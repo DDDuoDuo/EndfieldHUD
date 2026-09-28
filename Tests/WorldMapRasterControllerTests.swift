@@ -141,14 +141,24 @@ enum WorldMapRasterControllerTests {
             quality.finishGesture()
             check(wait { quality.isSettled } && quality.frame!.viewport == magnified && quality.frame!.pixelsPerPoint >= 2.19,
                   "Stopping restores exact final geography and full detail even when the low-resolution frame matched the camera")
-            drain(0.5)
             let correctImage = quality.frame!.image, correctCount = quality.completedPaintCount
             quality.update(viewport: WorldMapViewport(centerX: 0.52, centerY: 0.5, zoom: 12))
+            // The next paint's cooldown scales with the previous render time,
+            // so a fixed sleep cannot guarantee it has started on a busy runner.
+            // Activation flushes that pending request synchronously. Stay on the
+            // main thread until moving back so its worker cannot publish first.
+            quality.activate()
             check(quality.isPainting, "The away-and-back regression starts with an actual in-flight obsolete camera paint")
-            quality.update(viewport: magnified); quality.finishGesture()
+            // Finish only after the obsolete result is handled: finishGesture's
+            // animation window would otherwise discard fast results before the
+            // retained-current-frame guard is exercised.
+            quality.update(viewport: magnified)
             check(wait { quality.isSettled }, "Returning to an already-correct retained frame drains obsolete work and settles")
             check(quality.completedPaintCount == correctCount && quality.frame!.image === correctImage,
                   "An obsolete completed frame cannot replace the correct retained image after the camera moves away and back")
+            quality.finishGesture()
+            check(quality.isSettled && quality.completedPaintCount == correctCount && quality.frame!.image === correctImage,
+                  "Ending the return gesture keeps the already-correct full-resolution image without another paint")
 
             var disposable: WorldMapRasterController? = WorldMapRasterController()
             weak var released = disposable
