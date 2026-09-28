@@ -1,0 +1,92 @@
+{
+  "source": "NOAA ETOPO 2022 Global Relief Model",
+  "source_url": "https://coastwatch.pfeg.noaa.gov/erddap/griddap/ETOPO_2022_v1_15s.nc?z[0:60:43199][0:60:86399]",
+  "source_sha256": "4f7c9bbce9a55b80ab8cb7de6eb9319fc9fa01223dd59303b8ebee77148cb714",
+  "citation": "NOAA National Centers for Environmental Information. 2022: ETOPO 2022 15 Arc-Second Global Relief Model. doi:10.25921/fd45-gt74. Accessed 2026-09-27.",
+  "license": "CC0-1.0",
+  "license_url": "https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ngdc.mgg.dem%3Aetopo_2022",
+  "projection": "equirectangular; x=0 is longitude -180; y=0 is latitude 90",
+  "world_size": [
+    1024.0,
+    512.0
+  ],
+  "sample_interval_degrees": 0.25,
+  "simplification_tolerance_map_units": 0.1,
+  "vertices": 142392,
+  "bytes": 601709,
+  "sha256": "5356727bab11c5f96d69a94658d4f884a2e56b01e89f837670d57660e66635dd",
+  "bands": [
+    {
+      "elevation_m": -4000,
+      "contour_paths": 1355,
+      "fill_rings": 0,
+      "vertices": 22114
+    },
+    {
+      "elevation_m": -2000,
+      "contour_paths": 437,
+      "fill_rings": 0,
+      "vertices": 9151
+    },
+    {
+      "elevation_m": 0,
+      "contour_paths": 261,
+      "fill_rings": 261,
+      "vertices": 18726
+    },
+    {
+      "elevation_m": 250,
+      "contour_paths": 541,
+      "fill_rings": 541,
+      "vertices": 28545
+    },
+    {
+      "elevation_m": 500,
+      "contour_paths": 562,
+      "fill_rings": 561,
+      "vertices": 25373
+    },
+    {
+      "elevation_m": 1000,
+      "contour_paths": 411,
+      "fill_rings": 411,
+      "vertices": 17199
+    },
+    {
+      "elevation_m": 1500,
+      "contour_paths": 263,
+      "fill_rings": 263,
+      "vertices": 10280
+    },
+    {
+      "elevation_m": 2000,
+      "contour_paths": 163,
+      "fill_rings": 163,
+      "vertices": 6540
+    },
+    {
+      "elevation_m": 3000,
+      "contour_paths": 40,
+      "fill_rings": 40,
+      "vertices": 2098
+    },
+    {
+      "elevation_m": 4000,
+      "contour_paths": 30,
+      "fill_rings": 30,
+      "vertices": 1252
+    },
+    {
+      "elevation_m": 5000,
+      "contour_paths": 32,
+      "fill_rings": 32,
+      "vertices": 1114
+    },
+    {
+      "elevation_m": 6000,
+      "contour_paths": 0,
+      "fill_rings": 0,
+      "vertices": 0
+    }
+  ]
+}

@@ -1,0 +1,2335 @@
+{
+  "source": "Natural Earth 1:10m Admin 0 Countries",
+  "version": "5.1.1",
+  "source_url": "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_0_countries.zip",
+  "source_page": "https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-0-countries/",
+  "source_sha256": "ce1ac7036499a0edd641fbc093cd209a98f96a49d2eca8480aaacad35138a7f6",
+  "license": "Public domain",
+  "license_url": "https://www.naturalearthdata.com/about/terms-of-use/",
+  "accessed": "2026-09-27",
+  "source_records": 258,
+  "presentation_grouping": {
+    "CHN": {
+      "name": "China",
+      "source_ids": [
+        "CHN",
+        "TWN",
+        "HKG",
+        "MAC"
+      ],
+      "reason": "Application presentation requested by the user: group Taiwan, Hong Kong and Macao components with China. This is a derivative grouping, not a change to Natural Earth's source classification."
+    }
+  },
+  "projection": "equirectangular; x=0 is longitude -180; y=0 is latitude 90",
+  "world_size": [
+    1024.0,
+    512.0
+  ],
+  "coordinate_quantization": 16777215,
+  "general_simplification_tolerance_map_units": 0.085,
+  "china_simplification_tolerance_map_units": 0.006,
+  "countries": 255,
+  "vertices": 97707,
+  "bytes": 821219,
+  "sha256": "557e4e92f0fedb7e3f80e067cb0207655c9ecaedd9f5b29d730aa363842d0dd5",
+  "records": [
+    {
+      "id": "ABW",
+      "name": "Aruba",
+      "source_ids": [
+        "ABW"
+      ],
+      "components": 1,
+      "vertices": 5
+    },
+    {
+      "id": "AFG",
+      "name": "Afghanistan",
+      "source_ids": [
+        "AFG"
+      ],
+      "components": 1,
+      "vertices": 213
+    },
+    {
+      "id": "AGO",
+      "name": "Angola",
+      "source_ids": [
+        "AGO"
+      ],
+      "components": 3,
+      "vertices": 201
+    },
+    {
+      "id": "AIA",
+      "name": "Anguilla",
+      "source_ids": [
+        "AIA"
+      ],
+      "components": 6,
+      "vertices": 22
+    },
+    {
+      "id": "ALB",
+      "name": "Albania",
+      "source_ids": [
+        "ALB"
+      ],
+      "components": 1,
+      "vertices": 73
+    },
+    {
+      "id": "ALD",
+      "name": "Åland",
+      "source_ids": [
+        "ALD"
+      ],
+      "components": 16,
+      "vertices": 96
+    },
+    {
+      "id": "AND",
+      "name": "Andorra",
+      "source_ids": [
+        "AND"
+      ],
+      "components": 1,
+      "vertices": 10
+    },
+    {
+      "id": "ARE",
+      "name": "United Arab Emirates",
+      "source_ids": [
+        "ARE"
+      ],
+      "components": 10,
+      "vertices": 116
+    },
+    {
+      "id": "ARG",
+      "name": "Argentina",
+      "source_ids": [
+        "ARG"
+      ],
+      "components": 8,
+      "vertices": 693
+    },
+    {
+      "id": "ARM",
+      "name": "Armenia",
+      "source_ids": [
+        "ARM"
+      ],
+      "components": 2,
+      "vertices": 75
+    },
+    {
+      "id": "ASM",
+      "name": "American Samoa",
+      "source_ids": [
+        "ASM"
+      ],
+      "components": 5,
+      "vertices": 19
+    },
+    {
+      "id": "ATA",
+      "name": "Antarctica",
+      "source_ids": [
+        "ATA"
+      ],
+      "components": 179,
+      "vertices": 5242
+    },
+    {
+      "id": "ATC",
+      "name": "Ashmore and Cartier Islands",
+      "source_ids": [
+        "ATC"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "ATF",
+      "name": "French Southern and Antarctic Lands",
+      "source_ids": [
+        "ATF"
+      ],
+      "components": 18,
+      "vertices": 170
+    },
+    {
+      "id": "ATG",
+      "name": "Antigua and Barbuda",
+      "source_ids": [
+        "ATG"
+      ],
+      "components": 3,
+      "vertices": 15
+    },
+    {
+      "id": "AUS",
+      "name": "Australia",
+      "source_ids": [
+        "AUS"
+      ],
+      "components": 94,
+      "vertices": 2094
+    },
+    {
+      "id": "AUT",
+      "name": "Austria",
+      "source_ids": [
+        "AUT"
+      ],
+      "components": 1,
+      "vertices": 126
+    },
+    {
+      "id": "AZE",
+      "name": "Azerbaijan",
+      "source_ids": [
+        "AZE"
+      ],
+      "components": 6,
+      "vertices": 157
+    },
+    {
+      "id": "BDI",
+      "name": "Burundi",
+      "source_ids": [
+        "BDI"
+      ],
+      "components": 1,
+      "vertices": 39
+    },
+    {
+      "id": "BEL",
+      "name": "Belgium",
+      "source_ids": [
+        "BEL"
+      ],
+      "components": 1,
+      "vertices": 82
+    },
+    {
+      "id": "BEN",
+      "name": "Benin",
+      "source_ids": [
+        "BEN"
+      ],
+      "components": 1,
+      "vertices": 78
+    },
+    {
+      "id": "BFA",
+      "name": "Burkina Faso",
+      "source_ids": [
+        "BFA"
+      ],
+      "components": 1,
+      "vertices": 155
+    },
+    {
+      "id": "BGD",
+      "name": "Bangladesh",
+      "source_ids": [
+        "BGD"
+      ],
+      "components": 22,
+      "vertices": 366
+    },
+    {
+      "id": "BGR",
+      "name": "Bulgaria",
+      "source_ids": [
+        "BGR"
+      ],
+      "components": 1,
+      "vertices": 108
+    },
+    {
+      "id": "BHR",
+      "name": "Bahrain",
+      "source_ids": [
+        "BHR"
+      ],
+      "components": 7,
+      "vertices": 33
+    },
+    {
+      "id": "BHS",
+      "name": "The Bahamas",
+      "source_ids": [
+        "BHS"
+      ],
+      "components": 44,
+      "vertices": 302
+    },
+    {
+      "id": "BIH",
+      "name": "Bosnia and Herzegovina",
+      "source_ids": [
+        "BIH"
+      ],
+      "components": 1,
+      "vertices": 82
+    },
+    {
+      "id": "BJN",
+      "name": "Bajo Nuevo Bank",
+      "source_ids": [
+        "BJN"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "BLM",
+      "name": "Saint Barthélemy",
+      "source_ids": [
+        "BLM"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "BLR",
+      "name": "Belarus",
+      "source_ids": [
+        "BLR"
+      ],
+      "components": 1,
+      "vertices": 160
+    },
+    {
+      "id": "BLZ",
+      "name": "Belize",
+      "source_ids": [
+        "BLZ"
+      ],
+      "components": 10,
+      "vertices": 85
+    },
+    {
+      "id": "BMU",
+      "name": "Bermuda",
+      "source_ids": [
+        "BMU"
+      ],
+      "components": 2,
+      "vertices": 17
+    },
+    {
+      "id": "BOL",
+      "name": "Bolivia",
+      "source_ids": [
+        "BOL"
+      ],
+      "components": 1,
+      "vertices": 207
+    },
+    {
+      "id": "BRA",
+      "name": "Brazil",
+      "source_ids": [
+        "BRA"
+      ],
+      "components": 43,
+      "vertices": 1603
+    },
+    {
+      "id": "BRB",
+      "name": "Barbados",
+      "source_ids": [
+        "BRB"
+      ],
+      "components": 1,
+      "vertices": 6
+    },
+    {
+      "id": "BRI",
+      "name": "Brazilian Island",
+      "source_ids": [
+        "BRI"
+      ],
+      "components": 1,
+      "vertices": 3
+    },
+    {
+      "id": "BRN",
+      "name": "Brunei",
+      "source_ids": [
+        "BRN"
+      ],
+      "components": 2,
+      "vertices": 23
+    },
+    {
+      "id": "BRT",
+      "name": "Bir Tawil",
+      "source_ids": [
+        "BRT"
+      ],
+      "components": 1,
+      "vertices": 5
+    },
+    {
+      "id": "BTN",
+      "name": "Bhutan",
+      "source_ids": [
+        "BTN"
+      ],
+      "components": 1,
+      "vertices": 58
+    },
+    {
+      "id": "BWA",
+      "name": "Botswana",
+      "source_ids": [
+        "BWA"
+      ],
+      "components": 1,
+      "vertices": 109
+    },
+    {
+      "id": "CAF",
+      "name": "Central African Republic",
+      "source_ids": [
+        "CAF"
+      ],
+      "components": 1,
+      "vertices": 210
+    },
+    {
+      "id": "CAN",
+      "name": "Canada",
+      "source_ids": [
+        "CAN"
+      ],
+      "components": 412,
+      "vertices": 11727
+    },
+    {
+      "id": "CHE",
+      "name": "Switzerland",
+      "source_ids": [
+        "CHE"
+      ],
+      "components": 1,
+      "vertices": 101
+    },
+    {
+      "id": "CHL",
+      "name": "Chile",
+      "source_ids": [
+        "CHL"
+      ],
+      "components": 163,
+      "vertices": 2883
+    },
+    {
+      "id": "CHN",
+      "name": "China",
+      "source_ids": [
+        "CHN",
+        "TWN",
+        "HKG",
+        "MAC"
+      ],
+      "components": 83,
+      "vertices": 11144
+    },
+    {
+      "id": "CIV",
+      "name": "Ivory Coast",
+      "source_ids": [
+        "CIV"
+      ],
+      "components": 2,
+      "vertices": 218
+    },
+    {
+      "id": "CLP",
+      "name": "Clipperton Island",
+      "source_ids": [
+        "CLP"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "CMR",
+      "name": "Cameroon",
+      "source_ids": [
+        "CMR"
+      ],
+      "components": 1,
+      "vertices": 200
+    },
+    {
+      "id": "CNM",
+      "name": "United Nations Buffer Zone in Cyprus",
+      "source_ids": [
+        "CNM"
+      ],
+      "components": 3,
+      "vertices": 26
+    },
+    {
+      "id": "COD",
+      "name": "Democratic Republic of the Congo",
+      "source_ids": [
+        "COD"
+      ],
+      "components": 2,
+      "vertices": 355
+    },
+    {
+      "id": "COG",
+      "name": "Republic of the Congo",
+      "source_ids": [
+        "COG"
+      ],
+      "components": 1,
+      "vertices": 177
+    },
+    {
+      "id": "COK",
+      "name": "Cook Islands",
+      "source_ids": [
+        "COK"
+      ],
+      "components": 13,
+      "vertices": 50
+    },
+    {
+      "id": "COL",
+      "name": "Colombia",
+      "source_ids": [
+        "COL"
+      ],
+      "components": 11,
+      "vertices": 442
+    },
+    {
+      "id": "COM",
+      "name": "Comoros",
+      "source_ids": [
+        "COM"
+      ],
+      "components": 3,
+      "vertices": 18
+    },
+    {
+      "id": "CPV",
+      "name": "Cape Verde",
+      "source_ids": [
+        "CPV"
+      ],
+      "components": 11,
+      "vertices": 59
+    },
+    {
+      "id": "CRI",
+      "name": "Costa Rica",
+      "source_ids": [
+        "CRI"
+      ],
+      "components": 4,
+      "vertices": 113
+    },
+    {
+      "id": "CSI",
+      "name": "Coral Sea Islands",
+      "source_ids": [
+        "CSI"
+      ],
+      "components": 1,
+      "vertices": 3
+    },
+    {
+      "id": "CUB",
+      "name": "Cuba",
+      "source_ids": [
+        "CUB"
+      ],
+      "components": 41,
+      "vertices": 387
+    },
+    {
+      "id": "CUW",
+      "name": "Curaçao",
+      "source_ids": [
+        "CUW"
+      ],
+      "components": 1,
+      "vertices": 9
+    },
+    {
+      "id": "CYM",
+      "name": "Cayman Islands",
+      "source_ids": [
+        "CYM"
+      ],
+      "components": 3,
+      "vertices": 16
+    },
+    {
+      "id": "CYN",
+      "name": "Turkish Republic of Northern Cyprus",
+      "source_ids": [
+        "CYN"
+      ],
+      "components": 2,
+      "vertices": 30
+    },
+    {
+      "id": "CYP",
+      "name": "Cyprus",
+      "source_ids": [
+        "CYP"
+      ],
+      "components": 4,
+      "vertices": 35
+    },
+    {
+      "id": "CZE",
+      "name": "Czech Republic",
+      "source_ids": [
+        "CZE"
+      ],
+      "components": 1,
+      "vertices": 107
+    },
+    {
+      "id": "DEU",
+      "name": "Germany",
+      "source_ids": [
+        "DEU"
+      ],
+      "components": 22,
+      "vertices": 457
+    },
+    {
+      "id": "DJI",
+      "name": "Djibouti",
+      "source_ids": [
+        "DJI"
+      ],
+      "components": 1,
+      "vertices": 29
+    },
+    {
+      "id": "DMA",
+      "name": "Dominica",
+      "source_ids": [
+        "DMA"
+      ],
+      "components": 1,
+      "vertices": 6
+    },
+    {
+      "id": "DNK",
+      "name": "Denmark",
+      "source_ids": [
+        "DNK"
+      ],
+      "components": 15,
+      "vertices": 359
+    },
+    {
+      "id": "DOM",
+      "name": "Dominican Republic",
+      "source_ids": [
+        "DOM"
+      ],
+      "components": 3,
+      "vertices": 88
+    },
+    {
+      "id": "DZA",
+      "name": "Algeria",
+      "source_ids": [
+        "DZA"
+      ],
+      "components": 1,
+      "vertices": 182
+    },
+    {
+      "id": "ECU",
+      "name": "Ecuador",
+      "source_ids": [
+        "ECU"
+      ],
+      "components": 16,
+      "vertices": 225
+    },
+    {
+      "id": "EGY",
+      "name": "Egypt",
+      "source_ids": [
+        "EGY"
+      ],
+      "components": 8,
+      "vertices": 218
+    },
+    {
+      "id": "ERI",
+      "name": "Eritrea",
+      "source_ids": [
+        "ERI"
+      ],
+      "components": 3,
+      "vertices": 133
+    },
+    {
+      "id": "ESB",
+      "name": "Dhekelia Cantonment",
+      "source_ids": [
+        "ESB"
+      ],
+      "components": 1,
+      "vertices": 17
+    },
+    {
+      "id": "ESP",
+      "name": "Spain",
+      "source_ids": [
+        "ESP"
+      ],
+      "components": 23,
+      "vertices": 423
+    },
+    {
+      "id": "EST",
+      "name": "Estonia",
+      "source_ids": [
+        "EST"
+      ],
+      "components": 8,
+      "vertices": 169
+    },
+    {
+      "id": "ETH",
+      "name": "Ethiopia",
+      "source_ids": [
+        "ETH"
+      ],
+      "components": 1,
+      "vertices": 141
+    },
+    {
+      "id": "FIN",
+      "name": "Finland",
+      "source_ids": [
+        "FIN"
+      ],
+      "components": 42,
+      "vertices": 557
+    },
+    {
+      "id": "FJI",
+      "name": "Fiji",
+      "source_ids": [
+        "FJI"
+      ],
+      "components": 44,
+      "vertices": 260
+    },
+    {
+      "id": "FLK",
+      "name": "Falkland Islands",
+      "source_ids": [
+        "FLK"
+      ],
+      "components": 15,
+      "vertices": 231
+    },
+    {
+      "id": "FRA",
+      "name": "France",
+      "source_ids": [
+        "FRA"
+      ],
+      "components": 21,
+      "vertices": 627
+    },
+    {
+      "id": "FRO",
+      "name": "Faroe Islands",
+      "source_ids": [
+        "FRO"
+      ],
+      "components": 11,
+      "vertices": 87
+    },
+    {
+      "id": "FSM",
+      "name": "Federated States of Micronesia",
+      "source_ids": [
+        "FSM"
+      ],
+      "components": 20,
+      "vertices": 82
+    },
+    {
+      "id": "GAB",
+      "name": "Gabon",
+      "source_ids": [
+        "GAB"
+      ],
+      "components": 3,
+      "vertices": 210
+    },
+    {
+      "id": "GBR",
+      "name": "United Kingdom",
+      "source_ids": [
+        "GBR"
+      ],
+      "components": 57,
+      "vertices": 1068
+    },
+    {
+      "id": "GEO",
+      "name": "Georgia",
+      "source_ids": [
+        "GEO"
+      ],
+      "components": 1,
+      "vertices": 86
+    },
+    {
+      "id": "GGY",
+      "name": "Guernsey",
+      "source_ids": [
+        "GGY"
+      ],
+      "components": 4,
+      "vertices": 16
+    },
+    {
+      "id": "GHA",
+      "name": "Ghana",
+      "source_ids": [
+        "GHA"
+      ],
+      "components": 1,
+      "vertices": 113
+    },
+    {
+      "id": "GIB",
+      "name": "Gibraltar",
+      "source_ids": [
+        "GIB"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "GIN",
+      "name": "Guinea",
+      "source_ids": [
+        "GIN"
+      ],
+      "components": 1,
+      "vertices": 237
+    },
+    {
+      "id": "GMB",
+      "name": "The Gambia",
+      "source_ids": [
+        "GMB"
+      ],
+      "components": 1,
+      "vertices": 51
+    },
+    {
+      "id": "GNB",
+      "name": "Guinea-Bissau",
+      "source_ids": [
+        "GNB"
+      ],
+      "components": 13,
+      "vertices": 172
+    },
+    {
+      "id": "GNQ",
+      "name": "Equatorial Guinea",
+      "source_ids": [
+        "GNQ"
+      ],
+      "components": 3,
+      "vertices": 38
+    },
+    {
+      "id": "GRC",
+      "name": "Greece",
+      "source_ids": [
+        "GRC"
+      ],
+      "components": 74,
+      "vertices": 798
+    },
+    {
+      "id": "GRD",
+      "name": "Grenada",
+      "source_ids": [
+        "GRD"
+      ],
+      "components": 2,
+      "vertices": 8
+    },
+    {
+      "id": "GRL",
+      "name": "Greenland",
+      "source_ids": [
+        "GRL"
+      ],
+      "components": 128,
+      "vertices": 3839
+    },
+    {
+      "id": "GTM",
+      "name": "Guatemala",
+      "source_ids": [
+        "GTM"
+      ],
+      "components": 1,
+      "vertices": 51
+    },
+    {
+      "id": "GUM",
+      "name": "Guam",
+      "source_ids": [
+        "GUM"
+      ],
+      "components": 1,
+      "vertices": 8
+    },
+    {
+      "id": "GUY",
+      "name": "Guyana",
+      "source_ids": [
+        "GUY"
+      ],
+      "components": 2,
+      "vertices": 137
+    },
+    {
+      "id": "HMD",
+      "name": "Heard Island and McDonald Islands",
+      "source_ids": [
+        "HMD"
+      ],
+      "components": 1,
+      "vertices": 6
+    },
+    {
+      "id": "HND",
+      "name": "Honduras",
+      "source_ids": [
+        "HND"
+      ],
+      "components": 7,
+      "vertices": 163
+    },
+    {
+      "id": "HRV",
+      "name": "Croatia",
+      "source_ids": [
+        "HRV"
+      ],
+      "components": 25,
+      "vertices": 312
+    },
+    {
+      "id": "HTI",
+      "name": "Haiti",
+      "source_ids": [
+        "HTI"
+      ],
+      "components": 5,
+      "vertices": 92
+    },
+    {
+      "id": "HUN",
+      "name": "Hungary",
+      "source_ids": [
+        "HUN"
+      ],
+      "components": 1,
+      "vertices": 94
+    },
+    {
+      "id": "IDN",
+      "name": "Indonesia",
+      "source_ids": [
+        "IDN"
+      ],
+      "components": 264,
+      "vertices": 3111
+    },
+    {
+      "id": "IMN",
+      "name": "Isle of Man",
+      "source_ids": [
+        "IMN"
+      ],
+      "components": 1,
+      "vertices": 7
+    },
+    {
+      "id": "IND",
+      "name": "India",
+      "source_ids": [
+        "IND"
+      ],
+      "components": 35,
+      "vertices": 1196
+    },
+    {
+      "id": "IOA",
+      "name": "Australian Indian Ocean Territories",
+      "source_ids": [
+        "IOA"
+      ],
+      "components": 3,
+      "vertices": 13
+    },
+    {
+      "id": "IOT",
+      "name": "British Indian Ocean Territory",
+      "source_ids": [
+        "IOT"
+      ],
+      "components": 10,
+      "vertices": 38
+    },
+    {
+      "id": "IRL",
+      "name": "Ireland",
+      "source_ids": [
+        "IRL"
+      ],
+      "components": 7,
+      "vertices": 314
+    },
+    {
+      "id": "IRN",
+      "name": "Iran",
+      "source_ids": [
+        "IRN"
+      ],
+      "components": 12,
+      "vertices": 389
+    },
+    {
+      "id": "IRQ",
+      "name": "Iraq",
+      "source_ids": [
+        "IRQ"
+      ],
+      "components": 1,
+      "vertices": 122
+    },
+    {
+      "id": "ISL",
+      "name": "Iceland",
+      "source_ids": [
+        "ISL"
+      ],
+      "components": 5,
+      "vertices": 484
+    },
+    {
+      "id": "ISR",
+      "name": "Israel",
+      "source_ids": [
+        "ISR"
+      ],
+      "components": 1,
+      "vertices": 49
+    },
+    {
+      "id": "ITA",
+      "name": "Italy",
+      "source_ids": [
+        "ITA"
+      ],
+      "components": 29,
+      "vertices": 487
+    },
+    {
+      "id": "JAM",
+      "name": "Jamaica",
+      "source_ids": [
+        "JAM"
+      ],
+      "components": 1,
+      "vertices": 34
+    },
+    {
+      "id": "JEY",
+      "name": "Jersey",
+      "source_ids": [
+        "JEY"
+      ],
+      "components": 1,
+      "vertices": 5
+    },
+    {
+      "id": "JOR",
+      "name": "Jordan",
+      "source_ids": [
+        "JOR"
+      ],
+      "components": 1,
+      "vertices": 34
+    },
+    {
+      "id": "JPN",
+      "name": "Japan",
+      "source_ids": [
+        "JPN"
+      ],
+      "components": 109,
+      "vertices": 1195
+    },
+    {
+      "id": "KAB",
+      "name": "Baikonur",
+      "source_ids": [
+        "KAB"
+      ],
+      "components": 1,
+      "vertices": 15
+    },
+    {
+      "id": "KAS",
+      "name": "Siachen Glacier",
+      "source_ids": [
+        "KAS"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "KAZ",
+      "name": "Kazakhstan",
+      "source_ids": [
+        "KAZ"
+      ],
+      "components": 6,
+      "vertices": 717
+    },
+    {
+      "id": "KEN",
+      "name": "Kenya",
+      "source_ids": [
+        "KEN"
+      ],
+      "components": 2,
+      "vertices": 124
+    },
+    {
+      "id": "KGZ",
+      "name": "Kyrgyzstan",
+      "source_ids": [
+        "KGZ"
+      ],
+      "components": 1,
+      "vertices": 199
+    },
+    {
+      "id": "KHM",
+      "name": "Cambodia",
+      "source_ids": [
+        "KHM"
+      ],
+      "components": 6,
+      "vertices": 155
+    },
+    {
+      "id": "KIR",
+      "name": "Kiribati",
+      "source_ids": [
+        "KIR"
+      ],
+      "components": 35,
+      "vertices": 178
+    },
+    {
+      "id": "KNA",
+      "name": "Saint Kitts and Nevis",
+      "source_ids": [
+        "KNA"
+      ],
+      "components": 2,
+      "vertices": 10
+    },
+    {
+      "id": "KOR",
+      "name": "South Korea",
+      "source_ids": [
+        "KOR"
+      ],
+      "components": 53,
+      "vertices": 489
+    },
+    {
+      "id": "KOS",
+      "name": "Kosovo",
+      "source_ids": [
+        "KOS"
+      ],
+      "components": 1,
+      "vertices": 36
+    },
+    {
+      "id": "KWT",
+      "name": "Kuwait",
+      "source_ids": [
+        "KWT"
+      ],
+      "components": 4,
+      "vertices": 45
+    },
+    {
+      "id": "LAO",
+      "name": "Laos",
+      "source_ids": [
+        "LAO"
+      ],
+      "components": 1,
+      "vertices": 222
+    },
+    {
+      "id": "LBN",
+      "name": "Lebanon",
+      "source_ids": [
+        "LBN"
+      ],
+      "components": 1,
+      "vertices": 29
+    },
+    {
+      "id": "LBR",
+      "name": "Liberia",
+      "source_ids": [
+        "LBR"
+      ],
+      "components": 1,
+      "vertices": 88
+    },
+    {
+      "id": "LBY",
+      "name": "Libya",
+      "source_ids": [
+        "LBY"
+      ],
+      "components": 1,
+      "vertices": 105
+    },
+    {
+      "id": "LCA",
+      "name": "Saint Lucia",
+      "source_ids": [
+        "LCA"
+      ],
+      "components": 1,
+      "vertices": 6
+    },
+    {
+      "id": "LIE",
+      "name": "Liechtenstein",
+      "source_ids": [
+        "LIE"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "LKA",
+      "name": "Sri Lanka",
+      "source_ids": [
+        "LKA"
+      ],
+      "components": 5,
+      "vertices": 103
+    },
+    {
+      "id": "LSO",
+      "name": "Lesotho",
+      "source_ids": [
+        "LSO"
+      ],
+      "components": 1,
+      "vertices": 35
+    },
+    {
+      "id": "LTU",
+      "name": "Lithuania",
+      "source_ids": [
+        "LTU"
+      ],
+      "components": 2,
+      "vertices": 82
+    },
+    {
+      "id": "LUX",
+      "name": "Luxembourg",
+      "source_ids": [
+        "LUX"
+      ],
+      "components": 1,
+      "vertices": 20
+    },
+    {
+      "id": "LVA",
+      "name": "Latvia",
+      "source_ids": [
+        "LVA"
+      ],
+      "components": 1,
+      "vertices": 79
+    },
+    {
+      "id": "MAF",
+      "name": "Saint Martin",
+      "source_ids": [
+        "MAF"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "MAR",
+      "name": "Morocco",
+      "source_ids": [
+        "MAR"
+      ],
+      "components": 1,
+      "vertices": 155
+    },
+    {
+      "id": "MCO",
+      "name": "Monaco",
+      "source_ids": [
+        "MCO"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "MDA",
+      "name": "Moldova",
+      "source_ids": [
+        "MDA"
+      ],
+      "components": 1,
+      "vertices": 89
+    },
+    {
+      "id": "MDG",
+      "name": "Madagascar",
+      "source_ids": [
+        "MDG"
+      ],
+      "components": 3,
+      "vertices": 229
+    },
+    {
+      "id": "MDV",
+      "name": "Maldives",
+      "source_ids": [
+        "MDV"
+      ],
+      "components": 176,
+      "vertices": 654
+    },
+    {
+      "id": "MEX",
+      "name": "Mexico",
+      "source_ids": [
+        "MEX"
+      ],
+      "components": 51,
+      "vertices": 970
+    },
+    {
+      "id": "MHL",
+      "name": "Marshall Islands",
+      "source_ids": [
+        "MHL"
+      ],
+      "components": 22,
+      "vertices": 89
+    },
+    {
+      "id": "MKD",
+      "name": "North Macedonia",
+      "source_ids": [
+        "MKD"
+      ],
+      "components": 1,
+      "vertices": 39
+    },
+    {
+      "id": "MLI",
+      "name": "Mali",
+      "source_ids": [
+        "MLI"
+      ],
+      "components": 1,
+      "vertices": 214
+    },
+    {
+      "id": "MLT",
+      "name": "Malta",
+      "source_ids": [
+        "MLT"
+      ],
+      "components": 2,
+      "vertices": 11
+    },
+    {
+      "id": "MMR",
+      "name": "Myanmar",
+      "source_ids": [
+        "MMR"
+      ],
+      "components": 39,
+      "vertices": 718
+    },
+    {
+      "id": "MNE",
+      "name": "Montenegro",
+      "source_ids": [
+        "MNE"
+      ],
+      "components": 1,
+      "vertices": 52
+    },
+    {
+      "id": "MNG",
+      "name": "Mongolia",
+      "source_ids": [
+        "MNG"
+      ],
+      "components": 1,
+      "vertices": 278
+    },
+    {
+      "id": "MNP",
+      "name": "Northern Mariana Islands",
+      "source_ids": [
+        "MNP"
+      ],
+      "components": 12,
+      "vertices": 47
+    },
+    {
+      "id": "MOZ",
+      "name": "Mozambique",
+      "source_ids": [
+        "MOZ"
+      ],
+      "components": 4,
+      "vertices": 367
+    },
+    {
+      "id": "MRT",
+      "name": "Mauritania",
+      "source_ids": [
+        "MRT"
+      ],
+      "components": 5,
+      "vertices": 117
+    },
+    {
+      "id": "MSR",
+      "name": "Montserrat",
+      "source_ids": [
+        "MSR"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "MUS",
+      "name": "Mauritius",
+      "source_ids": [
+        "MUS"
+      ],
+      "components": 3,
+      "vertices": 17
+    },
+    {
+      "id": "MWI",
+      "name": "Malawi",
+      "source_ids": [
+        "MWI"
+      ],
+      "components": 3,
+      "vertices": 121
+    },
+    {
+      "id": "MYS",
+      "name": "Malaysia",
+      "source_ids": [
+        "MYS"
+      ],
+      "components": 17,
+      "vertices": 393
+    },
+    {
+      "id": "NAM",
+      "name": "Namibia",
+      "source_ids": [
+        "NAM"
+      ],
+      "components": 1,
+      "vertices": 121
+    },
+    {
+      "id": "NCL",
+      "name": "New Caledonia",
+      "source_ids": [
+        "NCL"
+      ],
+      "components": 11,
+      "vertices": 133
+    },
+    {
+      "id": "NER",
+      "name": "Niger",
+      "source_ids": [
+        "NER"
+      ],
+      "components": 1,
+      "vertices": 123
+    },
+    {
+      "id": "NFK",
+      "name": "Norfolk Island",
+      "source_ids": [
+        "NFK"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "NGA",
+      "name": "Nigeria",
+      "source_ids": [
+        "NGA"
+      ],
+      "components": 3,
+      "vertices": 258
+    },
+    {
+      "id": "NIC",
+      "name": "Nicaragua",
+      "source_ids": [
+        "NIC"
+      ],
+      "components": 5,
+      "vertices": 133
+    },
+    {
+      "id": "NIU",
+      "name": "Niue",
+      "source_ids": [
+        "NIU"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "NLD",
+      "name": "Netherlands",
+      "source_ids": [
+        "NLD"
+      ],
+      "components": 12,
+      "vertices": 151
+    },
+    {
+      "id": "NOR",
+      "name": "Norway",
+      "source_ids": [
+        "NOR"
+      ],
+      "components": 120,
+      "vertices": 2956
+    },
+    {
+      "id": "NPL",
+      "name": "Nepal",
+      "source_ids": [
+        "NPL"
+      ],
+      "components": 1,
+      "vertices": 136
+    },
+    {
+      "id": "NRU",
+      "name": "Nauru",
+      "source_ids": [
+        "NRU"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "NZL",
+      "name": "New Zealand",
+      "source_ids": [
+        "NZL"
+      ],
+      "components": 26,
+      "vertices": 702
+    },
+    {
+      "id": "OMN",
+      "name": "Oman",
+      "source_ids": [
+        "OMN"
+      ],
+      "components": 6,
+      "vertices": 149
+    },
+    {
+      "id": "PAK",
+      "name": "Pakistan",
+      "source_ids": [
+        "PAK"
+      ],
+      "components": 2,
+      "vertices": 349
+    },
+    {
+      "id": "PAN",
+      "name": "Panama",
+      "source_ids": [
+        "PAN"
+      ],
+      "components": 15,
+      "vertices": 265
+    },
+    {
+      "id": "PCN",
+      "name": "Pitcairn Islands",
+      "source_ids": [
+        "PCN"
+      ],
+      "components": 4,
+      "vertices": 16
+    },
+    {
+      "id": "PER",
+      "name": "Peru",
+      "source_ids": [
+        "PER"
+      ],
+      "components": 5,
+      "vertices": 342
+    },
+    {
+      "id": "PGA",
+      "name": "Wake Island",
+      "source_ids": [
+        "PGA"
+      ],
+      "components": 12,
+      "vertices": 46
+    },
+    {
+      "id": "PHL",
+      "name": "Philippines",
+      "source_ids": [
+        "PHL"
+      ],
+      "components": 97,
+      "vertices": 1092
+    },
+    {
+      "id": "PLW",
+      "name": "Palau",
+      "source_ids": [
+        "PLW"
+      ],
+      "components": 9,
+      "vertices": 41
+    },
+    {
+      "id": "PNG",
+      "name": "Papua New Guinea",
+      "source_ids": [
+        "PNG"
+      ],
+      "components": 58,
+      "vertices": 672
+    },
+    {
+      "id": "POL",
+      "name": "Poland",
+      "source_ids": [
+        "POL"
+      ],
+      "components": 1,
+      "vertices": 161
+    },
+    {
+      "id": "PRI",
+      "name": "Puerto Rico",
+      "source_ids": [
+        "PRI"
+      ],
+      "components": 4,
+      "vertices": 40
+    },
+    {
+      "id": "PRK",
+      "name": "North Korea",
+      "source_ids": [
+        "PRK"
+      ],
+      "components": 10,
+      "vertices": 243
+    },
+    {
+      "id": "PRT",
+      "name": "Portugal",
+      "source_ids": [
+        "PRT"
+      ],
+      "components": 17,
+      "vertices": 206
+    },
+    {
+      "id": "PRY",
+      "name": "Paraguay",
+      "source_ids": [
+        "PRY"
+      ],
+      "components": 1,
+      "vertices": 143
+    },
+    {
+      "id": "PSX",
+      "name": "Palestine",
+      "source_ids": [
+        "PSX"
+      ],
+      "components": 2,
+      "vertices": 28
+    },
+    {
+      "id": "PYF",
+      "name": "French Polynesia",
+      "source_ids": [
+        "PYF"
+      ],
+      "components": 88,
+      "vertices": 360
+    },
+    {
+      "id": "QAT",
+      "name": "Qatar",
+      "source_ids": [
+        "QAT"
+      ],
+      "components": 1,
+      "vertices": 37
+    },
+    {
+      "id": "ROU",
+      "name": "Romania",
+      "source_ids": [
+        "ROU"
+      ],
+      "components": 1,
+      "vertices": 148
+    },
+    {
+      "id": "RUS",
+      "name": "Russia",
+      "source_ids": [
+        "RUS"
+      ],
+      "components": 214,
+      "vertices": 6973
+    },
+    {
+      "id": "RWA",
+      "name": "Rwanda",
+      "source_ids": [
+        "RWA"
+      ],
+      "components": 1,
+      "vertices": 38
+    },
+    {
+      "id": "SAH",
+      "name": "Western Sahara",
+      "source_ids": [
+        "SAH"
+      ],
+      "components": 1,
+      "vertices": 42
+    },
+    {
+      "id": "SAU",
+      "name": "Saudi Arabia",
+      "source_ids": [
+        "SAU"
+      ],
+      "components": 11,
+      "vertices": 308
+    },
+    {
+      "id": "SCR",
+      "name": "Scarborough Shoal",
+      "source_ids": [
+        "SCR"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "SDN",
+      "name": "Sudan",
+      "source_ids": [
+        "SDN"
+      ],
+      "components": 2,
+      "vertices": 194
+    },
+    {
+      "id": "SDS",
+      "name": "South Sudan",
+      "source_ids": [
+        "SDS"
+      ],
+      "components": 1,
+      "vertices": 169
+    },
+    {
+      "id": "SEN",
+      "name": "Senegal",
+      "source_ids": [
+        "SEN"
+      ],
+      "components": 1,
+      "vertices": 171
+    },
+    {
+      "id": "SER",
+      "name": "Serranilla Bank",
+      "source_ids": [
+        "SER"
+      ],
+      "components": 1,
+      "vertices": 3
+    },
+    {
+      "id": "SGP",
+      "name": "Singapore",
+      "source_ids": [
+        "SGP"
+      ],
+      "components": 1,
+      "vertices": 7
+    },
+    {
+      "id": "SGS",
+      "name": "South Georgia and the South Sandwich Islands",
+      "source_ids": [
+        "SGS"
+      ],
+      "components": 12,
+      "vertices": 104
+    },
+    {
+      "id": "SHN",
+      "name": "Saint Helena",
+      "source_ids": [
+        "SHN"
+      ],
+      "components": 4,
+      "vertices": 18
+    },
+    {
+      "id": "SLB",
+      "name": "Solomon Islands",
+      "source_ids": [
+        "SLB"
+      ],
+      "components": 48,
+      "vertices": 310
+    },
+    {
+      "id": "SLE",
+      "name": "Sierra Leone",
+      "source_ids": [
+        "SLE"
+      ],
+      "components": 2,
+      "vertices": 89
+    },
+    {
+      "id": "SLV",
+      "name": "El Salvador",
+      "source_ids": [
+        "SLV"
+      ],
+      "components": 3,
+      "vertices": 60
+    },
+    {
+      "id": "SMR",
+      "name": "San Marino",
+      "source_ids": [
+        "SMR"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "SOL",
+      "name": "Somaliland",
+      "source_ids": [
+        "SOL"
+      ],
+      "components": 1,
+      "vertices": 40
+    },
+    {
+      "id": "SOM",
+      "name": "Somalia",
+      "source_ids": [
+        "SOM"
+      ],
+      "components": 1,
+      "vertices": 72
+    },
+    {
+      "id": "SPI",
+      "name": "Southern Patagonian Ice Field",
+      "source_ids": [
+        "SPI"
+      ],
+      "components": 1,
+      "vertices": 11
+    },
+    {
+      "id": "SPM",
+      "name": "Saint Pierre and Miquelon",
+      "source_ids": [
+        "SPM"
+      ],
+      "components": 2,
+      "vertices": 15
+    },
+    {
+      "id": "SRB",
+      "name": "Serbia",
+      "source_ids": [
+        "SRB"
+      ],
+      "components": 1,
+      "vertices": 115
+    },
+    {
+      "id": "STP",
+      "name": "São Tomé and Príncipe",
+      "source_ids": [
+        "STP"
+      ],
+      "components": 2,
+      "vertices": 10
+    },
+    {
+      "id": "SUR",
+      "name": "Suriname",
+      "source_ids": [
+        "SUR"
+      ],
+      "components": 1,
+      "vertices": 94
+    },
+    {
+      "id": "SVK",
+      "name": "Slovakia",
+      "source_ids": [
+        "SVK"
+      ],
+      "components": 1,
+      "vertices": 71
+    },
+    {
+      "id": "SVN",
+      "name": "Slovenia",
+      "source_ids": [
+        "SVN"
+      ],
+      "components": 1,
+      "vertices": 58
+    },
+    {
+      "id": "SWE",
+      "name": "Sweden",
+      "source_ids": [
+        "SWE"
+      ],
+      "components": 41,
+      "vertices": 778
+    },
+    {
+      "id": "SWZ",
+      "name": "Eswatini",
+      "source_ids": [
+        "SWZ"
+      ],
+      "components": 1,
+      "vertices": 21
+    },
+    {
+      "id": "SXM",
+      "name": "Sint Maarten",
+      "source_ids": [
+        "SXM"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "SYC",
+      "name": "Seychelles",
+      "source_ids": [
+        "SYC"
+      ],
+      "components": 26,
+      "vertices": 109
+    },
+    {
+      "id": "SYR",
+      "name": "Syria",
+      "source_ids": [
+        "SYR"
+      ],
+      "components": 1,
+      "vertices": 70
+    },
+    {
+      "id": "TCA",
+      "name": "Turks and Caicos Islands",
+      "source_ids": [
+        "TCA"
+      ],
+      "components": 12,
+      "vertices": 58
+    },
+    {
+      "id": "TCD",
+      "name": "Chad",
+      "source_ids": [
+        "TCD"
+      ],
+      "components": 1,
+      "vertices": 142
+    },
+    {
+      "id": "TGO",
+      "name": "Togo",
+      "source_ids": [
+        "TGO"
+      ],
+      "components": 1,
+      "vertices": 68
+    },
+    {
+      "id": "THA",
+      "name": "Thailand",
+      "source_ids": [
+        "THA"
+      ],
+      "components": 20,
+      "vertices": 464
+    },
+    {
+      "id": "TJK",
+      "name": "Tajikistan",
+      "source_ids": [
+        "TJK"
+      ],
+      "components": 3,
+      "vertices": 182
+    },
+    {
+      "id": "TKM",
+      "name": "Turkmenistan",
+      "source_ids": [
+        "TKM"
+      ],
+      "components": 3,
+      "vertices": 264
+    },
+    {
+      "id": "TLS",
+      "name": "East Timor",
+      "source_ids": [
+        "TLS"
+      ],
+      "components": 3,
+      "vertices": 34
+    },
+    {
+      "id": "TON",
+      "name": "Tonga",
+      "source_ids": [
+        "TON"
+      ],
+      "components": 10,
+      "vertices": 46
+    },
+    {
+      "id": "TTO",
+      "name": "Trinidad and Tobago",
+      "source_ids": [
+        "TTO"
+      ],
+      "components": 2,
+      "vertices": 18
+    },
+    {
+      "id": "TUN",
+      "name": "Tunisia",
+      "source_ids": [
+        "TUN"
+      ],
+      "components": 4,
+      "vertices": 123
+    },
+    {
+      "id": "TUR",
+      "name": "Turkey",
+      "source_ids": [
+        "TUR"
+      ],
+      "components": 6,
+      "vertices": 452
+    },
+    {
+      "id": "TUV",
+      "name": "Tuvalu",
+      "source_ids": [
+        "TUV"
+      ],
+      "components": 9,
+      "vertices": 34
+    },
+    {
+      "id": "TZA",
+      "name": "Tanzania",
+      "source_ids": [
+        "TZA"
+      ],
+      "components": 7,
+      "vertices": 242
+    },
+    {
+      "id": "UGA",
+      "name": "Uganda",
+      "source_ids": [
+        "UGA"
+      ],
+      "components": 1,
+      "vertices": 80
+    },
+    {
+      "id": "UKR",
+      "name": "Ukraine",
+      "source_ids": [
+        "UKR"
+      ],
+      "components": 4,
+      "vertices": 405
+    },
+    {
+      "id": "UMI",
+      "name": "United States Minor Outlying Islands",
+      "source_ids": [
+        "UMI"
+      ],
+      "components": 13,
+      "vertices": 49
+    },
+    {
+      "id": "URY",
+      "name": "Uruguay",
+      "source_ids": [
+        "URY"
+      ],
+      "components": 1,
+      "vertices": 81
+    },
+    {
+      "id": "USA",
+      "name": "United States of America",
+      "source_ids": [
+        "USA"
+      ],
+      "components": 344,
+      "vertices": 5859
+    },
+    {
+      "id": "USG",
+      "name": "Guantanamo Bay Naval Base",
+      "source_ids": [
+        "USG"
+      ],
+      "components": 2,
+      "vertices": 9
+    },
+    {
+      "id": "UZB",
+      "name": "Uzbekistan",
+      "source_ids": [
+        "UZB"
+      ],
+      "components": 3,
+      "vertices": 247
+    },
+    {
+      "id": "VAT",
+      "name": "Vatican City",
+      "source_ids": [
+        "VAT"
+      ],
+      "components": 1,
+      "vertices": 4
+    },
+    {
+      "id": "VCT",
+      "name": "Saint Vincent and the Grenadines",
+      "source_ids": [
+        "VCT"
+      ],
+      "components": 5,
+      "vertices": 20
+    },
+    {
+      "id": "VEN",
+      "name": "Venezuela",
+      "source_ids": [
+        "VEN"
+      ],
+      "components": 29,
+      "vertices": 492
+    },
+    {
+      "id": "VGB",
+      "name": "British Virgin Islands",
+      "source_ids": [
+        "VGB"
+      ],
+      "components": 6,
+      "vertices": 26
+    },
+    {
+      "id": "VIR",
+      "name": "United States Virgin Islands",
+      "source_ids": [
+        "VIR"
+      ],
+      "components": 3,
+      "vertices": 15
+    },
+    {
+      "id": "VNM",
+      "name": "Vietnam",
+      "source_ids": [
+        "VNM"
+      ],
+      "components": 25,
+      "vertices": 597
+    },
+    {
+      "id": "VUT",
+      "name": "Vanuatu",
+      "source_ids": [
+        "VUT"
+      ],
+      "components": 27,
+      "vertices": 168
+    },
+    {
+      "id": "WLF",
+      "name": "Wallis and Futuna",
+      "source_ids": [
+        "WLF"
+      ],
+      "components": 2,
+      "vertices": 9
+    },
+    {
+      "id": "WSB",
+      "name": "Akrotiri Sovereign Base Area",
+      "source_ids": [
+        "WSB"
+      ],
+      "components": 1,
+      "vertices": 6
+    },
+    {
+      "id": "WSM",
+      "name": "Samoa",
+      "source_ids": [
+        "WSM"
+      ],
+      "components": 2,
+      "vertices": 16
+    },
+    {
+      "id": "YEM",
+      "name": "Yemen",
+      "source_ids": [
+        "YEM"
+      ],
+      "components": 9,
+      "vertices": 144
+    },
+    {
+      "id": "ZAF",
+      "name": "South Africa",
+      "source_ids": [
+        "ZAF"
+      ],
+      "components": 3,
+      "vertices": 276
+    },
+    {
+      "id": "ZMB",
+      "name": "Zambia",
+      "source_ids": [
+        "ZMB"
+      ],
+      "components": 1,
+      "vertices": 189
+    },
+    {
+      "id": "ZWE",
+      "name": "Zimbabwe",
+      "source_ids": [
+        "ZWE"
+      ],
+      "components": 1,
+      "vertices": 100
+    }
+  ]
+}

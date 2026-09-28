@@ -1,0 +1,187 @@
+{
+  "retrieved": "2026-09-27",
+  "index": "https://endfield.wiki.gg/wiki/Category:Icons",
+  "copyright": "Arknights: Endfield game graphics are copyright Hypergryph Network Technology Co., Ltd. and respective rights holders. They are not covered by this project's MIT license.",
+  "assets": [
+    {
+      "file": "AIC_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:AIC_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/AIC_Icon.png?30507d&format=original",
+      "sha256": "8a8a34bb48a10687caaa61386382b12551fd1d2587d9c0b5e58f22dd23df13b9"
+    },
+    {
+      "file": "Archive_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Archive_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Archive_Icon.png?d76a54&format=original",
+      "sha256": "ab7934c5fe2a774d0cf7b970876f576bbb6397ca94c477d93fcf4ce7b76ed440"
+    },
+    {
+      "file": "Depot_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Depot_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Depot_icon.png?93fd5b&format=original",
+      "sha256": "41f9a002dcc84117907751576c791239705d21a286b6df0d31ae34c8af4705d3"
+    },
+    {
+      "file": "Environment_Monitoring.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Environment_Monitoring.png",
+      "originalURL": "https://endfield.wiki.gg/images/Environment_Monitoring.png?a4d7e2&format=original",
+      "sha256": "c2bddf1785f8b391fbc906c3185515247a45465125cb3ad4b9d828ee7d25c961"
+    },
+    {
+      "file": "Factory_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Factory_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Factory_icon.png?2b4707&format=original",
+      "sha256": "18e7b5dd484bfc848860d6698e644eecc2abb9769c5e7f276f1a070d7eaf644d"
+    },
+    {
+      "file": "Gear_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Gear_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Gear_icon.png?8c2914&format=original",
+      "sha256": "f4017deede3dd94a0688ef9f65b2306682b3fcda0717c5f9575aea7d83cdc95a"
+    },
+    {
+      "file": "Guide_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Guide_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Guide_icon.png?4670a8&format=original",
+      "sha256": "e23c4499bd3d1af0573db20fd9bc4103828566eb53faf37ab1de9bf9d6f0ae8b"
+    },
+    {
+      "file": "Headhunt_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Headhunt_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Headhunt_icon.png?9d99f1&format=original",
+      "sha256": "63cd92c41c0afd432175fbba4efddb1372b4548be817a0eb1b3552707f86626b"
+    },
+    {
+      "file": "Info_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Info_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Info_icon.png?cfa2fd&format=original",
+      "sha256": "7dc4eaff4dc0438fb1a77440d09e06e56ad283f67586b0222862c448ef23554e"
+    },
+    {
+      "file": "Mission_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Mission_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Mission_Icon.png?1ea91b&format=original",
+      "sha256": "2c011a796902d8fc0c53b0aad4dc87b75a078c2a2261c2f22a34aaf6259f8143"
+    },
+    {
+      "file": "Operational_Manual_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Operational_Manual_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Operational_Manual_icon.png?c8429b&format=original",
+      "sha256": "389a2c7d5eb9908a8b0dd3fcea1baaa8ad68d838174b6c21a7d05d1d006b07b1"
+    },
+    {
+      "file": "Operator_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Operator_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Operator_icon.png?f89cf8&format=original",
+      "sha256": "e07d1db4cb377d422e6733f05c93d3617a838a68c72c2c743fe82f486c6308f5"
+    },
+    {
+      "file": "PP_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:PP_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/PP_icon.png?354fe1&format=original",
+      "sha256": "617a1d1ef9535071fdde92ac71ffd271254b92400e36cd00465033596d0ed1e6"
+    },
+    {
+      "file": "Region_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Region_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Region_icon.png?bee5b6&format=original",
+      "sha256": "d65910fb49e47a666fb476301efe5b6fd372b812ee076c79a5c2c5fbfec37394"
+    },
+    {
+      "file": "Store_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Store_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Store_icon.png?e8b24e&format=original",
+      "sha256": "569cf597bf7b4816a6ec4965b2fc84ad11c996df825d3da6af979fcb18aa512e"
+    },
+    {
+      "file": "Story_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Story_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Story_icon.png?ae7104&format=original",
+      "sha256": "8c7e816877bd58569e5ca835057446efcc94de422f9bfe13a5ddb1e7ac68a81c"
+    },
+    {
+      "file": "Power_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Power_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Power_icon.png?6ed089&format=original",
+      "sha256": "c1f59f467bac8d1c014427c92d34938e924d4f4818dec0330b0a6e6ed6f9b1f1"
+    },
+    {
+      "file": "Medal_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Medal_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Medal_Icon.png?4d4ba9&format=original",
+      "sha256": "dbee388881229d081e607700e0c35bcc8e3f753c3543be1f96d700e5ddc4665b"
+    },
+    {
+      "file": "World_Map_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:World_Map_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/World_Map_Icon.png?a9bbfd&format=original",
+      "sha256": "a9382bcfa7f39453dadcca14c725a967a12f59f0922868ca23dea4ff6a22ed1b"
+    },
+    {
+      "file": "Weapon_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Weapon_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Weapon_icon.png?914fd5&format=original",
+      "sha256": "5e07b3897b149284afb204ea69458e6e9477f4a7b2667bd277e8590d51990b18"
+    },
+    {
+      "file": "Dijiang_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Dijiang_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Dijiang_Icon.png?644bc2&format=original",
+      "sha256": "48bc72b08f1408a34e25917cd5d3d7b379214b30b223c77b39e9474b6d4824b2"
+    },
+    {
+      "file": "Valley_IV_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Valley_IV_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Valley_IV_icon.png?15a20b&format=original",
+      "sha256": "14e84178bc7441b28935aa0423eebf698cb32005adc174b2b217e225a08fd665"
+    },
+    {
+      "file": "Wuling_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Wuling_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Wuling_icon.png?f1efb2&format=original",
+      "sha256": "555acc5e2ec0fd9f2fe28b2f6edc14c27b6c5774ae43fbd1744c55a659523386"
+    },
+    {
+      "file": "Sanity_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Sanity_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Sanity_icon.png?ebec46&format=original",
+      "sha256": "d614e98c66fc5209fa5f31c75798e3796d4e4eab67f0081fdeac865ec0a821b2"
+    },
+    {
+      "file": "Origeometry_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Origeometry_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Origeometry_icon.png?633ff5&format=original",
+      "sha256": "ccfa2f6f629ce612d84c33b9717f471faf9a093c5fe302f4720d34b06df989c9"
+    },
+    {
+      "file": "Oroberyl_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Oroberyl_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Oroberyl_icon.png?ace3d5&format=original",
+      "sha256": "580a5cc24458e3a53941f21181e269d022baf6ba97ad8de287d24398ea8048f7"
+    },
+    {
+      "file": "Credits_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Credits_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Credits_icon.png?800108&format=original",
+      "sha256": "cdc2c300c0689c084eb05b4b50177bb5649fdef341d6a7ac22bb041cdf0de067"
+    },
+    {
+      "file": "Baker_Icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Baker_Icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Baker_Icon.png?f76024&format=original",
+      "sha256": "f1ace87336ac90a08431039921f77351729da6ee0ec8ed38a67d826f1229ad62"
+    },
+    {
+      "file": "Exclamation_mark_map_icon.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:Exclamation_mark_map_icon.png",
+      "originalURL": "https://endfield.wiki.gg/images/Exclamation_mark_map_icon.png?26d422&format=original",
+      "sha256": "fe78845043e5f35f9d94c1e4b746890fa24a044574561a78a85dc9caeb124716"
+    },
+    {
+      "file": "STR.png",
+      "sourcePage": "https://endfield.wiki.gg/wiki/File:STR.png",
+      "originalURL": "https://endfield.wiki.gg/images/STR.png?6062bd&format=original",
+      "sha256": "9ab5df33dee05e593471c960b0a6923ce2edd3d1b1b98dc726f1d2a0d9e5581f"
+    }
+  ]
+}

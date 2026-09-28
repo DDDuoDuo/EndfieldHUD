@@ -1,0 +1,42 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      # Exercise the same CLI-only path used on a Mac without full Xcode.
+      DEVELOPER_DIR: /Library/Developer/CommandLineTools
+      ARCHS: arm64 x86_64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Show compiler and SDK
+        run: |
+          xcrun swiftc --version
+          ./scripts/build.sh --print-sdk
+      - name: Test core behavior
+        run: ./scripts/test.sh
+      - name: Verify release-only resource lookup
+        run: ./scripts/test-release-resources.sh
+      - name: Build universal app
+        run: ./scripts/build.sh
+      - name: Verify bundle
+        run: |
+          ./scripts/verify-bundle.sh build/EndfieldHUD.app arm64 x86_64
+      - name: Verify local release packaging
+        run: ./scripts/package.sh --skip-build --dmg
