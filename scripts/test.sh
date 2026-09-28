@@ -11,6 +11,8 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     -framework Cocoa -framework IOKit -framework CoreAudio -framework Quartz -framework Carbon -lsqlite3 \
     "$PROJECT_DIR/Sources/Models.swift" \
     "$PROJECT_DIR/Sources/HUDResources.swift" \
+    "$PROJECT_DIR/Sources/HUDGitHubRelease.swift" \
+    "$PROJECT_DIR/Sources/HUDUpdateState.swift" \
     "$PROJECT_DIR/Sources/HUDDisplayPolicy.swift" \
     "$PROJECT_DIR/Sources/HUDClock.swift" \
     "$PROJECT_DIR/Sources/HUDApplicationIcon.swift" \
@@ -151,6 +153,8 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDClockTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \
     "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
+    "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
+    "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
     "$PROJECT_DIR/Tests/CoreTests.swift" \
     -o "$BUILD_DIR/tests/CoreTests"
 "$BUILD_DIR/tests/CoreTests"

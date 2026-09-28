@@ -129,7 +129,7 @@ enum HUDModuleTests {
         let labels = stableWrapper?.sublayers?.first?.sublayers?.compactMap { ($0 as? CATextLayer)?.string as? String } ?? []
         check(content.layer === host && content.layer.sublayers?.first === stableWrapper,
               "Theme and language repaint preserves the active host and wrapper")
-        check(labels.contains("便签") && labels.contains("尚未配置"), "Visible placeholders change language immediately")
+        check(labels.contains("便笺") && labels.contains("尚未配置"), "Visible placeholders change language immediately")
         check((batteryValue.string as? String) == "REAL_BATTERY_SENTINEL", "Placeholder repaint never fabricates or changes Power data")
 
         for dark in [true, false] {

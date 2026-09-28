@@ -16,6 +16,7 @@ case "$DEV_OPTIMIZATION" in
 esac
 SELECTED_SDK="$("$PROJECT_DIR/scripts/build.sh" --print-sdk)"
 SWIFTC="$(xcrun --find swiftc)"
+SPARKLE_DIR="$("$PROJECT_DIR/scripts/fetch-sparkle.sh")"
 HOST_ARCH="$(uname -m)"
 # Prefer the native architecture even if this shell was opened under Rosetta.
 if [ "$HOST_ARCH" = x86_64 ] && [ "$(/usr/sbin/sysctl -in sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
@@ -62,6 +63,7 @@ printf 'Building native development app for %s…\n' "$TARGET"
 # Development stays unoptimized by default; opt in to native performance builds.
 "$SWIFTC" -swift-version 5 "$DEV_OPTIMIZATION" -whole-module-optimization \
     -sdk "$SELECTED_SDK" -target "$TARGET" \
+    -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -module-cache-path "$DEV_BUILD_DIR/module-cache" \
     -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -lsqlite3 \
     "${SOURCES[@]}" -o "$DEV_STAGE/$APP_NAME"
@@ -95,6 +97,7 @@ if [ ! -d "$DEV_APP" ]; then
     ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
     cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$STAGED_APP"
+    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
     codesign --force --sign - "$STAGED_APP"
     mv "$STAGED_APP" "$DEV_APP"
 else
@@ -111,6 +114,7 @@ else
     ditto "$PROJECT_DIR/Resources/WorldMap" "$DEV_APP/Contents/Resources/WorldMap"
     cp "$PROJECT_DIR/CREDITS.md" "$DEV_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$DEV_APP"
+    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$DEV_APP" "$SPARKLE_DIR"
     codesign --force --sign - "$DEV_APP"
 fi
 

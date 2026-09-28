@@ -723,8 +723,8 @@ enum HUDNavigationTests {
         navigation.cancelAnimations()
 
         let names: [(HUDModule, String, String)] = [
-            (.notes, "Notes", "便签"), (.fileShelf, "Temporary File Shelf", "文件暂存架"),
-            (.clipboard, "Clipboard Cache", "剪贴板缓存"), (.volume, "Volume", "音量"),
+            (.notes, "Notes", "便笺"), (.fileShelf, "Temporary File Shelf", "文件暂存架"),
+            (.clipboard, "Clipboard Cache", "剪贴板"), (.volume, "Volume", "音量"),
             (.workMode, "Work Mode", "工作模式"), (.eventLog, "Event Log", "事件日志"), (.map, "Map", "地图"),
             (.addApp, "+ Add App", "+ 添加应用"), (.system, "System", "系统"),
             (.display, "Display", "显示"), (.hotkeys, "Hotkeys", "快捷键"), (.about, "About", "关于"),

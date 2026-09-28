@@ -1,4 +1,4 @@
-# Clipboard Cache / 剪贴板缓存
+# Clipboard Cache / 剪贴板
 
 Open the HUD with the configured summon shortcut (**Ctrl + backtick** by default), then select **Clipboard Cache**. Copying in another application adds an entry while EndfieldHUD is running, even when its HUD is closed.
 
@@ -23,7 +23,7 @@ The store, watcher, canvas and AppKit interaction bridge are separate. Only the 
 
 ## 中文
 
-按召唤快捷键（默认 **Ctrl + 反引号**）打开浮层，再选择**剪贴板缓存**。应用运行期间，即使浮层关闭，也会记录新的复制内容。
+按召唤快捷键（默认 **Ctrl + 反引号**）打开浮层，再选择**剪贴板**。应用运行期间，即使浮层关闭，也会记录新的复制内容。
 
 - 支持纯文本、网址、图片和 Finder 文件。仅显示单行预览、缩略图或文件名；点击项目即可复制回系统剪贴板，再到目标应用中粘贴。
 - 每行可固定或删除；**清空未固定**保留固定项目。删除缓存不会删除原文件，也不会清空当前系统剪贴板。

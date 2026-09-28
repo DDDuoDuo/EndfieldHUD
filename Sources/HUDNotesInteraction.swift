@@ -139,8 +139,8 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         text.textContainer?.widthTracksTextView = true
         text.string = next.text
         text.delegate = self
-        text.setAccessibilityLabel(next.multiline ? L10n.text("Edit text note", "编辑文字便签") : L10n.text("Edit checklist item", "编辑待办事项"))
-        text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines.", "按 Esc 或 Command-Return 保存。文字便签支持多行。"))
+        text.setAccessibilityLabel(next.multiline ? L10n.text("Edit text note", "编辑文字便笺") : L10n.text("Edit checklist item", "编辑待办事项"))
+        text.setAccessibilityHelp(L10n.text("Escape or Command-Return saves. Text notes support multiple lines.", "按 Esc 或 Command-Return 保存。文字便笺支持多行。"))
         text.onFinish = { [weak self] in self?.finishEditing() }
         text.onToggle = { [weak self] in self?.onToggle?() }
         scroll.documentView = text
@@ -186,7 +186,7 @@ final class HUDNotesInteraction: NSObject, NSTextViewDelegate {
         guard active, chooser == nil, let window = host?.window else { return }
         finishEditing(); onLock?()
         let panel = NSOpenPanel()
-        panel.title = L10n.text("Add image notes", "添加图片便签")
+        panel.title = L10n.text("Add image notes", "添加图片便笺")
         panel.prompt = L10n.text("Add images", "添加图片")
         if #available(macOS 11.0, *) { panel.allowedContentTypes = [.image] }
         else { panel.allowedFileTypes = ["public.image"] }

@@ -17,3 +17,6 @@ xcuserdata/
 *.trace/
 *.xcresult/
 ._*
+
+__pycache__/
+*.pyc

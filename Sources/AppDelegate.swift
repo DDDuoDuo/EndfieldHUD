@@ -8,6 +8,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let overlay = OverlayController()
     private let shortcut = GlobalShortcutController()
     private lazy var hudSettings = HUDSettingsController(store: store)
+    private var appUpdater: HUDUpdateController?
+    private var updateAudioObserver: UUID?
+    private var updateRestartInProgress = false
+    private let updateMenuItem = NSMenuItem(title: "Check for Updates…", action: nil, keyEquivalent: "")
     private var loginRegistrationError: String?
     private let audioTopology = AudioTopologyWatcher()
     private var statusItem: NSStatusItem?
@@ -18,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusObserver: UUID?
     private var focusTerminationPending = false
     private var focusTerminationFinished = false
+    private var focusTerminationDeadline: Timer?
     private var snapshot: BatterySnapshot?
     private var presentedSnapshot: BatterySnapshot?
     private var previewSnapshot: BatterySnapshot?
@@ -46,6 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--smoke-test") { runSmokeTest(); return }
         if args.contains("--system-smoke-test") { runSystemSmokeTest(); return }
         if args.contains("--navigation-smoke-test") { runNavigationSmokeTest(); return }
+        if args.contains("--ui-test") && args.contains("--termination-smoke-test") {
+            runTerminationSmokeTest(stall: args.contains("--stall-focus-cleanup")); return
+        }
         if args.contains("--ui-test") && args.contains("--lifecycle-smoke-test") {
             configureSystemOverlay()
             HUDLifecycleVerification.run(overlay: overlay, configuration: .defaults) { NSApp.terminate(nil) }
@@ -104,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureSystemOverlay()
         makeMenu()
+        if diagnosticDomain == nil { configureUpdater() }
         if diagnosticDomain == nil {
             let focus = WorkModeFocusController()
             workFocus = focus
@@ -113,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 case .failed, .unavailable: self.overlay.workFocusStatusMessage = focus.statusMessage
                 default: self.overlay.workFocusStatusMessage = nil
                 }
+                self.appUpdater?.environmentDidChange()
             }
             focus.receive(overlay.workMode.snapshot)
         }
@@ -120,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.updateWorkMenu()
             self.workFocus?.receive(self.overlay.workMode.snapshot)
+            self.appUpdater?.environmentDidChange()
         }
         appliedConfiguration = store.configuration
         hudSettings.onConfigurationChange = { [weak self] configuration in self?.configurationChanged(configuration) }
@@ -181,18 +192,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         focusTerminationPending = true
         // Let the public automation finish its End action before exiting. A
         // stalled external shortcut cannot hold the application open forever.
-        func finish() {
-            guard self.focusTerminationPending else { return }
-            self.focusTerminationPending = false; self.focusTerminationFinished = true
-            NSApp.reply(toApplicationShouldTerminate: true)
+        workFocus.shutdown { [weak self] _ in
+            RunLoop.main.perform(inModes: [.common, .modalPanel]) { self?.finishFocusTermination() }
         }
-        workFocus.shutdown { _ in DispatchQueue.main.async { finish() } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { finish() }
+        let deadline = Timer(timeInterval: 8, repeats: false) { [weak self] _ in self?.finishFocusTermination() }
+        focusTerminationDeadline = deadline
+        RunLoop.main.add(deadline, forMode: .common)
+        RunLoop.main.add(deadline, forMode: .modalPanel)
         return .terminateLater
     }
 
+    private func finishFocusTermination() {
+        guard focusTerminationPending else { return }
+        focusTerminationDeadline?.invalidate(); focusTerminationDeadline = nil
+        focusTerminationPending = false; focusTerminationFinished = true
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        if CommandLine.arguments.contains("--termination-smoke-test") {
+            precondition(focusTerminationFinished, "Termination must wait for the Focus completion or bounded deadline")
+            print("PASS: normal application termination from a main-queue callback completes Focus cleanup / bounded timeout")
+            fflush(stdout)
+        }
         terminating = true
+        appUpdater?.stop()
+        if let updateAudioObserver { overlay.perAppAudio.removeObserver(updateAudioObserver) }
+        updateAudioObserver = nil
         shortcut.stop()
         monitor.stop()
         audioTopology.stop()
@@ -325,6 +351,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let about = NSMenuItem(title: L10n.text("About EndfieldHUD", "关于 EndfieldHUD"), action: #selector(about(_:)), keyEquivalent: "")
         about.target = self
         menu.addItem(about)
+        updateMenuItem.menu?.removeItem(updateMenuItem)
+        updateMenuItem.target = self
+        updateMenuItem.action = #selector(checkForAppUpdates(_:))
+        updateMenuItem.title = L10n.text("Check for Updates…", "检查更新…")
+        menu.addItem(updateMenuItem)
         let quit = NSMenuItem(title: L10n.text("Quit EndfieldHUD", "退出 EndfieldHUD"), action: #selector(quit(_:)), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -352,6 +383,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenuItem.submenu = edit
         mainMenu.addItem(editMenuItem)
         NSApp.mainMenu = mainMenu
+        if let appUpdater { updateUpdateMenu(appUpdater.state) }
+    }
+
+    private func configureUpdater() {
+        let updater = HUDUpdateController()
+        appUpdater = updater
+        updater.onChange = { [weak self] state in
+            self?.hudSettings.receiveUpdateState(state)
+            self?.updateUpdateMenu(state)
+        }
+        updater.onOpenAbout = { [weak self] in self?.openSettingsModule(.about) }
+        updater.isSafeToRestart = { [weak self] in
+            guard let self else { return false }
+            return !self.terminating && !self.suspended && self.overlay.isIdleForUpdate
+                && !self.overlay.workMode.snapshot.isActive && self.overlay.perAppAudio.sessions.isEmpty
+                && self.workFocus?.isPending != true && NSApp.modalWindow == nil
+                && !NSApp.windows.contains(where: { $0.isSheet })
+        }
+        updater.prepareForRestart = { [weak self] continuation in
+            guard let self else { return }
+            // Sparkle has accepted installation at this point. Its continuation
+            // still uses NSApp.terminate and our normal Focus/save cleanup.
+            self.terminating = true
+            self.updateRestartInProgress = true
+            self.shortcut.stop()
+            self.overlay.closeForApplicationUpdate(completion: continuation)
+        }
+        updater.onRestartCancelled = { [weak self] in
+            guard let self, self.updateRestartInProgress, !self.focusTerminationPending, !self.focusTerminationFinished else { return }
+            self.updateRestartInProgress = false; self.terminating = false
+            self.overlay.cancelApplicationUpdate()
+            self.shortcut.start(shortcut: self.store.configuration.summonShortcut)
+        }
+        updater.presentUpdateUI = { [weak self] show in
+            guard let self, !self.terminating else { return }
+            if self.overlay.systemPhase == .closed { show() }
+            else {
+                self.overlay.afterSystemClose = show
+                self.overlay.closeSystemOverlay()
+            }
+        }
+        hudSettings.onCheckForUpdates = { [weak updater] in updater?.checkForUpdates() }
+        hudSettings.onAutomaticUpdatesChange = { [weak updater] in updater?.setAutomaticallyInstalls($0) }
+        updateAudioObserver = overlay.perAppAudio.observe { [weak updater] in updater?.environmentDidChange() }
+        overlay.onSystemActivityChange = { [weak updater] in updater?.environmentDidChange() }
+        updater.start()
+    }
+
+    private func updateUpdateMenu(_ state: HUDUpdateState) {
+        updateMenuItem.title = state.hasUpdate
+            ? L10n.text("Update available", "发现新版本") + ((state.updateVersion ?? state.latestVersion).map { " · " + $0 } ?? "") + "…"
+            : (state.phase == .checking ? L10n.text("Checking for updates…", "正在检查更新…") : L10n.text("Check for Updates…", "检查更新…"))
+        updateMenuItem.isEnabled = !terminating
+        updateMenuItem.setAccessibilityHelp(state.detail ?? state.title)
+        statusItem?.button?.toolTip = state.hasUpdate ? "EndfieldHUD · " + state.title : "EndfieldHUD"
+        if let button = statusItem?.button {
+            button.wantsLayer = true
+            let key = "EndfieldHUD.updateBadge"
+            let existing = button.layer?.sublayers?.first { $0.name == key }
+            if state.hasUpdate && existing == nil {
+                let dot = CALayer(); dot.name = key
+                dot.frame = CGRect(x: button.bounds.maxX - 6, y: button.bounds.maxY - 6, width: 4, height: 4)
+                dot.cornerRadius = 2; dot.backgroundColor = NSColor.systemOrange.cgColor
+                button.layer?.addSublayer(dot)
+            } else if !state.hasUpdate { existing?.removeFromSuperlayer() }
+        }
+    }
+
+    @objc private func checkForAppUpdates(_ sender: Any?) {
+        guard !terminating else { return }
+        if appUpdater?.state.installationSupported != true { openSettingsModule(.about) }
+        appUpdater?.checkForUpdates()
     }
 
     private func updateWorkMenu() {
@@ -538,6 +641,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func suspend(_ reason: SuspensionReason) {
         suspensionReasons.insert(reason)
+        appUpdater?.environmentDidChange()
         overlay.clipboard.setSuspended(true)
         overlay.workMode.setSuspended(true)
         overlay.perAppAudio.stopAll()
@@ -563,6 +667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         overlay.workMode.setSuspended(false)
         overlay.reposition()
         presentLatestSnapshot()
+        appUpdater?.environmentDidChange()
     }
 
     private func updateApplicationIcon() {
@@ -572,6 +677,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // Local verification commands do not change settings or login items.
+    private func runTerminationSmokeTest(stall: Bool) {
+        let executor = ShortcutsWorkModeFocusExecutor(commandExecutor: { arguments, _ in
+            if arguments == ["list"] {
+                return [WorkModeFocusCommand.start.shortcutName, WorkModeFocusCommand.end.shortcutName].joined(separator: "\n")
+            }
+            if arguments.last == WorkModeFocusCommand.end.shortcutName {
+                if stall { Thread.sleep(forTimeInterval: 30) } // Worker-only timeout fixture; no system shortcut runs.
+                return "released"
+            }
+            return "enabled"
+        }, availability: { true })
+        let focus = WorkModeFocusController(executor: executor)
+        workFocus = focus
+        focusObserver = focus.observe { [weak focus] in
+            guard focus?.state == .enabled else { return }
+            // Reproduce an animation/updater completion already executing on
+            // GCD's main queue, which AppKit cannot re-enter during termination.
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 12) {
+            fputs("FAIL: application termination did not finish within its bounded deadline\n", stderr)
+            _exit(3)
+        }
+        focus.receive(WorkModeSnapshot(kind: .countdown, phase: .running, duration: 300, elapsed: 0))
+    }
+
     private func runSystemSmokeTest() {
         let demo = Self.demoSnapshot
         configureSystemOverlay()

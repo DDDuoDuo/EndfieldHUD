@@ -33,10 +33,16 @@ jobs:
         run: ./scripts/test.sh
       - name: Verify release-only resource lookup
         run: ./scripts/test-release-resources.sh
+      - name: Verify signed updater and packaging fixtures
+        run: ./scripts/test-update-tools.sh
       - name: Build universal app
         run: ./scripts/build.sh
       - name: Verify bundle
         run: |
           ./scripts/verify-bundle.sh build/EndfieldHUD.app arm64 x86_64
+      - name: Verify updater termination and bounded Focus cleanup
+        run: |
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --termination-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --termination-smoke-test --stall-focus-cleanup
       - name: Verify local release packaging
         run: ./scripts/package.sh --skip-build --dmg

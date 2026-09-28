@@ -43,6 +43,12 @@ final class OverlayController: NSObject {
     var afterSystemClose: (() -> Void)?
     private var quitRequested = false
     private var quitAfterSystemClose = false
+    private var applicationUpdateCompletion: (() -> Void)?
+    var onSystemActivityChange: (() -> Void)?
+    var isIdleForUpdate: Bool {
+        systemPhase == .closed && !isEditingPosition && !appLaunchInFlight
+            && !shelfDragPresentation.isActive && applicationUpdateCompletion == nil && !quitRequested
+    }
     var onQuitAccepted: (() -> Void)?
     var onQuitAfterSystemClose: (() -> Void)?
     var initialModuleRequest: HUDModule?
@@ -402,6 +408,29 @@ final class OverlayController: NSObject {
         performSystemAction(systemState.requestClose())
     }
 
+    /// Accepted updater relaunch only. Keep the current panel alive through its
+    /// closing animation, discard unrelated handoffs, then return to Sparkle.
+    func closeForApplicationUpdate(completion: @escaping () -> Void) {
+        guard applicationUpdateCompletion == nil else { return }
+        quitRequested = true
+        pendingAppLaunch = nil
+        pendingShelfReveal?.close(); pendingShelfReveal = nil
+        openStorageAfterClose = false; afterSystemClose = nil
+        cancelPositionEditing()
+        if systemPhase == .closed {
+            hide(animated: false)
+            DispatchQueue.main.async(execute: completion)
+        } else {
+            applicationUpdateCompletion = completion
+            closeSystemOverlay()
+        }
+    }
+
+    func cancelApplicationUpdate() {
+        applicationUpdateCompletion = nil
+        if !quitAfterSystemClose { quitRequested = false }
+    }
+
     func closeSystemOverlayForFocusLoss() {
         guard configuration.closeOnFocusLost else { return }
         guard systemView?.isPresentingModulePanel != true else { return }
@@ -667,6 +696,7 @@ final class OverlayController: NSObject {
     }
 
     private func logSystemPhase() {
+        onSystemActivityChange?()
         guard CommandLine.arguments.contains("--ui-test") else { return }
         print("Power overlay: \(systemState.phase.rawValue)")
         fflush(stdout)
@@ -674,13 +704,16 @@ final class OverlayController: NSObject {
 
     private func tearDownSystemPresentation(restoreFocus: Bool, notify: Bool) {
         let shouldQuit = quitAfterSystemClose
+        let updateCompletion = applicationUpdateCompletion
+        applicationUpdateCompletion = nil
+        let shouldExit = shouldQuit || updateCompletion != nil
         quitAfterSystemClose = false
-        let appLaunch = notify && !shouldQuit ? pendingAppLaunch : nil
+        let appLaunch = notify && !shouldExit ? pendingAppLaunch : nil
         pendingAppLaunch = nil
         let shelfReveal = pendingShelfReveal
         pendingShelfReveal = nil
         defer { shelfReveal?.close() }
-        let shouldRestore = !shouldQuit && restoreFocus && appLaunch == nil && shelfReveal == nil && !openStorageAfterClose && NSApp.isActive && panel.isKeyWindow
+        let shouldRestore = !shouldExit && restoreFocus && appLaunch == nil && shelfReveal == nil && !openStorageAfterClose && NSApp.isActive && panel.isKeyWindow
         lastSystemModule = systemView?.selectedModule ?? lastSystemModule
         systemView?.cancelAnimations()
         lastClosedAnimationCount = systemView?.activeAnimationCount ?? 0
@@ -707,6 +740,10 @@ final class OverlayController: NSObject {
         afterSystemClose = nil
         let openStorage = openStorageAfterClose
         openStorageAfterClose = false
+        if let updateCompletion {
+            DispatchQueue.main.async(execute: updateCompletion)
+            return
+        }
         if shouldQuit {
             // The dedicated one-shot completion runs only after the window and
             // all HUD layers are gone. Never restore charging or launch a handoff.

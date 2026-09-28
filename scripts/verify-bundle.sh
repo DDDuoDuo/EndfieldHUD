@@ -20,6 +20,23 @@ plutil -lint "$APP/Contents/Info.plist"
 xcrun lipo "$BINARY" -verify_arch "$@"
 codesign --verify --deep --strict --all-architectures --verbose=2 "$APP"
 
+
+source "$PROJECT_DIR/scripts/sparkle-config.sh"
+FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$FRAMEWORK/Resources/Info.plist")" = "$SPARKLE_VERSION" ]
+for COMPONENT in "$FRAMEWORK/Sparkle" "$FRAMEWORK/Versions/B/Autoupdate" "$FRAMEWORK/Versions/B/Updater.app/Contents/MacOS/Updater"; do
+    [ -x "$COMPONENT" ] || { printf 'Missing Sparkle helper: %s\n' "$COMPONENT" >&2; exit 1; }
+    xcrun lipo "$COMPONENT" -verify_arch "$@"
+done
+codesign --verify --deep --strict --all-architectures "$FRAMEWORK"
+if [ -e "$FRAMEWORK/XPCServices" ] || [ -e "$FRAMEWORK/Versions/B/XPCServices" ]; then
+    printf 'Unused Sparkle sandbox XPC services should not be bundled.\n' >&2; exit 1
+fi
+if ! otool -L "$BINARY" | /usr/bin/grep -F '@rpath/Sparkle.framework/Versions/B/Sparkle' > /dev/null; then
+    printf 'App is not linked to the embedded updater.\n' >&2; exit 1
+fi
+SPARKLE_DIR="$("$PROJECT_DIR/scripts/fetch-sparkle.sh")"
+
 # Packaging a stale bundle after editing the version or capabilities is an error.
 if ! cmp -s "$PROJECT_DIR/Resources/Info.plist" "$APP/Contents/Info.plist"; then
     printf 'Bundle Info.plist differs from the source. Rebuild before packaging.\n' >&2
@@ -31,6 +48,7 @@ verify_copy() {
         exit 1
     fi
 }
+verify_copy "$SPARKLE_DIR/LICENSE" "$RESOURCES/Sparkle-LICENSE.txt"
 verify_copy "$PROJECT_DIR/LICENSE" "$RESOURCES/LICENSE.txt"
 verify_copy "$PROJECT_DIR/CREDITS.md" "$RESOURCES/CREDITS.md"
 verify_copy "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$RESOURCES/EndfieldIndustriesSource.png"

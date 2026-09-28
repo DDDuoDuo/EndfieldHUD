@@ -148,6 +148,30 @@ enum HUDLifecycleVerification {
                       "Unanswered focus dismissal follows the ordinary close path")
                 check(overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration),
                       "An unanswered quit never permanently disables summon")
+                later(SystemHUDView.entranceDuration + 0.20) { [self] in checkUpdateClose() }
+            }
+        }
+
+        private func checkUpdateClose() {
+            check(!overlay.isIdleForUpdate, "An open HUD prevents an automatic update restart")
+            var completions = 0
+            overlay.afterSystemClose = { [weak self] in self?.genericHandoffs += 1 }
+            overlay.closeForApplicationUpdate { [self] in
+                completions += 1
+                checkCleanClose("Updater handoff")
+            }
+            overlay.closeForApplicationUpdate { completions += 100 }
+            check(overlay.systemPhase == .closing && completions == 0,
+                  "An accepted update waits for the closing animation before its continuation")
+            check(!overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration),
+                  "Summon cannot reopen while an accepted update is retracting")
+            later(SystemHUDView.exitDuration + 0.30) { [self] in
+                check(completions == 1 && normalCloses == 2 && genericHandoffs == 0 && completedQuits == 0,
+                      "Update continuation runs once, without unrelated handoffs, charging restore or quit callback")
+                overlay.cancelApplicationUpdate()
+                check(overlay.isIdleForUpdate, "Cancelling before app termination releases the update lock")
+                check(overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration),
+                      "A failed update before termination leaves the HUD usable")
                 later(SystemHUDView.entranceDuration + 0.20) { [self] in checkAcceptedQuit() }
             }
         }
@@ -217,7 +241,7 @@ enum HUDLifecycleVerification {
             overlay.onQuitAccepted = priorQuitAccepted
             overlay.onQuitAfterSystemClose = priorQuitClosed
             overlay.afterSystemClose = priorAfterClose
-            print("PASS: \(assertions) HUD lifecycle assertions; pointer follow-through during opening/closing, bounded transition tracks, pose continuity, in-HUD quit cancellation, focus-loss cancellation, close-before-quit and one-shot cleanup\(reduced ? "; transition midpoint checks skipped for system Reduce Motion" : "")")
+            print("PASS: \(assertions) HUD lifecycle assertions; pointer follow-through, bounded transitions, quit cancellation, updater close/recovery, close-before-quit and one-shot cleanup\(reduced ? "; transition midpoint checks skipped for system Reduce Motion" : "")")
             fflush(stdout)
             completion()
         }

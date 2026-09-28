@@ -42,6 +42,7 @@ SOURCE_ROOT="$PACKAGE_STAGE/EndfieldHUD"
 mkdir -p "$SOURCE_ROOT"
 SOURCE_PATHS=(Sources Tests Resources scripts .github README.md README.zh-CN.md CREDITS.md LICENSE DEVELOPMENT.md TESTING.md .gitignore)
 if [ -d "$PROJECT_DIR/docs" ]; then SOURCE_PATHS+=(docs); fi
+if [ -d "$PROJECT_DIR/updates" ]; then SOURCE_PATHS+=(updates); fi
 COPYFILE_DISABLE=1 tar -C "$PROJECT_DIR" \
     --exclude='.DS_Store' --exclude='._*' --exclude='.git' \
     --exclude='build' --exclude='dist' \

@@ -82,6 +82,9 @@ final class HUDSettingsController {
     var onShortcutCaptureChange: ((Bool) -> Void)?
     var onEditBatteryPosition: (() -> Void)?
     var onOpenLink: ((URL) -> Void)?
+    var onCheckForUpdates: (() -> Void)?
+    var onAutomaticUpdatesChange: ((Bool) -> Void)?
+    private(set) var updateState = HUDUpdateState()
     var loginStatusProvider: (() -> String)?
     /// Return nil while available, or the platform's current registration error.
     var shortcutRegistrationStatusProvider: (() -> String?)?
@@ -256,6 +259,12 @@ final class HUDSettingsController {
 
     func editBatteryPosition() { onEditBatteryPosition?() }
     func openLink(_ url: URL) { onOpenLink?(url) }
+    func checkForUpdates() { onCheckForUpdates?() }
+    func toggleAutomaticUpdates() { onAutomaticUpdatesChange?(!updateState.automaticallyInstalls) }
+    func receiveUpdateState(_ state: HUDUpdateState) {
+        guard updateState != state else { return }
+        updateState = state; publish()
+    }
 
     func refreshExternalStatus() {
         loginStatus = loginStatusProvider?()

@@ -50,6 +50,8 @@ for ARCH in "${ARCHITECTURES[@]}"; do
     case "$ARCH" in arm64|x86_64) ;; *) printf 'Unsupported architecture: %s\n' "$ARCH" >&2; exit 2 ;; esac
 done
 
+SPARKLE_DIR="$("$PROJECT_DIR/scripts/fetch-sparkle.sh")"
+
 mkdir -p "$BUILD_DIR/module-cache"
 STAGE="$(mktemp -d "$BUILD_DIR/.stage.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
@@ -73,6 +75,7 @@ for ARCH in "${ARCHITECTURES[@]}"; do
     "$SWIFTC" -swift-version 5 -O -whole-module-optimization -D HUD_RELEASE \
         -sdk "$SELECTED_SDK" -target "$TARGET" \
         -file-prefix-map "$PROJECT_DIR=/EndfieldHUD" \
+        -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
         -module-cache-path "$BUILD_DIR/module-cache" \
         -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -lsqlite3 \
         "${SOURCES[@]}" -o "$BINARY"
@@ -102,6 +105,7 @@ ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/Ap
 # Prepared cells replace the full atlas in the running app. Keep the original in source.
 if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
 ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
+"$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
 SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 if [ "$SIGNING_IDENTITY" = '-' ]; then
     codesign --force --sign - "$STAGED_APP"

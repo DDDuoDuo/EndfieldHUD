@@ -657,8 +657,8 @@ final class HUDNavigationEntry {
             subtitle.font = NSFont.systemFont(ofSize: 10, weight: .bold)
             subtitle.alignmentMode = .left
         } else if group == .bottom {
-            iconSize = 24
-            iconCenter = CGPoint(x: module == .storage ? 52 : rect.width - 52, y: 23)
+            iconSize = module == .storage ? 30 : 24
+            iconCenter = CGPoint(x: module == .storage ? 60 : rect.width - 60, y: 23)
             title.frame = module == .storage ? CGRect(x: 73, y: 15, width: 65, height: 22)
                 : CGRect(x: 5, y: 15, width: 64, height: 22)
             title.alignmentMode = .center
@@ -1040,7 +1040,7 @@ final class HUDNavigationEntry {
         case .fileShelf: return .depot
         case .clipboard: return .archive
         case .eventLog: return .story
-        case .storage, .activityMonitor: return .factory
+        case .storage: return .factory
         case .workMode: return .strength
         case .map: return .region
         // Keyboard, volume, display, plus and settings retain their

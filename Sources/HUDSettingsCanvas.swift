@@ -69,7 +69,10 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     var isDragging: Bool { draggedSlider != nil }
     var isTransitioning: Bool { outgoingPage != nil }
     var isCapturingShortcut: Bool { module == .hotkeys && controller.isCapturingShortcut }
-    var accessibilityStatus: String { localStatus ?? controller.shortcutStatus ?? controller.status ?? "" }
+    var accessibilityStatus: String {
+        if module == .about { return localStatus ?? controller.updateState.detail ?? "" }
+        return localStatus ?? controller.shortcutStatus ?? controller.status ?? ""
+    }
     private var config: AppConfiguration { controller.configuration }
     private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.12, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.64 : 0.40, alpha: 1) }
@@ -205,6 +208,9 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         let about = controller.about
         var result = [
             Row(id: "app", title: about.name, kind: .info(about.version), height: 46),
+            Row(id: "updates", title: L10n.text("Check for updates", "检查更新"), kind: .choice(controller.updateState.title)),
+            Row(id: "latestRelease", title: L10n.text("Latest GitHub release", "GitHub 最新版本"), kind: .link(controller.updateState.latestVersion ?? "—", controller.updateState.releaseURL)),
+            Row(id: "automaticUpdates", title: L10n.text("Install updates automatically", "自动安装更新"), kind: .toggle(controller.updateState.automaticallyInstalls)),
             Row(id: "author", title: L10n.text("Author", "作者"), kind: .info(about.author)),
             Row(id: "github", title: "GitHub", kind: .link(about.repositoryURL == nil ? L10n.text("Not configured", "尚未设置") : "↗", about.repositoryURL)),
             Row(id: "license", title: L10n.text("License", "许可证"), kind: .info(about.licenseName)),
@@ -351,6 +357,9 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         case "keyReset": _ = controller.setShortcut(.default)
         case "editPosition": controller.editBatteryPosition()
         case "github": if let url = controller.about.repositoryURL { controller.openLink(url) }
+        case "updates": controller.checkForUpdates()
+        case "automaticUpdates": controller.toggleAutomaticUpdates()
+        case "latestRelease": if let url = controller.updateState.releaseURL { controller.openLink(url) }
         default:
             if id.hasPrefix("screen:") {
                 let value = String(id.dropFirst(7))
@@ -505,7 +514,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     }
     private func renderRestore() {
         text(L10n.text("Restore all preferences?", "恢复所有设置？"), in: rowsLayer, rect: CGRect(x: 35, y: 114, width: 330, height: 25), size: 17, weight: .medium, color: primary, alignment: .center)
-        text(L10n.text("Notes, files and shortcuts are kept.", "保留便签、文件与应用快捷方式。"), in: rowsLayer, rect: CGRect(x: 35, y: 151, width: 330, height: 34), size: 11, color: muted, alignment: .center)
+        text(L10n.text("Notes, files and shortcuts are kept.", "保留便笺、文件与应用快捷方式。"), in: rowsLayer, rect: CGRect(x: 35, y: 151, width: 330, height: 34), size: 11, color: muted, alignment: .center)
         smallButton(L10n.text("Cancel", "取消"), rect: CGRect(x: 46, y: 197, width: 144, height: 32), in: rowsLayer)
         smallButton(L10n.text("Restore", "恢复"), rect: CGRect(x: 206, y: 197, width: 144, height: 32), in: rowsLayer, highlighted: true)
     }

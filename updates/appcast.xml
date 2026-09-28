@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>EndfieldHUD</title>
+    <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
+    <description>Signed EndfieldHUD updates</description>
+    <language>en</language>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: VxAu5bnBZ+pNvOrN3kVH6bTKoL8N7fK+n6eUYq74l9T4KePpwMqsuMmKjKUH5tAzsI14ZBo7P0nkc0AA6nwXCA==
+length: 584
+-->

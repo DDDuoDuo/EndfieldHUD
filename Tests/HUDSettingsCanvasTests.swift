@@ -237,6 +237,22 @@ enum HUDSettingsCanvasTests {
         hotkeys.perform(actionID: "capture"); hotkeys.deactivate()
         check(!controller.isCapturingShortcut, "Leaving Hotkeys cannot leave global summon registration suspended")
         about.activate()
+        var updateChecks = 0
+        var automaticChoice: Bool?
+        controller.onCheckForUpdates = { updateChecks += 1 }
+        controller.onAutomaticUpdatesChange = { automaticChoice = $0 }
+        check(about.accessibleActions.contains(where: { $0.id == "updates" }), "About offers an accessible update action without another settings window")
+        about.perform(actionID: "updates")
+        check(updateChecks == 1, "About requests a check through the application-owned updater")
+        about.perform(actionID: "automaticUpdates")
+        check(automaticChoice == false, "Automatic installation preference is delegated to its single owner")
+        var update = HUDUpdateState()
+        update.phase = .ready; update.latestVersion = "v0.5.0"; update.detail = "Ready to install"
+        update.releaseURL = URL(string: "https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v0.5.0")
+        controller.receiveUpdateState(update)
+        check(about.accessibleActions.contains(where: { $0.id == "latestRelease" }) && about.accessibilityStatus == "Ready to install",
+              "Release metadata and status refresh the retained About view")
+        _ = about.scroll(at: CGPoint(x: 100, y: 100), delta: 220)
         check(strings(about.layer).contains("Credits:"), "About separates attribution with the Credits heading")
         controller.update { $0.language = .simplifiedChinese }
         check(strings(about.layer).contains("Credits:"), "The requested Credits heading remains English in the Chinese interface")

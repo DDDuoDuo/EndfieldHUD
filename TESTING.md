@@ -7,6 +7,7 @@ Run on macOS with Xcode Command Line Tools installed:
 ```sh
 ./scripts/test.sh
 ./scripts/test-release-resources.sh
+./scripts/test-update-tools.sh
 ```
 
 The suite covers models and persistence, bounded caches, map geometry and raster
@@ -37,13 +38,24 @@ APP=build/dev/EndfieldHUD.app/Contents/MacOS/EndfieldHUD
 
 `--ui-test` isolates preferences, stores, and the clipboard from normal use.
 Lifecycle checks cover pointer response during deployment/retraction, modal quit
-cancellation, close-before-quit ordering, and zero retained animations after close.
+cancellation, updater close/recovery, close-before-quit ordering, and zero retained animations after close.
 Navigation checks cover every module, retained window/shell identity, and interrupted
 transitions. Notes/Shelf checks cover pinned notes and native drag-session teardown.
 
 Fixture tests do not replace testing real app activation, audio hardware, physical
 hotkeys, Finder drag/drop, multiple monitors, or Accessibility behavior. Respect
 system Reduce Motion when interpreting animation checks.
+
+These additional process checks use a fake Focus executor (no system shortcuts or
+Focus changes), including a stalled worker that must not block quit beyond eight seconds:
+
+```sh
+"$APP" --ui-test --termination-smoke-test
+"$APP" --ui-test --termination-smoke-test --stall-focus-cleanup
+```
+
+They reproduce termination from inside a main-queue callback. Cleanup acknowledgements
+and the fallback timer must remain serviceable in AppKit's nested termination loop.
 
 ## Release checks
 
@@ -71,6 +83,10 @@ Mac has been tested. See [test distribution](docs/testing-build.md).
   an app to 100%. Run/pause/reset Work Mode and verify Focus automation if configured.
 - Check settings, event filtering, profile/image cropping, app shortcuts, Storage,
   Activity history, and Map pan/zoom/reset/pins after switching tabs and reopening.
+- Check updates from both About and the menu. Verify network errors remain errors,
+  preview/stable channels agree, and a ready update waits for HUD/Work Mode/audio
+  inactivity. Development copies must never install an update. See [signed updates](docs/updates.md)
+  for signature tests and the separate first live upgrade requirement.
 - Check light/dark themes, custom accent, Reduce Motion, display disconnects, and
   extreme UI scale/position rollback. Preserve user data during testing.
 

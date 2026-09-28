@@ -68,7 +68,12 @@ final class ShortcutsWorkModeFocusExecutor: WorkModeFocusExecuting {
                 result = .success(response)
             } catch let error as WorkModeFocusRunError { result = .failure(error) }
             catch { result = .failure(.launchFailed) }
-            DispatchQueue.main.async { completion(result) }
+            // AppKit's terminate-later loop may be nested inside a main GCD
+            // block. Re-entering that queue deadlocks; run-loop work remains
+            // serviceable while macOS waits for our Focus cleanup reply.
+            RunLoop.main.perform(inModes: [.common, RunLoop.Mode("NSModalPanelRunLoopMode")]) {
+                completion(result)
+            }
         }
     }
 

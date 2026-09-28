@@ -8,9 +8,9 @@ enum HUDModule: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .notes: return L10n.text("Notes", "便签")
+        case .notes: return L10n.text("Notes", "便笺")
         case .fileShelf: return L10n.text("Temporary File Shelf", "文件暂存架")
-        case .clipboard: return L10n.text("Clipboard Cache", "剪贴板缓存")
+        case .clipboard: return L10n.text("Clipboard Cache", "剪贴板")
         case .volume: return L10n.text("Volume", "音量")
         case .workMode: return L10n.text("Work Mode", "工作模式")
         case .eventLog: return L10n.text("Event Log", "事件日志")
