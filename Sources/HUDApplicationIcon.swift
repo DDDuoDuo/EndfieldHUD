@@ -21,7 +21,9 @@ enum HUDApplicationIcon: String, CaseIterable {
     case gameBaker, gameExclamationMark, gameStrength
 
     static var pickerCases: [HUDApplicationIcon] {
-        allCases.filter { $0.gameIcon == nil || $0.gameIcon?.sourceImage() != nil }
+        // Keep the retired hand-drawn currency artwork available for saved
+        // preferences, without offering it alongside the verified game assets.
+        allCases.filter { $0 != .originium && $0 != .orundum && ($0.gameIcon == nil || $0.gameIcon?.sourceImage() != nil) }
     }
 
     var gameIcon: EndfieldGameIcon? {
@@ -175,6 +177,11 @@ enum HUDApplicationIcon: String, CaseIterable {
     }()
     private static var atlasLoaded = false
 
+    func menuBarImage() -> NSImage {
+        // A 20-point canvas leaves native padding in the square status item.
+        image(size: 20, menuBar: true)
+    }
+
     func image(size: CGFloat = 64, menuBar: Bool = false) -> NSImage {
         let dimension = max(16, min(1024, Int(size.rounded())))
         let cacheKey = "\(rawValue):\(dimension):\(menuBar)"
@@ -276,7 +283,7 @@ enum HUDApplicationIcon: String, CaseIterable {
             context.clip()
             context.setFillColor(NSColor(white: 0.055, alpha: 1).cgColor); context.fill(bounds)
         }
-        let margin: CGFloat = self == .perlica ? (menuBar ? 0 : 0.035) : 0.07
+        let margin: CGFloat = self == .perlica ? (menuBar ? 0 : 0.035) : (menuBar ? 0.025 : 0.07)
         let target = bounds.insetBy(dx: CGFloat(pixels) * margin, dy: CGFloat(pixels) * margin)
         let ratio = min(target.width / CGFloat(source.width), target.height / CGFloat(source.height))
         let destination = CGRect(x: target.midX - CGFloat(source.width) * ratio / 2,

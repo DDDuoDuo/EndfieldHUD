@@ -20,6 +20,16 @@ Generated binaries and compiler caches stay in ignored `build/` directories.
 The resource probe compiles both development and release modes to check that a
 release never falls back to checkout assets or embeds the checkout's path.
 
+Localization checks cover all four interface languages, system language/script
+selection, saved preferences, interpolation safety, complete source coverage,
+language-list transitions and Japanese navigation label fit. Core tests also
+render each menu-bar icon preset at the shared display size.
+
+For reproducible README previews, install FFmpeg and run
+`./scripts/render-readme-previews.sh`. The separate renderer uses the real HUD
+with sample data and temporary stores. It writes final PNG/GIF files into
+`docs/media` and keeps disposable frame sequences under `build/readme-previews`.
+
 ## Native HUD checks
 
 Build first with `./scripts/dev.sh`. Run one graphical check at a time from a

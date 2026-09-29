@@ -962,21 +962,30 @@ final class HUDNavigationEntry {
     private func updateTitle() {
         var text = shortcut?.name ?? module?.title ?? ""
         var size: CGFloat = module == .power ? 14 : labelSize
-        let hasTwoLines = !L10n.isChinese && (module == .fileShelf || module == .clipboard)
+        let japanese = L10n.resolvedLanguage == .japanese
+        let hasTwoLines = (!L10n.isCJK && (module == .fileShelf || module == .clipboard))
+            || (japanese && module == .fileShelf)
         if hasTwoLines {
-            text = module == .fileShelf ? "Temporary\nFile Shelf" : "Clipboard\nCache"
+            if !japanese { text = module == .fileShelf ? "Temporary\nFile Shelf" : "Clipboard\nCache" }
             size = 9.5
             title.frame = CGRect(x: 7, y: 39, width: rect.width - 14, height: 29)
         } else if group == .right {
             title.frame = CGRect(x: 7, y: 43, width: rect.width - 14, height: 22)
         }
-        let bottomWrapped = module == .activityMonitor && !L10n.isChinese
-        if bottomWrapped { text = "Activity\nMonitor" }
+        let bottomWrapped = module == .activityMonitor && (!L10n.isCJK || japanese)
+        if bottomWrapped {
+            if japanese { size = 9 }
+            else { text = "Activity\nMonitor" }
+        }
         if group == .bottom {
             title.frame.origin.y = bottomWrapped ? 8 : 15
             title.frame.size.height = bottomWrapped ? 29 : 22
         }
         if shortcut != nil { title.frame = CGRect(x: 7, y: 39, width: rect.width - 14, height: 30) }
+        if japanese && group == .right && !hasTwoLines && shortcut == nil {
+            let width = (text as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .bold)]).width
+            if width > title.frame.width { size *= title.frame.width / width }
+        }
         title.truncationMode = shortcut == nil ? .none : .end
         title.isWrapped = hasTwoLines || bottomWrapped || shortcut != nil
         title.string = text

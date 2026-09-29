@@ -24,6 +24,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDRuntimeAppearance.swift" \
     "$PROJECT_DIR/Sources/HUDControlHighlightLayer.swift" \
     "$PROJECT_DIR/Sources/Localization.swift" \
+    "$PROJECT_DIR/Sources/LocalizationCatalog.swift" \
     "$PROJECT_DIR/Sources/OverlayGeometry.swift" \
     "$PROJECT_DIR/Sources/BatteryCapacity.swift" \
     "$PROJECT_DIR/Sources/BatteryMonitor.swift" \
@@ -155,6 +156,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
     "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
     "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
+    "$PROJECT_DIR/Tests/LocalizationTests.swift" \
     "$PROJECT_DIR/Tests/CoreTests.swift" \
     -o "$BUILD_DIR/tests/CoreTests"
 "$BUILD_DIR/tests/CoreTests"

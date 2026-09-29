@@ -6,10 +6,10 @@ struct CorePerAppAudioFactory: PerAppAudioRouteFactory {
     func make(application: AudioApplicationInfo, output: AudioDeviceInfo,
               event: @escaping (PerAppAudioRouteEvent) -> Void) throws -> PerAppAudioRoute {
         if #available(macOS 14.2, *) {
-            let chinese = L10n.isChinese
+            let language = L10n.resolvedLanguage
             return AsyncPerAppAudioRoute(event: event) { queue, cancellation, event in
                 CorePerAppAudioRoute(application: application, output: output, executionQueue: queue,
-                    cancellation: cancellation, chinese: chinese, event: event)
+                    cancellation: cancellation, language: language, event: event)
             }
         }
         throw PerAppAudioEngineError.message(L10n.text("App audio routing requires macOS 14.2 or later.", "应用音频路由需要 macOS 14.2 或更新版本。"))
@@ -277,7 +277,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     private let hardware: PerAppAudioHardware
     private let executionQueue: DispatchQueue?
     private let cancellation: PerAppAudioCancellation?
-    private let chinese: Bool
+    private let language: AppLanguage
     private let readinessTimeout: TimeInterval
     private var hal: AudioHALBackend { hardware.metadata }
     private var tap: AudioObjectID = 0
@@ -299,11 +299,11 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
     var isStopped: Bool { tap == 0 && aggregate == 0 && ioProc == nil }
 
     init(application: AudioApplicationInfo, output: AudioDeviceInfo, hardware: PerAppAudioHardware = SystemPerAppAudioHardware(),
-         executionQueue: DispatchQueue? = nil, cancellation: PerAppAudioCancellation? = nil, chinese: Bool? = nil,
+         executionQueue: DispatchQueue? = nil, cancellation: PerAppAudioCancellation? = nil, language: AppLanguage? = nil,
          readinessTimeout: TimeInterval = 2,
          event: @escaping (PerAppAudioRouteEvent) -> Void) {
         self.application = application; self.output = output; self.hardware = hardware; self.event = event
-        self.executionQueue = executionQueue; self.cancellation = cancellation; self.chinese = chinese ?? L10n.isChinese
+        self.executionQueue = executionQueue; self.cancellation = cancellation; self.language = language ?? L10n.resolvedLanguage
         self.readinessTimeout = max(0, readinessTimeout)
     }
 
@@ -660,7 +660,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         message("This experimental route requires matching Float32 stereo streams and sample rates. This audio device or format is not supported.",
                 "此实验性路由需要格式和采样率匹配的 Float32 双声道音频流，暂不支持此音频设备或格式。")
     }
-    private func localized(_ english: String, _ chinese: String) -> String { self.chinese ? chinese : english }
+    private func localized(_ english: L10n.Text, _ chinese: L10n.Text) -> String { L10n.text(english, chinese, language: language) }
     private func describe(_ error: Error) -> String {
         // AudioDeviceError normally formats using the main-owned language.
         // Worker failures use this route's immutable language snapshot instead.
@@ -672,7 +672,7 @@ final class CorePerAppAudioRoute: PerAppAudioRoute {
         }
         return error.localizedDescription
     }
-    private func message(_ english: String, _ chinese: String) -> PerAppAudioEngineError { .message(localized(english, chinese)) }
+    private func message(_ english: L10n.Text, _ chinese: L10n.Text) -> PerAppAudioEngineError { .message(localized(english, chinese)) }
     private func check(_ status: OSStatus) throws {
         if status != noErr { throw message("macOS could not complete the audio route (\(status)).", "macOS 无法完成音频路由（\(status)）。") }
     }

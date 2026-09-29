@@ -1,4 +1,4 @@
-# EndfieldHUD 1.0 — installation and compatibility
+# EndfieldHUD 1.0.1 — installation and compatibility
 
 The download is a universal macOS application. It is
 **ad hoc signed and not notarized**. That signature checks bundle integrity; it
@@ -8,7 +8,7 @@ certificate is included in this repository.
 ## Install the DMG
 
 1. Quit any running EndfieldHUD copy from its menu bar menu.
-2. Open `EndfieldHUD-1.0.0-macOS.dmg` and drag **EndfieldHUD.app** to **Applications**.
+2. Open `EndfieldHUD-1.0.1-macOS.dmg` and drag **EndfieldHUD.app** to **Applications**.
 3. Eject the disk image, then open the installed app from Applications. The app
    lives in the menu bar. Its default summon shortcut is **Ctrl + backtick**.
 4. If macOS blocks this trusted download because the developer cannot be
@@ -20,7 +20,7 @@ certificate is included in this repository.
    remove quarantine globally. Stop if macOS identifies the app as malicious or
    damaged instead of offering its normal per-app exception.
 
-The accompanying `EndfieldHUD-1.0.0-SHA256SUMS.txt` lists only this package's
+The accompanying `EndfieldHUD-1.0.1-SHA256SUMS.txt` lists only this package's
 artifacts. It detects accidental changes when checked against a checksum
 obtained from the trusted distributor; it does not replace publisher identity.
 

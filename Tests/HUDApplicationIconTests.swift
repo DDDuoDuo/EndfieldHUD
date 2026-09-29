@@ -11,9 +11,11 @@ enum HUDApplicationIconTests {
         defer { defaults.removePersistentDomain(forName: suite); L10n.language = language }
         let store = ConfigurationStore(defaults: defaults)
         check(store.configuration.applicationIcon == .endfield, "A new installation uses the supplied Endfield icon")
-        check(HUDApplicationIcon.pickerCases.count == 66, "The picker includes all 36 original presets and 30 verified Endfield icons")
-        check(HUDApplicationIcon.pickerCases == HUDApplicationIcon.allCases,
-              "Every legacy Arknights and current Endfield choice remains selectable in stable order")
+        check(HUDApplicationIcon.pickerCases.count == 64, "The picker includes 34 original presets and 30 verified Endfield icons")
+        check(HUDApplicationIcon.pickerCases == HUDApplicationIcon.allCases.filter { $0 != .originium && $0 != .orundum },
+              "Only the two retired hand-drawn currency icons are omitted, preserving the remaining picker order")
+        check(HUDApplicationIcon.pickerCases.contains(.gameOrigeometry) && HUDApplicationIcon.pickerCases.contains(.gameOroberyl),
+              "The actual Endfield currency artwork remains selectable")
         check(HUDApplicationIcon.allCases.contains(.originium) && HUDApplicationIcon.allCases.contains(.orundum)
               && HUDApplicationIcon.allCases.contains(.contingencyContract) && HUDApplicationIcon.allCases.contains(.ambienceSynesthesia),
               "Saved currency and faction choices retain their raw values and artwork")
@@ -21,11 +23,11 @@ enum HUDApplicationIconTests {
         for preset in HUDApplicationIcon.allCases {
             var configuration = store.configuration; configuration.applicationIcon = preset; store.update(configuration)
             check(ConfigurationStore(defaults: defaults).configuration.applicationIcon == preset, "Every icon persists across launches")
-            let large = preset.image(size: 512), menu = preset.image(size: 18, menuBar: true)
+            let large = preset.image(size: 512), menu = preset.menuBarImage()
             check(large.size == NSSize(width: 512, height: 512), "Application icons have native square dimensions")
-            check(menu.size == NSSize(width: 18, height: 18), "Menu icons stay within the existing menu item")
+            check(menu.size == NSSize(width: 20, height: 20), "Larger menu icons stay within the existing square menu item")
             check(menu.isTemplate == (preset != .perlica), "Emblems adapt to the menu bar while the portrait retains its color")
-            check(preset.image(size: 18, menuBar: true) === menu, "Repeated status updates reuse cached icon pixels")
+            check(preset.menuBarImage() === menu, "Repeated status updates reuse cached icon pixels")
             if let pixels = preset.image(size: 64).tiffRepresentation {
                 check(artwork.insert(pixels).inserted, "Every preset uses distinct artwork rather than silently falling back to the battery icon")
             } else { check(false, "Every preset can supply its picker artwork") }

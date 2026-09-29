@@ -289,7 +289,7 @@ enum PerAppAudioTests {
                     if case .active = value { pendingBecameActive = true }
                 }) { queue, cancellation, event in
                     CorePerAppAudioRoute(application: app, output: output, hardware: pendingGainHardware,
-                        executionQueue: queue, cancellation: cancellation, chinese: false) { value in
+                        executionQueue: queue, cancellation: cancellation, language: .english) { value in
                         if case .active = value, let context = pendingGainHardware.context {
                             let input = StereoBuffers(frames: 16, planar: false)
                             let output = StereoBuffers(frames: 16, planar: false)
@@ -321,7 +321,7 @@ enum PerAppAudioTests {
                     if case .failed = event { failures += 1 }
                 }) { queue, cancellation, event in
                     CorePerAppAudioRoute(application: app, output: output, hardware: startBlocked,
-                        executionQueue: queue, cancellation: cancellation, chinese: false, event: event)
+                        executionQueue: queue, cancellation: cancellation, language: .english, event: event)
                 }
                 try asynchronous.begin()
                 check(startEntered.wait(timeout: .now() + 1) == .success && !startBlocked.didStartOnMain,
@@ -419,7 +419,7 @@ enum PerAppAudioTests {
         func make(application: AudioApplicationInfo, output: AudioDeviceInfo, event: @escaping (PerAppAudioRouteEvent) -> Void) throws -> PerAppAudioRoute {
             AsyncPerAppAudioRoute(startTimeout: 1, stopTimeout: 0.08, event: event) { [hardware] queue, cancellation, event in
                 CorePerAppAudioRoute(application: application, output: output, hardware: hardware,
-                    executionQueue: queue, cancellation: cancellation, chinese: false, event: event)
+                    executionQueue: queue, cancellation: cancellation, language: .english, event: event)
             }
         }
     }

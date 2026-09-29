@@ -54,10 +54,10 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     private var selectedSlider: String?
     private var restoreConfirmation = false
     private var localStatus: String?
-    private enum Page { case main, battery, icons, screens }
+    private enum Page { case main, battery, icons, screens, languages }
     private enum Kind {
         case toggle(Bool), choice(String), slider(Double, Double, Double), palette, icons([HUDApplicationIcon]), info(String), link(String, URL?), heading
-        case displayOption(selected: Bool, detail: String, available: Bool)
+        case selectionOption(selected: Bool, detail: String, available: Bool)
     }
     private struct Row {
         let id: String
@@ -140,19 +140,25 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     private var rows: [Row] {
         let c = config
         if module == .system {
+            if page == .languages {
+                return AppLanguage.allCases.map { language in
+                    Row(id: "language:" + language.rawValue, title: languageTitle(language),
+                        kind: .selectionOption(selected: c.language == language, detail: "", available: true))
+                }
+            }
             if page == .screens {
                 var result = [
-                    Row(id: "screen:pointer", title: L10n.text("Pointer display", "鼠标所在显示器"), kind: .displayOption(selected: c.hudDisplayUUID == nil && c.openOnActiveDisplay, detail: "", available: true)),
-                    Row(id: "screen:main", title: L10n.text("Main display", "主显示器"), kind: .displayOption(selected: c.hudDisplayUUID == nil && !c.openOnActiveDisplay, detail: "", available: true))
+                    Row(id: "screen:pointer", title: L10n.text("Pointer display", "鼠标所在显示器"), kind: .selectionOption(selected: c.hudDisplayUUID == nil && c.openOnActiveDisplay, detail: "", available: true)),
+                    Row(id: "screen:main", title: L10n.text("Main display", "主显示器"), kind: .selectionOption(selected: c.hudDisplayUUID == nil && !c.openOnActiveDisplay, detail: "", available: true))
                 ]
                 for (index, display) in displays.enumerated() {
                     let title = displays.filter { $0.name == display.name }.count > 1 ? "\(display.name) · \(index + 1)" : display.name
                     result.append(Row(id: "screen:" + display.uuid, title: title,
-                        kind: .displayOption(selected: c.hudDisplayUUID == display.uuid, detail: display.dimensions, available: true), height: 48))
+                        kind: .selectionOption(selected: c.hudDisplayUUID == display.uuid, detail: display.dimensions, available: true), height: 48))
                 }
                 if let uuid = c.hudDisplayUUID, !displays.contains(where: { $0.uuid == uuid }) {
                     result.append(Row(id: "screen:disconnected", title: c.hudDisplayName ?? L10n.text("Saved display", "已选显示器"),
-                        kind: .displayOption(selected: true, detail: L10n.text("Disconnected · using pointer display", "未连接 · 暂用鼠标所在显示器"), available: false), height: 48))
+                        kind: .selectionOption(selected: true, detail: L10n.text("Disconnected · using pointer display", "未连接 · 暂用鼠标所在显示器"), available: false), height: 48))
                 }
                 return result
             }
@@ -242,7 +248,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
             switch row.kind {
             case .toggle(let value): result.append(HUDSettingsAction(id: row.id, label: row.title + ", " + (value ? L10n.text("On", "开") : L10n.text("Off", "关")), rect: visible))
             case .choice(let value): result.append(HUDSettingsAction(id: row.id, label: row.title + ", " + value, rect: visible))
-            case .displayOption(let selected, let detail, let available):
+            case .selectionOption(let selected, let detail, let available):
                 result.append(HUDSettingsAction(id: row.id, label: [row.title, detail, selected ? L10n.text("Selected", "已选择") : ""].filter { !$0.isEmpty }.joined(separator: ", "), rect: visible, enabled: available))
             case .link(let value, let url):
                 if url != nil { result.append(HUDSettingsAction(id: row.id, label: row.title + ", " + value, rect: visible)) }
@@ -343,6 +349,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         localStatus = nil
         switch id {
         case "back": reveal(direction: -1) { page = .main; scrollOffset = mainScrollOffset }; return
+        case "language": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .languages; scrollOffset = 0 }; return
         case "screen": displays = displayProvider(); reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .screens; scrollOffset = 0 }; return
         case "appIcon": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .icons; scrollOffset = 0 }; return
         case "battery": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .battery; scrollOffset = 0 }; return
@@ -361,7 +368,14 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         case "automaticUpdates": controller.toggleAutomaticUpdates()
         case "latestRelease": if let url = controller.updateState.releaseURL { controller.openLink(url) }
         default:
-            if id.hasPrefix("screen:") {
+            if id.hasPrefix("language:"), let language = AppLanguage(rawValue: String(id.dropFirst(9))) {
+                reveal(direction: -1) {
+                    page = .main; scrollOffset = mainScrollOffset
+                    controller.update { $0.language = language }
+                }
+                return
+            }
+            else if id.hasPrefix("screen:") {
                 let value = String(id.dropFirst(7))
                 guard value == "pointer" || value == "main" || displays.contains(where: { $0.uuid == value }) else { return }
                 reveal(direction: -1) {
@@ -380,7 +394,6 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
             else {
                 controller.update { c in
                     switch id {
-                    case "language": c.language = next(c.language, in: AppLanguage.allCases)
                     case "login": c.launchAtLogin.toggle()
                     case "focus": c.closeOnFocusLost.toggle()
                     case "ambient": c.ambientAnimation.toggle()
@@ -426,7 +439,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
 
     private func repaint() {
         rowsLayer.sublayers?.forEach { $0.removeFromSuperlayer() }; chrome.sublayers?.forEach { $0.removeFromSuperlayer() }; rowLayers.removeAll()
-        text(page == .battery ? L10n.text("Battery alert", "电池提醒") : page == .icons ? L10n.text("App / menu bar icon", "应用 / 菜单栏图标") : page == .screens ? L10n.text("Display", "显示器") : module.title, in: chrome,
+        text(page == .battery ? L10n.text("Battery alert", "电池提醒") : page == .icons ? L10n.text("App / menu bar icon", "应用 / 菜单栏图标") : page == .screens ? L10n.text("Display", "显示器") : page == .languages ? L10n.text("Language", "语言") : module.title, in: chrome,
              rect: CGRect(x: 12, y: 1, width: 306, height: 23), size: 16, weight: .semibold, color: primary)
         let line = CALayer(); line.frame = CGRect(x: 12, y: 29, width: 376, height: 1); line.backgroundColor = accent.withAlphaComponent(0.5).cgColor; chrome.addSublayer(line)
         if page != .main { smallButton(L10n.text("‹ Back", "‹ 返回"), rect: CGRect(x: 323, y: 2, width: 65, height: 25), in: chrome) }
@@ -447,11 +460,11 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         let host = CALayer(); host.frame = layer.bounds; host.name = "settings.row.\(row.id)"; rowsLayer.addSublayer(host); rowLayers[row.id] = host
         let divider = CALayer(); divider.frame = CGRect(x: rect.minX, y: rect.maxY - 1, width: rect.width, height: 0.5); divider.backgroundColor = muted.withAlphaComponent(0.19).cgColor; host.addSublayer(divider)
         let labelY = rect.minY + (row.height > 45 ? 8 : 11)
-        if case .displayOption = row.kind {} else {
+        if case .selectionOption = row.kind {} else {
             text(row.title, in: host, rect: CGRect(x: 20, y: labelY, width: 175, height: 18), size: 11.5, weight: row.id == "credits" ? .semibold : .medium, color: row.id == "credits" ? accent : primary)
         }
         switch row.kind {
-        case .displayOption(let selected, let detail, let available):
+        case .selectionOption(let selected, let detail, let available):
             let plate = CAShapeLayer(); plate.path = cutCorner(rect.insetBy(dx: 1, dy: 3), corner: 3)
             plate.fillColor = (selected ? accent.withAlphaComponent(0.13) : muted.withAlphaComponent(0.07)).cgColor
             plate.strokeColor = (selected ? accent.withAlphaComponent(0.7) : muted.withAlphaComponent(0.2)).cgColor
@@ -631,7 +644,13 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         return "\(Int((value * 100).rounded()))%"
     }
     private func languageTitle(_ value: AppLanguage) -> String {
-        switch value { case .system: return L10n.text("System", "跟随系统"); case .english: return "English"; case .simplifiedChinese: return "简体中文" }
+        switch value {
+        case .system: return L10n.text("System", "跟随系统")
+        case .english: return "English"
+        case .simplifiedChinese: return "简体中文"
+        case .traditionalChinese: return "繁體中文"
+        case .japanese: return "日本語"
+        }
     }
     private func themeTitle(_ value: OverlayTheme) -> String {
         switch value { case .dark: return L10n.text("Dark", "深色"); case .light: return L10n.text("Light", "浅色"); case .system: return L10n.text("System", "跟随系统") }

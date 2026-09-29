@@ -1,0 +1,1 @@
+"NSAudioCaptureUsageDescription" = "EndfieldHUD 仅捕获您启用的应用音频，以调整它们的音量。音频只在内存中处理，不会保存。";

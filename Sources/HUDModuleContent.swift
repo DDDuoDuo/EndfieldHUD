@@ -38,7 +38,7 @@ final class HUDModuleContent {
     private var latestCompletion: (() -> Void)?
     private var style = HUDModuleContentStyle(dark: true,
         accent: NSColor(srgbRed: 0.85, green: 0.95, blue: 0.42, alpha: 1), contentsScale: 2)
-    private var languageIsChinese = L10n.isChinese
+    private var renderedLanguage = L10n.resolvedLanguage
     private let shouldReduceMotion: () -> Bool
 
     init(powerLayer: CALayer, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
@@ -107,9 +107,9 @@ final class HUDModuleContent {
         precondition(Thread.isMainThread)
         let color = accent.usingColorSpace(.deviceRGB) ?? accent
         let scale = contentsScale.isFinite ? min(8, max(1, contentsScale)) : 2
-        let repaint = style.dark != dark || !style.accent.isEqual(color) || languageIsChinese != L10n.isChinese
+        let repaint = style.dark != dark || !style.accent.isEqual(color) || renderedLanguage != L10n.resolvedLanguage
         style = HUDModuleContentStyle(dark: dark, accent: color, contentsScale: scale)
-        languageIsChinese = L10n.isChinese
+        renderedLanguage = L10n.resolvedLanguage
         for screen in [current, incoming].compactMap({ $0 }) {
             if repaint && screen.module != .power { rebuild(screen) }
             applyScale(to: screen.wrapper)

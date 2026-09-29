@@ -132,9 +132,9 @@ protocol AudioHALBackend: AnyObject {
 
 enum AudioDeviceError: LocalizedError {
     case unavailable, unsupported, deviceChanged, invalidValue, readback, hal(OSStatus), rollback
-    var errorDescription: String? { message(chinese: L10n.isChinese) }
-    func message(chinese: Bool) -> String {
-        func localized(_ english: String, _ chineseText: String) -> String { chinese ? chineseText : english }
+    var errorDescription: String? { message(language: L10n.resolvedLanguage) }
+    func message(language: AppLanguage) -> String {
+        func localized(_ english: L10n.Text, _ chineseText: L10n.Text) -> String { L10n.text(english, chineseText, language: language) }
         switch self {
         case .unavailable: return localized("Audio device information is unavailable.", "音频设备信息不可用。")
         case .unsupported: return localized("This device does not support this control.", "此设备不支持该控制。")
@@ -274,44 +274,44 @@ final class AudioDeviceController {
     func start() {
         requireMain(); guard !isRunning else { return }; isRunning = true
         if let synchronous { synchronous.start() }
-        else { generation = worker!.replaceSession(with: .start, chinese: L10n.isChinese) }
+        else { generation = worker!.replaceSession(with: .start, language: L10n.resolvedLanguage) }
     }
     func stop() {
         requireMain(); isRunning = false
         if let synchronous { synchronous.stop() }
-        else { generation = worker!.replaceSession(with: .stop, chinese: L10n.isChinese) }
+        else { generation = worker!.replaceSession(with: .stop, language: L10n.resolvedLanguage) }
     }
     func refresh() {
         requireMain()
         if let synchronous { synchronous.refresh() }
-        else { worker!.submit(.refresh, chinese: L10n.isChinese) }
+        else { worker!.submit(.refresh, language: L10n.resolvedLanguage) }
     }
     /// In production true means queued for validation. Readback/status arrives
     /// asynchronously; fixture setters retain their synchronous success result.
     @discardableResult func setOutputVolume(_ value: Double) -> Bool {
         requireMain(); if let synchronous { return synchronous.setOutputVolume(value) }
         guard isRunning, value.isFinite, snapshot.canSetOutputVolume, let id = snapshot.defaultOutputID else { return false }
-        worker!.submit(.volume(value, id), chinese: L10n.isChinese); return true
+        worker!.submit(.volume(value, id), language: L10n.resolvedLanguage); return true
     }
     @discardableResult func setOutputMuted(_ value: Bool) -> Bool {
         requireMain(); if let synchronous { return synchronous.setOutputMuted(value) }
         guard isRunning, snapshot.canSetOutputMute, let id = snapshot.defaultOutputID else { return false }
-        worker!.submit(.mute(value, id), chinese: L10n.isChinese); return true
+        worker!.submit(.mute(value, id), language: L10n.resolvedLanguage); return true
     }
     @discardableResult func setBalance(_ value: Double) -> Bool {
         requireMain(); if let synchronous { return synchronous.setBalance(value) }
         guard isRunning, value.isFinite, snapshot.canSetBalance, let id = snapshot.defaultOutputID else { return false }
-        worker!.submit(.balance(value, id), chinese: L10n.isChinese); return true
+        worker!.submit(.balance(value, id), language: L10n.resolvedLanguage); return true
     }
     @discardableResult func setDefaultOutput(_ id: UInt32) -> Bool {
         requireMain(); if let synchronous { return synchronous.setDefaultOutput(id) }
         guard isRunning, snapshot.canSetDefaultOutput, snapshot.outputs.contains(where: { $0.id == id && $0.canBeDefaultOutput }) else { return false }
-        worker!.submit(.output(id), chinese: L10n.isChinese); return true
+        worker!.submit(.output(id), language: L10n.resolvedLanguage); return true
     }
     @discardableResult func setDefaultInput(_ id: UInt32) -> Bool {
         requireMain(); if let synchronous { return synchronous.setDefaultInput(id) }
         guard isRunning, snapshot.canSetDefaultInput, snapshot.inputs.contains(where: { $0.id == id && $0.canBeDefaultInput }) else { return false }
-        worker!.submit(.input(id), chinese: L10n.isChinese); return true
+        worker!.submit(.input(id), language: L10n.resolvedLanguage); return true
     }
     private func receive(generation: Int, snapshot incoming: AudioDeviceSnapshot, status: String?) {
         requireMain(); guard self.generation == generation else { return }
@@ -367,7 +367,7 @@ private enum AudioDeviceCommand {
 /// A bounded mailbox avoids accumulating drag samples behind a stalled HAL
 /// call. Its lock only protects values; no HAL or callback runs while held.
 private final class AudioDeviceWorker {
-    private struct Job { let generation: Int; let command: AudioDeviceCommand; let chinese: Bool }
+    private struct Job { let generation: Int; let command: AudioDeviceCommand; let language: AppLanguage }
     let queue = DispatchQueue(label: "io.github.endfieldcharge.audio-metadata", qos: .userInitiated)
     var deliver: ((Int, AudioDeviceSnapshot, String?) -> Void)?
     private let factory: (DispatchQueue) -> AudioHALBackend
@@ -380,18 +380,18 @@ private final class AudioDeviceWorker {
     private var engine: AudioDeviceStateEngine? // created and released on worker
     init(factory: @escaping (DispatchQueue) -> AudioHALBackend) { self.factory = factory }
 
-    func replaceSession(with command: AudioDeviceCommand, chinese: Bool) -> Int {
+    func replaceSession(with command: AudioDeviceCommand, language: AppLanguage) -> Int {
         lock.lock(); generation += 1; let next = generation; jobs.removeAll()
-        jobs.append(Job(generation: next, command: command, chinese: chinese))
+        jobs.append(Job(generation: next, command: command, language: language))
         let needsDispatch = !scheduled; scheduled = true; lock.unlock()
         if needsDispatch { queue.async { self.drain() } }
         return next
     }
-    func submit(_ command: AudioDeviceCommand, chinese: Bool) {
+    func submit(_ command: AudioDeviceCommand, language: AppLanguage) {
         lock.lock()
         guard !closed else { lock.unlock(); return }
         jobs.removeAll { $0.command.key == command.key }
-        jobs.append(Job(generation: generation, command: command, chinese: chinese))
+        jobs.append(Job(generation: generation, command: command, language: language))
         let needsDispatch = !scheduled; scheduled = true; lock.unlock()
         if needsDispatch { queue.async { self.drain() } }
     }
@@ -416,12 +416,12 @@ private final class AudioDeviceWorker {
                 let backend = AudioDeviceGuardedBackend(base: factory(queue)) { [weak self] in
                     guard let self else { return false }; return self.isCurrent(self.operationGeneration)
                 }
-                let value = AudioDeviceStateEngine(backend: backend, executionQueue: queue, chinese: job.chinese)
+                let value = AudioDeviceStateEngine(backend: backend, executionQueue: queue, language: job.language)
                 engine = value
                 _ = value.observe { [weak self] in self?.publish() }
             }
             guard let engine else { continue }
-            engine.chinese = job.chinese
+            engine.language = job.language
             switch job.command {
             case .start: engine.stop(); engine.start()
             case .stop: break
@@ -474,7 +474,7 @@ private final class AudioDeviceStateEngine {
     private(set) var isRunning = false
     private let backend: AudioHALBackend?
     private let executionQueue: DispatchQueue?
-    var chinese: Bool?
+    var language: AppLanguage?
     private var observers: [UUID: () -> Void] = [:]
     private var listeners: [AudioHALProperty: UUID] = [:]
     private var pendingRefresh = false
@@ -491,8 +491,8 @@ private final class AudioDeviceStateEngine {
     private static let output = UInt32(kAudioDevicePropertyScopeOutput)
     private static let input = UInt32(kAudioDevicePropertyScopeInput)
 
-    init(backend: AudioHALBackend, executionQueue: DispatchQueue? = nil, chinese: Bool? = nil) {
-        self.backend = backend; self.executionQueue = executionQueue; self.chinese = chinese
+    init(backend: AudioHALBackend, executionQueue: DispatchQueue? = nil, language: AppLanguage? = nil) {
+        self.backend = backend; self.executionQueue = executionQueue; self.language = language
     }
     /// Diagnostics use no real HAL, including during activation and mutations.
     init(snapshot: AudioDeviceSnapshot) { backend = nil; executionQueue = nil; self.snapshot = snapshot }
@@ -848,11 +848,11 @@ private final class AudioDeviceStateEngine {
         if let executionQueue { dispatchPrecondition(condition: .onQueue(executionQueue)) }
         else { precondition(Thread.isMainThread, "Synchronous audio fixtures require the main thread") }
     }
-    private func localized(_ english: String, _ chineseText: String) -> String {
-        (chinese ?? L10n.isChinese) ? chineseText : english
+    private func localized(_ english: L10n.Text, _ chineseText: L10n.Text) -> String {
+        L10n.text(english, chineseText, language: language ?? L10n.resolvedLanguage)
     }
     private func errorMessage(_ error: Error) -> String {
-        if let value = error as? AudioDeviceError { return value.message(chinese: chinese ?? L10n.isChinese) }
+        if let value = error as? AudioDeviceError { return value.message(language: language ?? L10n.resolvedLanguage) }
         return error.localizedDescription
     }
     private func property(_ id: UInt32, _ selector: UInt32, scope: UInt32 = kAudioObjectPropertyScopeGlobal, element: UInt32 = 0) -> AudioHALProperty {

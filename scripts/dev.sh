@@ -89,6 +89,9 @@ if [ ! -d "$DEV_APP" ]; then
     fi
     mv "$DEV_STAGE/$APP_NAME" "$STAGED_APP/Contents/MacOS/$APP_NAME"
     cp "$PROJECT_DIR/Resources/Info.plist" "$STAGED_APP/Contents/Info.plist"
+    for LOCALIZATION in en zh-Hans zh-Hant ja; do
+        ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$STAGED_APP/Contents/Resources/$LOCALIZATION.lproj"
+    done
     cp "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$STAGED_APP/Contents/Resources/"
     cp "$ICON_CACHE" "$STAGED_APP/Contents/Resources/AppIcon.icns"
     ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/AppIconSources"
@@ -106,6 +109,9 @@ else
     mv -f "$DEV_STAGE/$APP_NAME" "$DEV_APP/Contents/MacOS/$APP_NAME"
     # Keep new capability purpose strings in step with the development binary.
     cp "$PROJECT_DIR/Resources/Info.plist" "$DEV_APP/Contents/Info.plist"
+    for LOCALIZATION in en zh-Hans zh-Hant ja; do
+        ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$DEV_APP/Contents/Resources/$LOCALIZATION.lproj"
+    done
     cp "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$DEV_APP/Contents/Resources/"
     cp "$ICON_CACHE" "$DEV_APP/Contents/Resources/AppIcon.icns"
     ditto "$PROJECT_DIR/Resources/AppIconSources" "$DEV_APP/Contents/Resources/AppIconSources"

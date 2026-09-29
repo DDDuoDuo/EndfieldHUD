@@ -39,7 +39,7 @@ final class HUDIdentityCard {
         let dark: Bool
         let accent: CGColor
         let contentsScale: CGFloat
-        let chinese: Bool
+        let language: AppLanguage
         let profileRevision: UInt64
         let profileBounds: CGRect
         let closeBounds: CGRect
@@ -71,7 +71,7 @@ final class HUDIdentityCard {
         let scale = contentsScale.isFinite ? min(8, max(1, contentsScale)) : 2
         let nextState = RenderedState(dark: dark,
             accent: (accent.usingColorSpace(.sRGB) ?? accent).cgColor,
-            contentsScale: scale, chinese: L10n.isChinese, profileRevision: profileRevision,
+            contentsScale: scale, language: L10n.resolvedLanguage, profileRevision: profileRevision,
             profileBounds: profile.bounds, closeBounds: close.bounds)
         guard nextState != renderedState else { return }
         self.dark = dark; self.accent = accent

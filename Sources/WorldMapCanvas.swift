@@ -28,7 +28,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     private var statusZoom: Double?
     private var pinLabels: [UUID: String] = [:]
     private var labeledPins: [MapPin] = []
-    private var pinLabelLanguage: Bool?
+    private var pinLabelLanguage: AppLanguage?
     private var pinStyleRevision = 0
     private var markerStyleRevisions: [UUID: Int] = [:]
     private var animatedPinIDs: Set<UUID> = []
@@ -144,8 +144,8 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     var accessibleActions: [WorldMapAction] {
         var actions = toolbarActions
         let currentPins = pins
-        if labeledPins != currentPins || pinLabelLanguage != L10n.isChinese {
-            labeledPins = currentPins; pinLabelLanguage = L10n.isChinese
+        if labeledPins != currentPins || pinLabelLanguage != L10n.resolvedLanguage {
+            labeledPins = currentPins; pinLabelLanguage = L10n.resolvedLanguage
             pinLabels = Dictionary(uniqueKeysWithValues: currentPins.enumerated().map { index, pin in
                 (pin.id, L10n.text("Pin ", "标记 ") + String(index + 1) + ", "
                     + WorldMapGeometry.coordinateDescription(x: pin.x, y: pin.y))
@@ -327,7 +327,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         }
     }
     private func renderChrome() {
-        let key = "\(dark)|\(accent)|\(scale)|\(L10n.isChinese)|\(viewport.zoom < WorldMapViewport.maxZoom)|\(viewport.zoom > WorldMapViewport.minZoom)|\(pins.count)|\(selectedPinID?.uuidString ?? "")|\(message ?? "")|\(terrain != nil)"
+        let key = "\(dark)|\(accent)|\(scale)|\(L10n.resolvedLanguage)|\(viewport.zoom < WorldMapViewport.maxZoom)|\(viewport.zoom > WorldMapViewport.minZoom)|\(pins.count)|\(selectedPinID?.uuidString ?? "")|\(message ?? "")|\(terrain != nil)"
         guard key != chromeKey else { updateZoomStatus(); return }; chromeKey = key
         chrome.sublayers?.forEach { $0.removeFromSuperlayer() }
         let ink = NSColor(white: dark ? 0.95 : 0.13, alpha: 1)

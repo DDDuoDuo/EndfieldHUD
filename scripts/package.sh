@@ -32,7 +32,9 @@ mkdir -p "$DIST_DIR"
 PACKAGE_STAGE="$(mktemp -d "$BUILD_DIR/.package.XXXXXX")"
 trap 'rm -rf "$PACKAGE_STAGE"' EXIT
 ARCHIVE="$PACKAGE_STAGE/EndfieldHUD-$VERSION-macOS.zip"
-ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+# Bundle resources are ordinary files. Omit machine-local extended attributes
+# and resource-fork sidecars from the public archive.
+ditto -c -k --norsrc --noextattr --noqtn --keepParent "$APP" "$ARCHIVE"
 unzip -tq "$ARCHIVE"
 GENERATED_FILES=("$(basename "$ARCHIVE")")
 
@@ -40,7 +42,7 @@ GENERATED_FILES=("$(basename "$ARCHIVE")")
 # cannot accidentally enter the source download.
 SOURCE_ROOT="$PACKAGE_STAGE/EndfieldHUD"
 mkdir -p "$SOURCE_ROOT"
-SOURCE_PATHS=(Sources Tests Resources scripts .github README.md README.zh-CN.md CREDITS.md LICENSE DEVELOPMENT.md TESTING.md .gitignore)
+SOURCE_PATHS=(Sources Tests Resources scripts .github README.md README.zh-CN.md README.zh-TW.md README.ja.md CREDITS.md LICENSE DEVELOPMENT.md TESTING.md .gitignore)
 if [ -d "$PROJECT_DIR/docs" ]; then SOURCE_PATHS+=(docs); fi
 if [ -d "$PROJECT_DIR/updates" ]; then SOURCE_PATHS+=(updates); fi
 COPYFILE_DISABLE=1 tar -C "$PROJECT_DIR" \
@@ -67,7 +69,7 @@ GENERATED_FILES+=("$(basename "$SOURCE_ARCHIVE")")
 if [ "$MAKE_DMG" -eq 1 ]; then
     DMG_ROOT="$PACKAGE_STAGE/dmg"
     mkdir -p "$DMG_ROOT"
-    ditto "$APP" "$DMG_ROOT/EndfieldHUD.app"
+    ditto --norsrc --noextattr --noqtn "$APP" "$DMG_ROOT/EndfieldHUD.app"
     ln -s /Applications "$DMG_ROOT/Applications"
     cp "$PROJECT_DIR/LICENSE" "$DMG_ROOT/LICENSE.txt"
     cp "$PROJECT_DIR/docs/testing-build.md" "$DMG_ROOT/Testing-build.md"

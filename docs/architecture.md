@@ -1,7 +1,7 @@
 # Architecture
 
 EndfieldHUD is a native AppKit application with a Core Animation HUD. It uses
-the macOS SDK directly, with no third-party runtime dependencies. The build
+the macOS SDK directly, with Sparkle for signed application updates. The build
 scripts compile the flat `Sources` directory; folders are not Swift modules.
 
 ## Ownership
@@ -72,6 +72,18 @@ compile out the source-tree fallback used by standalone development tools. Third
 `CREDITS.md` and the feature documentation.
 
 ## Tests, builds and remaining seams
+
+`L10n` resolves English, Simplified Chinese, Traditional Chinese and Japanese.
+Literal templates and interpolated values are separate, so translated messages
+do not change user content. `LocalizationCatalog` stores contextual translations;
+source-coverage tests flag new untranslated strings. Background audio jobs capture
+their language when submitted. Visible canvases invalidate labels for the resolved
+language, including switches between the two Chinese scripts.
+
+`scripts/render-readme-previews.sh` renders the real HUD into documentation images
+and GIFs (requires FFmpeg). It uses temporary stores, a private clipboard, a sample
+profile and fixture telemetry. It does not capture the desktop or read personal
+application data. Generated intermediate frames stay in ignored `build/` storage.
 
 `scripts/test.sh` runs model, geometry, canvas and lifecycle checks using
 injected clocks/readers where possible. Graphical verification helpers exercise

@@ -94,7 +94,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private var dark = true
     private var accent = NSColor(srgbRed: 0.98, green: 0.83, blue: 0.12, alpha: 1)
     private var scale: CGFloat = 2
-    private var languageIsChinese = L10n.isChinese
+    private var renderedLanguage = L10n.resolvedLanguage
     private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.11, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.65 : 0.37, alpha: 1) }
     private var border: NSColor { NSColor(white: dark ? 0.72 : 0.24, alpha: dark ? 0.28 : 0.24) }
@@ -151,11 +151,11 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     /// update even when a different center module is selected.
     func updateAppearance(style: HUDModuleContentStyle) {
         guard dark != style.dark || !accent.isEqual(style.accent)
-                || scale != style.contentsScale || languageIsChinese != L10n.isChinese else { return }
+                || scale != style.contentsScale || renderedLanguage != L10n.resolvedLanguage else { return }
         dark = style.dark
         accent = style.accent
         scale = style.contentsScale
-        languageIsChinese = L10n.isChinese
+        renderedLanguage = L10n.resolvedLanguage
         withoutActions {
             repaint()
             renderDeletionControls()

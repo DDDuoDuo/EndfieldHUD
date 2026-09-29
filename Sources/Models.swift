@@ -15,6 +15,8 @@ enum AppLanguage: String, CaseIterable {
     case system
     case english
     case simplifiedChinese
+    case traditionalChinese
+    case japanese
 }
 
 enum HUDClockFormat: String, CaseIterable {

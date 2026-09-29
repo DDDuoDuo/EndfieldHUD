@@ -673,7 +673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateApplicationIcon() {
         let icon = store.configuration.applicationIcon
         NSApp.applicationIconImage = icon.image(size: 512)
-        statusItem?.button?.image = icon.image(size: 18, menuBar: true)
+        statusItem?.button?.image = icon.menuBarImage()
     }
 
     // Local verification commands do not change settings or login items.

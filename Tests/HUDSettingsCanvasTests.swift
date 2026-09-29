@@ -78,8 +78,45 @@ enum HUDSettingsCanvasTests {
         for id in ["language", "login", "focus", "screen", "ambient", "batteryEnabled", "restore"] {
             check(reach(id, in: system), "Every system setting remains reachable by continuous scrolling: \(id)")
         }
-        check(reach("screen", in: system), "Display chooser is reachable in System settings")
+        check(reach("language", in: system), "Language chooser is reachable in System settings")
+        _ = system.scroll(at: CGPoint(x: 100, y: 100), delta: 12)
+        let languageMainScroll = system.scrollOffset
         let retainedSystemLayer = system.layer
+        system.perform(actionID: "language")
+        check(controller.configuration.language == .english && store.configuration.language == .english,
+              "Opening the language chooser does not cycle or persist a different language")
+        check(system.isTransitioning && system.layer === retainedSystemLayer,
+              "Language choices open through the retained page handoff used by display selection")
+        checkPageHandoff(system, direction: 1); system.settleTransition()
+        check(system.accessibleActions.map(\.id) == ["back"] + AppLanguage.allCases.map { "language:" + $0.rawValue },
+              "All five language choices fit on the selection page in their stable order")
+        check(["System", "English", "简体中文", "繁體中文", "日本語"].allSatisfy { strings(system.layer).contains($0) },
+              "The chooser identifies each explicit language in its own writing system")
+        check(system.accessibleActions.first(where: { $0.id == "language:english" })?.label == "English, Selected"
+              && strings(system.layer).filter { $0 == "✓" }.count == 1,
+              "The saved language has one visible checkmark and an accessible selection announcement")
+        check(!system.accessibleActions.contains(where: { $0.id == "login" || $0.id == "language" }),
+              "Language choices do not expose controls from the outgoing System page")
+        check(system.escape() && controller.configuration.language == .english,
+              "Escape returns from language selection without changing the saved preference")
+        checkPageHandoff(system, direction: -1); system.settleTransition()
+        check(system.scrollOffset == languageMainScroll, "Returning from language selection restores the main-list scroll position")
+        for language in AppLanguage.allCases {
+            system.perform(actionID: "language"); system.settleTransition()
+            system.perform(actionID: "language:" + language.rawValue)
+            check(controller.configuration.language == language && ConfigurationStore(defaults: defaults).configuration.language == language,
+                  "Choosing \(language.rawValue) immediately updates the interface and persists across launches")
+            checkPageHandoff(system, direction: -1); system.settleTransition()
+            check(system.accessibleActions.contains(where: { $0.id == "language" }) && system.scrollOffset == languageMainScroll,
+                  "A language choice returns to System with the prior scroll position")
+            system.perform(actionID: "language"); system.settleTransition()
+            let selected = system.accessibleActions.filter { $0.id.hasPrefix("language:") && $0.label.hasSuffix(L10n.text("Selected", "已选择")) }
+            check(selected.map(\.id) == ["language:" + language.rawValue] && strings(system.layer).filter { $0 == "✓" }.count == 1,
+                  "Reopening the chooser checks exactly the saved \(language.rawValue) row")
+            system.perform(actionID: "back"); system.settleTransition()
+        }
+        system.perform(actionID: "language"); system.perform(actionID: "language:english"); system.settleTransition()
+        check(reach("screen", in: system), "Display chooser is reachable in System settings")
         system.perform(actionID: "screen")
         check(system.isTransitioning && system.layer === retainedSystemLayer, "Display choices open through the same retained mechanical page handoff")
         checkPageHandoff(system, direction: 1); system.settleTransition()
@@ -175,6 +212,12 @@ enum HUDSettingsCanvasTests {
         check(reach("appIcon", in: display), "Icon chooser remains inside Display settings")
         display.perform(actionID: "appIcon"); display.settleTransition()
         check(display.accessibleActions.contains(where: { $0.id == "appIcon:endfield" }), "Icon presets expose accessible names")
+        check(!display.accessibleActions.contains(where: { $0.id == "appIcon:originium" || $0.id == "appIcon:orundum" }),
+              "The removed hand-drawn currency symbols are absent from the first icon row")
+        let previousIcon = controller.configuration.applicationIcon
+        display.perform(actionID: "appIcon:originium"); display.perform(actionID: "appIcon:orundum")
+        check(controller.configuration.applicationIcon == previousIcon,
+              "Retired icon IDs cannot be selected through the picker action handler")
         check(!strings(display.layer).contains(where: { HUDApplicationIcon.pickerCases.map(\.title).contains($0) }),
               "Icon tiles show artwork only; names remain available to accessibility")
         let firstIconRow = display.accessibleActions.filter { $0.id.hasPrefix("appIcon:") && $0.rect.minY == display.accessibleActions.first(where: { $0.id == "appIcon:endfield" })!.rect.minY }

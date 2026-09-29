@@ -5,6 +5,7 @@ import IOKit.ps
 @main
 enum CoreTests {
     static func main() {
+        assertionCount += LocalizationTests.run()
         testPowerSourceNormalization()
         testCapacityReadings()
         testBatteryLevelTones()

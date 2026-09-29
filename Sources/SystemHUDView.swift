@@ -866,6 +866,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         appShortcutCanvas.perform(actionID: id)
     }
 
+    func performSettingsActionForVerification(_ id: String) {
+        settingsCanvases[selectedModule]?.perform(actionID: id)
+    }
+
     func showAppShortcutError(_ message: String) {
         if interactionEnabled, selectedModule != .addApp { selectModule(.addApp) }
         appShortcutCanvas.showError(message)
@@ -1220,10 +1224,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         else { super.keyDown(with: event) }
     }
 
-    func writePNG(to url: URL) throws {
+    func writePNG(to url: URL, scale: CGFloat = 2, presentation: Bool = false,
+                  background: CGColor? = nil) throws {
         layoutSubtreeIfNeeded()
         CATransaction.flush()
-        let scale: CGFloat = 2
         let width = max(1, Int(bounds.width * scale)), height = max(1, Int(bounds.height * scale))
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
                                       bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
@@ -1232,13 +1236,17 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: scale, y: -scale)
-        backdrop.render(in: context)
+        if let background {
+            context.setFillColor(background)
+            context.fill(bounds)
+        }
+        (presentation ? backdrop.presentation() ?? backdrop : backdrop).render(in: context)
         context.saveGState()
         context.translateBy(x: designOrigin.x, y: designOrigin.y)
         context.scaleBy(x: designScale, y: designScale)
-        canvas.render(in: context)
+        (presentation ? canvas.presentation() ?? canvas : canvas).render(in: context)
         context.restoreGState()
-        notesWorkspace.render(in: context)
+        (presentation ? notesWorkspace.presentation() ?? notesWorkspace : notesWorkspace).render(in: context)
         guard let cgImage = context.makeImage(),
               let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
             throw NSError(domain: "PowerOverlay", code: 2)
