@@ -29,7 +29,7 @@ jobs:
           cd "$RUNNER_TEMP/endfield-launch"
           curl --fail --location --silent --show-error --retry 3 \
             --proto '=https' --proto-redir '=https' \
-            'https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build10-macOS.dmg' \
+            'https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-macOS.dmg' \
             -o EndfieldHUD.dmg
           echo '29d7adbd96cf9264858d64481e797beac9a329ebda8d297beff7805955aaf40a  EndfieldHUD.dmg' | shasum -a 256 -c -
           mkdir mount
