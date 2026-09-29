@@ -37,19 +37,24 @@ jobs:
           cd "$RUNNER_TEMP/endfield-launch"
           curl --fail --location --silent --show-error --retry 3 \
             --proto '=https' --proto-redir '=https' \
-            'https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-macOS.dmg' \
+            'https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg' \
             -o EndfieldHUD.dmg
-          echo '29d7adbd96cf9264858d64481e797beac9a329ebda8d297beff7805955aaf40a  EndfieldHUD.dmg' | shasum -a 256 -c -
+          echo '986458582a71dab69c7045ef1c0f920cb9096d0d59b771ef1080f11b3226eee4  EndfieldHUD.dmg' | shasum -a 256 -c -
           mkdir mount
           trap 'hdiutil detach "$RUNNER_TEMP/endfield-launch/mount" || true' EXIT
           hdiutil attach EndfieldHUD.dmg -readonly -nobrowse -mountpoint "$PWD/mount"
           ditto mount/EndfieldHUD.app EndfieldHUD.app
       - name: Check the distributed app without rebuilding it
         run: scripts/test-distributed-launch.sh "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" build/tahoe-launch
-      - name: Build and inspect the standard installer
+      - name: Download and inspect the published installer
         run: |
-          scripts/package-installer.sh "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" "$RUNNER_TEMP/endfield-installer"
-          scripts/test-installer-package.sh "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build10-Installer.pkg" "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app"
+          mkdir -p "$RUNNER_TEMP/endfield-installer"
+          curl --fail --location --silent --show-error --retry 3 \
+            --proto '=https' --proto-redir '=https' \
+            'https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-Installer.pkg' \
+            -o "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build11-Installer.pkg"
+          echo "4c4dc8fcbaf57b0c760761bdb99545f2d5823cdba276cc7a6b447a2870440e8e  $RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build11-Installer.pkg" | shasum -a 256 -c -
+          scripts/test-installer-package.sh "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build11-Installer.pkg" "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app"
       - name: Verify clean replacement and same-version repair
         shell: bash
         run: |
@@ -61,7 +66,7 @@ jobs:
           sudo ditto "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" /Applications/EndfieldHUD.app
           for pass in 1 2; do
             sudo touch /Applications/EndfieldHUD.app/Contents/obsolete-installer-verification.txt
-            sudo installer -pkg "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build10-Installer.pkg" -target / \
+            sudo installer -pkg "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build11-Installer.pkg" -target / \
               | tee "build/tahoe-launch/installer/install-$pass.log"
             test ! -e /Applications/EndfieldHUD.app/Contents/obsolete-installer-verification.txt
           done

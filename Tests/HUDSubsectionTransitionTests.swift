@@ -120,10 +120,12 @@ enum HUDSubsectionTransitionTests {
         }
         let clipboard = ClipboardCanvas(store: clipboardStore, reduceMotion: { reduced })
         _ = clipboard.makeContent(for: .clipboard, style: style); clipboard.activate()
-        clipboard.perform(actionID: "clipboard:next")
-        check(clipboard.pageIndex == 1 && tracks(clipboard.layer).count == 2, "Clipboard pages use the shared reveal without changing pagination")
+        _ = clipboard.scroll(at: CGPoint(x: 30, y: 60), delta: 20.5)
+        check(clipboard.scrollOffset == 20.5 && tracks(clipboard.layer).isEmpty,
+              "Continuous clipboard scrolling moves rows directly without starting a page transition")
         clipboard.deactivate()
-        check(tracks(clipboard.layer).isEmpty, "Closing Clipboard cancels its finite page transition")
+        check(clipboard.scrollOffset == 20.5 && tracks(clipboard.layer).isEmpty,
+              "Closing Clipboard preserves its reading position without leaving subsection motion")
 
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("EndfieldCharge-SubsectionShelf-\(UUID().uuidString)")
         try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -30,17 +30,24 @@ enum ClipboardCanvasTests {
         func animationCount(_ layer: CALayer) -> Int {
             (layer.animationKeys()?.count ?? 0) + (layer.sublayers ?? []).reduce(0) { $0 + animationCount($1) }
         }
+        let viewport = CGRect(x: 12, y: 41, width: 376, height: 246)
+        let scrollPoint = CGPoint(x: 30, y: 60)
+        func scrollTo(_ offset: CGFloat) {
+            _ = canvas.scroll(at: scrollPoint, delta: offset - canvas.scrollOffset)
+        }
         let dark = HUDModuleContentStyle(dark: true, accent: .systemYellow, contentsScale: 2)
         let light = HUDModuleContentStyle(dark: false, accent: .systemGreen, contentsScale: 2.35)
         let persistent = canvas.makeContent(for: .clipboard, style: dark)
         canvas.activate()
-        check(canvas.itemCount == 0 && canvas.pageCount == 1 && canvas.pageIndex == 0, "Empty clipboard renders a valid first page")
+        check(canvas.itemCount == 0 && canvas.scrollOffset == 0, "Empty clipboard starts at the top of its history")
         check(!canvas.mouseDown(at: CGPoint(x: -1, y: 60)) && canvas.mouseDown(at: CGPoint(x: 50, y: 10)),
               "Only input within the common content host is consumed")
         check(copies.isEmpty, "Empty and heading clicks never restore an arbitrary clipboard item")
         for index in 0..<10 { capture("Entry \(index) – 中文\nSecond line") }
-        check(canvas.itemCount == 10 && canvas.pageCount == 2 && commands("copy").count == 6,
-              "Observed captures update six readable rows with the remainder on a second page")
+        check(canvas.itemCount == 10 && commands("copy").count == 6,
+              "Observed captures show six readable rows at the top of the scrollable history")
+        check(!canvas.accessibleActions.contains { $0.id == "clipboard:next" || $0.id == "clipboard:previous" },
+              "Continuous history does not expose page navigation controls")
         let first = store.items[0]
         for item in store.items.prefix(6) {
             check(canvas.rowRect(for: item.id).map(canvas.layer.bounds.contains) == true,
@@ -62,27 +69,58 @@ enum ClipboardCanvasTests {
         check(canvas.selectedID == store.items[1].id && copies.count == 1, "Arrow selection moves without replacing the system clipboard")
         canvas.copySelection()
         check(copies.last == store.items[1].id, "Return-style copy uses the selected row")
-        canvas.perform(actionID: "clipboard:next")
-        check(canvas.pageIndex == 1 && canvas.selectedID == nil && commands("copy").count == 4,
-              "Next page exposes the remaining rows without retaining a hidden selection")
-        canvas.copyVisibleItem(at: 0)
-        check(copies.last == store.items[6].id, "Number shortcuts restore the intended row on the visible page")
-        let copyCount = copies.count
-        canvas.copyVisibleItem(at: 5)
-        check(copies.count == copyCount, "An empty numbered slot cannot copy a different item")
-        canvas.perform(actionID: "clipboard:next")
-        check(canvas.pageIndex == 1 && !canvas.accessibleActions.contains { $0.id == "clipboard:next" }, "Pagination stops at the last page")
-        canvas.perform(actionID: "clipboard:previous")
+        check(canvas.scroll(at: scrollPoint, delta: 0.5) && canvas.scrollOffset == 0.5,
+              "A fractional trackpad sample moves the history immediately")
+        scrollTo(0)
         for _ in 0..<30 { _ = canvas.scroll(at: CGPoint(x: 30, y: 60), delta: 0.5) }
-        check(canvas.pageIndex == 0, "Small trackpad samples do not skip pages")
+        check(canvas.scrollOffset == 15, "Small trackpad samples accumulate as continuous pixel movement")
         _ = canvas.scroll(at: CGPoint(x: 30, y: 60), delta: -10)
         _ = canvas.scroll(at: CGPoint(x: 30, y: 60), delta: 30)
-        check(canvas.pageIndex == 0, "Scroll reversal resets accumulated movement")
-        _ = canvas.scroll(at: CGPoint(x: 30, y: 60), delta: 12)
-        check(canvas.pageIndex == 1, "The scroll threshold advances one page")
+        check(canvas.scrollOffset == 35, "Reversing direction moves immediately without a page threshold")
         check(!canvas.scroll(at: CGPoint(x: 30, y: 10), delta: 60) && !canvas.scroll(at: CGPoint(x: 30, y: 60), delta: .nan),
-              "Heading and invalid scroll input cannot change pages")
-        canvas.perform(actionID: "clipboard:previous")
+              "Heading and invalid scroll input cannot move the history")
+        check(canvas.scrollOffset == 35, "Ignored scroll input preserves the current position")
+        scrollTo(20)
+        check(canvas.rowRect(for: first.id) == CGRect(x: 12, y: 41, width: 376, height: 19),
+              "A partially visible top row exposes only its clipped onscreen area")
+        let clippedPin = canvas.accessibleActions.first { $0.id == action(first.id, "pin") }!
+        check(clippedPin.rect == CGRect(x: 332, y: 41, width: 23, height: 13),
+              "Partially visible row controls retain their original position before clipping")
+        check(canvas.accessibleActions.filter { $0.id.split(separator: ":").count == 3 }.allSatisfy { viewport.contains($0.rect) },
+              "Row accessibility frames never overlap the heading or bottom toolbar")
+        let copiesBeforeClippedClick = copies.count
+        _ = canvas.mouseDown(at: CGPoint(x: clippedPin.rect.midX, y: viewport.minY - 1))
+        check(copies.count == copiesBeforeClippedClick && store.items.first { $0.id == first.id }?.isPinned == true,
+              "The clipped-away part of a row cannot copy or toggle its pin")
+        _ = canvas.mouseDown(at: center(clippedPin.rect))
+        check(store.items.first { $0.id == first.id }?.isPinned == false && copies.count == copiesBeforeClippedClick,
+              "A visible part of a clipped pin remains clickable without copying")
+        canvas.perform(actionID: action(first.id, "pin"))
+        scrollTo(37.5)
+        check(canvas.rowRect(for: first.id) == nil && !canvas.accessibleActions.contains { $0.id == action(first.id, "copy") },
+              "A row reduced to a sliver smaller than two pixels has no native action target")
+        scrollTo(102.5)
+        canvas.copyVisibleItem(at: 0)
+        check(copies.last == store.items[2].id, "Number one restores the partially visible first row after scrolling")
+        scrollTo(102.5)
+        canvas.copyVisibleItem(at: 5)
+        check(copies.last == store.items[7].id, "Number six follows the sixth currently visible row at a fractional offset")
+        let copyCount = copies.count
+        canvas.copyVisibleItem(at: -1); canvas.copyVisibleItem(at: 6)
+        check(copies.count == copyCount, "Only the six supported numbered shortcuts can restore an item")
+        _ = canvas.scroll(at: scrollPoint, delta: CGFloat.greatestFiniteMagnitude)
+        check(canvas.scrollOffset == 164 && canvas.rowRect(for: store.items.last!.id)?.height == 37,
+              "Scrolling clamps at the bottom with the oldest row fully visible")
+        let edgeChanges = changes
+        _ = canvas.scroll(at: scrollPoint, delta: 100)
+        _ = canvas.scroll(at: scrollPoint, delta: 0)
+        check(changes == edgeChanges, "Clamped and zero-distance scrolling do not rebuild native actions")
+        _ = canvas.scroll(at: scrollPoint, delta: -CGFloat.greatestFiniteMagnitude)
+        check(canvas.scrollOffset == 0, "Scrolling clamps at the newest item")
+        canvas.selectNext(1)
+        check(canvas.selectedID == store.items[8].id && canvas.rowRect(for: store.items[8].id)?.height == 37 && canvas.scrollOffset > 0,
+              "Keyboard selection scrolls a previously selected offscreen row fully into view")
+        scrollTo(0)
         let IDs = store.items.map(\.id)
         L10n.language = .simplifiedChinese
         let updated = canvas.makeContent(for: .clipboard, style: light)
@@ -102,8 +140,8 @@ enum ClipboardCanvasTests {
               "Cancelling clear keeps every history item")
         canvas.perform(actionID: "clipboard:clear")
         canvas.perform(actionID: "clipboard:confirmClear")
-        check(store.items.count == 1 && store.items[0].id == first.id && canvas.pageCount == 1,
-              "Clear unpinned retains the pinned entry and recomputes page bounds")
+        check(store.items.count == 1 && store.items[0].id == first.id && canvas.scrollOffset == 0,
+              "Clear unpinned retains the pinned entry and resets short history to the top")
         canvas.perform(actionID: action(first.id, "copy"))
         canvas.deleteSelection()
         check(store.items.isEmpty && canvas.selectedID == nil, "Explicit delete can remove a selected pinned item")
@@ -146,6 +184,55 @@ enum ClipboardCanvasTests {
         capture("Observer cleanup remains safe")
         check(canvas.itemCount == 5, "The surviving canvas still observes after another observer is removed")
 
+        let scrollingStore = ClipboardStore(capacity: 48)
+        let scrollingCanvas = ClipboardCanvas(store: scrollingStore, reduceMotion: { true })
+        var scrollingChanges = 0
+        scrollingCanvas.onChange = { scrollingChanges += 1 }
+        func captureScrolling(_ text: String) {
+            pasteboard.clearContents(); pasteboard.setString(text, forType: .string)
+            precondition(scrollingStore.capture(from: pasteboard))
+        }
+        for index in 0..<40 { captureScrolling("Scroll entry \(index)") }
+        scrollingCanvas.activate()
+        _ = scrollingCanvas.scroll(at: scrollPoint, delta: 125.5)
+        let anchoredID = scrollingStore.items[3].id
+        let anchoredRect = scrollingCanvas.rowRect(for: anchoredID)
+        captureScrolling("A new clipboard arrival")
+        check(scrollingCanvas.scrollOffset == 166.5 && scrollingCanvas.rowRect(for: anchoredID) == anchoredRect,
+              "New captures preserve the top visible item and its fractional position")
+        captureScrolling("Scroll entry 0")
+        check(scrollingCanvas.scrollOffset == 207.5 && scrollingCanvas.rowRect(for: anchoredID) == anchoredRect,
+              "Recapturing an older item preserves the current reading position as that item moves to the top")
+        func retainedRows(_ layer: CALayer) -> Int {
+            ((layer.name ?? "").hasPrefix("clipboard.row.") ? 1 : 0)
+                + (layer.sublayers ?? []).reduce(0) { $0 + retainedRows($1) }
+        }
+        check(scrollingCanvas.itemCount == 41 && retainedRows(scrollingCanvas.layer) <= 8,
+              "Long clipboard histories retain only the visible rows and a bounded amount of surrounding artwork")
+        scrollingCanvas.deactivate()
+        let inactiveOffset = scrollingCanvas.scrollOffset
+        let inactiveChanges = scrollingChanges
+        captureScrolling("Captured while the scrolled history is hidden")
+        check(scrollingCanvas.scrollOffset == inactiveOffset && scrollingCanvas.itemCount == 41
+              && scrollingChanges == inactiveChanges && animationCount(scrollingCanvas.layer) == 0,
+              "Hidden history preserves its offset without rebuilding rows, accessibility or animations")
+        scrollingCanvas.activate()
+        check(scrollingCanvas.itemCount == 42 && scrollingCanvas.scrollOffset == 248.5
+              && scrollingCanvas.rowRect(for: anchoredID) == anchoredRect,
+              "Reopening incorporates hidden arrivals while preserving the viewed item")
+        _ = scrollingStore.remove(id: scrollingStore.items[0].id)
+        check(scrollingCanvas.scrollOffset == 207.5 && scrollingCanvas.rowRect(for: anchoredID) == anchoredRect,
+              "Removing an item above the viewport leaves the current reading position intact")
+        _ = scrollingCanvas.scroll(at: scrollPoint, delta: CGFloat.greatestFiniteMagnitude)
+        check(scrollingStore.setCapacity(8) && scrollingCanvas.scrollOffset == 82
+              && scrollingCanvas.rowRect(for: scrollingStore.items.last!.id)?.height == 37,
+              "Evicting the viewed tail clamps the viewport to the remaining oldest row")
+        check(scrollingStore.setCapacity(4) && scrollingCanvas.scrollOffset == 0,
+              "Trimming history below the viewport capacity resets its scroll offset")
+        _ = scrollingCanvas.scroll(at: scrollPoint, delta: 500)
+        check(scrollingCanvas.scrollOffset == 0, "A short history cannot scroll into blank space")
+        scrollingCanvas.deactivate()
+
         let inputStore = ClipboardStore()
         for text in ["Keyboard older", "Keyboard newer"] {
             pasteboard.clearContents(); pasteboard.setString(text, forType: .string)
@@ -184,6 +271,15 @@ enum ClipboardCanvasTests {
         check(!host.subviews.isEmpty, "The active scene exposes native accessibility controls")
         inputStore.clearUnpinned()
         check(host.subviews.isEmpty, "Eviction removes obsolete native row actions")
+        for index in 0..<10 {
+            pasteboard.clearContents(); pasteboard.setString("Native scroll entry \(index)", forType: .string)
+            _ = inputStore.capture(from: pasteboard)
+        }
+        _ = inputCanvas.scroll(at: scrollPoint, delta: 73.5)
+        let nativeActions = inputCanvas.accessibleActions
+        check(host.subviews.count == nativeActions.count && host.subviews.allSatisfy { button in
+            nativeActions.contains { $0.rect == button.frame }
+        }, "Scrolling refreshes native accessibility controls to match the current clipped row positions")
         input.deactivate()
         check(!input.keyDown(key(125)) && !input.mouseDown(at: CGPoint(x: 120, y: 60), event: down),
               "An inactive clipboard module cannot intercept another module's keyboard or pointer input")
@@ -219,7 +315,7 @@ enum ClipboardCanvasTests {
         check(feedbackTracks().allSatisfy { $0.duration <= 0.26 && $0.repeatCount == 0 && $0.repeatDuration == 0
             && ($0 as? CAPropertyAnimation)?.keyPath != "opacity" }, "Action feedback stays finite and mechanical without blinking or crossfade")
         reducedFeedback = true; feedbackCanvas.updateRenderScale(2)
-        check(feedbackTracks().isEmpty, "Reduce Motion immediately clears every clipboard action and page track")
+        check(feedbackTracks().isEmpty, "Reduce Motion immediately clears every clipboard action track")
         feedbackCanvas.copyVisibleItem(at: 0)
         check(feedbackTracks().isEmpty, "Reduced Motion still copies without starting feedback")
         reducedFeedback = false; feedbackCanvas.copyVisibleItem(at: 0); feedbackCanvas.deactivate()

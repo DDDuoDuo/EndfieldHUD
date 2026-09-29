@@ -4,7 +4,7 @@
 
 一款《明日方舟：終末地》風格的 macOS 選單列 App。按下快捷鍵，就能開啟具有層次與動態效果的 HUD，使用便箋、檔案暫存、計時、音量控制和系統狀態等功能。
 
-**[下載 v1.0.1 — EndfieldHUD-1.0.1-build10-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build10-macOS.dmg)** · [所有版本](https://github.com/DDDuoDuo/EndfieldHUD/releases)
+**[下載 v1.0.1 — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [所有版本](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD 電源頁面，使用範例讀數](docs/media/overview.png)
 

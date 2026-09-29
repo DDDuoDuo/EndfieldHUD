@@ -35,9 +35,8 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
     var onCopy: ((UUID) -> Bool)?
     var onChange: (() -> Void)?
     private(set) var selectedID: UUID?
-    private(set) var pageIndex = 0
+    private(set) var scrollOffset: CGFloat = 0
     var itemCount: Int { items.count }
-    var pageCount: Int { max(1, (items.count + Self.pageCapacity - 1) / Self.pageCapacity) }
     var accessibilityStatus: String { feedback ?? store.statusMessage ?? defaultStatus }
     var accessibleActions: [ClipboardCanvasAction] {
         var result = toolbarActions()
@@ -50,7 +49,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         return result
     }
 
-    private static let pageCapacity = 6
+    private static let rowHeight: CGFloat = 41
     private static let contentRect = CGRect(x: 12, y: 41, width: 376, height: 246)
     private let store: ClipboardStore
     private var observer: UUID?
@@ -59,22 +58,28 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
     private var dirty = true
     private var confirmingClear = false
     private var feedback: String?
-    private var scrollAccumulation: CGFloat = 0
     private var dark = true
     private var scale: CGFloat = 2
     private var yellow: NSColor { HUDRuntimeAppearance.accent }
     private let heading = CATextLayer()
     private let status = CATextLayer()
     private let rows = CALayer()
+    private let scrollIndicator = CALayer()
+    private var rowLayers: [UUID: CALayer] = [:]
     private let toolbar = CALayer()
     private let reduceMotion: () -> Bool
-    private var pageTransition: HUDSubsectionTransition!
+    private var collectionTransition: HUDSubsectionTransition!
     private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.11, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.68 : 0.38, alpha: 1) }
     private let ink = NSColor(white: 0.14, alpha: 1)
+    private var maximumOffset: CGFloat { max(0, CGFloat(items.count) * Self.rowHeight - Self.contentRect.height) }
+    private var visibleIndices: Range<Int> {
+        let first = min(items.count, max(0, Int(floor(scrollOffset / Self.rowHeight))))
+        let end = min(items.count, Int(ceil((scrollOffset + Self.contentRect.height) / Self.rowHeight)))
+        return first..<max(first, end)
+    }
     private var visibleItems: ArraySlice<Row> {
-        let start = min(items.count, pageIndex * Self.pageCapacity)
-        return items[start..<min(items.count, start + Self.pageCapacity)]
+        items[visibleIndices]
     }
     private var defaultStatus: String {
         L10n.text("\(items.count) / \(store.capacity) items · Click to copy", "\(items.count) / \(store.capacity) 项 · 点击复制")
@@ -87,9 +92,14 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
             layer.name = "module.clipboard.canvas"
             layer.frame = CGRect(x: 0, y: 0, width: 400, height: 334)
             layer.allowsGroupOpacity = false
-            rows.frame = layer.bounds
+            rows.name = "clipboard.rows"
+            rows.frame = Self.contentRect
+            rows.masksToBounds = true
             rows.allowsGroupOpacity = false
             layer.addSublayer(rows)
+            scrollIndicator.name = "clipboard.scrollIndicator"
+            scrollIndicator.cornerRadius = 1
+            layer.addSublayer(scrollIndicator)
             heading.frame = CGRect(x: 12, y: 0, width: 376, height: 20)
             heading.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
             heading.fontSize = 15
@@ -102,7 +112,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
             toolbar.frame = layer.bounds
             layer.addSublayer(toolbar)
         }
-        pageTransition = HUDSubsectionTransition(content: rows, viewport: Self.contentRect)
+        collectionTransition = HUDSubsectionTransition(content: rows, viewport: rows.bounds)
         observer = store.observe { [weak self] in
             guard let self else { return }
             self.dirty = true
@@ -124,16 +134,15 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
 
     func deactivate() {
         active = false
-        pageTransition.settle()
+        collectionTransition.settle()
         removeActionFeedback(in: layer)
         confirmingClear = false
         feedback = nil
-        scrollAccumulation = 0
         dirty = true
     }
 
     func updateRenderScale(_ value: CGFloat) {
-        if reduceMotion() { pageTransition.settle(); removeActionFeedback(in: layer) }
+        if reduceMotion() { collectionTransition.settle(); removeActionFeedback(in: layer) }
         let next = value.isFinite ? min(8, max(1, value)) : 2
         guard scale != next else { return }
         scale = next
@@ -155,39 +164,69 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
     }
 
     @discardableResult func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
-        guard Self.contentRect.contains(point), delta.isFinite, abs(delta) > 0.01 else { return false }
-        if (delta > 0) != (scrollAccumulation > 0) { scrollAccumulation = 0 }
-        scrollAccumulation += delta
-        if abs(scrollAccumulation) >= 40 {
-            changePage(by: scrollAccumulation > 0 ? 1 : -1)
-            scrollAccumulation = 0
+        guard Self.contentRect.contains(point), delta.isFinite else { return false }
+        let next = min(maximumOffset, max(0, scrollOffset + delta))
+        guard next != scrollOffset else { return true }
+        collectionTransition.settle()
+        removeActionFeedback(in: rows)
+        scrollOffset = next
+        let toolbarChanged = confirmingClear
+        confirmingClear = false
+        feedback = nil
+        withoutActions {
+            // Retain the visible row layers during wheel/momentum events. Only
+            // rows entering/leaving the viewport allocate or release artwork.
+            layoutRows()
+            status.string = accessibilityStatus
+            status.foregroundColor = muted.cgColor
+            if toolbarChanged { renderToolbar() }
         }
+        onChange?()
         return true
     }
 
     func rowRect(for id: UUID) -> CGRect? {
-        guard let index = items.firstIndex(where: { $0.id == id }), index / Self.pageCapacity == pageIndex else { return nil }
-        return CGRect(x: 12, y: 43 + CGFloat(index % Self.pageCapacity) * 41, width: 376, height: 37)
+        guard let rect = fullRowRect(for: id) else { return nil }
+        return clipped(rect)
+    }
+
+    private func fullRowRect(for id: UUID) -> CGRect? {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        return CGRect(x: Self.contentRect.minX, y: Self.contentRect.minY + 2 + CGFloat(index) * Self.rowHeight - scrollOffset,
+                      width: Self.contentRect.width, height: 37)
+    }
+
+    private func clipped(_ rect: CGRect) -> CGRect? {
+        let visible = rect.intersection(Self.contentRect)
+        return visible.isNull || visible.height < 2 ? nil : visible
+    }
+
+    private func revealRow(at index: Int) {
+        let top = CGFloat(index) * Self.rowHeight
+        if top < scrollOffset { scrollOffset = top }
+        else if top + Self.rowHeight > scrollOffset + Self.contentRect.height {
+            scrollOffset = top + Self.rowHeight - Self.contentRect.height
+        }
+        scrollOffset = min(maximumOffset, max(0, scrollOffset))
     }
 
     func selectNext(_ direction: Int) {
         guard !items.isEmpty else { return }
         let current = selectedID.flatMap { id in items.firstIndex { $0.id == id } }
         let index = min(items.count - 1, max(0, current.map { $0 + direction } ?? (direction < 0 ? items.count - 1 : 0)))
-        let previousPage = pageIndex
         selectedID = items[index].id
-        pageIndex = index / Self.pageCapacity
+        revealRow(at: index)
         feedback = nil
         confirmingClear = false
         withoutActions { repaint() }
-        if previousPage != pageIndex { pageTransition.reveal(direction: CGFloat(direction), animated: active && !reduceMotion()) }
         onChange?()
     }
 
     func copySelection() { if let id = selectedID { copy(id) } }
     func copyVisibleItem(at index: Int) {
-        guard index >= 0, index < visibleItems.count else { return }
-        copy(items[pageIndex * Self.pageCapacity + index].id)
+        let visible = visibleItems.filter { rowRect(for: $0.id) != nil }
+        guard index >= 0, index < 6, index < visible.count else { return }
+        copy(visible[index].id)
     }
     func deleteSelection() {
         guard let id = selectedID else { return }
@@ -213,8 +252,6 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
             let positions = visibleRowPositions()
             if store.clearUnpinned() { animateCollectionChange(from: positions) }
             animateToolbar(direction: -1)
-        case "clipboard:previous": changePage(by: -1)
-        case "clipboard:next": changePage(by: 1)
         default:
             let parts = value.split(separator: ":")
             guard parts.count == 3, parts[0] == "clipboard", let id = UUID(uuidString: String(parts[1])),
@@ -234,7 +271,6 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         confirmingClear = false
         let success = onCopy?(id) ?? false
         feedback = success ? L10n.text("Copied", "已复制") : (store.statusMessage ?? L10n.text("Could not restore this item", "无法恢复此项目"))
-        if let index = items.firstIndex(where: { $0.id == id }) { pageIndex = index / Self.pageCapacity }
         withoutActions { repaint() }
         if success { animateRow(id) }
         onChange?()
@@ -252,7 +288,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
     }
     private func animateCollectionChange(from positions: [String: CGPoint]) {
         guard active, !reduceMotion() else { return }
-        pageTransition.settle()
+        collectionTransition.settle()
         var moved = false
         for row in rows.sublayers ?? [] {
             guard let name = row.name, name.hasPrefix("clipboard.row.") else { continue }
@@ -263,7 +299,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
             reflow.duration = 0.20; reflow.timingFunction = CAMediaTimingFunction(name: .easeOut)
             row.add(reflow, forKey: "action.clipboard.reflow"); moved = true
         }
-        if !moved { pageTransition.reveal(direction: -1, animated: true) }
+        if !moved { collectionTransition.reveal(direction: -1, animated: true) }
     }
     private func animateRow(_ id: UUID) {
         guard active, !reduceMotion(), let row = rows.sublayers?.first(where: { $0.name == "clipboard.row.\(id.uuidString)" }) else { return }
@@ -292,34 +328,37 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
     }
 
     private func refresh(notify: Bool = true) {
-        if dirty { items = store.items.map(Row.init); dirty = false }
+        if dirty {
+            // Keep the item under the user's eyes stable when captures prepend
+            // history. At the top, new captures should appear immediately.
+            let first = Int(floor(scrollOffset / Self.rowHeight))
+            let anchor = scrollOffset > 0 && items.indices.contains(first) ? items[first].id : nil
+            let remainder = scrollOffset.truncatingRemainder(dividingBy: Self.rowHeight)
+            items = store.items.map(Row.init)
+            if let anchor, let index = items.firstIndex(where: { $0.id == anchor }) {
+                scrollOffset = CGFloat(index) * Self.rowHeight + remainder
+            }
+            dirty = false
+        }
         if let id = selectedID, !items.contains(where: { $0.id == id }) { selectedID = nil }
-        pageIndex = min(pageIndex, pageCount - 1)
+        scrollOffset = min(maximumOffset, max(0, scrollOffset))
         if !items.contains(where: { !$0.isPinned }) { confirmingClear = false }
         withoutActions { repaint() }
         if notify { onChange?() }
     }
 
-    private func changePage(by direction: Int) {
-        scrollAccumulation = 0
-        let next = min(pageCount - 1, max(0, pageIndex + direction))
-        guard pageIndex != next else { return }
-        pageIndex = next
-        selectedID = nil
-        feedback = nil
-        confirmingClear = false
-        withoutActions { repaint() }
-        pageTransition.reveal(direction: CGFloat(direction), animated: active && !reduceMotion())
-        onChange?()
-    }
-
     private func action(_ id: UUID, _ verb: String) -> String { "clipboard:\(id.uuidString):\(verb)" }
-    private func rowActions(_ item: Row) -> [ClipboardCanvasAction] {
-        guard let rect = rowRect(for: item.id) else { return [] }
-        return [ClipboardCanvasAction(id: action(item.id, "pin"), label: (item.isPinned ? L10n.text("Unpin: ", "取消固定：") : L10n.text("Pin: ", "固定：")) + item.preview,
+    private func rowActions(_ item: Row, clippedToViewport: Bool = true) -> [ClipboardCanvasAction] {
+        guard let rect = fullRowRect(for: item.id) else { return [] }
+        let actions = [ClipboardCanvasAction(id: action(item.id, "pin"), label: (item.isPinned ? L10n.text("Unpin: ", "取消固定：") : L10n.text("Pin: ", "固定：")) + item.preview,
                                       rect: CGRect(x: rect.minX + 320, y: rect.minY + 6, width: 23, height: 25)),
                 ClipboardCanvasAction(id: action(item.id, "remove"), label: L10n.text("Delete: ", "删除：") + item.preview,
                                       rect: CGRect(x: rect.minX + 348, y: rect.minY + 6, width: 23, height: 25))]
+        guard clippedToViewport else { return actions }
+        return actions.compactMap { action in
+            guard let rect = clipped(action.rect) else { return nil }
+            return ClipboardCanvasAction(id: action.id, label: action.label, rect: rect)
+        }
     }
 
     private func toolbarActions() -> [ClipboardCanvasAction] {
@@ -329,8 +368,6 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         }
         var result: [ClipboardCanvasAction] = []
         if items.contains(where: { !$0.isPinned }) { result.append(ClipboardCanvasAction(id: "clipboard:clear", label: L10n.text("Clear unpinned", "清空未固定项"), rect: CGRect(x: 12, y: 299, width: 140, height: 27))) }
-        if pageIndex > 0 { result.append(ClipboardCanvasAction(id: "clipboard:previous", label: L10n.text("Previous page", "上一页"), rect: CGRect(x: 265, y: 299, width: 29, height: 27))) }
-        if pageIndex + 1 < pageCount { result.append(ClipboardCanvasAction(id: "clipboard:next", label: L10n.text("Next page", "下一页"), rect: CGRect(x: 359, y: 299, width: 29, height: 27))) }
         return result
     }
 
@@ -342,17 +379,43 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         status.foregroundColor = feedback == L10n.text("Copied", "已复制") ? (dark ? yellow : yellow.blended(withFraction: 0.40, of: .black) ?? yellow).cgColor : muted.cgColor
         status.contentsScale = HUDRenderScale.contentScale(for: status, baseScale: scale)
         rows.sublayers?.forEach { $0.removeFromSuperlayer() }
+        rowLayers.removeAll()
         if items.isEmpty {
-            addText(L10n.text("Your clipboard history appears here", "剪贴板历史将在此显示"), rect: CGRect(x: 24, y: 145, width: 352, height: 46), size: 14, color: primary, parent: rows, alignment: .center, wrapped: true)
-            addText(L10n.text("Copy text, links, images or files", "复制文字、链接、图片或文件"), rect: CGRect(x: 24, y: 197, width: 352, height: 32), size: 10.5, color: muted, parent: rows, alignment: .center, wrapped: true)
-        } else { for (index, item) in visibleItems.enumerated() { render(item, number: pageIndex * Self.pageCapacity + index + 1) } }
+            addText(L10n.text("Your clipboard history appears here", "剪贴板历史将在此显示"), rect: CGRect(x: 12, y: 104, width: 352, height: 46), size: 14, color: primary, parent: rows, alignment: .center, wrapped: true)
+            addText(L10n.text("Copy text, links, images or files", "复制文字、链接、图片或文件"), rect: CGRect(x: 12, y: 156, width: 352, height: 32), size: 10.5, color: muted, parent: rows, alignment: .center, wrapped: true)
+        }
+        layoutRows()
         renderToolbar()
     }
 
+    private func layoutRows() {
+        let expected = Set(visibleItems.map(\.id))
+        for id in Array(rowLayers.keys) where !expected.contains(id) {
+            rowLayers.removeValue(forKey: id)?.removeFromSuperlayer()
+        }
+        for index in visibleIndices {
+            let item = items[index]
+            if let row = rowLayers[item.id], let rect = fullRowRect(for: item.id) {
+                row.frame = rect.offsetBy(dx: -Self.contentRect.minX, dy: -Self.contentRect.minY)
+            } else { render(item, number: index + 1) }
+        }
+        scrollIndicator.isHidden = maximumOffset == 0
+        if maximumOffset > 0 {
+            let height = max(24, Self.contentRect.height * Self.contentRect.height / (CGFloat(items.count) * Self.rowHeight))
+            scrollIndicator.frame = CGRect(x: Self.contentRect.maxX + 4,
+                y: Self.contentRect.minY + (Self.contentRect.height - height) * scrollOffset / maximumOffset,
+                width: 2, height: height)
+            scrollIndicator.backgroundColor = yellow.withAlphaComponent(0.55).cgColor
+        }
+    }
+
     private func render(_ item: Row, number: Int) {
-        guard let rect = rowRect(for: item.id) else { return }
-        let row = CALayer(); row.name = "clipboard.row.\(item.id.uuidString)"; row.frame = rect; row.allowsGroupOpacity = false
+        guard let rect = fullRowRect(for: item.id) else { return }
+        let row = CALayer(); row.name = "clipboard.row.\(item.id.uuidString)"
+        row.frame = rect.offsetBy(dx: -Self.contentRect.minX, dy: -Self.contentRect.minY)
+        row.allowsGroupOpacity = false
         rows.addSublayer(row)
+        rowLayers[item.id] = row
         let selected = item.id == selectedID
         let plate = CAShapeLayer()
         plate.path = cutCorner(CGRect(origin: .zero, size: rect.size), corner: 5)
@@ -376,7 +439,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         case .files: title = L10n.text("Files", "文件")
         }
         addText(title + (item.isPinned ? L10n.text(" · Pinned", " · 已固定") : ""), rect: CGRect(x: 71, y: 23, width: 243, height: 11), size: 8.5, color: ink.withAlphaComponent(0.64), parent: row)
-        for action in rowActions(item) {
+        for action in rowActions(item, clippedToViewport: false) {
             HUDControlHighlightLayer.add(to: row, rect: action.rect.offsetBy(dx: -rect.minX, dy: -rect.minY))
         }
         let pin = CGMutablePath(); pin.move(to: CGPoint(x: 327, y: 11)); pin.addLine(to: CGPoint(x: 336, y: 11)); pin.move(to: CGPoint(x: 329, y: 11)); pin.addLine(to: CGPoint(x: 329, y: 17)); pin.addLine(to: CGPoint(x: 326, y: 20)); pin.addLine(to: CGPoint(x: 337, y: 20)); pin.addLine(to: CGPoint(x: 334, y: 17)); pin.addLine(to: CGPoint(x: 334, y: 11)); pin.move(to: CGPoint(x: 331.5, y: 20)); pin.addLine(to: CGPoint(x: 331.5, y: 27))
@@ -416,10 +479,8 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
             plate.fillColor = (command.id == "clipboard:confirmClear" ? yellow : NSColor(white: dark ? 0.82 : 0.9, alpha: 1)).cgColor
             plate.strokeColor = NSColor(white: dark ? 0.93 : 0.38, alpha: 0.65).cgColor; plate.lineWidth = 0.6; toolbar.addSublayer(plate)
             HUDControlHighlightLayer.add(to: plate, rect: plate.bounds, shape: .cutCorner, framed: true)
-            let title = command.id == "clipboard:previous" ? "‹" : (command.id == "clipboard:next" ? "›" : command.label)
-            addText(title, rect: CGRect(x: command.rect.minX + 4, y: command.rect.minY + 6, width: command.rect.width - 8, height: 17), size: 11, color: ink, parent: toolbar, weight: .semibold, alignment: .center)
+            addText(command.label, rect: CGRect(x: command.rect.minX + 4, y: command.rect.minY + 6, width: command.rect.width - 8, height: 17), size: 11, color: ink, parent: toolbar, weight: .semibold, alignment: .center)
         }
-        if !confirmingClear { addText("\(pageIndex + 1) / \(pageCount)", rect: CGRect(x: 299, y: 306, width: 54, height: 15), size: 10, color: muted, parent: toolbar, alignment: .center) }
     }
 
     private func cutCorner(_ rect: CGRect, corner: CGFloat) -> CGPath {
