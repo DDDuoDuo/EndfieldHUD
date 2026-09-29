@@ -1,0 +1,47 @@
+name: Validate distributed app on Tahoe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/tahoe-launch.yml
+      - scripts/test-distributed-launch.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tahoe-launch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  published-app:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download and verify the published DMG
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/endfield-launch" build/tahoe-launch
+          cd "$RUNNER_TEMP/endfield-launch"
+          curl --fail --location --silent --show-error --retry 3 \
+            --proto '=https' --proto-redir '=https' \
+            'https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build10-macOS.dmg' \
+            -o EndfieldHUD.dmg
+          echo '29d7adbd96cf9264858d64481e797beac9a329ebda8d297beff7805955aaf40a  EndfieldHUD.dmg' | shasum -a 256 -c -
+          mkdir mount
+          trap 'hdiutil detach "$RUNNER_TEMP/endfield-launch/mount" || true' EXIT
+          hdiutil attach EndfieldHUD.dmg -readonly -nobrowse -mountpoint "$PWD/mount"
+          ditto mount/EndfieldHUD.app EndfieldHUD.app
+      - name: Check the distributed app without rebuilding it
+        run: scripts/test-distributed-launch.sh "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" build/tahoe-launch
+      - name: Preserve compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tahoe-published-app-launch
+          path: build/tahoe-launch
+          retention-days: 7
