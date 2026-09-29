@@ -26,9 +26,9 @@ if [ -n "${INSTALLER_SIGN_IDENTITY:-}" ] && [[ "$INSTALLER_SIGN_IDENTITY" != 'De
 fi
 codesign --verify --deep --strict --all-architectures --verbose=2 "$APP"
 xcrun lipo "$APP/Contents/MacOS/EndfieldHUD" -verify_arch arm64 x86_64
-mkdir -p "$OUTPUT_DIRECTORY"
-OUTPUT_DIRECTORY="$(cd "$OUTPUT_DIRECTORY" && pwd -P)"
+OUTPUT_DIRECTORY="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$OUTPUT_DIRECTORY")"
 case "$OUTPUT_DIRECTORY/" in "$APP/"*) printf 'Output must be outside the app bundle.\n' >&2; exit 2 ;; esac
+mkdir -p "$OUTPUT_DIRECTORY"
 ARTIFACT="EndfieldHUD-$VERSION-build$APP_BUILD-Installer.pkg"
 if [ -e "$OUTPUT_DIRECTORY/$ARTIFACT" ]; then
     printf 'Refusing to replace an existing installer: %s\n' "$OUTPUT_DIRECTORY/$ARTIFACT" >&2

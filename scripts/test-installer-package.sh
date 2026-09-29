@@ -10,9 +10,9 @@ fi
 PACKAGE="$(cd "$(dirname "$1")" && pwd -P)/$(basename "$1")"
 APP="$(cd "$2" && pwd -P)"
 REPORT_DIRECTORY="${3:-$PROJECT_DIR/build/installer-verification}"
-mkdir -p "$REPORT_DIRECTORY"
-REPORT_DIRECTORY="$(cd "$REPORT_DIRECTORY" && pwd -P)"
+REPORT_DIRECTORY="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$REPORT_DIRECTORY")"
 case "$REPORT_DIRECTORY/" in "$APP/"*) printf 'Reports must be outside the app bundle.\n' >&2; exit 2 ;; esac
+mkdir -p "$REPORT_DIRECTORY"
 VERIFY_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/EndfieldHUD-installer-check.XXXXXX")"
 trap 'rm -rf "$VERIFY_STAGE"' EXIT
 pkgutil --expand-full "$PACKAGE" "$VERIFY_STAGE/expanded"
@@ -56,6 +56,7 @@ assert set(path.name for path in component.iterdir()) <= {"PackageInfo", "Payloa
 package_info = ET.parse(component / "PackageInfo").getroot()
 assert package_info.get("identifier") == identifier and package_info.get("version") == build
 assert package_info.get("install-location") == "/"
+assert package_info.get("postinstall-action", "none") == "none", "No logout/restart is permitted"
 assert package_info.find("scripts") is None, "Installer scripts are forbidden"
 assert package_info.get("relocatable") == "false", "Component must not be relocatable"
 assert not package_info.findall("relocate/*"), "Component must not search for another installed copy"
