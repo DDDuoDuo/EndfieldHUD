@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/tahoe-launch.yml
       - scripts/test-distributed-launch.sh
+      - scripts/package-installer.sh
+      - scripts/test-installer-package.sh
 
 permissions:
   contents: read
@@ -38,6 +40,33 @@ jobs:
           ditto mount/EndfieldHUD.app EndfieldHUD.app
       - name: Check the distributed app without rebuilding it
         run: scripts/test-distributed-launch.sh "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" build/tahoe-launch
+      - name: Build and inspect the standard installer
+        run: |
+          scripts/package-installer.sh "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" "$RUNNER_TEMP/endfield-installer"
+          scripts/test-installer-package.sh "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build10-Installer.pkg" "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app"
+      - name: Verify clean replacement and same-version repair
+        shell: bash
+        run: |
+          # This is a disposable hosted runner, never the user's Mac. The
+          # installer contains no scripts and changes no security settings.
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test ! -e /Applications/EndfieldHUD.app
+          mkdir -p build/tahoe-launch/installer
+          sudo ditto "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app" /Applications/EndfieldHUD.app
+          for pass in 1 2; do
+            sudo touch /Applications/EndfieldHUD.app/Contents/obsolete-installer-verification.txt
+            sudo installer -pkg "$RUNNER_TEMP/endfield-installer/EndfieldHUD-1.0.1-build10-Installer.pkg" -target / \
+              | tee "build/tahoe-launch/installer/install-$pass.log"
+            test ! -e /Applications/EndfieldHUD.app/Contents/obsolete-installer-verification.txt
+          done
+          scripts/test-distributed-launch.sh /Applications/EndfieldHUD.app build/tahoe-launch/installer/launch
+          cmp "$RUNNER_TEMP/endfield-launch/EndfieldHUD.app/Contents/MacOS/EndfieldHUD" /Applications/EndfieldHUD.app/Contents/MacOS/EndfieldHUD
+      - name: Preserve the tested installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: tahoe-tested-installer
+          path: ${{ runner.temp }}/endfield-installer/
+          retention-days: 7
       - name: Preserve compatibility evidence
         if: always()
         uses: actions/upload-artifact@v7
