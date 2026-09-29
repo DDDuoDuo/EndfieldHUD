@@ -39,8 +39,12 @@ def load_info(path):
     return info
 
 
+def archive_names(version, build):
+    return (f"EndfieldHUD-{version}-macOS.zip", f"EndfieldHUD-{version}-build{build}-macOS.zip")
+
+
 def check_archive(path, info):
-    require(path.name == f'EndfieldHUD-{info["CFBundleShortVersionString"]}-macOS.zip', "Unexpected release archive filename")
+    require(path.name in archive_names(info["CFBundleShortVersionString"], info["CFBundleVersion"]), "Unexpected release archive filename")
     with zipfile.ZipFile(path) as archive:
         require(archive.testzip() is None, "Corrupt release ZIP")
         seen = set()
@@ -69,6 +73,7 @@ def check_feed(path, info, archive=None, allow_empty=False):
     items = channels[0].findall("item")
     require(len(items) <= 64 and (items or allow_empty), "Feed is empty or has too many entries")
     builds = set()
+    urls = set()
     selected = None
     for item in items:
         build = item.findtext(NS + "version", "")
@@ -80,6 +85,8 @@ def check_feed(path, info, archive=None, allow_empty=False):
         url = enclosure.get("url", "")
         parsed = urllib.parse.urlsplit(url)
         require(url.startswith(DOWNLOAD) and not parsed.query and not parsed.fragment, "Update URL must be an immutable release asset in this repository")
+        require(url not in urls, "Update archive URL is shared by multiple builds")
+        urls.add(url)
         relative = url[len(DOWNLOAD):].split("/")
         require(len(relative) == 2, "Invalid release URL")
         version = item.findtext(NS + "shortVersionString", "")
@@ -88,7 +95,7 @@ def check_feed(path, info, archive=None, allow_empty=False):
         base_version = version.split("-", 1)[0]
         expected_channel = "preview" if "-preview." in relative[0] else ""
         require(item.findtext(NS + "channel", "") == expected_channel, "Update channel does not match release tag")
-        require(relative[1] == f"EndfieldHUD-{base_version}-macOS.zip", "Unexpected update asset filename")
+        require(relative[1] in archive_names(base_version, build), "Unexpected update asset filename")
         signature = enclosure.get(NS + "edSignature", "")
         require(len(base64.b64decode(signature, validate=True)) == 64, "Missing or invalid archive signature")
         require(enclosure.get("type") == "application/octet-stream", "Unexpected enclosure type")
@@ -99,8 +106,10 @@ def check_feed(path, info, archive=None, allow_empty=False):
         require(item.find(NS + "releaseNotesLink") is None, "Embed release notes so no separate unsigned notes are fetched")
         require(item.find(NS + "deltas") is None, "This release workflow publishes full archives only")
         if build == info["CFBundleVersion"]:
-            require(url == DOWNLOAD + info["HUDReleaseTag"] + "/" + f'EndfieldHUD-{info["CFBundleShortVersionString"]}-macOS.zip', "Current release URL mismatch")
+            require(relative[0] == info["HUDReleaseTag"]
+                    and relative[1] in archive_names(info["CFBundleShortVersionString"], info["CFBundleVersion"]), "Current release URL mismatch")
             if archive:
+                require(relative[1] == archive.name, "Current release archive filename mismatch")
                 require(int(enclosure.get("length")) == archive.stat().st_size, "Archive byte length mismatch")
             selected = signature
     if archive:

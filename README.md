@@ -4,7 +4,7 @@
 
 An Endfield-inspired menu bar app for macOS. Bring up a moving, layered HUD for notes, files, timers, audio controls, and a quick look at your Mac.
 
-**[Download v1.0.1 — EndfieldHUD-1.0.1-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-macOS.dmg)** · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
+**[Download v1.0.1 — EndfieldHUD-1.0.1-build10-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build10-macOS.dmg)** · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD Power overview with sample readings](docs/media/overview.png)
 

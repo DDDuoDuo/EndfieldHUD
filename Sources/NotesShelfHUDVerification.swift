@@ -8,6 +8,37 @@ enum NotesShelfHUDVerification {
         func later(_ delay: Double, _ body: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: body)
         }
+        func verifyNotesRetraction(_ note: CanvasNote, scales: [Double], completion: @escaping () -> Void) {
+            guard let scale = scales.first else {
+                overlay.update(snapshot: .unavailable, configuration: .defaults)
+                completion()
+                return
+            }
+            var configuration = AppConfiguration.defaults
+            configuration.hudScale = scale
+            overlay.update(snapshot: .unavailable, configuration: configuration)
+            later(0.15) {
+                let shell = overlay.systemShellIdentity
+                overlay.beginShelfDragForVerification()
+                if !HUDRuntimeAppearance.reduceMotion {
+                    check(overlay.notesFollowRetractionForVerification,
+                          "Notes fold with panel timing while retaining layout scale \(scale) and a safe full-screen projection")
+                    overlay.setSystemPointerForVerification(CGPoint(x: 0.7, y: -0.6))
+                    check(overlay.notesSpatialPoseMatchesPanelsForVerification,
+                          "Notes keep following the pointer during retraction")
+                }
+                overlay.finishShelfDragForVerification(delivered: false)
+                later(SystemHUDView.exitDuration + SystemHUDView.entranceDuration + 0.3) {
+                    check(overlay.systemShellIdentity == shell && overlay.notesDeploymentRestoredForVerification,
+                          "Reopening a cancelled drag restores note deployment without losing scale \(scale)")
+                    check(overlay.visibleNotesForVerification.contains(note.id)
+                          && overlay.notesForVerification.first?.x == note.x
+                          && overlay.notesForVerification.first?.y == note.y,
+                          "Pinned notes keep their saved screen position across closing and reopening")
+                    verifyNotesRetraction(note, scales: Array(scales.dropFirst()), completion: completion)
+                }
+            }
+        }
         func verifyPinnedNotesProjection(_ note: CanvasNote, completion: @escaping () -> Void) {
             let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             // The far corner exercises the free workspace outside the center
@@ -35,7 +66,7 @@ enum NotesShelfHUDVerification {
                           "Pinned notes remain visible and follow the opposite pointer pose")
                     check(reduced || hypot(reversed.x - projected[0].x, reversed.y - projected[0].y) > 1,
                           "Changing pointer side moves the projected note surface")
-                    completion()
+                    verifyNotesRetraction(note, scales: [0.2, 1, 2], completion: completion)
                 }
             }
         }

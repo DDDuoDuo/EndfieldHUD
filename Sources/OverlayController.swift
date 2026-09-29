@@ -132,6 +132,8 @@ final class OverlayController: NSObject {
     var notesSpatialPoseMatchesPanelsForVerification: Bool {
         systemView?.notesSpatialPoseMatchesPanelsForVerification ?? false
     }
+    var notesFollowRetractionForVerification: Bool { systemView?.notesFollowRetractionForVerification ?? false }
+    var notesDeploymentRestoredForVerification: Bool { systemView?.notesDeploymentRestoredForVerification ?? false }
     var shelfCountForVerification: Int { (try? shelfStore.get().items.count) ?? 0 }
     var shelfDragPhaseForVerification: ShelfDragPresentationState.Phase { shelfDragPresentation.phase }
     var systemWindowVisibleForVerification: Bool { panel.isVisible }

@@ -66,8 +66,8 @@ with tempfile.TemporaryDirectory(prefix="endfield-update-fixtures-") as temporar
     rejects(lambda: m.check_feed(feed, info))
     checks += 1
     archive = temporary / archive_name
-    def write_archive(extra=None, plist=info):
-        with zipfile.ZipFile(archive, "w") as output:
+    def write_archive(extra=None, plist=info, path=archive):
+        with zipfile.ZipFile(path, "w") as output:
             output.writestr("EndfieldHUD.app/Contents/Info.plist", plistlib.dumps(plist))
             if extra:
                 output.writestr(*extra)
@@ -86,4 +86,35 @@ with tempfile.TemporaryDirectory(prefix="endfield-update-fixtures-") as temporar
     wrong["CFBundleIdentifier"] = "other.app"
     write_archive(plist=wrong)
     rejects(lambda: m.check_archive(archive, info))
+
+    # A same-version hotfix gets a new build and asset URL while the original
+    # published item and filename remain valid.
+    hotfix_info = copy.deepcopy(info)
+    hotfix_info["CFBundleVersion"] = "10"
+    hotfix_name = f"EndfieldHUD-{version}-build10-macOS.zip"
+    hotfix_archive = temporary / hotfix_name
+    write_archive(plist=hotfix_info, path=hotfix_archive)
+    m.check_archive(hotfix_archive, hotfix_info)
+    checks += 1
+    old_xml = xml.replace(f'<sparkle:version>{info["CFBundleVersion"]}</sparkle:version>',
+                          '<sparkle:version>9</sparkle:version>')
+    hotfix_xml = xml.replace(f'<sparkle:version>{info["CFBundleVersion"]}</sparkle:version>',
+                            '<sparkle:version>10</sparkle:version>').replace(archive_name, hotfix_name)
+    hotfix_xml = hotfix_xml.replace('length="1"', f'length="{hotfix_archive.stat().st_size}"')
+    combined = ET.fromstring(hotfix_xml)
+    combined.find("channel").append(ET.fromstring(old_xml).find("channel/item"))
+    feed.write_text(ET.tostring(combined, encoding="unicode"))
+    m.check_feed(feed, hotfix_info, hotfix_archive)
+    checks += 1
+    rejects(lambda: m.check_feed(feed, hotfix_info, archive))
+    # Both names can be valid separately, but one URL cannot identify two builds.
+    feed.write_text(ET.tostring(combined, encoding="unicode").replace(hotfix_name, archive_name))
+    rejects(lambda: m.check_feed(feed, hotfix_info))
+    for invalid_build in ["9", "11", "010", "0"]:
+        wrong_name = f"EndfieldHUD-{version}-build{invalid_build}-macOS.zip"
+        rejects(lambda: m.check_archive(temporary / wrong_name, hotfix_info))
+        feed.write_text(hotfix_xml.replace(hotfix_name, wrong_name))
+        rejects(lambda: m.check_feed(feed, hotfix_info))
+    feed.write_text(hotfix_xml.replace(f'length="{hotfix_archive.stat().st_size}"', 'length="1"'))
+    rejects(lambda: m.check_feed(feed, hotfix_info, hotfix_archive))
 print(f"PASS: {checks} release metadata, URL, version, ZIP and symlink checks")

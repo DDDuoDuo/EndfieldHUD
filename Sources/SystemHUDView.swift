@@ -93,6 +93,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var moduleContent: HUDModuleContent!
     private let notesCanvas: NotesCanvas
     private let notesWorkspace = CALayer()
+    private let notesLayout = CALayer()
     private let notesCoordinates = CALayer()
     private let settingsController: HUDSettingsController?
     private var settingsCanvases: [HUDModule: HUDSettingsCanvas] = [:]
@@ -314,11 +315,17 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         buildNavigation()
         refreshAppNavigation(animated: false)
         notesWorkspace.name = "hud.notesWorkspace"
+        // Keep screen placement/scale outside the deployment transform, just
+        // as canvas does for the other planes. Retraction must not replace the
+        // coordinate mapping of freely positioned notes.
+        notesLayout.name = "notes.layout"
+        notesLayout.bounds = canvas.bounds
         notesCoordinates.name = "notes.screenCoordinates"
         notesCoordinates.anchorPoint = .zero
         notesCoordinates.addSublayer(notesCanvas.workspaceLayer)
         notesPlane.content.addSublayer(notesCoordinates)
-        notesWorkspace.addSublayer(notesPlane.deployment)
+        notesLayout.addSublayer(notesPlane.deployment)
+        notesWorkspace.addSublayer(notesLayout)
         layer?.addSublayer(notesWorkspace)
         // Pointer feedback is screen-aligned and above all projected content,
         // including native inline text editors and freely positioned notes.
@@ -415,8 +422,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.canvas.position = CGPoint(x: self.bounds.midX + offset.x,
                                            y: self.bounds.midY - Self.verticalLift * self.designScale + offset.y)
             self.canvas.setAffineTransform(CGAffineTransform(scaleX: self.designScale, y: self.designScale))
-            self.notesPlane.deployment.position = self.canvas.position
-            self.notesPlane.deployment.setAffineTransform(CGAffineTransform(scaleX: self.designScale, y: self.designScale))
+            self.notesLayout.position = self.canvas.position
+            self.notesLayout.setAffineTransform(CGAffineTransform(scaleX: self.designScale, y: self.designScale))
             // Convert saved screen points into the shared design space before
             // applying perspective; note sizes stay independent of HUD scale.
             self.notesCoordinates.bounds = self.bounds
@@ -542,6 +549,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.canvas.opacity = 1
             self.notesWorkspace.opacity = 1
             self.notesWorkspace.transform = CATransform3DIdentity
+            self.notesPlane.deployment.opacity = 1
+            self.notesPlane.deployment.transform = CATransform3DIdentity
             for plane in self.depthPlanes {
                 plane.deployment.opacity = 1
                 plane.deployment.transform = CATransform3DIdentity
@@ -667,7 +676,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let retraction: [(HUDDepthPlane, Double, Double, CGFloat)] = [
             (glassPlane, 0.12, 0.15, 0.55), (markersPlane, 0.035, 0.18, 0.35),
             (corePlane, 0.11, 0.20, 0.65), (profileBackgroundPlane, 0.11, 0.20, 0.65),
-            (panelsPlane, 0.15, 0.20, 0.88),
+            (panelsPlane, 0.15, 0.20, 0.88), (notesPlane, 0.15, 0.20, 0.88),
             (innerPlane, 0.065, 0.25, 0.12), (framePlane, 0.075, 0.325, 0.08),
             (secondaryPlane, 0.09, 0.30, 0.08), (rimPlane, 0.09, 0.30, 0.08), (rearPlane, 0.11, 0.29, 0.08),
             (distantPlane, 0.11, 0.29, 0.60)
@@ -676,9 +685,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             let item = plane.deployment
             let oldTransform = item.presentation()?.transform ?? item.transform
             let oldOpacity = item.presentation()?.opacity ?? item.opacity
-            let target = Self.tiltedTransform(scale: scale, depth: -50)
+            // Notes already carry their bounded pointer perspective. They can
+            // span the entire screen, far beyond the dial at small HUD scales;
+            // a second lens during the steep fold could cross its near plane.
+            let foldPerspective = plane !== notesPlane
+            let target = Self.tiltedTransform(scale: scale, depth: -50, perspective: foldPerspective)
             withoutActions { item.transform = target; item.opacity = 0 }
-            animateRetraction(item, from: oldTransform, to: target, duration: duration, delay: delay)
+            animateRetraction(item, from: oldTransform, to: target, duration: duration, delay: delay,
+                              perspective: foldPerspective)
             let fade = CAKeyframeAnimation(keyPath: "opacity")
             fade.values = [oldOpacity, oldOpacity, 0]
             fade.keyTimes = [0, 0.45, 1]
@@ -699,7 +713,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         withoutActions { chargeDeployment.transform = chargeTarget }
         animateRetraction(chargeDeployment, from: chargeStart, to: chargeTarget,
                           duration: 0.325, delay: 0.075)
-        for item in [header, footer, notesWorkspace] {
+        for item in [header, footer] {
             let opacity = item.presentation()?.opacity ?? item.opacity
             withoutActions { item.opacity = 0 }
             animate(item, "opacity", from: opacity, to: 0, duration: 0.06, delay: 0.35)
@@ -791,6 +805,24 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     var visibleNotesForVerification: Set<UUID> { notesCanvas.visibleNoteIDs }
+    var notesFollowRetractionForVerification: Bool {
+        guard let notes = notesPlane.deployment.animation(forKey: "deployment.transform") as? CAKeyframeAnimation,
+              let panels = panelsPlane.deployment.animation(forKey: "deployment.transform") as? CAKeyframeAnimation,
+              let values = notes.values as? [NSValue], values.count == 3 else { return false }
+        let middle = values[1].caTransform3DValue
+        let end = values[2].caTransform3DValue
+        return notes.duration == panels.duration && notes.keyTimes == panels.keyTimes
+            && abs(notes.beginTime - panels.beginTime) < 0.02
+            && abs(middle.m23) > 0.5 && abs(end.m23) > abs(middle.m23)
+            && end.m14 == 0 && end.m24 == 0 && end.m34 == 0 && end.m44 == 1
+            && CATransform3DEqualToTransform(notesLayout.transform, canvas.transform)
+            && notesLayout.position == canvas.position
+    }
+    var notesDeploymentRestoredForVerification: Bool {
+        CATransform3DIsIdentity(notesPlane.deployment.transform) && notesPlane.deployment.opacity == 1
+            && CATransform3DEqualToTransform(notesLayout.transform, canvas.transform)
+            && notesLayout.position == canvas.position
+    }
     var notesSpatialPoseMatchesPanelsForVerification: Bool {
         // The near-plane guard may shorten only the notes lens at small HUD
         // scales. Their affine attitude, depth and pointer travel still match.
@@ -1780,8 +1812,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return p
     }
 
-    private static func tiltedTransform(scale: CGFloat, depth: CGFloat = 0, degrees: CGFloat = 70) -> CATransform3D {
-        var result = CATransform3DIdentity; result.m34 = -1 / 1100
+    private static func tiltedTransform(scale: CGFloat, depth: CGFloat = 0, degrees: CGFloat = 70,
+                                        perspective: Bool = true) -> CATransform3D {
+        var result = CATransform3DIdentity
+        if perspective { result.m34 = -1 / 1100 }
         result = CATransform3DTranslate(result, 0, 0, depth)
         result = CATransform3DRotate(result, degrees * .pi / 180, 1, 0, 0)
         return CATransform3DScale(result, scale, scale, scale)
@@ -1807,10 +1841,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func animateRetraction(_ item: CALayer, from: CATransform3D, to: CATransform3D,
-                                   duration: TimeInterval, delay: TimeInterval) {
+                                   duration: TimeInterval, delay: TimeInterval, perspective: Bool = true) {
         let animation = CAKeyframeAnimation(keyPath: "transform")
         animation.values = [NSValue(caTransform3D: from),
-            NSValue(caTransform3D: Self.tiltedTransform(scale: 0.88, depth: -24, degrees: 53)),
+            NSValue(caTransform3D: Self.tiltedTransform(scale: 0.88, depth: -24, degrees: 53, perspective: perspective)),
             NSValue(caTransform3D: to)]
         animation.keyTimes = [0, 0.58, 1]
         animation.timingFunctions = [CAMediaTimingFunction(name: .easeInEaseOut), CAMediaTimingFunction(name: .easeIn)]
