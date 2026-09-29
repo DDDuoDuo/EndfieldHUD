@@ -8,6 +8,10 @@ on:
       - scripts/test-distributed-launch.sh
       - scripts/package-installer.sh
       - scripts/test-installer-package.sh
+      - scripts/normalize-bundle-permissions.py
+      - scripts/test-bundle-permissions.py
+      - scripts/build.sh
+      - scripts/verify-bundle.sh
 
 permissions:
   contents: read
@@ -24,6 +28,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Check bundle permission regressions
+        run: python3 scripts/test-bundle-permissions.py
       - name: Download and verify the published DMG
         shell: bash
         run: |

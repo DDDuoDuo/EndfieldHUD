@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Build a standard, script-free Installer product from an existing app. No
-# installation, application signing, permissions repair, or quarantine changes
-# take place here. INSTALLER_SIGN_IDENTITY optionally signs the outer product.
+# installation, application signing, or changes to the input bundle take place
+# here. INSTALLER_SIGN_IDENTITY optionally signs the outer product.
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 if [ "$(uname -s)" != "Darwin" ] || [ "$#" -gt 2 ]; then
     printf 'Usage on macOS: %s [APP_PATH] [OUTPUT_DIRECTORY]\n' "$0" >&2
@@ -38,6 +38,8 @@ PACKAGE_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/EndfieldHUD-installer.XXXXXX")"
 trap 'rm -rf "$PACKAGE_STAGE"' EXIT
 mkdir -p "$PACKAGE_STAGE/root/Applications" "$PACKAGE_STAGE/packages"
 ditto --norsrc --noextattr --noqtn "$APP" "$PACKAGE_STAGE/root/Applications/EndfieldHUD.app"
+python3 "$PROJECT_DIR/scripts/normalize-bundle-permissions.py" "$PACKAGE_STAGE/root/Applications/EndfieldHUD.app"
+codesign --verify --deep --strict --all-architectures "$PACKAGE_STAGE/root/Applications/EndfieldHUD.app"
 
 python3 - "$PACKAGE_STAGE" "$BUNDLE_ID" "$APP_BUILD" <<'PY'
 import plistlib

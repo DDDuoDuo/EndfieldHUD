@@ -16,7 +16,7 @@ mkdir -p "$REPORT_DIRECTORY"
 VERIFY_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/EndfieldHUD-installer-check.XXXXXX")"
 trap 'rm -rf "$VERIFY_STAGE"' EXIT
 pkgutil --expand-full "$PACKAGE" "$VERIFY_STAGE/expanded"
-python3 - "$VERIFY_STAGE/expanded" "$APP" "$REPORT_DIRECTORY" <<'PY'
+python3 - "$VERIFY_STAGE/expanded" "$APP" "$REPORT_DIRECTORY" "$PROJECT_DIR" <<'PY'
 import hashlib
 import json
 import os
@@ -27,7 +27,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-expanded, original, reports = map(Path, sys.argv[1:])
+expanded, original, reports, project = map(Path, sys.argv[1:])
 with (original / "Contents/Info.plist").open("rb") as file:
     expected_info = plistlib.load(file)
 identifier, build = expected_info["CFBundleIdentifier"], expected_info["CFBundleVersion"]
@@ -73,8 +73,8 @@ assert set(path.name for path in (payload / "Applications").iterdir()) == {"Endf
 packaged_app = payload / "Applications/EndfieldHUD.app"
 
 
-def manifest(root):
-    entries = {}
+def manifest(root, normalized_modes=False):
+    entries = {".": ["directory", 0o755 if normalized_modes else stat.S_IMODE(root.stat().st_mode)]}
     for folder, directories, files in os.walk(root, followlinks=False):
         for name in directories + files:
             path = Path(folder) / name
@@ -85,16 +85,18 @@ def manifest(root):
                 assert root.resolve() in path.resolve().parents, f"Symlink escapes bundle: {relative}"
                 entries[relative] = ["link", target]
             elif stat.S_ISDIR(mode):
-                entries[relative] = ["directory", stat.S_IMODE(mode)]
+                entries[relative] = ["directory", 0o755 if normalized_modes else stat.S_IMODE(mode)]
             elif stat.S_ISREG(mode):
-                entries[relative] = ["file", stat.S_IMODE(mode), hashlib.sha256(path.read_bytes()).hexdigest()]
+                expected_mode = (0o755 if mode & 0o111 else 0o644) if normalized_modes else stat.S_IMODE(mode)
+                entries[relative] = ["file", expected_mode, hashlib.sha256(path.read_bytes()).hexdigest()]
             else:
                 raise AssertionError(f"Unexpected special file: {relative}")
     return entries
 
 
-original_manifest, packaged_manifest = manifest(original), manifest(packaged_app)
-assert original_manifest == packaged_manifest, "Packaged app bytes, links, or file modes differ from the input app"
+original_manifest, packaged_manifest = manifest(original, normalized_modes=True), manifest(packaged_app)
+assert original_manifest == packaged_manifest, "Packaged app bytes or links changed, or permissions are not standard distributable modes"
+subprocess.run([sys.executable, str(project / "scripts/normalize-bundle-permissions.py"), "--check", str(packaged_app)], check=True)
 verification = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--all-architectures", "--verbose=2", str(packaged_app)],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=30)
 (reports / "payload-signature.log").write_text(verification.stdout)
@@ -102,7 +104,7 @@ assert verification.returncode == 0, "Expanded app signature did not verify"
 summary = {"passed": True, "bundle_identifier": identifier, "release_version": expected_info["CFBundleShortVersionString"],
            "build": build, "package_version": package_info.get("version"), "payload": "/Applications/EndfieldHUD.app",
            "scripts": False, "relocatable": False, "overwrite_action": "upgrade", "must_close": identifier,
-           "unchanged_manifest_entries": len(original_manifest), "signature_verified": True}
+           "unchanged_content_entries": len(original_manifest), "standard_permissions": True, "signature_verified": True}
 (reports / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 print(json.dumps(summary, indent=2))
 PY

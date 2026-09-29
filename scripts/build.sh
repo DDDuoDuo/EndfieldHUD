@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 022
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
@@ -109,6 +110,9 @@ ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/Ap
 if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
 ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
 "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
+# Imported images can carry owner-only permissions. A release must remain
+# readable when Installer makes the bundle root-owned or another user opens it.
+python3 "$PROJECT_DIR/scripts/normalize-bundle-permissions.py" "$STAGED_APP"
 SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 if [ "$SIGNING_IDENTITY" = '-' ]; then
     codesign --force --sign - "$STAGED_APP"

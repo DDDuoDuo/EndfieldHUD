@@ -19,7 +19,9 @@ not Apple-notarized.
 
 `scripts/package-installer.sh [APP_PATH] [OUTPUT_DIRECTORY]` creates an
 additional macOS Installer package from the existing verified app. It does not
-rebuild or re-sign the app. The package version uses the internal build number;
+rebuild or re-sign the app. It gives the staged files standard installation
+permissions (755 for directories/executables, 644 for other files), preserving
+their contents and signatures. The package version uses the internal build number;
 the app's displayed version and bundle identifier remain unchanged.
 
 The only payload is `/Applications/EndfieldHUD.app`. Installer atomically
@@ -33,6 +35,15 @@ Developer ID certificate or notarization ticket. The close-app requirement also
 does not guarantee that Installer can terminate an already hung process. This
 package is an alternate clean installation method, not a confirmed remedy for
 every launch-policy failure.
+
+The first installation test caught three imported image resources with 600
+permissions. After an administrator installed the app, the resources became
+unreadable to other users and signature verification failed with Permission
+denied. Installer staging now normalizes these permissions; release builds do
+the same before signing. Bundle verification checks permissions independently
+of the current user's access, so a successful check as the file owner cannot
+mask this problem. This defect does not establish the cause of a process held
+before startup on another Mac.
 
 The Tahoe workflow checks the package contents, installs and reinstalls it on a
 disposable runner, checks that stale bundle files are removed, and reruns the

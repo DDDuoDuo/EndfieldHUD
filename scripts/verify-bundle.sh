@@ -16,6 +16,7 @@ done
 BINARY="$APP/Contents/MacOS/EndfieldHUD"
 RESOURCES="$APP/Contents/Resources"
 [ -x "$BINARY" ] || { printf 'Missing executable: %s\n' "$BINARY" >&2; exit 1; }
+python3 "$PROJECT_DIR/scripts/normalize-bundle-permissions.py" --check "$APP"
 plutil -lint "$APP/Contents/Info.plist"
 xcrun lipo "$BINARY" -verify_arch "$@"
 codesign --verify --deep --strict --all-architectures --verbose=2 "$APP"
