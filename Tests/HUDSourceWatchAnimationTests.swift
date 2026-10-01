@@ -63,7 +63,8 @@ enum HUDSourceWatchAnimationTests {
             var groupCurves = [HUDSourceAnimationCurve]()
             // Original watch_in01 Group1/2 inherited scalar endpoints. The
             // installed Legacy TypeTree fallback writes these native fields;
-            // the later layout writer is responsible for restoring rows.
+            // RectTransform finalization derives visible XY from anchors,
+            // without needing a parent layout component to restore rows.
             let originalX = -26.344890594482422, originalY = 0.564835786819458
             func originalGroupCurve(_ id: HUDSourceID, _ name: String, _ property: String,
                                     firstTime: Double, firstValue: Double, lastValue: Double) throws -> HUDSourceAnimationCurve {
@@ -89,9 +90,16 @@ enum HUDSourceWatchAnimationTests {
             let groupsResolved = try groupsScene.resolve(overrides: groupsPose.transforms)
             let firstPosition = groupsResolved[groupOne]!.worldMatrix.columns.3
             let secondPosition = groupsResolved[groupTwo]!.worldMatrix.columns.3
-            check(firstPosition.x == originalX && secondPosition.x == originalX &&
-                  firstPosition.y == originalY && secondPosition.y == originalY,
-                  "Original class224 inherited XY endpoint keys write before the later layout pass")
+            check(groupsPose.value("m_LocalPosition.x", on: groupOne, fallback: 0) == originalX &&
+                  groupsPose.value("m_LocalPosition.y", on: groupOne, fallback: 0) == originalY &&
+                  groupsPose.value("m_LocalPosition.x", on: groupTwo, fallback: 0) == originalX &&
+                  groupsPose.value("m_LocalPosition.y", on: groupTwo, fallback: 0) == originalY,
+                  "Original class224 inherited XY endpoints remain accepted serialized property values")
+            // Independent source-anchor calculation, with no layout pass:
+            // parent top-left (-960,540) + original anchoredPosition XY.
+            check(firstPosition.x == -746 && secondPosition.x == -704 &&
+                  firstPosition.y == 542 && secondPosition.y == 390,
+                  "Native RectTransform finalization preserves distinct anchored XY without a parent row layout")
             check(firstPosition.z == 0 && secondPosition.z == 0, "Registered RectTransform local Z still reaches its endpoint")
             check(groupsPose.unregisteredBindings.isEmpty, "Verified inherited bindings have no false rejection diagnostics")
             let rowLayout = HUDSourceWatchLayout(scene: groupsScene, components: [rootID: [
@@ -110,8 +118,10 @@ enum HUDSourceWatchAnimationTests {
                   "Layout after inherited animation restores separated source-size rows on both driven axes")
             check(rowOne.z == -5 && rowTwo.z == 0 && laidOut[groupOne]!.rect!.size == SIMD2(286, 143),
                   "Driven XY layout keeps animated depth and the original tile rectangle")
-            // A nonuniform synthetic scale distinguishes all three inherited
-            // components, and checks their effect on real corner geometry.
+            // Adapter compatibility check only: a nonuniform synthetic scale
+            // distinguishes all three components in our geometry evaluator.
+            // Native inherited-scale finalization is not yet established;
+            // the original main wrapper has no class224 scalar scale tracks.
             groupsAnimation.apply(clip("InheritedScale", 1, 0, [
                 try curve("m_LocalScale.x", [1, 2], nodes: [groupOne], classID: 224),
                 try curve("m_LocalScale.y", [1, 3], nodes: [groupOne], classID: 224),
@@ -120,7 +130,7 @@ enum HUDSourceWatchAnimationTests {
             let scaledNode = try groupsScene.resolve(overrides: groupsPose.transforms)[groupOne]!
             let scaledCorner = simd_mul(scaledNode.worldMatrix, SIMD4<Double>(143, 71.5, 2, 1))
             check(scaledCorner == SIMD4<Double>(-531, 683, 3, 1) && groupsPose.unregisteredBindings.isEmpty,
-                  "Inherited scalar XYZ scale endpoints change actual geometry without changing classID")
+                  "Adapter scalar XYZ scale endpoints keep nonuniform geometry and their original classID")
             groupsAnimation.apply(clip("UnknownRectProperty", 1, 0, [
                 try curve("m_UnknownFixtureProperty", [1], nodes: [groupTwo], classID: 224)]),
                 time: 0, to: &groupsPose, base: laidOut)

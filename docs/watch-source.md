@@ -24,10 +24,14 @@ macOS functions. Those feature panels retain their existing desktop interfaces.
 - Legacy scalar curves preserve their source class ID and property names.
   RectTransform's own registry handles anchored position, anchors, size and
   pivot; the installed player's serialized-type-tree fallback also accepts
-  inherited local X/Y and scale channels. The adapter retains those original
-  class-224 curves. Later layout writers override the axes they drive while
-  preserving other animated axes. This Legacy proof does not establish every
-  packed Animator binding entry.
+  inherited local X/Y and scale channels. For class-224 local X/Y, the fallback
+  writes serialized cache fields; the native RectTransform finalizer then
+  derives visible X/Y from anchored position, anchors and pivot. The adapter
+  records those original sampled keys without treating cache fields as graph
+  position setters. This preserves the original rows even without a parent
+  layout driver. Class-4 Transform graph channels remain separate. Later layout
+  writers override the axes they drive while preserving other animated axes.
+  This Legacy proof does not establish every packed Animator binding entry.
 - Background opacity follows WatchBlur's separate Linear wrapper and original
   0.13333334-second alpha keys: an unweighted Hermite entrance and near-linear
   exit. These keys are not stretched to the main menu's duration. The desktop
