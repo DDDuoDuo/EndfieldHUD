@@ -31,6 +31,9 @@ jobs:
           ./scripts/build.sh --print-sdk
       - name: Test core behavior
         run: ./scripts/test.sh
+      - name: Record original source layout without GPU
+        if: always()
+        run: bash ./scripts/render-source-layout-reference.sh
       - name: Verify release-only resource lookup
         run: ./scripts/test-release-resources.sh
       - name: Verify signed updater and packaging fixtures
@@ -60,5 +63,6 @@ jobs:
           path: |
             build/watch-source-previews/
             build/metal-source-probe/
+            build/watch-source-layout-reference/
           retention-days: 7
           if-no-files-found: warn

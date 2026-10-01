@@ -534,6 +534,7 @@ enum LocalizationCatalog {
         Entry("That combination is reserved for common macOS or editing commands.", "该组合用于常见的 macOS 或编辑命令，请选择其他快捷键。", "該組合用於常見的 macOS 或編輯命令，請選擇其他快速鍵。", "この組み合わせはmacOSや編集操作で使われます。別のショートカットを選択してください。"),
         // SystemHUDView.swift
         Entry("System interface", "系统界面", "系統介面", "システムインターフェース"),
+        Entry("The original menu could not be rendered. Please check the log.", "原始菜单无法渲染，请查看日志。", "原始選單無法繪製，請查看日誌。", "元のメニューを描画できませんでした。ログを確認してください。"),
         Entry("Open battery menu", "打开电池菜单", "開啟電池選單", "バッテリーメニューを開く"),
         Entry("Not selected", "未选择", "未選擇", "未選択"),
         Entry("Scroll modules up", "向上滚动模块", "向上滾動模組", "モジュールを上にスクロール"),

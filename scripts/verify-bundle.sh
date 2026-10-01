@@ -72,6 +72,12 @@ for DIRECTORY in AppIconSources/Factions AppIconSources/EndfieldWiki WorldMap; d
         verify_copy "$SOURCE" "$RESOURCES/$DIRECTORY/$(basename "$SOURCE")"
     done
 done
+SOURCE_WATCH="$PROJECT_DIR/Resources/WatchSource"
+[ -s "$SOURCE_WATCH/render-color-policy.json" ] || { printf 'Missing original Watch rendering policy.\n' >&2; exit 1; }
+while IFS= read -r -d '' SOURCE; do
+    RELATIVE="${SOURCE#"$SOURCE_WATCH/"}"
+    verify_copy "$SOURCE" "$RESOURCES/WatchSource/$RELATIVE"
+done < <(find "$SOURCE_WATCH" -type f -print0)
 if [ -e "$RESOURCES/AppIconSources/FactionAtlas.png" ]; then
     printf 'The full faction atlas must not ship in the runtime bundle.\n' >&2
     exit 1
