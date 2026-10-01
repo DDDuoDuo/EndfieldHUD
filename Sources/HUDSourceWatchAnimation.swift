@@ -66,7 +66,7 @@ struct HUDSourceWatchAnimation {
             if curve.nodeIDs.isEmpty { pose.unboundPaths.insert(curve.path); continue }
             guard let value = curve.sample(at: time) else { continue }
             for id in curve.nodeIDs {
-                guard let node = scene.node(id), let resolved = base[id] else {
+                guard let node = scene.node(id), base[id] != nil else {
                     pose.unboundPaths.insert(curve.path); continue
                 }
                 var transform = pose.transforms[id] ?? HUDSourceTransformOverride()
@@ -78,15 +78,22 @@ struct HUDSourceWatchAnimation {
                     switch curve.attribute {
                     case "m_IsActive": transform.active = scalar >= 0.5
                     case "m_LocalPosition.x", "m_LocalPosition.y", "m_LocalPosition.z":
-                        let p = transform.localPosition?.simd ?? SIMD3(resolved.localMatrix.columns.3.x,
-                            resolved.localMatrix.columns.3.y, resolved.localMatrix.columns.3.z)
-                        transform.localPosition = Self.replace(p, attribute: curve.attribute, value: scalar)
+                        transform.positionComponents[Self.axis(curve.attribute)] = scalar
+                    case "m_LocalScale.x", "m_LocalScale.y", "m_LocalScale.z":
+                        transform.localScale = Self.replace((transform.localScale ?? node.transform.localScale).simd,
+                            attribute: curve.attribute, value: scalar)
                     case "m_AnchoredPosition.x", "m_AnchoredPosition.y":
                         let p = transform.anchoredPosition3D ?? HUDSourceVector3(
                             node.transform.rect?.anchoredPosition.x ?? node.transform.localPosition.x,
                             node.transform.rect?.anchoredPosition.y ?? node.transform.localPosition.y,
                             node.transform.localPosition.z)
                         transform.anchoredPosition3D = Self.replace(p.simd, attribute: curve.attribute, value: scalar)
+                    case "m_AnchorMin.x", "m_AnchorMin.y":
+                        let v = transform.anchorMin ?? node.transform.rect?.anchorMin ?? HUDSourceVector2(0, 0)
+                        transform.anchorMin = Self.axis(curve.attribute) == 0 ? HUDSourceVector2(scalar, v.y) : HUDSourceVector2(v.x, scalar)
+                    case "m_AnchorMax.x", "m_AnchorMax.y":
+                        let v = transform.anchorMax ?? node.transform.rect?.anchorMax ?? HUDSourceVector2(0, 0)
+                        transform.anchorMax = Self.axis(curve.attribute) == 0 ? HUDSourceVector2(scalar, v.y) : HUDSourceVector2(v.x, scalar)
                     default: pose.properties[id, default: [:]][curve.attribute] = scalar
                     }
                 default: break
@@ -100,6 +107,9 @@ struct HUDSourceWatchAnimation {
         if attribute.hasSuffix(".x") { return HUDSourceVector3(value, p.y, p.z) }
         if attribute.hasSuffix(".y") { return HUDSourceVector3(p.x, value, p.z) }
         return HUDSourceVector3(p.x, p.y, value)
+    }
+    private static func axis(_ attribute: String) -> Int {
+        attribute.hasSuffix(".x") ? 0 : (attribute.hasSuffix(".y") ? 1 : 2)
     }
 }
 

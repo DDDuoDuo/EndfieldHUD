@@ -101,9 +101,12 @@ struct HUDSourceRectTransform: Codable, Equatable {
     /// Unity anchors refer to the *immediate* RectTransform parent. A Transform
     /// parent has no rect; its anchor reference is zero, not a distant ancestor.
     func layout(parent: HUDSourceRect?, anchoredPosition3D: HUDSourceVector3? = nil,
-                sizeDelta: HUDSourceVector2? = nil, localZ: Double) -> (rect: HUDSourceRect, position: SIMD3<Double>) {
+                sizeDelta: HUDSourceVector2? = nil, localZ: Double,
+                anchorMin: HUDSourceVector2? = nil, anchorMax: HUDSourceVector2? = nil,
+                pivot: HUDSourceVector2? = nil) -> (rect: HUDSourceRect, position: SIMD3<Double>) {
         let parentSize = parent?.size ?? .zero
         let parentOrigin = parent?.origin ?? .zero
+        let anchorMin = anchorMin ?? self.anchorMin, anchorMax = anchorMax ?? self.anchorMax, pivot = pivot ?? self.pivot
         let span = anchorMax.simd - anchorMin.simd
         let size = parentSize * span + (sizeDelta ?? self.sizeDelta).simd
         let reference = parentOrigin + parentSize * (anchorMin.simd + span * pivot.simd)
@@ -213,6 +216,12 @@ struct HUDSourceTransformOverride {
     var anchoredPosition3D: HUDSourceVector3? = nil
     var sizeDelta: HUDSourceVector2? = nil
     var active: Bool? = nil
+    var anchorMin: HUDSourceVector2? = nil
+    var anchorMax: HUDSourceVector2? = nil
+    var pivot: HUDSourceVector2? = nil
+    /// Float channels change one local axis after anchor layout. A Z hover must
+    /// not freeze the X/Y that a layout writer or anchor animation updates.
+    var positionComponents: [Int: Double] = [:]
 }
 
 struct HUDSourceResolvedNode {
@@ -295,10 +304,15 @@ struct HUDSourceScene: Codable {
             if let sourceRect = source.rect {
                 let layout = sourceRect.layout(parent: node.parentID == nil ? rootParentRect : parent?.rect,
                     anchoredPosition3D: override?.anchoredPosition3D, sizeDelta: override?.sizeDelta,
-                    localZ: source.localPosition.z)
+                    localZ: source.localPosition.z, anchorMin: override?.anchorMin,
+                    anchorMax: override?.anchorMax, pivot: override?.pivot)
                 rect = layout.rect; position = layout.position
             }
             if let localPosition = override?.localPosition { position = localPosition.simd }
+            for (axis, value) in override?.positionComponents ?? [:] {
+                guard (0...2).contains(axis), value.isFinite else { throw HUDSourceError.invalid("Invalid local axis override") }
+                position[axis] = value
+            }
             let rotation = try (override?.localRotation ?? source.localRotation).matrix()
             let scale = (override?.localScale ?? source.localScale).simd
             guard position.x.isFinite, position.y.isFinite, position.z.isFinite,
@@ -383,12 +397,14 @@ struct HUDSourceCamera {
     func project(_ local: SIMD3<Double>, world: simd_double4x4, viewport: CGRect,
                  clipDepth: Bool = true) -> HUDSourceProjectedPoint? {
         guard validViewport(viewport) else { return nil }
-        let clip = viewProjection * world * SIMD4(local.x, local.y, local.z, 1)
+        let localPoint = SIMD4<Double>(local.x, local.y, local.z, 1)
+        let clip: SIMD4<Double> = simd_mul(viewProjection, simd_mul(world, localPoint))
         guard clip.x.isFinite, clip.y.isFinite, clip.z.isFinite, clip.w.isFinite, clip.w > 0 else { return nil }
-        let ndc = SIMD3(clip.x, clip.y, clip.z) / clip.w
+        let ndc = SIMD3<Double>(clip.x, clip.y, clip.z) / clip.w
         guard !clipDepth || (ndc.z >= -1e-10 && ndc.z <= 1 + 1e-10) else { return nil }
-        return HUDSourceProjectedPoint(point: CGPoint(x: Double(viewport.minX) + (ndc.x + 1) * Double(viewport.width) / 2,
-            y: Double(viewport.minY) + (1 - ndc.y) * Double(viewport.height) / 2), depth: ndc.z, clipW: clip.w)
+        let x = Double(viewport.minX) + (ndc.x + 1) * Double(viewport.width) / 2
+        let y = Double(viewport.minY) + (1 - ndc.y) * Double(viewport.height) / 2
+        return HUDSourceProjectedPoint(point: CGPoint(x: x, y: y), depth: ndc.z, clipW: clip.w)
     }
     /// Invert the exact matrix used by rendering. Intersect its near/far segment
     /// with local z=0; this handles perspective, parent tilt, and negative scales.
@@ -400,7 +416,7 @@ struct HUDSourceCamera {
         let x = 2 * Double(screen.x - viewport.minX) / Double(viewport.width) - 1
         let y = 1 - 2 * Double(screen.y - viewport.minY) / Double(viewport.height)
         func endpoint(_ depth: Double) -> SIMD3<Double>? {
-            let p = inverse * SIMD4(x, y, depth, 1)
+            let p: SIMD4<Double> = simd_mul(inverse, SIMD4<Double>(x, y, depth, 1))
             guard p.x.isFinite, p.y.isFinite, p.z.isFinite, p.w.isFinite, p.w != 0 else { return nil }
             return SIMD3(p.x, p.y, p.z) / p.w
         }
