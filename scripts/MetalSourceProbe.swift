@@ -92,7 +92,7 @@ func runProbe() throws -> Bool {
         let handle = try FileHandle(forWritingTo: log)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = ["-sdk", "macosx", "metal", "-std=metal2.3", "-c", source.path,
+        process.arguments = ["-sdk", "macosx", "metal", "-std=macos-metal2.3", "-c", source.path,
                              "-o", output.appendingPathComponent(stem + ".air").path]
         process.standardOutput = handle
         process.standardError = handle
@@ -108,6 +108,10 @@ func runProbe() throws -> Bool {
         results.append(StageResult(file: "Shaders/" + source.lastPathComponent, sha256: sha,
                                    exitCode: process.terminationStatus, diagnosticFile: log.lastPathComponent))
         print("\(process.terminationStatus == 0 ? "PASS" : "FAIL") \(source.lastPathComponent)")
+        if process.terminationStatus != 0 {
+            let diagnostic = try String(contentsOf: log, encoding: .utf8)
+            print(String(diagnostic.prefix(6000)))
+        }
     }
     let passed = results.allSatisfy { $0.exitCode == 0 }
     let report = ProbeReport(resourceRoot: resource.path, stageCount: results.count,
