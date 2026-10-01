@@ -71,8 +71,71 @@ enum HUDSourceWatchWidgetsTests {
                 empty.transforms[id("-1343216166854802277")]?.active == false &&
                 empty.transforms[id("5176234855714047131")]?.active == false,
                 "Source hidden head-level/activity/season gates and unproved birthday state stay hidden")
-            check(unaccounted.sprites[widget.bannerImageComponentID] == "CAB-453a2bda20bf8e297e653335ba1e9836:4250958573640483290",
+            let firstBanner = widget.bannerInstances[0], secondBanner = widget.bannerInstances[1]
+            check(unaccounted.sprites[firstBanner.imageComponentID] == "CAB-453a2bda20bf8e297e653335ba1e9836:4250958573640483290",
                 "The default banner is one explicit Yvonne source artwork, not a table-wide account rotation")
+            check(original.scene.node(widget.bannerImageNodeID)?.parentID != firstBanner.rootID &&
+                document.scene.node(firstBanner.imageNodeID)?.parentID == firstBanner.rootID &&
+                document.scene.node(firstBanner.rootID)?.parentID?.rawValue ==
+                    "CAB-194e41a66c2317b9df19269f505210be:7252297320149642455" &&
+                widget.runtimeNodeAliases[firstBanner.imageNodeID] == widget.bannerImageNodeID,
+                "Visible banner cells are clearly identified runtime copies under the original empty Container")
+            let staticResolved = try document.scene.resolve(overrides: empty.transforms)
+            check(staticResolved[firstBanner.imageNodeID]?.activeInHierarchy == true &&
+                staticResolved[secondBanner.imageNodeID]?.activeInHierarchy == false &&
+                staticResolved[widget.bannerImageNodeID]?.activeInHierarchy == false,
+                "Single static reference renders a real clone while retaining the original inactive template")
+            check(staticResolved[firstBanner.rootID]?.rect?.size == SIMD2<Double>(360, 122) &&
+                staticResolved[firstBanner.imageNodeID]?.rect?.size == SIMD2<Double>(350, 122) &&
+                abs((staticResolved[firstBanner.rootID]?.localMatrix.columns.3.x ?? -1) - 2.5) < 1e-9 &&
+                abs((staticResolved[firstBanner.rootID]?.localMatrix.columns.3.y ?? -1) + 3.25) < 1e-9,
+                "Native clone writer uses authored360x122 cell,350x122 image and exact2.5/3.25 centering padding")
+            check(document.components[firstBanner.rootID]?.contains(where: { $0.kind == "UIButton" }) == true &&
+                document.component("UIButton", on: firstBanner.rootID)?["m_TargetGraphic"].targetID?.rawValue ==
+                    "runtime-watch-banner/cell/0/CAB-194e41a66c2317b9df19269f505210be:1112811429148650711",
+                "Copied UIButton target references are remapped to their copied Light graphic")
+            check(document.component("UIToggle", on: firstBanner.pageRootID)?["m_Interactable"].flag() == false &&
+                !widget.bannerButtonIDs.contains(firstBanner.pageRootID) &&
+                widget.bannerButtonIDs.contains(widget.bannerListNodeID),
+                "Original page tabs are noninteractive indicators; whole-list and cloned-cell UIButton routes remain distinct")
+            check(widget.runtimeComponentAliases.keys.contains(where: {
+                document.spriteByComponent[$0]?["id"].string == "CAB-e959d72720ecb3bf27836302d239ada3:-662833002379585603"
+            }), "Banner Light's cloned component keeps its original Sprite dependency")
+            let carouselState = HUDSourceWatchWidgets.State(bannerArtworks: ["yvonne_banner", "weapon_typhoeus_banner"])
+            var playback = try widget.makeBannerPlayback(artworks: carouselState.bannerArtworks!)
+            try playback.advance(delta: 3.999)
+            check(playback.normalizedPosition == 0 && playback.selectedIndex == 0 && !playback.isTweening,
+                "Source Lua cannot change the page before its four-second hold threshold")
+            try playback.advance(delta: 0.0011)
+            check(playback.selectedIndex == 1 && playback.holdTime == 0 && playback.normalizedPosition == 0,
+                "The triggering Lua tick discards overshoot and starts the original scroll tween")
+            try playback.advance(delta: 0.1)
+            check(abs(playback.normalizedPosition - sqrt(0.5)) < 1e-7 && playback.selectedIndex == 1 && playback.holdTime == 0.1,
+                "Ease3 is OutSine and an automatic center-changed callback restarts the hold clock")
+            var carouselPose = HUDSourceWatchPose(transforms: [:])
+            let carousel = try widget.apply(to: &carouselPose, state: carouselState, at: 4.1, banner: playback.sample)
+            let carouselResolved = try document.scene.resolve(overrides: carouselPose.transforms)
+            check(carousel.sprites[firstBanner.imageComponentID] != carousel.sprites[secondBanner.imageComponentID] &&
+                carouselResolved[firstBanner.imageNodeID]?.activeInHierarchy == true &&
+                carouselResolved[secondBanner.imageNodeID]?.activeInHierarchy == true &&
+                carouselResolved[firstBanner.rootID]?.rect?.size == SIMD2<Double>(360, 122),
+                "Both explicitly supplied original artworks coexist in source clones during the transition")
+            let containerID = HUDSourceID(rawValue: "CAB-194e41a66c2317b9df19269f505210be:7252297320149642455")
+            check(carouselResolved[containerID]?.rect?.size == SIMD2<Double>(731.5, 128.5) &&
+                abs((carouselResolved[containerID]?.localMatrix.columns.3.x ?? 1) + 366.5 * playback.normalizedPosition) < 1e-7 &&
+                carouselResolved[firstBanner.pageOffID]?.activeInHierarchy == true &&
+                carouselResolved[secondBanner.pageOnID]?.activeInHierarchy == true,
+                "Native padded content size/normalized ScrollRect position and cloned page toggles share the same sample")
+            try playback.advance(delta: 0.2, paused: true)
+            check(playback.normalizedPosition == 1 && !playback.isTweening && playback.holdTime == 0.1,
+                "Lua pause freezes only the hold clock while its independent original DOTween completes")
+            try playback.select(index: 0); try playback.advance(delta: 0.1, paused: true)
+            check(abs(playback.normalizedPosition - (1 - sqrt(0.5))) < 1e-7 && playback.selectedIndex == 0 && playback.holdTime == 0,
+                "Last-to-first follows the original reverse normalized tween and center callback, without an invented seamless wrap")
+            do {
+                _ = try widget.makeBannerPlayback(artworks: ["yvonne_banner", "weapon_typhoeus_banner", "yvonne_banner"])
+                fatalError("Unimplemented source cell capacity silently accepted")
+            } catch { check(true, "Unsupported source list capacity is explicit") }
             var pose = HUDSourceWatchPose(transforms: [:])
             let reference = try widget.apply(to: &pose, state: .recordReference, at: 8.234)
             check(reference.text[id("5452048441616942235")] == "管理员" &&
@@ -91,7 +154,7 @@ enum HUDSourceWatchWidgetsTests {
             alternate.profile.isMaximumLevel = false
             alternate.profile.relativeExperience = 10; alternate.profile.nextLevelExperience = 40
             let changed = try widget.apply(to: &pose, state: alternate, at: 12)
-            check(changed.sprites[widget.bannerImageComponentID] == "CAB-520854379894316bbed598088030cd9c:5980436975975208562" &&
+            check(changed.sprites[firstBanner.imageComponentID] == "CAB-520854379894316bbed598088030cd9c:5980436975975208562" &&
                 changed.text[id("-8926847511235017573")] == "10/40" &&
                 pose.value("m_FillAmount", on: id("-3381093159146109797"), fallback: -1) == 0.25,
                 "Changing explicit artwork/experience updates the original image and fill channels")

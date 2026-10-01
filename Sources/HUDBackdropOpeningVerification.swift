@@ -75,7 +75,7 @@ enum HUDBackdropOpeningVerification {
                       "Dismissal cancels the pending input and its preparation deadline")
                 if heldOpening {
                     check(view.playback.phase == .concealed && view.isHidden && view.renderedFrameCount == frameCount,
-                          "Cancelling a held initial pose never renders the fully deployed exit pose")
+                          "Cancelling a held initial pose never renders the fully deployed exit pose; hidden=\(view.isHidden), frameCount=\(view.renderedFrameCount), prior=\(String(describing: frameCount))")
                 }
             }
             later(SystemHUDView.exitDuration + 0.30) { [self] in

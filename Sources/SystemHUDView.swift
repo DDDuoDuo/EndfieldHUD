@@ -838,7 +838,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // distinct presentation size, before input uses the committed mapping.
         if moduleContent != nil {
             notesCanvas.setPresentation(notesSelected: selectedModule == .notes, animated: false)
-            updateModulePresentation()
+            // Restoring the committed module host must not reopen the source
+            // overview that this cancellation just suspended. In particular,
+            // a held initial pose must never submit a deployed stable frame.
+            updateModulePresentation(restoreSourceOverview: false)
         }
         sourceWatch?.suspendForConcealment()
         updateButtonStates()
@@ -1053,8 +1056,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         scheduleVisibleMotion()
     }
 
-    private func updateModulePresentation() {
-        updateSourceOverviewPresentation(stable: sourceOverviewPresented)
+    private func updateModulePresentation(restoreSourceOverview: Bool = true) {
+        if restoreSourceOverview { updateSourceOverviewPresentation(stable: sourceOverviewPresented) }
         updateProfileBackgroundPresentation()
         withoutActions {
             self.moduleContent.layer.position = CGPoint(x: 500, y: self.reportCenterY)
@@ -2292,6 +2295,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func updateSourceProfile(_ profile: UserProfile) {
         guard let sourceWatch else { return }
         var state = sourceWatch.widgetState
+        // A desktop reference sequence of two artworks confirmed in the
+        // supplied menu recording; it does not represent live account eligibility.
+        state.bannerArtworks = ["yvonne_banner", "weapon_typhoeus_banner"]
         // These are the desktop application's existing editable profile fields.
         // Experience, maximum-level gates and live game-account state are not inferred.
         state.profile = HUDSourceWatchWidgets.Profile(displayName: profile.name,

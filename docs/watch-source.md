@@ -100,8 +100,8 @@ UIImage references loaded by `imgRefPath` are resolved through the original
 AssetBundle container and persistent manifest as well as serialized Sprite
 pointers. This includes the two `ui_out_ring` nodes, `deco_04` and
 `ui_main_loop_bg`. An unresolved declared Sprite is diagnosed rather than
-silently becoming a white rectangle. The original disabled banner prototypes
-remain without an invented runtime banner.
+silently becoming a white rectangle. Original banner templates remain inactive;
+their visible cells are derived source clones under the original list container.
 
 HG's UI screen tuple copies `_ScreenSize`: width, height and their reciprocals.
 The UI render clock uses the proved 0.05t/t/2t source components; the gameplay
@@ -206,6 +206,10 @@ The ICC output is an explicit premultiplied RGBA8 sRGB raster uploaded without
 automatic texture-format selection. The fixture reads back every uploaded byte,
 then checks colors and row orientation for mixed-scale and reconstructed RGB ICC
 profiles. Missing or non-RGB profiles are rejected.
+The source main UI HDR target uses finalRTSize, while its extraction copy uses
+sceneRTSize. They are separate live values. This desktop adapter uses its actual
+drawable extent for its final target and captured raster; it does not infer the
+recording's scene size, viewport or final composite target from saved camera data.
 The explicit native lifecycle fixture also supplies delayed preparation completion,
 closes while input is pending, and waits for the real three-second timeout. It
 checks the existing source view and host deadlines without invoking capture APIs.
@@ -219,9 +223,18 @@ supplies its existing name, UID and permission level; game experience, rewards,
 birthdays, seasons and account eligibility are not inferred. Original profile
 UIButton targets open the existing macOS personal-profile module.
 
-The default banner is static. The original four-second interval, 0.2-second
-transition and ease3 contract are retained as evidence, but an eligible multi-cell
-carousel is not yet implemented. Three activity decoration materials require
+The deterministic fixture default has one static banner. The desktop explicitly
+shows the two reference artworks as source cell clones. The list keeps its
+365-by-128.5 viewport, 360-by-122 cells, 6.5 spacing and original padding.
+Its four-second hold discards tick overshoot and its 0.2-second ease3 transition
+uses the installed OutSine implementation. Center-changed callbacks also restart
+the hold clock, and beginning a drag kills an existing tween without completing
+it. The adapter advances tween, sampled center callback and hold tick in that
+order; the original Unity/DOTween/Lua ordering across frames remains unobserved.
+Original non-interactable page toggles indicate state; they are not new buttons.
+Desktop banner buttons open the existing event-log module. This reference
+sequence is not a recovered game account's eligible list or its JumpOut targets.
+Three activity decoration materials require
 additional source shader variants and remain behind the original inactive gates.
 Controlled GPU fixtures use generic profile text and original artwork without
 publishing the supplied recording's personal name or UID. Widget source/projection
@@ -328,8 +341,10 @@ Pixel-identical output has not yet been established against the supplied game
 recording. The original HG render globals, engine scheduling, possible IFix
 patches, native vertex-buffer quantization and game postprocessing still need
 runtime comparison. The live direct LDR port does not claim HG HDR/bloom/tonemapping;
-the packed-HDR and original desktop-input FrostedGlass/capture/RawImage path
-requires native validation. The actual game main-scene input and dynamic capture
+the packed-HDR and original desktop-input FrostedGlass/RawImage GPU path has
+passed synthetic native validation, including both original stencil passes,
+all three filters and explicit color-profile uploads. The desktop-capture and
+permission path still needs hardware validation. The actual game main-scene input and dynamic capture
 gates remain unobserved. Runtime account fields and
 two serialized multiline counter placeholders cannot stand in for live values.
 Unsupported text/layout/material features are diagnosed instead of rendered

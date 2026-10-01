@@ -110,7 +110,8 @@ final class HUDSourceWatchDocument {
         let widgetURL = root.appendingPathComponent("Widgets/widget.json")
         let widgets: HUDSourceWatchWidgets?
         if includeWidgets && FileManager.default.fileExists(atPath: widgetURL.path) {
-            widgets = try HUDSourceWatchWidgets(data: Data(contentsOf: widgetURL))
+            widgets = try HUDSourceWatchWidgets(data: Data(contentsOf: widgetURL), originalSceneData: sceneData,
+                bannerData: Data(contentsOf: root.appendingPathComponent("Widgets/banner-runtime.json")))
         } else { widgets = nil }
         self.widgets = widgets
         scene = try widgets?.mounted(in: originalScene) ?? originalScene
@@ -136,6 +137,9 @@ final class HUDSourceWatchDocument {
             for binding in sprite["bindings"].array {
                 if let id = binding["component_id"].string { joined[HUDSourceID(rawValue: id)] = sprite }
             }
+        }
+        for (copy, source) in widgets?.runtimeComponentAliases ?? [:] {
+            if let sprite = joined[source] { joined[copy] = sprite }
         }
         spriteByComponent = joined
     }
