@@ -58,5 +58,5 @@
       "byte_identical": true
     }
   ],
-  "native_macos_checks": "Pending publication and macOS CI; not executed on the Windows authoring host."
+  "native_macos_checks": "Native validation is tracked by the macOS checks and watch-motion-previews artifact on https://github.com/DDDuoDuo/EndfieldHUD/pull/1; this report verifies Windows-side source integrity and numerical correspondence."
 }
