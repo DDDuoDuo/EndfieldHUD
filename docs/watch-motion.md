@@ -1,4 +1,11 @@
-# PC watch-menu motion adaptation
+# Earlier desktop Watch motion adapter
+
+This document records the earlier Core Animation adapter. The current Watch
+overview uses the original scene, camera, geometry, fonts, texture mips and
+translated shader programs. See [the source renderer](watch-source.md) for the
+current behavior, native validation and remaining fidelity limits. The retained
+macOS feature panels can still use this older desktop artwork.
+
 
 Main navigation hover previously moved the card while its brightness, rim and
 icon marker changed instantly. Decorative rings and three randomly placed
