@@ -5,6 +5,10 @@ import QuartzCore
 /// The host owns accessible NSButtons, input routing, and the common depth plane.
 final class HUDNavigation {
     static let selectionTransitionDuration: TimeInterval = 0.22
+    // WatchPanel_PC uses keyboard_btn: Highlighted lasts five 30 Hz frames;
+    // returning to its static Normal clip blends for 0.1 seconds.
+    static let hoverTransitionDuration: TimeInterval = 1.0 / 6.0
+    static let hoverExitDuration: TimeInterval = 0.1
     let layer = CALayer()
     /// The bottom sectors share the central instrument's depth and parallax.
     /// Both navigation roots retain the same design-space coordinates.
@@ -785,16 +789,20 @@ final class HUDNavigationEntry {
 
     fileprivate func setSelected(_ selected: Bool, animated: Bool) {
         isSelected = selected
-        updatePose(animated: animated, rising: selected)
+        updatePose(animated: animated,
+                   duration: selected ? HUDNavigation.selectionTransitionDuration : 0.18)
     }
 
     /// Retarget every layer from its rendered pose. Hover separates the planes
     /// without enlarging them, and selection never adds a spring or overshoot.
-    private func updatePose(animated: Bool, rising: Bool) {
+    private func updatePose(animated: Bool, duration: TimeInterval, activatingHover: Bool = false) {
         let previousFace = faceLayer.presentation()?.transform ?? faceLayer.transform
         let previousContent = contentLayer.presentation()?.transform ?? contentLayer.transform
-        let highlightLayers = [plate, bottomStripe]
-        let previousColors = highlightLayers.map { $0.presentation()?.fillColor ?? $0.fillColor }
+        let colorLayers = [plate, inset] + (group == .bottom ? [bottomStripe] : [side])
+        let previousFills = colorLayers.map { $0.presentation()?.fillColor ?? $0.fillColor }
+        let previousStrokes = colorLayers.map { $0.presentation()?.strokeColor ?? $0.strokeColor }
+        let opacityLayers: [CALayer] = hasLayeredHover ? [hoverLight, marker] : [marker]
+        let previousOpacities = opacityLayers.map { $0.presentation()?.opacity ?? $0.opacity }
         cancelSelectionCleanup()
         let nextFace = faceTransform()
         withoutActions {
@@ -806,21 +814,44 @@ final class HUDNavigationEntry {
         }
         faceLayer.removeAnimation(forKey: "navigation.transform")
         contentLayer.removeAnimation(forKey: "navigation.contentTransform")
-        for shape in highlightLayers { shape.removeAnimation(forKey: "navigation.highlight") }
-        let duration: TimeInterval = rising && isSelected ? HUDNavigation.selectionTransitionDuration : 0.18
+        removeAppearanceAnimations()
         updateBackingPose(animated: animated, duration: duration)
         guard animated, !HUDRuntimeAppearance.reduceMotion else { return }
-        if group == .bottom {
-            // The inner-circle sectors stay fixed. Only their fill highlight
-            // changes, preserving clearance around the full-size timer dial.
-            for (index, shape) in highlightLayers.enumerated() {
-                guard let from = previousColors[index], let to = shape.fillColor, !CFEqual(from, to) else { continue }
-                let highlight = CABasicAnimation(keyPath: "fillColor")
-                highlight.fromValue = from; highlight.toValue = to
-                highlight.duration = duration; highlight.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                shape.add(highlight, forKey: "navigation.highlight")
+        for (index, shape) in colorLayers.enumerated() {
+            if activatingHover, hasLayeredHover, shape === plate,
+               let from = previousFills[index], let to = shape.fillColor {
+                // The game's two finite brightness activations end at white;
+                // there is no continuing blink, sweep or pulse while hovered.
+                // Retarget the first sample from the displayed color so rapid
+                // pointer reversals do not flash back to the idle model pose.
+                let highlight = CAKeyframeAnimation(keyPath: "fillColor")
+                highlight.values = [from, to, sidePlateColor(hovered: false).cgColor, to, to]
+                highlight.keyTimes = [0, 0.2, 0.4, 0.6, 1]
+                highlight.calculationMode = .linear
+                // Decoded RGB/alpha coefficients are 3u² − 2u³. Linear
+                // Bezier time with these ordinates reproduces that curve.
+                let activationTiming = CAMediaTimingFunction(controlPoints: 1.0 / 3.0, 0, 2.0 / 3.0, 1)
+                highlight.timingFunctions = [activationTiming, activationTiming, activationTiming,
+                                             CAMediaTimingFunction(name: .linear)]
+                highlight.duration = duration
+                highlight.isRemovedOnCompletion = true
+                highlight.beginTime = shape.convertTime(CACurrentMediaTime(), from: nil)
+                shape.add(highlight, forKey: "navigation.fillColor")
+            } else {
+                animateColor(shape, keyPath: "fillColor", from: previousFills[index], to: shape.fillColor, duration: duration)
             }
-        } else if !CATransform3DEqualToTransform(previousFace, nextFace) {
+            animateColor(shape, keyPath: "strokeColor", from: previousStrokes[index], to: shape.strokeColor, duration: duration)
+        }
+        for (index, item) in opacityLayers.enumerated() where previousOpacities[index] != item.opacity {
+            let highlight = CABasicAnimation(keyPath: "opacity")
+            highlight.fromValue = previousOpacities[index]; highlight.toValue = item.opacity
+            highlight.duration = duration
+            highlight.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            highlight.beginTime = item.convertTime(CACurrentMediaTime(), from: nil)
+            item.add(highlight, forKey: "navigation.opacity")
+        }
+        // Inner-circle sectors stay fixed; only their appearance changes.
+        if group != .bottom, !CATransform3DEqualToTransform(previousFace, nextFace) {
             let expansion = CABasicAnimation(keyPath: "transform")
             expansion.fromValue = NSValue(caTransform3D: previousFace)
             expansion.toValue = NSValue(caTransform3D: nextFace)
@@ -844,11 +875,29 @@ final class HUDNavigationEntry {
             self.selectionCleanup = nil
             self.faceLayer.removeAnimation(forKey: "navigation.transform")
             self.contentLayer.removeAnimation(forKey: "navigation.contentTransform")
-            self.plate.removeAnimation(forKey: "navigation.highlight")
-            self.bottomStripe.removeAnimation(forKey: "navigation.highlight")
+            self.removeAppearanceAnimations()
         }
         selectionCleanup = cleanup
         DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.02, execute: cleanup)
+    }
+
+    private func animateColor(_ item: CAShapeLayer, keyPath: String,
+                              from: CGColor?, to: CGColor?, duration: TimeInterval) {
+        guard let from, let to, !CFEqual(from, to) else { return }
+        let animation = CABasicAnimation(keyPath: keyPath)
+        animation.fromValue = from; animation.toValue = to
+        animation.duration = duration
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        animation.beginTime = item.convertTime(CACurrentMediaTime(), from: nil)
+        item.add(animation, forKey: "navigation." + keyPath)
+    }
+
+    private func removeAppearanceAnimations() {
+        for item in [plate, bottomStripe, inset, side] {
+            item.removeAnimation(forKey: "navigation.fillColor")
+            item.removeAnimation(forKey: "navigation.strokeColor")
+        }
+        for item in [hoverLight, marker] { item.removeAnimation(forKey: "navigation.opacity") }
     }
 
     /// The underplate follows by less than one point while the face and glyphs
@@ -926,8 +975,11 @@ final class HUDNavigationEntry {
     }
 
     fileprivate func update(dark: Bool, accent: NSColor, contentsScale: CGFloat) {
+        let appearanceChanged = self.dark != dark || !self.accent.isEqual(accent)
         self.dark = dark
         self.accent = accent
+        if HUDRuntimeAppearance.reduceMotion { cancelAnimations() }
+        else if appearanceChanged { removeAppearanceAnimations() }
         let scale = contentsScale.isFinite && contentsScale > 0 ? max(1, min(8, contentsScale)) : 2
         withoutActions {
             self.updateTitle()
@@ -943,6 +995,7 @@ final class HUDNavigationEntry {
     fileprivate func cancelAnimations() {
         cancelSelectionCleanup()
         cancelBackingCleanup()
+        removeAppearanceAnimations()
         for item in [layer, faceLayer, contentLayer, side, plate, bottomStripe, hoverLight] {
             for key in item.animationKeys() ?? [] where key.hasPrefix("navigation.") {
                 item.removeAnimation(forKey: key)
@@ -956,7 +1009,9 @@ final class HUDNavigationEntry {
     fileprivate func setHovered(_ hovered: Bool, animated: Bool = true) {
         guard hovered != isHovered else { return }
         isHovered = hovered
-        updatePose(animated: animated, rising: hovered)
+        updatePose(animated: animated,
+                   duration: hovered ? HUDNavigation.hoverTransitionDuration : HUDNavigation.hoverExitDuration,
+                   activatingHover: hovered)
     }
 
     private func updateTitle() {
@@ -997,7 +1052,7 @@ final class HUDNavigationEntry {
         let isPower = module == .power
         let isBottom = group == .bottom
         let foreground = (isPower && dark) || isBottom ? NSColor(white: 0.96, alpha: 1) : NSColor(white: 0.12, alpha: 1)
-        let silver = NSColor(white: isSelected ? 0.93 : (isHovered ? 0.89 : (dark ? 0.79 : 0.88)), alpha: 0.95)
+        let silver = sidePlateColor(hovered: isHovered)
         // Keep the translucent sector face, bright lower band and hover depth
         // while deriving their hue from the live theme rather than fixed gold.
         let sectorBase = accent.blended(withFraction: isHovered ? 0.02 : (isSelected ? 0.055 : 0.19),
@@ -1041,6 +1096,14 @@ final class HUDNavigationEntry {
         }
         title.foregroundColor = foreground.cgColor
         subtitle.foregroundColor = foreground.withAlphaComponent(0.62).cgColor
+    }
+
+    private func sidePlateColor(hovered: Bool) -> NSColor {
+        // Match keyboard_btn's translucent gray / opaque white states while
+        // retaining the existing selected and light-theme materials.
+        if hovered { return NSColor(white: 1, alpha: 1) }
+        return NSColor(white: isSelected ? 0.93 : (dark ? 0.9056603908538818 : 0.88),
+                       alpha: isSelected ? 0.95 : 0.8627451062202454)
     }
 
     private static func gameIcon(for module: HUDModule?) -> EndfieldGameIcon? {

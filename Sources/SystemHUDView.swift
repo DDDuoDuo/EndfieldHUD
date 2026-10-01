@@ -583,7 +583,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // animation stay disabled until opening completes; raster work is
         // cancelled normally if the presentation is interrupted.
         if selectedModule == .map { mapCanvas.prepareForPresentation() }
-        prepareTriangleOrbits()
         chargeBadge.animateEntrance()
         guard !HUDRuntimeAppearance.reduceMotion else {
             let token = generation
@@ -912,6 +911,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard window != nil, interactionEnabled || transitioning else { return }
         motion.setParallax(normalizedPoint: point)
     }
+
+    /// Fixture renderer feedback without synthesizing system pointer events.
+    func setNavigationHoverForVerification(_ module: HUDModule?) { navigation.hover(module) }
 
     var pointerTargetForVerification: CGPoint { motion.targetNormalizedPoint }
     var currentPointerTargetForVerification: CGPoint { currentPointerTarget() }
@@ -1303,29 +1305,33 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         markersPlane.content.addSublayer(artwork.markers)
         glassPlane.content.addSublayer(artwork.glass)
         rimPlane.content.addSublayer(artwork.rim)
-        motion.registerAmbient(layer: artwork.rearRotor, key: "rearRotation", keyPath: "transform.rotation.z",
-                               fromValue: 0, toValue: .pi * 2, duration: 47, autoreverses: false)
-        motion.registerAmbient(layer: artwork.secondaryRotor, key: "secondaryRotation", keyPath: "transform.rotation.z",
-                               fromValue: 0, toValue: -.pi * 2, duration: 29, autoreverses: false)
-        prepareTriangleOrbits()
-        motion.registerAmbient(layer: artwork.innerGuideRotor, key: "innerRotation", keyPath: "transform.rotation.z",
-                               fromValue: 0, toValue: -.pi * 2, duration: 73, autoreverses: false)
+        // Match the shared watch_loop phase. These are slow bounded excursions,
+        // not independent full turns; registerAmbient owns pause/close cleanup.
+        for (rotor, key) in [(artwork.rearRotor, "rearRotation"),
+                             (artwork.secondaryRotor, "secondaryRotation"),
+                             (artwork.innerGuideRotor, "innerRotation")] {
+            motion.registerAmbient(layer: rotor, key: key, keyPath: "transform.rotation.z",
+                                   fromValue: 0, toValue: HUDMechanicalArtwork.watchRingExcursion,
+                                   duration: HUDMechanicalArtwork.watchLoopLegDuration, timingFunction: .linear)
+        }
+        registerTriangleMotion()
+        motion.registerAmbient(layer: artwork.meshRotor, key: "meshRotation", keyPath: "transform.rotation.z",
+                               fromValue: 0, toValue: HUDMechanicalArtwork.watchMeshExcursion,
+                               duration: HUDMechanicalArtwork.watchLoopLegDuration, timingFunction: .linear)
         motion.registerAmbient(layer: artwork.indicatorGlow, key: "indicatorPulse", keyPath: "opacity",
                                fromValue: -0.12, toValue: 0.12, duration: 1.7)
         motion.registerAmbient(layer: artwork.scanLayer, key: "scan", keyPath: "transform.translation.y",
                                fromValue: -165, toValue: 165, duration: 6.1, beginOffset: -3.05)
-        motion.registerAmbient(layer: artwork.gridDrift, key: "gridDrift", keyPath: "transform.translation.x",
-                               fromValue: -3, toValue: 3, duration: 17.5, beginOffset: -8.75)
         motion.registerAmbient(layer: artwork.highlightCarrier, key: "highlight", keyPath: "opacity",
                                fromValue: -0.06, toValue: 0.08, duration: 3.7)
     }
 
-    private func prepareTriangleOrbits() {
-        artwork.randomizeTriangleOrbits()
-        for (index, orbit) in artwork.triangleOrbits.enumerated() {
-            motion.registerAmbient(layer: artwork.triangleRotors[index], key: "triangleRotation.\(index)",
-                                   keyPath: "transform.rotation.z", fromValue: orbit.fromValue,
-                                   toValue: orbit.toValue, duration: orbit.period, autoreverses: false)
+    private func registerTriangleMotion() {
+        for (index, rotor) in artwork.triangleRotors.enumerated() {
+            motion.registerAmbient(layer: rotor, key: "triangleRotation.\(index)",
+                                   keyPath: "transform.rotation.z", fromValue: 0,
+                                   toValue: HUDMechanicalArtwork.watchRingExcursion,
+                                   duration: HUDMechanicalArtwork.watchLoopLegDuration, timingFunction: .linear)
         }
     }
 
