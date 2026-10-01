@@ -129,8 +129,21 @@ menu's own Volume. The installed pipeline requests format74,
 Volume profile is empty. The original UI postprocess constructor invokes copy,
 distortion, bloom and UI-uber stages, whose active effects depend on actual
 camera Volume state. Authored values in the disabled menu Volume are not an
-active-effect preset. The current direct LDR macOS drawable does not yet
-reproduce that target or postprocess chain.
+active-effect preset. The live desktop view still uses its direct LDR mode.
+An explicit `sourceRGBHDR` renderer mode now draws into Metal's `rg11b10Float`
+mapping of format74, clears the UI scene black, then uses the unmodified
+original UberPost_CompositeUI pass1 base program726 to load and composite the
+final attachment. The adapter initializes that final attachment separately;
+this initialization is not a recreation of the game's earlier scene render.
+The source pass samples LOD0, retains RGB and clamps alpha. No optional
+bloom/vignette keyword is enabled without its original live-state gates.
+All six original composite variants, reflection, parameter records and source
+provenance are preserved under `WatchSource/HDR`. The final Metal RT adapter's
+flip tuple is separate from the offscreen UI camera tuple. Native asymmetric
+texture fixtures check both row orientations, source-alpha blending and the
+sRGB output transfer; separate Watch samples retain the original packed HDR
+scene blit. The original WatchBlur RawImage, material and clips are bundled,
+but bundling them does not supply dynamic scene pixels or execute its filter.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
@@ -231,7 +244,9 @@ Successful older desktop-adapter checks do not validate this renderer.
 Pixel-identical output has not yet been established against the supplied game
 recording. The original HG render globals, engine scheduling, possible IFix
 patches, native vertex-buffer quantization and game postprocessing still need
-runtime comparison. The direct LDR port does not claim HG HDR/bloom/tonemapping.
+runtime comparison. The live direct LDR port does not claim HG HDR/bloom/tonemapping;
+the explicit packed-HDR reference path requires native validation and does not
+yet include the complete main-scene FrostedGlass/capture/RawImage sequence.
 The desktop backdrop currently uses the system blur. Runtime account fields and
 two serialized multiline counter placeholders cannot stand in for live values.
 Unsupported text/layout/material features are diagnosed instead of rendered

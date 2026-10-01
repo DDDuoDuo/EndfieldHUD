@@ -1,0 +1,202 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "frag"
+    }
+  ],
+  "types": {
+    "_12": {
+      "name": "_12",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 16
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 32
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 48
+        },
+        {
+          "name": "_m4",
+          "type": "vec4",
+          "offset": 64
+        },
+        {
+          "name": "_m5",
+          "type": "vec4",
+          "offset": 80
+        },
+        {
+          "name": "_m6",
+          "type": "vec4",
+          "offset": 96
+        },
+        {
+          "name": "_m7",
+          "type": "vec4",
+          "offset": 112
+        },
+        {
+          "name": "_m8",
+          "type": "vec4",
+          "offset": 128
+        },
+        {
+          "name": "_m9",
+          "type": "vec4",
+          "offset": 144
+        },
+        {
+          "name": "_m10",
+          "type": "vec4",
+          "offset": 160
+        },
+        {
+          "name": "_m11",
+          "type": "vec4",
+          "offset": 176
+        },
+        {
+          "name": "_m12",
+          "type": "vec4",
+          "offset": 192
+        },
+        {
+          "name": "_m13",
+          "type": "vec4",
+          "offset": 208
+        },
+        {
+          "name": "_m14",
+          "type": "vec4",
+          "offset": 224
+        },
+        {
+          "name": "_m15",
+          "type": "vec4",
+          "offset": 240
+        },
+        {
+          "name": "_m16",
+          "type": "vec4",
+          "offset": 256
+        },
+        {
+          "name": "_m17",
+          "type": "vec4",
+          "offset": 272
+        },
+        {
+          "name": "_m18",
+          "type": "vec4",
+          "offset": 288
+        },
+        {
+          "name": "_m19",
+          "type": "vec4",
+          "offset": 304
+        },
+        {
+          "name": "_m20",
+          "type": "vec4",
+          "offset": 320
+        },
+        {
+          "name": "_m21",
+          "type": "vec4",
+          "offset": 336
+        },
+        {
+          "name": "_m22",
+          "type": "vec4",
+          "offset": 352
+        },
+        {
+          "name": "_m23",
+          "type": "vec4",
+          "offset": 368
+        },
+        {
+          "name": "_m24",
+          "type": "vec4",
+          "offset": 384
+        },
+        {
+          "name": "_m25",
+          "type": "vec4",
+          "offset": 400
+        }
+      ]
+    }
+  },
+  "inputs": [
+    {
+      "type": "vec2",
+      "name": "_3",
+      "location": 0
+    }
+  ],
+  "outputs": [
+    {
+      "type": "vec4",
+      "name": "_4",
+      "location": 0
+    }
+  ],
+  "separate_images": [
+    {
+      "type": "texture2D",
+      "name": "_7",
+      "set": 3,
+      "binding": 4
+    },
+    {
+      "type": "texture2D",
+      "name": "_8",
+      "set": 3,
+      "binding": 5
+    },
+    {
+      "type": "texture2D",
+      "name": "_9",
+      "set": 3,
+      "binding": 3
+    }
+  ],
+  "separate_samplers": [
+    {
+      "type": "sampler",
+      "name": "_10",
+      "set": 3,
+      "binding": 1
+    },
+    {
+      "type": "sampler",
+      "name": "_11",
+      "set": 3,
+      "binding": 2
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_12",
+      "name": "_12_13",
+      "block_size": 416,
+      "set": 3,
+      "binding": 6
+    }
+  ]
+}

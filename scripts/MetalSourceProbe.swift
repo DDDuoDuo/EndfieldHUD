@@ -43,8 +43,12 @@ func runProbe() throws -> Bool {
     let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true).standardizedFileURL
     try files.createDirectory(at: output, withIntermediateDirectories: true)
     let shaders = resource.appendingPathComponent("Shaders", isDirectory: true)
-    let metalFiles = try files.contentsOfDirectory(at: shaders, includingPropertiesForKeys: nil)
-        .filter { $0.pathExtension == "metal" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+    guard let enumerator = files.enumerator(at: resource, includingPropertiesForKeys: [.isRegularFileKey]) else {
+        throw ProbeFailure.invalid("Cannot enumerate original shader resources")
+    }
+    let metalFiles = enumerator.compactMap { $0 as? URL }
+        .filter { $0.pathExtension == "metal" && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        .sorted { $0.path < $1.path }
     guard !metalFiles.isEmpty else { throw ProbeFailure.invalid("No translated source Metal programs") }
 
     // Validate the actual runtime JSON against its compiled stage's binding
@@ -105,7 +109,8 @@ func runProbe() throws -> Bool {
             throw error
         }
         let sha = SHA256.hash(data: try Data(contentsOf: source)).map { String(format: "%02x", $0) }.joined()
-        results.append(StageResult(file: "Shaders/" + source.lastPathComponent, sha256: sha,
+        let relativePath = String(source.path.dropFirst(resource.path.count + 1))
+        results.append(StageResult(file: relativePath, sha256: sha,
                                    exitCode: process.terminationStatus, diagnosticFile: log.lastPathComponent))
         print("\(process.terminationStatus == 0 ? "PASS" : "FAIL") \(source.lastPathComponent)")
         if process.terminationStatus != 0 {

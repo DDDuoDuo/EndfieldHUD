@@ -1,0 +1,500 @@
+{
+  "schema_version": 1,
+  "scope": "Installed original default implementation and serialized source data, read-only static audit. No game/DLL execution, live GPU capture or runtime IFix observation.",
+  "source": {
+    "game_assembly": "D:/Arknights Endfield/GameAssembly.dll",
+    "game_assembly_sha256": "c24495e51b406f03b03890c4788ee618ae022c991405be5d5b8b787cb775ae89",
+    "metadata_sha256": "0076743397acadf03d3b0064343a963c7c88863b8160526d397e4b3efb96f02e"
+  },
+  "target": {
+    "method": "HGRenderPath3DUI.RenderInternal",
+    "method_index": 269634,
+    "address": "0x188ed10e4",
+    "create_color_call": "0x188ed1297",
+    "format_store": "0x188ed1281",
+    "graphics_format": 74,
+    "graphics_format_name": "B10G11R11_UFloatPack32",
+    "enum_default_raw": "8094",
+    "channels": "RGB packed unsigned float HDR; no alpha channel. This is not an RGBA half-float target.",
+    "dimensions": "HGCamera.finalRTSize (getter call 0x188ed1263); no fixed 1.25 crop/scale in this target creation call.",
+    "msaa": "HGCamera.msaaEnabled chooses sample count; CreateColorBuffer uses camera+0x688 if enabled, otherwise 1.",
+    "descriptor": {
+      "writer": "HGRenderPipeline.CreateColorBuffer",
+      "address": "0x188ea8954",
+      "format_write": "0x188ea89d7",
+      "clear_buffer_write": "0x188ea8a1c",
+      "clear_color_write": "0x188ea8a3d",
+      "filter_mode": 0,
+      "filter_mode_write": "0x188ea8a2e",
+      "wrap_mode": 1,
+      "wrap_mode_write": "0x188ea8a4a",
+      "dimension": 2,
+      "slices": 1,
+      "default_initializer": "0x18358eef0",
+      "allocate_call": "0x188ea8ab5"
+    },
+    "boundary": "This proves the requested render-graph descriptor. Device fallback/physical allocation and live target contents were not observed."
+  },
+  "clear": {
+    "method": "HGRenderPipeline.NeedClearColorBuffer",
+    "address": "0x188ea96b8",
+    "enum": {
+      "Sky": 0,
+      "Color": 1,
+      "None_": 2
+    },
+    "rule": "Sky (0) or Color (1) => clearBuffer true; other modes => HGUtils.IsRegularPreviewCamera(camera).",
+    "tests": [
+      "0x188ea96db",
+      "0x188ea96ea"
+    ],
+    "regular_preview_call": "0x188ea9708",
+    "true_branch": "0x188ea9718",
+    "color": {
+      "method": "HGRenderPipeline.GetColorBufferClearColor",
+      "address": "0x188ea91e8",
+      "getter_call": "0x188ea921d",
+      "source": "HGCamera.backgroundColorHDR; valid HGAdditionalCameraData with non-None mode returns its serialized/runtime RGBA unchanged.",
+      "additional_color_offset": "0x24",
+      "additional_color_read": "0x183536180",
+      "none": "Color.clear",
+      "fallback": "Without valid additional data, uses Camera.backgroundColor and a conversion helper."
+    },
+    "source_prefab": {
+      "asset": "assets/beyond/initialassets/prefabs/entry/uicamera.prefab",
+      "cab": "CAB-93faf152cd46f6a512e9459a55074b1f",
+      "provenance": {
+        "name": "Data/Bundles/Windows/initial/cb096bd8884fbb632822f210.ab",
+        "layer": "Persistent",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+        "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+        "offset": 25643212,
+        "length": 555207,
+        "md5": "A46E15BB56C43B3D81A2DFEEB4DB4A82",
+        "sha256": "765156a8310850f53e8e96802e47ad9eac25b20871cd45560f69deeade43eae1",
+        "md5_verified": true
+      },
+      "camera_id": "CAB-93faf152cd46f6a512e9459a55074b1f:-6618082447550201530",
+      "additional_id": "CAB-93faf152cd46f6a512e9459a55074b1f:-4991808508561145530",
+      "clearColorMode": 0,
+      "backgroundColorHDR": [
+        0.02500000037252903,
+        0.07000000029802322,
+        0.1899999976158142,
+        0
+      ],
+      "enableAlpha": 0,
+      "flipYMode": 0,
+      "renderPath": 1,
+      "m_HDR": false,
+      "m_AllowMSAA": false
+    },
+    "boundary": "These describe the initial texture descriptor only. The actual first world-UI attachment explicitly overrides load/clear to Clear black; do not use this initial HDR background as final UI background. Alpha 0 is unused in the requested RGB-only target."
+  },
+  "actual_attachment_clear": {
+    "first_world_ui": {
+      "layer_mask": 1024,
+      "source_layer": "UIPP/layer10",
+      "layer_write": "0x188ed155a",
+      "prepare_method": "UIPassConstructor.PrepareUIPassData",
+      "method_index": 268699,
+      "comparison": "0x188e84dfe: input.layerMask == HGUtils.UI_3D_LAYER",
+      "load_action": 1,
+      "load_name": "Clear",
+      "store_action": 0,
+      "store_name": "Store",
+      "clear_color": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "clear_color_write": "0x188e84dcb..0x188e84df0",
+      "attachment_call": "0x188e84e27",
+      "manual_override_true": "0x188e1d69d"
+    },
+    "later_screen_ui": {
+      "layer_mask": 32,
+      "source_layer": "UI/layer5",
+      "layer_write": "0x188ed186e",
+      "load_action": 0,
+      "load_name": "Load",
+      "store_action": 0,
+      "store_name": "Store",
+      "attachment_call": "0x188e84e27"
+    },
+    "significance": "The first UIPP UI pass clears the new HDR target black BEFORE drawing its renderer list. A WatchBlur RawImage on UIPP is drawn after this clear and can remain in that HDR result. The later ordinary UI pass loads its target instead of clearing it."
+  },
+  "normal_watch_enable": {
+    "transition": "PhaseWatch._DoPhaseTransitionIn",
+    "ordered_calls": [
+      {
+        "line": 73,
+        "call": "ctrl.view.volume.gameObject:SetActive(false)"
+      },
+      {
+        "line": 81,
+        "call": "ctrl:PlayAnimationIn()"
+      },
+      {
+        "line": 84,
+        "call": "ctrl:_SetCameraCfg()"
+      }
+    ],
+    "back_to_top": {
+      "method": "PhaseWatch._DoPhaseTransitionBackToTop",
+      "line": 146,
+      "call": "uiCtrl:_SetCameraCfg()"
+    },
+    "watch_ctrl": {
+      "method": "WatchCtrl._SetCameraCfg",
+      "line": 948,
+      "calls": [
+        "CameraManager:SetUICameraPostProcess(true)",
+        "CameraManager:AddUICamCullingMaskConfig(\"Watch\", UIConst.LAYERS.UIPP)"
+      ]
+    },
+    "native_manager": {
+      "method": "CameraManager.SetUICameraPostProcess",
+      "method_index": 48999,
+      "address": "0x184476d10",
+      "camera_read": "0x184476d44",
+      "get_hg_camera": "0x184476d5c",
+      "value": "bool + 1",
+      "value_instruction": "0x184476d66",
+      "setter_call": "0x184476d6f"
+    },
+    "effect": "true selects HGCamera.renderPath 2/UI3D; false selects 1/UI.",
+    "close": "WatchCtrl._ClearCameraCfg at line 953 sets false and removes the Watch UIPP culling configuration; OnClose and OnHide call it.",
+    "volume_boundary": "Normal transition explicitly disables the WatchPanel volume GameObject. Presence/active flags of serialized Bloom/Vignette profile components do not prove that they affect the normal Watch output.",
+    "unknown": [
+      "Other active scene/global volumes, quality/frame settings, IFix replacements and runtime PP values are not live-observed."
+    ]
+  },
+  "pipeline_configuration": {
+    "load_method": "RenderPipelineDataLoader.PreloadFullRpResources (0x18403c020)",
+    "asset_literal": {
+      "encoded": "0xa0002091",
+      "index": 4168,
+      "path": "Assets/Beyond/InitialAssets/Settings/RenderPipeline/HGRenderPipelineAsset.asset"
+    },
+    "global_settings_literal": {
+      "encoded": "0xa0002093",
+      "index": 4169,
+      "path": "Assets/Beyond/InitialAssets/Settings/RenderPipeline/HGRenderPipelineGlobalSettings.asset"
+    },
+    "load_full_method": "RenderPipelineDataLoader.LoadFullRpResources (0x183263000)",
+    "source": "One exact original settings bundle, decoded into isolated unity-postprocess-cab; dependencies were not expanded.",
+    "pipeline_asset": {
+      "id": "CAB-5edbf457631197eaf84a8374582f8cca:7092282995594712424",
+      "raw_sha256": "bd1d1e1dffb199473cf2c0f1802a6df73b63f7591c62a4ed6335658b6f37795d",
+      "colorBufferFormat": 74,
+      "dynamicResolutionSettings": {
+        "enabled": 0,
+        "useMipBias": 0,
+        "enableDLSS": 0,
+        "DLSSPerfQualitySetting": 0,
+        "DLSSUseOptimalSettings": 1,
+        "DLSSSharpness": 0.5,
+        "maxPercentage": 100.0,
+        "minPercentage": 100.0,
+        "dynResType": 1,
+        "upsampleFilter": 1,
+        "forceResolution": 0,
+        "forcedPercentage": 100.0,
+        "lowResTransparencyMinimumThreshold": 0.0,
+        "rayTracingHalfResThreshold": 50.0
+      }
+    },
+    "globals": {
+      "id": "CAB-5edbf457631197eaf84a8374582f8cca:6280066910515101693",
+      "raw_sha256": "8787b57ecb7e43096e0d8c664bd3cdb11117814b4e739ec5047326ae2a1f4d2a",
+      "default_profile": {
+        "id": "CAB-5edbf457631197eaf84a8374582f8cca:-7893306897126227420",
+        "raw_sha256": "dfdb228868360885b34721c9a5ff472f4f29d1ef28e9e02dee50aae67e2debff",
+        "components": []
+      },
+      "desktop_taau_scale": 1.0,
+      "camera_frame_settings": {
+        "bitDatas": {
+          "data1": 72198329345245005,
+          "data2": 13763000477350330392
+        },
+        "materialQuality": 0
+      }
+    },
+    "boundary": "These are the exact originally loaded configuration resources. The default volume profile is empty. DefaultLookDevProfile is a separate resource and its inactive Bloom/Tonemapping do not establish normal Watch postprocess parameters."
+  },
+  "postprocess_construction": {
+    "method": "UIPostProcessConstructor.ConstructPass",
+    "method_index": 269431,
+    "address": "0x188ec4f9c",
+    "entry_call": "0x188ed17aa from UI3D RenderInternal",
+    "calls": [
+      {
+        "address": "0x188ec50e3",
+        "method": "CopyUIRT"
+      },
+      {
+        "address": "0x188ec50f9",
+        "method": "RenderUIDistortion"
+      },
+      {
+        "address": "0x188ec51a4",
+        "method": "UberPostPassUtils.BloomPass"
+      },
+      {
+        "address": "0x188ec51f6",
+        "method": "UIUberPass"
+      }
+    ],
+    "components": "Reads HGCamera.volumeComponentsData; UIUberPass queries its Bloom/Vignette/HGVignette and frame settings.",
+    "bloom_condition": "UIUberPass calls Bloom.IsActive at 0x188ec5d90 before using the source bloom parameters.",
+    "boundary": "The calls prove the original construction path. Specific active bloom/vignette/distortion values or weighted scene-volume parameters are not established by the empty default profile or disabled Watch-local volume."
+  },
+  "per_pass": {
+    "writer": "HGRenderPathBase.IRenderGraphCallbackOwner.OnRenderPassExecution",
+    "method_index": 269585,
+    "address": "0x188ebd808",
+    "condition": "renderPassIssued is true; targetCamera is provided or falls back to the render-path camera.",
+    "back_buffer": "Logical OR of valid color attachments for which HGRenderGraph.IsBackBuffer returns true.",
+    "offscreen": {
+      "HGFlipX": 0,
+      "HGFlipY": 0,
+      "HGOrientationType": 0
+    },
+    "backbuffer_rule": "GraphicsDeviceType OpenGLES2(8), OpenGLES3(11), OpenGLCore(17) use zero flips/orientation. Otherwise Display.preTransform 1 or 3 selects HGFlipX=1; other values select HGFlipY=1, with orientation equal to Display.preTransform.",
+    "injected_rule": "If the second 32-bit float of customPayload compares equal to 0, _RenderPathInjected=1; otherwise, including NaN, 0.",
+    "payload_read": "0x188ebdd5a",
+    "injected_store": "0x188ebdd7e",
+    "first_tuple": [
+      "_RenderPathInjected",
+      "_HGFlipX",
+      "_HGFlipY",
+      "_HGOrientationType"
+    ],
+    "first_tuple_copy": "0x188ebddac (constant buffer offset 0)",
+    "payload_copy": "0x188ebddc4 (offset 16)",
+    "bind": "0x188ebde0d (32-byte global constant buffer, HGShaderIDs static offset 0x318)",
+    "not_watch_constants": [
+      "HGRenderPipeline.Render reset (0,0,1,0).",
+      "TerrainVTBake callback (1,0,0,0)."
+    ],
+    "ui_draw_payload": {
+      "ui3d_construct_calls": [
+        "0x188ed164e",
+        "0x188ed18cb"
+      ],
+      "constructor": "UIPassConstructor.ConstructPass (0x188e8472c)",
+      "set_render_func_call": "0x188e848f6",
+      "null_custom_payload_store": "0x188e848a3",
+      "forwarding": [
+        "0x18697bca8 -> 0x18697bbd0",
+        "0x18697bc87 -> 0x1877510d4",
+        "0x1877511ac -> 0x187751084"
+      ],
+      "helper": "HGRenderGraphPass<T>.SetupRenderFuncDescHelper (0x187751084)",
+      "helper_null_test": "0x1877510b2",
+      "helper_destination": "RenderFuncDesc+0x10 (16-byte fixed buffer)",
+      "helper_null_branch": "0x1877510b7: edx=0, r8d=16; tail-calls 0x183387650",
+      "resolved_zero_writer": "Unity.Collections.LowLevel.Unsafe.UnsafeUtility::MemSet(System.Void*,System.Byte,System.Int64)",
+      "payload": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "callback": "ExecuteSubpassRenderFunc 0x187750b22 supplies &RenderFuncDesc+0x10 through InvokeOwnerCallback 0x188e131bc.",
+      "offscreen_result": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "boundary": "This tuple follows for the UI draw pass on the newly created offscreen UI color attachment. The later draw/composite to a backbuffer uses the separate attachment/display orientation branch; do not set every pass to the offscreen tuple."
+    }
+  },
+  "implementation_boundaries": [
+    "HDR RGB target/clear and PP-path enable are source contracts, not proof that a Metal recreation matches all original HGRP composite/postprocess stages.",
+    "Do not use the renderPath enum value 2 as the _RenderPathInjected float.",
+    "GPU/API flip adaptation must account for source shader final clip-Y conversion, adapter GPU projection and render-target UV conventions; do not copy a PC sign solely by enum name.",
+    "No newly proven fixed 1.25 viewport/projection crop is present in the inspected target creation/clear code."
+  ],
+  "evidence": [
+    {
+      "path": "precision-reference/postprocess/native/HGRenderPath3DUI--RenderInternal--269634.asm.txt",
+      "bytes": 43010,
+      "sha256": "646cc2e05d4579d103523557cc229a5f1ee91d93d2c95262af46f9661eb2fd13"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGRenderPipeline--CreateColorBuffer--265781.asm.txt",
+      "bytes": 8930,
+      "sha256": "80c40971d7a78422c24f2b682f4d58b9f2299903c9ebc674fe6090d0363575af"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGRenderPipeline--NeedClearColorBuffer--265774.asm.txt",
+      "bytes": 7020,
+      "sha256": "c8d5280646064c3a94c9dbaf6232c4567c24c3bb8b8d81d9bfb04314e5181f92"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGRenderPipeline--GetColorBufferClearColor--265775.asm.txt",
+      "bytes": 3018,
+      "sha256": "9a57c11f5befe027ee6c0739c0fff14de81dba4805f6b848c77acaec73bb8a34"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGCamera--get_clearColorMode--268340.asm.txt",
+      "bytes": 7781,
+      "sha256": "fa31053fa5de76fbfdd3d3857078898efbac8c437ba88c25d5979ca3a2ad2c53"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGCamera--get_backgroundColorHDR--268341.asm.txt",
+      "bytes": 14452,
+      "sha256": "34269f2455d467deaf0e536749ed9ad0eca2f5f0f3a4e41203d7164a113de5c8"
+    },
+    {
+      "path": "precision-reference/postprocess/native/CameraManager--SetUICameraPostProcess--48999.asm.txt",
+      "bytes": 3403,
+      "sha256": "679552049183d92dc723ce38e280da65e442545f669f91ab484a07637b8d26e1"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGCamera--set_renderPath--268349.asm.txt",
+      "bytes": 2730,
+      "sha256": "57ae0a52958f05a3bfe853bae58f3a6a502f9112b728165c09b3722e6829d030"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGRenderPathBase--HG_Rendering_RenderGraphModule_IRenderGraphCallbackOwner_OnRenderPassExecution--269585.asm.txt",
+      "bytes": 31404,
+      "sha256": "905d9ab4b1c77877d31222ab2c438530af0a897133bc34a5bb10051b50512cf7"
+    },
+    {
+      "path": "precision-reference/ui-camera-scene.json",
+      "bytes": 24635,
+      "sha256": "ccd9f74f5cfc4644a99eef71b682ea621b0db76b15496fa9e43c2b4d3b4c6bb9"
+    },
+    {
+      "path": "precision-reference/postprocess/enum-defaults.json",
+      "bytes": 186290,
+      "sha256": "a67e202e1e5e0e2c3646aa73fc4606910815c6aa8268af1e973e0357fc4426c2"
+    },
+    {
+      "path": "precision-reference/postprocess/decoded-postprocess-settings.json",
+      "bytes": 22457,
+      "sha256": "3af80222b7bc35a31f18c9b5dc3845cd3b15c06544b227d7a7032341391ed79b"
+    },
+    {
+      "path": "extracted/Persistent/Data/LuaScripts/Phase/Watch/PhaseWatch.dec.lua",
+      "bytes": 7202,
+      "sha256": "04c5ef4216bbe4ecf6af01b4e1c4b58c099f123bccec72decd25405d6d7e4828"
+    },
+    {
+      "path": "extracted/Persistent/Data/LuaScripts/UI/Panels/Watch/WatchCtrl.dec.lua",
+      "bytes": 39026,
+      "sha256": "19f0ea130b8b1e9b6d428d66e9febba631d4a824d4eddd65324dccdcfaf2f453"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/18697bca8-18697bd1d.asm.txt",
+      "bytes": 2197,
+      "sha256": "3c8730bf4d0bf617301eff9b5b2fdd09e1b42a3f8536bc36a1380c63275e47ac"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/18697bbd0-18697bca7.asm.txt",
+      "bytes": 4100,
+      "sha256": "de79c48126a19233a607d612a43597120c8efe29f09fd471f447a9526659e243"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/1877510d4-1877511ed.asm.txt",
+      "bytes": 5125,
+      "sha256": "839ec46f4b41c861d3c94fec804292b0082bc5232140658e4b998b059672d920"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/187751084-1877510d4.asm.txt",
+      "bytes": 1499,
+      "sha256": "630d9d8a4b817241134f34a681fbc20fdf7c39103ccf31390b9d0c3adc899f3e"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/183387650-1833876ae.asm.txt",
+      "bytes": 1756,
+      "sha256": "06f463bee83e42ae09609a0060f5562d0116fb3a41296e12c2bad3b06a777da9"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/18775092c-187750e01.asm.txt",
+      "bytes": 20243,
+      "sha256": "38bb439669206e52f9ac52c794df7a82b8039d386bc58e972a8defa0bbda14cc"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/18030e9fc-18030ea21.asm.txt",
+      "bytes": 672,
+      "sha256": "2a1160cdf0edff019b6045939d325ad217b824c2b91f05ebfc1232b65bd03e7b"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/18030e9d4-18030e9fc.asm.txt",
+      "bytes": 673,
+      "sha256": "7430430e10f595010f735dea1679caec0c79e40f57ef081a043468bb2dbf7811"
+    },
+    {
+      "path": "precision-reference/map-dynamic/native/UIPassConstructor--ConstructPass--268704.asm.txt",
+      "bytes": 9606,
+      "sha256": "b1f001707a6b73c20f459011f688b2f5574864e857ffbccf0f3184882f29b427"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGShaderIDs--_cctor--268670.asm.txt",
+      "bytes": 197066,
+      "sha256": "1b9fa3eadbd04959137af51240d3459d563bf08d1d319c1d58dc7ba6fcb36a1d"
+    },
+    {
+      "path": "precision-reference/postprocess/native/RenderPipelineDataLoader--PreloadFullRpResources--391446.asm.txt",
+      "bytes": 8362,
+      "sha256": "2c9059574716291249cfecba6fda583f6783cd56bf368a8662c6d9d7ee0017d9"
+    },
+    {
+      "path": "precision-reference/postprocess/native/RenderPipelineDataLoader--LoadFullRpResources--391448.asm.txt",
+      "bytes": 17541,
+      "sha256": "90c9d1f0a3e610f99ad6b6369e9b4bee26e967294fb117662adde48cd7405560"
+    },
+    {
+      "path": "precision-reference/postprocess/native/UIPostProcessConstructor--ConstructPass--269431.asm.txt",
+      "bytes": 12933,
+      "sha256": "85d687b85fc81f21d993f75247b1b18ec76f1376aa03ece5bba698fee3d58113"
+    },
+    {
+      "path": "precision-reference/postprocess/native/UIPostProcessConstructor--UIUberPass--269426.asm.txt",
+      "bytes": 42613,
+      "sha256": "fbb645531472de80df8fb5f45f0cdc802840986c7e1328987ff1b419d4e492c9"
+    },
+    {
+      "path": "precision-reference/postprocess/native/UIPostProcessConstructor--RenderUIDistortion--269428.asm.txt",
+      "bytes": 17121,
+      "sha256": "aa13f9242d9d31f0ceea133c9393e3e77fcd4ae796e64dee3a9791697b126cf7"
+    },
+    {
+      "path": "precision-reference/postprocess/pipeline-address-literals.json",
+      "bytes": 768,
+      "sha256": "8562bc2ea92f27988a14cc0a0166ee164cdfe0712a8678701e9976614bf0b9ae"
+    },
+    {
+      "path": "precision-reference/postprocess/pipeline-settings-decode.json",
+      "bytes": 1196,
+      "sha256": "379ba23c640972c932d14e82187b7e4408251b70b1d2f33f54b2659c4e1add7a"
+    },
+    {
+      "path": "precision-reference/map-dynamic/native/UIPassConstructor--PrepareUIPassData--268699.asm.txt",
+      "bytes": 28696,
+      "sha256": "ad57eb6847d1f46b37ae0f4841503d4e4aafd8fb8e4b7f05cccd058a0aca5043"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGRenderGraphPass--SetColorAttachment--265248.asm.txt",
+      "bytes": 4564,
+      "sha256": "6c276447b57170794452ee34dccc2cdb204e11882fc28be6e435d5b904c44bca"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGUtils--_cctor--270020.asm.txt",
+      "bytes": 22034,
+      "sha256": "5353ff53b84b5cf3b0e5bd4f21f785ba0342e6587ffe9ff02fc4ca6f4b7783c5"
+    },
+    {
+      "path": "precision-reference/postprocess/composite-enum-defaults.json",
+      "bytes": 36922,
+      "sha256": "3cc6fc7667fb96ee1231941d463fa77b72b90347fa9fe48b5e0456b6a048b7a8"
+    }
+  ]
+}

@@ -6,6 +6,21 @@ import simd
 /// values are supplied by the scene; this view does not fit source art to the
 /// earlier desktop composition or synthesize a postprocess.
 final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
+    enum SceneColorMode: Equatable {
+        case directLDR
+        /// Original packed RGB target followed by UberPost_CompositeUI. This
+        /// has no alpha channel and requires a real backdrop for desktop use.
+        case sourceRGBHDR
+    }
+
+    struct SceneColorReadback {
+        var data: Data
+        var width: Int
+        var height: Int
+        var rowBytes: Int
+        var pixelFormat: String
+    }
+
     struct Camera {
         var viewProjection: simd_float4x4
         var viewNoTranslationProjection: simd_float4x4
@@ -128,6 +143,12 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     private let queue: MTLCommandQueue
     private let root: URL
+    private let sceneColorMode: SceneColorMode
+    private var sceneColorTexture: MTLTexture?
+    private var uiComposite: HUDSourceUIComposite?
+    private var sceneColorPixelFormat: MTLPixelFormat {
+        sceneColorMode == .sourceRGBHDR ? .rg11b10Float : colorPixelFormat
+    }
     private let shaders: [String: Shader]
     private var geometries: [String: Geometry] = [:]
     private var materials: [String: Material] = [:]
@@ -165,7 +186,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     override var isOpaque: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    init(frame: CGRect, resourceRoot: URL? = nil) throws {
+    init(frame: CGRect, resourceRoot: URL? = nil, sceneColorMode: SceneColorMode = .directLDR) throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw Failure.message("Metal device or command queue unavailable")
         }
@@ -174,6 +195,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
         self.queue = queue
         self.root = root
+        self.sceneColorMode = sceneColorMode
         let colorPolicy = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("render-color-policy.json"))) as? [String: Any]
         guard (colorPolicy?["serialized_color_space"] as? Int) == 1 else {
             throw Failure.message("Original linear project color-space evidence unavailable")
@@ -210,8 +232,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
         shaders = catalog
         super.init(frame: frame, device: device)
-        // Source PlayerSettings is Linear. This direct LDR display target
-        // performs its sRGB output transfer; HG HDR/postprocess is not inferred.
+        // Source PlayerSettings is Linear. The display attachment performs its
+        // sRGB transfer. HDR mode renders into the original RGB format first.
         colorPixelFormat = .bgra8Unorm_srgb
         depthStencilPixelFormat = .depth32Float_stencil8
         clearColor = MTLClearColorMake(0, 0, 0, 0)
@@ -226,6 +248,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         isPaused = true
         enableSetNeedsDisplay = true
         delegate = self
+        if sceneColorMode == .sourceRGBHDR {
+            uiComposite = try HUDSourceUIComposite(device: device, resourceRoot: root, outputPixelFormat: colorPixelFormat)
+        }
         try loadGeometries(device: device)
         try loadTextures(device: device)
         try loadFontTextures()
@@ -354,11 +379,76 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         return image
     }
 
+    /// Original packed RGB scene bytes before the final source composite.
+    /// No alpha expansion, output transfer, tone mapping or PNG conversion.
+    func copySceneColorReadback() throws -> SceneColorReadback {
+        guard sceneColorMode == .sourceRGBHDR,
+              renderedFrameGeneration == submittedFrameGeneration,
+              let texture = sceneColorTexture, let device else {
+            throw Failure.message("Current frame has no original HDR scene target")
+        }
+        lastRenderCommand?.waitUntilCompleted()
+        if let error = lastRenderCommand?.error { throw error }
+        let rowBytes = ((texture.width * 4 + 255) / 256) * 256
+        guard let buffer = device.makeBuffer(length: rowBytes * texture.height, options: .storageModeShared),
+              let command = queue.makeCommandBuffer(), let encoder = command.makeBlitCommandEncoder() else {
+            throw Failure.message("Cannot allocate original HDR readback")
+        }
+        encoder.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                     sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
+                     to: buffer, destinationOffset: 0, destinationBytesPerRow: rowBytes,
+                     destinationBytesPerImage: rowBytes * texture.height)
+        encoder.endEncoding(); command.commit(); command.waitUntilCompleted()
+        if let error = command.error { throw error }
+        return SceneColorReadback(data: Data(bytes: buffer.contents(), count: rowBytes * texture.height),
+            width: texture.width, height: texture.height, rowBytes: rowBytes, pixelFormat: "rg11b10Float")
+    }
+
+    private func sceneDescriptor(display: MTLRenderPassDescriptor, drawable: CAMetalDrawable,
+                                 command: MTLCommandBuffer) throws -> MTLRenderPassDescriptor {
+        guard sceneColorMode == .sourceRGBHDR else { return display }
+        guard let device else { throw Failure.message("Metal device unavailable") }
+        if sceneColorTexture?.width != drawable.texture.width || sceneColorTexture?.height != drawable.texture.height {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rg11b10Float,
+                width: drawable.texture.width, height: drawable.texture.height, mipmapped: false)
+            descriptor.storageMode = .private
+            descriptor.usage = [.renderTarget, .shaderRead]
+            guard let texture = device.makeTexture(descriptor: descriptor) else {
+                throw Failure.message("Original B10G11R11 RGB HDR target unavailable")
+            }
+            texture.label = "Source UI3D RGB HDR"
+            sceneColorTexture = texture
+        }
+        // The desktop adapter owns its initial destination contents. Clear it
+        // before the source composite's explicit Load, avoiding undefined data.
+        // This is not a claim about the game's earlier scene render contents.
+        let initialize = MTLRenderPassDescriptor()
+        initialize.colorAttachments[0].texture = drawable.texture
+        initialize.colorAttachments[0].loadAction = .clear
+        initialize.colorAttachments[0].storeAction = .store
+        initialize.colorAttachments[0].clearColor = clearColor
+        guard let initialization = command.makeRenderCommandEncoder(descriptor: initialize) else {
+            throw Failure.message("Cannot initialize final UI attachment")
+        }
+        initialization.endEncoding()
+        let descriptor = display.copy() as! MTLRenderPassDescriptor
+        descriptor.colorAttachments[0].texture = sceneColorTexture
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        descriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
+        return descriptor
+    }
+
     func draw(in view: MTKView) {
-        guard let camera, let descriptor = currentRenderPassDescriptor,
-              let drawable = currentDrawable, let command = queue.makeCommandBuffer(),
-              let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+        guard let camera, let display = currentRenderPassDescriptor,
+              let drawable = currentDrawable, let command = queue.makeCommandBuffer() else { return }
         diagnostics.removeAll(keepingCapacity: true)
+        let descriptor: MTLRenderPassDescriptor
+        do { descriptor = try sceneDescriptor(display: display, drawable: drawable, command: command) }
+        catch { diagnostics.append(String(describing: error)); return }
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else {
+            diagnostics.append("Cannot encode source UI scene"); return
+        }
         for batch in batches {
             guard let geometry = geometries[batch.mesh], let material = materials[batch.material] else {
                 diagnostics.append("Unsupported source mesh/material: \(batch.mesh) / \(batch.material)")
@@ -523,6 +613,19 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             }
         }
         encoder.endEncoding()
+        if sceneColorMode == .sourceRGBHDR {
+            guard let uiComposite, let sceneColorTexture else {
+                diagnostics.append("Original UI HDR composite unavailable"); return
+            }
+            do {
+                // This source fullscreen stage pairs UV.y=1-quadY with a
+                // negated clip Y. The Metal top-left RT adapter requires flipY
+                // 1 to preserve row order; independent asymmetric GPU fixtures
+                // verify it rather than reusing the UI3D camera's flip tuple.
+                try uiComposite.encode(command: command, input: sceneColorTexture,
+                    destination: drawable.texture, flipX: 0, flipY: 1)
+            } catch { diagnostics.append(String(describing: error)); return }
+        }
         lastDrawable = drawable
         lastRenderCommand = command
         renderedFrameGeneration = submittedFrameGeneration
@@ -825,7 +928,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             pipeline.depthAttachmentPixelFormat = depthStencilPixelFormat
             pipeline.stencilAttachmentPixelFormat = depthStencilPixelFormat
             let color = pipeline.colorAttachments[0]!
-            color.pixelFormat = colorPixelFormat
+            color.pixelFormat = sceneColorPixelFormat
             color.isBlendingEnabled = true
             color.sourceRGBBlendFactor = try Self.blend(number(blend, "srcBlend"))
             color.destinationRGBBlendFactor = try Self.blend(number(blend, "destBlend"))

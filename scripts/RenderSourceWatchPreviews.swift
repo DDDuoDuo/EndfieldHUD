@@ -11,6 +11,178 @@ enum RenderSourceWatchPreviews {
     private static func trace(_ message: String) {
         FileHandle.standardError.write(Data(("Source GPU fixture: " + message + "\n").utf8))
     }
+
+    // These tiny GPU fixtures use independently specified texels and blend
+    // equations. They do not sample the menu or substitute for its rendering.
+    private static func half(_ word: UInt16) -> Double {
+        let exponent = Int((word >> 10) & 31), fraction = Int(word & 1023)
+        let magnitude: Double
+        if exponent == 0 { magnitude = Double(fraction) * pow(2, -24) }
+        else if exponent == 31 { magnitude = fraction == 0 ? .infinity : .nan }
+        else { magnitude = (1 + Double(fraction) / 1024) * pow(2, Double(exponent - 15)) }
+        return word & 0x8000 == 0 ? magnitude : -magnitude
+    }
+
+    private static func unsignedFloat(_ word: UInt32, mantissaBits: Int) -> Double {
+        let mask = (UInt32(1) << mantissaBits) - 1
+        let exponent = Int(word >> mantissaBits), fraction = Int(word & mask)
+        if exponent == 0 { return Double(fraction) * pow(2, Double(1 - 15 - mantissaBits)) }
+        if exponent == 31 { return fraction == 0 ? .infinity : .nan }
+        return (1 + Double(fraction) / Double(UInt32(1) << mantissaBits)) * pow(2, Double(exponent - 15))
+    }
+
+    private static func littleWord(_ data: Data, at offset: Int) -> UInt32 {
+        UInt32(data[offset]) | (UInt32(data[offset + 1]) << 8) |
+            (UInt32(data[offset + 2]) << 16) | (UInt32(data[offset + 3]) << 24)
+    }
+
+    private static func encodedByte(_ linear: Double) -> Double {
+        let value = max(0, min(1, linear))
+        return ((value <= 0.0031308 ? value * 12.92 : 1.055 * pow(value, 1 / 2.4) - 0.055) * 255).rounded()
+    }
+
+    private static func hdrReport(_ readback: HUDSourceMetalRenderer.SceneColorReadback,
+                                 finalBGRA: Data, finalReport: HUDSourceDrawableReadback.Report) throws -> [String: Any] {
+        guard readback.pixelFormat == "rg11b10Float", readback.width > 0, readback.height > 0,
+              readback.rowBytes >= readback.width * 4,
+              readback.data.count == readback.rowBytes * readback.height,
+              finalReport.width == readback.width, finalReport.height == readback.height,
+              finalReport.rowBytes >= readback.width * 4,
+              finalBGRA.count == finalReport.rowBytes * finalReport.height else {
+            throw HUDSourceError.invalid("Invalid original RGB HDR readback dimensions")
+        }
+        var samples: [[String: Any]] = []
+        for yStep in 0..<4 {
+            for xStep in 0..<5 {
+                let x = (readback.width - 1) * xStep / 4, y = (readback.height - 1) * yStep / 3
+                let offset = y * readback.rowBytes + x * 4
+                let word = littleWord(readback.data, at: offset)
+                let rgb = [unsignedFloat(word & 2047, mantissaBits: 6),
+                    unsignedFloat((word >> 11) & 2047, mantissaBits: 6),
+                    unsignedFloat((word >> 22) & 1023, mantissaBits: 5)]
+                guard rgb.allSatisfy(\.isFinite) else {
+                    throw HUDSourceError.invalid("Nonfinite original HDR sample at \(x),\(y)")
+                }
+                let finalOffset = y * finalReport.rowBytes + x * 4
+                let measured = (0..<4).map { Int(finalBGRA[finalOffset + $0]) }
+                let predicted = [Int(encodedByte(rgb[2])), Int(encodedByte(rgb[1])), Int(encodedByte(rgb[0])), 255]
+                guard zip(measured, predicted).allSatisfy({ abs($0.0 - $0.1) <= 2 }) else {
+                    throw HUDSourceError.invalid("HDR menu upright composite/color mismatch at \(x),\(y): actual BGRA \(measured), expected \(predicted)")
+                }
+                samples.append(["x": x, "y": y, "packedWord": String(format: "%08x", word),
+                    "rawBytes": (0..<4).map { Int(readback.data[offset + $0]) }, "linearRGB": rgb,
+                    "finalBGRA": measured, "independentExpectedFinalBGRA": predicted])
+            }
+        }
+        return ["width": readback.width, "height": readback.height, "rowBytes": readback.rowBytes,
+            "pixelFormat": readback.pixelFormat, "implicitSampledAlpha": 1,
+            "rowOrder": "Original Metal texture memory rows; no vertical conversion",
+            "representation": "Raw source RGB scene before composite; no transfer, tone mapping or unpremultiplication",
+            "finalDrawableComparison": "Same-coordinate sampled RGB through sRGB encoding and UNORM clamp; alpha 1; tolerance 2 bytes",
+            "finalDrawableComparisonPassed": true,
+            "coverage": "20 bounded sample points; not a full-image range or finite-value scan", "samples": samples]
+    }
+
+    private static func verifyComposite(device: MTLDevice, resourceRoot: URL) throws -> [[String: Any]] {
+        guard let queue = device.makeCommandQueue() else { throw HUDSourceError.invalid("Cannot allocate composite fixture queue") }
+        let base = [0.125, 0.25, 0.375, 0.5]
+        // Exact unsigned-float powers, with visibly different rows and columns.
+        let packed: [UInt32] = [
+            (15 << 6) | ((13 << 6) << 11),
+            ((15 << 6) << 11) | ((14 << 5) << 22),
+            (14 << 6) | ((16 << 5) << 22),
+            (13 << 6) | ((14 << 6) << 11) | ((15 << 5) << 22)]
+        let rgbTexels = [[1.0, 0.25, 0, 1], [0, 1, 0.5, 1], [0.5, 0, 2, 1], [0.25, 0.5, 1, 1]]
+        // Fractional, >1 and negative alpha exercise the original fragment's
+        // alpha clamp, destination Load, and SrcAlpha blend for RGB AND alpha.
+        let halfWords: [UInt16] = [0x4000, 0x3800, 0x3400, 0x3400,
+            0x3400, 0x3c00, 0x3800, 0x3e00, 0x4400, 0x3000, 0x3800, 0xb800,
+            0x3800, 0x4000, 0x3c00, 0x3800]
+        let rgbaTexels = [[2.0, 0.5, 0.25, 0.25], [0.25, 1, 0.5, 1.5],
+            [4, 0.125, 0.5, -0.5], [0.5, 2, 1, 0.5]]
+        func texture(_ format: MTLPixelFormat, usage: MTLTextureUsage, storage: MTLStorageMode) throws -> MTLTexture {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: 2, height: 2, mipmapped: false)
+            descriptor.usage = usage; descriptor.storageMode = storage
+            guard let texture = device.makeTexture(descriptor: descriptor) else {
+                throw HUDSourceError.invalid("Cannot allocate independent composite fixture texture")
+            }
+            return texture
+        }
+        let rgbInput = try texture(.rg11b10Float, usage: .shaderRead, storage: .shared)
+        packed.withUnsafeBytes { rgbInput.replace(region: MTLRegionMake2D(0, 0, 2, 2), mipmapLevel: 0,
+            withBytes: $0.baseAddress!, bytesPerRow: 8) }
+        let rgbaInput = try texture(.rgba16Float, usage: .shaderRead, storage: .shared)
+        halfWords.withUnsafeBytes { rgbaInput.replace(region: MTLRegionMake2D(0, 0, 2, 2), mipmapLevel: 0,
+            withBytes: $0.baseAddress!, bytesPerRow: 16) }
+        var reports: [[String: Any]] = []
+        for outputFormat in [MTLPixelFormat.rgba16Float, .bgra8Unorm_srgb] {
+            let composite = try HUDSourceUIComposite(device: device, resourceRoot: resourceRoot, outputPixelFormat: outputFormat)
+            for (inputName, input, texels) in [("rg11b10Float", rgbInput, rgbTexels), ("rgba16Float", rgbaInput, rgbaTexels)] {
+                for flipY in [Float(0), 1] {
+                    for flipX in [Float(0), 1] {
+                        let destination = try texture(outputFormat, usage: .renderTarget, storage: .private)
+                        guard let buffer = device.makeBuffer(length: 512, options: .storageModeShared),
+                              let command = queue.makeCommandBuffer() else {
+                            throw HUDSourceError.invalid("Cannot allocate composite fixture readback")
+                        }
+                        let initialize = MTLRenderPassDescriptor()
+                        initialize.colorAttachments[0].texture = destination
+                        initialize.colorAttachments[0].loadAction = .clear; initialize.colorAttachments[0].storeAction = .store
+                        initialize.colorAttachments[0].clearColor = MTLClearColor(red: base[0], green: base[1], blue: base[2], alpha: base[3])
+                        guard let clear = command.makeRenderCommandEncoder(descriptor: initialize) else {
+                            throw HUDSourceError.invalid("Cannot initialize composite fixture destination")
+                        }
+                        clear.endEncoding()
+                        try composite.encode(command: command, input: input, destination: destination, flipX: flipX, flipY: flipY)
+                        guard let blit = command.makeBlitCommandEncoder() else {
+                            throw HUDSourceError.invalid("Cannot read independent composite fixture")
+                        }
+                        blit.copy(from: destination, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                            sourceSize: MTLSize(width: 2, height: 2, depth: 1), to: buffer, destinationOffset: 0,
+                            destinationBytesPerRow: 256, destinationBytesPerImage: 512)
+                        blit.endEncoding(); command.commit(); command.waitUntilCompleted()
+                        if let error = command.error { throw error }
+                        guard command.status == .completed else { throw HUDSourceError.invalid("Independent composite fixture did not complete") }
+                        let data = Data(bytes: buffer.contents(), count: 512)
+                        var actual: [[Double]] = [], expected: [[Double]] = []
+                        var maxError = 0.0
+                        for y in 0..<2 {
+                            for x in 0..<2 {
+                                let sourceX = flipX == 0 ? x : 1 - x, sourceY = flipY == 0 ? 1 - y : y
+                                let source = texels[sourceY * 2 + sourceX], alpha = max(0, min(1, source[3]))
+                                var predicted = (0..<3).map { source[$0] * alpha + base[$0] * (1 - alpha) }
+                                predicted.append(alpha * alpha + base[3] * (1 - alpha))
+                                let offset = y * 256 + x * (outputFormat == .rgba16Float ? 8 : 4)
+                                let measured: [Double]
+                                if outputFormat == .rgba16Float {
+                                    measured = (0..<4).map { channel in
+                                        let index = offset + channel * 2
+                                        return half(UInt16(data[index]) | (UInt16(data[index + 1]) << 8))
+                                    }
+                                } else {
+                                    measured = [Double(data[offset + 2]), Double(data[offset + 1]), Double(data[offset]), Double(data[offset + 3])]
+                                    predicted = (0..<3).map { encodedByte(predicted[$0]) } + [(max(0, min(1, predicted[3])) * 255).rounded()]
+                                }
+                                let error = zip(measured, predicted).map { abs($0.0 - $0.1) }.max() ?? .infinity
+                                guard measured.allSatisfy(\.isFinite), error <= (outputFormat == .rgba16Float ? 0.004 : 2) else {
+                                    throw HUDSourceError.invalid("Original composite mismatch: \(inputName), \(outputFormat), flip(\(flipX),\(flipY)), texel(\(x),\(y)); actual \(measured), expected \(predicted)")
+                                }
+                                maxError = max(maxError, error); actual.append(measured); expected.append(predicted)
+                            }
+                        }
+                        reports.append(["inputPixelFormat": inputName,
+                            "outputPixelFormat": outputFormat == .rgba16Float ? "rgba16Float" : "bgra8Unorm_srgb",
+                            "flipX": Int(flipX), "flipY": Int(flipY),
+                            "rowMapping": flipY == 0 ? "Vertically reversed input memory rows" : "Preserves input memory rows",
+                            "pixelOrder": "Row-major top-left, top-right, bottom-left, bottom-right; RGBA channels",
+                            "units": outputFormat == .rgba16Float ? "Linear floating-point" : "sRGB RGB bytes / linear alpha byte",
+                            "actual": actual, "independentExpected": expected, "maxAbsoluteError": maxError, "passed": true])
+                    }
+                }
+            }
+        }
+        return reports
+    }
     static func main() throws {
         do { try capture() }
         catch {
@@ -150,6 +322,11 @@ enum RenderSourceWatchPreviews {
         guard let battlepass = document.buttons.first(where: { $0.label?.literal == "通行证" }) else {
             throw HUDSourceError.invalid("Missing original Battle Pass button")
         }
+        guard let resourceRoot = HUDResources.url(for: "WatchSource") else {
+            throw HUDSourceError.invalid("Original composite fixture resources unavailable")
+        }
+        var hdrRenderer: HUDSourceMetalRenderer?
+        var hdrBuilder: HUDSourceWatchFrameBuilder?
         let samples: [(String, Double?, Double?, Double?, Double?)] = [
             ("opening-000", 0, nil, nil, nil), ("opening-100", 0.1, nil, nil, nil),
             ("opening-250", 0.25, nil, nil, nil), ("opening-500", 0.5, nil, nil, nil),
@@ -163,10 +340,33 @@ enum RenderSourceWatchPreviews {
             ("domain-selected-167", nil, 0, nil, nil),
             ("domain-hover-hold", nil, 0, nil, nil),
             ("domain-region02-lv008-selected", nil, 0, nil, nil),
-            ("domain-region02-lv008-hover", nil, 0, nil, nil)
+            ("domain-region02-lv008-hover", nil, 0, nil, nil),
+            ("hdr-stable", nil, 0, nil, nil), ("hdr-hover-hold", nil, 0, nil, 1)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
+            let isHDR = name.hasPrefix("hdr-")
+            if isHDR && hdrRenderer == nil {
+                trace("loading independent original RGB HDR renderer")
+                let originalHDR = try HUDSourceMetalRenderer(frame: viewport, resourceRoot: resourceRoot,
+                    sceneColorMode: .sourceRGBHDR)
+                hdrBuilder = try HUDSourceWatchFrameBuilder(document: document, renderer: originalHDR)
+                hdrRenderer = originalHDR
+                window.contentView = originalHDR
+                originalHDR.drawableSize = CGSize(width: size.x, height: size.y)
+                window.displayIfNeeded()
+                try abiEncoder.encode(originalHDR.constantBufferABI)
+                    .write(to: output.appendingPathComponent("source-hdr-constant-buffer-abi.json"))
+            }
+            let activeRenderer: HUDSourceMetalRenderer
+            let activeBuilder: HUDSourceWatchFrameBuilder
+            if isHDR {
+                guard let hdrRenderer, let hdrBuilder else { throw HUDSourceError.invalid("Original HDR fixture not initialized") }
+                activeRenderer = hdrRenderer; activeBuilder = hdrBuilder
+            } else {
+                activeRenderer = renderer
+                activeBuilder = name.hasPrefix("domain-region02-lv008-") ? region02Builder : builder
+            }
             buttons.reset(at: 0)
             if hover != nil { buttons.setHovered(true, on: battlepass.nodeID, at: 0, reduceMotion: false) }
             var pose = try document.animation.pose(entranceTime: opening.map {
@@ -193,7 +393,6 @@ enum RenderSourceWatchPreviews {
                 if name == "domain-selected-083" { domainState.selectionElapsed = 0.1666666716337204 / 2 }
                 if name == "domain-hover-hold" { domainState.hoverClipTimes = ["map01_lv001": 0.1666666716337204] }
             }
-            let activeBuilder = isFourSlotFixture ? region02Builder : builder
             let frame = try activeBuilder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState)
             var materialRegression: [[String: Any]] = []
             if isFourSlotFixture {
@@ -210,7 +409,7 @@ enum RenderSourceWatchPreviews {
                 for (slot, batch) in targetBatches.enumerated() {
                     var expected: [String: [Float]] = [:]
                     for (property, sourceValue) in sourceExpected {
-                        let gpuValue = renderer.gpuMaterialValue(sourceValue, property: property, materialKey: batch.material)
+                        let gpuValue = activeRenderer.gpuMaterialValue(sourceValue, property: property, materialKey: batch.material)
                         guard let actual = batch.uniformOverrides[property], actual.count == gpuValue.count,
                               zip(actual, gpuValue).allSatisfy({ $0.0.isFinite && abs($0.0 - $0.1) < 0.000001 }) else {
                             throw HUDSourceError.invalid("Renderer-wide \(property) missing/different on source lv008 slot \(slot)")
@@ -241,22 +440,37 @@ enum RenderSourceWatchPreviews {
             }
             trace("drawing " + name)
             var clock = gpu; clock.timeSeconds = Float(ambient ?? opening ?? closing ?? 0)
-            renderer.submit(camera: clock, batches: frame.batches)
-            renderer.draw()
-            let image = try renderer.copyDrawableImage()
-            guard let pixelReport = renderer.drawableReadbackReport else {
+            activeRenderer.submit(camera: clock, batches: frame.batches)
+            activeRenderer.draw()
+            let image = try activeRenderer.copyDrawableImage()
+            guard let pixelReport = activeRenderer.drawableReadbackReport else {
                 throw HUDSourceError.invalid("Source GPU fixture has no raw pixel report for \(name)")
             }
             let pixelReportFile = name + "-raw-pixel-report.json"
             try abiEncoder.encode(pixelReport).write(to: output.appendingPathComponent(pixelReportFile))
             if name == "stable" {
-                guard let rawPixels = renderer.drawableReadbackBGRA else {
+                guard let rawPixels = activeRenderer.drawableReadbackBGRA else {
                     throw HUDSourceError.invalid("Source GPU fixture has no stable raw pixel buffer")
                 }
                 try rawPixels.write(to: output.appendingPathComponent("stable-raw.bgra"))
             }
-            guard renderer.diagnostics.isEmpty else {
-                throw HUDSourceError.invalid("Source GPU fixture skipped content in \(name): \(renderer.diagnostics.joined(separator: "; "))")
+            var hdrFiles: [String: Any] = [:]
+            if isHDR {
+                let raw = try activeRenderer.copySceneColorReadback()
+                guard let finalBGRA = activeRenderer.drawableReadbackBGRA else {
+                    throw HUDSourceError.invalid("HDR fixture has no final raw drawable")
+                }
+                let dataFile = name + "-scene-raw.rg11b10f", reportFile = name + "-scene-raw-report.json"
+                try raw.data.write(to: output.appendingPathComponent(dataFile))
+                try JSONSerialization.data(withJSONObject: hdrReport(raw, finalBGRA: finalBGRA, finalReport: pixelReport), options: [.prettyPrinted, .sortedKeys])
+                    .write(to: output.appendingPathComponent(reportFile))
+                hdrFiles = ["rawScenePixels": dataFile, "rawSceneReport": reportFile,
+                    "originalCompositeProgram": 726, "expectedUprightCompositeFlipX": 0,
+                    "expectedUprightCompositeFlipY": 1,
+                    "backdrop": "Fixture black initialized attachment; not the game's live scene or desktop"]
+            }
+            guard activeRenderer.diagnostics.isEmpty else {
+                throw HUDSourceError.invalid("Source GPU fixture skipped content in \(name): \(activeRenderer.diagnostics.joined(separator: "; "))")
             }
             let file = name + ".png"
             guard let destination = CGImageDestinationCreateWithURL(output.appendingPathComponent(file) as CFURL, UTType.png.identifier as CFString, 1, nil) else {
@@ -271,8 +485,9 @@ enum RenderSourceWatchPreviews {
                 return ["id": button.nodeID.rawValue, "label": button.label?.literal ?? "", "active": node.activeInHierarchy,
                     "corners": corners.map { [Double($0.x), Double($0.y)] }]
             }
-            let diagnostics = frame.diagnostics + renderer.diagnostics
+            let diagnostics = frame.diagnostics + activeRenderer.diagnostics
             manifest.append(["file": file, "rawPixelReport": pixelReportFile, "batches": frame.batches.count, "hits": frame.hits.count,
+                "sceneColorMode": isHDR ? "sourceRGBHDR" : "directLDR", "hdr": hdrFiles,
                 "canvasSize": [view.layout.canvasSize.x, view.layout.canvasSize.y], "worldScale": view.layout.scale,
                 "standardVerticalFOV": camera.verticalFieldOfViewDegrees,
                 "runtimeVerticalFOV": view.layout.runtimeVerticalFieldOfViewDegrees,
@@ -285,6 +500,18 @@ enum RenderSourceWatchPreviews {
                 "closingElapsed": timestamp(closing), "hoverElapsed": timestamp(hover)])
             print(name + ": " + String(frame.batches.count) + " source batches; " + String(diagnostics.count) + " diagnostics")
         }
+        guard let device = renderer.device else { throw HUDSourceError.invalid("Composite fixture Metal device unavailable") }
+        trace("verifying independent composite direction, Load, alpha clamp and HDR colors")
+        let compositeTests = try verifyComposite(device: device, resourceRoot: resourceRoot)
+        let compositeReport: [String: Any] = ["schemaVersion": 1, "sourceProgram": 726,
+            "shader": "Unmodified original base UberPost_CompositeUI; no volume keywords",
+            "fixture": "Independent 2x2 exact-power texels; initialized destination RGBA=(.125,.25,.375,.5)",
+            "independentBlendEquation": "a=clamp(source.a,0,1); RGB=source.rgb*a+destination.rgb*(1-a); A=a*a+destination.a*(1-a)",
+            "orientation": "Metal clip +Y is the top row: flipY=0 reverses input rows, flipY=1 preserves them",
+            "passed": true, "tests": compositeTests]
+        let compositeFile = "source-composite-gpu-regression.json"
+        try JSONSerialization.data(withJSONObject: compositeReport, options: [.prettyPrinted, .sortedKeys])
+            .write(to: output.appendingPathComponent(compositeFile))
         let report: [String: Any] = ["schemaVersion": 1, "width": 1728, "height": 1080,
             "capture": "Actual Metal drawable GPU readback", "fixtureMouse": [864, 540],
             "pngRepresentation": "Opaque black matte retaining raw encoded premultiplied RGB; original alpha preserved in raw-pixel reports",
@@ -296,6 +523,8 @@ enum RenderSourceWatchPreviews {
             },
             "inverseViewBasis": "Default source Camera.cameraToWorldMatrix: Transform.localToWorld * Scale(1,1,-1)",
             "originalWrapperEase": "OutQuad finite; Linear loop", "recordingPixelComparisonPassed": false,
+            "hdrCompositeRegression": compositeFile,
+            "hdrBoundary": "Original RGB target and base composite on a black fixture backdrop; optional game postprocess volume state and desktop backdrop are not captured",
             "availability": "All 22 mapped macOS functions enabled; game account locks and notifications absent",
             "commit": ProcessInfo.processInfo.environment["GITHUB_SHA"] ?? "local", "frames": manifest]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
