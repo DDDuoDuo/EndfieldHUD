@@ -90,6 +90,34 @@ struct HUDSourceWatchCamera {
     let far: Double
     let referenceResolutionScale: Double
 
+    /// Unity's default Camera.cameraToWorldMatrix includes the camera-space
+    /// Z reflection. This is the HG shader value, distinct from Transform's
+    /// localToWorld matrix and the CPU adapter's positive-Z projection.
+    var shaderCameraToWorld: simd_double4x4 {
+        simd_mul(cameraWorld, HUDSourceGeometry.scale(SIMD3<Double>(1, 1, -1)))
+    }
+
+    /// HGCamera.UpdateFrustum probes the inverse GPU projection at (0,1,0,1)
+    /// and divides by w to choose the Y sign. The near/far tuple is copied
+    /// unchanged into _UIProjectionParams; reversed Z is a separate decision.
+    static func uiProjectionParams(gpuProjection: simd_float4x4,
+                                   near: Float, far: Float) throws -> SIMD4<Float> {
+        guard near.isFinite, far.isFinite, near > 0, far > near,
+              (0..<4).allSatisfy({ column in (0..<4).allSatisfy { gpuProjection[column][$0].isFinite } }) else {
+            throw HUDSourceError.invalid("Invalid HG UI projection input")
+        }
+        let determinant = simd_determinant(gpuProjection)
+        guard determinant.isFinite, determinant != 0 else {
+            throw HUDSourceError.invalid("Singular HG UI projection")
+        }
+        let probe = simd_mul(simd_inverse(gpuProjection), SIMD4<Float>(0, 1, 0, 1))
+        guard probe.y.isFinite, probe.w.isFinite, probe.w != 0,
+              (probe.y / probe.w).isFinite, (1 / far).isFinite else {
+            throw HUDSourceError.invalid("Invalid HG UI projection probe")
+        }
+        return SIMD4(probe.y / probe.w < 0 ? -1 : 1, near, far, 1 / far)
+    }
+
     init(runtimeRoot: HUDSourceJSONValue, referenceResolutionScale: Double = 1.25) throws {
         let objects = runtimeRoot.array
         func unique(_ rows: [HUDSourceJSONValue], _ name: String) throws -> HUDSourceJSONValue {

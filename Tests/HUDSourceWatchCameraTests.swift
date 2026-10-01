@@ -72,6 +72,40 @@ enum HUDSourceWatchCameraTests {
             close(forward.z, 0, "Combined known-axis rotation has no residual forward component")
 
             let frame = try model.frame(screenSize: screen)
+            let shaderWorldPoint = simd_mul(model.shaderCameraToWorld, SIMD4<Double>(0, 0, -30, 1))
+            check(shaderWorldPoint == SIMD4(0, 100, 30, 1),
+                  "Camera-space negative Z maps to the original UI world plane in HG inverse view")
+            check(model.cameraWorld.columns.2 == SIMD4(0, 0, 1, 0)
+                && model.shaderCameraToWorld.columns.2 == SIMD4(0, 0, -1, 0),
+                  "Transform forward and source Camera inverse view have distinct Z bases")
+            let cpuProjection = HUDSourceGeometry.floatMatrix(frame.camera.projection)
+            var gpuProjection = cpuProjection
+            for column in 0..<4 { gpuProjection[column].y = -gpuProjection[column].y }
+            let uiParams = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
+                near: Float(model.near), far: Float(model.far))
+            check(uiParams == SIMD4(-1, Float(model.near), Float(model.far), 1 / Float(model.far)),
+                  "Actual Y-flipped adapter projection produces HG sign/near/far/reciprocal tuple")
+            let unflippedParams = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: cpuProjection, near: 0.3, far: 200)
+            check(unflippedParams.x == 1, "HG Y sign follows the supplied GPU matrix, not a fixed OS constant")
+            let negativeW = simd_float4x4(diagonal: SIMD4<Float>(1, 1, 1, -1))
+            check(try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: negativeW, near: 1, far: 10).x == -1,
+                  "HG sign divides inverse-projection Y by homogeneous W")
+            fails("Singular GPU projection is rejected") {
+                _ = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: simd_float4x4(diagonal: .zero), near: 0.3, far: 200)
+            }
+            var invalidProjection = matrix_identity_float4x4
+            invalidProjection[0].x = .nan
+            fails("Nonfinite GPU projection is rejected") {
+                _ = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: invalidProjection, near: 0.3, far: 200)
+            }
+            let zeroProbeW = simd_float4x4(columns: (SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0),
+                SIMD4(0, 0, 0, 1), SIMD4(0, 0, 1, 0)))
+            fails("Finite invertible projection with zero probe W is rejected") {
+                _ = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: zeroProbeW, near: 0.3, far: 200)
+            }
+            fails("Invalid clipping planes are rejected") {
+                _ = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: cpuProjection, near: 200, far: 0.3)
+            }
             let viewport = CGRect(x: 0, y: 0, width: 1728, height: 1080)
             guard let projected = frame.camera.project(.zero, world: frame.worldRoot, viewport: viewport) else {
                 fatalError("Original world root is visible to the original camera")
