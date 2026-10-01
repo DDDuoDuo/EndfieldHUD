@@ -15,7 +15,7 @@ SOURCES=()
 for source in "$PROJECT_DIR"/Sources/*.swift; do
     if [[ "$source" != */main.swift ]]; then SOURCES+=("$source"); fi
 done
-xcrun swiftc -swift-version 5 -O -whole-module-optimization -parse-as-library \
+xcrun swiftc -swift-version 5 -D HUD_WATCH_MOTION_PREVIEW -O -whole-module-optimization -parse-as-library \
     -sdk "$SDK" -module-cache-path "$RUNTIME_DIR/module-cache" \
     -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement \
     -framework Carbon -framework Quartz -lsqlite3 \
