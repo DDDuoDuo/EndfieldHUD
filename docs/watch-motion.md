@@ -67,6 +67,11 @@ feedback, live Reduce Motion cancellation, shared ambient clocks, ambient
 disable/enable, teardown, cached tint pixels, sprite alpha and bundled resources.
 The fixture preview renders the real HUD with temporary stores and a private
 pasteboard. It writes only its own layers, not the desktop framebuffer.
+The preview script compiles with `HUD_WATCH_MOTION_PREVIEW` so CI can exercise
+animation even when its host enables Reduce Motion. This affects only the
+isolated preview binary; the shipped app retains its macOS accessibility policy.
+The capture manifest records both the host preference and effective preview
+policy, and static captures cannot pass as animation evidence.
 Captured hover timestamps are measured; rendering overhead means PNG captures
 are visual samples rather than exact 30 Hz curve measurements.
 
