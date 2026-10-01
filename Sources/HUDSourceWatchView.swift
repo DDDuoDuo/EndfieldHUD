@@ -35,6 +35,11 @@ final class HUDSourceWatchView: NSView {
     private var observers: [NSObjectProtocol] = []
     private var timer: Timer?
     private var tracking: NSTrackingArea?
+    private let cursorBitmap: CGImage
+    private let cursorHotspotPixels: CGPoint
+    private var sourceCursor: NSCursor?
+    private var cursorBackingScale: CGFloat = 0
+    private var previousCursor: NSCursor?
     private var hovered: HUDSourceID?
     private var pressed: HUDSourceID?
     private var lastPose: HUDSourceWatchPose?
@@ -52,6 +57,7 @@ final class HUDSourceWatchView: NSView {
     var inputEnabled = false {
         didSet {
             if !inputEnabled { hovered = nil; pressed = nil; updateAnimatorStates(at: now) }
+            refreshSourceCursor()
             refreshPlaybackScheduling()
         }
     }
@@ -90,6 +96,23 @@ final class HUDSourceWatchView: NSView {
             from: Data(contentsOf: document.root.appendingPathComponent("runtime-root-camera.json")))
         cameraModel = try HUDSourceWatchCamera(runtimeRoot: root)
         gyro = try HUDSourceWatchGyroMotion(initialRotation: cameraModel.rootRotation)
+        guard let cursorURL = HUDResources.url(for: "WatchSource/Cursor/player-default-icon_mouse.png"),
+              let image = NSImage(contentsOf: cursorURL),
+              let bitmap = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let cursorManifestURL = HUDResources.url(for: "WatchSource/Cursor/player-default.json") else {
+            throw HUDSourceError.invalid("Missing original Watch cursor resource")
+        }
+        let cursorManifest = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
+            from: Data(contentsOf: cursorManifestURL))
+        guard bitmap.width == Int(cursorManifest["width"].float()),
+              bitmap.height == Int(cursorManifest["height"].float()),
+              let hotspot = cursorManifest["typed_prefix_fields"].array.first(where: { $0["name"].string == "cursorHotspot" }),
+              let hotspotX = hotspot["value"]["x"].number,
+              let hotspotY = hotspot["value"]["y"].number else {
+            throw HUDSourceError.invalid("Invalid original Watch cursor manifest")
+        }
+        cursorBitmap = bitmap
+        cursorHotspotPixels = CGPoint(x: hotspotX, y: hotspotY)
         frameBuilder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer)
         playback = HUDSourceWatchPlayback(animation: document.animation)
         buttonAnimation = try HUDSourceWatchButtonAnimation(document: document)
@@ -130,7 +153,10 @@ final class HUDSourceWatchView: NSView {
         setAccessibilityChildren(document.buttons.compactMap { accessibilityButtons[$0.nodeID] })
     }
     required init?(coder: NSCoder) { fatalError("Use the source-resource initializer") }
-    deinit { timer?.invalidate(); observers.forEach { NotificationCenter.default.removeObserver($0) } }
+    deinit {
+        previousCursor?.set()
+        timer?.invalidate(); observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
 
     override func layout() {
         super.layout()
@@ -141,10 +167,12 @@ final class HUDSourceWatchView: NSView {
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        restoreSourceCursor()
         observers.forEach { NotificationCenter.default.removeObserver($0) }; observers.removeAll()
         if let window {
             for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
-                         NSWindow.didDeminiaturizeNotification, NSWindow.willCloseNotification] {
+                         NSWindow.didDeminiaturizeNotification, NSWindow.willCloseNotification,
+                         NSWindow.didResignKeyNotification, NSWindow.didBecomeKeyNotification] {
                 observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
                     guard let self else { return }
                     if note.name == NSWindow.willCloseNotification { self.conceal() }
@@ -156,10 +184,11 @@ final class HUDSourceWatchView: NSView {
     }
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties(); needsLayout = true
+        sourceCursor = nil; refreshSourceCursor()
     }
     override func updateTrackingAreas() {
         if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect], owner: self)
         tracking = area; addTrackingArea(area); super.updateTrackingAreas()
     }
 
@@ -221,6 +250,7 @@ final class HUDSourceWatchView: NSView {
 
     private func refreshPlaybackScheduling() {
         stopTimer()
+        refreshSourceCursor()
         guard !isHidden, playback.phase != .concealed else { return }
         render(at: now)
         guard isOnScreen else { return }
@@ -284,6 +314,7 @@ final class HUDSourceWatchView: NSView {
                 batches: frame.batches)
             renderedFrameCount += 1
             updateAccessibility(frame: frame, camera: camera.camera)
+            refreshSourceCursor()
         } catch {
             diagnostics = [String(describing: error)]
             stopTimer(); playback.conceal(); inputEnabled = false
@@ -302,18 +333,43 @@ final class HUDSourceWatchView: NSView {
     }
 
     private func point(_ event: NSEvent) -> CGPoint { convert(event.locationInWindow, from: nil) }
+    private func refreshSourceCursor() {
+        guard inputEnabled, playback.phase == .visible, isOnScreen, let window,
+              window.isKeyWindow, NSApp.isActive else { restoreSourceCursor(); return }
+        let p = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
+        guard visibleRect.contains(p) else { restoreSourceCursor(); return }
+        let scale = max(window.backingScaleFactor, 1)
+        if sourceCursor == nil || cursorBackingScale != scale {
+            // AppKit image sizes are points. This adapter preserves the original
+            // bitmap's backing-pixel extent; game runtime/DPI overrides are unknown.
+            let image = NSImage(cgImage: cursorBitmap,
+                size: NSSize(width: CGFloat(cursorBitmap.width) / scale,
+                             height: CGFloat(cursorBitmap.height) / scale))
+            sourceCursor = NSCursor(image: image,
+                hotSpot: NSPoint(x: cursorHotspotPixels.x / scale, y: cursorHotspotPixels.y / scale))
+            cursorBackingScale = scale
+        }
+        if previousCursor == nil { previousCursor = NSCursor.current }
+        sourceCursor?.set()
+    }
+    private func restoreSourceCursor() {
+        guard let previousCursor else { return }
+        previousCursor.set(); self.previousCursor = nil
+    }
     private func button(at point: CGPoint) -> HUDSourceID? {
         guard inputEnabled, playback.phase == .visible, let frame = renderedFrame, let camera = renderedCamera else { return nil }
         return frame.button(at: point, camera: camera.camera, viewport: bounds)
     }
     private func updateHover(_ event: NSEvent) {
+        refreshSourceCursor()
         let next = button(at: point(event))
         if next != hovered { hovered = next; updateAnimatorStates(at: now); refreshPlaybackScheduling() }
         else if timer == nil && !HUDRuntimeAppearance.reduceMotion { refreshPlaybackScheduling() }
     }
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
-    override func mouseExited(with event: NSEvent) { hovered = nil; updateAnimatorStates(at: now); refreshPlaybackScheduling() }
+    override func mouseExited(with event: NSEvent) { restoreSourceCursor(); hovered = nil; updateAnimatorStates(at: now); refreshPlaybackScheduling() }
+    override func cursorUpdate(with event: NSEvent) { refreshSourceCursor() }
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         pressed = button(at: point(event)); hovered = pressed

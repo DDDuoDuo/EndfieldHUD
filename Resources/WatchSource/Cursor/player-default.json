@@ -1,0 +1,54 @@
+{
+  "player_settings_source": "D:\\Arknights Endfield\\Endfield_Data\\globalgamemanagers",
+  "player_settings_object": "1",
+  "typed_prefix_fields": [
+    {
+      "name": "defaultCursor",
+      "type": "PPtr<Texture2D>",
+      "offset": 64,
+      "end": 76,
+      "value": {
+        "m_FileID": 1,
+        "m_PathID": 3
+      }
+    },
+    {
+      "name": "cursorHotspot",
+      "type": "Vector2f",
+      "offset": 76,
+      "end": 84,
+      "value": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    }
+  ],
+  "target_external": "globalgamemanagers.assets",
+  "source_file": "D:\\Arknights Endfield\\Endfield_Data\\globalgamemanagers.assets",
+  "source_file_sha256": "d6a7dc6806c8a8ffcb85cfdedd6e9c9f2fca2be8ce5d7b55ae70352f10e84cfc",
+  "path_id": "3",
+  "texture_name": "icon_mouse",
+  "texture_typetree_file": "precision-reference/blur-cursor/cursor/player-default-icon_mouse.typetree.json",
+  "width": 58,
+  "height": 58,
+  "texture_format": 4,
+  "color_space": 0,
+  "mip_count": 1,
+  "sampler": {
+    "m_FilterMode": 1,
+    "m_Aniso": 1,
+    "m_MipBias": 0.0,
+    "m_WrapU": 1,
+    "m_WrapV": 1,
+    "m_WrapW": 0
+  },
+  "png": "precision-reference/blur-cursor/cursor/player-default-icon_mouse.png",
+  "png_sha256": "d479751c9298b9ec582dcaddb393e4f4e92c7e66511a6db19ed2e666ac9b8789",
+  "source_payload": {
+    "file": "precision-reference/blur-cursor/cursor/player-default-icon_mouse.source-mips.bin",
+    "bytes": 13456,
+    "sha256": "68349486d91392b14f05715e87ab5c206712aaa0fb09fd751793330b512ea24b"
+  },
+  "runtime_override_observed": false,
+  "policy": "Exact installed PlayerSettings defaultCursor pointer and hotspot; runtime cursor replacement/scale remains separately unverified"
+}
