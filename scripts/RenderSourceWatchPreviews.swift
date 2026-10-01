@@ -367,7 +367,12 @@ enum RenderSourceWatchPreviews {
             ("domain-region02-lv008-selected", nil, 0, nil, nil),
             ("domain-region02-lv008-hover", nil, 0, nil, nil),
             ("hdr-stable", nil, 0, nil, nil), ("hdr-hover-hold", nil, 0, nil, 1),
-            ("widgets-reference", nil, 0, nil, nil), ("widgets-weapon-reference", nil, 0, nil, nil)
+            ("widgets-reference", nil, 0, nil, nil), ("widgets-weapon-reference", nil, 0, nil, nil),
+            ("widgets-banner-000", nil, 0, nil, nil), ("widgets-banner-4000", nil, 4, nil, nil),
+            ("widgets-banner-midpoint", nil, 4.1, nil, nil),
+            ("widgets-banner-endpoint", nil, 4.200000002980232, nil, nil),
+            ("widgets-banner-reverse-midpoint", nil, 4.4, nil, nil),
+            ("widgets-banner-reverse-endpoint", nil, 4.500000002980232, nil, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
@@ -424,6 +429,13 @@ enum RenderSourceWatchPreviews {
             if name == "widgets-weapon-reference" {
                 activeBuilder.widgetState.bannerArtwork = "weapon_typhoeus_banner"
             }
+            let isBannerFixture = name.hasPrefix("widgets-banner-")
+            if isBannerFixture {
+                activeBuilder.widgetState.bannerArtworks = ["yvonne_banner", "weapon_typhoeus_banner"]
+                if name == "widgets-banner-reverse-midpoint" {
+                    try activeBuilder.selectWidgetBanner(index: 0, at: 4.3)
+                }
+            }
             let frame = try activeBuilder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState,
                                                 widgetTime: ambient ?? opening ?? closing ?? 0)
             if let missing = frame.diagnostics.first(where: { $0.hasPrefix("Unresolved original UIImage Sprite:") }) {
@@ -438,7 +450,7 @@ enum RenderSourceWatchPreviews {
                 }
                 let widgetCAB = "CAB-7979328e8a85d73c8b989cdca5a79bf8:"
                 let requiredNodes = [widgetCAB + "-6424786528150829925", widgetCAB + "6805299908380312731",
-                    widgetCAB + "4639931523971466395", "CAB-194e41a66c2317b9df19269f505210be:-2839740590567297833"]
+                    widgetCAB + "4639931523971466395", widgets.bannerInstances[0].imageNodeID.rawValue]
                 var textures: [String: String] = [:]
                 for id in requiredNodes {
                     guard let batch = frame.batches.first(where: { $0.sourceNodeID == id }),
@@ -452,6 +464,28 @@ enum RenderSourceWatchPreviews {
                 widgetRegression = ["sourceRootID": widgets.sourceScene.rootID.rawValue,
                     "localSize": [364, 128], "drawnArtworkTextures": textures,
                     "profileHitCount": hits.count, "accountData": "Controlled generic fixture; no personal name or UID"]
+                if isBannerFixture {
+                    guard let sample = activeBuilder.widgetBannerSample else {
+                        throw HUDSourceError.invalid("Original banner playback sample missing")
+                    }
+                    let expectedPosition: Double
+                    switch name {
+                    case "widgets-banner-midpoint": expectedPosition = Double(Float(sin(Double(Float(0.5) * Float(1.5707963705062866)))))
+                    case "widgets-banner-endpoint": expectedPosition = 1
+                    case "widgets-banner-reverse-midpoint": expectedPosition = Double(Float(1) - Float(sin(Double(Float(0.5) * Float(1.5707963705062866)))))
+                    default: expectedPosition = 0
+                    }
+                    guard abs(sample.normalizedPosition - expectedPosition) < 0.000001,
+                          widgets.bannerInstances.allSatisfy({ frame.resolved[$0.rootID]?.activeInHierarchy == true }),
+                          frame.resolved[widgets.bannerImageNodeID]?.activeInHierarchy == false,
+                          widgets.bannerInstances.allSatisfy({ instance in frame.batches.contains { $0.sourceNodeID == instance.imageNodeID.rawValue } }) else {
+                        throw HUDSourceError.invalid("Original banner clone or OutSine transition regression: " + name)
+                    }
+                    widgetRegression["bannerNormalizedPosition"] = sample.normalizedPosition
+                    widgetRegression["bannerExpectedNormalizedPosition"] = expectedPosition
+                    widgetRegression["bannerSelectedPage"] = sample.selectedIndex
+                    widgetRegression["bannerFrameOrder"] = "Adapter tween, sampled center callback, then hold tick; original cross-frame scheduling remains unverified"
+                }
             }
             var materialRegression: [[String: Any]] = []
             if isFourSlotFixture {
@@ -549,6 +583,7 @@ enum RenderSourceWatchPreviews {
                 "sceneColorMode": isHDR ? "sourceRGBHDR" : "directLDR", "hdr": hdrFiles,
                 "widgetFixture": isWidgetFixture ? "Explicit original artwork and generic profile; no personal name or UID" : "No inferred game account fields",
                 "bannerArtwork": activeBuilder.widgetState.bannerArtwork.map { $0 as Any } ?? NSNull(),
+                "bannerArtworks": activeBuilder.widgetState.bannerArtworks.map { $0 as Any } ?? NSNull(),
                 "widgetRegression": widgetRegression,
                 "canvasSize": [view.layout.canvasSize.x, view.layout.canvasSize.y], "worldScale": view.layout.scale,
                 "standardVerticalFOV": camera.verticalFieldOfViewDegrees,

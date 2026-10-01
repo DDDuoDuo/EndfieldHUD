@@ -33,6 +33,38 @@ final class HUDSourceWatchFrameBuilder {
     let text: HUDSourceTextGeometry
     let domain: HUDSourceWatchDomain
     var widgetState: HUDSourceWatchWidgets.State = .desktopReference
+    private var bannerPlayback: HUDSourceWatchWidgets.BannerPlayback?
+    private var bannerClockTime: Double?
+    var widgetBannerSample: HUDSourceWatchWidgets.BannerSample? { bannerPlayback?.sample }
+    var requiresWidgetFrames: Bool {
+        bannerPlayback?.isTweening == true || (!widgetState.bannerPaused && (widgetState.bannerArtworks?.count ?? 0) > 1)
+    }
+    /// Drop only the timestamp anchor when hidden/preparing. The source page,
+    /// remaining hold and running tween are retained without counting that wait.
+    func resetWidgetBannerClock() { bannerClockTime = nil }
+    func selectWidgetBanner(index: Int, at time: Double) throws {
+        try updateWidgetBanner(at: time); try bannerPlayback?.select(index: index)
+    }
+    func dragWidgetBanner(to position: Double, at time: Double) throws {
+        try updateWidgetBanner(at: time)
+        bannerPlayback?.dragged(); try bannerPlayback?.scrolled(to: position)
+    }
+    func beginWidgetBannerDrag(at time: Double) throws {
+        try updateWidgetBanner(at: time); bannerPlayback?.beganDrag()
+    }
+    private func updateWidgetBanner(at time: Double) throws {
+        guard time.isFinite else { throw HUDSourceError.invalid("Nonfinite source widget clock") }
+        guard let artworks = widgetState.bannerArtworks, let widgets = document.widgets else {
+            bannerPlayback = nil; bannerClockTime = nil; return
+        }
+        if bannerPlayback?.artworks != artworks {
+            bannerPlayback = try widgets.makeBannerPlayback(artworks: artworks); bannerClockTime = nil
+        }
+        if let previous = bannerClockTime, time >= previous {
+            try bannerPlayback?.advance(delta: time - previous, paused: widgetState.bannerPaused)
+        }
+        bannerClockTime = time
+    }
     private let renderer: HUDSourceMetalRenderer
     private let materials: [HUDSourceID: HUDSourceJSONValue]
     private var sprites: [HUDSourceID: HUDSourceImageGeometry.Sprite] = [:]
@@ -137,7 +169,9 @@ final class HUDSourceWatchFrameBuilder {
                domainAnimationState: HUDSourceDomainAnimation.State = .init(),
                widgetTime: Double = 0) throws -> Frame {
         var pose = input
-        let widget = try document.widgets?.apply(to: &pose, state: widgetState, at: widgetTime) ?? HUDSourceWatchWidgets.Overrides()
+        try updateWidgetBanner(at: widgetTime)
+        let widget = try document.widgets?.apply(to: &pose, state: widgetState, at: widgetTime,
+            banner: widgetBannerSample) ?? HUDSourceWatchWidgets.Overrides()
         let layout = HUDSourceWatchLayout(document: document) { [weak self] id, _ in
             guard let self else { return nil }
             return try? self.text.preferredSize(on: id, literal: widget.text[id])

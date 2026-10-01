@@ -1,9 +1,14 @@
 {
   "files": [
     {
+      "file": "banner-runtime.json",
+      "bytes": 2754,
+      "sha256": "ce328f387b488cce88f56fefbe28e24f6d56346593a0f6c8424de6bc66e526f2"
+    },
+    {
       "file": "provenance.json",
-      "bytes": 9394,
-      "sha256": "08c5946ac55e951226c7c7a77e5573aad81f2404df23e7f70d052d6a513dc246"
+      "bytes": 10107,
+      "sha256": "0c7c4a91b5d37ce00fee45ed40f3fd81d298fd8b04d9acd7633584c7dc2a96ec"
     },
     {
       "file": "source-textures/aim_button_bg01--6229f6df--697738812654829304.png",

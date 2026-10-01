@@ -111,6 +111,7 @@ final class HUDSourceWatchView: NSView {
     }
     var inputEnabled = false {
         didSet {
+            guard inputEnabled != oldValue else { return }
             if !inputEnabled { hovered = nil; pressed = nil; updateAnimatorStates(at: now) }
             refreshSourceCursor()
             refreshPlaybackScheduling()
@@ -216,6 +217,12 @@ final class HUDSourceWatchView: NSView {
                 let source = HUDSourceWatchButton(nodeID: id, path: node.path, labels: [])
                 actionsByID[id] = ButtonAction(source: source, module: .profile)
             }
+            if document.widgets?.bannerButtonIDs.contains(id) == true {
+                // A desktop reference news card opens the existing event log.
+                // Game JumpOut IDs and account eligibility are not inferred.
+                let source = HUDSourceWatchButton(nodeID: id, path: node.path, labels: [])
+                actionsByID[id] = ButtonAction(source: source, module: .eventLog)
+            }
         }
         setAccessibilityChildren(document.buttons.compactMap { accessibilityButtons[$0.nodeID] })
         if #available(macOS 14.0, *), canCaptureDesktopBackdrop {
@@ -290,6 +297,7 @@ final class HUDSourceWatchView: NSView {
     func open(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
         isHidden = false
         cancelPendingOpening()
+        frameBuilder.resetWidgetBannerClock()
         backdropTransitionStart = now
         hovered = nil; pressed = nil
         if let preparation = backdropPreparationForVerification {
@@ -323,6 +331,7 @@ final class HUDSourceWatchView: NSView {
     func showStable() {
         isHidden = false
         cancelPendingOpening()
+        frameBuilder.resetWidgetBannerClock()
         backdropTransitionStart = now
         playback.showStable(at: now)
         // Completing an entrance suspends the wrapper before selecting its
@@ -346,6 +355,7 @@ final class HUDSourceWatchView: NSView {
     func conceal() {
         cancelPendingOpening()
         cancelBackdropCapture()
+        frameBuilder.resetWidgetBannerClock()
         playback.conceal(); inputEnabled = false; hovered = nil; pressed = nil
         stopTimer(); isHidden = true
         try? gyro.stop(at: now)
@@ -354,6 +364,7 @@ final class HUDSourceWatchView: NSView {
     func suspendForConcealment() {
         cancelPendingOpening()
         cancelBackdropCapture()
+        frameBuilder.resetWidgetBannerClock()
         // Cancellation drops wrapper callbacks before input invalidation can
         // schedule a render. Preserve the last drawable until the owner hides
         // the view or chooses a new stable/opening pose.
@@ -391,13 +402,14 @@ final class HUDSourceWatchView: NSView {
         guard pendingOpening == nil else { return }
         guard isOnScreen else { return }
         let finite = playback.phase == .opening || playback.phase == .closing || gyro.isAnimating || buttonAnimation.requiresFrames(at: now)
+            || frameBuilder.requiresWidgetFrames
         guard !HUDRuntimeAppearance.reduceMotion && (finite || HUDRuntimeAppearance.ambientEnabled) else { return }
         let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
             guard let self else { return }
             guard self.isOnScreen, self.playback.phase != .concealed else { self.stopTimer(); return }
             self.render(at: self.now)
             if !HUDRuntimeAppearance.ambientEnabled && self.playback.phase == .visible && !self.gyro.isAnimating
-                && !self.buttonAnimation.requiresFrames(at: self.now) {
+                && !self.buttonAnimation.requiresFrames(at: self.now) && !self.frameBuilder.requiresWidgetFrames {
                 self.stopTimer()
             }
         }
@@ -517,6 +529,7 @@ final class HUDSourceWatchView: NSView {
         guard let pending = pendingOpening else { return }
         cancelPendingOpening()
         guard !isHidden, playback.phase == .opening else { return }
+        frameBuilder.resetWidgetBannerClock()
         backdropTransitionStart = now
         pending.ready()
         buttonAnimation.reset(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion)

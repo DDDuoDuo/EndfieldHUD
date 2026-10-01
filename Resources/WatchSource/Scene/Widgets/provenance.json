@@ -196,5 +196,13 @@
     "recording frames",
     "personal account name/UID"
   ],
-  "validation": "Original PNG and every authored mip byte/hash checked; no resampling or mip generation. Native Swift/GPU integration still requires macOS validation."
+  "validation": "Original PNG and every authored mip byte/hash checked; no resampling or mip generation. Native Swift/GPU integration still requires macOS validation.",
+  "banner_runtime_contract": {
+    "file": "banner-runtime.json",
+    "sha256": "ce328f387b488cce88f56fefbe28e24f6d56346593a0f6c8424de6bc66e526f2",
+    "policy": "Runtime projection of installed source cloning/scroll contract. Default static single artwork. An explicit two-artwork desktop reference is not a recovered game account eligible list. Source templates and scene bytes are unchanged.",
+    "source_lua_sha256": "2b046ebe5601b15a87b722a81993d17047420e413cb9769ef9eea224e66300bf",
+    "source_cache_lua_sha256": "13a490021a2b76381db7dcd8b09b69d250338bc3c7a3808cbc99041eb27ab505",
+    "source_native_scroll_contract_sha256": "a562f1dbc63cb0c55e9b778a2ab701c3e184d4706623565efab4065a0a87105d"
+  }
 }
