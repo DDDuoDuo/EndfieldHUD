@@ -99,6 +99,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private struct Pass {
         var shader: Shader
         var pipeline: MTLRenderPipelineState
+        var uniformByteCounts: [String: [Int: Int]]
         var depth: MTLDepthStencilState
         var stencilReference: UInt32
         var cull: MTLCullMode
@@ -139,6 +140,20 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private var stencilStates: [StencilKey: MTLDepthStencilState] = [:]
     private var colorPipelines: [String: MTLRenderPipelineState] = [:]
     private(set) var diagnostics: [String] = []
+
+    struct ConstantBufferABIRecord: Encodable {
+        var file: String
+        var stage: String
+        var name: String
+        var index: Int
+        var sourceSize: Int
+        var reflectedSize: Int?
+        var uploadedSize: Int
+    }
+    private var constantBufferABIRecords: [String: ConstantBufferABIRecord] = [:]
+    var constantBufferABI: [ConstantBufferABIRecord] {
+        constantBufferABIRecords.keys.sorted().compactMap { constantBufferABIRecords[$0] }
+    }
 
     override var isOpaque: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -413,7 +428,11 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             for stageName in ["vertex", "fragment"] {
                 guard let stage = pass.shader.stages[stageName] else { continue }
                 for uniform in stage.uniforms {
-                    var bytes = Data(repeating: 0, count: uniform.size)
+                    // SPIR-V's last occupied byte can precede MSL struct tail
+                    // padding. Use the compiled argument's actual byte size;
+                    // member offsets and original source values stay intact.
+                    let byteCount = pass.uniformByteCounts[stageName]?[uniform.index] ?? uniform.size
+                    var bytes = Data(repeating: 0, count: byteCount)
                     for field in uniform.fields {
                         if let override = batch.uniformOverrides[field.name] {
                             Self.put(override, into: &bytes, at: field.offset)
@@ -796,7 +815,11 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             guard let depthState = device.makeDepthStencilState(descriptor: depth) else { throw Failure.message("Cannot create source depth/stencil state") }
             let culling = try number(state, "culling")
             let cull: MTLCullMode = culling == 0 ? .none : culling == 1 ? .front : .back
-            passes.append(Pass(shader: shader, pipeline: try device.makeRenderPipelineState(descriptor: pipeline), depth: depthState,
+            var reflection: MTLRenderPipelineReflection?
+            let pipelineState = try device.makeRenderPipelineState(descriptor: pipeline, options: .argumentInfo, reflection: &reflection)
+            guard let reflection else { throw Failure.message("Source pipeline reflection unavailable: " + name) }
+            let uniformByteCounts = try constantBufferLengths(shader: shader, reflection: reflection)
+            passes.append(Pass(shader: shader, pipeline: pipelineState, uniformByteCounts: uniformByteCounts, depth: depthState,
                                stencilReference: UInt32(try number(state, "stencilRef")), cull: cull,
                                id: (record["id"] as? String ?? name) + "/" + passName,
                                pipelineDescriptor: pipeline, depthCompare: depth.depthCompareFunction, depthWrite: depth.isDepthWriteEnabled))
@@ -812,6 +835,29 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 if let id = record["id"] as? String { clipMaterialKeys[id] = variants }
             }
         }
+    }
+
+    private func constantBufferLengths(shader: Shader, reflection: MTLRenderPipelineReflection) throws -> [String: [Int: Int]] {
+        var result: [String: [Int: Int]] = [:]
+        for (stageName, stage) in shader.stages {
+            let arguments = stageName == "vertex" ? (reflection.vertexArguments ?? []) : (reflection.fragmentArguments ?? [])
+            var lengths: [Int: Int] = [:]
+            for uniform in stage.uniforms {
+                let argument = arguments.first { $0.type == .buffer && $0.index == uniform.index }
+                let reflectedSize = argument?.bufferDataSize
+                let length = max(uniform.size, reflectedSize ?? 0)
+                guard uniform.size > 0, length <= 4096 else {
+                    throw Failure.message("Source constant buffer exceeds Metal inline limit: \(stage.file) / \(uniform.name)")
+                }
+                lengths[uniform.index] = length
+                let key = "\(stage.file)/\(stageName)/\(uniform.index)"
+                constantBufferABIRecords[key] = ConstantBufferABIRecord(file: stage.file, stage: stageName,
+                    name: uniform.name, index: uniform.index, sourceSize: uniform.size,
+                    reflectedSize: reflectedSize, uploadedSize: length)
+            }
+            result[stageName] = lengths
+        }
+        return result
     }
 
     private static func addressMode(_ value: Int) -> MTLSamplerAddressMode {

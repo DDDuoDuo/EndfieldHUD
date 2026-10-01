@@ -45,6 +45,10 @@ enum RenderSourceWatchPreviews {
         let renderer = try HUDSourceMetalRenderer(frame: viewport)
         trace("building original image, text and Domain geometry")
         let builder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer)
+        let abiEncoder = JSONEncoder()
+        abiEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try abiEncoder.encode(renderer.constantBufferABI)
+            .write(to: output.appendingPathComponent("source-constant-buffer-abi.json"))
         trace("source resources loaded")
         let buttons = try HUDSourceWatchButtonAnimation(document: document)
         let window = NSWindow(contentRect: viewport, styleMask: [.borderless], backing: .buffered, defer: false)

@@ -269,10 +269,8 @@ final class HUDSourceWatchFrameBuilder {
                 if let size = textureSizes[textureID] { batch.uniformOverrides["mainTexTexelSize"] = [1 / size.x, 1 / size.y, size.x, size.y] }
                 if let clip {
                     batch.uniformOverrides["clipRect"] = clip
-                    if let mask = maskIDs.last, let m = document.component("RectMask2D", on: mask) {
-                        let softness = m["m_HGSoftness"]
-                        batch.uniformOverrides["uiMaskHGSoftness"] = ["x", "y", "z", "w"].map { Float(softness[$0].float()) }
-                    }
+                    batch.uniformOverrides.merge(HUDSourceRectClipping.uniforms(graphicID: id, maskIDs: maskIDs,
+                        components: document.components)) { _, value in value }
                 }
                 applyMaterialProperties(pose, on: id, materialID: materialID, to: &batch)
                 if let animation = document.component("UIGraphicAnimation", on: id) {
