@@ -29,6 +29,7 @@ jobs:
         run: |
           xcrun swiftc --version
           ./scripts/build.sh --print-sdk
+          bash -n ./scripts/dev.sh
       - name: Test core behavior
         run: ./scripts/test.sh
       - name: Record original source layout without GPU

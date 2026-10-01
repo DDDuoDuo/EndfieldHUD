@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "scope": "Original installed files, static unpatched native bodies; no game execution or live-state observation",
+  "conclusion": "Temporal registration is consumed by one camera render-recording cycle; capture RT survives removal of the request",
+  "watch_source": {
+    "rt_extraction_type": 1,
+    "rt_extraction_duration": 1,
+    "duration_name": "Temporal",
+    "auto_update": false,
+    "need_use_scene_color_ps": false,
+    "registration": "WatchBlurCtrl.OnCreate explicitly InitRT then Register; _autoUpdate only gates OnEnable/OnDisable",
+    "continuous_capture_required_by_source": false
+  },
+  "request_storage": {
+    "field": "HGCamera.m_rtExtractionLists",
+    "offset": 1760,
+    "duration_outer_index": 1,
+    "type_inner_index": 1,
+    "register_va": "0x18358a2b0",
+    "register_lookup_va": "0x18358a2f4",
+    "type_lookup_va": "0x18358a307",
+    "add_va": "0x18358a31e",
+    "get_pair_va": "0x188e5698c",
+    "pair_order": [
+      "Persistent=0",
+      "Temporal=1"
+    ]
+  },
+  "callback": {
+    "static_property": "HGCamera.extractionDoneCallback",
+    "cctor_va": "0x18476cdb0",
+    "method_usage_address": "0x18cfd7608",
+    "encoded_method_usage": "0x60083013",
+    "decoded_method_index": 268297,
+    "method_name": "HGCamera.RTExtractionDone",
+    "method_va": "0x188e56cc8",
+    "unpatched_behavior": "No-op; direct return. No removal or RT release.",
+    "copy_record_callback_sites": [
+      "0x188ef1378",
+      "0x188ef14e1"
+    ]
+  },
+  "temporal_cleanup": {
+    "method": "HGCamera.OnRecordingEnd",
+    "va": "0x18358adf0",
+    "temporal_collection_load_va": "0x18358aeb0",
+    "outer_index1_load_va": "0x18358aeca",
+    "clear_each_type_call_va": "0x18358af5b",
+    "clear_leaf_va": "0x182d6a7c0",
+    "clear_effect": "Clear slots/buckets, zero count and lastIndex via qword@0x20, freeList=-1@0x28, increment version@0x38",
+    "clear_count_va": "0x182d6a95d",
+    "clear_freelist_va": "0x182d6a961",
+    "clear_version_va": "0x182d6a7df",
+    "persistent_collection_cleared_here": false,
+    "releases_capture_rt_here": false,
+    "managed_post_render_calls": [
+      "0x188ebe0d3",
+      "0x188ebe0e2"
+    ],
+    "cpp_render_calls": [
+      "0x182ef06a1",
+      "0x182ef06c0"
+    ],
+    "cpp_instruction_boundary_validation": "Both calls verified by full contiguous PE unwind-body instruction decode"
+  },
+  "retained_rt": {
+    "ui_blur_rt_handle_offset": 48,
+    "explicit_update_rt_va": "0x18a05f528",
+    "update_existing_rt_behavior": "No InitRT/Register; takes logging branch",
+    "update_missing_rt_behavior": "InitRT then Register",
+    "on_disable_auto_update_false": "Returns without _Clear; handle retained",
+    "boundaries": "Explicit UnRegister removes requests without proving handle disposal; _Clear/OnDestroy manages actual RT release separately"
+  },
+  "interpretation_limits": [
+    "Recording end is CPU render-graph/request recording, not a GPU completion fence or a measured frame duration.",
+    "Clearing is unconditional within this unpatched recording-end path; it does not by itself prove a copy was scheduled, executed, or successful under every dynamic render gate.",
+    "Native IFix branches permit replacements. This report proves original unpatched bodies; it does not prove active patch state.",
+    "A new explicit Register can enqueue another extraction into the retained handle. Temporal does not prohibit later registrations.",
+    "Scene FrostedGlass preprocessing may update its own cached textures independently; the WatchBlur extraction copy is a separate request.",
+    "One capture per desktop opening is an input-adapter policy; the exact game panel reuse/destruction schedule is not asserted here.",
+    "No live game scene pixels, exposure/LUT configuration, GPU completion timing, or runtime account/phase state was observed."
+  ],
+  "evidence": [
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/metadata-fields.json",
+      "sha256": "f5d6dd29b7853c89b1b05e94a6a86ef5995fc9b4ebf8cee36f8d6386bf1d59f0",
+      "bytes": 158722
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGRenderPipeline-ExecuteRenderRequestCPP-recording-end-window.asm.txt",
+      "sha256": "8a09256532f861a36813c62c0645c39b873f1098cfa5573dad885dc8639c2840",
+      "bytes": 4047
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGCamera--RegisterRTExtraction--268292.asm.txt",
+      "sha256": "e21e37be3ef14e2ec5ee5544aa637d131c08a65aa0faaba2fdc81274fa6b30f1",
+      "bytes": 3910
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGCamera--GetRTForExtraction--268295.asm.txt",
+      "sha256": "3bb0ed840222d7dd13c70a9e0a98b2321c6487d3b287c95064e4023aa992dec5",
+      "bytes": 5001
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGCamera--GetRTForExtractionCPP--268296.asm.txt",
+      "sha256": "99519eddf7c737a98a0d225dda332bd34e852f088511d8baabed654a0c1a7b51",
+      "bytes": 29963
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGCamera--RTExtractionDone--268297.asm.txt",
+      "sha256": "4b70a564ff01a4e87486729aec0a6785d786a7c0455d1f6fa10ba22854f2d0be",
+      "bytes": 1881
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGCamera--OnRecordingEnd--268426.asm.txt",
+      "sha256": "6c86938171bfe1fed2d5db23864f1dd898e9ae76140827878c21f403766937ab",
+      "bytes": 10644
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGCamera--_cctor--268433.asm.txt",
+      "sha256": "07cd3f304d35c3d9c5ce893ab5f465a50f70301fe74e83d584a0793df7443df4",
+      "bytes": 7242
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/HGRenderPathBase--OnPostRendering--269599.asm.txt",
+      "sha256": "962655122c21d5e64b78ee83dee2336e11bd58371c8b66e6dca8a14dbd48df31",
+      "bytes": 11497
+    },
+    {
+      "path": "precision-reference/postprocess/rt-extraction-lifetime/native/Leaf-0x182d6a7c0.asm.txt",
+      "sha256": "28a95debd275f2e15aeb15e3798d6b9bb4afc9ac8211b493eca3bf2b33231f6c",
+      "bytes": 21619
+    },
+    {
+      "path": "precision-reference/native-blur-cursor/UIBlurRT--OnEnable--352103.asm.txt",
+      "sha256": "0fba4b587c19adc01d879745752f3aed9ac830455317c494b00b2fe916284da9",
+      "bytes": 12845
+    },
+    {
+      "path": "precision-reference/native-blur-cursor/UIBlurRT--OnDisable--352104.asm.txt",
+      "sha256": "8a8452f3c07594b20609d7c392e2ae1ae02d19772d2e2955cc52c847f3f2991d",
+      "bytes": 8835
+    },
+    {
+      "path": "precision-reference/native-blur-cursor/UIBlurRT--UpdateRT--352102.asm.txt",
+      "sha256": "0d8215688634bbaf93dabf52aaa1b80598a900a858f3b98c2bbb0380ed58209f",
+      "bytes": 22591
+    },
+    {
+      "path": "precision-reference/native-blur-cursor/UIBlurRT--Register--352100.asm.txt",
+      "sha256": "64b593bf0c7081db34c4a8203595f284c91c7af0d21831418144ab74cc5dcacb",
+      "bytes": 10292
+    },
+    {
+      "path": "precision-reference/blur-cursor/scene-blur.json",
+      "sha256": "70a502324bcdf0b2ddf2dc7b35a9305d6b11d2ba87e5b457fec246e9ec871843",
+      "bytes": 91849
+    },
+    {
+      "path": "precision-reference/blur-cursor/metadata-fields.json",
+      "sha256": "de6a29179338c8545250a05a73f55cf1e56aa9d4aad6bef3b7ad2e373674ab61",
+      "bytes": 13117
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGUtils--ProcessRTExtraction--270008.asm.txt",
+      "sha256": "c47cde00213034c372b01a137c6e01bd64b42b1474ff0832d37e93debf399792",
+      "bytes": 14869
+    },
+    {
+      "path": "extracted/Persistent/Data/LuaScripts/UI/Panels/WatchBlur/WatchBlurCtrl.dec.lua",
+      "sha256": "386e39872866b8ecae0814391e5b6eeaa20a3d6252ec3b3a157b6db8b1cf4086",
+      "bytes": 620
+    }
+  ],
+  "reproduce": [
+    "python query_rt_extraction_metadata.py",
+    "python report_rt_extraction_lifetime.py"
+  ]
+}

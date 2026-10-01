@@ -96,7 +96,8 @@ final class HUDSourceFrostedGlass {
     /// Encodes three H/V levels from the supplied input dimensions, then the
     /// original bilinear extraction pass into a full-size, single-mip sRGB RT.
     /// It does not capture the desktop or observe a game camera's live state.
-    func encode(command: MTLCommandBuffer, input: MTLTexture, outputSize: CGSize) throws -> MTLTexture {
+    func encode(command: MTLCommandBuffer, input: MTLTexture, outputSize: CGSize,
+                passObserver: ((String, MTLTexture) throws -> Void)? = nil) throws -> MTLTexture {
         guard input.textureType == .type2D, input.sampleCount == 1,
               input.width > 0, input.height > 0, input.mipmapLevelCount == 1,
               outputSize.width.isFinite, outputSize.height.isFinite,
@@ -107,13 +108,17 @@ final class HUDSourceFrostedGlass {
             throw HUDSourceError.invalid("Invalid FrostedGlass input or capture dimensions")
         }
         var current = input
-        for factor in [0.25, 0.125, 0.0625] {
+        for (level, factor) in [0.25, 0.125, 0.0625].enumerated() {
             let width = Int(ceil(Double(input.width) * factor))
             let height = Int(ceil(Double(input.height) * factor))
             let temp = try texture(width: width, height: height, format: .rg11b10Float, label: "FrostedGlass horizontal")
             let result = try texture(width: width, height: height, format: .rg11b10Float, label: "FrostedGlass vertical")
             try draw(command: command, pass: horizontal, input: current, output: temp, copyPass: false)
+            // Optional regression readback hook. Observers encode their own
+            // copies on this command; production callers leave it nil.
+            try passObserver?("level\(level).horizontal", temp)
             try draw(command: command, pass: vertical, input: temp, output: result, copyPass: false)
+            try passObserver?("level\(level).vertical", result)
             current = result
         }
         let capture = try texture(width: Int(outputSize.width), height: Int(outputSize.height),
