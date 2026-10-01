@@ -48,6 +48,18 @@ enum HUDSourceWatchDomainTests {
             let position = try HUDSourceWatchDomain.moveToPlayer(playerWorld: SIMD3(16, 28, 40), centerWorld: center)
             check(position == SIMD3(-3, -2, 0), "MoveToPlayer must use center inverse and replace localXY only")
 
+            func sorting(_ type: Double, _ offset: Double, enabled: Bool = true) -> HUDSourceWatchComponent {
+                HUDSourceWatchComponent(id: id(95), type: "MonoBehaviour", script: "UISortingOrder",
+                    data: ["_renderType": .number(type), "_sortingOrderOffset": .number(offset), "m_Enabled": .bool(enabled)])
+            }
+            let renderer: HUDSourceJSONValue = .object(["m_SortingOrder": .number(0)])
+            check(HUDSourceWatchDomain.rendererSortingOrder(renderer: renderer, ownComponents: [sorting(0, -5)]) == -5,
+                  "Renderer UISortingOrder uses absolute negative offset even when serialized renderer order is0")
+            check(HUDSourceWatchDomain.rendererSortingOrder(renderer: renderer, ownComponents: [sorting(1, 11)]) == 0,
+                  "Canvas offset must not be assigned to an attached MeshRenderer")
+            check(HUDSourceWatchDomain.rendererSortingOrder(renderer: renderer, ownComponents: [sorting(0, -5, enabled: false)]) == -5,
+                  "SetOrder has no Behaviour enabled guard; its Awake registration writes the absolute offset")
+
             // Real resource decoding catches case-sensitive manifest paths,
             // decimal-string source IDs, vertex channels and exact parent joins.
             let domain = try HUDSourceWatchDomain()
@@ -77,6 +89,18 @@ enum HUDSourceWatchDomainTests {
                 _ = try HUDSourceWatchDomain(loadedLevelIDs: ["not-a-source-level"])
                 fatalError("Unknown source level must be rejected")
             } catch { check(true, "Unknown source level was rejected") }
+            let region02 = try HUDSourceWatchDomain(domainName: "Region02")
+            let terrain = try region02.frame(domainWorld: matrix_identity_double4x4).meshes.first {
+                $0.path.hasSuffix("/S_regionMap_terrain")
+            }
+            check(terrain?.renderer["m_SortingOrder"].number == 0 && terrain?.sourceRuntimeSortingOrder == -5,
+                  "Actual Region02 terrain must use native absolute -5 writer instead of serialized0")
+            let spaceship = try HUDSourceWatchDomain(domainName: "Spaceship")
+            let ship = try spaceship.frame(domainWorld: matrix_identity_double4x4).meshes.first {
+                $0.path.hasSuffix("/SpaceShip")
+            }
+            check(ship?.renderer["m_SortingOrder"].number == 0 && ship?.sourceRuntimeSortingOrder == -2,
+                  "Actual Spaceship mesh must use native absolute -2 writer instead of serialized0")
         } catch { fatalError("Source Domain tests failed: \(error)") }
         return count
     }

@@ -22,6 +22,12 @@ macOS functions. Those feature panels retain their existing desktop interfaces.
   with source local-Z channels, followed by its held endpoint. Normal and
   Pressed use the original transition duration. Rapid changes preserve the
   current blended pose. Repeated pointer samples do not restart the flash.
+- A stationary pointer is raycast again when animation or the gyroscope moves
+  the menu. Mouse release and accessibility activation share the original
+  per-button 0.10000000149-second click cooldown and resolved hit eligibility.
+  The original 58-pixel cursor and zero hotspot are used while the menu has
+  focus; the adapter restores the previous cursor when it leaves or conceals.
+  The game's runtime cursor/DPI overrides are still unobserved.
 - Original layout writers and the slant effect run before rendering. Slant
   replaces the cell's world X while retaining its world Y/Z. Scroll clipping
   and inverse-plane hit tests include the external world-root rotation.
@@ -51,6 +57,13 @@ UIImage/TMP shader variants. A source null UI material resolves to the game's
 against the exported equivalents. Materials preserve their fixed blend,
 depth/stencil and texture state.
 
+Soft masks use the original UIImage's full atlas, Sprite rectangle, sliced
+border geometry and native Canvas-to-mask matrix. The UIImage's own color alpha
+does not disable its mask: the original map mask has alpha zero. The 132 bundled
+Metal stages include the original default/TMP/VFX/world/stencil soft-mask
+combinations, preserving their texture slots and existing material keywords.
+Missing mask inputs are diagnosed rather than replaced with a white texture.
+
 The original PlayerSettings prefix proves Linear color space. Canvas vertex
 colors and original Color/Gamma material properties follow their separate
 conversion rules; the direct LDR drawable uses sRGB output. Original texture
@@ -64,6 +77,9 @@ inverse world matrix. Watch's original region placement is retained; a generic
 map rotation tween is not additionally applied. The reference view loads all
 declared Region01 levels. A matching live-game map additionally requires the
 actual current level, player position, loaded/unlocked levels and selection.
+Renderer sorting uses native UISortingOrder's absolute renderer offset; it is
+not added to the parent panel's Canvas order. Source terrain and spaceship
+instances therefore retain their native negative sorting offsets.
 
 ## Validation
 

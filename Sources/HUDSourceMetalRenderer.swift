@@ -178,6 +178,14 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 catalog[key + suffix] = try JSONDecoder().decode(Shader.self, from: Data(contentsOf: root.appendingPathComponent(stem + "-" + file + "-shader.json")))
             }
         }
+        for (key, stem) in [("imageSoftMask", "image-softmask"), ("imageMainFXSoftMask", "image-mainfx-softmask"),
+                            ("imageDissolveFXSoftMask", "image-dissolvefx-softmask"), ("imageWorldSoftMask", "image-world-softmask"),
+                            ("imageStencilSoftMask", "image-stencil-softmask"), ("fontSoftMask", "font-softmask"),
+                            ("fontUnderlaySoftMask", "font-underlay-softmask")] {
+            for (suffix, file) in [("", ""), ("AlphaClip", "-alphaclip"), ("ClipRect", "-cliprect"), ("ClipRectAlpha", "-cliprect-alphaclip")] {
+                catalog[key + suffix] = try JSONDecoder().decode(Shader.self, from: Data(contentsOf: root.appendingPathComponent(stem + file + "-shader.json")))
+            }
+        }
         shaders = catalog
         super.init(frame: frame, device: device)
         // Source PlayerSettings is Linear. This direct LDR display target
@@ -259,12 +267,14 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     func containsTexture(named name: String) -> Bool { textureAssets[name] != nil }
 
-    /// Select the original UIImage/TMP material with explicit Canvas clipping
+    /// Select the original UIImage/TMP material with explicit Canvas masking
     /// keywords. Derived records preserve its saved properties and pass state.
-    func materialKey(named base: String, clipRect: Bool, alphaClip: Bool) -> String? {
+    func materialKey(named base: String, clipRect: Bool, alphaClip: Bool, softMask: Bool = false) -> String? {
         guard materials[base] != nil else { return nil }
-        guard clipRect || alphaClip else { return base }
-        let flag = clipRect ? (alphaClip ? "clipAlpha" : "clip") : "alpha"
+        guard clipRect || alphaClip || softMask else { return base }
+        let flag: String
+        if softMask { flag = clipRect ? (alphaClip ? "softClipAlpha" : "softClip") : (alphaClip ? "softAlpha" : "soft") }
+        else { flag = clipRect ? (alphaClip ? "clipAlpha" : "clip") : "alpha" }
         guard let key = clipMaterialKeys[base]?[flag], materials[key] != nil else { return nil }
         return key
     }
@@ -338,6 +348,14 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                batch.uniformOverrides["_WatchWorldToLocalMatrix"] == nil {
                 diagnostics.append("Source map requires _WatchWorldToLocalMatrix: \(batch.mesh)")
                 continue
+            }
+            if material.passes.contains(where: { $0.shader.textures.contains(where: { $0.name == "_SoftMaskTex" }) }) {
+                guard batch.uniformOverrides["_WorldToSoftMask"]?.count == 16,
+                      batch.uniformOverrides["_SoftMaskTex_ST"]?.count == 4,
+                      let maskTexture = batch.textureOverrides["_SoftMaskTex"], textureAssets[maskTexture] != nil else {
+                    diagnostics.append("Source soft mask requires its Canvas-local matrix, sprite ST and original texture: \(batch.mesh)")
+                    continue
+                }
             }
             let needsInverseView = material.passes.contains { pass in
                 pass.shader.stages.values.contains { stage in
@@ -703,7 +721,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             }
             else if isFX { key = keywords.contains("HG_UI_VFX_DISSOLVE") ? "fx" : keywords.contains("HG_UI_VFX_MASKTEX") ? "fx13" : "fx12" }
             else if isFont {
-                let base = keywords.contains("UNDERLAY_ON") ? "fontUnderlay" : "font"
+                let base = (keywords.contains("UNDERLAY_ON") ? "fontUnderlay" : "font") + (keywords.contains("HG_SOFT_MASKABLE") ? "SoftMask" : "")
                 let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
                 key = base + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
             }
@@ -715,7 +733,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 else if keywords.contains("HG_WORLD_UI") { base = "imageWorld" }
                 else { base = "image" }
                 let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
-                key = base + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
+                key = base + (keywords.contains("HG_SOFT_MASKABLE") ? "SoftMask" : "") + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
             }
             guard let shader = shaders[key], let (vertexFunction, fragmentFunction) = functions[key],
                   let blend = state["rtBlend0"] as? [String: Any], let stencilOp = state["stencilOp"] as? [String: Any] else {
