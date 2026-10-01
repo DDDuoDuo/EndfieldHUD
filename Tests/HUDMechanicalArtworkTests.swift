@@ -49,7 +49,9 @@ enum HUDMechanicalArtworkTests {
             }, "The secondary ring follows the supplied theme accent in both appearances")
             let triangleImage = HUDWatchArtwork.image(.triangle, tint: themeBlue)
             check(triangleImage != nil && artwork.triangleRotors.allSatisfy {
-                ($0.sublayers?.first?.sublayers?.first?.contents as? CGImage) === triangleImage
+                guard let expected = triangleImage,
+                      let contents = $0.sublayers?.first?.sublayers?.first?.contents else { return false }
+                return (contents as AnyObject) === (expected as AnyObject)
             }, "Every marker uses the cached source triangle tinted to the chosen accent")
             let indicator = artwork.indicatorGlow.sublayers?.first as? CAShapeLayer
             check(indicator?.strokeColor == chargeGreen.cgColor,

@@ -11,6 +11,13 @@ enum HUDNavigationTests {
             if !condition { fatalError(message, file: file, line: line) }
         }
         func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 0.000001 }
+        func colorsEqual(_ first: Any?, _ second: Any?) -> Bool {
+            guard let first, let second else { return false }
+            let left = first as AnyObject, right = second as AnyObject
+            guard CFGetTypeID(left) == CGColorGetTypeID(),
+                  CFGetTypeID(right) == CGColorGetTypeID() else { return false }
+            return CFEqual(left, right)
+        }
         func animationCount(_ layer: CALayer) -> Int {
             (layer.animationKeys()?.count ?? 0)
                 + (layer.sublayers ?? []).reduce(0) { $0 + animationCount($1) }
@@ -340,13 +347,13 @@ enum HUDNavigationTests {
                   "Hover commits a steady opaque white face and lamp after its finite activation")
             let activation = plate.animation(forKey: "navigation.fillColor") as? CAKeyframeAnimation
             if !HUDRuntimeAppearance.reduceMotion {
-                let colors = activation?.values as? [CGColor]
+                let colors = activation?.values
                 check(activation?.duration == 1.0 / 6.0
                       && activation?.keyTimes == [0, 0.2, 0.4, 0.6, 1]
                       && activation?.timingFunctions?.count == 4
                       && activation?.repeatCount == 0 && activation?.autoreverses == false
-                      && colors?.count == 5 && colors?[1] == colors?[3] && colors?[3] == colors?[4]
-                      && colors?[0] == colors?[2] && colors?[0] != colors?[1],
+                      && colors?.count == 5 && colorsEqual(colors?[1], colors?[3]) && colorsEqual(colors?[3], colors?[4])
+                      && colorsEqual(colors?[0], colors?[2]) && !colorsEqual(colors?[0], colors?[1]),
                       "Highlighted replays two 30 Hz brightness activations over one sixth second and then holds")
                 check(lamp.animation(forKey: "navigation.opacity")?.duration == HUDNavigation.hoverTransitionDuration,
                       "The lamp joins the finite activation instead of changing opacity abruptly")
@@ -403,7 +410,7 @@ enum HUDNavigationTests {
             depth.hover(nil)
             let exit = plate.animation(forKey: "navigation.fillColor") as? CABasicAnimation
             let lampExit = lamp.animation(forKey: "navigation.opacity") as? CABasicAnimation
-            check((exit == nil ? shownColor == plate.fillColor : exit?.fromValue as? CGColor == shownColor)
+            check((exit == nil ? shownColor == plate.fillColor : colorsEqual(exit?.fromValue, shownColor))
                   && (lampExit == nil ? shownLamp == lamp.opacity : lampExit?.fromValue as? Float == shownLamp),
                   "A fast exit retargets the rendered color and opacity instead of restarting from an idle value")
             for _ in 0..<16 {
