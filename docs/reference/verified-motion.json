@@ -1106,8 +1106,8 @@
       {
         "path": "Content/WatchNode/canvas_watch/MiddleDecoNode/TriagleNode/triangle_fx1",
         "position_xyz": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": -466.78411865234375,
+          "y": 212.74237060546875,
           "z": 0.0
         },
         "scale_xyz": {
@@ -1125,14 +1125,14 @@
           "z": -0.4135681390762329,
           "w": -0.6183546781539917
         },
-        "radial_degrees_y_up": 0.0,
-        "radial_degrees_y_down": -0.0
+        "radial_degrees_y_up": 155.49831365230744,
+        "radial_degrees_y_down": -155.49831365230744
       },
       {
         "path": "Content/WatchNode/canvas_watch/MiddleDecoNode/TriagleNode/triangle_fx1",
         "position_xyz": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": -49.15162658691406,
+          "y": 510.6181335449219,
           "z": 0.0
         },
         "scale_xyz": {
@@ -1150,14 +1150,14 @@
           "z": 0.048983074724674225,
           "w": 0.7422949075698853
         },
-        "radial_degrees_y_up": 0.0,
-        "radial_degrees_y_down": -0.0
+        "radial_degrees_y_up": 95.49829814158939,
+        "radial_degrees_y_down": -95.49829814158939
       },
       {
         "path": "Content/WatchNode/canvas_watch/MiddleDecoNode/TriagleNode/triangle_fx1",
         "position_xyz": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 417.63250732421875,
+          "y": 297.8756103515625,
           "z": 0.0
         },
         "scale_xyz": {
@@ -1175,14 +1175,14 @@
           "z": -0.3287268877029419,
           "w": 0.6673378348350525
         },
-        "radial_degrees_y_up": 0.0,
-        "radial_degrees_y_down": -0.0
+        "radial_degrees_y_up": 35.49829395711107,
+        "radial_degrees_y_down": -35.49829395711107
       },
       {
         "path": "Content/WatchNode/canvas_watch/MiddleDecoNode/TriagleNode/triangle_fx1",
         "position_xyz": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 49.15161895751953,
+          "y": -510.6181945800781,
           "z": 0.0
         },
         "scale_xyz": {
@@ -1200,14 +1200,14 @@
           "z": -0.7422949075698853,
           "w": 0.04898308590054512
         },
-        "radial_degrees_y_up": 0.0,
-        "radial_degrees_y_down": -0.0
+        "radial_degrees_y_up": -84.50170335982969,
+        "radial_degrees_y_down": 84.50170335982969
       },
       {
         "path": "Content/WatchNode/canvas_watch/MiddleDecoNode/TriagleNode/triangle_fx1",
         "position_xyz": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": 466.7840576171875,
+          "y": -212.74264526367188,
           "z": 0.0
         },
         "scale_xyz": {
@@ -1225,14 +1225,14 @@
           "z": -0.6183547973632812,
           "w": 0.4135679602622986
         },
-        "radial_degrees_y_up": 0.0,
-        "radial_degrees_y_down": -0.0
+        "radial_degrees_y_up": -24.50171708962486,
+        "radial_degrees_y_down": 24.50171708962486
       },
       {
         "path": "Content/WatchNode/canvas_watch/MiddleDecoNode/TriagleNode/triangle_fx1",
         "position_xyz": {
-          "x": 0.0,
-          "y": 0.0,
+          "x": -417.63250732421875,
+          "y": -297.8756408691406,
           "z": 0.0
         },
         "scale_xyz": {
@@ -1250,8 +1250,8 @@
           "z": -0.6673377752304077,
           "w": -0.3287269175052643
         },
-        "radial_degrees_y_up": 0.0,
-        "radial_degrees_y_down": -0.0
+        "radial_degrees_y_up": -144.50170326785113,
+        "radial_degrees_y_down": 144.50170326785113
       }
     ],
     "mesh_material": {
