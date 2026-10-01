@@ -5,7 +5,13 @@ import AppKit
 enum HUDLifecycleVerification {
     static func run(overlay: OverlayController, configuration: AppConfiguration,
                     completion: @escaping () -> Void) {
-        Session(overlay: overlay, configuration: configuration, completion: completion).start()
+        if CommandLine.arguments.contains("--backdrop-preparation-smoke-test") {
+            HUDBackdropOpeningVerification.run(overlay: overlay, configuration: configuration) {
+                Session(overlay: overlay, configuration: configuration, completion: completion).start()
+            }
+        } else {
+            Session(overlay: overlay, configuration: configuration, completion: completion).start()
+        }
     }
 
     private final class Session {

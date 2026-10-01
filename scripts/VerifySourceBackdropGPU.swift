@@ -11,6 +11,7 @@ import simd
 enum VerifySourceBackdropGPU {
     private static var frostedProgress: [[String: Any]] = []
     private static var rawImageProgress: [[String: Any]] = []
+    private static var tileProgress: [[String: Any]] = []
     private static var formatProgress: [String: Any] = [:]
     private enum AttachmentRounding: String, CaseIterable, Hashable {
         case nearestEven, towardZero, halfThenTowardZero
@@ -496,10 +497,22 @@ enum VerifySourceBackdropGPU {
     }
     private static func verifyCompositeTiles(device: MTLDevice) throws -> [[String: Any]] {
         guard let sRGB = CGColorSpace(name: CGColorSpace.sRGB), let p3 = CGColorSpace(name: CGColorSpace.displayP3),
+              let icc = sRGB.copyICCData(), let reconstructedRGB = CGColorSpace(iccData: icc),
               let queue = device.makeCommandQueue() else { throw HUDSourceError.invalid("Synthetic color profiles unavailable") }
+        // A profile may have no standard name after ICC reconstruction. Its actual
+        // RGB model is accepted; untagged/unsupported models must throw explicitly.
+        _ = try HUDSourceWatchBackdrop.requireDesktopRGBProfile(reconstructedRGB)
+        for (name, profile) in [("nil", Optional<CGColorSpace>.none),
+                                ("gray", Optional(CGColorSpaceCreateDeviceGray()))] {
+            var rejected = false
+            do { _ = try HUDSourceWatchBackdrop.requireDesktopRGBProfile(profile) }
+            catch { rejected = true }
+            try require(rejected, "Unsupported synthetic desktop profile was accepted: " + name)
+        }
         let rect = CGRect(x: -73, y: 24, width: 64, height: 48)
         let top: [UInt8] = [32, 200, 64], bottom: [UInt8] = [220, 40, 24]
         let singleImage = try image(width: 128, height: 96, space: sRGB, top: top, bottom: bottom)
+        let reconstructedImage = try image(width: 128, height: 96, space: reconstructedRGB, top: top, bottom: bottom)
         let left = CGRect(x: rect.minX, y: rect.minY, width: 32, height: 48)
         let right = CGRect(x: rect.minX + 32, y: rect.minY, width: 32, height: 48)
         let leftImage = try image(width: 64, height: 96, space: sRGB, top: top, bottom: bottom)
@@ -509,16 +522,40 @@ enum VerifySourceBackdropGPU {
         var reports: [[String: Any]] = []
         for (name, tiles) in [("single-retina-negative-origin", [tile(singleImage, id: 101, rect: rect, scale: 2)]),
             ("two-ICC-tiles-mixed-native-scales", [tile(leftImage, id: 101, rect: left, scale: 2),
-                                                   tile(rightImage, id: 202, rect: right, scale: 1)])] {
+                                                   tile(rightImage, id: 202, rect: right, scale: 1)]),
+            ("reconstructed-RGB-ICC-profile", [tile(reconstructedImage, id: 303, rect: rect, scale: 2)])] {
             let frame = HUDSourceDesktopBackdrop.Frame(requestedRect: rect, hudWindowID: 999, excludedWindowIDs: [],
                 tiles: tiles, captureStartUptime: 0, captureEndUptime: 0)
             let composite = try HUDSourceWatchBackdrop.compositeDesktop(frame: frame,
                 drawableSize: CGSize(width: 128, height: 96), sourceMaterialID: "synthetic-source-material")
-            let texture = try MTKTextureLoader(device: device).newTexture(cgImage: composite.image,
-                options: [.origin: MTKTextureLoader.Origin.topLeft.rawValue, .SRGB: NSNumber(value: true),
-                    .generateMipmaps: NSNumber(value: false), .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue)])
-            try require(texture.pixelFormat == .rgba8Unorm_srgb || texture.pixelFormat == .bgra8Unorm_srgb,
-                "Synthetic composite lost its sRGB format")
+            var loaderDiagnostic: [String: Any] = [:]
+            do {
+                let automatic = try MTKTextureLoader(device: device).newTexture(cgImage: composite.image,
+                    options: [.origin: MTKTextureLoader.Origin.topLeft.rawValue, .SRGB: NSNumber(value: true),
+                        .generateMipmaps: NSNumber(value: false), .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue)])
+                loaderDiagnostic = ["returnedPixelFormat": String(describing: automatic.pixelFormat),
+                    "returnedPixelFormatRawValue": automatic.pixelFormat.rawValue,
+                    "width": automatic.width, "height": automatic.height, "mipmapLevelCount": automatic.mipmapLevelCount,
+                    "acceptedByPreviousGuard": automatic.pixelFormat == .rgba8Unorm_srgb || automatic.pixelFormat == .bgra8Unorm_srgb]
+            } catch { loaderDiagnostic = ["error": String(describing: error)] }
+            let reportData = try JSONEncoder().encode(composite.report)
+            let geometryReport = try JSONSerialization.jsonObject(with: reportData)
+            var current: [String: Any] = ["name": name, "passed": false, "legacyAutomaticLoaderDiagnostic": loaderDiagnostic,
+                "image": ["bitsPerComponent": composite.image.bitsPerComponent, "bitsPerPixel": composite.image.bitsPerPixel,
+                    "bytesPerRow": composite.image.bytesPerRow, "bitmapInfoRawValue": composite.image.bitmapInfo.rawValue,
+                    "alphaInfoRawValue": composite.image.alphaInfo.rawValue,
+                    "colorSpaceName": composite.image.colorSpace?.name.map { $0 as String } ?? "unnamed",
+                    "colorSpaceModel": composite.image.colorSpace.map { Int($0.model.rawValue) } ?? -1],
+                "geometryReport": geometryReport,
+                "profileContract": "Explicit RGB profile required; nil/gray rejected; RGB ICC reconstruction accepted without a name whitelist",
+                "upload": "Explicit RGBA8 sRGB byte upload; previous loader format is diagnostic only"]
+            tileProgress = reports + [current]
+            let texture = try HUDSourceWatchBackdrop.uploadDesktopComposite(composite, device: device)
+            current["uploadedPixelFormat"] = String(describing: texture.pixelFormat)
+            current["uploadedPixelFormatRawValue"] = texture.pixelFormat.rawValue
+            tileProgress = reports + [current]
+            try require(texture.pixelFormat == .rgba8Unorm_srgb && texture.mipmapLevelCount == 1,
+                "Explicit synthetic composite upload changed its RGBA8 sRGB format")
             let stride = 512
             guard let buffer = device.makeBuffer(length: stride * 96, options: .storageModeShared),
                   let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder() else {
@@ -531,6 +568,14 @@ enum VerifySourceBackdropGPU {
             if let error = command.error { throw error }
             try require(command.status == .completed, "Synthetic tile GPU readback incomplete")
             let ptr = buffer.contents().assumingMemoryBound(to: UInt8.self)
+            var uploadByteMismatches = 0
+            for y in 0..<96 { for x in 0..<512 {
+                if ptr[y * stride + x] != composite.rgba8[y * composite.bytesPerRow + x] { uploadByteMismatches += 1 }
+            } }
+            current["uploadComparedBytes"] = composite.rgba8.count
+            current["uploadByteMismatches"] = uploadByteMismatches
+            tileProgress = reports + [current]
+            try require(uploadByteMismatches == 0, "Explicit ICC composite GPU upload changed its original RGBA byte rows")
             var samples: [[String: Any]] = []
             for y in [12, 36, 60, 84] {
                 for x in [16, 48, 80, 112] {
@@ -538,15 +583,17 @@ enum VerifySourceBackdropGPU {
                     let offset = y * stride + x * 4
                     let actual = texture.pixelFormat == .bgra8Unorm_srgb ? [Int(ptr[offset + 2]), Int(ptr[offset + 1]), Int(ptr[offset])] :
                         [Int(ptr[offset]), Int(ptr[offset + 1]), Int(ptr[offset + 2])]
+                    samples.append(["x": x, "y": y, "expectedRGB": expected, "actualRGB": actual, "actualAlpha": Int(ptr[offset + 3])])
+                    current["samples"] = samples
+                    tileProgress = reports + [current]
                     try require(zip(expected, actual).allSatisfy { abs($0.0 - $0.1) <= 2 } && ptr[offset + 3] == 255,
                         "Synthetic tile origin/ICC/crop mismatch \(name) at \(x),\(y): expected \(expected), actual \(actual)")
-                    samples.append(["x": x, "y": y, "expectedRGB": expected, "actualRGB": actual])
                 }
             }
-            let reportData = try JSONEncoder().encode(composite.report)
-            let geometryReport = try JSONSerialization.jsonObject(with: reportData)
-            reports.append(["name": name, "passed": true, "samples": samples, "geometryReport": geometryReport,
-                "coverage": "Whole tiles, mixed native scales, negative AppKit origin, sRGB/P3 neutral ICC invariant; no actual display data"])
+            current["passed"] = true
+            current["coverage"] = "Whole tiles, mixed native scales, negative AppKit origin, sRGB/P3 neutral ICC invariant; no actual display data"
+            reports.append(current)
+            tileProgress = reports
         }
         return reports
     }
@@ -720,6 +767,7 @@ enum VerifySourceBackdropGPU {
             report["error"] = String(describing: error)
             if report["attachmentConversionProbe"] == nil { report["attachmentConversionProbe"] = formatProgress }
             if report["frostedTests"] == nil { report["frostedTests"] = frostedProgress }
+            if report["tileTests"] == nil { report["tileTests"] = tileProgress }
             if report["rawImageTests"] == nil { report["rawImageTests"] = rawImageProgress }
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: output.appendingPathComponent("source-backdrop-gpu-regression.json"))

@@ -30,11 +30,17 @@ final class HUDSourceWatchBackdrop {
         let textureOrigin: String
         let sourceUVPlatformMapping: String
         let sourceMaterialID: String
+        let uploadPixelFormat: String
+        let uploadBytesPerRow: Int
+        let uploadBitmapInfo: UInt32
         let tiles: [TileReport]
     }
 
     struct Composite {
         let image: CGImage
+        /// Owned snapshot of the explicitly specified CGContext, before any image loader.
+        let rgba8: Data
+        let bytesPerRow: Int
         let report: Report
     }
 
@@ -146,6 +152,16 @@ final class HUDSourceWatchBackdrop {
             uv: [SIMD2(0, 1), SIMD2(1, 1), SIMD2(1, 0), SIMD2(0, 0)], indices: [0, 1, 2, 2, 3, 0])
     }
 
+    /// A profile name is descriptive, not a whitelist: reconstructed RGB ICC profiles
+    /// and named RGB aliases are converted by Quartz into the explicit sRGB target.
+    /// Untagged and non-RGB capture inputs have no supported desktop-pixel contract.
+    static func requireDesktopRGBProfile(_ profile: CGColorSpace?) throws -> CGColorSpace {
+        guard let profile = profile, profile.model == .rgb, profile.numberOfComponents == 3 else {
+            throw HUDSourceError.invalid("WatchBlur desktop tile requires an explicit three-component RGB color profile")
+        }
+        return profile
+    }
+
     /// One explicit display-to-drawable resample, with ICC conversion per source image.
     /// No capture APIs are called, so synthetic profiled tiles can exercise this in GPU CI.
     static func compositeDesktop(frame: HUDSourceDesktopBackdrop.Frame, drawableSize: CGSize,
@@ -176,9 +192,10 @@ final class HUDSourceWatchBackdrop {
         for tile in frame.tiles {
             guard valid(tile.requestedAppKitRect), valid(tile.capturedAppKitRect),
                   hud.contains(tile.requestedAppKitRect), tile.capturedAppKitRect.contains(tile.requestedAppKitRect),
-                  tile.image.width > 0, tile.image.height > 0, tile.image.colorSpace != nil else {
-                throw HUDSourceError.invalid("WatchBlur desktop tile has incomplete geometry/profile")
+                  tile.image.width > 0, tile.image.height > 0 else {
+                throw HUDSourceError.invalid("WatchBlur desktop tile has incomplete geometry")
             }
+            _ = try requireDesktopRGBProfile(tile.image.colorSpace)
             for previous in coverage {
                 let overlap = previous.intersection(tile.requestedAppKitRect)
                 guard overlap.isNull || overlap.width <= 0 || overlap.height <= 0 else {
@@ -199,7 +216,7 @@ final class HUDSourceWatchBackdrop {
         context.setShouldAntialias(false)
         context.clear(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
         // Quartz bitmap drawing uses +Y-up placement, as do the AppKit input rectangles.
-        // The resulting CGImage is uploaded with an explicit top-left Metal origin.
+        // The specified RGBA byte rows are uploaded unchanged at Metal row zero.
         var reports: [TileReport] = []
         for tile in frame.tiles {
             let destination = target(tile.capturedAppKitRect)
@@ -207,7 +224,7 @@ final class HUDSourceWatchBackdrop {
             context.clip(to: target(tile.requestedAppKitRect))
             context.draw(tile.image, in: destination)
             context.restoreGState()
-            let profile = tile.image.colorSpace!
+            let profile = try requireDesktopRGBProfile(tile.image.colorSpace)
             reports.append(TileReport(displayID: tile.displayID, sourcePixelSize: [tile.image.width, tile.image.height],
                 capturedAppKitRect: rectangle(tile.capturedAppKitRect), requestedAppKitRect: rectangle(tile.requestedAppKitRect),
                 sourcePixelsPerAppKitPoint: [Double(CGFloat(tile.image.width) / tile.capturedAppKitRect.width),
@@ -216,12 +233,44 @@ final class HUDSourceWatchBackdrop {
                 sourceColorSpaceModel: Int(profile.model.rawValue), sourceBitsPerComponent: tile.image.bitsPerComponent,
                 sourceBitsPerPixel: tile.image.bitsPerPixel))
         }
-        guard let image = context.makeImage() else { throw HUDSourceError.invalid("Cannot create WatchBlur desktop composite") }
-        return Composite(image: image, report: Report(inputMode: "desktopDisplayPixels", hudRect: rectangle(hud),
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        guard let image = context.makeImage(), let bytes = context.data,
+              image.bitsPerComponent == 8, image.bitsPerPixel == 32, image.bytesPerRow == width * 4,
+              image.bitmapInfo.rawValue == bitmapInfo, let profile = image.colorSpace,
+              CFEqual(profile, sRGB) else {
+            throw HUDSourceError.invalid("WatchBlur composite did not retain its specified RGBA8 sRGB bitmap layout")
+        }
+        let rgba8 = Data(bytes: bytes, count: width * height * 4)
+        return Composite(image: image, rgba8: rgba8, bytesPerRow: width * 4,
+            report: Report(inputMode: "desktopDisplayPixels", hudRect: rectangle(hud),
             outputPixelSize: [width, height], outputPixelsPerAppKitPoint: [Double(sx), Double(sy)],
             outputColorSpace: "sRGB", renderingIntent: "relativeColorimetric", interpolation: "CoreGraphics high",
             textureOrigin: "Metal topLeft", sourceUVPlatformMapping: "u unchanged; v = 1 - sourceRawImageUV.y",
-            sourceMaterialID: sourceMaterialID, tiles: reports))
+            sourceMaterialID: sourceMaterialID, uploadPixelFormat: "rgba8Unorm_srgb",
+            uploadBytesPerRow: width * 4, uploadBitmapInfo: bitmapInfo, tiles: reports))
+    }
+
+    /// The raster has already undergone the single ICC conversion above. Uploading
+    /// its declared bytes avoids MTKTextureLoader's automatic CGImage format selection.
+    static func uploadDesktopComposite(_ composite: Composite, device: MTLDevice) throws -> MTLTexture {
+        let width = composite.image.width, height = composite.image.height
+        guard width > 0, height > 0, width <= Int.max / 4, height <= Int.max / (width * 4),
+              composite.bytesPerRow == width * 4, composite.rgba8.count == width * height * 4 else {
+            throw HUDSourceError.invalid("WatchBlur composite has an invalid RGBA8 byte extent")
+        }
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm_srgb,
+            width: width, height: height, mipmapped: false)
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = device.hasUnifiedMemory ? .shared : .managed
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw HUDSourceError.invalid("WatchBlur explicit RGBA8 sRGB upload texture unavailable")
+        }
+        texture.label = "WatchBlur ICC-converted RGBA8 sRGB display pixels"
+        composite.rgba8.withUnsafeBytes { bytes in
+            texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+                withBytes: bytes.baseAddress!, bytesPerRow: composite.bytesPerRow)
+        }
+        return texture
     }
 
     /// Only expose a completed source texture. Failed preparation never supplies a stale batch.
@@ -229,11 +278,7 @@ final class HUDSourceWatchBackdrop {
         ready = false
         report = nil
         let composite = try Self.compositeDesktop(frame: frame, drawableSize: drawableSize, sourceMaterialID: materialID)
-        let input = try MTKTextureLoader(device: device).newTexture(cgImage: composite.image, options: [
-            .origin: MTKTextureLoader.Origin.topLeft.rawValue, .SRGB: NSNumber(value: true),
-            .generateMipmaps: NSNumber(value: false),
-            .textureUsage: NSNumber(value: MTLTextureUsage.shaderRead.rawValue)
-        ])
+        let input = try Self.uploadDesktopComposite(composite, device: device)
         guard input.width == composite.image.width, input.height == composite.image.height,
               input.pixelFormat == .rgba8Unorm_srgb || input.pixelFormat == .bgra8Unorm_srgb,
               let command = queue.makeCommandBuffer() else {
