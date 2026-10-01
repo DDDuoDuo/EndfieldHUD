@@ -2,12 +2,63 @@ import Foundation
 import CoreGraphics
 import simd
 
+/// WatchBlur has its own Linear wrapper. Its alpha keys finish before the
+/// main Watch wrapper; do not stretch them to the menu's deployment duration.
+struct HUDSourceWatchBlurAnimation {
+    struct Track {
+        let curve: HUDSourceAnimationCurve
+        let duration: Double
+        let startAlpha: Double
+        let endAlpha: Double
+        let controlPoints: SIMD4<Float>
+        init(curve: HUDSourceAnimationCurve) throws {
+            let keys = curve.body.keys
+            guard curve.group == "m_FloatCurves", curve.path == "BlurBG", curve.attribute == "m_Alpha",
+                  keys.count == 2, keys[0].time == 0, keys[1].time > 0,
+                  keys.allSatisfy({ $0.weightedMode == 0 }),
+                  case .scalar(let start) = keys[0].value, case .scalar(let end) = keys[1].value,
+                  case .scalar(let outgoing) = keys[0].outSlope,
+                  case .scalar(let incoming) = keys[1].inSlope,
+                  start != end, outgoing.isFinite, incoming.isFinite else {
+                throw HUDSourceError.invalid("Unsupported original WatchBlur alpha track")
+            }
+            self.curve = curve; duration = keys[1].time; startAlpha = start; endAlpha = end
+            // An unweighted Hermite segment is this cubic Bezier with x=t.
+            // Core Animation therefore evaluates the original segment without
+            // sampled keyframes or a second easing function.
+            controlPoints = SIMD4(1 / 3, Float(outgoing * duration / (3 * (end - start))),
+                2 / 3, Float(1 - incoming * duration / (3 * (end - start))))
+        }
+        func alpha(at elapsed: Double) -> Double? {
+            guard case .scalar(let alpha)? = curve.sample(at: elapsed) else { return nil }
+            return alpha
+        }
+    }
+    let entrance: Track
+    let exit: Track
+    init(data: Data) throws {
+        let source = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self, from: data)
+        guard source["wrapper"]["_options"]["animEase"].number == 1, source["default_speed"].number == 1 else {
+            throw HUDSourceError.invalid("Unsupported WatchBlur wrapper clock")
+        }
+        struct Payload: Decodable {
+            struct Channel: Decodable { let curve: HUDSourceAnimationCurve }
+            let entrance: Channel
+            let exit: Channel
+        }
+        let payload = try HUDSourceJSON.decoder().decode(Payload.self, from: data)
+        entrance = try Track(curve: payload.entrance.curve)
+        exit = try Track(curve: payload.exit.curve)
+    }
+}
+
 /// Source property channels stay distinct: CanvasGroup alpha, graphic color
 /// alpha, and material alpha multiply at their original places in rendering.
 struct HUDSourceWatchPose {
     var transforms: [HUDSourceID: HUDSourceTransformOverride]
     var properties: [HUDSourceID: [String: Double]] = [:]
     var unboundPaths: Set<String> = []
+    var unregisteredBindings: Set<String> = []
 
     func value(_ attribute: String, on node: HUDSourceID, fallback: Double) -> Double {
         properties[node]?[attribute] ?? fallback
@@ -17,6 +68,11 @@ struct HUDSourceWatchPose {
 /// Immutable sampler. Native previews and the live display share this exact
 /// evaluation path; seeking does not start timers or Core Animation tracks.
 struct HUDSourceWatchAnimation {
+    private static let rectTransformScalarAttributes: Set<String> = [
+        "m_LocalPosition.z", "m_AnchoredPosition.x", "m_AnchoredPosition.y",
+        "m_AnchorMin.x", "m_AnchorMin.y", "m_AnchorMax.x", "m_AnchorMax.y",
+        "m_SizeDelta.x", "m_SizeDelta.y", "m_Pivot.x", "m_Pivot.y"
+    ]
     let scene: HUDSourceScene
     let entrance: HUDSourceAnimationClip
     let ambient: HUDSourceAnimationClip
@@ -69,6 +125,15 @@ struct HUDSourceWatchAnimation {
                base: [HUDSourceID: HUDSourceResolvedNode]) {
         guard let time = clip.localTime(time) else { return }
         for curve in clip.curves {
+            // The installed player's RectTransform scalar registry binds Z,
+            // anchored X/Y, anchors, size and pivot. Its hash lookup rejects
+            // local X/Y; these legacy serialized leftovers never reach a
+            // setter. Transform (class 4) position tracks remain valid.
+            if curve.group == "m_FloatCurves", curve.classID == 224,
+               !Self.rectTransformScalarAttributes.contains(curve.attribute) {
+                pose.unregisteredBindings.insert("224:" + curve.attribute)
+                continue
+            }
             if curve.nodeIDs.isEmpty { pose.unboundPaths.insert(curve.path); continue }
             guard let value = curve.sample(at: time) else { continue }
             for id in curve.nodeIDs {
@@ -100,6 +165,12 @@ struct HUDSourceWatchAnimation {
                     case "m_AnchorMax.x", "m_AnchorMax.y":
                         let v = transform.anchorMax ?? node.transform.rect?.anchorMax ?? HUDSourceVector2(0, 0)
                         transform.anchorMax = Self.axis(curve.attribute) == 0 ? HUDSourceVector2(scalar, v.y) : HUDSourceVector2(v.x, scalar)
+                    case "m_SizeDelta.x", "m_SizeDelta.y":
+                        let v = transform.sizeDelta ?? node.transform.rect?.sizeDelta ?? HUDSourceVector2(0, 0)
+                        transform.sizeDelta = Self.axis(curve.attribute) == 0 ? HUDSourceVector2(scalar, v.y) : HUDSourceVector2(v.x, scalar)
+                    case "m_Pivot.x", "m_Pivot.y":
+                        let v = transform.pivot ?? node.transform.rect?.pivot ?? HUDSourceVector2(0.5, 0.5)
+                        transform.pivot = Self.axis(curve.attribute) == 0 ? HUDSourceVector2(scalar, v.y) : HUDSourceVector2(v.x, scalar)
                     default: pose.properties[id, default: [:]][curve.attribute] = scalar
                     }
                 default: break

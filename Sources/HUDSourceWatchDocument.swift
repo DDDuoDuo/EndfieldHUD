@@ -87,6 +87,7 @@ final class HUDSourceWatchDocument {
     let scene: HUDSourceScene
     let library: HUDSourceAnimationLibrary
     let animation: HUDSourceWatchAnimation
+    let blurAnimation: HUDSourceWatchBlurAnimation
     let components: [HUDSourceID: [HUDSourceWatchComponent]]
     let buttons: [HUDSourceWatchButton]
     let animators: [Animator]
@@ -110,6 +111,7 @@ final class HUDSourceWatchDocument {
         buttons = details.buttons
         library = try decoder.decode(HUDSourceAnimationLibrary.self, from: clipData)
         animation = try HUDSourceWatchAnimation(scene: scene, library: library)
+        blurAnimation = try HUDSourceWatchBlurAnimation(data: data("watch-blur"))
         animators = try decoder.decode(ExtraAnimations.self, from: clipData).animators
         sprites = try decoder.decode(HUDSourceJSONValue.self, from: data("sprites"))
         fonts = try decoder.decode(HUDSourceJSONValue.self, from: data("fonts"))

@@ -586,7 +586,11 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             // Preserve every authored mip. BC7 fallback decodes each source
             // mip independently; original RGBA32 stays in its source format.
             guard format == 25 || format == 4 || format == 63 else { throw Failure.message("Unmapped original source texture format: \(id)") }
-            let useBC = format == 25 && device.supportsBCTextureCompression
+            // The Intel build retains the app's macOS 10.15.4 minimum. Older
+            // systems use the already exported pixels of every original mip.
+            var supportsOriginalBC7 = false
+            if #available(macOS 11.0, *) { supportsOriginalBC7 = device.supportsBCTextureCompression }
+            let useBC = format == 25 && supportsOriginalBC7
             let pixelFormat: MTLPixelFormat
             if format == 63 {
                 guard !sRGB else { throw Failure.message("Unexpected gamma R8 source atlas: \(id)") }

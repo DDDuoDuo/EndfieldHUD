@@ -158,7 +158,8 @@ enum RenderSourceWatchLayoutReference {
                 "hoverElapsed": optional(sample.hover), "buttons": buttonRecords, "worldRoot": matrix(camera.worldRoot),
                 "layoutDiagnostics": layoutReport.unverifiedCustomComponents.sorted(),
                 "missingTextMetrics": layoutReport.missingTextMetrics.map(\.rawValue).sorted(),
-                "geometryDiagnostics": failures, "unboundAnimationPaths": pose.unboundPaths.sorted()])
+                "geometryDiagnostics": failures, "unboundAnimationPaths": pose.unboundPaths.sorted(),
+                "unregisteredAnimationBindings": pose.unregisteredBindings.sorted()])
         }
         let report: [String: Any] = ["schemaVersion": 1, "evidence": "Native Swift source geometry; no GPU or raster output",
             "commit": ProcessInfo.processInfo.environment["GITHUB_SHA"] ?? "local", "viewport": [1728, 1080], "mouseUnity": [864, 540],

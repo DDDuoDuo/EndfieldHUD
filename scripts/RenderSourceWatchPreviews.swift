@@ -9,6 +9,24 @@ import simd
 @main
 enum RenderSourceWatchPreviews {
     static func main() throws {
+        do { try capture() }
+        catch {
+            if CommandLine.arguments.count == 2 {
+                let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+                try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+                let report: [String: Any] = ["schemaVersion": 1,
+                    "commit": ProcessInfo.processInfo.environment["GITHUB_SHA"] ?? "local",
+                    "captureSucceeded": false, "recordingPixelComparisonPassed": false,
+                    "metalDevice": MTLCreateSystemDefaultDevice()?.name ?? "Unavailable",
+                    "error": String(describing: error)]
+                if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
+                    try? data.write(to: output.appendingPathComponent("source-preview-failure.json"))
+                }
+            }
+            throw error
+        }
+    }
+    private static func capture() throws {
         guard CommandLine.arguments.count == 2 else { throw HUDSourceError.invalid("Expected preview output directory") }
         let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)

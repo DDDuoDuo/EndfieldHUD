@@ -266,7 +266,6 @@ final class HUDSourceWatchFrameBuilder {
                 else { diagnostics.append("Unresolved original material clipping variant: \(n.node.path)"); continue }
                 var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: material,
                     world: HUDSourceGeometry.floatMatrix(canvasWorld), color: color, textureOverrides: ["_MainTex": textureID])
-                sourceSoftMask?.apply(to: &batch)
                 if let size = textureSizes[textureID] { batch.uniformOverrides["mainTexTexelSize"] = [1 / size.x, 1 / size.y, size.x, size.y] }
                 if let clip {
                     batch.uniformOverrides["clipRect"] = clip
@@ -287,6 +286,9 @@ final class HUDSourceWatchFrameBuilder {
                     batch.uniformOverrides["_VFXMainTex_ST"] = [Float(ix), Float(iy), Float((1 - ix) * 0.5), Float((1 - iy) * 0.5)]
                     batch.uniformOverrides["_TintColorAlpha"] = [Float(pose.value("_alpha", on: id, fallback: animation["_alpha"].float()))]
                 }
+                // Native material refresh copies the base properties first,
+                // then writes the six active soft-mask parameters.
+                sourceSoftMask?.apply(to: &batch)
                 batches.append((order, sequence, batch))
             }
             if let mesh = document.component("MeshFilter", on: id), let sourceID = mesh["m_Mesh"].targetID,
@@ -357,7 +359,8 @@ final class HUDSourceWatchFrameBuilder {
         batches.sort { $0.order == $1.order ? $0.sequence < $1.sequence : $0.order < $1.order }
         hits.sort { $0.order == $1.order ? $0.sequence < $1.sequence : $0.order < $1.order }
         return Frame(resolved: resolved, batches: batches.map(\.batch), hits: hits.map(\.hit), layoutReport: report,
-            diagnostics: diagnostics + pose.unboundPaths.sorted().map { "Unbound source curve: " + $0 })
+            diagnostics: diagnostics + pose.unboundPaths.sorted().map { "Unbound source curve: " + $0 }
+                + pose.unregisteredBindings.sorted().map { "Ignored unregistered native animation binding: " + $0 })
     }
 
     private func domainUIBatches(_ frame: HUDSourceWatchDomain.Frame, watchWorldToLocal: [Float],
@@ -521,10 +524,14 @@ final class HUDSourceWatchFrameBuilder {
             let uvSize = SIMD2(sourceSprite.outer.z - sourceSprite.outer.x, sourceSprite.outer.w - sourceSprite.outer.y)
             let uv = sourceSprite.inner
             let tiny = Double(Float.leastNonzeroMagnitude * 8)
-            innerUV = [Float(abs(uvSize.x) < tiny ? uv.x : (uv.x - sourceSprite.outer.x) / uvSize.x),
-                Float(abs(uvSize.y) < tiny ? uv.y : (uv.y - sourceSprite.outer.y) / uvSize.y),
-                Float(abs(uvSize.x) < tiny ? uv.z : (uv.z - sourceSprite.outer.x) / uvSize.x),
-                Float(abs(uvSize.y) < tiny ? uv.w : (uv.w - sourceSprite.outer.y) / uvSize.y)]
+            // Native normalization returns the original UV pair when either
+            // dimension is approximately zero; it does not divide one axis.
+            if abs(uvSize.x) < tiny || abs(uvSize.y) < tiny {
+                innerUV = [Float(uv.x), Float(uv.y), Float(uv.z), Float(uv.w)]
+            } else {
+                innerUV = [Float((uv.x - sourceSprite.outer.x) / uvSize.x), Float((uv.y - sourceSprite.outer.y) / uvSize.y),
+                    Float((uv.z - sourceSprite.outer.x) / uvSize.x), Float((uv.w - sourceSprite.outer.y) / uvSize.y)]
+            }
             sliced = true
         }
         return SoftMask(worldToUnit: simd_mul(inverseBasis, inverseOuter), textureID: textureID,

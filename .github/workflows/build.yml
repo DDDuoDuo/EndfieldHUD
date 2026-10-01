@@ -54,6 +54,7 @@ jobs:
       - name: Verify local release packaging
         run: ./scripts/package.sh --skip-build --dmg
       - name: Render original Watch scene through Metal
+        if: always()
         run: bash ./scripts/render-source-watch-previews.sh
       - name: Upload original scene and Metal evidence
         if: always()
