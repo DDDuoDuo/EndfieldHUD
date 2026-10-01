@@ -111,6 +111,33 @@ enum HUDSourceWatchWidgetsTests {
                 document.spriteByComponent[$0]?["id"].string == "CAB-e959d72720ecb3bf27836302d239ada3:-662833002379585603"
             }), "Banner Light's cloned component keeps its original Sprite dependency")
             let carouselState = HUDSourceWatchWidgets.State(bannerArtworks: ["yvonne_banner", "weapon_typhoeus_banner"])
+            var elastic = try widget.makeBannerPlayback(artworks: carouselState.bannerArtworks!)
+            try elastic.scrolled(to: -0.25)
+            var elasticPose = HUDSourceWatchPose(transforms: [:])
+            _ = try widget.apply(to: &elasticPose, state: carouselState, at: 0, banner: elastic.sample)
+            let elasticContainer = HUDSourceID(rawValue: "CAB-194e41a66c2317b9df19269f505210be:7252297320149642455")
+            check(elastic.sample.normalizedPosition == -0.25 && elastic.centerIndex == 0 &&
+                elasticPose.transforms[elasticContainer]?.anchoredPosition3D?.x == 91.625,
+                "Original elastic overscroll is retained as positive content position rather than clamped away")
+            try elastic.select(index: 1)
+            try elastic.advanceTween(delta: 0.1, sampleCenter: false)
+            check(elastic.centerIndex == 0 && elastic.holdTime == 0,
+                "Page tween and Lua clock are separable from actual ScrollRect center callbacks")
+            try elastic.scrolled(to: elastic.normalizedPosition)
+            try elastic.advanceHoldClock(delta: 0.1)
+            check(elastic.centerIndex == 1 && elastic.holdTime == 0.1,
+                "Actual center callback runs before the adapter's separate hold-clock tick")
+            elastic.settleTween()
+            check(elastic.normalizedPosition == 1 && !elastic.isTweening,
+                "Reduced-motion desktop policy settles only the existing page target")
+            var manualSnap = try widget.makeBannerPlayback(artworks: carouselState.bannerArtworks!)
+            try manualSnap.advanceHoldClock(delta: 0.3)
+            try manualSnap.snapTo(index: 1)
+            check(manualSnap.selectedIndex == 0 && manualSnap.holdTime == 0.3 && manualSnap.isTweening,
+                "A native release snap does not impersonate Lua AutoTick's immediate page/hold mutation")
+            try manualSnap.advance(delta: 0.1)
+            check(manualSnap.selectedIndex == 1 && manualSnap.holdTime == 0.1,
+                "Manual snap updates Lua selection and resets hold through the real center callback")
             var playback = try widget.makeBannerPlayback(artworks: carouselState.bannerArtworks!)
             try playback.advance(delta: 3.999)
             check(playback.normalizedPosition == 0 && playback.selectedIndex == 0 && !playback.isTweening,

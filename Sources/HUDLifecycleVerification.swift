@@ -5,12 +5,18 @@ import AppKit
 enum HUDLifecycleVerification {
     static func run(overlay: OverlayController, configuration: AppConfiguration,
                     completion: @escaping () -> Void) {
+        let lifecycle = { Session(overlay: overlay, configuration: configuration, completion: completion).start() }
+        let interactions = {
+            if CommandLine.arguments.contains("--banner-drag-smoke-test") {
+                HUDSourceBannerDragVerification.run(overlay: overlay, configuration: configuration, completion: lifecycle)
+            } else { lifecycle() }
+        }
         if CommandLine.arguments.contains("--backdrop-preparation-smoke-test") {
             HUDBackdropOpeningVerification.run(overlay: overlay, configuration: configuration) {
-                Session(overlay: overlay, configuration: configuration, completion: completion).start()
+                interactions()
             }
         } else {
-            Session(overlay: overlay, configuration: configuration, completion: completion).start()
+            interactions()
         }
     }
 

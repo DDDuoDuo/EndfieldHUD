@@ -425,9 +425,25 @@ struct HUDSourceCamera {
     /// Invert the exact matrix used by rendering. Intersect its near/far segment
     /// with local z=0; this handles perspective, parent tilt, and negative scales.
     func hit(_ screen: CGPoint, world: simd_double4x4, rect: HUDSourceRect, viewport: CGRect) -> SIMD2<Double>? {
-        guard validViewport(viewport), screen.x.isFinite, screen.y.isFinite,
-              screen.x >= viewport.minX, screen.x <= viewport.maxX,
+        guard screen.x >= viewport.minX, screen.x <= viewport.maxX,
               screen.y >= viewport.minY, screen.y <= viewport.maxY,
+              let intersection = localPlaneIntersection(screen, world: world, viewport: viewport),
+              intersection.fraction >= -1e-10, intersection.fraction <= 1 + 1e-10 else { return nil }
+        let point = intersection.point, xy = SIMD2(point.x, point.y)
+        guard rect.contains(xy), project(point, world: world, viewport: viewport) != nil else { return nil }
+        return xy
+    }
+    /// A captured drag continues on the tilted viewport's plane after leaving
+    /// its rectangle or the window. This is the desktop inverse-projection
+    /// adapter; button hits retain their rectangle and near/far clipping above.
+    func pointOnPlane(_ screen: CGPoint, world: simd_double4x4, viewport: CGRect) -> SIMD2<Double>? {
+        guard let intersection = localPlaneIntersection(screen, world: world, viewport: viewport),
+              intersection.fraction >= -1e-10 else { return nil }
+        return SIMD2(intersection.point.x, intersection.point.y)
+    }
+    private func localPlaneIntersection(_ screen: CGPoint, world: simd_double4x4,
+                                        viewport: CGRect) -> (point: SIMD3<Double>, fraction: Double)? {
+        guard validViewport(viewport), screen.x.isFinite, screen.y.isFinite,
               let inverse = HUDSourceGeometry.inverse(viewProjection * world) else { return nil }
         let x = 2 * Double(screen.x - viewport.minX) / Double(viewport.width) - 1
         let y = 1 - 2 * Double(screen.y - viewport.minY) / Double(viewport.height)
@@ -440,11 +456,10 @@ struct HUDSourceCamera {
         let direction = far - near
         guard direction.z.isFinite, abs(direction.z) > 1e-14 else { return nil }
         let fraction = -near.z / direction.z
-        guard fraction >= -1e-10, fraction <= 1 + 1e-10 else { return nil }
+        guard fraction.isFinite else { return nil }
         let point = near + fraction * direction
-        let xy = SIMD2(point.x, point.y)
-        guard rect.contains(xy), project(point, world: world, viewport: viewport) != nil else { return nil }
-        return xy
+        guard point.x.isFinite, point.y.isFinite, point.z.isFinite else { return nil }
+        return (point, fraction)
     }
 }
 

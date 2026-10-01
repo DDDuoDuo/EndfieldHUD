@@ -94,6 +94,7 @@ final class HUDSourceWatchView: NSView {
     private var previousCursor: NSCursor?
     private var hovered: HUDSourceID?
     private var pressed: HUDSourceID?
+    private var bannerPointerPixels: SIMD2<Float>?
     private var lastPose: HUDSourceWatchPose?
     private var renderedFrame: HUDSourceWatchFrameBuilder.Frame?
     private var renderedCamera: HUDSourceWatchCamera.Frame?
@@ -108,12 +109,12 @@ final class HUDSourceWatchView: NSView {
     var onFailure: ((String) -> Void)?
     var widgetState: HUDSourceWatchWidgets.State {
         get { frameBuilder.widgetState }
-        set { frameBuilder.widgetState = newValue; refreshPlaybackScheduling() }
+        set { cancelBannerPointer(); frameBuilder.widgetState = newValue; refreshPlaybackScheduling() }
     }
     var inputEnabled = false {
         didSet {
             guard inputEnabled != oldValue else { return }
-            if !inputEnabled { hovered = nil; pressed = nil; updateAnimatorStates(at: now) }
+            if !inputEnabled { cancelBannerPointer(); hovered = nil; pressed = nil; updateAnimatorStates(at: now) }
             refreshSourceCursor()
             refreshPlaybackScheduling()
         }
@@ -260,6 +261,7 @@ final class HUDSourceWatchView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         restoreSourceCursor()
+        if window == nil { cancelBannerPointer(); pressed = nil }
         observers.forEach { NotificationCenter.default.removeObserver($0) }; observers.removeAll()
         if let window {
             for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
@@ -271,6 +273,9 @@ final class HUDSourceWatchView: NSView {
                     guard let self else { return }
                     if note.name == NSWindow.willCloseNotification { self.conceal() }
                     else {
+                        if note.name == NSWindow.didResignKeyNotification || note.name == NSWindow.didMiniaturizeNotification {
+                            self.cancelBannerPointer(); self.pressed = nil; self.updateAnimatorStates(at: self.now)
+                        }
                         self.refreshBackdropGeometry()
                         self.refreshPlaybackScheduling()
                     }
@@ -300,7 +305,9 @@ final class HUDSourceWatchView: NSView {
         isHidden = false
         selectableColor.reset(at: now)
         cancelPendingOpening()
-        frameBuilder.resetWidgetBannerClock()
+        // A complete Watch close/reopen reconstructs the Banner widget in the
+        // game; retain desktop artwork/profile policy while restarting runtime.
+        frameBuilder.resetWidgetBannerForPanelCreation()
         backdropTransitionStart = now
         hovered = nil; pressed = nil
         if let preparation = backdropPreparationForVerification {
@@ -352,14 +359,15 @@ final class HUDSourceWatchView: NSView {
         backdropTransitionStart = now
         inputEnabled = false
         playback.close(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion) { [weak self] in
-            self?.stopTimer(); self?.isHidden = true; completion()
+            self?.stopTimer(); try? self?.frameBuilder.deactivateWidgetBanner()
+            self?.isHidden = true; completion()
         }
         refreshPlaybackScheduling()
     }
     func conceal() {
         cancelPendingOpening()
         cancelBackdropCapture()
-        frameBuilder.resetWidgetBannerClock()
+        try? frameBuilder.deactivateWidgetBanner()
         playback.conceal(); inputEnabled = false; hovered = nil; pressed = nil
         stopTimer(); isHidden = true
         try? gyro.stop(at: now)
@@ -658,6 +666,26 @@ final class HUDSourceWatchView: NSView {
     }
 
     private func point(_ event: NSEvent) -> CGPoint { convert(event.locationInWindow, from: nil) }
+    private func bannerScreenPixels(_ point: CGPoint) -> SIMD2<Float> {
+        let scale = window?.backingScaleFactor ?? 1
+        return SIMD2(Float(point.x * scale), Float(point.y * scale))
+    }
+    private func bannerViewportPoint(_ point: CGPoint, requireHit: Bool) -> (local: SIMD2<Double>, panelWidth: Float)? {
+        guard inputEnabled, playback.phase == .visible, isOnScreen,
+              let widgets = document.widgets, let frame = renderedFrame, let camera = renderedCamera,
+              let viewport = frame.resolved[widgets.bannerListNodeID], viewport.activeInHierarchy,
+              let rect = viewport.rect, let panelRect = frame.resolved[document.scene.rootID]?.rect else { return nil }
+        let world = simd_mul(camera.worldRoot, viewport.worldMatrix)
+        let local = requireHit ? camera.camera.hit(point, world: world, rect: rect, viewport: bounds)
+            : camera.camera.pointOnPlane(point, world: world, viewport: bounds)
+        guard let local else { return nil }
+        // UIStep's cumulative-distance gate uses its owning LuaPanel width,
+        // distinct from the narrow ScrollRect viewport width used by rubber.
+        return (local, Float(panelRect.size.x))
+    }
+    private func cancelBannerPointer() {
+        bannerPointerPixels = nil; frameBuilder.cancelWidgetBannerPointer()
+    }
     private func refreshSourceCursor() {
         guard inputEnabled, playback.phase == .visible, isOnScreen, let window,
               window.isKeyWindow, NSApp.isActive else { restoreSourceCursor(); return }
@@ -717,11 +745,11 @@ final class HUDSourceWatchView: NSView {
         else { onClose?() }
         return true
     }
-    private func updateHover(_ event: NSEvent) {
+    private func updateHover(_ event: NSEvent, forceRefresh: Bool = false) {
         refreshSourceCursor()
         let next = button(at: point(event))
         if next != hovered { hovered = next; updateAnimatorStates(at: now); refreshPlaybackScheduling() }
-        else if timer == nil && !HUDRuntimeAppearance.reduceMotion { refreshPlaybackScheduling() }
+        else if forceRefresh || (timer == nil && !HUDRuntimeAppearance.reduceMotion) { refreshPlaybackScheduling() }
     }
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
@@ -730,14 +758,52 @@ final class HUDSourceWatchView: NSView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         pressed = button(at: point(event)); hovered = pressed
+        cancelBannerPointer()
+        if let pressed, document.widgets?.bannerButtonIDs.contains(pressed) == true,
+           bannerViewportPoint(point(event), requireHit: true) != nil {
+            let pixels = bannerScreenPixels(point(event))
+            do {
+                try frameBuilder.initializeWidgetBannerPointer(at: now, screenPosition: pixels)
+                bannerPointerPixels = pixels
+            } catch { diagnostics.append("Source banner pointer: \(error)") }
+        }
         updateAnimatorStates(at: now); refreshPlaybackScheduling()
     }
-    override func mouseDragged(with event: NSEvent) { updateHover(event) }
+    override func mouseDragged(with event: NSEvent) {
+        if let previous = bannerPointerPixels {
+            let p = point(event), pixels = bannerScreenPixels(p)
+            bannerPointerPixels = pixels
+            if let viewport = bannerViewportPoint(p, requireHit: false) {
+                do {
+                    let result = try frameBuilder.dragWidgetBannerPointer(at: now, screenPosition: pixels,
+                        frameDelta: pixels - previous, viewportLocalX: Float(viewport.local.x))
+                    if result == .began, pressed != document.widgets?.bannerListNodeID {
+                        // InputSystem cancels the pressed child only when its
+                        // pointerPress differs from the viewport pointerDrag.
+                        pressed = nil; updateAnimatorStates(at: now)
+                    }
+                } catch { cancelBannerPointer(); diagnostics.append("Source banner drag: \(error)") }
+            }
+        }
+        updateHover(event, forceRefresh: true)
+    }
     override func mouseUp(with event: NSEvent) {
         let released = button(at: point(event)), down = pressed
-        pressed = nil; hovered = released; updateAnimatorStates(at: now); refreshPlaybackScheduling()
-        guard let down, released == down else { return }
-        performClick(on: down, at: now, point: point(event))
+        let previous = bannerPointerPixels
+        pressed = nil; hovered = released; updateAnimatorStates(at: now)
+        // Original release dispatches PointerUp/Click before EndDrag. A mapped
+        // macOS action can hide the view and cancel its pending drag first.
+        if let down, released == down { performClick(on: down, at: now, point: point(event)) }
+        if let previous, bannerPointerPixels != nil, inputEnabled,
+           let viewport = bannerViewportPoint(point(event), requireHit: false) {
+            let pixels = bannerScreenPixels(point(event)), scale = window?.backingScaleFactor ?? 1
+            do {
+                try frameBuilder.endWidgetBannerPointer(at: now, screenPosition: pixels,
+                    frameDelta: pixels - previous, screenWidth: Float(bounds.width * scale),
+                    panelRectWidth: viewport.panelWidth, reduceMotion: HUDRuntimeAppearance.reduceMotion)
+            } catch { diagnostics.append("Source banner release: \(error)") }
+        }
+        cancelBannerPointer(); refreshPlaybackScheduling()
     }
     override func keyDown(with event: NSEvent) {
         if inputEnabled, event.keyCode == 53 { onClose?() } else { super.keyDown(with: event) }

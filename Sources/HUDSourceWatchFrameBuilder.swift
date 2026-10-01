@@ -34,34 +34,111 @@ final class HUDSourceWatchFrameBuilder {
     let domain: HUDSourceWatchDomain
     var widgetState: HUDSourceWatchWidgets.State = .desktopReference
     private var bannerPlayback: HUDSourceWatchWidgets.BannerPlayback?
+    private var bannerScroll: HUDSourceBannerScroll?
     private var bannerClockTime: Double?
-    var widgetBannerSample: HUDSourceWatchWidgets.BannerSample? { bannerPlayback?.sample }
-    var requiresWidgetFrames: Bool {
-        bannerPlayback?.isTweening == true || (!widgetState.bannerPaused && (widgetState.bannerArtworks?.count ?? 0) > 1)
+    var widgetBannerSample: HUDSourceWatchWidgets.BannerSample? {
+        guard var sample = bannerPlayback?.sample else { return nil }
+        sample.contentPosition = bannerScroll.map { Double($0.position) }
+        return sample
     }
-    /// Drop only the timestamp anchor when hidden/preparing. The source page,
-    /// remaining hold and running tween are retained without counting that wait.
+    var isWidgetBannerDragging: Bool { bannerScroll?.isDragging == true }
+    var requiresWidgetFrames: Bool {
+        bannerPlayback?.isTweening == true || bannerScroll?.requiresFrames == true
+            || (!widgetState.bannerPaused && (widgetState.bannerArtworks?.count ?? 0) > 1)
+    }
+    /// Drop only the timestamp anchor during a temporary wrapper suspension.
+    /// The desktop page, remaining hold and running tween are retained without
+    /// counting that wait; real hide/recreation has a separate lifecycle below.
     func resetWidgetBannerClock() { bannerClockTime = nil }
+    func resetWidgetBannerForPanelCreation() {
+        bannerPlayback = nil; bannerScroll = nil; bannerClockTime = nil
+    }
+    /// Models real component deactivation rather than a temporary wrapper
+    /// cancellation: kill the adjust tween without completion, clear velocity,
+    /// and instant-scroll to the clamped actual center. Hold is reset only if
+    /// the normal sampled-center callback actually changes the center.
+    func deactivateWidgetBanner() throws {
+        bannerClockTime = nil
+        guard var playback = bannerPlayback, var scroll = bannerScroll else { return }
+        playback.beganDrag()
+        scroll.onDisable()
+        let count = playback.artworks.count
+        let normalized = count > 1 ? Float(playback.centerIndex) / Float(count - 1) : 0
+        try scroll.setNormalizedPosition(normalized)
+        try playback.scrolled(to: Double(scroll.normalizedPosition))
+        bannerPlayback = playback; bannerScroll = scroll
+    }
     func selectWidgetBanner(index: Int, at time: Double) throws {
         try updateWidgetBanner(at: time); try bannerPlayback?.select(index: index)
     }
     func dragWidgetBanner(to position: Double, at time: Double) throws {
         try updateWidgetBanner(at: time)
-        bannerPlayback?.dragged(); try bannerPlayback?.scrolled(to: position)
+        if var scroll = bannerScroll {
+            try scroll.setNormalizedPosition(Float(position)); bannerScroll = scroll
+            bannerPlayback?.dragged(); try bannerPlayback?.scrolled(to: Double(scroll.normalizedPosition))
+        }
     }
     func beginWidgetBannerDrag(at time: Double) throws {
         try updateWidgetBanner(at: time); bannerPlayback?.beganDrag()
     }
+    func initializeWidgetBannerPointer(at time: Double, screenPosition: SIMD2<Float>) throws {
+        try updateWidgetBanner(at: time)
+        try bannerScroll?.initializePotentialDrag(screenPosition: screenPosition)
+    }
+    func dragWidgetBannerPointer(at time: Double, screenPosition: SIMD2<Float>,
+                                 frameDelta: SIMD2<Float>, viewportLocalX: Float) throws -> HUDSourceBannerScroll.DragResult {
+        try updateWidgetBanner(at: time)
+        guard var scroll = bannerScroll, var playback = bannerPlayback else { return .ignored }
+        let result = try scroll.drag(screenPosition: screenPosition, frameDelta: frameDelta,
+            viewportLocalX: viewportLocalX, currentCenter: playback.centerIndex)
+        if result == .began { playback.beganDrag() }
+        if result == .began || result == .dragged {
+            playback.dragged(); try playback.scrolled(to: Double(scroll.normalizedPosition))
+        }
+        bannerScroll = scroll; bannerPlayback = playback
+        return result
+    }
+    func endWidgetBannerPointer(at time: Double, screenPosition: SIMD2<Float>, frameDelta: SIMD2<Float>,
+                                screenWidth: Float, panelRectWidth: Float, reduceMotion: Bool) throws {
+        try updateWidgetBanner(at: time)
+        guard var scroll = bannerScroll, var playback = bannerPlayback else { return }
+        let decision = try scroll.endDrag(screenPosition: screenPosition, frameDelta: frameDelta,
+            screenWidth: screenWidth, panelRectWidth: panelRectWidth, currentCenter: playback.centerIndex)
+        if let decision {
+            try playback.snapTo(index: decision.targetIndex)
+            if reduceMotion {
+                playback.settleTween(); try scroll.setNormalizedPosition(Float(playback.normalizedPosition))
+                try playback.scrolled(to: Double(scroll.normalizedPosition))
+            }
+        }
+        bannerScroll = scroll; bannerPlayback = playback
+    }
+    func cancelWidgetBannerPointer() { bannerScroll?.cancelPointer() }
     private func updateWidgetBanner(at time: Double) throws {
         guard time.isFinite else { throw HUDSourceError.invalid("Nonfinite source widget clock") }
         guard let artworks = widgetState.bannerArtworks, let widgets = document.widgets else {
-            bannerPlayback = nil; bannerClockTime = nil; return
+            bannerPlayback = nil; bannerScroll = nil; bannerClockTime = nil; return
         }
         if bannerPlayback?.artworks != artworks {
-            bannerPlayback = try widgets.makeBannerPlayback(artworks: artworks); bannerClockTime = nil
+            bannerPlayback = try widgets.makeBannerPlayback(artworks: artworks)
+            bannerScroll = artworks.isEmpty ? nil : try widgets.makeBannerScroll(pageCount: artworks.count)
+            bannerClockTime = nil
         }
         if let previous = bannerClockTime, time >= previous {
-            try bannerPlayback?.advance(delta: time - previous, paused: widgetState.bannerPaused)
+            let delta = time - previous
+            if var playback = bannerPlayback, var scroll = bannerScroll {
+                // Explicit desktop phase order; the original DOTween/Unity/Lua
+                // global PlayerLoop order remains unobserved.
+                let hadTween = playback.isTweening
+                try playback.advanceTween(delta: delta, sampleCenter: false)
+                if hadTween { try scroll.setNormalizedPosition(Float(playback.normalizedPosition)) }
+                try scroll.lateUpdate(unscaledDelta: Float(delta))
+                try playback.scrolled(to: Double(scroll.normalizedPosition))
+                try playback.advanceHoldClock(delta: delta, paused: widgetState.bannerPaused)
+                bannerScroll = scroll; bannerPlayback = playback
+            } else {
+                try bannerPlayback?.advance(delta: delta, paused: widgetState.bannerPaused)
+            }
         }
         bannerClockTime = time
     }

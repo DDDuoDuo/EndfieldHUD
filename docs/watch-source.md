@@ -229,8 +229,32 @@ shows the two reference artworks as source cell clones. The list keeps its
 Its four-second hold discards tick overshoot and its 0.2-second ease3 transition
 uses the installed OutSine implementation. Center-changed callbacks also restart
 the hold clock, and beginning a drag kills an existing tween without completing
-it. The adapter advances tween, sampled center callback and hold tick in that
-order; the original Unity/DOTween/Lua ordering across frames remains unobserved.
+it. The live adapter uses the original ten-screen-pixel input threshold, captures
+the local pointer at threshold time, and retains elastic overscroll. It applies
+the installed 0.1 RubberDelta coefficient, 0.1 SmoothDamp elasticity, 0.135
+deceleration, velocity cutoff and normalized-setter tolerances. Input projection
+continues on the real tilted list plane outside its viewport. AppKit points are
+converted to backing pixels before the threshold comparison.
+
+EndDrag uses the current input event delta, including a same-position zero delta;
+the distance fallback uses the owning Lua panel width and screen width. A release
+snap starts the page tween without immediately changing Lua selection or its hold
+clock. Selection updates through actual center callbacks. Automatic and explicit
+page selection retain their separate immediate selection/hold behavior. A child
+press is cancelled when dragging begins; a press on the list itself retains the
+source click-before-EndDrag ordering. Actual Drag callbacks clear the hold clock;
+an entirely motionless ongoing drag does not invent a pause of the Lua clock.
+
+The adapter advances the page tween, actual normalized-position setter,
+ScrollRect LateUpdate, sampled center callback and Lua hold tick in that order;
+the original Unity/DOTween/Lua ordering across frames remains unobserved.
+Real deactivation cancels the page tween, clears drag velocity and instantly
+aligns to the clamped current center. It does not unconditionally clear the hold
+clock. A full close/reopen recreates banner runtime state. Temporary desktop
+wrapper suspension retains runtime state and drops only the timestamp anchor;
+it is distinct from deactivating the source component. macOS Reduce Motion and
+nonpositive-delta guards remain explicit host policies, and cross-platform libm
+last-bit identity is not claimed.
 Original non-interactable page toggles indicate state; they are not new buttons.
 Desktop banner buttons open the existing event-log module. This reference
 sequence is not a recovered game account's eligible list or its JumpOut targets.
@@ -255,6 +279,12 @@ its Color32 Graphic color by the tint before its existing Canvas RGB conversion.
 The original engine's final tint/vertex packing and non-white RGB conversion
 order remain unobserved; white-RGB alpha fixtures verify this adapter separately
 from source final-pixel equivalence.
+The installed ordinary mouse path does not automatically select a clicked
+button: the original thirteen ColorTint buttons have navigation disabled, and
+the active input module's selection call clears an old selection. This supports
+the host's Normal/Highlighted/Pressed mouse states. A prior external/programmatic
+selection can still reach and retain Selected in the original engine; arbitrary
+callbacks and IFix behavior have not been dynamically verified.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
@@ -275,8 +305,17 @@ scene, using instance-bound clips rather than the PC menu's node graph. Watch
 initialization plays the current model's selected clip at timeScale 1 and seeks
 other model wrappers to their deselected endpoints. A reference with no current
 level explicitly uses the original deselected endpoints for every model; it
-does not claim game account state. Selection curves retain each original
-wrapper's Linear or OutQuad ease, material colors and exact child targets. Ground materials are
+does not claim game account state.
+
+The recording-map GPU fixture additionally loads all ten declared Region02
+models and explicitly selects `map02_lv007` at its original selected endpoint.
+It checks both material slots of that source model, the actual bound wrapper
+curves and Region02 placement. The default Region01 reference and earlier GPU
+fixtures remain unchanged; this explicit fixture does not infer unlocked levels
+or the recorded player's account/controller colors.
+
+Selection curves retain each original wrapper's Linear or OutQuad ease,
+material colors and exact child targets. Ground materials are
 not overwritten. Original hover curves affect model Lightness and two separate
 glow-material alphas; explicit clip-time samples are available for verification,
 while Watch's live map hover dispatch remains unverified. The saved idle glow
@@ -314,7 +353,7 @@ On macOS:
 ./scripts/test.sh
 ./scripts/build.sh
 ./scripts/verify-bundle.sh build/EndfieldHUD.app arm64 x86_64
-build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test
+build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test --backdrop-preparation-smoke-test --banner-drag-smoke-test
 build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
 bash ./scripts/render-source-watch-previews.sh
 bash ./scripts/verify-source-backdrop-gpu.sh
@@ -326,6 +365,15 @@ assembly. The Metal probe compiles each bundled stage with Apple's compiler and
 checks reflected interfaces. Bundle validation checks every WatchSource file
 against the source bytes. Lifecycle and navigation checks exercise real source
 phase, timer, drawable and hits as well as the retained macOS functions.
+The banner input fixture sends actual mouse events through the source view.
+It checks subthreshold child clicks, threshold-time capture, elastic overscroll,
+dragging outside the viewport, source page snap and a real list-hit click before
+EndDrag. It additionally verifies retained-view module handoff, real deactivation
+before restoring fixture data, and page-zero initialization in a recreated view.
+It requires the actual masked raycast winner rather than substituting
+a manufactured pointer press. These synthetic events never trigger macOS module
+actions, capture APIs or permission dialogs. Pure checks independently cover the
+installed physics constants, spring samples, snap thresholds and clock phases.
 The runtime allocates constant bytes using the compiled Metal argument size,
 including any MSL struct tail padding while preserving source member offsets.
 The GPU fixture records these sizes in `source-constant-buffer-abi.json`.

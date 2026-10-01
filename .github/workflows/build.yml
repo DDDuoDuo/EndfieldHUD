@@ -46,7 +46,7 @@ jobs:
           ./scripts/verify-bundle.sh build/EndfieldHUD.app arm64 x86_64
       - name: Verify native HUD lifecycle and navigation
         run: |
-          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test --backdrop-preparation-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test --backdrop-preparation-smoke-test --banner-drag-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
       - name: Verify updater termination and bounded Focus cleanup
         run: |
