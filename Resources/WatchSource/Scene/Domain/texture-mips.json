@@ -1210,6 +1210,2602 @@
       ],
       "all_mip_ranges_verified": true,
       "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-1585664649887358733",
+      "name": "map02_lv007_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 1510000,
+        "size": 247808,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 247808,
+      "raw": {
+        "file": "texture-mips/map02_lv007_bloom---1585664649887358733.bin",
+        "bytes": 247808,
+        "sha256": "ad9e10aea0d12d63c0afc978aea1fd0c9ccba34989269bc37211cdef1b98f421"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 484,
+          "offset": 0,
+          "length": 247808,
+          "sha256": "ad9e10aea0d12d63c0afc978aea1fd0c9ccba34989269bc37211cdef1b98f421"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-1701304502918558251",
+      "name": "map02_lv008_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 1262192,
+        "size": 247808,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 247808,
+      "raw": {
+        "file": "texture-mips/map02_lv008_bloom---1701304502918558251.bin",
+        "bytes": 247808,
+        "sha256": "8fd5fd9917b33fcdfcee1aecbccd6e4ec8859bc229810f3a7dbc49ec6150c585"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 484,
+          "offset": 0,
+          "length": 247808,
+          "sha256": "8fd5fd9917b33fcdfcee1aecbccd6e4ec8859bc229810f3a7dbc49ec6150c585"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-213845300137141800",
+      "name": "map02_lv005_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 1884144,
+        "size": 247808,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 247808,
+      "raw": {
+        "file": "texture-mips/map02_lv005_bloom---213845300137141800.bin",
+        "bytes": 247808,
+        "sha256": "e94a655e6417a775367f1c5f63899d21f7093f62d951d07191ef1f700b07410a"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 484,
+          "offset": 0,
+          "length": 247808,
+          "sha256": "e94a655e6417a775367f1c5f63899d21f7093f62d951d07191ef1f700b07410a"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-5503443179822565141",
+      "name": "map05_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 504,
+      "height": 364,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 656240,
+        "size": 183456,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 183456,
+      "raw": {
+        "file": "texture-mips/map05_bloom---5503443179822565141.bin",
+        "bytes": 183456,
+        "sha256": "87ccf4ae0ba38833fef6fce5fb869072ddd32d66fc3abe893f5f27e6fccf466d"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 504,
+          "height": 364,
+          "offset": 0,
+          "length": 183456,
+          "sha256": "87ccf4ae0ba38833fef6fce5fb869072ddd32d66fc3abe893f5f27e6fccf466d"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-6644324337239083920",
+      "name": "map07_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 384,
+      "height": 504,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 396272,
+        "size": 193536,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 193536,
+      "raw": {
+        "file": "texture-mips/map07_bloom---6644324337239083920.bin",
+        "bytes": 193536,
+        "sha256": "f64a584762f909b725436529c2034df77dce21f97b044cc01368f20e873fa4cb"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 384,
+          "height": 504,
+          "offset": 0,
+          "length": 193536,
+          "sha256": "f64a584762f909b725436529c2034df77dce21f97b044cc01368f20e873fa4cb"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-9108460901867554818",
+      "name": "map02_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 488,
+      "height": 440,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 214720,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 214720,
+      "raw": {
+        "file": "texture-mips/map02_bloom---9108460901867554818.bin",
+        "bytes": 214720,
+        "sha256": "d60a5dc597471ad2ca3d5264c2163272f077770d964b031471cee4f715784b44"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 488,
+          "height": 440,
+          "offset": 0,
+          "length": 214720,
+          "sha256": "d60a5dc597471ad2ca3d5264c2163272f077770d964b031471cee4f715784b44"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-948137933548833056",
+      "name": "map02_lv003_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 272,
+      "height": 312,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 1778432,
+        "size": 84864,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 84864,
+      "raw": {
+        "file": "texture-mips/map02_lv003_bloom---948137933548833056.bin",
+        "bytes": 84864,
+        "sha256": "d253b18cce55edf7ea5057a71dd4942f442675709f4d961be83a0ad8f82171a1"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 272,
+          "height": 312,
+          "offset": 0,
+          "length": 84864,
+          "sha256": "d253b18cce55edf7ea5057a71dd4942f442675709f4d961be83a0ad8f82171a1"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:1808801069315504428",
+      "name": "map02_lv004_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 436,
+      "height": 512,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 2706832,
+        "size": 223232,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 223232,
+      "raw": {
+        "file": "texture-mips/map02_lv004_bloom--1808801069315504428.bin",
+        "bytes": 223232,
+        "sha256": "ad5434be0a897f810ca0c2feda5069b5d1d152d175bb5a92eb696be86d579abe"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 436,
+          "height": 512,
+          "offset": 0,
+          "length": 223232,
+          "sha256": "ad5434be0a897f810ca0c2feda5069b5d1d152d175bb5a92eb696be86d579abe"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:28729348985856102",
+      "name": "map02_lv006_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 2384960,
+        "size": 247808,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 247808,
+      "raw": {
+        "file": "texture-mips/map02_lv006_bloom--28729348985856102.bin",
+        "bytes": 247808,
+        "sha256": "81dbe6b369dfa39628eb1affa6e2bf2ae3aebea915b82d1bc29537715b299781"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 484,
+          "offset": 0,
+          "length": 247808,
+          "sha256": "81dbe6b369dfa39628eb1affa6e2bf2ae3aebea915b82d1bc29537715b299781"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:3412472835358659884",
+      "name": "map02_lv001_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 240,
+      "height": 336,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 3217504,
+        "size": 80640,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 80640,
+      "raw": {
+        "file": "texture-mips/map02_lv001_bloom--3412472835358659884.bin",
+        "bytes": 80640,
+        "sha256": "ba1675fa918b1a27bd161e9997dffffac337d415645c8be49cdc309109b3f623"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 240,
+          "height": 336,
+          "offset": 0,
+          "length": 80640,
+          "sha256": "ba1675fa918b1a27bd161e9997dffffac337d415645c8be49cdc309109b3f623"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:3701357888794842",
+      "name": "map03_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 488,
+      "height": 496,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 2142912,
+        "size": 242048,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 242048,
+      "raw": {
+        "file": "texture-mips/map03_bloom--3701357888794842.bin",
+        "bytes": 242048,
+        "sha256": "80a6aaa87da245f19aebdc8a69c0857fce164345b4487648205568aa1065c83c"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 488,
+          "height": 496,
+          "offset": 0,
+          "length": 242048,
+          "sha256": "80a6aaa87da245f19aebdc8a69c0857fce164345b4487648205568aa1065c83c"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:6543666175246653684",
+      "name": "map02_lv009_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 3668208,
+        "size": 247808,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 247808,
+      "raw": {
+        "file": "texture-mips/map02_lv009_bloom--6543666175246653684.bin",
+        "bytes": 247808,
+        "sha256": "dcff6545524fa780271e73653ed63b87e9fde91caabd23df505dbcc600d583ce"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 484,
+          "offset": 0,
+          "length": 247808,
+          "sha256": "dcff6545524fa780271e73653ed63b87e9fde91caabd23df505dbcc600d583ce"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:6927862065446760556",
+      "name": "map02_lv002_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 268,
+      "height": 344,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 3942720,
+        "size": 92192,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 92192,
+      "raw": {
+        "file": "texture-mips/map02_lv002_bloom--6927862065446760556.bin",
+        "bytes": 92192,
+        "sha256": "6727008508d4ec11f5e3a5601ef7ea83da330ebee71f53c5f2b66aa7be48c92c"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 268,
+          "height": 344,
+          "offset": 0,
+          "length": 92192,
+          "sha256": "6727008508d4ec11f5e3a5601ef7ea83da330ebee71f53c5f2b66aa7be48c92c"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "name": "map_building_light_hover",
+      "source": {
+        "name": "Data/Bundles/Windows/main/99ed1ae9f1d15105aaf8b85b.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 642323381,
+        "length": 12796,
+        "md5": "885545CFC1F856E4B4241720D6E37875",
+        "sha256": "7bb86afdc5483a549b1effcca4f702bbea90e05cec3516bb49360fd422d83601",
+        "md5_verified": true
+      },
+      "width": 476,
+      "height": 476,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 226576,
+        "path": "archive:/CAB-2c0270486d58ce16e5d597fa7d4309f2/CAB-2c0270486d58ce16e5d597fa7d4309f2.resS"
+      },
+      "complete_image_size": 226576,
+      "raw": {
+        "file": "texture-mips/map_building_light_hover---1640941011107609933.bin",
+        "bytes": 226576,
+        "sha256": "5e9388a3578b672bb70b50d41b38e4a7abc2aebae90408450b933d01f22fd88b"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 476,
+          "height": 476,
+          "offset": 0,
+          "length": 226576,
+          "sha256": "5e9388a3578b672bb70b50d41b38e4a7abc2aebae90408450b933d01f22fd88b"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:6110342881534965045",
+      "name": "building_ground_map02_lv005",
+      "source": {
+        "name": "Data/Bundles/Windows/main/d20588fd2afa08e5cadccb30.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180764813,
+        "length": 26369,
+        "md5": "97963ACDA19348D570E42AF91C42772C",
+        "sha256": "2e7fdf81e7e9a3b9e6c53fa818d8bbded284f27ca471355c89c2454616c2623e",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-3c1cfa862c20d72b54ec6d2cef492a66/CAB-3c1cfa862c20d72b54ec6d2cef492a66.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv005--6110342881534965045.bin",
+        "bytes": 1398128,
+        "sha256": "be108797f75909bb0bf2466935a684a5163bf725fc56aa24d6f70c95e49f3b4d"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "01f5c680409d9baa19051d80d41182cf8a95659d75bfc29707355c84e7b28888"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "223cbd898a490c8295d406a46a5958ebba524f6a66e5d54d47d152deab7a3f49"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "c2c1192aef0508cdc7dbacd3d7d206bcb63a37ff12dec33d31cabdbf28c90864"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "40933740eccb9fba944643cc9f4a0f5279d6f7332aded6f1151c504b4b7c2453"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "997e0e73737d1368356f720e9728a446d5941c917c5ee89f8163078fccb6e3ca"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "3e5c3dbaa83a091e3e30903aff18ba09411070b43fd0a186854fd04f52fd4161"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "e06b8334ad46930083208f2008c8e300f56d92511389016ceeccbbedd4e41d2f"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "3fe30b0be82d3687620c84a6f6fc705e308ecbed5aec6b78578bab1e7a53aaff"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "3381732f31761c0830bcda2a1a4c68e935edee5394474f3380fde2944f7b8dce"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "ff85e6d7adb0774e4082eb0650bb80506997142fa0406ed89b0fdb6b64b1a150"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "010da1ba7b63a828503d2a665fefd4023ad6b883a8a109ccbbfcda2afed01e6a"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-45c445765ed08de8cfb23d8110266025:4248116634518733454",
+      "name": "building_ground_map02_lv006",
+      "source": {
+        "name": "Data/Bundles/Windows/main/639385ba713e740441606d63.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 98224609,
+        "length": 38378,
+        "md5": "771588F78D8C869D5FC8EDF53074F449",
+        "sha256": "13eca498b1f8f89d60cc55dc8ea50d6abb24f5334ecf6a3e32c8ab7221f02bb3",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-45c445765ed08de8cfb23d8110266025/CAB-45c445765ed08de8cfb23d8110266025.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv006--4248116634518733454.bin",
+        "bytes": 1398128,
+        "sha256": "3f250023d9ce6c5a683b5732a8f39ae8b2911d4fa6f785bc4bbd5ede6f78d971"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "146b44c626b5b4b39ef326ca07cbd22a99472de8b847088f94673421564cad19"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "4cf2b818fe2f726e4a082aa78ec708b267ece6f5c7df55b02cf3e9f0a7a3eb1d"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "f36815b3e39357a414d6f920ae5c162d7aaa74b612cdd19396b5f90f6bc06e08"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "d226ae559d6967aa89a9a1f26e6a15192e0289165b739744f8e563dcc5114f26"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "a79d6d7fd5b11982b0ef975221865db583ffba6e108e21f8ba368a49fa81a0ab"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "61c28ce7d77001d9a0141e5770348bbaf5999f0eff7c02fb84fdba25a8ad5f9f"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "60822f26816164af8198bd38ffc8e2d7c914866e4d4c3c4adde53e62884a1157"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "04c181886096be66a24c065814555cd16f3da476fe0ae5ceed9e9c9b53784635"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "57842f8ac76e7b708da5475bb7da746eb5ff5e1fbcc2ee49ea7a6cd305416cdc"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "ced26d9dfbcc20374c3430f1600c08c26aa280a9f0b52d269fef32ee69d30864"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "9e5cf528a5a0a243c579d0f1f3803772d7d8fa2bfaf97e1ad3581b54f314d8a3"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-51e6d708dcbda646319206f0794d2f7e:7174919328536147988",
+      "name": "building_ground_map02_lv003",
+      "source": {
+        "name": "Data/Bundles/Windows/main/bfae12f10866b2ff53a0dc51.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 274059351,
+        "length": 41210,
+        "md5": "AA1402622CB56EFC76A3818C3C59A4FD",
+        "sha256": "6195c1b709f7c1aab06c7f97e993f8c12d985e44dfe1b367efe5884c54ac7b56",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-51e6d708dcbda646319206f0794d2f7e/CAB-51e6d708dcbda646319206f0794d2f7e.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv003--7174919328536147988.bin",
+        "bytes": 1398128,
+        "sha256": "f4f4a2bba6ea00791c9c2bdcaf8cea276d6e713e8a1a7bd932ee3b21467212fa"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "cb62ec905e668131fc8fc668f4484ffe7e275226875c2bdf8c0b9d6dc3a4cd63"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "7ce7fc5fb9b6ac5856806ce57b396ca7d3df038a4999bd2bef53a6b840d6a9ad"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "636eab04c83f71f9d6b54e71536282acd8d320297b653bddf92ce1ccc7d2b05c"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "dfcfab568ae72235bc70eddeeb11ae3b7852f2d31634b00a237b85bc56dccf4e"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "55a1dc7f3a051748139df33316813d1545ae64dc1a071afd5aae75fa34ece648"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "84f4db97e25f8fec3d6a5c8d2b5beed73c2ee0a8f913f429fa815040d2235c9f"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "bc7a5be6c32d0e89e63c4f6aaab4f154d5b4c811c38b57928e7c09020c62d28d"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "ae8d8a9d710517d222761d6558f0addb26456fe6921edb81af61285b8b43c559"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "d3a05130212c033cf791d0a1d7eee7efed17f7be7d5538044e73cde6d3752f99"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "e5ce1336d34fcafb511ca64d310e9aadb245645f18f5445df335bfdd2d4ea6af"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "5086e35292b5dc5368e517dfb782c2a6426f0aeca4c1983cab21970ffdf2400b"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-6126544025852434530",
+      "name": "building_ground_map02_lv002",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ec0b9693b61687a4c57d0e2d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 297615414,
+        "length": 42435,
+        "md5": "53F86D76D123F460CD2C693FDADCEC04",
+        "sha256": "bc5772215d14898c7389996d457af1b3abe5117abf71c3d4ce4b4813e5c54295",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-5b44dfce1a8f3fc82812acc52e209230/CAB-5b44dfce1a8f3fc82812acc52e209230.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv002---6126544025852434530.bin",
+        "bytes": 1398128,
+        "sha256": "6ce8271f7c03ded598eba81be8e5683b19f2dc51b514cf1ffabfe5ced9ce8cc7"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "eceada0f99353169051279ea355f80ccd3e871b48a6eed416b82ab07774d9ef3"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "6bb97de6bd4444c37aca81c2a181e5c8de0ee4354783654371681cf9db9bc3c0"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "fb9dfb36ff4c21f6a9dc6da3dea14a55668b956fc049acff167f17f7fd5ebc93"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "309f14a8961df52dfe7784e7a86817883d73cbaf1c9c6d9247ef35fa1e40da34"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "a245314e33d53da5fc4bec0be618e04390a42be8afe808b05c145adeb19ba309"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "7f1af057ef55029ccf95a8dc8a831200543ced1f1ed3fc7401d42733ee45ed36"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "731259e9e9c5711ef1f2456380e08571062959303b13fbc5c40c092d77f568ae"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "c528a6635a350583ff6b9bf3a7654b0cc346c8a4b32572af8c396489559b593a"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "19b76b22e1c3a844c42c055c0286be161ed31ebd9f68b8800f28ce409441106b"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "a7a5c3e829a563865c91a0ccc004c18ad714052de7e5b6179b77e7091b7d34bb"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "adb8187e5e0e2cfb0daa04ec76853377b0ff08d9b55f7f3a75672b8cee2ffcd1"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-601e461c0e295400c99553d04ec554d4:-7803391685981912894",
+      "name": "T_buildingGround_lv003",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4b097382d024c7bdefa6f28f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 653409258,
+        "length": 13282,
+        "md5": "713A38D8F1B15CE47A62CBAAA5A0912E",
+        "sha256": "3dab8e7b8a11ffd2d374270bdc3d2564a96e9a32ffe8c8b66c6c1c40664349f4",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 512,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 10,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 349552,
+        "path": "archive:/CAB-601e461c0e295400c99553d04ec554d4/CAB-601e461c0e295400c99553d04ec554d4.resS"
+      },
+      "complete_image_size": 349552,
+      "raw": {
+        "file": "texture-mips/T_buildingGround_lv003---7803391685981912894.bin",
+        "bytes": 349552,
+        "sha256": "5e87fe7ba62ecd742c2553b0e4406b9d63dafcea5f23f71aa03b5365ffee0372"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 512,
+          "offset": 0,
+          "length": 262144,
+          "sha256": "a760f5fa0cce2420258b8d2d379345c28c6a95e4c6762d0dea03793c9ff06bc1"
+        },
+        {
+          "level": 1,
+          "width": 256,
+          "height": 256,
+          "offset": 262144,
+          "length": 65536,
+          "sha256": "44a7c97f5e4b5f2fddb87d779739c0e010849c39424bd8268bbb0d311f946a2a"
+        },
+        {
+          "level": 2,
+          "width": 128,
+          "height": 128,
+          "offset": 327680,
+          "length": 16384,
+          "sha256": "bac6174c057670e09ccfdc17b92a3feac0e7774fb10f3e9d7766ede0d51c0a82"
+        },
+        {
+          "level": 3,
+          "width": 64,
+          "height": 64,
+          "offset": 344064,
+          "length": 4096,
+          "sha256": "3ded1073e575b52cf3e12622b9b48ae78e79a3ed7ce40a510e1ab3bfe5a84fe9"
+        },
+        {
+          "level": 4,
+          "width": 32,
+          "height": 32,
+          "offset": 348160,
+          "length": 1024,
+          "sha256": "69bf47e319efd43a0a238674b875f21549b415b2308f7672f9c9ce57591dc93d"
+        },
+        {
+          "level": 5,
+          "width": 16,
+          "height": 16,
+          "offset": 349184,
+          "length": 256,
+          "sha256": "9167392bf32e2dcb5941c9de4d54bc2ea49cd7ba7966d15b137e9f86f94d6e4b"
+        },
+        {
+          "level": 6,
+          "width": 8,
+          "height": 8,
+          "offset": 349440,
+          "length": 64,
+          "sha256": "782f6a71a186c0b0c8d78b06d6f3786fa522c4bf67276007458f7ecd885e8fa3"
+        },
+        {
+          "level": 7,
+          "width": 4,
+          "height": 4,
+          "offset": 349504,
+          "length": 16,
+          "sha256": "dbdde43d266d0141ddffc2a547d5924e2e5e8001cb1f58923c26e154838cca33"
+        },
+        {
+          "level": 8,
+          "width": 2,
+          "height": 2,
+          "offset": 349520,
+          "length": 16,
+          "sha256": "765b343a67e75caf106008a9ed7f0e31c9dc6772ccdefa6cdca23113e46a391b"
+        },
+        {
+          "level": 9,
+          "width": 1,
+          "height": 1,
+          "offset": 349536,
+          "length": 16,
+          "sha256": "47079c2f85e9de8f9579a5a61e2ea756cb5211d71b284eaafc32c20ec6fd86df"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-1324616633903220316",
+      "name": "building_ground_map02_lv008",
+      "source": {
+        "name": "Data/Bundles/Windows/main/595f1d8c2fffaac57eb4cd29.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 362554375,
+        "length": 50076,
+        "md5": "F942F91E280C9C32376ABBCDD2FC1483",
+        "sha256": "4e66b0ba0e6af3221560252df36d8cb0f934777477b121c2c5e3c5597b11713a",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-62e7605cc5477d0fadcc5fe255f637f9/CAB-62e7605cc5477d0fadcc5fe255f637f9.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv008---1324616633903220316.bin",
+        "bytes": 1398128,
+        "sha256": "ef32e6cefc124dfce5e88445f8907cb7f38f07020900b9a74d20943bb01e9070"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "bb0afad2aec6da5da2f803dea99179497af43b1405b4cafa18a8e8b2d2d3644b"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "331aab4304fddcdcc1f563f0a38eb57964af1ae60ddb4830996b51e5c3ec377d"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "621f28293ce6a146d4d0a93397a8bcf1edb9996e772acb9ff5ce0913acbe4889"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "3d2eb56d92f31db5dce0d78514598866f1610295214ef502bd6b14f911e71d76"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "835907c88b586ffeb9fd8c2aa66c977243e1dfcd2f5819f0d6d4a0d26645a8a5"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "d19fd69dd1e9d7880e120cc6d06f2d70c038c1dc8b4f2339ba8674e4132e7e20"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "d13afbc1d4291f3f96f772b615b6e752e78c43324070e506ebb65ce3deb8ee20"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "a04add64867c74fb18382012e4d50075ad2a09a2147daa511ed06374aeb13a07"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "c34210f983f859515d480c64ad30c6ee77909dedb3f28a169f565bc2feb4391e"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "d7532a91c08974d50ff21852f664fc199cc61b89a69c8a5fadbb8abaf04093b8"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "5086e35292b5dc5368e517dfb782c2a6426f0aeca4c1983cab21970ffdf2400b"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:-9116040948500704571",
+      "name": "building_ground_map02_lv004",
+      "source": {
+        "name": "Data/Bundles/Windows/main/57ab6b380ed93007aa701459.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180458933,
+        "length": 26311,
+        "md5": "6A4148FD614D413E4ECC0DBCD4A0400F",
+        "sha256": "9f138ace8d773dcdc1af95a904becbcdada21db67bcca8a1f847060b7adcab3f",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-760ef0c4170598d5d21fb16a2cad5b64/CAB-760ef0c4170598d5d21fb16a2cad5b64.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv004---9116040948500704571.bin",
+        "bytes": 1398128,
+        "sha256": "bf81b3720a1dc05dfd621cbb949ae4cf91c88db927bb2587f8e01b9ac561b57b"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "35a0942f483cb15ad0a02750ae384c6887bf012e1f94528c62040126260ed347"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "bff4f08f36360f5635ca415349657c5c5dc97f814b41d42fe34bd0e0ecdb6808"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "516cbf20909ad4b23020ddac0cfdc0f265075127408947bfa85f33e74c5dba18"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "0d2c1cdf2c0ad43cf9055a66749b7751e9332f82b088bd4d77955e0f63b0abe9"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "fc6763189e1fc2aae7326c3e589e5f51e98722fcb5fabd01bde8e1e1ad63ff70"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "3019e5f2d9dd5fddfef736f7a7d9b976368b63a56b4cb88e842e271e10a1ff3d"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "008c536db5d18eec0d6364d78f904a1189947bee104db1380213cdbfe19e3214"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "aa7900cfa58070d50834c5751f90abc2a101e13472872e8a9a028d0bb89b4db4"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "ace3a1a4f3ee2581e76df77e1b5a5fcdcd0c964e8de5c39cc9a378c7d5dd12b6"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "ea55f8270e9088a060a1e5b07b485ebda283291a47d053464a8f6e42e3893ed3"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "36093fd7d73904ad44b9633295987c8c2c1eca60aac87cf4dd8ce614e58fd06d"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-a00dcacd425c618176071b42bd3140cb:2279490683766080768",
+      "name": "building_ground_map02_lv009",
+      "source": {
+        "name": "Data/Bundles/Windows/main/affa7f078acb73919451e488.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 151878352,
+        "length": 46016,
+        "md5": "0FD9389A2B18D5071018ED0E10709AA7",
+        "sha256": "4f314632b3e6860ad8d644249bc2b59863e603f95b4b5ba68c348a6b002e4999",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-a00dcacd425c618176071b42bd3140cb/CAB-a00dcacd425c618176071b42bd3140cb.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv009--2279490683766080768.bin",
+        "bytes": 1398128,
+        "sha256": "de815150cede43ee88eab357952ea9d5551560bfb090747318216df3b67df136"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "d84978aefee4d83eecf6cd936e501dc4d41daf9b980d044f6f0ca1beb7406c03"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "01cc7d98bd392bc30cec69c01c780c56163c8b7608eae81db9f2cd3a2d8a0975"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "ba0e83a0c57e50576ffd1ee4e766dcb8ea01fa2cddcc0b7c7f6434bdedf97682"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "fea7f4b25a3855e0b65b4f1d7d8e0fa727ed5197c4c4afa526eac9a8f3a962a1"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "c308e4077e536cd9645738f33c812cf74967dc2c9701b2f4234ee897cb0542fd"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "547bc0228d4516add2d82d6add610989ec959e42eff2201de409cfa30852c3d6"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "49f01a39585e8ec3aecc600e19ae58a6cbf253ae1dd484b7a9b8cbd34f04cd92"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "33112580cf910dbdfde00b707c0e8cd0f92449ddb4a60981170207a33111caad"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "e2a7067a125baa3ca3ae59f7120a0650f9b474ae7346500696bd1290bd112e27"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "260d0f62ced5963954d2cbb2a542b136b0d575171c5a4df3bd711fc883c47239"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "301e120a4595910c438dcf910e8bbb288aa15422afb8f84ba19f8a192ccefc8b"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-a84c829789b5bc77409f56ede752d4e8:5057986545702316246",
+      "name": "T_buildingGround_lv007",
+      "source": {
+        "name": "Data/Bundles/Windows/main/18578fb4cb3bca2e6cbdb82d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 247168797,
+        "length": 40008,
+        "md5": "5298F52D78E279C1155A3CCD40CB8E56",
+        "sha256": "62c331aec384e34647e1b5f627526f5dcdc4009e92b962aef5f898a1a5235749",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-a84c829789b5bc77409f56ede752d4e8/CAB-a84c829789b5bc77409f56ede752d4e8.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/T_buildingGround_lv007--5057986545702316246.bin",
+        "bytes": 1398128,
+        "sha256": "103ebf122bf772b4b850cd48295f580c7c006312bb0e5a5f0aef23879b4fe0c0"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "637bf39909fdd9bd35d125eb155690a75c30b59de038a4e5c4cdb0eaaf57f8dd"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "15a433f36b7046bb5810661507585d2ad1313dd9610652b1f59a5fafa455a2b5"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "09ba924f810d65df7d59d168c633f6f1abdd78f6ecd2ddb77d407ac5983218bd"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "17ac0fb00fb1dab516d878526cca4caee85ae9acc86038d6bead91678fcebfb0"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "871e1a71eb79452d05f791b7bddd10e73ee28ef578e629ac6a4b3592fa526db2"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "6128978180a11a29ef34672eb0ce32d48404598157f944c2bec0305d5f35ee2e"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "d5904dfa7d10f6bdbe8fbb999635943b026109aefb1f1bd2a473b0244baeb294"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "7cb90667bacdb315899c8eb655e59a26c5da7a6e670f3967b7758a8f433925db"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "74c42aa756b7b4299b6dd1d0b104779ccccbab4c344a7e20c17dab002bcedcf1"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "4f3a8db84f90bddfe6daa6cafd97133f9b81855839ec67e681c2f8b60fa25d29"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "adb8187e5e0e2cfb0daa04ec76853377b0ff08d9b55f7f3a75672b8cee2ffcd1"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-6794573065034727467",
+      "name": "building_ground_map02_lv007",
+      "source": {
+        "name": "Data/Bundles/Windows/main/27d547fbeec27f8116c30b1d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 213232592,
+        "length": 22174,
+        "md5": "D62569ED344B84C9CE9CEBC893957623",
+        "sha256": "44b028ef354d66e28f098be0c4093f582313a0f806a4021a23dc3301e0b00c0c",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-d110bd617c82d477ec69e26a02cf1a87/CAB-d110bd617c82d477ec69e26a02cf1a87.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv007---6794573065034727467.bin",
+        "bytes": 1398128,
+        "sha256": "510b83339334e091c658dbe5c4f1f8fa4987a1388385f234089fe3b4249b8663"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "9da88b6703f4fc747933d39757f2c94877d5b3dab30580a4085089d9a1c76177"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "802800e438a360ed4f459772c5399dc593752f2c771a16194f6d579d63d55d3d"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "49a776b500bb338c139c67bac5140118871a77665de92b31ffdc285f0d47ae56"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "f8dab5274d0bb843c1165f38c670a20f2e57bdd6835f5c5332a04f4ef5776da7"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "64fb2dedff8a5bd60e2196be15f2cfe5b779a1f9d82eaa5525f5b202340053f3"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "f924bbfad31dc433b5f9da7d6d640bd6d0d2bff1aa1c7d9183defeb114502eee"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "0bd1a7b8f9b076dc4eb6a27fd3435b29cb613ffa2568b756162d4003189946f0"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "a284c852913b1c8e33ab363787f10073fc669eceb68d55684740211152606505"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "9c615173814643f1ba9e4d5f4a9c649e4bce3f42a555a245726c38b78fb6c4bd"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "dfb5cfdb7aae37110bdda1950c30b6699d14e7cf05ef6229c9421604ab1a2b44"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "ce005b3841eede865e96d83a2ad6ccf9561b22899a19c60ef7a8e91e5b83f46c"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-d295e16a449220f859cf80696790f762:-8107350467945170983",
+      "name": "building_ground_map02_lv001",
+      "source": {
+        "name": "Data/Bundles/Windows/main/011a1cd7cc26902814a09364.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 820405432,
+        "length": 21671,
+        "md5": "BFE06FF46A00399278FE3BA00FF90DCA",
+        "sha256": "05d85e64cf9a90fb873f7127a6ba2221d719eca9a041385bd6e82da726e71966",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-d295e16a449220f859cf80696790f762/CAB-d295e16a449220f859cf80696790f762.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/building_ground_map02_lv001---8107350467945170983.bin",
+        "bytes": 1398128,
+        "sha256": "52b0af7c5826e9008349d7cf7e99c3b175d65c2a39d432abb1dcda80284aab1a"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "33cc1857ad17f02a3eab28385c7b86cc2d819e47ffe7d83ece3be3952290c301"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "9eaf6673a394701596ea324423d22695d7e4a82528d5880bb45abbb32a087e4d"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "b0760061e55eea4c400c133c931c5fbcbc1e5783b101db754cb914d6fb4709ce"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "fc7b88bccb55109a351b6eef78d1692f3030379e773af9070cfa702a8093b9bc"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "93f4f217cc9fcdad5d686d267cc48053dfc095ccb16b9ec2e7fcd64a8f8ff146"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "2d097d542c9c1a9d732ce28126799f8c89d4241abf36e80e70924a03706c4f41"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "dfd7ef8879febe03d58fd6963b83be9e239ed10f1f58e54be67617c2e500daf2"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "a6908d2779114dcc4c11996a1e42712196842c2300e3d156d9dee41b29a6c7f9"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "e7680afe16b91e0f44c452e697735a0cc3af37659f034f4d1476bc15ae0d9c56"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "09b3ddcb76dc805b206021ed656d874c53bb880b580264fe0a1b4f1f078bc40d"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "f820cda09220519f750b17043f3bb225892e713f308ca995d6957b8f777bde62"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-3860286434201570480",
+      "name": "T_buildingGround_lv006",
+      "source": {
+        "name": "Data/Bundles/Windows/main/77a7cc91f5f7a3f195b0be7f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 280762773,
+        "length": 41569,
+        "md5": "151CADB73E279767E489BA5CE80CBEB2",
+        "sha256": "9038ca782c524a1876450001354ea3222f9ceaf07cf88982adacc4cf7a598622",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-df6912390a6e5a575716bfcb8a8023b0/CAB-df6912390a6e5a575716bfcb8a8023b0.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/T_buildingGround_lv006---3860286434201570480.bin",
+        "bytes": 1398128,
+        "sha256": "fafdedb48ecb55d5319aeaae43f8993935831a896da7ae6f9fa1c512c25278a6"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "864bcfc5a1d49baa6891dbc8ccfab51dd2c3f1e710587ef0e6224496bc66c377"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "cf35934922b4ae778f5dbe614b983f2245678324fb4672af068d14d36e9d359c"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "db8cc9512e209b21d29775224aeb022551bf20f5deb350f1c6747b3f42c843bd"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "416875a341ee5d0c6b4fdedcb738467fceaf3aa411a6dd9c00aa913add068fe3"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "e7b0e7557786ef4c0bb828a1edb6139729f590e1873ba7d472dafcfe19b5665f"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "7fdcabfaa90da7c328e729a18f74476bfe61c1ee319043c61ce737efaff545b9"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "8cd5b91aef11ed88242bd99e8d5c9291f3938c92839de8420325631126042f47"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "f3f95c4355be7a7b7d72bf6ebc7f1e94146c855d31e627afae0372b2a6240838"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "75eb09fa3c3710e1aee62836992aaa424b5009b485e9af3a6fb34b733457e476"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "96b16ff6c4ef05a77aef2bd31b03046eb59ef0c0a6639b5092e0c1633c5b5121"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "47079c2f85e9de8f9579a5a61e2ea756cb5211d71b284eaafc32c20ec6fd86df"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-e559542e2f9408e27009e95062ec0834:4179065066434640104",
+      "name": "T_buildingGround_lv005",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ebc4c23215ca141c0a000755.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301007056,
+        "length": 42601,
+        "md5": "29DC929031D515411744C18FE6A0B69C",
+        "sha256": "e1a1872e91122de32f447f84c285e12865c4d1bc93b90d878649c2b508ebf94b",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-e559542e2f9408e27009e95062ec0834/CAB-e559542e2f9408e27009e95062ec0834.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/T_buildingGround_lv005--4179065066434640104.bin",
+        "bytes": 1398128,
+        "sha256": "ce929e7bbfb5df9feb98de58a82eac0e5b1fd623cc6bb4d18c4e0586e4525e2c"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "926aed024ece688f8e73482adaa5d400af4ad9e478e13d2087cc97be08d5567c"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "2270850c6367d529d5e193d93f2dd7c0704de2782f5209f2b8a3b4672103d381"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "ad80e107ea953300bf988542362928b9c5425e5471ef11ce838b5b3e69a0e223"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "cdcc2dd71111a2f3094111c18a7780c262bb7806d6a513ccdb2db183effd3d4c"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "6a29424bd2b5d8428ba8476486e51a79fff00389e67c65a164540bd884d0f865"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "6a891f675d0020f489f1cf02633519ecf7da18b7683300b4b0bbd4bac075a287"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "b4511b202439978e933f47e0dc0201042a82e9c34f1d4f49a0cedf2a3b3f566c"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "2eed1d1a3b55183f67aaafd0ac3fe1a95bc3260391dd8aae20fe603d8610a715"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "9dc1637c28b3b9b7ec7c327f43122758dea37f70807adb28536d093af5ba62c8"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "7f41770f93382e8e7b47d34a1f88c001638794b31ec0a8f10caa5e2051a35f84"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "47079c2f85e9de8f9579a5a61e2ea756cb5211d71b284eaafc32c20ec6fd86df"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
+    },
+    {
+      "texture_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:6236855769001714808",
+      "name": "T_buildingGround_lv002",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1125bb8c3bf5ef64dc2a0208.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 151281652,
+        "length": 36020,
+        "md5": "D16C74B5D035551A3FA567FCE7DACC9B",
+        "sha256": "cd2e816b425edac1dc6c84b9f4f9ff6fa7999ebc781c184b7402516a721cd528",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-fd86c149664ae3e4f87d49c123e5f042/CAB-fd86c149664ae3e4f87d49c123e5f042.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/T_buildingGround_lv002--6236855769001714808.bin",
+        "bytes": 1398128,
+        "sha256": "54aae00d1db0b1cc3995b605b4f8690cfca3808c200b19330f4821abccab6580"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "18ecff7638ad5477a3859a08e943515899ea69e796587b55e5154ef11b0af1d1"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "102508ca96e6a21a2b37eceeb28d0fe45a706df6153fa43333b98443f018eee1"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "b3ad50a3c902f50557f2cb1a3e9afeb7995cbbab0190b56169d98df82967520f"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "fc9742d867c6177821de3ecdc7c05d5977c6dd8697d102a380381834066c0ac8"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "a46c46c0cb6b735ed59fc5c05e5d4cfd36d7cc26eb835c224cc112777362c78c"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "be346aa0bbaf9b4b17396a1446d12b106bf1f34c62d3d5ea8576a21b27b9cc70"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "ed2baaef4f766fda44dce7ed239650c080faeff60ebdeeacfd83f31dc7bb4551"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "a925f610344708b6d81df5460004612fc39e468ae5d49037e0ba1a715f65e811"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "cf763d8ba7544834866286678d1e8d695aa2336d4697a8b8a12aa72c7f11d26b"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "96b16ff6c4ef05a77aef2bd31b03046eb59ef0c0a6639b5092e0c1633c5b5121"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "47079c2f85e9de8f9579a5a61e2ea756cb5211d71b284eaafc32c20ec6fd86df"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Original Texture2D payload and exact authored mip byte ranges. No generated mip, gamma conversion, resize or recompression."
     }
   ],
   "policy": "Only original textures bound by the 50 exported domain scenes or their materials/Sprites. Raw compressed or original pixel payload retained with exact source mip ranges where byte format is explicitly supported."

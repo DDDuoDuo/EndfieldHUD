@@ -88,7 +88,23 @@ color-space, filtering, wrapping, anisotropy and every authored mip are retained
 BC7 textures use their original compressed data on capable devices, or the
 decoded pixels of every original mip. No replacement mip chain is generated.
 
+UIImage references loaded by `imgRefPath` are resolved through the original
+AssetBundle container and persistent manifest as well as serialized Sprite
+pointers. This includes the two `ui_out_ring` nodes, `deco_04` and
+`ui_main_loop_bg`. An unresolved declared Sprite is diagnosed rather than
+silently becoming a white rectangle. The original disabled banner prototypes
+remain without an invented runtime banner.
+
+HG's UI screen tuple copies `_ScreenSize`: width, height and their reciprocals.
+The UI render clock uses the proved 0.05t/t/2t source components; the gameplay
+clock and the recording's absolute render-clock phase remain unobserved.
+
 Map geometry uses the source instance matrices, submeshes and material slots.
+The enabled `UIRegionBuildingTexManager` components bind their own original
+outline Texture2D as `_BuildingTex`. The source checks every shared-material
+slot and applies a renderer-wide property block if any shader matches; it
+does not change `_MinimapBuildingTex`. Dependencies referenced by these
+components retain their original pixels, mips and sampler settings.
 Single-component packed normal channels retain their original float32 words,
 including NaN payloads, for decoding by the original map vertex shader. They
 are not treated as three-component normals or normalized on the CPU.
@@ -100,6 +116,16 @@ actual current level, player position, loaded/unlocked levels and selection.
 Renderer sorting uses native UISortingOrder's absolute renderer offset; it is
 not added to the parent panel's Canvas order. Source terrain and spaceship
 instances therefore retain their native negative sorting offsets.
+
+Canvas-type UISortingOrder writers receive the same panel base and enable
+overrideSorting. BannerNode, MoneyCellRoot and ExploreRoot each use base+12;
+canvas_watch's type0 writer affects Renderers and does not change its Canvas.
+Rendering, hits and parent-mask boundaries use the same effective Canvas order.
+This standalone panel retains the source root's authored 6080 as a relative
+ordering reference. The game's live Window-panel base is allocated in steps of
+20 within its 7000 sorting interval and depends on other opened/resident panels;
+that stack was not captured. Nested offsets are not accumulated. Overlapping
+ancestor Renderer writes remain unverified until their lifecycle order is known.
 
 ## Validation
 

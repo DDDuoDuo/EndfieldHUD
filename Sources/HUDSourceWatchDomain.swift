@@ -41,6 +41,9 @@ final class HUDSourceWatchDomain {
         /// RegionMapSetting._RefreshMaterials sets this on every loaded
         /// renderer. Color selection is a separate explicit runtime action.
         let sourceUniformOverrides: [String: HUDSourceJSONValue]
+        /// UIRegionBuildingTexManager writes a renderer-wide property block
+        /// when any shared material uses its original region shader.
+        let sourceTextureOverrides: [String: String]
         /// UISortingOrder.Renderer writes its absolute offset, rather than
         /// adding the owning panel's order. This handles the renderer's own
         /// component; overlapping ancestor writers require lifecycle ordering.
@@ -288,6 +291,8 @@ final class HUDSourceWatchDomain {
             batches.append(MeshBatch(nodeID: instance.nodeID, path: node.node.path, mesh: mesh,
                 materialIDs: instance.materials, worldMatrix: node.worldMatrix, renderer: instance.renderer, levelID: instance.levelID,
                 sourceUniformOverrides: ["_RegionMapEditor": .number(showType == 1 ? 0 : 1)],
+                sourceTextureOverrides: Self.rendererTextureOverrides(materialIDs: instance.materials,
+                    ownComponents: components[instance.nodeID] ?? [], materials: materials),
                 sourceRuntimeSortingOrder: Self.rendererSortingOrder(renderer: instance.renderer,
                     ownComponents: components[instance.nodeID] ?? [])))
         }
@@ -307,6 +312,28 @@ final class HUDSourceWatchDomain {
             $0.kind == "UISortingOrder" && $0["_renderType"].number == 0
         }), let offset = order["_sortingOrderOffset"].number else { return source }
         return Int(offset)
+    }
+
+    /// Installed UIRegionBuildingTexManager.OnEnable/_UpdateTexture obtains
+    /// its own MeshRenderer and checks every shared material's shader. A match
+    /// writes _BuildingTex to the renderer's property block without a slot
+    /// index; the unrelated _MinimapBuildingTex is not changed.
+    /// This resolves the enabled source state. OnDisable clears the complete
+    /// renderer block in the game; live manager state changes are not invented.
+    static func rendererTextureOverrides(materialIDs: [HUDSourceID?],
+                                         ownComponents: [HUDSourceWatchComponent],
+                                         materials: [HUDSourceID: HUDSourceJSONValue]) -> [String: String] {
+        var overrides: [String: String] = [:]
+        for manager in ownComponents where manager.kind == "UIRegionBuildingTexManager" && manager.enabled {
+            guard let shaderID = manager["_regionMapShader"].targetID,
+                  let textureID = manager["minimapOutlineTex"].targetID,
+                  materialIDs.contains(where: { reference in
+                      guard let materialID = reference else { return false }
+                      return materials[materialID]?["shader_id"].string == shaderID.rawValue
+                  }) else { continue }
+            overrides["_BuildingTex"] = textureID.rawValue
+        }
+        return overrides
     }
 
     /// Original Watch InitData uses circle/rectangle intersection after its

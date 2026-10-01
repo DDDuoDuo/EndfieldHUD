@@ -93,11 +93,26 @@ enum RenderSourceWatchPreviews {
             document.applyMacButtonAvailability(to: &pose)
             buttons.apply(to: &pose, at: hover ?? 0, reduceMotion: false)
             let frame = try builder.build(pose: pose, worldRoot: view.worldRoot)
+            if name == "stable" {
+                let batches: [[String: Any]] = frame.batches.map { batch in
+                    let matrix = (0..<4).map { column in (0..<4).map { row in Double(batch.world[column][row]) } }
+                    return ["mesh": batch.mesh, "material": batch.material, "worldColumns": matrix,
+                        "color": [batch.color.x, batch.color.y, batch.color.z, batch.color.w].map { Double($0) },
+                        "uniformOverrides": batch.uniformOverrides.mapValues { $0.map { Double($0) } },
+                        "textureOverrides": batch.textureOverrides,
+                        "colorWriteMask": batch.colorWriteMask.map { Int($0) } ?? -1]
+                }
+                try JSONSerialization.data(withJSONObject: batches, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: output.appendingPathComponent("source-batches-stable.json"))
+            }
             trace("drawing " + name)
             var clock = gpu; clock.timeSeconds = Float(ambient ?? opening ?? closing ?? 0)
             renderer.submit(camera: clock, batches: frame.batches)
             renderer.draw()
             let image = try renderer.copyDrawableImage()
+            guard renderer.diagnostics.isEmpty else {
+                throw HUDSourceError.invalid("Source GPU fixture skipped content in \(name): \(renderer.diagnostics.joined(separator: "; "))")
+            }
             let file = name + ".png"
             guard let destination = CGImageDestinationCreateWithURL(output.appendingPathComponent(file) as CFURL, UTType.png.identifier as CFString, 1, nil) else {
                 throw HUDSourceError.invalid("Cannot create source preview PNG")
