@@ -333,6 +333,22 @@ struct HUDSourceScene: Codable {
 }
 
 enum HUDSourceGeometry {
+    /// Swift SIMD matrices have no cross-precision initializer. Convert each
+    /// column explicitly at the CPU/GPU boundary without changing its order.
+    static func floatMatrix(_ matrix: simd_double4x4) -> simd_float4x4 {
+        func column(_ value: SIMD4<Double>) -> SIMD4<Float> {
+            SIMD4(Float(value.x), Float(value.y), Float(value.z), Float(value.w))
+        }
+        return simd_float4x4(columns: (column(matrix.columns.0), column(matrix.columns.1),
+            column(matrix.columns.2), column(matrix.columns.3)))
+    }
+    static func doubleMatrix(_ matrix: simd_float4x4) -> simd_double4x4 {
+        func column(_ value: SIMD4<Float>) -> SIMD4<Double> {
+            SIMD4(Double(value.x), Double(value.y), Double(value.z), Double(value.w))
+        }
+        return simd_double4x4(columns: (column(matrix.columns.0), column(matrix.columns.1),
+            column(matrix.columns.2), column(matrix.columns.3)))
+    }
     static func translation(_ p: SIMD3<Double>) -> simd_double4x4 {
         var m = matrix_identity_double4x4; m.columns.3 = SIMD4(p.x, p.y, p.z, 1); return m
     }

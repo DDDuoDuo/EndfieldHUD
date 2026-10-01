@@ -41,6 +41,23 @@ final class HUDSourceWatchFrameBuilder {
     private var geometryKeys: [HUDSourceID: [Double]] = [:]
     private var textMeshes: [HUDSourceID: (key: [Double], mesh: HUDSourceTextGeometry.Mesh)] = [:]
     private let buttonIDs: Set<HUDSourceID>
+    private struct SoftMask {
+        let worldToUnit: simd_double4x4
+        let textureID: String
+        let textureST: [Float]
+        let inner: [Float]
+        let innerUV: [Float]
+        let sliced: Bool
+        func apply(to batch: inout HUDSourceMetalRenderer.Batch) {
+            batch.uniformOverrides["_WorldToSoftMask"] = HUDSourceWatchFrameBuilder.flatten(
+                simd_mul(worldToUnit, HUDSourceGeometry.doubleMatrix(batch.world)))
+            batch.uniformOverrides["_SoftMaskTex_ST"] = textureST
+            batch.uniformOverrides["_InnerSoftMask"] = inner
+            batch.uniformOverrides["_InnerSoftMaskUV"] = innerUV
+            batch.uniformOverrides["_SpriteIsSliced"] = [sliced ? 1 : 0]
+            batch.textureOverrides["_SoftMaskTex"] = textureID
+        }
+    }
 
     init(document: HUDSourceWatchDocument, renderer: HUDSourceMetalRenderer,
          domain: HUDSourceWatchDomain? = nil) throws {
@@ -116,6 +133,12 @@ final class HUDSourceWatchFrameBuilder {
         var batches: [(order: Int, sequence: Int, batch: HUDSourceMetalRenderer.Batch)] = []
         var hits: [(order: Int, sequence: Int, hit: Hit)] = []
         var diagnostics: [String] = []
+        var softMasks: [HUDSourceID: SoftMask] = [:]
+        for id in document.scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
+            guard document.component("UISoftMask", on: id) != nil else { continue }
+            do { softMasks[id] = try softMask(on: id, resolved: resolved, worldRoot: worldRoot) }
+            catch { diagnostics.append("Source soft mask \(document.scene.node(id)?.path ?? id.rawValue): \(error)") }
+        }
         let cutNodes = document.scene.traversalIDs.filter { document.component("UIWatchPanelCut", on: $0) != nil }
         guard cutNodes.count == 1, let cut = resolved[cutNodes[0]],
               let watchInverse = HUDSourceGeometry.inverse(simd_mul(worldRoot, cut.worldMatrix)) else {
@@ -231,11 +254,19 @@ final class HUDSourceWatchFrameBuilder {
                     geometryKeys[component.id] = key
                 }
                 let baseMaterial = materialID?.rawValue ?? "__ui_default"
+                let maskable = document.component("UISoftMaskable", on: id) != nil
+                let softMaskID = maskable ? nearestSoftMask(id) : nil
+                let sourceSoftMask = softMaskID.flatMap { softMasks[$0] }
+                if softMaskID != nil && sourceSoftMask == nil {
+                    diagnostics.append("Unresolved original soft mask: " + n.node.path); continue
+                }
                 let material: String
-                if let key = renderer.materialKey(named: baseMaterial, clipRect: clip != nil, alphaClip: false) { material = key }
+                if let key = renderer.materialKey(named: baseMaterial, clipRect: clip != nil, alphaClip: false,
+                    softMask: sourceSoftMask != nil) { material = key }
                 else { diagnostics.append("Unresolved original material clipping variant: \(n.node.path)"); continue }
                 var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: material,
-                    world: simd_float4x4(canvasWorld), color: color, textureOverrides: ["_MainTex": textureID])
+                    world: HUDSourceGeometry.floatMatrix(canvasWorld), color: color, textureOverrides: ["_MainTex": textureID])
+                sourceSoftMask?.apply(to: &batch)
                 if let size = textureSizes[textureID] { batch.uniformOverrides["mainTexTexelSize"] = [1 / size.x, 1 / size.y, size.x, size.y] }
                 if let clip {
                     batch.uniformOverrides["clipRect"] = clip
@@ -262,7 +293,7 @@ final class HUDSourceWatchFrameBuilder {
                let meshName = sourceMeshNames[sourceID], let render = document.component("MeshRenderer", on: id) {
                 for material in render["m_Materials"].array {
                     guard let materialID = material.targetID, let name = materials[materialID]?["name"].string else { continue }
-                    var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: materialID.rawValue, world: simd_float4x4(world), color: SIMD4(repeating: 1))
+                    var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: materialID.rawValue, world: HUDSourceGeometry.floatMatrix(world), color: SIMD4(repeating: 1))
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
                     applyMaterialProperties(pose, on: id, materialID: materialID, to: &batch)
                     batches.append((Int(render["m_SortingOrder"].float()), sequence, batch)); sequence += 1
@@ -308,15 +339,18 @@ final class HUDSourceWatchFrameBuilder {
                         throw HUDSourceError.invalid("Unsupported original Domain submesh")
                     }
                     var batch = HUDSourceMetalRenderer.Batch(mesh: name, material: materialID.rawValue,
-                        world: simd_float4x4(instance.worldMatrix), color: SIMD4(repeating: 1), indexRange: first..<(first + count))
+                        world: HUDSourceGeometry.floatMatrix(instance.worldMatrix), color: SIMD4(repeating: 1), indexRange: first..<(first + count))
                     for (uniform, value) in instance.sourceUniformOverrides {
                         if let number = value.number { batch.uniformOverrides[uniform] = [Float(number)] }
                     }
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
-                    batches.append((Int(instance.renderer["m_SortingOrder"].float()), sequence, batch)); sequence += 1
+                    batches.append((instance.sourceRuntimeSortingOrder, sequence, batch)); sequence += 1
                 }
             }
-            for (order, batch) in try domainUIBatches(source, watchWorldToLocal: watchWorldToLocal, diagnostics: &diagnostics) {
+            let regionMaskID = nearestSoftMask(placement.id)
+            for (order, batch) in try domainUIBatches(source, watchWorldToLocal: watchWorldToLocal,
+                softMask: regionMaskID.flatMap { softMasks[$0] }, expectsSoftMask: regionMaskID != nil,
+                diagnostics: &diagnostics) {
                 batches.append((order, sequence, batch)); sequence += 1
             }
         }
@@ -327,6 +361,7 @@ final class HUDSourceWatchFrameBuilder {
     }
 
     private func domainUIBatches(_ frame: HUDSourceWatchDomain.Frame, watchWorldToLocal: [Float],
+                                 softMask: SoftMask?, expectsSoftMask: Bool,
                                  diagnostics: inout [String]) throws -> [(Int, HUDSourceMetalRenderer.Batch)] {
         var result: [(Int, HUDSourceMetalRenderer.Batch)] = []
         var canvases: [HUDSourceID: HUDSourceID] = [:], orders: [HUDSourceID: Int] = [:], inheritedAlpha: [HUDSourceID: Float] = [:]
@@ -381,20 +416,119 @@ final class HUDSourceWatchFrameBuilder {
                     geometryKeys[component.id] = key
                 }
                 let base = materialID?.rawValue ?? "__ui_default"
-                guard let material = renderer.materialKey(named: base, clipRect: false, alphaClip: false) else {
+                let maskable = components.contains { $0.kind == "UISoftMaskable" && $0.enabled }
+                if maskable && expectsSoftMask && softMask == nil {
+                    diagnostics.append("Unresolved original Domain soft mask: " + node.node.path); continue
+                }
+                guard let material = renderer.materialKey(named: base, clipRect: false, alphaClip: false,
+                    softMask: maskable && softMask != nil) else {
                     diagnostics.append("Unresolved original Domain UI material: " + node.node.path); continue
                 }
                 for axis in 0..<4 { color[axis] = (min(1, max(0, color[axis])) * 255).rounded(.toNearestOrEven) / 255 }
                 color = Self.canvasVertexColor(color, alwaysGamma: domain.components[canvasID]?.first(where: { $0.kind == "Canvas" })?["m_VertexColorAlwaysGammaSpace"].flag() ?? false)
                 color.w *= alpha
                 var batch = HUDSourceMetalRenderer.Batch(mesh: name, material: material,
-                    world: simd_float4x4(canvasNode.worldMatrix), color: color, textureOverrides: ["_MainTex": texture])
+                    world: HUDSourceGeometry.floatMatrix(canvasNode.worldMatrix), color: color, textureOverrides: ["_MainTex": texture])
+                if maskable { softMask?.apply(to: &batch) }
                 batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
                 if let size = textureSizes[texture] { batch.uniformOverrides["mainTexTexelSize"] = [1 / size.x, 1 / size.y, size.x, size.y] }
                 result.append((orders[id] ?? 0, batch))
             }
         }
         return result
+    }
+    private func nearestSoftMask(_ id: HUDSourceID) -> HUDSourceID? {
+        var current: HUDSourceID? = id
+        while let node = current {
+            if let mask = document.components[node]?.first(where: { $0.kind == "UISoftMask" }) {
+                // Native GetComponentInParent finds the closest component;
+                // a disabled closest mask returns the base material.
+                return mask.enabled ? node : nil
+            }
+            current = document.scene.node(node)?.parentID
+        }
+        return nil
+    }
+    private func softMask(on id: HUDSourceID, resolved: [HUDSourceID: HUDSourceResolvedNode],
+                          worldRoot: simd_double4x4) throws -> SoftMask {
+        guard let node = resolved[id], let rect = node.rect,
+              let image = document.components[id]?.first(where: { $0.kind == "UIImage" }),
+              let sprite = document.spriteByComponent[image.id],
+              let textureID = sprite["texture"]["id"].string,
+              let textureSize = textureSizes[textureID] else {
+            throw HUDSourceError.invalid("Missing original UIImage/Sprite soft mask binding")
+        }
+        // Native _UpdateParam measures GetWorldCorners in the outermost Canvas,
+        // builds [BR-BL, TL-BL, cross, BL], and uploads its inverse. Convert that
+        // matrix into world space once, then into each batch's Canvas space.
+        var outerCanvasID: HUDSourceID?, ancestor: HUDSourceID? = id
+        while let current = ancestor {
+            if document.component("Canvas", on: current) != nil { outerCanvasID = current }
+            ancestor = document.scene.node(current)?.parentID
+        }
+        guard let outerCanvasID, let outerCanvas = resolved[outerCanvasID],
+              let inverseOuter = HUDSourceGeometry.inverse(simd_mul(worldRoot, outerCanvas.worldMatrix)) else {
+            throw HUDSourceError.invalid("Unresolved original outer Canvas for soft mask")
+        }
+        let toOuter = simd_mul(inverseOuter, simd_mul(worldRoot, node.worldMatrix))
+        // HUDSourceRect.corners is BL,BR,TR,TL. Unity GetWorldCorners is BL,TL,TR,BR.
+        let corners: [SIMD4<Double>] = [0, 3, 2, 1].map {
+            let p = rect.corners[$0]; return simd_mul(toOuter, SIMD4<Double>(p.x, p.y, p.z, 1))
+        }
+        let x = corners[3] - corners[0], y = corners[1] - corners[0]
+        let z = simd_cross(SIMD3(x.x, x.y, x.z), SIMD3(y.x, y.y, y.z))
+        let basis = simd_double4x4(columns: (SIMD4(x.x, x.y, x.z, 0), SIMD4(y.x, y.y, y.z, 0),
+            SIMD4(z.x, z.y, z.z, 0), corners[0]))
+        guard let inverseBasis = HUDSourceGeometry.inverse(basis), textureSize.x > 0, textureSize.y > 0 else {
+            throw HUDSourceError.invalid("Degenerate original soft mask geometry")
+        }
+        // The source uses Sprite.rect and image.mainTexture. The UIImage's own
+        // color alpha is not a mask property: the map mask intentionally has 0.
+        let sourceRect = sprite["raw_sprite"]["m_Rect"]
+        let st = [Float(sourceRect["width"].float()) / textureSize.x,
+            Float(sourceRect["height"].float()) / textureSize.y,
+            Float(sourceRect["x"].float()) / textureSize.x, Float(sourceRect["y"].float()) / textureSize.y]
+        var inner = [Float](repeating: 0, count: 4), innerUV = inner
+        var sliced = false
+        if Int(image["m_Type"].float()) == 1, let sourceSprite = sprites[image.id], sourceSprite.border != .zero {
+            // All selected source Canvases have pixelPerfect=false; the native
+            // GetPixelAdjustedRect therefore retains RectTransform.rect.
+            guard document.component("Canvas", on: outerCanvasID)?["m_PixelPerfect"].flag() != true else {
+                throw HUDSourceError.invalid("Unverified pixel-adjusted source soft mask")
+            }
+            var referencePPU = 100.0, current: HUDSourceID? = id
+            while let ancestorID = current {
+                if let scaler = document.component("CanvasScaler", on: ancestorID) {
+                    referencePPU = scaler["m_ReferencePixelsPerUnit"].float(100); break
+                }
+                current = document.scene.node(ancestorID)?.parentID
+            }
+            let ppu = sourceSprite.pixelsPerUnit / referencePPU * image["m_PixelsPerUnitMultiplier"].float(1)
+            guard ppu > 0 else { throw HUDSourceError.invalid("Invalid original sliced mask pixelsPerUnit") }
+            var border = sourceSprite.border / ppu
+            for axis in 0..<2 {
+                let sum = border[axis] + border[axis + 2]
+                if sum > rect.size[axis] && sum != 0 {
+                    let ratio = rect.size[axis] / sum; border[axis] *= ratio; border[axis + 2] *= ratio
+                }
+            }
+            let minimum = simd_mul(toOuter, SIMD4<Double>(rect.origin.x + border.x, rect.origin.y + border.y, 0, 1))
+            let maximum = simd_mul(toOuter, SIMD4<Double>(rect.origin.x + rect.size.x - border.z,
+                rect.origin.y + rect.size.y - border.w, 0, 1))
+            let width = simd_length(SIMD3(x.x, x.y, x.z)), height = simd_length(SIMD3(y.x, y.y, y.z))
+            inner = [Float((minimum.x - corners[0].x) / width), Float((minimum.y - corners[0].y) / height),
+                Float((maximum.x - corners[0].x) / width), Float((maximum.y - corners[0].y) / height)]
+            let uvSize = SIMD2(sourceSprite.outer.z - sourceSprite.outer.x, sourceSprite.outer.w - sourceSprite.outer.y)
+            let uv = sourceSprite.inner
+            let tiny = Double(Float.leastNonzeroMagnitude * 8)
+            innerUV = [Float(abs(uvSize.x) < tiny ? uv.x : (uv.x - sourceSprite.outer.x) / uvSize.x),
+                Float(abs(uvSize.y) < tiny ? uv.y : (uv.y - sourceSprite.outer.y) / uvSize.y),
+                Float(abs(uvSize.x) < tiny ? uv.z : (uv.z - sourceSprite.outer.x) / uvSize.x),
+                Float(abs(uvSize.y) < tiny ? uv.w : (uv.w - sourceSprite.outer.y) / uvSize.y)]
+            sliced = true
+        }
+        return SoftMask(worldToUnit: simd_mul(inverseBasis, inverseOuter), textureID: textureID,
+            textureST: st, inner: inner, innerUV: innerUV, sliced: sliced)
     }
     /// The original PlayerSettings.m_ActiveColorSpace is Linear. Canvas keeps
     /// alpha unchanged and converts Color32 RGB unless its explicit gamma flag

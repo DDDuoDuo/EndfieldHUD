@@ -22,6 +22,13 @@ final class HUDSourceWatchView: NSView {
         "MapBtnShadow": .map, "SNSBtnShadow": .addApp,
         "QuestionnaireBtnShadow": .about, "GameToolShadow": .hotkeys,
     ]
+    // Paths resolve the actual LuaReference settingBtn/mailBtn/announcementBtn;
+    // the numeric TopLeft names are not their visual or sibling order.
+    private static let auxiliaryActions: [String: HUDModule] = [
+        "TopLeftBtnNode/TopLeftBtn4/btn_4Node/btn": .system,
+        "TopLeftBtnNode/TopLeftBtn1/btn_1Node/btn": .notes,
+        "TopLeftBtnNode/TopLeftBtn3/btn_3Node/btn": .eventLog,
+    ]
     let document: HUDSourceWatchDocument
     let renderer: HUDSourceMetalRenderer
     let cameraModel: HUDSourceWatchCamera
@@ -31,6 +38,8 @@ final class HUDSourceWatchView: NSView {
     private var gyro: HUDSourceWatchGyroMotion
     private var animatorButtons: [HUDSourceID: HUDSourceID] = [:]
     private var actionsByID: [HUDSourceID: ButtonAction] = [:]
+    private var closeButtonIDs: Set<HUDSourceID> = []
+    private var lastAcceptedClick: [HUDSourceID: TimeInterval] = [:]
     private var accessibilityButtons: [HUDSourceID: HUDSourceWatchAccessibilityButton] = [:]
     private var observers: [NSObjectProtocol] = []
     private var timer: Timer?
@@ -70,7 +79,7 @@ final class HUDSourceWatchView: NSView {
     /// geometry, including original masks; this never synthesizes CA tracks.
     var visibleMainButtonForVerification: HUDSourceID? {
         guard let frame = renderedFrame, let camera = renderedCamera else { return nil }
-        for hit in frame.hits where actionsByID[hit.buttonID] != nil {
+        for hit in frame.hits where document.buttons.contains(where: { $0.nodeID == hit.buttonID }) {
             let middle = hit.rect.origin + hit.rect.size * 0.5
             let local = SIMD3<Double>(middle.x, middle.y, 0)
             guard let point = camera.camera.project(local, world: hit.world, viewport: bounds)?.point,
@@ -143,12 +152,20 @@ final class HUDSourceWatchView: NSView {
             element.setAccessibilityHelp(module.title)
             element.setAccessibilityParent(self)
             element.performPress = { [weak self] in
-                guard let self, self.inputEnabled, self.playback.phase == .visible,
-                      self.renderedFrame?.hits.contains(where: { $0.buttonID == button.nodeID }) == true,
-                      let action = self.actionsByID[button.nodeID] else { return false }
-                self.onAction?(action); return true
+                guard let self else { return false }
+                return self.performClick(on: button.nodeID, at: self.now)
             }
             accessibilityButtons[button.nodeID] = element
+        }
+        for id in document.scene.traversalIDs {
+            guard let node = document.scene.node(id), document.component("UIButton", on: id) != nil else { continue }
+            if node.path.hasSuffix("/CloseButtonNode/Btn_BackNode") || node.path.hasSuffix("/FullScreenCloseBtn") {
+                closeButtonIDs.insert(id)
+            }
+            if let entry = Self.auxiliaryActions.first(where: { node.path.hasSuffix("/" + $0.key) }) {
+                let source = HUDSourceWatchButton(nodeID: id, path: node.path, labels: [])
+                actionsByID[id] = ButtonAction(source: source, module: entry.value)
+            }
         }
         setAccessibilityChildren(document.buttons.compactMap { accessibilityButtons[$0.nodeID] })
     }
@@ -275,10 +292,11 @@ final class HUDSourceWatchView: NSView {
         do {
             let screen = SIMD2<Double>(Double(bounds.width), Double(bounds.height))
             let reduce = HUDRuntimeAppearance.reduceMotion
-            if !reduce, isOnScreen, let window {
-                let screenPoint = pointerLocationProvider()
-                let windowPoint = window.convertPoint(fromScreen: screenPoint)
-                let p = convert(windowPoint, from: nil)
+            let pointerPoint = window.map { window in
+                convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
+            }
+            if !reduce, isOnScreen, window != nil {
+                guard let p = pointerPoint else { throw HUDSourceError.invalid("Source Watch pointer conversion failed") }
                 let euler = try cameraModel.gyro.targetEuler(mouseUnity: SIMD2(Double(p.x), Double(bounds.height - p.y)), screenSize: screen)
                 _ = try gyro.retarget(eulerDegrees: euler, at: time, duration: cameraModel.gyro.duration)
             }
@@ -293,24 +311,41 @@ final class HUDSourceWatchView: NSView {
                 pose = try document.animation.pose(entranceTime: document.animation.entrance.lastKeyTime,
                     ambientTime: nil, exitTime: nil, canvasResolution: camera.layout.canvasSize)
             }
+            let wrapperPose = pose
             buttonAnimation.apply(to: &pose, at: time, reduceMotion: reduce)
             document.applyMacButtonAvailability(to: &pose)
-            let frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
+            var frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
+                                               verticalNormalizedPosition: verticalNormalizedPosition)
+            // Source EventSystem raycasts each frame, including stationary
+            // pointers while the menu or gyro moves. Retarget at this same
+            // clock instant, then rebuild once; do not recurse into the timer.
+            let nextHover: HUDSourceID?
+            if inputEnabled, playback.phase == .visible, isOnScreen,
+               let pointerPoint, bounds.contains(pointerPoint) {
+                nextHover = frame.button(at: pointerPoint, camera: camera.camera, viewport: bounds)
+            } else { nextHover = nil }
+            if nextHover != hovered {
+                hovered = nextHover; updateAnimatorStates(at: time)
+                pose = wrapperPose
+                buttonAnimation.apply(to: &pose, at: time, reduceMotion: reduce)
+                document.applyMacButtonAvailability(to: &pose)
+                frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
                                                 verticalNormalizedPosition: verticalNormalizedPosition)
+            }
             lastPose = pose; renderedFrame = frame; renderedCamera = camera
             diagnostics = frame.diagnostics
             let position = cameraModel.cameraWorld.columns.3
             // Retain the converted Vulkan program's final Y negation and
             // compensate once in the GPU matrix. CPU render/hit stays +Y up.
-            var gpuProjection = simd_float4x4(camera.camera.projection)
-            var gpuVP = simd_float4x4(camera.camera.viewProjection)
+            var gpuProjection = HUDSourceGeometry.floatMatrix(camera.camera.projection)
+            var gpuVP = HUDSourceGeometry.floatMatrix(camera.camera.viewProjection)
             for column in 0..<4 { gpuProjection[column].y = -gpuProjection[column].y; gpuVP[column].y = -gpuVP[column].y }
             renderer.submit(camera: HUDSourceMetalRenderer.Camera(
                 viewProjection: gpuVP,
                 worldSpacePosition: SIMD3(Float(position.x), Float(position.y), Float(position.z)),
                 timeSeconds: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : Float(time),
                 renderPathInjected: 0, flipX: 0, flipY: 0,
-                projection: gpuProjection, inverseView: simd_float4x4(cameraModel.cameraWorld)),
+                projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(cameraModel.cameraWorld)),
                 batches: frame.batches)
             renderedFrameCount += 1
             updateAccessibility(frame: frame, camera: camera.camera)
@@ -360,6 +395,38 @@ final class HUDSourceWatchView: NSView {
         guard inputEnabled, playback.phase == .visible, let frame = renderedFrame, let camera = renderedCamera else { return nil }
         return frame.button(at: point, camera: camera.camera, viewport: bounds)
     }
+    /// Both mouse release and AX activation pass the actual resolved source
+    /// raycast/masks and the original UIButton per-instance click cooldown.
+    @discardableResult private func performClick(on id: HUDSourceID, at time: TimeInterval, point: CGPoint? = nil) -> Bool {
+        guard inputEnabled, playback.phase == .visible, !isHidden,
+              let frame = renderedFrame, let camera = renderedCamera,
+              frame.resolved[id]?.activeInHierarchy == true,
+              let component = document.component("UIButton", on: id), component.enabled,
+              component["m_Interactable"].flag(true),
+              actionsByID[id] != nil || closeButtonIDs.contains(id) else { return false }
+        let eligible: Bool
+        if let point {
+            eligible = bounds.contains(point) && frame.button(at: point, camera: camera.camera, viewport: bounds) == id
+        } else { eligible = frame.hits.filter { $0.buttonID == id }.contains { hit in
+            // A masked/offscreen button cannot be activated by accessibility.
+            // Probe its interior using the same source matrices as mouse hits.
+            [SIMD2<Double>(0.5, 0.5), SIMD2(0.25, 0.25), SIMD2(0.75, 0.25),
+             SIMD2(0.25, 0.75), SIMD2(0.75, 0.75)].contains { fraction in
+                let p = hit.rect.origin + hit.rect.size * fraction
+                guard let projected = camera.camera.project(SIMD3<Double>(p.x, p.y, 0), world: hit.world, viewport: bounds)?.point,
+                      bounds.contains(projected) else { return false }
+                return frame.button(at: projected, camera: camera.camera, viewport: bounds) == id
+            }
+        } }
+        guard eligible else { return false }
+        let cooldown = component["_clickCd"].float()
+        guard cooldown.isFinite, cooldown >= 0,
+              lastAcceptedClick[id].map({ time > $0 + cooldown }) ?? true else { return false }
+        lastAcceptedClick[id] = time
+        if let action = actionsByID[id] { onAction?(action) }
+        else { onClose?() }
+        return true
+    }
     private func updateHover(_ event: NSEvent) {
         refreshSourceCursor()
         let next = button(at: point(event))
@@ -380,8 +447,7 @@ final class HUDSourceWatchView: NSView {
         let released = button(at: point(event)), down = pressed
         pressed = nil; hovered = released; updateAnimatorStates(at: now); refreshPlaybackScheduling()
         guard let down, released == down else { return }
-        if let action = actionsByID[down] { onAction?(action) }
-        else if document.scene.node(down)?.path.contains("TopLeftBtn") == true { onClose?() }
+        performClick(on: down, at: now, point: point(event))
     }
     override func keyDown(with event: NSEvent) {
         if inputEnabled, event.keyCode == 53 { onClose?() } else { super.keyDown(with: event) }

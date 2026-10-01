@@ -31,10 +31,10 @@ enum RenderSourceWatchPreviews {
         let gyro = try HUDSourceWatchCamera.quaternion(eulerDegrees: gyroEuler)
         let view = try camera.frame(screenSize: size, localRotation: gyro)
         let gpuY = HUDSourceGeometry.scale(SIMD3<Double>(1, -1, 1))
-        let gpu = HUDSourceMetalRenderer.Camera(viewProjection: simd_float4x4(simd_mul(gpuY, view.camera.viewProjection)),
+        let gpu = HUDSourceMetalRenderer.Camera(viewProjection: HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.viewProjection)),
             worldSpacePosition: SIMD3(Float(camera.cameraWorld.columns.3.x), Float(camera.cameraWorld.columns.3.y), Float(camera.cameraWorld.columns.3.z)),
             timeSeconds: 0, renderPathInjected: 0, flipX: 0, flipY: 0,
-            projection: simd_float4x4(simd_mul(gpuY, view.camera.projection)), inverseView: simd_float4x4(camera.cameraWorld))
+            projection: HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.projection)), inverseView: HUDSourceGeometry.floatMatrix(camera.cameraWorld))
         var manifest: [[String: Any]] = []
         func timestamp(_ value: Double?) -> Any {
             if let value { return value }

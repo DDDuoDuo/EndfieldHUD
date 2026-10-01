@@ -31,6 +31,10 @@ final class HUDSourceWatchDomain {
         /// RegionMapSetting._RefreshMaterials sets this on every loaded
         /// renderer. Color selection is a separate explicit runtime action.
         let sourceUniformOverrides: [String: HUDSourceJSONValue]
+        /// UISortingOrder.Renderer writes its absolute offset, rather than
+        /// adding the owning panel's order. This handles the renderer's own
+        /// component; overlapping ancestor writers require lifecycle ordering.
+        let sourceRuntimeSortingOrder: Int
     }
     struct Frame {
         let meshes: [MeshBatch]
@@ -243,12 +247,26 @@ final class HUDSourceWatchDomain {
                   instance.renderer["m_Enabled"].flag(true), let mesh = meshes[instance.meshID] else { continue }
             batches.append(MeshBatch(nodeID: instance.nodeID, path: node.node.path, mesh: mesh,
                 materialIDs: instance.materials, worldMatrix: node.worldMatrix, renderer: instance.renderer, levelID: instance.levelID,
-                sourceUniformOverrides: ["_RegionMapEditor": .number(showType == 1 ? 0 : 1)]))
+                sourceUniformOverrides: ["_RegionMapEditor": .number(showType == 1 ? 0 : 1)],
+                sourceRuntimeSortingOrder: Self.rendererSortingOrder(renderer: instance.renderer,
+                    ownComponents: components[instance.nodeID] ?? [])))
         }
         return Frame(meshes: batches, nodes: nodes, selectionPolicy: selectionPolicy,
             limitations: ["Current level, player marker, unlock/selection and load completion require explicit caller state.",
                 "The source -90 degree world rotation tween targets loadedRegionTransform; its invocation in Watch is not established and is not applied here.",
+                "Renderer own UISortingOrder offsets are applied; conflicting ancestor writer lifecycle order remains unverified.",
                 "Unity scheduling and pixel-identical engine rendering remain unverified."])
+    }
+
+    /// Native UISortingOrder.SetOrder(0x18359c160), Renderer branch
+    /// 0x18359c254..0x18359c30a. Canvas and Particle use different rules.
+    static func rendererSortingOrder(renderer: HUDSourceJSONValue,
+                                     ownComponents: [HUDSourceWatchComponent]) -> Int {
+        let source = Int(renderer["m_SortingOrder"].number ?? 0)
+        guard let order = ownComponents.first(where: {
+            $0.kind == "UISortingOrder" && $0["_renderType"].number == 0
+        }), let offset = order["_sortingOrderOffset"].number else { return source }
+        return Int(offset)
     }
 
     /// Original Watch InitData uses circle/rectangle intersection after its
