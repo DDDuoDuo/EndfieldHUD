@@ -21,6 +21,7 @@ enum HUDLifecycleVerification {
         private var reduced = false
         private var screenPointer = CGPoint.zero
         private var openingPointer = CGPoint.zero
+        private var openingSourceFrames = 0
         private var windowIDs = Set<ObjectIdentifier>()
         private let priorPointerProvider: (() -> CGPoint)?
         private let priorClosed: (() -> Void)?
@@ -87,13 +88,26 @@ enum HUDLifecycleVerification {
 
         private func checkOpenAndCancel() {
             check(overlay.systemPhase == .open, "Deployment completes before normal controls activate")
-            if !reduced {
-                check(overlay.systemPointerTargetForVerification == openingPointer
-                      && overlay.systemSpatialPoseMatchesPointerForVerification(openingPointer),
-                      "Promotion to the fully open HUD preserves the latest deployment pointer pose")
+            guard let source = overlay.systemSourceWatchForVerification else {
+                preconditionFailure("Original Watch view unavailable: \(overlay.systemSourceFailureForVerification ?? "missing")")
             }
-            check(overlay.systemParallaxAnimationCount <= 13, "Open promotion cannot duplicate pointer tracks")
+            check(source.playback.phase == .visible && source.document.buttons.count == 22,
+                  "Opening reaches the original Watch endpoint with all 22 original button definitions")
+            check(source.currentFrameForVerification?.hits.isEmpty == false,
+                  "The displayed source frame contains original graphic raycasts")
+            check(source.visibleMainButtonForVerification != nil,
+                  "A projected original button can be hit through the same source camera and masks")
+            check(source.hasDisplayTimerForVerification == !reduced && overlay.systemAmbientAnimationCount == 0
+                  && overlay.systemParallaxAnimationCount == 0,
+                  "Source overview owns one display timer without hidden legacy motion tracks")
+            if !reduced { check(source.renderedFrameCount > openingSourceFrames, "The real source frame advances after the injected pointer changes") }
+            do {
+                let image = try source.renderedImageForVerification()
+                check(image.width > 0 && image.height > 0, "The displayed original menu produces an actual Metal drawable")
+            } catch { preconditionFailure("Source drawable verification failed: \(error)") }
             overlay.selectSystemModule(.eventLog, animated: false)
+            check(!source.hasDisplayTimerForVerification && source.playback.phase == .concealed,
+                  "Entering a macOS module suspends the hidden original menu")
             let shell = overlay.systemShellIdentity
             let section = overlay.systemSelectedModule
             overlay.presentQuitConfirmationForVerification()
@@ -178,6 +192,9 @@ enum HUDLifecycleVerification {
 
         private func checkAcceptedQuit() {
             check(overlay.systemPhase == .open, "Accepted-quit cycle starts from an open HUD")
+            overlay.selectSystemModule(.power, animated: false)
+            check(overlay.systemSourceWatchForVerification?.playback.phase == .visible,
+                  "The final quit cycle returns to the original Watch overview")
             overlay.afterSystemClose = { [weak self] in self?.genericHandoffs += 1 }
             overlay.presentQuitConfirmationForVerification()
             check(overlay.systemQuitConfirmationVisibleForVerification, "Final quit requires its own confirmation")
@@ -189,6 +206,15 @@ enum HUDLifecycleVerification {
                   "Summon cannot reopen an accepted application quit")
             check(acceptedQuits == 1 && completedQuits == 0,
                   "Repeated confirmation cannot duplicate acceptance or bypass retraction")
+            if !reduced {
+                later(0.08) { [self] in checkTransitionMotion(.zero, phase: .closing) }
+            }
+            let sourceExit = overlay.systemSourceWatchForVerification?.document.animation.exit.lastKeyTime ?? 0.3333333432674408
+            later(sourceExit + 0.15) { [self] in
+                check(overlay.systemPhase == .closed && !overlay.lastClosedSourceTimerActive
+                      && overlay.lastClosedSourcePhase == .concealed,
+                      "Original Watch exit finishes at its source duration and leaves no display timer")
+            }
             later(SystemHUDView.exitDuration + 0.30) { [self] in
                 checkCleanClose("Accepted quit")
                 check(completedQuits == 1 && acceptedQuits == 1 && normalCloses == 2 && genericHandoffs == 0,
@@ -206,6 +232,7 @@ enum HUDLifecycleVerification {
 
         private func movePointer(x: CGFloat, y: CGFloat) -> CGPoint {
             screenPointer.x += x; screenPointer.y += y
+            if overlay.systemSelectedModule == .power { return screenPointer }
             guard let point = overlay.systemCurrentPointerTargetForVerification else {
                 preconditionFailure("The live HUD must provide its normalized pointer target")
             }
@@ -214,6 +241,20 @@ enum HUDLifecycleVerification {
         }
 
         private func checkTransitionMotion(_ point: CGPoint, phase: SystemOverlayPhase) {
+            if overlay.systemSelectedModule == .power {
+                guard let source = overlay.systemSourceWatchForVerification else {
+                    preconditionFailure("Source Watch transition must retain its renderer")
+                }
+                let expected: HUDSourceWatchPlayback.Phase = phase == .opening ? .opening : .closing
+                check(overlay.systemPhase == phase && source.playback.phase == expected && source.hasDisplayTimerForVerification,
+                      "Original Watch finite transition owns its active display clock")
+                check(source.currentFrameForVerification != nil && source.renderedFrameCount > 0,
+                      "Original Watch transition resolves actual source geometry")
+                check(overlay.systemParallaxAnimationCount == 0 && overlay.systemAmbientAnimationCount == 0,
+                      "Original Watch transitions do not animate hidden legacy planes")
+                openingSourceFrames = source.renderedFrameCount
+                return
+            }
             check(overlay.systemPhase == phase && overlay.systemPointerTargetForVerification == point
                   && overlay.systemSpatialPoseMatchesPointerForVerification(point),
                   "Pointer input updates spatial planes during \(phase.rawValue)")
@@ -225,7 +266,8 @@ enum HUDLifecycleVerification {
 
         private func checkCleanClose(_ label: String) {
             check(overlay.systemPhase == .closed && !overlay.systemWindowVisibleForVerification
-                  && overlay.systemShellIdentity == nil && overlay.lastClosedAnimationCount == 0,
+                  && overlay.systemShellIdentity == nil && overlay.lastClosedAnimationCount == 0
+                  && !overlay.lastClosedSourceTimerActive && overlay.lastClosedSourcePhase == .concealed,
                   "\(label) releases the hidden presentation and all animation tracks")
         }
 

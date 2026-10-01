@@ -81,6 +81,8 @@ enum HUDSourceWatchButtonAnimationTests {
             check(initial.properties[id(1)]?["m_Alpha"] == 0.7 && initial.properties[id(2)]?["m_fontColor.a"] == 0.6,
                   "CanvasGroup and unbound font alpha channels survive controller sampling")
             player.setState(.highlighted, on: id(2), at: 1)
+            check(player.requiresFrames(at: 1.1), "The host needs frames while the finite hover clip is running")
+            check(!player.requiresFrames(at: 1.2), "Steady hover does not retain a display timer even for a looping wrap flag")
             let white = pose(player, at: 1 + 1.0/30)
             check(white.properties[id(2)]?["m_Color.r"] == 1, "First short source flash reaches white")
             check(white.properties[id(3)]?["m_Color.r"] == gray && white.transforms[id(3)]!.positionComponents[2] == 0,
@@ -96,6 +98,7 @@ enum HUDSourceWatchButtonAnimationTests {
                     && steady.properties[id(2)]?["material._Alpha"] == 0.1,
                   "Graphic, font and material property channels remain separate")
             player.setState(.normal, on: id(2), at: 1.3)
+            check(player.requiresFrames(at: 1.35), "Exit blending requires frames beyond the short static Normal clip")
             let halfway = pose(player, at: 1.35)
             check(near(halfway.transforms[id(2)]!.positionComponents[2]!, -2.5), "Source fixed-duration exit retains partial Z halfway")
             player.setState(.pressed, on: id(2), at: 1.35)
@@ -116,6 +119,7 @@ enum HUDSourceWatchButtonAnimationTests {
             player.setState(.normal, on: id(2), at: 2.01)
             let stopped = pose(player, at: 2.03, reduceMotion: true)
             check(stopped.transforms[id(2)]!.positionComponents[2] == 0, "Enabling Reduce Motion during exit cancels the remaining blend")
+            check(!player.requiresFrames(at: 2.03), "Reduce Motion removes both finite and transition timer demand")
             player.reset(at: 3)
             let reset = pose(player, at: 4)
             check(reset.transforms[id(2)]!.positionComponents[2] == 0 && reset.transforms[id(4)]?.active == false,
@@ -124,6 +128,7 @@ enum HUDSourceWatchButtonAnimationTests {
             let faster = try HUDSourceWatchButtonAnimation(scene: scene, library: library, animators: animators, transitionData: metadata(speed: 2))
             faster.setState(.highlighted, on: id(2), at: 5)
             check(near(pose(faster, at: 5 + 1.0/60).properties[id(2)]!["m_Color.r"]!, 1), "Original state speed changes clip time")
+            check(!faster.requiresFrames(at: 5 + duration / 2 + 0.00001), "Timer demand respects original speed instead of raw clip duration")
             let offset = try HUDSourceWatchButtonAnimation(scene: scene, library: library, animators: animators, transitionData: metadata(offset: 0.2))
             offset.setState(.highlighted, on: id(2), at: 6)
             check(near(pose(offset, at: 6).properties[id(2)]!["m_Color.r"]!, 1), "Original cycleOffset is applied in normalized clip time")

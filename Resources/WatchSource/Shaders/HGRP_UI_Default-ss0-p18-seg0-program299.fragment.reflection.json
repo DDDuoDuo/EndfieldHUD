@@ -1,0 +1,270 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "frag"
+    }
+  ],
+  "types": {
+    "_8": {
+      "name": "_8",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "mat4",
+          "offset": 0,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m1",
+          "type": "mat4",
+          "offset": 64,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m2",
+          "type": "mat4",
+          "offset": 128,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m3",
+          "type": "mat4",
+          "offset": 192,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m4",
+          "type": "mat4",
+          "offset": 256,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m5",
+          "type": "mat4",
+          "offset": 320,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m6",
+          "type": "mat4",
+          "offset": 384,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m7",
+          "type": "mat4",
+          "offset": 448,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m8",
+          "type": "mat4",
+          "offset": 512,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m9",
+          "type": "mat4",
+          "offset": 576,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m10",
+          "type": "mat4",
+          "offset": 640,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m11",
+          "type": "vec4",
+          "offset": 704
+        },
+        {
+          "name": "_m12",
+          "type": "vec4",
+          "offset": 720
+        },
+        {
+          "name": "_m13",
+          "type": "vec4",
+          "offset": 736
+        },
+        {
+          "name": "_m14",
+          "type": "vec4",
+          "offset": 752
+        },
+        {
+          "name": "_m15",
+          "type": "vec4",
+          "offset": 768
+        }
+      ]
+    },
+    "_10": {
+      "name": "_10",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "mat4",
+          "offset": 16,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 80
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 96
+        },
+        {
+          "name": "_m4",
+          "type": "float",
+          "offset": 112
+        },
+        {
+          "name": "_m5",
+          "type": "vec4",
+          "offset": 128
+        },
+        {
+          "name": "_m6",
+          "type": "vec4",
+          "offset": 144
+        },
+        {
+          "name": "_m7",
+          "type": "vec4",
+          "offset": 160
+        },
+        {
+          "name": "_m8",
+          "type": "float",
+          "offset": 176
+        },
+        {
+          "name": "_m9",
+          "type": "float",
+          "offset": 180
+        },
+        {
+          "name": "_m10",
+          "type": "float",
+          "offset": 184
+        },
+        {
+          "name": "_m11",
+          "type": "float",
+          "offset": 188
+        },
+        {
+          "name": "_m12",
+          "type": "float",
+          "offset": 192
+        },
+        {
+          "name": "_m13",
+          "type": "float",
+          "offset": 196
+        },
+        {
+          "name": "_m14",
+          "type": "float",
+          "offset": 200
+        },
+        {
+          "name": "_m15",
+          "type": "float",
+          "offset": 204
+        },
+        {
+          "name": "_m16",
+          "type": "vec4",
+          "offset": 208
+        },
+        {
+          "name": "_m17",
+          "type": "vec4",
+          "offset": 224
+        },
+        {
+          "name": "_m18",
+          "type": "vec4",
+          "offset": 240
+        }
+      ]
+    }
+  },
+  "inputs": [
+    {
+      "type": "vec4",
+      "name": "_3",
+      "location": 0
+    },
+    {
+      "type": "vec2",
+      "name": "_4",
+      "location": 1
+    }
+  ],
+  "outputs": [
+    {
+      "type": "vec4",
+      "name": "_5",
+      "location": 0
+    }
+  ],
+  "separate_images": [
+    {
+      "type": "texture2D",
+      "name": "_13",
+      "set": 1,
+      "binding": 2
+    }
+  ],
+  "separate_samplers": [
+    {
+      "type": "sampler",
+      "name": "_14",
+      "set": 1,
+      "binding": 1
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_8",
+      "name": "_8_9",
+      "block_size": 784,
+      "set": 0,
+      "binding": 0
+    },
+    {
+      "type": "_10",
+      "name": "_10_11",
+      "block_size": 256,
+      "set": 1,
+      "binding": 0
+    }
+  ]
+}

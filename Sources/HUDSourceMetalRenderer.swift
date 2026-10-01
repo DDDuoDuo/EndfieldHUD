@@ -125,11 +125,15 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private let shaders: [String: Shader]
     private var geometries: [String: Geometry] = [:]
     private var materials: [String: Material] = [:]
+    private var clipMaterialKeys: [String: [String: String]] = [:]
+    private var materialPropertyTypes: [String: [String: (type: Int, flags: Int)]] = [:]
     private var textureAssets: [String: TextureAsset] = [:]
     private var camera: Camera?
     private var batches: [Batch] = []
     private var lastDrawable: CAMetalDrawable?
     private var lastRenderCommand: MTLCommandBuffer?
+    private(set) var submittedFrameGeneration: UInt64 = 0
+    private(set) var renderedFrameGeneration: UInt64?
     private var tintedVertices: [String: (color: SIMD4<Float>, buffer: MTLBuffer)] = [:]
     private struct StencilKey: Hashable { var pass: String; var state: StencilState }
     private var stencilStates: [StencilKey: MTLDepthStencilState] = [:]
@@ -148,6 +152,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
         self.queue = queue
         self.root = root
+        let colorPolicy = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("render-color-policy.json"))) as? [String: Any]
+        guard (colorPolicy?["serialized_color_space"] as? Int) == 1 else {
+            throw Failure.message("Original linear project color-space evidence unavailable")
+        }
         var catalog: [String: Shader] = [:]
         for (key, file) in [("fx", "fx-shader.json"), ("image", "image-shader.json"), ("imageStencil", "image-stencil-shader.json"),
                             ("imageMainFX", "image-mainfx-shader.json"), ("imageDissolveFX", "image-dissolvefx-shader.json"),
@@ -163,9 +171,18 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             catalog["fx\(program)"] = try JSONDecoder().decode(Shader.self, from: Data(contentsOf: root.appendingPathComponent("fx-\(program)-shader.json")))
         }
         catalog["imageWorld"] = try JSONDecoder().decode(Shader.self, from: Data(contentsOf: root.appendingPathComponent("image-world-shader.json")))
+        for (key, stem) in [("imageMainFX", "image-mainfx"), ("imageDissolveFX", "image-dissolvefx"),
+                            ("imageWorld", "image-world"), ("imageStencil", "image-stencil"),
+                            ("font", "font"), ("fontUnderlay", "font-underlay")] {
+            for (suffix, file) in [("AlphaClip", "alphaclip"), ("ClipRect", "cliprect"), ("ClipRectAlpha", "cliprect-alphaclip")] {
+                catalog[key + suffix] = try JSONDecoder().decode(Shader.self, from: Data(contentsOf: root.appendingPathComponent(stem + "-" + file + "-shader.json")))
+            }
+        }
         shaders = catalog
         super.init(frame: frame, device: device)
-        colorPixelFormat = .bgra8Unorm
+        // Source PlayerSettings is Linear. This direct LDR display target
+        // performs its sRGB output transfer; HG HDR/postprocess is not inferred.
+        colorPixelFormat = .bgra8Unorm_srgb
         depthStencilPixelFormat = .depth32Float_stencil8
         clearColor = MTLClearColorMake(0, 0, 0, 0)
         clearDepth = 1
@@ -175,6 +192,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         wantsLayer = true
         layer?.isOpaque = false
         layer?.backgroundColor = NSColor.clear.cgColor
+        (layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
         isPaused = true
         enableSetNeedsDisplay = true
         delegate = self
@@ -191,6 +209,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     func submit(camera: Camera, batches: [Batch]) {
         self.camera = camera
         self.batches = batches
+        submittedFrameGeneration &+= 1
         needsDisplay = true
     }
 
@@ -240,11 +259,32 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     func containsTexture(named name: String) -> Bool { textureAssets[name] != nil }
 
+    /// Select the original UIImage/TMP material with explicit Canvas clipping
+    /// keywords. Derived records preserve its saved properties and pass state.
+    func materialKey(named base: String, clipRect: Bool, alphaClip: Bool) -> String? {
+        guard materials[base] != nil else { return nil }
+        guard clipRect || alphaClip else { return base }
+        let flag = clipRect ? (alphaClip ? "clipAlpha" : "clip") : "alpha"
+        guard let key = clipMaterialKeys[base]?[flag], materials[key] != nil else { return nil }
+        return key
+    }
+
+    /// Scene curves are evaluated in their serialized material value space.
+    /// Convert a completed source Color/Gamma property once before using it as
+    /// a GPU override; ordinary floats, vectors, matrices and alpha stay raw.
+    func gpuMaterialValue(_ value: [Float], property: String, materialKey: String) -> [Float] {
+        guard let kind = materialPropertyTypes[materialKey]?[property] else { return value }
+        return Self.linearMaterialValue(value, type: kind.type, flags: kind.flags)
+    }
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     /// Read pixels produced by Metal itself. AppKit's layer-tree render does
     /// not capture CAMetalLayer drawable content reliably.
     func copyDrawableImage() throws -> CGImage {
+        guard renderedFrameGeneration == submittedFrameGeneration else {
+            throw Failure.message("Current source frame has no newly rendered Metal drawable")
+        }
         guard let device, let texture = lastDrawable?.texture,
               let command = queue.makeCommandBuffer(), let blit = command.makeBlitCommandEncoder() else {
             throw Failure.message("No rendered Metal drawable to capture")
@@ -265,7 +305,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         let data = Data(bytes: buffer.contents(), count: rowBytes * texture.height)
         guard let provider = CGDataProvider(data: data as CFData),
               let image = CGImage(width: texture.width, height: texture.height, bitsPerComponent: 8, bitsPerPixel: 32,
-                                  bytesPerRow: rowBytes, space: CGColorSpaceCreateDeviceRGB(),
+                                  bytesPerRow: rowBytes, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue),
                                   provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else {
             throw Failure.message("Cannot construct Metal readback image")
@@ -413,6 +453,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         encoder.endEncoding()
         lastDrawable = drawable
         lastRenderCommand = command
+        renderedFrameGeneration = submittedFrameGeneration
         command.present(drawable)
         command.commit()
     }
@@ -625,6 +666,16 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                     values[key] = ["r", "g", "b", "a"].map { value[$0]?.floatValue ?? 0 }
                 }
             }
+            guard let shaderProperties = record["shader_properties"] as? [[String: Any]] else {
+                throw Failure.message("Source material property color-space metadata unavailable: \(name)")
+            }
+            var propertyTypes: [String: (type: Int, flags: Int)] = [:]
+            for property in shaderProperties {
+                guard let key = property["name"] as? String, let type = property["type"] as? Int,
+                      let flags = property["flags"] as? Int else { continue }
+                propertyTypes[key] = (type, flags)
+                if let value = values[key] { values[key] = Self.linearMaterialValue(value, type: type, flags: flags) }
+            }
             var textureIDs: [String: String] = [:]
             for binding in record["texture_bindings"] as? [[String: Any]] ?? [] {
                 guard let slot = binding["slot"] as? String,
@@ -651,14 +702,21 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 else { key = "map12" }
             }
             else if isFX { key = keywords.contains("HG_UI_VFX_DISSOLVE") ? "fx" : keywords.contains("HG_UI_VFX_MASKTEX") ? "fx13" : "fx12" }
-            else if isFont { key = keywords.contains("UNDERLAY_ON") ? "fontUnderlay" : "font" }
-            else if passName == "Default-Stencil-Alpha-Blend" { key = "imageStencil" }
-            else if keywords.contains("HG_UI_VFX_DISSOLVE") { key = "imageDissolveFX" }
-            else if keywords.contains("HG_UI_VFX_MAINTEX") { key = "imageMainFX" }
-            else if keywords.contains("UNITY_UI_CLIP_RECT") { key = keywords.contains("UNITY_UI_ALPHACLIP") ? "imageClipRectAlpha" : "imageClipRect" }
-            else if keywords.contains("UNITY_UI_ALPHACLIP") { key = "imageAlphaClip" }
-            else if keywords.contains("HG_WORLD_UI") { key = "imageWorld" }
-            else { key = "image" }
+            else if isFont {
+                let base = keywords.contains("UNDERLAY_ON") ? "fontUnderlay" : "font"
+                let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
+                key = base + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
+            }
+            else {
+                let base: String
+                if passName == "Default-Stencil-Alpha-Blend" { base = "imageStencil" }
+                else if keywords.contains("HG_UI_VFX_DISSOLVE") { base = "imageDissolveFX" }
+                else if keywords.contains("HG_UI_VFX_MAINTEX") { base = "imageMainFX" }
+                else if keywords.contains("HG_WORLD_UI") { base = "imageWorld" }
+                else { base = "image" }
+                let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
+                key = base + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
+            }
             guard let shader = shaders[key], let (vertexFunction, fragmentFunction) = functions[key],
                   let blend = state["rtBlend0"] as? [String: Any], let stencilOp = state["stencilOp"] as? [String: Any] else {
                 throw Failure.message("Unmapped source pass interface: \(name) / \(passName)")
@@ -722,12 +780,34 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                                pipelineDescriptor: pipeline, depthCompare: depth.depthCompareFunction, depthWrite: depth.isDepthWriteEnabled))
             }
             materials[name] = Material(values: values, textures: textureIDs, passes: passes)
-            if let id = record["id"] as? String { materials[id] = Material(values: values, textures: textureIDs, passes: passes) }
+            materialPropertyTypes[name] = propertyTypes
+            if let id = record["id"] as? String {
+                materials[id] = Material(values: values, textures: textureIDs, passes: passes)
+                materialPropertyTypes[id] = propertyTypes
+            }
+            if let variants = record["clip_variants"] as? [String: String] {
+                clipMaterialKeys[name] = variants
+                if let id = record["id"] as? String { clipMaterialKeys[id] = variants }
+            }
         }
     }
 
     private static func addressMode(_ value: Int) -> MTLSamplerAddressMode {
         switch value { case 0: return .repeat; case 2: return .mirrorRepeat; case 3: return .mirrorClampToEdge; default: return .clampToEdge }
+    }
+
+    private static func gammaToLinear(_ value: Float) -> Float {
+        if value <= 0.04045 { return value / 12.92 }
+        if value < 1 { return pow((value + 0.055) / 1.055, 2.4) }
+        return pow(value, 2.2)
+    }
+
+    private static func linearMaterialValue(_ value: [Float], type: Int, flags: Int) -> [Float] {
+        guard type == 0 || flags & 32 != 0 else { return value }
+        var result = value
+        let count = min(type == 2 || type == 3 ? 1 : 3, result.count)
+        for i in 0..<count { result[i] = gammaToLinear(result[i]) }
+        return result
     }
 
     private static func blend(_ value: Float) throws -> MTLBlendFactor {

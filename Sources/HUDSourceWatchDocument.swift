@@ -128,6 +128,28 @@ final class HUDSourceWatchDocument {
         components[id]?.first { $0.kind == kind && $0.enabled }
     }
 
+    /// WatchCtrl._RelayoutRightList activates every non-hidden main button.
+    /// The macOS adapter exposes all 22 mapped functions, with no game-account
+    /// lock, safe-zone restriction or unread-notification state. This is an
+    /// explicit desktop availability policy, not an inferred game save.
+    func applyMacButtonAvailability(to pose: inout HUDSourceWatchPose) {
+        let main = Set(buttons.map(\.nodeID))
+        for id in main {
+            var value = pose.transforms[id] ?? HUDSourceTransformOverride()
+            value.active = true; pose.transforms[id] = value
+        }
+        for node in scene.nodes {
+            let name = node.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let notification = name.lowercased().hasSuffix("reddot")
+            guard notification || ["LockIcon", "SafeZoneIcon"].contains(name) else { continue }
+            var ancestor = node.parentID
+            while let id = ancestor, !main.contains(id) { ancestor = scene.node(id)?.parentID }
+            guard notification || ancestor != nil else { continue }
+            var value = pose.transforms[node.id] ?? HUDSourceTransformOverride()
+            value.active = false; pose.transforms[node.id] = value
+        }
+    }
+
     func inheritedAlpha(pose: HUDSourceWatchPose) -> [HUDSourceID: Double] {
         var result: [HUDSourceID: Double] = [:]
         for id in scene.traversalIDs {

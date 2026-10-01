@@ -50,13 +50,15 @@ jobs:
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --termination-smoke-test --stall-focus-cleanup
       - name: Verify local release packaging
         run: ./scripts/package.sh --skip-build --dmg
-      - name: Render native Watch hover and ambient previews
-        run: bash ./scripts/render-watch-previews.sh
-      - name: Upload native Watch preview evidence
+      - name: Render original Watch scene through Metal
+        run: bash ./scripts/render-source-watch-previews.sh
+      - name: Upload original scene and Metal evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: watch-motion-previews
-          path: build/watch-previews/
+          name: watch-source-previews
+          path: |
+            build/watch-source-previews/
+            build/metal-source-probe/
           retention-days: 7
           if-no-files-found: warn
