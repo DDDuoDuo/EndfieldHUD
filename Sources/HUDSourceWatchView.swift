@@ -6,6 +6,7 @@ import simd
 /// The live source menu. A single display clock owns wrapper clips, button
 /// Animator states, gyroscope and shader time; rendering and hits use one frame.
 final class HUDSourceWatchView: NSView {
+    static let backdropPreparationTimeout: TimeInterval = 3
     struct ButtonAction {
         let source: HUDSourceWatchButton
         let module: HUDModule
@@ -62,6 +63,7 @@ final class HUDSourceWatchView: NSView {
         let completion: () -> Void
     }
     private var pendingOpening: PendingOpening?
+    private var backdropPreparationDeadline: DispatchWorkItem?
     private var backdropTransitionStart: Double = 0
     private(set) var backdropDiagnostics: [String] = []
     /// Native verification and exported previews never read the desktop or
@@ -214,6 +216,7 @@ final class HUDSourceWatchView: NSView {
     required init?(coder: NSCoder) { fatalError("Use the source-resource initializer") }
     deinit {
         backdropTask?.cancel()
+        backdropPreparationDeadline?.cancel()
         previousCursor?.set()
         timer?.invalidate(); observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
@@ -246,6 +249,7 @@ final class HUDSourceWatchView: NSView {
                 })
             }
         } else {
+            cancelPendingOpening()
             cancelBackdropCapture(); sourceBackdrop = nil; backdropGeometry = nil
             try? renderer.disableSourceRGBHDR()
             stopTimer()
@@ -266,7 +270,7 @@ final class HUDSourceWatchView: NSView {
 
     func open(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
         isHidden = false
-        pendingOpening = nil
+        cancelPendingOpening()
         backdropTransitionStart = now
         hovered = nil; pressed = nil
         if #available(macOS 14.0, *), canCaptureDesktopBackdrop,
@@ -275,6 +279,7 @@ final class HUDSourceWatchView: NSView {
             // Menu and blur start together; capture latency cannot consume the
             // source's short 0.133-second background entrance.
             pendingOpening = PendingOpening(heldTime: now, ready: ready, completion: completion)
+            armBackdropPreparationDeadline()
             playback.open(at: now, reduceMotion: false)
             refreshPlaybackScheduling()
             requestDesktopBackdrop()
@@ -289,14 +294,19 @@ final class HUDSourceWatchView: NSView {
     }
     func showStable() {
         isHidden = false
-        pendingOpening = nil
+        cancelPendingOpening()
         backdropTransitionStart = now
         playback.showStable(at: now)
+        // Completing an entrance suspends the wrapper before selecting its
+        // stable pose. Keep its successfully prepared pixels and HDR pipelines
+        // when that suspension has not changed the window's capture geometry.
+        if sourceBackdrop == nil || backdropGeometry == nil || backdropGeometry != currentBackdropGeometry() {
+            requestDesktopBackdrop()
+        }
         refreshPlaybackScheduling()
-        requestDesktopBackdrop()
     }
     func close(completion: @escaping () -> Void = {}) {
-        pendingOpening = nil
+        cancelPendingOpening()
         cancelBackdropCapture()
         backdropTransitionStart = now
         inputEnabled = false
@@ -306,7 +316,7 @@ final class HUDSourceWatchView: NSView {
         refreshPlaybackScheduling()
     }
     func conceal() {
-        pendingOpening = nil
+        cancelPendingOpening()
         cancelBackdropCapture()
         playback.conceal(); inputEnabled = false; hovered = nil; pressed = nil
         stopTimer(); isHidden = true
@@ -314,7 +324,7 @@ final class HUDSourceWatchView: NSView {
         renderedFrame = nil; renderedCamera = nil; lastPose = nil
     }
     func suspendForConcealment() {
-        pendingOpening = nil
+        cancelPendingOpening()
         cancelBackdropCapture()
         // Cancellation drops wrapper callbacks before input invalidation can
         // schedule a render. Preserve the last drawable until the owner hides
@@ -371,6 +381,28 @@ final class HUDSourceWatchView: NSView {
     private func cancelBackdropCapture() {
         backdropGeneration &+= 1
         backdropTask?.cancel(); backdropTask = nil
+    }
+
+    private func cancelPendingOpening() {
+        backdropPreparationDeadline?.cancel(); backdropPreparationDeadline = nil
+        pendingOpening = nil
+    }
+
+    private func armBackdropPreparationDeadline() {
+        backdropPreparationDeadline?.cancel()
+        let deadline = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingOpening != nil,
+                  !self.isHidden, self.playback.phase == .opening else { return }
+            // ScreenCaptureKit cancellation need not abort its system request.
+            // Invalidate its generation before starting the bounded fallback.
+            self.cancelBackdropCapture()
+            self.sourceBackdrop = nil
+            self.backdropDiagnostics = ["Desktop backdrop preparation timed out; using the system backdrop"]
+            try? self.renderer.disableSourceRGBHDR()
+            self.startPendingOpening()
+        }
+        backdropPreparationDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.backdropPreparationTimeout, execute: deadline)
     }
 
     private func currentBackdropGeometry() -> BackdropGeometry? {
@@ -448,7 +480,7 @@ final class HUDSourceWatchView: NSView {
 
     private func startPendingOpening() {
         guard let pending = pendingOpening else { return }
-        pendingOpening = nil
+        cancelPendingOpening()
         guard !isHidden, playback.phase == .opening else { return }
         backdropTransitionStart = now
         pending.ready()

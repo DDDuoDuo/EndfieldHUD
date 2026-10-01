@@ -177,11 +177,29 @@ The framework is weak-linked for older deployment targets. CI and preview
 arguments bypass capture and permission APIs entirely; GPU checks use synthetic
 profiled tiles. A successful input is currently a snapshot per opening and is
 invalidated/rebuilt after a window, screen, size or backing-scale change.
-Continuous desktop updates remain outside this adapter. Original shaders are
+The original unpatched `HGCamera.OnRecordingEnd` clears duration1 Temporal
+extraction requests after one camera recording while retaining the capture RT.
+Both ordinary and CPP render request paths invoke that cleanup. The default
+RTExtractionDone callback is a no-op. WatchBlur's explicit registration with
+`autoUpdate=false` therefore supports retaining a single captured input; it
+does not require continuous desktop capture. Live IFix changes, menu reuse and
+dynamic capture gates remain unobserved. Original shaders are
 precompiled before the visible opening animation starts. When capture is
 available, the view holds the source initial pose until its input is ready,
 then starts the menu and blur clocks together. Capture delay cannot consume
 the short blur entrance; cancellation prevents a late result reopening the menu.
+An asynchronous preparation deadline falls back after three seconds; the host's
+normal opening deadline starts again when the original animation becomes ready.
+Successful geometry-matched inputs survive the opening-to-stable transition.
+The deadline cannot interrupt synchronous work already running on the main thread.
+
+Synthetic Metal checks isolate packed-RGB attachment conversion with the unchanged
+original extraction copy shader and a bitwise float32 identity control. Only one
+independently specified rounding mode may match all diagnostic pixels. That device
+result informs the CPU oracle; it does not establish the Windows driver's behavior.
+Each of the six original filter intermediates is also read back and checked using
+the actual preceding GPU input. Whole-image RGB tolerances remain four bytes, or
+one byte for the constant fixture; alpha remains exact.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
@@ -285,8 +303,8 @@ recording. The original HG render globals, engine scheduling, possible IFix
 patches, native vertex-buffer quantization and game postprocessing still need
 runtime comparison. The live direct LDR port does not claim HG HDR/bloom/tonemapping;
 the packed-HDR and original desktop-input FrostedGlass/capture/RawImage path
-requires native validation. The game main-scene input and continuous capture
-schedule remain unobserved. Runtime account fields and
+requires native validation. The actual game main-scene input and dynamic capture
+gates remain unobserved. Runtime account fields and
 two serialized multiline counter placeholders cannot stand in for live values.
 Unsupported text/layout/material features are diagnosed instead of rendered
 with substitute artwork. The disabled original UnlitCylinder mesh is not drawn.

@@ -597,12 +597,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         updateButtonStates()
     }
 
-    func animateEntrance(completion: @escaping () -> Void = {}) {
+    func animateEntrance(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
         showStable()
         if displaysSourceOverview {
-            animateSourceEntrance(completion: completion)
+            animateSourceEntrance(ready: ready, completion: completion)
             return
         }
+        ready()
         motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
         // Start geography while the mechanical shell deploys. Input and pin
         // animation stay disabled until opening completes; raster work is
@@ -1422,11 +1423,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         } else { sourceWatch.conceal() }
     }
 
-    private func animateSourceEntrance(completion: @escaping () -> Void) {
+    private func animateSourceEntrance(ready: @escaping () -> Void, completion: @escaping () -> Void) {
         transitioning = true; retracting = false; transitionCompletion = completion
         let token = generation
         updateButtonStates()
         guard let sourceWatch, sourceWatchFailureReason == nil else {
+            ready()
             transitioning = false; transitionCompletion = nil
             DispatchQueue.main.async { [weak self] in
                 guard self?.generation == token else { return }; completion()
@@ -1438,6 +1440,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             if !HUDRuntimeAppearance.reduceMotion {
                 self.animateSourceBlur(sourceWatch.document.blurAnimation.entrance)
             }
+            ready()
         }) { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == token else { return }

@@ -152,8 +152,11 @@ public final class HUDSourceDesktopBackdrop {
     }
 
     /// Only the caller's explicit user action may invoke this. No capture path calls it.
-    @MainActor
     public static func requestPermissionFromUserAction() -> PermissionStatus {
+        // AppKit/Carbon user actions arrive on the main thread. Keep that
+        // invariant without requiring legacy NSObject callback callers to
+        // adopt global Swift actor isolation.
+        precondition(Thread.isMainThread, "Screen capture permission requires the main user-action thread")
         if #available(macOS 11.0, *) {
             return CGRequestScreenCaptureAccess() ? .granted : .notGranted
         }

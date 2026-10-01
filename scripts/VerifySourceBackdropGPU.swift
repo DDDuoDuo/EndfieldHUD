@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CryptoKit
 import Foundation
 import MetalKit
 import simd
@@ -10,6 +11,22 @@ import simd
 enum VerifySourceBackdropGPU {
     private static var frostedProgress: [[String: Any]] = []
     private static var rawImageProgress: [[String: Any]] = []
+    private static var formatProgress: [String: Any] = [:]
+    private enum AttachmentRounding: String, CaseIterable, Hashable {
+        case nearestEven, towardZero, halfThenTowardZero
+    }
+    // Selected only by the independent, untouched copy-shader format probe.
+    // No image-dependent fitting or tolerance changes are permitted.
+    private static var attachmentRounding: AttachmentRounding = .nearestEven
+    private struct StageReadback {
+        let name: String
+        let width: Int
+        let height: Int
+        let stride: Int
+        let buffer: MTLBuffer
+    }
+    private static var lastStageReadbacks: [StageReadback] = []
+    private static var diagnosticOutput: URL?
     private struct Raster {
         let width: Int
         let height: Int
@@ -40,15 +57,19 @@ enum VerifySourceBackdropGPU {
     private static func threshold(_ color: SIMD3<Float>) -> SIMD3<Float> {
         color / (max(max(max(color.x, color.y), color.z), 2.5) / 2.5)
     }
-    private static func unsignedFloat(_ value: Float, mantissaBits: Int) -> Float {
+    private static func unsignedFloat(_ value: Float, mantissaBits: Int,
+                                      rounding: AttachmentRounding? = nil) -> Float {
         // R/G: 5-bit exponent + 6-bit fraction; B: 5+5. No alpha.
         guard value > 0 else { return 0 }
-        let x = Double(value), minNormal = pow(2.0, -14.0)
+        let selected = rounding ?? attachmentRounding
+        let source = selected == .halfThenTowardZero ?
+            unsignedFloat(value, mantissaBits: 10, rounding: .nearestEven) : value
+        let x = Double(source), minNormal = pow(2.0, -14.0)
         let exponent: Double
         if x < minNormal { exponent = 1 - 15 - Double(mantissaBits) }
         else { exponent = floor(log2(x)) - Double(mantissaBits) }
         let unit = pow(2.0, exponent)
-        return Float((x / unit).rounded(.toNearestOrEven) * unit)
+        return Float((x / unit).rounded(selected == .nearestEven ? .toNearestOrEven : .towardZero) * unit)
     }
     private static func rgbHDR(_ color: SIMD3<Float>) -> SIMD3<Float> {
         SIMD3(unsignedFloat(color.x, mantissaBits: 6), unsignedFloat(color.y, mantissaBits: 6),
@@ -138,8 +159,22 @@ enum VerifySourceBackdropGPU {
         let floats = input.pixels.flatMap { [$0.x, $0.y, $0.z, Float(1)] }
         floats.withUnsafeBytes { texture.replace(region: MTLRegionMake2D(0, 0, input.width, input.height), mipmapLevel: 0,
             withBytes: $0.baseAddress!, bytesPerRow: input.width * 16) }
+        lastStageReadbacks = []
         let output = try helper.encode(command: command, input: texture,
-            outputSize: CGSize(width: CGFloat(outputWidth), height: CGFloat(outputHeight)))
+            outputSize: CGSize(width: CGFloat(outputWidth), height: CGFloat(outputHeight)), passObserver: { name, stage in
+                try require(stage.pixelFormat == .rg11b10Float, "FrostedGlass intermediate format differs")
+                let stride = ((stage.width * 4 + 255) / 256) * 256
+                guard let buffer = device.makeBuffer(length: stride * stage.height, options: .storageModeShared),
+                      let blit = command.makeBlitCommandEncoder() else {
+                    throw HUDSourceError.invalid("Cannot allocate original FrostedGlass stage readback")
+                }
+                blit.copy(from: stage, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                    sourceSize: MTLSize(width: stage.width, height: stage.height, depth: 1), to: buffer,
+                    destinationOffset: 0, destinationBytesPerRow: stride, destinationBytesPerImage: stride * stage.height)
+                blit.endEncoding()
+                lastStageReadbacks.append(StageReadback(name: name, width: stage.width, height: stage.height,
+                    stride: stride, buffer: buffer))
+            })
         try require(output.pixelFormat == .rgba8Unorm_srgb && output.mipmapLevelCount == 1 &&
             output.width == outputWidth && output.height == outputHeight, "Synthetic capture output format/size differs")
         let stride = ((outputWidth * 4 + 255) / 256) * 256
@@ -158,6 +193,228 @@ enum VerifySourceBackdropGPU {
         for y in 0..<outputHeight { pixels += Array(UnsafeBufferPointer(start: pointer + y * stride, count: outputWidth * 4)) }
         return pixels
     }
+    private static func componentCode(_ value: Float, fractionBits: Int) -> UInt32 {
+        guard value > 0 else { return 0 }
+        let bits = value.bitPattern
+        let exponent = Int((bits >> 23) & 255) - 127 + 15
+        if exponent <= 0 {
+            return UInt32((Double(value) / pow(2, Double(-14 - fractionBits))).rounded(.towardZero))
+        }
+        return UInt32(exponent << fractionBits) | ((bits & 0x7fffff) >> UInt32(23 - fractionBits))
+    }
+    private static func packedWord(_ color: SIMD3<Float>, rounding: AttachmentRounding) -> UInt32 {
+        componentCode(unsignedFloat(color.x, mantissaBits: 6, rounding: rounding), fractionBits: 6) |
+            (componentCode(unsignedFloat(color.y, mantissaBits: 6, rounding: rounding), fractionBits: 6) << 11) |
+            (componentCode(unsignedFloat(color.z, mantissaBits: 5, rounding: rounding), fractionBits: 5) << 22)
+    }
+    /// A format-only experiment, separate from FrostedGlass. Original Blit
+    /// outputs float32 samples without arithmetic. Pixel-center nearest sampling
+    /// and a float32 render-target control isolate attachment conversion.
+    private static func verifyAttachmentConversion(device: MTLDevice, root: URL) throws -> [String: Any] {
+        let hdr = root.appendingPathComponent("HDR")
+        let manifest = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
+            from: Data(contentsOf: hdr.appendingPathComponent("FrostedGlass/manifest.json")))
+        let copy = manifest["capture_copy"]
+        func function(_ stage: HUDSourceJSONValue) throws -> MTLFunction {
+            guard let file = stage["files"].array.first(where: { $0["path"].string?.hasSuffix(".metal") == true }),
+                  let path = file["path"].string, !path.contains(".."), !path.hasPrefix("/"),
+                  let hash = file["sha256"].string, let entry = stage["function"].string else {
+                throw HUDSourceError.invalid("Attachment probe source module unavailable")
+            }
+            let bytes = try Data(contentsOf: hdr.appendingPathComponent(path))
+            try require(SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() == hash,
+                "Attachment probe original Blit hash differs")
+            guard let text = String(data: bytes, encoding: .utf8),
+                  let result = try device.makeLibrary(source: text, options: nil).makeFunction(name: entry) else {
+                throw HUDSourceError.invalid("Attachment probe original Blit function unavailable")
+            }
+            return result
+        }
+        let vertex = try function(copy["stages"]["vertex"]), fragment = try function(copy["stages"]["fragment"])
+        let resources = copy["stages"]["fragment"]["resources"].array
+        guard let textureIndex = resources.first(where: { $0["source_name"].string == "_BlitTexture" })?["msl_index"].number,
+              let samplerIndex = resources.first(where: { $0["source_name"].string == "sampler_LinearClamp" })?["msl_index"].number,
+              copy["stages"]["vertex"]["uniforms"].array.count == 1,
+              copy["stages"]["fragment"]["uniforms"].array.count == 1,
+              let vertexIndex = copy["stages"]["vertex"]["uniforms"].array[0]["msl_index"].number,
+              let fragmentIndex = copy["stages"]["fragment"]["uniforms"].array[0]["msl_index"].number,
+              let queue = device.makeCommandQueue(), let command = queue.makeCommandBuffer() else {
+            throw HUDSourceError.invalid("Attachment probe named bindings unavailable")
+        }
+        var colors: [SIMD3<Float>] = []
+        // Exact dyadic values, deliberately off midpoint boundaries. The last
+        // two fractions distinguish direct RTZ from float16-before-RTZ.
+        let fractions: [Float] = [0.015625, 0.125, 0.375, 0.625, 0.875, 0.984375, 0.9921875]
+        for exponent in [-5, -3, -1, 0, 2] {
+            let base = Float(pow(2.0, Double(exponent)))
+            for mantissa in [1, 17, 41, 59] {
+                for fraction in fractions {
+                    colors.append(SIMD3(base * (1 + (Float(mantissa) + fraction) / 64),
+                        base * (1 + (Float(63 - mantissa) + fraction) / 64),
+                        base * (1 + (Float(mantissa % 31) + fraction) / 32)))
+                }
+            }
+        }
+        let width = colors.count, height = 2
+        colors += colors.reversed().map { SIMD3($0.y, $0.z, $0.x) }
+        let inputDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float,
+            width: width, height: height, mipmapped: false)
+        inputDescriptor.storageMode = .shared; inputDescriptor.usage = .shaderRead
+        guard let input = device.makeTexture(descriptor: inputDescriptor) else {
+            throw HUDSourceError.invalid("Attachment probe float32 input unavailable")
+        }
+        let floats = colors.flatMap { [$0.x, $0.y, $0.z, Float(1)] }
+        floats.withUnsafeBytes { input.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0,
+            withBytes: $0.baseAddress!, bytesPerRow: width * 16) }
+        let samplerDescriptor = MTLSamplerDescriptor()
+        samplerDescriptor.minFilter = .nearest; samplerDescriptor.magFilter = .nearest
+        samplerDescriptor.mipFilter = .notMipmapped
+        samplerDescriptor.sAddressMode = .clampToEdge; samplerDescriptor.tAddressMode = .clampToEdge
+        guard let sampler = device.makeSamplerState(descriptor: samplerDescriptor) else {
+            throw HUDSourceError.invalid("Attachment probe nearest sampler unavailable")
+        }
+        var constants = Data(repeating: 0, count: 64)
+        [Float(1), -1, 0, 1].withUnsafeBytes { constants.replaceSubrange(0..<16, with: $0) }
+        var outputs: [(MTLPixelFormat, MTLBuffer, Int)] = []
+        for (format, bytesPerPixel) in [(MTLPixelFormat.rgba32Float, 16), (.rg11b10Float, 4)] {
+            let pipelineDescriptor = MTLRenderPipelineDescriptor()
+            pipelineDescriptor.vertexFunction = vertex; pipelineDescriptor.fragmentFunction = fragment
+            pipelineDescriptor.colorAttachments[0].pixelFormat = format
+            var reflection: MTLRenderPipelineReflection?
+            let pipeline = try device.makeRenderPipelineState(descriptor: pipelineDescriptor,
+                options: .argumentInfo, reflection: &reflection)
+            for (stage, arguments) in [(copy["stages"]["vertex"], reflection?.vertexArguments),
+                                       (copy["stages"]["fragment"], reflection?.fragmentArguments)] {
+                let uniform = stage["uniforms"].array[0]
+                guard let slot = uniform["msl_index"].number,
+                      let argument = arguments?.first(where: { $0.type == .buffer && $0.index == Int(slot) }),
+                      let structure = argument.bufferStructType else {
+                    throw HUDSourceError.invalid("Attachment probe reflection unavailable")
+                }
+                try require(argument.bufferDataSize >= 52 && argument.bufferDataSize <= 64,
+                    "Attachment probe source constant size differs")
+                for member in uniform["members"].array {
+                    try require(structure.members.first(where: { $0.name == member["name"].string })?.offset ==
+                        Int(member["offset"].number ?? -1), "Attachment probe source member offset differs")
+                }
+            }
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format,
+                width: width, height: height, mipmapped: false)
+            descriptor.storageMode = .private; descriptor.usage = .renderTarget
+            let stride = ((width * bytesPerPixel + 255) / 256) * 256
+            guard let texture = device.makeTexture(descriptor: descriptor),
+                  let buffer = device.makeBuffer(length: stride * height, options: .storageModeShared) else {
+                throw HUDSourceError.invalid("Attachment probe targets unavailable")
+            }
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = texture
+            pass.colorAttachments[0].loadAction = .dontCare; pass.colorAttachments[0].storeAction = .store
+            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
+                throw HUDSourceError.invalid("Attachment probe encoder unavailable")
+            }
+            encoder.setRenderPipelineState(pipeline); encoder.setCullMode(.none)
+            constants.withUnsafeBytes {
+                encoder.setVertexBytes($0.baseAddress!, length: $0.count, index: Int(vertexIndex))
+                encoder.setFragmentBytes($0.baseAddress!, length: $0.count, index: Int(fragmentIndex))
+            }
+            encoder.setFragmentTexture(input, index: Int(textureIndex))
+            encoder.setFragmentSamplerState(sampler, index: Int(samplerIndex))
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encoder.endEncoding()
+            guard let blit = command.makeBlitCommandEncoder() else {
+                throw HUDSourceError.invalid("Attachment probe readback unavailable")
+            }
+            blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                sourceSize: MTLSize(width: width, height: height, depth: 1), to: buffer,
+                destinationOffset: 0, destinationBytesPerRow: stride, destinationBytesPerImage: stride * height)
+            blit.endEncoding(); outputs.append((format, buffer, stride))
+        }
+        command.commit(); command.waitUntilCompleted()
+        if let error = command.error { throw error }
+        try require(command.status == .completed, "Attachment probe did not complete")
+        let control = Data(bytes: outputs[0].1.contents(), count: outputs[0].2 * height)
+        let packed = Data(bytes: outputs[1].1.contents(), count: outputs[1].2 * height)
+        var identityFailures = 0, mismatches = Dictionary(uniqueKeysWithValues: AttachmentRounding.allCases.map { ($0, 0) })
+        var samples: [[String: Any]] = []
+        for index in colors.indices {
+            let y = index / width, x = index % width
+            let actual = word(packed, y * outputs[1].2 + x * 4)
+            let value = colors[index]
+            for channel in 0..<4 {
+                if word(control, y * outputs[0].2 + x * 16 + channel * 4) != floats[index * 4 + channel].bitPattern {
+                    identityFailures += 1
+                }
+            }
+            var predictions: [String: Any] = [:]
+            for mode in AttachmentRounding.allCases {
+                let prediction = packedWord(value, rounding: mode)
+                predictions[mode.rawValue] = Int(prediction)
+                if prediction != actual { mismatches[mode, default: 0] += 1 }
+            }
+            samples.append(["x": x, "y": y, "inputRGB": [value.x, value.y, value.z],
+                "actualWord": Int(actual), "predictedWords": predictions])
+        }
+        let matches = AttachmentRounding.allCases.filter { mismatches[$0] == 0 }
+        formatProgress = ["name": "original-copy-format-only", "shaderProgram": 1,
+            "input": "Exact positive-normal dyadic float32 values; 280 pixels; no filter or blend",
+            "sampler": "Nearest, pixel centers; diagnostic-only mapping",
+            "float32IdentityFailures": identityFailures,
+            "candidateMismatchPixels": Dictionary(uniqueKeysWithValues: mismatches.map { ($0.key.rawValue, $0.value) }),
+            "recognizedModes": matches.map(\.rawValue), "samples": samples,
+            "boundary": "Empirical attachment conversion on this device; not a claim about source Windows driver or MSL texture-write rounding",
+            "passed": identityFailures == 0 && matches.count == 1]
+        try require(identityFailures == 0, "Format-only source copy failed float32 bitwise identity control")
+        try require(matches.count == 1, "Format-only HDR conversion did not uniquely match an independently specified rounding mode")
+        attachmentRounding = matches[0]
+        return formatProgress
+    }
+    private static func verifyStages(input: Raster, caseName: String) throws -> [[String: Any]] {
+        var reports: [[String: Any]] = [], actualInput = input
+        try require(lastStageReadbacks.count == 6, "Original FrostedGlass did not expose six diagnostic intermediates")
+        for stage in lastStageReadbacks {
+            let bytes = Data(bytes: stage.buffer.contents(), count: stage.stride * stage.height)
+            let expected = filtered(actualInput, width: stage.width, height: stage.height,
+                horizontal: stage.name.hasSuffix("horizontal"), wrongInputTexelSize: false)
+            var actual = Raster(width: stage.width, height: stage.height,
+                pixels: Array(repeating: .zero, count: stage.width * stage.height))
+            var maxCodeError = 0, failures = 0, samples: [[String: Any]] = []
+            for y in 0..<stage.height {
+                for x in 0..<stage.width {
+                    let packed = word(bytes, y * stage.stride + x * 4)
+                    let codes = [packed & 2047, (packed >> 11) & 2047, (packed >> 22) & 1023]
+                    let value = SIMD3(packedComponent(codes[0], fractionBits: 6),
+                        packedComponent(codes[1], fractionBits: 6), packedComponent(codes[2], fractionBits: 5))
+                    actual.pixels[y * stage.width + x] = value
+                    var expectedCodes: [Int] = []
+                    for channel in 0..<3 {
+                        let code = componentCode(expected[x, y][channel], fractionBits: channel == 2 ? 5 : 6)
+                        expectedCodes.append(Int(code))
+                        let error = abs(Int(codes[channel]) - Int(code))
+                        maxCodeError = max(maxCodeError, error)
+                        // Single-pass, actual-input comparison: one adjacent code
+                        // permits a fixed-function interpolation/float32 boundary.
+                        // It cannot accumulate six-pass biased rounding errors.
+                        if error > 1 || !value[channel].isFinite { failures += 1 }
+                    }
+                    if x == 0 || (x == stage.width / 2 && y == stage.height / 2) ||
+                        (x == stage.width - 1 && y == stage.height - 1) {
+                        samples.append(["x": x, "y": y, "actualCodes": codes.map(Int.init),
+                            "expectedCodes": expectedCodes])
+                    }
+                }
+            }
+            let file = "\(caseName)-\(stage.name).rg11b10.bin"
+            if let diagnosticOutput { try bytes.write(to: diagnosticOutput.appendingPathComponent(file)) }
+            reports.append(["stage": stage.name, "size": [stage.width, stage.height],
+                "cpuInput": stage.name == "level0.horizontal" ? "Original float32 fixture" : "Previous actual GPU intermediate",
+                "attachmentRounding": attachmentRounding.rawValue, "maximumComponentCodeError": maxCodeError,
+                "toleranceAdjacentCodes": 1, "failureCount": failures, "passed": failures == 0,
+                "readback": file, "rowBytes": stage.stride,
+                "sha256": SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(), "samples": samples])
+            actualInput = actual
+        }
+        return reports
+    }
     private static func verifyFrosted(device: MTLDevice, root: URL) throws -> [[String: Any]] {
         guard let queue = device.makeCommandQueue() else { throw HUDSourceError.invalid("Synthetic GPU queue unavailable") }
         let helper = try HUDSourceFrostedGlass(device: device, resourceRoot: root, mode: .desktopDisplayPixels)
@@ -173,6 +430,7 @@ enum VerifySourceBackdropGPU {
             let input = pattern(width: width, height: height, constant: constant)
             let expected = oracle(input, outputWidth: outWidth, outputHeight: outHeight)
             let actual = try read(device: device, queue: queue, helper: helper, input: input, outputWidth: outWidth, outputHeight: outHeight)
+            let stages = try verifyStages(input: input, caseName: name)
             try require(actual.count == expected.count, "FrostedGlass GPU byte count differs")
             var maximum = 0, square = 0.0, failures = 0
             // Four bytes allow two R/G 6-bit and B 5-bit intermediate rounding
@@ -208,8 +466,10 @@ enum VerifySourceBackdropGPU {
                 "comparedBytes": actual.count, "maximumByteError": maximum,
                 "rmsByteError": sqrt(square / Double(actual.count)), "toleranceRGBBytes": tolerance,
                 "alphaMustEqual": 255, "failureCount": failures, "controls": controls, "samples": samples,
-                "passed": failures == 0])
+                "attachmentRounding": attachmentRounding.rawValue, "stages": stages,
+                "passed": failures == 0 && stages.allSatisfy { $0["passed"] as? Bool == true }])
             frostedProgress = reports
+            try require(stages.allSatisfy { $0["passed"] as? Bool == true }, "Independent FrostedGlass per-pass oracle failed \(name)")
             try require(failures == 0, "Independent FrostedGlass oracle failed \(name): \(failures) bytes, max error \(maximum)")
         }
         return reports
@@ -433,6 +693,7 @@ enum VerifySourceBackdropGPU {
         guard CommandLine.arguments.count == 2 else { throw HUDSourceError.invalid("Expected synthetic GPU output directory") }
         let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        diagnosticOutput = output
         var report: [String: Any] = ["schemaVersion": 1, "passed": false,
             "input": "Synthetic file-memory pixels only; no desktop/screen/permission APIs invoked",
             "oracle": "Independent CPU 9tap H / 5 bilinear-tap V; per-tap threshold; target-level texel size; two Y flips per level; unsigned RGB11/11/10 quantization after each pass; final top-left bilinear sRGB copy",
@@ -446,6 +707,7 @@ enum VerifySourceBackdropGPU {
                 throw HUDSourceError.invalid("Synthetic Metal device/source resources unavailable")
             }
             report["device"] = device.name
+            report["attachmentConversionProbe"] = try verifyAttachmentConversion(device: device, root: root)
             report["frostedTests"] = try verifyFrosted(device: device, root: root)
             report["tileTests"] = try verifyCompositeTiles(device: device)
             report["rawImageTests"] = try verifyRawImage(root: root)
@@ -456,6 +718,7 @@ enum VerifySourceBackdropGPU {
             print("Independent synthetic FrostedGlass, ICC/tile and two-pass RawImage HDR GPU checks passed")
         } catch {
             report["error"] = String(describing: error)
+            if report["attachmentConversionProbe"] == nil { report["attachmentConversionProbe"] = formatProgress }
             if report["frostedTests"] == nil { report["frostedTests"] = frostedProgress }
             if report["rawImageTests"] == nil { report["rawImageTests"] = rawImageProgress }
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])

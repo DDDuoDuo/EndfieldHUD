@@ -555,10 +555,18 @@ final class OverlayController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(view)
-            armTransitionDeadline(after: SystemHUDView.entranceDuration + 0.2) { [weak self] in
+            // Preparation has its own bounded fallback. The finite source
+            // entrance deadline starts only when the real/fallback input is ready.
+            armTransitionDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2) { [weak self] in
                 self?.finishSystemOpening(token)
             }
-            view.animateEntrance { [weak self] in self?.finishSystemOpening(token) }
+            view.animateEntrance(ready: { [weak self, weak view] in
+                guard let self, let view, self.systemView === view,
+                      self.systemState.phase == .opening, self.systemState.generation == token else { return }
+                self.armTransitionDeadline(after: SystemHUDView.entranceDuration + 0.2) { [weak self] in
+                    self?.finishSystemOpening(token)
+                }
+            }) { [weak self] in self?.finishSystemOpening(token) }
         case .close(let token):
             logSystemPhase()
             systemView?.interactionEnabled = false
@@ -641,8 +649,12 @@ final class OverlayController: NSObject {
                 self.closeAfterShelfDrag = false
                 if close { self.closeSystemOverlay() }
             }
-            armShelfDragDeadline(after: SystemHUDView.entranceDuration + 0.2, completion: completion)
-            view.animateEntrance(completion: completion)
+            armShelfDragDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2, completion: completion)
+            view.animateEntrance(ready: { [weak self, weak view] in
+                guard let self, let view, self.systemView === view,
+                      self.shelfDragPresentation.generation == token else { return }
+                self.armShelfDragDeadline(after: SystemHUDView.entranceDuration + 0.2, completion: completion)
+            }, completion: completion)
         case .close: finishConcealedShelfClose()
         }
     }

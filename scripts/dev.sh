@@ -54,6 +54,12 @@ preserve_legacy_executable() {
 }
 
 SOURCES=("$PROJECT_DIR"/Sources/*.swift)
+BACKDROP_LINK_FLAGS=()
+if [ -d "$SELECTED_SDK/System/Library/Frameworks/ScreenCaptureKit.framework" ]; then
+    # Match the release link policy: the guarded macOS 14 background path
+    # must not prevent the native 10.15/11 development app from launching.
+    BACKDROP_LINK_FLAGS=(-Xlinker -weak_framework -Xlinker ScreenCaptureKit)
+fi
 if [ ! -f "${SOURCES[0]}" ]; then
     printf 'No Swift source files found in %s/Sources.\n' "$PROJECT_DIR" >&2
     exit 1
@@ -65,7 +71,8 @@ printf 'Building native development app for %s…\n' "$TARGET"
     -sdk "$SELECTED_SDK" -target "$TARGET" \
     -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -module-cache-path "$DEV_BUILD_DIR/module-cache" \
-    -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -lsqlite3 \
+    -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit \
+    "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 \
     "${SOURCES[@]}" -o "$DEV_STAGE/$APP_NAME"
 
 # Refresh the generated default icon only when its script or source changes.
@@ -99,6 +106,7 @@ if [ ! -d "$DEV_APP" ]; then
     if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
     ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
+    ditto "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
     cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$STAGED_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
@@ -120,11 +128,43 @@ else
     if [ -d "$DEV_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$DEV_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$DEV_APP/Contents/Resources/WorldMap"
     ditto "$PROJECT_DIR/Resources/Watch" "$DEV_APP/Contents/Resources/Watch"
+    ditto "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
     cp "$PROJECT_DIR/CREDITS.md" "$DEV_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$DEV_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$DEV_APP" "$SPARKLE_DIR"
     codesign --force --sign - "$DEV_APP"
 fi
+
+# Use the bundle verifier's native architecture, signature, weak-link and
+# current WatchSource checks without its release-only source-path restriction.
+# Development intentionally retains its checkout paths for source fallback.
+# Only runtime Resources/WatchSource is copied; extraction/recording files and
+# the installed game are outside this bundle's resource source directory.
+DEV_BINARY="$DEV_APP/Contents/MacOS/$APP_NAME"
+xcrun lipo "$DEV_BINARY" -verify_arch "$HOST_ARCH"
+codesign --verify --deep --strict --all-architectures "$DEV_APP"
+if ! otool -arch "$HOST_ARCH" -l "$DEV_BINARY" | awk '
+    $1 == "cmd" { load_command = $2 }
+    $1 == "name" && $2 ~ /ScreenCaptureKit.framework/ {
+        if (load_command != "LC_LOAD_WEAK_DYLIB") bad = 1
+    }
+    END { exit bad ? 1 : 0 }
+'; then
+    printf 'ScreenCaptureKit must be weak-linked for %s.\n' "$HOST_ARCH" >&2
+    exit 1
+fi
+SOURCE_WATCH="$PROJECT_DIR/Resources/WatchSource"
+[ -s "$SOURCE_WATCH/render-color-policy.json" ] || {
+    printf 'Missing original Watch rendering policy.\n' >&2; exit 1
+}
+while IFS= read -r -d '' SOURCE; do
+    RELATIVE="${SOURCE#"$SOURCE_WATCH/"}"
+    DESTINATION="$DEV_APP/Contents/Resources/WatchSource/$RELATIVE"
+    if [ ! -f "$DESTINATION" ] || ! cmp -s "$SOURCE" "$DESTINATION"; then
+        printf 'Missing or stale development Watch resource: %s\n' "$DESTINATION" >&2
+        exit 1
+    fi
+done < <(find "$SOURCE_WATCH" -type f -print0)
 
 printf '\nBuilt: %s\n' "$DEV_APP"
 printf 'Launch after quitting any running copy:\n  open %q\n' "$DEV_APP"
