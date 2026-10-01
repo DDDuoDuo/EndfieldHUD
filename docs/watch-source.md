@@ -21,11 +21,13 @@ macOS functions. Those feature panels retain their existing desktop interfaces.
   clips. Their wrapper advances with OutQuad; the 13.683333-second ambient clip
   advances linearly. Weighted scalar keys invert the time handles before
   sampling; baked quaternion keys are retained.
-- Legacy scalar curves preserve their source class ID. The installed player's
-  RectTransform registry accepts Z, anchored position, anchors, size and pivot;
-  its hash resolver rejects unregistered local X/Y. These serialized curves are
-  retained in the resource but ignored during playback, matching the native
-  binding. Transform-class vector/packed position and scale tracks still run.
+- Legacy scalar curves preserve their source class ID and property names.
+  RectTransform's own registry handles anchored position, anchors, size and
+  pivot; the installed player's serialized-type-tree fallback also accepts
+  inherited local X/Y and scale channels. The adapter retains those original
+  class-224 curves. Later layout writers override the axes they drive while
+  preserving other animated axes. This Legacy proof does not establish every
+  packed Animator binding entry.
 - Background opacity follows WatchBlur's separate Linear wrapper and original
   0.13333334-second alpha keys: an unweighted Hermite entrance and near-linear
   exit. These keys are not stretched to the main menu's duration. The desktop
@@ -106,8 +108,25 @@ using a platform constant. `_InvViewMatrix` uses the original Camera getter's
 negative-Z camera space: `Transform.localToWorld * Scale(1,1,-1)`. The original
 engine getter and default view-cache writer establish that reflection. The
 CPU projection/raycast adapter keeps its positive-Z convention separately.
+The original offscreen UI draw's fresh null payload is zeroed by the render
+graph; its callback writes `(Injected=1, FlipX=0, FlipY=0, orientation=0)`.
+This is distinct from the UI3D camera enum and from later backbuffer passes.
+The port pairs that flag with the GPU projection times the view matrix with
+its translation column removed. The shader subtracts world camera XYZ once;
+the original global stores those unchanged XYZ with W=0. The full VP remains
+separate for the source non-injected path. Rotated/translated-camera tests
+verify that camera-relative drawing preserves the CPU projection.
 Custom view overrides and the game's live render-target pipeline still need
 runtime correspondence; these shader values do not establish pixel parity.
+
+Normal Watch entry explicitly enables the UI3D camera path and disables the
+menu's own Volume. The installed pipeline requests format74,
+`B10G11R11_UFloatPack32`, an RGB HDR target without alpha; its default settings
+Volume profile is empty. The original UI postprocess constructor invokes copy,
+distortion, bloom and UI-uber stages, whose active effects depend on actual
+camera Volume state. Authored values in the disabled menu Volume are not an
+active-effect preset. The current direct LDR macOS drawable does not yet
+reproduce that target or postprocess chain.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
@@ -136,6 +155,15 @@ while Watch's live map hover dispatch remains unverified. The saved idle glow
 materials already have alpha zero. Region02's nested wheel wrapper has
 autoPlay=1, Linear ease and its original 14.966666-second quaternion loop; it
 does not rely on the Animation component's disabled PlayAutomatically flag.
+The installed Legacy Renderer animation handler writes plain `material.*`
+channels to the same renderer-wide property block used by the original
+`Renderer.SetPropertyBlock` internal call. These overrides therefore reach all
+of that Renderer’s material slots, including Region02's four-slot models;
+they do not alter shared Material assets or another Renderer’s ground material.
+Controller color writes and animated scalar channels share this property block:
+the last actual writer determines an overlapping property. A controller color
+is not assumed to permanently override a continuously sampled clip.
+Material-index-specific property-block precedence remains outside this path.
 Renderer sorting uses native UISortingOrder's absolute renderer offset; it is
 not added to the parent panel's Canvas order. Source terrain and spaceship
 instances therefore retain their native negative sorting offsets.

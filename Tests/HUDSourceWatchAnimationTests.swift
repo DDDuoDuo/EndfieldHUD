@@ -61,13 +61,27 @@ enum HUDSourceWatchAnimationTests {
                     transform: HUDSourceTransform(kind: .rectTransform, localPosition: HUDSourceVector3(0, 0, 0), rect: rect)),
                 group(groupOne, "Group1", SIMD2(214, 2)), group(groupTwo, "Group2", SIMD2(256, -150))])
             var groupCurves = [HUDSourceAnimationCurve]()
-            for id in [groupOne, groupTwo] {
-                groupCurves += [try curve("m_LocalPosition.x", [-26.34489], nodes: [id], classID: 224),
-                    try curve("m_LocalPosition.y", [0.5648358], nodes: [id], classID: 224),
-                    try curve("m_LocalPosition.z", [50, 0], nodes: [id], classID: 224),
-                    try curve("m_LocalScale.x", [0], nodes: [id], classID: 224),
-                    try curve("m_LocalScale.y", [0], nodes: [id], classID: 224),
-                    try curve("m_LocalScale.z", [0], nodes: [id], classID: 224)]
+            // Original watch_in01 Group1/2 inherited scalar endpoints. The
+            // installed Legacy TypeTree fallback writes these native fields;
+            // the later layout writer is responsible for restoring rows.
+            let originalX = -26.344890594482422, originalY = 0.564835786819458
+            func originalGroupCurve(_ id: HUDSourceID, _ name: String, _ property: String,
+                                    firstTime: Double, firstValue: Double, lastValue: Double) throws -> HUDSourceAnimationCurve {
+                let keys = [(firstTime, firstValue), (0.75, lastValue)].map { time, value in
+                    HUDSourceAnimationKey(time: time, value: .scalar(value), inSlope: .scalar(0), outSlope: .scalar(0),
+                        weightedMode: 0, inWeight: .scalar(0.3333333432674408), outWeight: .scalar(0.3333333432674408))
+                }
+                return try HUDSourceAnimationCurve(group: "m_FloatCurves",
+                    path: "Content/WatchNode/canvas_watch/RightBottomNode/ScrollView/Viewport/ScrollViewContent/RightBotton/" + name,
+                    attribute: property, nodeIDs: [id],
+                    body: HUDSourceAnimationCurve.Body(keys: keys, preInfinity: 2, postInfinity: 2), classID: 224)
+            }
+            for (id, name, firstTime) in [(groupOne, "Group1", 0.5333333611488342), (groupTwo, "Group2", 0.550000011920929)] {
+                groupCurves += [try originalGroupCurve(id, name, "m_LocalPosition.x", firstTime: firstTime,
+                                    firstValue: -26.344892501831055, lastValue: originalX),
+                    try originalGroupCurve(id, name, "m_LocalPosition.y", firstTime: firstTime,
+                                    firstValue: originalY, lastValue: originalY),
+                    try curve("m_LocalPosition.z", [50, 0], nodes: [id], classID: 224)]
             }
             let groupsAnimation = try HUDSourceWatchAnimation(scene: groupsScene, library: HUDSourceAnimationLibrary(clips: [
                 clip("_animationIn", 1, 0, groupCurves), clip("_animationLoop", 1, 2, []), clip("_animationOut", 1, 0, [])]))
@@ -75,14 +89,43 @@ enum HUDSourceWatchAnimationTests {
             let groupsResolved = try groupsScene.resolve(overrides: groupsPose.transforms)
             let firstPosition = groupsResolved[groupOne]!.worldMatrix.columns.3
             let secondPosition = groupsResolved[groupTwo]!.worldMatrix.columns.3
-            check(abs((firstPosition.x - secondPosition.x) + 42) < 1e-10 && abs((firstPosition.y - secondPosition.y) - 152) < 1e-10,
-                  "Unregistered RectTransform scalar local X/Y cannot collapse distinct anchored source rows")
+            check(firstPosition.x == originalX && secondPosition.x == originalX &&
+                  firstPosition.y == originalY && secondPosition.y == originalY,
+                  "Original class224 inherited XY endpoint keys write before the later layout pass")
             check(firstPosition.z == 0 && secondPosition.z == 0, "Registered RectTransform local Z still reaches its endpoint")
-            check(groupsPose.unregisteredBindings == ["224:m_LocalPosition.x", "224:m_LocalPosition.y",
-                  "224:m_LocalScale.x", "224:m_LocalScale.y", "224:m_LocalScale.z"],
-                  "Rejected native properties have bounded diagnostics while source keys remain available")
-            check(groupsResolved[groupOne]!.worldMatrix.columns.0.x == 1 && groupsResolved[groupTwo]!.worldMatrix.columns.1.y == 1,
-                  "Unregistered RectTransform scalar scale does not hide source rows")
+            check(groupsPose.unregisteredBindings.isEmpty, "Verified inherited bindings have no false rejection diagnostics")
+            let rowLayout = HUDSourceWatchLayout(scene: groupsScene, components: [rootID: [
+                HUDSourceWatchComponent(id: HUDSourceID(rawValue: "CAB-fixture:200"), type: "MonoBehaviour",
+                    script: "VerticalLayoutGroup", data: ["m_Enabled": .number(1), "m_ChildAlignment": .number(0),
+                        "m_Spacing": .number(9), "m_ChildControlWidth": .bool(false), "m_ChildControlHeight": .bool(false),
+                        "m_ChildForceExpandWidth": .bool(false), "m_ChildForceExpandHeight": .bool(false)])]])
+            groupsAnimation.apply(clip("Depth", 1, 0, [try curve("m_LocalPosition.z", [-5], nodes: [groupOne], classID: 224)]),
+                time: 0, to: &groupsPose, base: groupsResolved)
+            _ = try rowLayout.apply(to: &groupsPose)
+            let laidOut = try groupsScene.resolve(overrides: groupsPose.transforms)
+            let rowOne = laidOut[groupOne]!.localMatrix.columns.3, rowTwo = laidOut[groupTwo]!.localMatrix.columns.3
+            // Independent top-left uGUI calculation: -1920/2 + 286/2;
+            // 1080/2 - 143/2, then subtract one 143+9 row stride.
+            check(rowOne.x == -817 && rowTwo.x == -817 && rowOne.y == 468.5 && rowTwo.y == 316.5,
+                  "Layout after inherited animation restores separated source-size rows on both driven axes")
+            check(rowOne.z == -5 && rowTwo.z == 0 && laidOut[groupOne]!.rect!.size == SIMD2(286, 143),
+                  "Driven XY layout keeps animated depth and the original tile rectangle")
+            // A nonuniform synthetic scale distinguishes all three inherited
+            // components, and checks their effect on real corner geometry.
+            groupsAnimation.apply(clip("InheritedScale", 1, 0, [
+                try curve("m_LocalScale.x", [1, 2], nodes: [groupOne], classID: 224),
+                try curve("m_LocalScale.y", [1, 3], nodes: [groupOne], classID: 224),
+                try curve("m_LocalScale.z", [1, 4], nodes: [groupOne], classID: 224)]),
+                time: 1, to: &groupsPose, base: laidOut)
+            let scaledNode = try groupsScene.resolve(overrides: groupsPose.transforms)[groupOne]!
+            let scaledCorner = simd_mul(scaledNode.worldMatrix, SIMD4<Double>(143, 71.5, 2, 1))
+            check(scaledCorner == SIMD4<Double>(-531, 683, 3, 1) && groupsPose.unregisteredBindings.isEmpty,
+                  "Inherited scalar XYZ scale endpoints change actual geometry without changing classID")
+            groupsAnimation.apply(clip("UnknownRectProperty", 1, 0, [
+                try curve("m_UnknownFixtureProperty", [1], nodes: [groupTwo], classID: 224)]),
+                time: 0, to: &groupsPose, base: laidOut)
+            check(groupsPose.unregisteredBindings == ["224:m_UnknownFixtureProperty"],
+                  "Unknown RectTransform properties remain bounded diagnostics")
             let transformTracks = clip("Animator.state.Highlighted", 1, 0, [
                 try curve("m_LocalPosition.x", [12], nodes: [groupOne], classID: 4),
                 try curve("m_LocalPosition.y", [-13], nodes: [groupOne], classID: 4)])

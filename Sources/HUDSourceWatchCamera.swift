@@ -97,6 +97,27 @@ struct HUDSourceWatchCamera {
         simd_mul(cameraWorld, HUDSourceGeometry.scale(SIMD3<Double>(1, 1, -1)))
     }
 
+    /// HG removes the source view's fourth column before multiplying by the
+    /// non-jittered GPU projection. Its injected vertex path first subtracts
+    /// the camera's world position. Do the paired operation in this adapter's
+    /// positive-Z camera convention; projection already includes its GPU Y
+    /// policy. Keeping a full translated VP here subtracts camera translation
+    /// twice and separates rendered geometry from CPU raycasts.
+    static func viewNoTranslationProjection(gpuProjection: simd_float4x4,
+                                            view: simd_double4x4) throws -> simd_float4x4 {
+        guard HUDSourceGeometry.isFinite(view),
+              (0..<4).allSatisfy({ column in (0..<4).allSatisfy { gpuProjection[column][$0].isFinite } }) else {
+            throw HUDSourceError.invalid("Invalid camera-relative UI matrix input")
+        }
+        var noTranslation = HUDSourceGeometry.floatMatrix(view)
+        noTranslation.columns.3 = SIMD4(0, 0, 0, 1)
+        let result = simd_mul(gpuProjection, noTranslation)
+        guard (0..<4).allSatisfy({ column in (0..<4).allSatisfy { result[column][$0].isFinite } }) else {
+            throw HUDSourceError.invalid("Nonfinite camera-relative UI projection")
+        }
+        return result
+    }
+
     /// HGCamera.UpdateFrustum probes the inverse GPU projection at (0,1,0,1)
     /// and divides by w to choose the Y sign. The near/far tuple is copied
     /// unchanged into _UIProjectionParams; reversed Z is a separate decision.

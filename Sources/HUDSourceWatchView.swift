@@ -343,9 +343,13 @@ final class HUDSourceWatchView: NSView {
             for column in 0..<4 { gpuProjection[column].y = -gpuProjection[column].y; gpuVP[column].y = -gpuVP[column].y }
             renderer.submit(camera: HUDSourceMetalRenderer.Camera(
                 viewProjection: gpuVP,
+                viewNoTranslationProjection: try HUDSourceWatchCamera.viewNoTranslationProjection(
+                    gpuProjection: gpuProjection, view: camera.camera.view),
                 worldSpacePosition: SIMD3(Float(position.x), Float(position.y), Float(position.z)),
                 timeSeconds: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : Float(time),
-                renderPathInjected: 0, flipX: 0, flipY: 0,
+                // The original freshly constructed offscreen UI color pass
+                // has a zeroed payload and writes this camera-relative tuple.
+                renderPathInjected: 1, flipX: 0, flipY: 0,
                 projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(cameraModel.shaderCameraToWorld),
                 uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
                     near: Float(cameraModel.near), far: Float(cameraModel.far))),

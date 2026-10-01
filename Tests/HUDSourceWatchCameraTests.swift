@@ -85,6 +85,39 @@ enum HUDSourceWatchCameraTests {
                 near: Float(model.near), far: Float(model.far))
             check(uiParams == SIMD4(-1, Float(model.near), Float(model.far), 1 / Float(model.far)),
                   "Actual Y-flipped adapter projection produces HG sign/near/far/reciprocal tuple")
+            let relativeVP = try HUDSourceWatchCamera.viewNoTranslationProjection(
+                gpuProjection: gpuProjection, view: frame.camera.view)
+            let sourceCenter = simd_mul(relativeVP, SIMD4<Float>(0, 0, 30, 1))
+            close(Double(sourceCenter.x / sourceCenter.w), 0,
+                  "Injected source world-center remains at the viewport center")
+            close(Double(sourceCenter.y / sourceCenter.w), 0,
+                  "Camera Y100 is subtracted once rather than again in the shader matrix")
+            // Use a translated, rotated camera and independent camera-local
+            // points, so an identity-only or translation-only fix cannot pass.
+            let rotatedWorld = simd_mul(HUDSourceGeometry.translation(SIMD3(27, -48, 5)),
+                try HUDSourceWatchCamera.quaternion(eulerDegrees: SIMD3(22, -13, 7)).matrix())
+            let rotatedView = simd_inverse(rotatedWorld)
+            let rotatedRelativeVP = try HUDSourceWatchCamera.viewNoTranslationProjection(
+                gpuProjection: gpuProjection, view: rotatedView)
+            let cameraPosition = SIMD3<Float>(27, -48, 5)
+            for localPoint in [SIMD4<Double>(0, 0, 30, 1), SIMD4(3, -2, 20, 1), SIMD4(-4, 6, 60, 1)] {
+                let worldPoint = simd_mul(rotatedWorld, localPoint)
+                let relativePoint = SIMD3(Float(worldPoint.x), Float(worldPoint.y), Float(worldPoint.z)) - cameraPosition
+                let injectedClip = simd_mul(rotatedRelativeVP,
+                    SIMD4(relativePoint.x, relativePoint.y, relativePoint.z, 1))
+                let independentlyExpected = simd_mul(gpuProjection,
+                    SIMD4(Float(localPoint.x), Float(localPoint.y), Float(localPoint.z), 1))
+                for axis in 0..<4 {
+                    close(Double(injectedClip[axis]), Double(independentlyExpected[axis]),
+                          "Camera-relative shader preserves projected clip axis\(axis) under camera rotation/translation",
+                          tolerance: 0.0001)
+                }
+            }
+            var invalidView = matrix_identity_double4x4
+            invalidView[2].x = .infinity
+            fails("Nonfinite relative-view input is rejected") {
+                _ = try HUDSourceWatchCamera.viewNoTranslationProjection(gpuProjection: gpuProjection, view: invalidView)
+            }
             let unflippedParams = try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: cpuProjection, near: 0.3, far: 200)
             check(unflippedParams.x == 1, "HG Y sign follows the supplied GPU matrix, not a fixed OS constant")
             let negativeW = simd_float4x4(diagonal: SIMD4<Float>(1, 1, 1, -1))
