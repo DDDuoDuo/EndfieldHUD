@@ -22,6 +22,8 @@ enum CoreTests {
         assertionCount += SystemOverlayStateTests.run() + ShelfDragPresentationStateTests.run() + HUDMotionTests.run()
         assertionCount += HUDMechanicalArtworkTests.run() + HUDDeploymentFlickerTests.run() + HUDControlHighlightTests.run()
         assertionCount += HUDWatchArtworkTests.run()
+        assertionCount += HUDSourceSceneTests.run()
+        assertionCount += HUDSourceWatchAnimationTests.run()
         assertionCount += HUDChargeBadgeTests.run()
         assertionCount += HUDModuleTests.run()
         assertionCount += HUDNavigationTests.run()
