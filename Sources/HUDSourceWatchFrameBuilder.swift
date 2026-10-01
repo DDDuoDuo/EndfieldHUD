@@ -294,7 +294,7 @@ final class HUDSourceWatchFrameBuilder {
             if let mesh = document.component("MeshFilter", on: id), let sourceID = mesh["m_Mesh"].targetID,
                let meshName = sourceMeshNames[sourceID], let render = document.component("MeshRenderer", on: id) {
                 for material in render["m_Materials"].array {
-                    guard let materialID = material.targetID, let name = materials[materialID]?["name"].string else { continue }
+                    guard let materialID = material.targetID, materials[materialID]?["name"].string != nil else { continue }
                     var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: materialID.rawValue, world: HUDSourceGeometry.floatMatrix(world), color: SIMD4(repeating: 1))
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
                     applyMaterialProperties(pose, on: id, materialID: materialID, to: &batch)
@@ -320,7 +320,7 @@ final class HUDSourceWatchFrameBuilder {
                     let positions = mesh.positions.map { SIMD4<Float>(Float($0[0]), Float($0[1]), Float($0[2]), 1) }
                     let uv = mesh.uv0.isEmpty ? Array(repeating: SIMD2<Float>(repeating: 0), count: positions.count)
                         : mesh.uv0.map { SIMD2<Float>(Float($0[0]), Float($0[1])) }
-                    let normals = mesh.normals.map { SIMD3<Float>(Float($0[0]), Float($0[1]), Float($0[2])) }
+                    let normals = try mesh.normalVectors()
                     let uv1 = mesh.uv1.map { SIMD2<Float>(Float($0[0]), Float($0[1])) }
                     let colors = mesh.colors.map { SIMD4<Float>(Float($0[0]), Float($0[1]), Float($0[2]), Float($0[3])) }
                     try renderer.registerGeometry(named: name, positions: positions, uv: uv, colors: colors,

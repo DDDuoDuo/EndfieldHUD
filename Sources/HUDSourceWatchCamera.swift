@@ -9,6 +9,7 @@ struct HUDSourceWatchCamera {
         let scale: Double
         let screenAspect: Double
         let worldHeight: Double
+        let runtimeVerticalFieldOfViewDegrees: Double
     }
     struct Frame {
         let camera: HUDSourceCamera
@@ -82,6 +83,8 @@ struct HUDSourceWatchCamera {
     let worldParent: simd_double4x4
     let rootPosition: SIMD3<Double>
     let rootRotation: HUDSourceQuaternion
+    /// Serialized/default standard FOV. UIManager.SetUICameraFOV adjusts the
+    /// actual camera FOV for narrow screens before the canvas render callback.
     let verticalFieldOfViewDegrees: Double
     let near: Double
     let far: Double
@@ -177,15 +180,32 @@ struct HUDSourceWatchCamera {
         }
     }
 
-    func layout(screenSize: SIMD2<Double>) throws -> Layout {
+    /// UIManager.SetUICameraFOV (source Lua): preserve the standard horizontal
+    /// FOV below UIConst.STANDARD_RATIO; wider screens keep the standard vertical
+    /// FOV. This models the initialized positive-resolution listener branch and
+    /// every later resize. It does not infer a camera from recording geometry.
+    func runtimeVerticalFieldOfViewDegrees(screenSize: SIMD2<Double>) throws -> Double {
         guard screenSize.x.isFinite, screenSize.y.isFinite, screenSize.x > 0, screenSize.y > 0 else {
             throw HUDSourceError.invalid("Invalid source screen dimensions")
         }
+        let aspect = screenSize.x / screenSize.y
+        let referenceAspect = Double(Float(bitPattern: 0x3fe38e39))
+        guard aspect < referenceAspect else { return verticalFieldOfViewDegrees }
+        // Unity's public Camera conversion methods have float parameters and
+        // results. Preserve those API boundaries around the FOV identities.
+        let halfStandard = verticalFieldOfViewDegrees * .pi / 360
+        let horizontal = Float(2 * atan(tan(halfStandard) * referenceAspect) * 180 / .pi)
+        let vertical = Float(2 * atan(tan(Double(horizontal) * .pi / 360) / Double(Float(aspect))) * 180 / .pi)
+        return Double(vertical)
+    }
+
+    func layout(screenSize: SIMD2<Double>) throws -> Layout {
+        let runtimeFOV = try runtimeVerticalFieldOfViewDegrees(screenSize: screenSize)
         let worldPosition: SIMD4<Double> = simd_mul(worldParent, SIMD4<Double>(rootPosition.x, rootPosition.y, rootPosition.z, 1))
         // False 'useLocalPosition' branch in the actual WorldSpace caller reads
         // Transform.position.z. It is not distance along camera forward.
         let z = abs(Float(worldPosition.z))
-        let fov = Float(verticalFieldOfViewDegrees)
+        let fov = Float(runtimeFOV)
         let radians = ((fov * 0.5) / 180) * Float.pi
         let halfHeight = Float(tan(Double(radians))) * z
         let height = halfHeight + halfHeight
@@ -205,14 +225,14 @@ struct HUDSourceWatchCamera {
             throw HUDSourceError.invalid("Invalid source world canvas scale")
         }
         return Layout(canvasSize: SIMD2(Double(size.x), Double(size.y)), scale: Double(scale),
-                      screenAspect: Double(aspect), worldHeight: Double(height))
+                      screenAspect: Double(aspect), worldHeight: Double(height), runtimeVerticalFieldOfViewDegrees: runtimeFOV)
     }
 
     func frame(screenSize: SIMD2<Double>, localRotation: HUDSourceQuaternion? = nil) throws -> Frame {
         let layout = try self.layout(screenSize: screenSize)
         guard let view = HUDSourceGeometry.inverse(cameraWorld) else { throw HUDSourceError.invalid("Invalid camera view") }
         let camera = try HUDSourceCamera.perspective(view: view,
-            verticalFieldOfViewRadians: verticalFieldOfViewDegrees * .pi / 180,
+            verticalFieldOfViewRadians: layout.runtimeVerticalFieldOfViewDegrees * .pi / 180,
             aspect: screenSize.x / screenSize.y, near: near, far: far)
         let rotation = try (localRotation ?? rootRotation).matrix()
         let trs = simd_mul(simd_mul(HUDSourceGeometry.translation(rootPosition), rotation),

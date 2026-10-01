@@ -70,8 +70,32 @@ enum HUDSourceWatchDomainTests {
             let external = HUDSourceGeometry.translation(SIMD3(1, 2, 3)) * HUDSourceGeometry.scale(SIMD3(repeating: 0.01))
             let frame = try domain.frame(domainWorld: external)
             check(!frame.meshes.isEmpty, "Real Domain must emit original mesh batches")
+            let packed = Float(bitPattern: 0x40001234)
+            let normal = try HUDSourceWatchDomain.normalVectors([[Double(packed)]], vertexCount: 1)[0]
+            check(normal.x.bitPattern == packed.bitPattern && normal.y == 0 && normal.z == 0,
+                  "Single-component packed normal must retain source x bits for shader decoding")
+            let fullNormal = try HUDSourceWatchDomain.normalVectors([[0.25, -0.5, 1]], vertexCount: 1)[0]
+            check(fullNormal == SIMD3(0.25, -0.5, 1), "Three-component normal must retain every source component")
+            let payload: UInt32 = 0x7fc01234
+            let packedNaN = try HUDSourceWatchDomain.normalVectors([[.nan]], vertexCount: 1, words: [[payload]])[0]
+            check(packedNaN.x.bitPattern == payload && packedNaN.y == 0 && packedNaN.z == 0,
+                  "Packed NaN normal must retain raw payload rather than a canonical Float.nan")
+            do {
+                _ = try HUDSourceWatchDomain.normalVectors([[.nan]], vertexCount: 1)
+                fatalError("Packed non-finite normal without raw words must be rejected")
+            } catch { check(true, "Missing packed normal payload was rejected") }
+            do {
+                _ = try HUDSourceWatchDomain.normalVectors([[1, 2]], vertexCount: 1)
+                fatalError("Unreviewed normal dimension must be rejected")
+            } catch { check(true, "Unreviewed normal dimension was rejected") }
             let local = try domain.scene.resolve()
             for batch in frame.meshes {
+                let normals = try batch.mesh.normalVectors()
+                check(normals.isEmpty || normals.count == batch.mesh.positions.count,
+                      "Every actual Region01 mesh normal channel must support source GPU upload")
+                check(batch.mesh.normal_words.map { words in
+                    zip(normals, words).allSatisfy { $0.0.x.bitPattern == $0.1[0] }
+                } ?? false, "Actual packed normal words must reach vertex upload without losing payload bits")
                 let expected = external * local[batch.nodeID]!.worldMatrix
                 let error = simd_length(batch.worldMatrix.columns.3 - expected.columns.3)
                 check(error < 1e-9, "Mesh instance must retain exact external×source world matrix")

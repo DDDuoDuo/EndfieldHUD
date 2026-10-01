@@ -10,7 +10,7 @@ SOURCE_NAMES=(HUDResources HUDSourceScene HUDSourceWatchAnimation HUDSourceWatch
     HUDSourceWatchCamera HUDSourceMetalRenderer HUDSourceWatchFrameBuilder)
 SOURCE_FILES=()
 for name in "${SOURCE_NAMES[@]}"; do SOURCE_FILES+=("$TASK_ROOT/Sources/$name.swift"); done
-xcrun swiftc -swift-version 5 -parse-as-library -sdk "$SDK" -module-cache-path "$RUNTIME/module-cache" \
+xcrun swiftc -g -swift-version 5 -parse-as-library -sdk "$SDK" -module-cache-path "$RUNTIME/module-cache" \
     -framework Cocoa -framework Metal -framework MetalKit \
     "${SOURCE_FILES[@]}" "$TASK_ROOT/scripts/RenderSourceWatchPreviews.swift" -o "$RUNTIME/RenderSourceWatchPreviews"
 "$RUNTIME/RenderSourceWatchPreviews" "$OUTPUT"

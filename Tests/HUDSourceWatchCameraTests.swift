@@ -23,17 +23,32 @@ enum HUDSourceWatchCameraTests {
             let source = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self, from: Data(contentsOf: sourceURL))
             let model = try HUDSourceWatchCamera(runtimeRoot: source)
             check(model.worldRootID.rawValue == "CAB-c8c00fab94bd2bb66b9b7e5ccbec370c:-7961340619866959176", "Gyro and ScaleHelper resolve their actual shared WorldRoot")
-            close(model.verticalFieldOfViewDegrees, 15.381799697875977, "Original UI camera FOV remains unchanged")
+            close(model.verticalFieldOfViewDegrees, 15.381799697875977, "Serialized standard FOV remains the source default")
             let normal = try model.layout(screenSize: SIMD2(1920, 1080))
             check(normal.canvasSize == SIMD2(2400, 1350), "PC reference scale1.25 changes the runtime canvas to2400×1350")
             let narrow = try model.layout(screenSize: SIMD2(1728, 1080))
             check(narrow.canvasSize == SIMD2(2400, 1500), "8:5 recording preserves width and expands canvas height")
-            close(narrow.worldHeight, 8.102614402770996, "World-space canvas height from30*tan(original half FOV)*2", tolerance: 1e-6)
-            close(narrow.scale, 0.005401742644608021, "Native float arithmetic gives world canvas scale for8:5", tolerance: 1e-9)
+            close(narrow.runtimeVerticalFieldOfViewDegrees, 17.06695749507, "8:5 uses the original horizontal-FOV preservation rule", tolerance: 1e-6)
+            close(narrow.worldHeight, 9.002904891967773, "World-space height uses the adjusted runtime camera FOV", tolerance: 1e-6)
+            close(narrow.scale, 0.006001936737447977, "PC runtime canvas uses CUR_STANDARD width and adjusted FOV", tolerance: 1e-9)
+            close(narrow.scale, normal.scale, "Narrow FOV adjustment preserves the standard world scale", tolerance: 1e-9)
             let wide = try model.layout(screenSize: SIMD2(2560, 1080))
             close(wide.canvasSize.x, 3200, "Wide viewport expands the canvas width", tolerance: 0.001)
             close(wide.canvasSize.y, 1350, "Wide viewport preserves standard canvas height")
             close(wide.scale, normal.scale, "Wide screen keeps the standard vertical world scale")
+            close(wide.runtimeVerticalFieldOfViewDegrees, model.verticalFieldOfViewDegrees, "Wider screens retain standard vertical FOV")
+            func horizontalFOV(_ vertical: Double, _ aspect: Double) -> Double {
+                2 * atan(tan(vertical * .pi / 360) * aspect) * 180 / .pi
+            }
+            let standardHorizontal = horizontalFOV(model.verticalFieldOfViewDegrees, 16.0 / 9.0)
+            close(horizontalFOV(narrow.runtimeVerticalFieldOfViewDegrees, 1.6), standardHorizontal,
+                  "Independent trigonometric check preserves horizontal coverage at8:5", tolerance: 1e-6)
+            let portrait = try model.layout(screenSize: SIMD2(1080, 1920))
+            close(horizontalFOV(portrait.runtimeVerticalFieldOfViewDegrees, 9.0 / 16.0), standardHorizontal,
+                  "Narrower resize retains horizontal coverage without fitted camera values", tolerance: 2e-6)
+            let narrowAgain = try model.layout(screenSize: SIMD2(1728, 1080))
+            close(narrowAgain.runtimeVerticalFieldOfViewDegrees, narrow.runtimeVerticalFieldOfViewDegrees,
+                  "Resize recomputes from standard FOV rather than adjusting an already adjusted FOV")
             let sourceScaleOne = try HUDSourceWatchCamera(runtimeRoot: source, referenceResolutionScale: 1)
             let scaleOne = try sourceScaleOne.layout(screenSize: SIMD2(1728, 1080))
             close(scaleOne.scale / narrow.scale, 1.25, "Runtime PC multiplier is not the serialized prefab scale", tolerance: 2e-7)
@@ -97,6 +112,7 @@ enum HUDSourceWatchCameraTests {
             let stoppedRotation = try motion.rotation(at: 10)
             check(!motion.isAnimating && stoppedRotation == beforeStop, "Teardown freezes gyro without an ownerless animation")
             fails("Invalid screen size is rejected") { _ = try model.layout(screenSize: .zero) }
+            fails("Nonfinite resize dimensions are rejected") { _ = try model.runtimeVerticalFieldOfViewDegrees(screenSize: SIMD2(.infinity, 1080)) }
             fails("Invalid pointer input is rejected") { _ = try model.gyro.targetEuler(mouseUnity: SIMD2(.nan, 0), screenSize: screen) }
             fails("Malformed runtime asset is rejected instead of guessing a camera") { _ = try HUDSourceWatchCamera(runtimeRoot: .array([])) }
         } catch { fatalError("Source Watch camera test failed: \(error)") }

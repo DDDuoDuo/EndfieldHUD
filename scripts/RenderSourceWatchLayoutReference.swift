@@ -163,10 +163,12 @@ enum RenderSourceWatchLayoutReference {
         }
         let report: [String: Any] = ["schemaVersion": 1, "evidence": "Native Swift source geometry; no GPU or raster output",
             "commit": ProcessInfo.processInfo.environment["GITHUB_SHA"] ?? "local", "viewport": [1728, 1080], "mouseUnity": [864, 540],
-            "cameraPolicy": "Original source camera and settled original center-mouse gyro for every sampled wrapper pose",
+            "cameraPolicy": "Source standard FOV with UIManager narrow-aspect runtime adjustment; settled original center-mouse gyro for every sampled wrapper pose",
             "matrixOrder": "JSON rows; matrices multiply column vectors; Unity +Y up; projected pixels +Y down",
             "canvasSize": [camera.layout.canvasSize.x, camera.layout.canvasSize.y], "worldScale": camera.layout.scale,
             "worldHeight": camera.layout.worldHeight, "originalFOVDegrees": cameraModel.verticalFieldOfViewDegrees,
+            "standardFOVDegrees": cameraModel.verticalFieldOfViewDegrees,
+            "runtimeFOVDegrees": camera.layout.runtimeVerticalFieldOfViewDegrees,
             "cameraNear": cameraModel.near, "cameraFar": cameraModel.far,
             "worldParent": matrix(cameraModel.worldParent), "rootPosition": [cameraModel.rootPosition.x, cameraModel.rootPosition.y, cameraModel.rootPosition.z],
             "gyroEulerDegrees": [euler.x, euler.y, euler.z], "gyroQuaternion": [rotation.x, rotation.y, rotation.z, rotation.w],
