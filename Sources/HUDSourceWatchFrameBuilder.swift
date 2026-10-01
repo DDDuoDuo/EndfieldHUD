@@ -41,6 +41,7 @@ final class HUDSourceWatchFrameBuilder {
     private var geometryKeys: [HUDSourceID: [Double]] = [:]
     private var textMeshes: [HUDSourceID: (key: [Double], mesh: HUDSourceTextGeometry.Mesh)] = [:]
     private let buttonIDs: Set<HUDSourceID>
+    private let canvasSorting: HUDSourceCanvasSorting
     private struct SoftMask {
         let worldToUnit: simd_double4x4
         let textureID: String
@@ -62,6 +63,7 @@ final class HUDSourceWatchFrameBuilder {
     init(document: HUDSourceWatchDocument, renderer: HUDSourceMetalRenderer,
          domain: HUDSourceWatchDomain? = nil) throws {
         self.document = document; self.renderer = renderer
+        canvasSorting = HUDSourceCanvasSorting(scene: document.scene, components: document.components)
         let sourceDomain = try domain ?? HUDSourceWatchDomain(resourceRoot: document.root.appendingPathComponent("Domain"))
         self.domain = sourceDomain
         text = try HUDSourceTextGeometry(document: document, additionalComponents: sourceDomain.components,
@@ -145,17 +147,20 @@ final class HUDSourceWatchFrameBuilder {
             throw HUDSourceError.invalid("Unresolved original UIWatchPanelCut world matrix")
         }
         let watchWorldToLocal = Self.flatten(watchInverse)
+        // The standalone port has one Watch panel. Keep its authored base as
+        // a source reference; registered Canvas writers all receive that same
+        // base, independently of their parent Canvas's offset.
+        let panelBase = Int(document.component("Canvas", on: document.scene.rootID)?["m_SortingOrder"].float() ?? 0)
+        let sorting = canvasSorting.resolve(panelBase: panelBase)
         var canvases: [HUDSourceID: HUDSourceID] = [:], orders: [HUDSourceID: Int] = [:]
         var masks: [HUDSourceID: [HUDSourceID]] = [:]
         var sequence = 0
         for id in document.scene.traversalIDs {
             guard let n = resolved[id], n.activeInHierarchy else { continue }
             let parent = n.node.parentID
-            let canvas = document.component("Canvas", on: id)
-            canvases[id] = canvas != nil ? id : parent.flatMap { canvases[$0] }
-            let inheritedOrder = parent.flatMap { orders[$0] } ?? 0
-            orders[id] = canvas?["m_OverrideSorting"].flag() == true ? Int(canvas!["m_SortingOrder"].float()) : inheritedOrder
-            masks[id] = canvas?["m_OverrideSorting"].flag() == true ? [] : (parent.flatMap { masks[$0] } ?? [])
+            canvases[id] = sorting[id]?.nearestCanvasID
+            orders[id] = sorting[id]?.sortingOrder ?? 0
+            masks[id] = sorting[id]?.startsSortingBoundary == true ? [] : (parent.flatMap { masks[$0] } ?? [])
             if document.component("RectMask2D", on: id) != nil { masks[id, default: []].append(id) }
             guard let canvasID = canvases[id], let canvasNode = resolved[canvasID] else { continue }
             let canvasWorld = simd_mul(worldRoot, canvasNode.worldMatrix)
@@ -209,6 +214,13 @@ final class HUDSourceWatchFrameBuilder {
                         materialID = animation["_material"].targetID ?? materialID
                     }
                 } else {
+                    if sprites[component.id] == nil {
+                        let dynamicPath = component["imgRefPath"].string ?? ""
+                        if component["m_Sprite"].targetID != nil || !dynamicPath.isEmpty {
+                            diagnostics.append("Unresolved original UIImage Sprite: \(n.node.path) / \(dynamicPath)")
+                            continue
+                        }
+                    }
                     let fill = pose.value("m_FillAmount", on: id, fallback: component["m_FillAmount"].float(1))
                     let pivot = pose.transforms[id]?.pivot?.simd ?? n.node.transform.rect?.pivot.simd ?? SIMD2(0.5, 0.5)
                     let mesh = try HUDSourceImageGeometry.build(image: component, sprite: sprites[component.id], rect: rect, pivot: pivot, fillAmount: fill)
@@ -296,7 +308,9 @@ final class HUDSourceWatchFrameBuilder {
                     var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: materialID.rawValue, world: HUDSourceGeometry.floatMatrix(world), color: SIMD4(repeating: 1))
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
                     applyMaterialProperties(pose, on: id, materialID: materialID, to: &batch)
-                    batches.append((Int(render["m_SortingOrder"].float()), sequence, batch)); sequence += 1
+                    let sourceOrder = HUDSourceWatchDomain.rendererSortingOrder(renderer: .object(render.data),
+                        ownComponents: document.components[id] ?? [])
+                    batches.append((sourceOrder, sequence, batch)); sequence += 1
                 }
             }
         }
@@ -339,7 +353,8 @@ final class HUDSourceWatchFrameBuilder {
                         throw HUDSourceError.invalid("Unsupported original Domain submesh")
                     }
                     var batch = HUDSourceMetalRenderer.Batch(mesh: name, material: materialID.rawValue,
-                        world: HUDSourceGeometry.floatMatrix(instance.worldMatrix), color: SIMD4(repeating: 1), indexRange: first..<(first + count))
+                        world: HUDSourceGeometry.floatMatrix(instance.worldMatrix), color: SIMD4(repeating: 1),
+                        textureOverrides: instance.sourceTextureOverrides, indexRange: first..<(first + count))
                     for (uniform, value) in instance.sourceUniformOverrides {
                         if let number = value.number { batch.uniformOverrides[uniform] = [Float(number)] }
                     }

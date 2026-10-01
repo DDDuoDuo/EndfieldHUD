@@ -1,1 +1,1423 @@
-{"textures":[{"id":"CAB-033a310a4dc2034d606d02d7c0617c3b:-4578960290218705282","name":"map_spaceship","source":{"name":"Data/Bundles/Windows/main/594e1559cadc7c16466a9ac2.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"FCEDFAF95834E358E0685530069FD8C6","offset":625925900,"length":151605,"md5":"0844C6F4CAC1304612F527AB08506F55","sha256":"0d67b04e63df554e63aeb6eaf682a259236b5aa8802dcf406cdea0206721c6fa","md5_verified":true},"width":1024,"height":1024,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/map_spaceship---4578960290218705282.png","bytes":195533,"sha256":"f5359114fe097ce88fe9dccc60bc0125cc24c179c7f2eafdedc2415484058e40"}},{"id":"CAB-18b095294e8c2cbc38223244e7112ab8:8007938032893606277","name":"map01_bloom","source":{"name":"Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"0D25AFD638AB93A71F82ACE1E48F7059","offset":952074323,"length":1414532,"md5":"BB006D61DAB164AAC0810C9E093A3720","sha256":"c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af","md5_verified":true},"width":404,"height":372,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/map01_bloom--8007938032893606277.png","bytes":37009,"sha256":"6b313ef2e5b847be2bb28d4888ee050e801d4ad6401c25c1b122981cc8557c43"}},{"id":"CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626","name":"map_building_hover","source":{"name":"Data/Bundles/Windows/main/bcf69176728c14c8d89dd034.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":116702356,"length":4072,"md5":"BDBE0C7B0EF2B289CF8EEDC97334CA58","sha256":"071a710b732f82d9fb7b52d7ade2b839e01844825da6b47054ca377acb5be4b3","md5_verified":true},"width":500,"height":500,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/map_building_hover--5878083957641791626.png","bytes":2592,"sha256":"5218dbc7d02bbe7cf9df467d22acd5bc1b68fbe7d192e91215c182920611097f"}},{"id":"CAB-665b872f0e8b37ab525ae5438d39689e:-8559442201712933853","name":"deco_readio_mask","source":{"name":"Data/Bundles/Windows/main/0748a52a8ddd072b14c0abf3.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":896219922,"length":26634,"md5":"D1D09BEC9C058742049B002092EC30B6","sha256":"97e8bf8e8b1842afafe5d4c997eec8b857008e59d3224b7a486a53c158cc76a9","md5_verified":true},"width":196,"height":212,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/deco_readio_mask---8559442201712933853.png","bytes":11393,"sha256":"98994b2c765f37837dfe6f6596400dc44e2084e3856f2667371b1fbf66d246d4"}},{"id":"CAB-665b872f0e8b37ab525ae5438d39689e:3554789046412338323","name":"icon_char","source":{"name":"Data/Bundles/Windows/main/0748a52a8ddd072b14c0abf3.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":896219922,"length":26634,"md5":"D1D09BEC9C058742049B002092EC30B6","sha256":"97e8bf8e8b1842afafe5d4c997eec8b857008e59d3224b7a486a53c158cc76a9","md5_verified":true},"width":104,"height":104,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/icon_char--3554789046412338323.png","bytes":8493,"sha256":"dc711242e1ac2a313429d01b8ba663908942246f8b2685a12ecc67d5f0b5987a"}},{"id":"CAB-8ef9b04f489a760cbab95424d6de4ae4:-9198916553927714072","name":"T_region02_fog","source":{"name":"Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"40E7DB1645D20991CB0FE316B2128FC2","offset":546770344,"length":2800202,"md5":"F3D4B1F8EB589C92D3A335CFCBE1951F","sha256":"def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463","md5_verified":true},"width":1024,"height":1024,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":0},"png":{"file":"textures/T_region02_fog---9198916553927714072.png","bytes":935814,"sha256":"ca9f849161122fe1fd4e25d142f44d6714bf97c568c7e5cbb97df2ea538cd7ad"}},{"id":"CAB-9be43e1316462700d364842c0ef4341b:-2382921133099723979","name":"icon_sapceship_room_icon_control_console","source":{"name":"Data/Bundles/Windows/main/1b46440d89497313fc5a8316.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"FCEDFAF95834E358E0685530069FD8C6","offset":809409249,"length":191577,"md5":"4329F27EF5012BDF8610B70E82963AE4","sha256":"5c8bd02275deb67ac566ad7d95c5681d46406ef2673d1c6b5db0960a0b487911","md5_verified":true},"width":72,"height":72,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/icon_sapceship_room_icon_control_console---2382921133099723979.png","bytes":1411,"sha256":"21e658be69ef0c14be01397c8c1db53281f43a4681daa69ae2f0a50e214dc8c6"}},{"id":"CAB-a2b352154e43a41848e634e361e8e205:4275033587688225551","name":"T_fx_mask_02_M","source":{"name":"Data/Bundles/Windows/main/a6ed0a600e081e2cfa4f79bd.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":944575515,"length":29997,"md5":"FD1ABA6E1992FF77645EA2B98F90D0A6","sha256":"789e096ed7fea292762aae9cdc8f3a592d3ba2ed8d881030508dfd2e0ebc6b40","md5_verified":true},"width":256,"height":256,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":13},"png":{"file":"textures/T_fx_mask_02_M--4275033587688225551.png","bytes":19861,"sha256":"4ca3a5967e2ebec6a2c81dc11524982c779c1ce76c9cec6aa117f52009cfde22"}},{"id":"CAB-c9660f932fa68fee05fa99d3ad953d96:1561923509560101765","name":"T_contour_ramp","source":{"name":"Data/Bundles/Windows/main/b5ad83269be7d1a5ed8bce87.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":62187626,"length":3377,"md5":"90D66E0E02DBCC5833173B6B5A188F2A","sha256":"c97319d39e1189c764054b1b94ee8c15bc4b368c0448488ae6e8e15f0a8e384f","md5_verified":true},"width":128,"height":4,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/T_contour_ramp--1561923509560101765.png","bytes":345,"sha256":"27d02e1696ec7fc6143419aa6f3555bd3c40c74e0768becaa8be98f89c5bdef0"}},{"id":"CAB-cbb672f51f785acdd9419de287cf9757:-2911143777855343952","name":"T_region02_buildingGround_lv001","source":{"name":"Data/Bundles/Windows/main/7bdb7767a5a08e266cd538c2.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":929578533,"length":28964,"md5":"FC6B48BC1BED7A0AE94D6D162168742E","sha256":"08f9a19f618000df4909b4a27ccbbbe238f62acaccc59b14845962781d3e4ac6","md5_verified":true},"width":1024,"height":1024,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":0},"png":{"file":"textures/T_region02_buildingGround_lv001---2911143777855343952.png","bytes":27820,"sha256":"be060282d93945da216fe4a62d7df05121aa06053e94ef6e0c80d1f21bc07765"}},{"id":"CAB-dcbdfe810efe900ab6373e3e78b9cade:8202142729593834543","name":"map06_bloom","source":{"name":"Data/Bundles/Windows/main/f42419a0a2ebe440687edc1a.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"E3C14F98B619EA61383EDEFE2D33A629","offset":1097443058,"length":102040,"md5":"DBE7DC9319D80D97E50C066067329AE5","sha256":"291e98b1c5ae131ada9a79d131a8721d53dfb44313ee393e732ae9fbc92b792f","md5_verified":true},"width":500,"height":536,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":1,"m_WrapV":1,"m_WrapW":1,"m_TextureGroup":0},"png":{"file":"textures/map06_bloom--8202142729593834543.png","bytes":68458,"sha256":"bb6f26b8057d680bca64e16e2e98874405ad8e758b3c3961662ded9eba93928b"}},{"id":"CAB-e25d47817ed3d885485eff4f81309da7:1137672293064584959","name":"ui_plus_fx_texture","source":{"name":"Data/Bundles/Windows/main/b3c940fa5f6faf4dcce6f457.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":88766370,"length":3791,"md5":"1B3B894720920567E728FBB51AC99FE1","sha256":"aed9e79cb688adec69681de11f231d05071b7a721ffc87386fc10970c94422d9","md5_verified":true},"width":60,"height":60,"texture_format":4,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":0},"png":{"file":"textures/ui_plus_fx_texture--1137672293064584959.png","bytes":525,"sha256":"0f538f76de4f9f86b57656841353399c7dbafa0cb094eaf535507842636380d0"}},{"id":"CAB-e3868540e5b268d35b2ff5587ee8e77a:6321088089909992519","name":"t_region_map02_vfx_tree","source":{"name":"Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"B02CFCA60CEABD61B6AEC2AA55ACB411","offset":763622404,"length":168656,"md5":"81EB8C3D2188B2C12BF008B2B171E830","sha256":"04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea","md5_verified":true},"width":512,"height":1024,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":0},"png":{"file":"textures/t_region_map02_vfx_tree--6321088089909992519.png","bytes":132690,"sha256":"02f8e7d672abdd6196c29f0b3c5d2ca25b8801985a9e062a2979f9a877c29e5b"}},{"id":"CAB-e5d7f562b661a06291893d4bb2b080ca:1187803294943371637","name":"T_building_lines","source":{"name":"Data/Bundles/Windows/main/36c0238c97a6de7dfd2366a7.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":656030715,"length":13396,"md5":"EC5161F22B6E515A62E82465A9D1B8E0","sha256":"39744fe3796ee37fb549f893e1e28e2c27203f5db8b948f0ef29d3399a086652","md5_verified":true},"width":1024,"height":1024,"texture_format":25,"color_space":1,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":0},"png":{"file":"textures/T_building_lines--1187803294943371637.png","bytes":33295,"sha256":"49f0c4127545352d02daa52eb2f2f1e8c1a8e30e5d76238aa62b48e746c4642f"}},{"id":"CAB-ee8b13bfaffa3babf0ee4e43787ee2ab:6712698097951409592","name":"T_buildingGround_lv001","source":{"name":"Data/Bundles/Windows/main/8cf2e77f17903feb845038e0.ab","layer":"StreamingAssets","manifest":"D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc","chunk":"77595C8EE1F66B033DF909EF3C0F9EDD","offset":863529158,"length":24444,"md5":"AB2B69451F4FEA69BB82FA897893573B","sha256":"33f01204a16c93d7bab3891d6c2991d3f9d3d84a890dacf87b06fa095bbb195a","md5_verified":true},"width":1024,"height":1024,"texture_format":25,"color_space":0,"sampler":{"m_FilterMode":1,"m_Aniso":1,"m_MipBias":0.0,"m_WrapU":0,"m_WrapV":0,"m_WrapW":0,"m_TextureGroup":0},"png":{"file":"textures/T_buildingGround_lv001--6712698097951409592.png","bytes":21294,"sha256":"9e901aad79ee1cfef4dc72e0781e4c0391add3eb81624f8dd060bc2ba8afd0f0"}}]}
+{
+  "textures": [
+    {
+      "id": "CAB-033a310a4dc2034d606d02d7c0617c3b:-4578960290218705282",
+      "name": "map_spaceship",
+      "source": {
+        "name": "Data/Bundles/Windows/main/594e1559cadc7c16466a9ac2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "FCEDFAF95834E358E0685530069FD8C6",
+        "offset": 625925900,
+        "length": 151605,
+        "md5": "0844C6F4CAC1304612F527AB08506F55",
+        "sha256": "0d67b04e63df554e63aeb6eaf682a259236b5aa8802dcf406cdea0206721c6fa",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map_spaceship---4578960290218705282.png",
+        "bytes": 195533,
+        "sha256": "f5359114fe097ce88fe9dccc60bc0125cc24c179c7f2eafdedc2415484058e40"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:8007938032893606277",
+      "name": "map01_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 404,
+      "height": 372,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map01_bloom--8007938032893606277.png",
+        "bytes": 37009,
+        "sha256": "6b313ef2e5b847be2bb28d4888ee050e801d4ad6401c25c1b122981cc8557c43"
+      }
+    },
+    {
+      "id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "name": "map_building_hover",
+      "source": {
+        "name": "Data/Bundles/Windows/main/bcf69176728c14c8d89dd034.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 116702356,
+        "length": 4072,
+        "md5": "BDBE0C7B0EF2B289CF8EEDC97334CA58",
+        "sha256": "071a710b732f82d9fb7b52d7ade2b839e01844825da6b47054ca377acb5be4b3",
+        "md5_verified": true
+      },
+      "width": 500,
+      "height": 500,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map_building_hover--5878083957641791626.png",
+        "bytes": 2592,
+        "sha256": "5218dbc7d02bbe7cf9df467d22acd5bc1b68fbe7d192e91215c182920611097f"
+      }
+    },
+    {
+      "id": "CAB-665b872f0e8b37ab525ae5438d39689e:-8559442201712933853",
+      "name": "deco_readio_mask",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0748a52a8ddd072b14c0abf3.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 896219922,
+        "length": 26634,
+        "md5": "D1D09BEC9C058742049B002092EC30B6",
+        "sha256": "97e8bf8e8b1842afafe5d4c997eec8b857008e59d3224b7a486a53c158cc76a9",
+        "md5_verified": true
+      },
+      "width": 196,
+      "height": 212,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/deco_readio_mask---8559442201712933853.png",
+        "bytes": 11393,
+        "sha256": "98994b2c765f37837dfe6f6596400dc44e2084e3856f2667371b1fbf66d246d4"
+      }
+    },
+    {
+      "id": "CAB-665b872f0e8b37ab525ae5438d39689e:3554789046412338323",
+      "name": "icon_char",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0748a52a8ddd072b14c0abf3.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 896219922,
+        "length": 26634,
+        "md5": "D1D09BEC9C058742049B002092EC30B6",
+        "sha256": "97e8bf8e8b1842afafe5d4c997eec8b857008e59d3224b7a486a53c158cc76a9",
+        "md5_verified": true
+      },
+      "width": 104,
+      "height": 104,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/icon_char--3554789046412338323.png",
+        "bytes": 8493,
+        "sha256": "dc711242e1ac2a313429d01b8ba663908942246f8b2685a12ecc67d5f0b5987a"
+      }
+    },
+    {
+      "id": "CAB-8ef9b04f489a760cbab95424d6de4ae4:-9198916553927714072",
+      "name": "T_region02_fog",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "40E7DB1645D20991CB0FE316B2128FC2",
+        "offset": 546770344,
+        "length": 2800202,
+        "md5": "F3D4B1F8EB589C92D3A335CFCBE1951F",
+        "sha256": "def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_region02_fog---9198916553927714072.png",
+        "bytes": 935814,
+        "sha256": "ca9f849161122fe1fd4e25d142f44d6714bf97c568c7e5cbb97df2ea538cd7ad"
+      }
+    },
+    {
+      "id": "CAB-9be43e1316462700d364842c0ef4341b:-2382921133099723979",
+      "name": "icon_sapceship_room_icon_control_console",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1b46440d89497313fc5a8316.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "FCEDFAF95834E358E0685530069FD8C6",
+        "offset": 809409249,
+        "length": 191577,
+        "md5": "4329F27EF5012BDF8610B70E82963AE4",
+        "sha256": "5c8bd02275deb67ac566ad7d95c5681d46406ef2673d1c6b5db0960a0b487911",
+        "md5_verified": true
+      },
+      "width": 72,
+      "height": 72,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/icon_sapceship_room_icon_control_console---2382921133099723979.png",
+        "bytes": 1411,
+        "sha256": "21e658be69ef0c14be01397c8c1db53281f43a4681daa69ae2f0a50e214dc8c6"
+      }
+    },
+    {
+      "id": "CAB-a2b352154e43a41848e634e361e8e205:4275033587688225551",
+      "name": "T_fx_mask_02_M",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a6ed0a600e081e2cfa4f79bd.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 944575515,
+        "length": 29997,
+        "md5": "FD1ABA6E1992FF77645EA2B98F90D0A6",
+        "sha256": "789e096ed7fea292762aae9cdc8f3a592d3ba2ed8d881030508dfd2e0ebc6b40",
+        "md5_verified": true
+      },
+      "width": 256,
+      "height": 256,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 13
+      },
+      "png": {
+        "file": "textures/T_fx_mask_02_M--4275033587688225551.png",
+        "bytes": 19861,
+        "sha256": "4ca3a5967e2ebec6a2c81dc11524982c779c1ce76c9cec6aa117f52009cfde22"
+      }
+    },
+    {
+      "id": "CAB-c9660f932fa68fee05fa99d3ad953d96:1561923509560101765",
+      "name": "T_contour_ramp",
+      "source": {
+        "name": "Data/Bundles/Windows/main/b5ad83269be7d1a5ed8bce87.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 62187626,
+        "length": 3377,
+        "md5": "90D66E0E02DBCC5833173B6B5A188F2A",
+        "sha256": "c97319d39e1189c764054b1b94ee8c15bc4b368c0448488ae6e8e15f0a8e384f",
+        "md5_verified": true
+      },
+      "width": 128,
+      "height": 4,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_contour_ramp--1561923509560101765.png",
+        "bytes": 345,
+        "sha256": "27d02e1696ec7fc6143419aa6f3555bd3c40c74e0768becaa8be98f89c5bdef0"
+      }
+    },
+    {
+      "id": "CAB-cbb672f51f785acdd9419de287cf9757:-2911143777855343952",
+      "name": "T_region02_buildingGround_lv001",
+      "source": {
+        "name": "Data/Bundles/Windows/main/7bdb7767a5a08e266cd538c2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 929578533,
+        "length": 28964,
+        "md5": "FC6B48BC1BED7A0AE94D6D162168742E",
+        "sha256": "08f9a19f618000df4909b4a27ccbbbe238f62acaccc59b14845962781d3e4ac6",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_region02_buildingGround_lv001---2911143777855343952.png",
+        "bytes": 27820,
+        "sha256": "be060282d93945da216fe4a62d7df05121aa06053e94ef6e0c80d1f21bc07765"
+      }
+    },
+    {
+      "id": "CAB-dcbdfe810efe900ab6373e3e78b9cade:8202142729593834543",
+      "name": "map06_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/f42419a0a2ebe440687edc1a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 1097443058,
+        "length": 102040,
+        "md5": "DBE7DC9319D80D97E50C066067329AE5",
+        "sha256": "291e98b1c5ae131ada9a79d131a8721d53dfb44313ee393e732ae9fbc92b792f",
+        "md5_verified": true
+      },
+      "width": 500,
+      "height": 536,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map06_bloom--8202142729593834543.png",
+        "bytes": 68458,
+        "sha256": "bb6f26b8057d680bca64e16e2e98874405ad8e758b3c3961662ded9eba93928b"
+      }
+    },
+    {
+      "id": "CAB-e25d47817ed3d885485eff4f81309da7:1137672293064584959",
+      "name": "ui_plus_fx_texture",
+      "source": {
+        "name": "Data/Bundles/Windows/main/b3c940fa5f6faf4dcce6f457.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 88766370,
+        "length": 3791,
+        "md5": "1B3B894720920567E728FBB51AC99FE1",
+        "sha256": "aed9e79cb688adec69681de11f231d05071b7a721ffc87386fc10970c94422d9",
+        "md5_verified": true
+      },
+      "width": 60,
+      "height": 60,
+      "texture_format": 4,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/ui_plus_fx_texture--1137672293064584959.png",
+        "bytes": 525,
+        "sha256": "0f538f76de4f9f86b57656841353399c7dbafa0cb094eaf535507842636380d0"
+      }
+    },
+    {
+      "id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:6321088089909992519",
+      "name": "t_region_map02_vfx_tree",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 763622404,
+        "length": 168656,
+        "md5": "81EB8C3D2188B2C12BF008B2B171E830",
+        "sha256": "04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/t_region_map02_vfx_tree--6321088089909992519.png",
+        "bytes": 132690,
+        "sha256": "02f8e7d672abdd6196c29f0b3c5d2ca25b8801985a9e062a2979f9a877c29e5b"
+      }
+    },
+    {
+      "id": "CAB-e5d7f562b661a06291893d4bb2b080ca:1187803294943371637",
+      "name": "T_building_lines",
+      "source": {
+        "name": "Data/Bundles/Windows/main/36c0238c97a6de7dfd2366a7.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 656030715,
+        "length": 13396,
+        "md5": "EC5161F22B6E515A62E82465A9D1B8E0",
+        "sha256": "39744fe3796ee37fb549f893e1e28e2c27203f5db8b948f0ef29d3399a086652",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_building_lines--1187803294943371637.png",
+        "bytes": 33295,
+        "sha256": "49f0c4127545352d02daa52eb2f2f1e8c1a8e30e5d76238aa62b48e746c4642f"
+      }
+    },
+    {
+      "id": "CAB-ee8b13bfaffa3babf0ee4e43787ee2ab:6712698097951409592",
+      "name": "T_buildingGround_lv001",
+      "source": {
+        "name": "Data/Bundles/Windows/main/8cf2e77f17903feb845038e0.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 863529158,
+        "length": 24444,
+        "md5": "AB2B69451F4FEA69BB82FA897893573B",
+        "sha256": "33f01204a16c93d7bab3891d6c2991d3f9d3d84a890dacf87b06fa095bbb195a",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_buildingGround_lv001--6712698097951409592.png",
+        "bytes": 21294,
+        "sha256": "9e901aad79ee1cfef4dc72e0781e4c0391add3eb81624f8dd060bc2ba8afd0f0"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-1585664649887358733",
+      "name": "map02_lv007_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv007_bloom---1585664649887358733.png",
+        "bytes": 51009,
+        "sha256": "39feff7161eb1614e2a3780fc5d57e4ecb19a3eabe9a44e815e208e44fb4a0fe"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-1701304502918558251",
+      "name": "map02_lv008_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv008_bloom---1701304502918558251.png",
+        "bytes": 58313,
+        "sha256": "09a370b58ab29e61474e54192d4ba8130ecc98c6a8002031a146b0b2ba9a60e8"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-213845300137141800",
+      "name": "map02_lv005_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv005_bloom---213845300137141800.png",
+        "bytes": 53868,
+        "sha256": "6d2f2be3ffcb962200e223a54a63f8443e0fc39dd69431254fa1d696b2dd4c85"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-5503443179822565141",
+      "name": "map05_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 504,
+      "height": 364,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map05_bloom---5503443179822565141.png",
+        "bytes": 47614,
+        "sha256": "02f66e21a7663397372b0b809e9a829a6b5933805301597a8b09845fc9406f0c"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-6644324337239083920",
+      "name": "map07_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 384,
+      "height": 504,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map07_bloom---6644324337239083920.png",
+        "bytes": 50177,
+        "sha256": "15e4d993bf06623b6de5a4b4b1b24d163735180be370230a5a807dc12fd5c760"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-9108460901867554818",
+      "name": "map02_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 488,
+      "height": 440,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_bloom---9108460901867554818.png",
+        "bytes": 58007,
+        "sha256": "1762cdaa795df7853c0f46b74103289e5aa475969dc9028841a538d6c06fa294"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:-948137933548833056",
+      "name": "map02_lv003_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 272,
+      "height": 312,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv003_bloom---948137933548833056.png",
+        "bytes": 26636,
+        "sha256": "01d6aacd49a1e54f449e95b69505c0027f783578224fbea36b45e8ea690f4cd8"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:1808801069315504428",
+      "name": "map02_lv004_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 436,
+      "height": 512,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv004_bloom--1808801069315504428.png",
+        "bytes": 56590,
+        "sha256": "c4c24e930cdfa3de6e0e4263b4696ee3f2df8c033f99eeee2f61c2a25fcdeb26"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:28729348985856102",
+      "name": "map02_lv006_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv006_bloom--28729348985856102.png",
+        "bytes": 37481,
+        "sha256": "6149fb8d5e3a35ee9d94fab00be2495e77728a5db1f5cfccc373a2b15eefff58"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:3412472835358659884",
+      "name": "map02_lv001_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 240,
+      "height": 336,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv001_bloom--3412472835358659884.png",
+        "bytes": 44853,
+        "sha256": "9a5527f9a0fdb350a6e5de9fe4a0ec61989f1957d7806cc5cc1827dd15c79e0a"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:3701357888794842",
+      "name": "map03_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 488,
+      "height": 496,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map03_bloom--3701357888794842.png",
+        "bytes": 32228,
+        "sha256": "b377cb4bb167dd8ce61daa99dd418ba46711e8ecf06f67281efb6fe0a3446fa6"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:6543666175246653684",
+      "name": "map02_lv009_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 484,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv009_bloom--6543666175246653684.png",
+        "bytes": 49631,
+        "sha256": "d8e416298a9fc50f86f1da668f68f74a144f2a086ba3396b4442cfd73c670348"
+      }
+    },
+    {
+      "id": "CAB-18b095294e8c2cbc38223244e7112ab8:6927862065446760556",
+      "name": "map02_lv002_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 268,
+      "height": 344,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map02_lv002_bloom--6927862065446760556.png",
+        "bytes": 22889,
+        "sha256": "9f0c704174e1c556b5cbbf0c62a2e8c174c50bd46dc7395bbde297634625148a"
+      }
+    },
+    {
+      "id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "name": "map_building_light_hover",
+      "source": {
+        "name": "Data/Bundles/Windows/main/99ed1ae9f1d15105aaf8b85b.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 642323381,
+        "length": 12796,
+        "md5": "885545CFC1F856E4B4241720D6E37875",
+        "sha256": "7bb86afdc5483a549b1effcca4f702bbea90e05cec3516bb49360fd422d83601",
+        "md5_verified": true
+      },
+      "width": 476,
+      "height": 476,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/map_building_light_hover---1640941011107609933.png",
+        "bytes": 19401,
+        "sha256": "8820e17483d2a9765bfece33c3da3647a4c027438f24c8270c147a7d1dd2b3bc"
+      }
+    },
+    {
+      "id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:6110342881534965045",
+      "name": "building_ground_map02_lv005",
+      "source": {
+        "name": "Data/Bundles/Windows/main/d20588fd2afa08e5cadccb30.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180764813,
+        "length": 26369,
+        "md5": "97963ACDA19348D570E42AF91C42772C",
+        "sha256": "2e7fdf81e7e9a3b9e6c53fa818d8bbded284f27ca471355c89c2454616c2623e",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv005--6110342881534965045.png",
+        "bytes": 19956,
+        "sha256": "014f8cd609d45f1fee51d07c856ff61ef9fa0eab6036e8a88f92fbad7e8a075b"
+      }
+    },
+    {
+      "id": "CAB-45c445765ed08de8cfb23d8110266025:4248116634518733454",
+      "name": "building_ground_map02_lv006",
+      "source": {
+        "name": "Data/Bundles/Windows/main/639385ba713e740441606d63.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 98224609,
+        "length": 38378,
+        "md5": "771588F78D8C869D5FC8EDF53074F449",
+        "sha256": "13eca498b1f8f89d60cc55dc8ea50d6abb24f5334ecf6a3e32c8ab7221f02bb3",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv006--4248116634518733454.png",
+        "bytes": 38198,
+        "sha256": "dfdb21cd9e63aff5fb6c42db22e1f932b7f36a9e812f763eb853255a2d1375fd"
+      }
+    },
+    {
+      "id": "CAB-51e6d708dcbda646319206f0794d2f7e:7174919328536147988",
+      "name": "building_ground_map02_lv003",
+      "source": {
+        "name": "Data/Bundles/Windows/main/bfae12f10866b2ff53a0dc51.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 274059351,
+        "length": 41210,
+        "md5": "AA1402622CB56EFC76A3818C3C59A4FD",
+        "sha256": "6195c1b709f7c1aab06c7f97e993f8c12d985e44dfe1b367efe5884c54ac7b56",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv003--7174919328536147988.png",
+        "bytes": 38477,
+        "sha256": "bf038da9c512402f54467b8122232192868bdfae09b2eb337bee0426f9b8d3d6"
+      }
+    },
+    {
+      "id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-6126544025852434530",
+      "name": "building_ground_map02_lv002",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ec0b9693b61687a4c57d0e2d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 297615414,
+        "length": 42435,
+        "md5": "53F86D76D123F460CD2C693FDADCEC04",
+        "sha256": "bc5772215d14898c7389996d457af1b3abe5117abf71c3d4ce4b4813e5c54295",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv002---6126544025852434530.png",
+        "bytes": 39043,
+        "sha256": "1c78784be78cda11b5fb55449baab112ea47353aacc5c82ef05118e348cf6215"
+      }
+    },
+    {
+      "id": "CAB-601e461c0e295400c99553d04ec554d4:-7803391685981912894",
+      "name": "T_buildingGround_lv003",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4b097382d024c7bdefa6f28f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 653409258,
+        "length": 13282,
+        "md5": "713A38D8F1B15CE47A62CBAAA5A0912E",
+        "sha256": "3dab8e7b8a11ffd2d374270bdc3d2564a96e9a32ffe8c8b66c6c1c40664349f4",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 512,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_buildingGround_lv003---7803391685981912894.png",
+        "bytes": 8590,
+        "sha256": "defa04cc389e31cc67ea123f0919cdce128bad87717ff6c468a2c37bba7bd684"
+      }
+    },
+    {
+      "id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-1324616633903220316",
+      "name": "building_ground_map02_lv008",
+      "source": {
+        "name": "Data/Bundles/Windows/main/595f1d8c2fffaac57eb4cd29.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 362554375,
+        "length": 50076,
+        "md5": "F942F91E280C9C32376ABBCDD2FC1483",
+        "sha256": "4e66b0ba0e6af3221560252df36d8cb0f934777477b121c2c5e3c5597b11713a",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv008---1324616633903220316.png",
+        "bytes": 41643,
+        "sha256": "8944c289dce14646c5ea2efc67307170d4ba920a3218e123615e74e67b735110"
+      }
+    },
+    {
+      "id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:-9116040948500704571",
+      "name": "building_ground_map02_lv004",
+      "source": {
+        "name": "Data/Bundles/Windows/main/57ab6b380ed93007aa701459.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180458933,
+        "length": 26311,
+        "md5": "6A4148FD614D413E4ECC0DBCD4A0400F",
+        "sha256": "9f138ace8d773dcdc1af95a904becbcdada21db67bcca8a1f847060b7adcab3f",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv004---9116040948500704571.png",
+        "bytes": 18005,
+        "sha256": "8ea6944a6999b71ef02f8f36bfa3c4ca87a24178a42ead244290d9a577d8879f"
+      }
+    },
+    {
+      "id": "CAB-a00dcacd425c618176071b42bd3140cb:2279490683766080768",
+      "name": "building_ground_map02_lv009",
+      "source": {
+        "name": "Data/Bundles/Windows/main/affa7f078acb73919451e488.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 151878352,
+        "length": 46016,
+        "md5": "0FD9389A2B18D5071018ED0E10709AA7",
+        "sha256": "4f314632b3e6860ad8d644249bc2b59863e603f95b4b5ba68c348a6b002e4999",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv009--2279490683766080768.png",
+        "bytes": 39822,
+        "sha256": "86341fd1de3e8e155e1619f8bc9c74db6bb75e25115a633a8b27d748232bbe2c"
+      }
+    },
+    {
+      "id": "CAB-a84c829789b5bc77409f56ede752d4e8:5057986545702316246",
+      "name": "T_buildingGround_lv007",
+      "source": {
+        "name": "Data/Bundles/Windows/main/18578fb4cb3bca2e6cbdb82d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 247168797,
+        "length": 40008,
+        "md5": "5298F52D78E279C1155A3CCD40CB8E56",
+        "sha256": "62c331aec384e34647e1b5f627526f5dcdc4009e92b962aef5f898a1a5235749",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_buildingGround_lv007--5057986545702316246.png",
+        "bytes": 39266,
+        "sha256": "bd0f958f51b043dc23cea7822aeb88c373ff73f9df9a53ea1f80d84d66ce95d6"
+      }
+    },
+    {
+      "id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-6794573065034727467",
+      "name": "building_ground_map02_lv007",
+      "source": {
+        "name": "Data/Bundles/Windows/main/27d547fbeec27f8116c30b1d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 213232592,
+        "length": 22174,
+        "md5": "D62569ED344B84C9CE9CEBC893957623",
+        "sha256": "44b028ef354d66e28f098be0c4093f582313a0f806a4021a23dc3301e0b00c0c",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv007---6794573065034727467.png",
+        "bytes": 15761,
+        "sha256": "9f92fa8419c3153bb5f6b9d8b3ee5f5e62509e869614f0f39a57edb5edabb90d"
+      }
+    },
+    {
+      "id": "CAB-d295e16a449220f859cf80696790f762:-8107350467945170983",
+      "name": "building_ground_map02_lv001",
+      "source": {
+        "name": "Data/Bundles/Windows/main/011a1cd7cc26902814a09364.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 820405432,
+        "length": 21671,
+        "md5": "BFE06FF46A00399278FE3BA00FF90DCA",
+        "sha256": "05d85e64cf9a90fb873f7127a6ba2221d719eca9a041385bd6e82da726e71966",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/building_ground_map02_lv001---8107350467945170983.png",
+        "bytes": 18566,
+        "sha256": "c6eabb0561e49c88f17c8635718b172b6ad320322b2f92a59bf15f904ef03a16"
+      }
+    },
+    {
+      "id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-3860286434201570480",
+      "name": "T_buildingGround_lv006",
+      "source": {
+        "name": "Data/Bundles/Windows/main/77a7cc91f5f7a3f195b0be7f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 280762773,
+        "length": 41569,
+        "md5": "151CADB73E279767E489BA5CE80CBEB2",
+        "sha256": "9038ca782c524a1876450001354ea3222f9ceaf07cf88982adacc4cf7a598622",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_buildingGround_lv006---3860286434201570480.png",
+        "bytes": 34196,
+        "sha256": "ef5e905cf6dd26c2e2b4f271c9b185c829032f0d6b1a8eca999fa353661ca877"
+      }
+    },
+    {
+      "id": "CAB-e559542e2f9408e27009e95062ec0834:4179065066434640104",
+      "name": "T_buildingGround_lv005",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ebc4c23215ca141c0a000755.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301007056,
+        "length": 42601,
+        "md5": "29DC929031D515411744C18FE6A0B69C",
+        "sha256": "e1a1872e91122de32f447f84c285e12865c4d1bc93b90d878649c2b508ebf94b",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_buildingGround_lv005--4179065066434640104.png",
+        "bytes": 35957,
+        "sha256": "3e1baff235cd721f5111e687a5f4ae067b15a0d9647b71305970a22c64c9b4c2"
+      }
+    },
+    {
+      "id": "CAB-fd86c149664ae3e4f87d49c123e5f042:6236855769001714808",
+      "name": "T_buildingGround_lv002",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1125bb8c3bf5ef64dc2a0208.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 151281652,
+        "length": 36020,
+        "md5": "D16C74B5D035551A3FA567FCE7DACC9B",
+        "sha256": "cd2e816b425edac1dc6c84b9f4f9ff6fa7999ebc781c184b7402516a721cd528",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "color_space": 0,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "png": {
+        "file": "textures/T_buildingGround_lv002--6236855769001714808.png",
+        "bytes": 33385,
+        "sha256": "1517d152f5a43eb16385a86e314655efb94f64e0d580cb987942825369baf073"
+      }
+    }
+  ]
+}

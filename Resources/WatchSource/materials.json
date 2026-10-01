@@ -9135,6 +9135,857 @@
     }
   },
   {
+    "name": "M_terrain_backGroundWatch",
+    "cab": "CAB-6934958af701272d8c23ea7d9e7fb440",
+    "path_id": "-5814472127852972467",
+    "type": "Material",
+    "serialized": {
+      "m_Name": "M_terrain_backGroundWatch",
+      "m_Shader": {
+        "m_FileID": 5,
+        "m_PathID": 505394952752169778
+      },
+      "m_ValidKeywords": [
+        "_USE_OUTLINE"
+      ],
+      "m_InvalidKeywords": [],
+      "m_LightmapFlags": 4,
+      "m_EnableInstancingVariants": false,
+      "m_DoubleSidedGI": false,
+      "m_CustomRenderQueue": 3000,
+      "stringTagMap": [
+        [
+          "RenderType",
+          "Transparent"
+        ]
+      ],
+      "disabledShaderPasses": [
+        "DepthOnly",
+        "GBuffer"
+      ],
+      "m_SavedProperties": {
+        "m_TexEnvs": [
+          [
+            "_BuildingTex",
+            {
+              "m_Texture": {
+                "m_FileID": 6,
+                "m_PathID": 4860359082281507013
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_ContourRamp",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_MinimapBuildingTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ]
+        ],
+        "m_Ints": [],
+        "m_Floats": [
+          [
+            "_Alpha",
+            1.0
+          ],
+          [
+            "_AlphaClipThreshold",
+            0.5
+          ],
+          [
+            "_AlphaDstBlend",
+            10.0
+          ],
+          [
+            "_AlphaSrcBlend",
+            1.0
+          ],
+          [
+            "_BlendMode",
+            0.0
+          ],
+          [
+            "_ContourColorIntensity",
+            1.0
+          ],
+          [
+            "_ContourFresnelIntensity",
+            1.0
+          ],
+          [
+            "_ContourFresnelMax",
+            1.0
+          ],
+          [
+            "_ContourFresnelMin",
+            0.6000000238418579
+          ],
+          [
+            "_ContourSmooth",
+            60.0
+          ],
+          [
+            "_CullMode",
+            2.0
+          ],
+          [
+            "_DisableZTest",
+            0.0
+          ],
+          [
+            "_DstBlend",
+            10.0
+          ],
+          [
+            "_EnableAlphaTest",
+            0.0
+          ],
+          [
+            "_HeightInterval",
+            2.0
+          ],
+          [
+            "_Lightness",
+            150.0
+          ],
+          [
+            "_MainProperties",
+            0.0
+          ],
+          [
+            "_MinWidth",
+            0.0
+          ],
+          [
+            "_MiniMapZWrite",
+            0.0
+          ],
+          [
+            "_MinimapBuilding",
+            0.0
+          ],
+          [
+            "_MinimapContour",
+            0.0
+          ],
+          [
+            "_MinimapErosion",
+            0.0
+          ],
+          [
+            "_MinimapOutline",
+            1.0
+          ],
+          [
+            "_PointDissolveEnd",
+            0.0
+          ],
+          [
+            "_PointDissolveStart",
+            0.0
+          ],
+          [
+            "_QuadRadius",
+            0.0
+          ],
+          [
+            "_RegionMapEditor",
+            0.0
+          ],
+          [
+            "_RimMax",
+            1.5
+          ],
+          [
+            "_RimMin",
+            0.6000000238418579
+          ],
+          [
+            "_SrcBlend",
+            1.0
+          ],
+          [
+            "_StencilRef",
+            32.0
+          ],
+          [
+            "_SurfaceType",
+            1.0
+          ],
+          [
+            "_TerrainColorIntensity",
+            1.0
+          ],
+          [
+            "_TerrainEdgeBlurIntensity",
+            0.20000000298023224
+          ],
+          [
+            "_TerrainEdgeBlurSmoothness",
+            0.30000001192092896
+          ],
+          [
+            "_TerrainFresnelMax",
+            1.0
+          ],
+          [
+            "_TerrainFresnelMin",
+            0.6000000238418579
+          ],
+          [
+            "_TerrainNormalSmoothness",
+            0.0
+          ],
+          [
+            "_TransparentSortPriority",
+            0.0
+          ],
+          [
+            "_WatchToMinimapEclosion",
+            0.6499999761581421
+          ],
+          [
+            "_WatchToMinimapRadius",
+            0.6000000238418579
+          ],
+          [
+            "_Width",
+            0.0
+          ],
+          [
+            "_ZTest",
+            4.0
+          ],
+          [
+            "_ZWrite",
+            0.0
+          ]
+        ],
+        "m_Colors": [
+          [
+            "_ContentColor",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_HDir",
+            {
+              "r": 0.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_InnerColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MountainFresnelColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MountainFresnelColor2",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_OuterColor",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_OutlineColor",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_PointCloudColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ]
+        ]
+      },
+      "m_BuildTextureStacks": [],
+      "m_SubsurfaceProfile": {
+        "m_FileID": 0,
+        "m_PathID": 0
+      }
+    },
+    "shader": {
+      "cab": "CAB-ed0ef62aed688764274ce4df5f36b609",
+      "path_id": "505394952752169778",
+      "type": "Shader"
+    },
+    "texture_bindings": [
+      {
+        "slot": "_BuildingTex",
+        "scale": {
+          "x": 1.0,
+          "y": 1.0
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "texture": {
+          "cab": "CAB-0d121181e130f1ba4dabd24fbb815c7b",
+          "path_id": "4860359082281507013",
+          "type": "Texture2D"
+        }
+      },
+      {
+        "slot": "_ContourRamp",
+        "scale": {
+          "x": 1.0,
+          "y": 1.0
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "texture": null
+      },
+      {
+        "slot": "_MinimapBuildingTex",
+        "scale": {
+          "x": 1.0,
+          "y": 1.0
+        },
+        "offset": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "texture": null
+      }
+    ],
+    "static_pass_states": [
+      {
+        "name": "ForwardOnly",
+        "lightmode_tags": {
+          "tags": [
+            [
+              "LIGHTMODE",
+              "ForwardOnly"
+            ],
+            [
+              "RenderPipeline",
+              "HGRenderPipeline"
+            ],
+            [
+              "RenderType",
+              "HGUnlitShader"
+            ]
+          ]
+        },
+        "disabled_in_serialized_material": false,
+        "state": {
+          "rtBlend0": {
+            "srcBlend": {
+              "value": 1.0,
+              "source": "serialized material property",
+              "property": "_SrcBlend"
+            },
+            "destBlend": {
+              "value": 10.0,
+              "source": "serialized material property",
+              "property": "_DstBlend"
+            },
+            "srcBlendAlpha": {
+              "value": 1.0,
+              "source": "serialized material property",
+              "property": "_AlphaSrcBlend"
+            },
+            "destBlendAlpha": {
+              "value": 10.0,
+              "source": "serialized material property",
+              "property": "_AlphaDstBlend"
+            },
+            "blendOp": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "blendOpAlpha": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "colMask": {
+              "value": 15.0,
+              "source": "constant pass state"
+            }
+          },
+          "rtBlend1": {
+            "srcBlend": {
+              "value": 1.0,
+              "source": "constant pass state"
+            },
+            "destBlend": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "srcBlendAlpha": {
+              "value": 1.0,
+              "source": "constant pass state"
+            },
+            "destBlendAlpha": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "blendOp": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "blendOpAlpha": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "colMask": {
+              "value": 15.0,
+              "source": "constant pass state"
+            }
+          },
+          "rtSeparateBlend": false,
+          "zClip": {
+            "value": 1.0,
+            "source": "constant pass state"
+          },
+          "zTest": {
+            "value": 4.0,
+            "source": "serialized material property",
+            "property": "_ZTest"
+          },
+          "zWrite": {
+            "value": 0.0,
+            "source": "serialized material property",
+            "property": "_MiniMapZWrite"
+          },
+          "culling": {
+            "value": 2.0,
+            "source": "serialized material property",
+            "property": "_CullMode"
+          },
+          "alphaToMask": {
+            "value": 0.0,
+            "source": "constant pass state"
+          },
+          "stencilOp": {
+            "pass": {
+              "value": 2.0,
+              "source": "constant pass state"
+            },
+            "fail": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "zFail": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "comp": {
+              "value": 8.0,
+              "source": "constant pass state"
+            }
+          },
+          "stencilOpFront": {
+            "pass": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "fail": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "zFail": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "comp": {
+              "value": 8.0,
+              "source": "constant pass state"
+            }
+          },
+          "stencilOpBack": {
+            "pass": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "fail": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "zFail": {
+              "value": 0.0,
+              "source": "constant pass state"
+            },
+            "comp": {
+              "value": 8.0,
+              "source": "constant pass state"
+            }
+          },
+          "stencilReadMask": {
+            "value": 255.0,
+            "source": "constant pass state"
+          },
+          "stencilWriteMask": {
+            "value": 255.0,
+            "source": "constant pass state"
+          },
+          "stencilRef": {
+            "value": 32.0,
+            "source": "serialized material property",
+            "property": "_StencilRef"
+          }
+        }
+      }
+    ],
+    "id": "CAB-6934958af701272d8c23ea7d9e7fb440:-5814472127852972467",
+    "shader_properties": [
+      {
+        "name": "_MainProperties",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_SurfaceType",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_BlendMode",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_CullMode",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_RegionMapEditor",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_WatchToMinimapEclosion",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_WatchToMinimapRadius",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_MiniMapZWrite",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_DisableZTest",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_StencilRef",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_Lightness",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_Alpha",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_MinimapContour",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_HDir",
+        "type": 1,
+        "flags": 0
+      },
+      {
+        "name": "_HeightInterval",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_Width",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_MinWidth",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_ContourSmooth",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_ContourFresnelMin",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_ContourFresnelMax",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_ContourFresnelIntensity",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_ContourRamp",
+        "type": 4,
+        "flags": 0
+      },
+      {
+        "name": "_TerrainFresnelMin",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_TerrainFresnelMax",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_TerrainNormalSmoothness",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_MountainFresnelColor",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_MountainFresnelColor2",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_ContourColorIntensity",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_TerrainColorIntensity",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_TerrainEdgeBlurIntensity",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_TerrainEdgeBlurSmoothness",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_MinimapBuilding",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_MinimapBuildingTex",
+        "type": 4,
+        "flags": 0
+      },
+      {
+        "name": "_RimMin",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_RimMax",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_InnerColor",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_OuterColor",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_MinimapOutline",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_BuildingTex",
+        "type": 4,
+        "flags": 0
+      },
+      {
+        "name": "_OutlineColor",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_ContentColor",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_MinimapErosion",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_QuadRadius",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_PointCloudColor",
+        "type": 0,
+        "flags": 0
+      },
+      {
+        "name": "_PointDissolveStart",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_PointDissolveEnd",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_EnableAlphaTest",
+        "type": 2,
+        "flags": 0
+      },
+      {
+        "name": "_AlphaClipThreshold",
+        "type": 3,
+        "flags": 0
+      },
+      {
+        "name": "_ZWrite",
+        "type": 2,
+        "flags": 1
+      },
+      {
+        "name": "_ZTest",
+        "type": 2,
+        "flags": 1
+      },
+      {
+        "name": "_SrcBlend",
+        "type": 2,
+        "flags": 1
+      },
+      {
+        "name": "_DstBlend",
+        "type": 2,
+        "flags": 1
+      },
+      {
+        "name": "_AlphaSrcBlend",
+        "type": 2,
+        "flags": 1
+      },
+      {
+        "name": "_AlphaDstBlend",
+        "type": 2,
+        "flags": 1
+      },
+      {
+        "name": "_TransparentSortPriority",
+        "type": 2,
+        "flags": 1
+      }
+    ]
+  },
+  {
     "name": "M_fx_watch_deco_techline_02",
     "cab": "CAB-6934958af701272d8c23ea7d9e7fb440",
     "path_id": "2029747906550901491",

@@ -450,14 +450,17 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                             case "_WorldSpaceCameraPos_Internal":
                                 Self.put([camera.worldSpacePosition.x, camera.worldSpacePosition.y, camera.worldSpacePosition.z, 1], into: &bytes, at: field.offset)
                             case "_UITime":
-                                // The translated FX shader uses only y. Other
-                                // components do not claim HG's unknown policy.
-                                Self.put([0, camera.timeSeconds, 0, 0], into: &bytes, at: field.offset)
+                                // HG copies its render-time tuple to UI globals.
+                                // This adapter has no game's gameplay clock;
+                                // the selected programs consume render time.
+                                Self.put([camera.timeSeconds * 0.05, camera.timeSeconds, camera.timeSeconds * 2, 0], into: &bytes, at: field.offset)
                             case "_Time":
                                 Self.put([camera.timeSeconds / 20, camera.timeSeconds, camera.timeSeconds * 2, camera.timeSeconds * 3], into: &bytes, at: field.offset)
                             case "_UIScreenParams":
                                 let width = Float(drawableSize.width), height = Float(drawableSize.height)
-                                if width > 0, height > 0 { Self.put([width, height, 1 + 1 / width, 1 + 1 / height], into: &bytes, at: field.offset) }
+                                // UpdateUIShaderVariablesGlobal copies HG's
+                                // _ScreenSize, whose zw are reciprocal size.
+                                if width > 0, height > 0 { Self.put([width, height, 1 / width, 1 / height], into: &bytes, at: field.offset) }
                             case "_RenderPathInjected": Self.put([camera.renderPathInjected], into: &bytes, at: field.offset)
                             case "_HGFlipX": Self.put([camera.flipX], into: &bytes, at: field.offset)
                             case "_HGFlipY": Self.put([camera.flipY], into: &bytes, at: field.offset)

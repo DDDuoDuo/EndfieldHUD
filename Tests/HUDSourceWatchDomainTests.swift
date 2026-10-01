@@ -60,6 +60,26 @@ enum HUDSourceWatchDomainTests {
             check(HUDSourceWatchDomain.rendererSortingOrder(renderer: renderer, ownComponents: [sorting(0, -5, enabled: false)]) == -5,
                   "SetOrder has no Behaviour enabled guard; its Awake registration writes the absolute offset")
 
+            func manager(_ shader: Int, _ texture: Int, enabled: Bool = true) -> HUDSourceWatchComponent {
+                HUDSourceWatchComponent(id: id(96), type: "MonoBehaviour", script: "UIRegionBuildingTexManager",
+                    data: ["m_Enabled": .bool(enabled),
+                        "_regionMapShader": .object(["target_id": .string(id(shader).rawValue)]),
+                        "minimapOutlineTex": .object(["target_id": .string(id(texture).rawValue)])])
+            }
+            let shaderMaterials: [HUDSourceID: HUDSourceJSONValue] = [
+                id(10): .object(["shader_id": .string(id(20).rawValue)]),
+                id(11): .object(["shader_id": .string(id(21).rawValue)])]
+            let textureBlock = HUDSourceWatchDomain.rendererTextureOverrides(materialIDs: [nil, id(10), id(11)],
+                ownComponents: [manager(21, 30)], materials: shaderMaterials)
+            check(textureBlock == ["_BuildingTex": id(30).rawValue],
+                  "A matching later shared-material slot writes the renderer-wide original _BuildingTex, not _MinimapBuildingTex")
+            check(HUDSourceWatchDomain.rendererTextureOverrides(materialIDs: [id(10)],
+                ownComponents: [manager(21, 30)], materials: shaderMaterials).isEmpty,
+                  "A different original shader must not receive the manager texture")
+            check(HUDSourceWatchDomain.rendererTextureOverrides(materialIDs: [id(11)],
+                ownComponents: [manager(21, 30, enabled: false)], materials: shaderMaterials).isEmpty,
+                  "The disabled manager must not create an active renderer property block")
+
             // Real resource decoding catches case-sensitive manifest paths,
             // decimal-string source IDs, vertex channels and exact parent joins.
             let domain = try HUDSourceWatchDomain()
@@ -70,6 +90,11 @@ enum HUDSourceWatchDomainTests {
             let external = HUDSourceGeometry.translation(SIMD3(1, 2, 3)) * HUDSourceGeometry.scale(SIMD3(repeating: 0.01))
             let frame = try domain.frame(domainWorld: external)
             check(!frame.meshes.isEmpty, "Real Domain must emit original mesh batches")
+            let groundBlocks = frame.meshes.filter { $0.path == "map01_lv001_ground" || $0.path.hasPrefix("map01_lv001_ground/") }
+                .map(\.sourceTextureOverrides)
+            let groundTexture = "CAB-ee8b13bfaffa3babf0ee4e43787ee2ab:6712698097951409592"
+            check(groundBlocks.count == 2 && groundBlocks.allSatisfy { $0["_BuildingTex"] == groundTexture },
+                  "Both actual level001 ground renderers must bind their source outline texture despite generic shared-material textures")
             let packed = Float(bitPattern: 0x40001234)
             let normal = try HUDSourceWatchDomain.normalVectors([[Double(packed)]], vertexCount: 1)[0]
             check(normal.x.bitPattern == packed.bitPattern && normal.y == 0 && normal.z == 0,
