@@ -247,8 +247,35 @@ enum RenderSourceWatchPreviews {
         let region02 = try HUDSourceWatchDomain(resourceRoot: document.root.appendingPathComponent("Domain"),
             domainName: "Region02", loadedLevelIDs: ["map02_lv008"])
         let region02Builder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer, domain: region02)
+        // Recording-content reference only: the visible level is explicit,
+        // while nil retains all declared assets rather than inferring unlocks.
+        let recordingRegion02 = try HUDSourceWatchDomain(resourceRoot: document.root.appendingPathComponent("Domain"),
+            domainName: "Region02", loadedLevelIDs: nil)
+        let recordingRegion02Builder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer,
+            domain: recordingRegion02)
+        let recordingLevelIDs: Set<String> = ["indie_dg016", "map02_lv001", "map02_lv002", "map02_lv003",
+            "map02_lv004", "map02_lv005", "map02_lv006", "map02_lv007", "map02_lv008", "map02_lv009"]
+        guard recordingRegion02.loadedLevelIDs == recordingLevelIDs,
+              recordingRegion02.selectionPolicy == "all-declared-source-levels-reference" else {
+            throw HUDSourceError.invalid("Original Region02 all-declared reference differs")
+        }
         let levelClips = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
             from: Data(contentsOf: region02.root.appendingPathComponent("level-clips.json")))
+        let recordingModelRoot = HUDSourceID(rawValue: "CAB-5b48e6dd80305bdb3a51bc76d304daae:-1511050905380908587")
+        guard let recordingInstance = levelClips["instances"].array.first(where: {
+            $0["root_node_id"].string == recordingModelRoot.rawValue && $0["is_level_model_root"].flag() &&
+                $0["levels"].array.contains { $0["domain"].string == "region02" && $0["level_id"].string == "map02_lv007" }
+        }), let recordingModelRenderer = recordingRegion02.components[recordingModelRoot]?
+            .first(where: { $0.kind == "MeshRenderer" }),
+              let recordingSelectedClipID = recordingInstance["wrapper_clip_fields"]["_animationIn"].string,
+              let recordingSelectedClip = levelClips["clips"].array.first(where: { $0["id"].string == recordingSelectedClipID }) else {
+            throw HUDSourceError.invalid("Original recording-reference Region02 lv007 model missing")
+        }
+        let recordingMaterialIDs = recordingModelRenderer["m_Materials"].array.compactMap { $0.targetID?.rawValue }
+        guard recordingMaterialIDs == ["CAB-e0bf9992b0c38530be7957e92a2cb7fb:6442507501819082003",
+            "CAB-64867704c9a97c4a056d76e833da6270:3150233134595064732"] else {
+            throw HUDSourceError.invalid("Original Region02 lv007 two-slot order differs")
+        }
         guard let fourSlotInstance = levelClips["instances"].array.first(where: { instance in
             instance["is_level_model_root"].flag() && instance["levels"].array.contains {
                 $0["domain"].string == "region02" && $0["level_id"].string == "map02_lv008"
@@ -304,8 +331,10 @@ enum RenderSourceWatchPreviews {
         }
         let selectedEndpoint = try endpointProperties(selectedClip)
         let hoverEndpoint = try endpointProperties(hoverClip)
+        let recordingSelectedEndpoint = try endpointProperties(recordingSelectedClip)
         guard Set(selectedEndpoint.keys) == Set(["_OuterColor", "_InnerColor", "_Lightness"]),
-              hoverEndpoint["_Lightness"] != nil else {
+              hoverEndpoint["_Lightness"] != nil,
+              Set(recordingSelectedEndpoint.keys) == Set(["_OuterColor", "_InnerColor", "_Lightness"]) else {
             throw HUDSourceError.invalid("Original four-slot endpoint properties differ")
         }
         func placement(_ domain: String) throws -> HUDSourceID {
@@ -378,10 +407,12 @@ enum RenderSourceWatchPreviews {
             ("widgets-banner-tint-hover-midpoint", nil, 0.05000000074505806, nil, nil),
             ("widgets-banner-tint-hover-endpoint", nil, 0.10000000149011612, nil, nil),
             ("widgets-banner-tint-pressed-midpoint", nil, 0.15000000223517418, nil, nil),
-            ("widgets-banner-tint-pressed-endpoint", nil, 0.20000000298023224, nil, nil)
+            ("widgets-banner-tint-pressed-endpoint", nil, 0.20000000298023224, nil, nil),
+            ("recording-map-region02-lv007-reference", nil, 0, nil, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
+            let isRecordingMapFixture = name == "recording-map-region02-lv007-reference"
             let isHDR = name.hasPrefix("hdr-")
             if isHDR && hdrRenderer == nil {
                 trace("loading independent original RGB HDR renderer")
@@ -402,7 +433,8 @@ enum RenderSourceWatchPreviews {
                 activeRenderer = hdrRenderer; activeBuilder = hdrBuilder
             } else {
                 activeRenderer = renderer
-                activeBuilder = name.hasPrefix("domain-region02-lv008-") ? region02Builder : builder
+                activeBuilder = isRecordingMapFixture ? recordingRegion02Builder
+                    : (name.hasPrefix("domain-region02-lv008-") ? region02Builder : builder)
             }
             buttons.reset(at: 0)
             if hover != nil { buttons.setHovered(true, on: battlepass.nodeID, at: 0, reduceMotion: false) }
@@ -414,14 +446,17 @@ enum RenderSourceWatchPreviews {
             document.applyMacButtonAvailability(to: &pose)
             buttons.apply(to: &pose, at: hover ?? 0, reduceMotion: false)
             let isFourSlotFixture = name.hasPrefix("domain-region02-lv008-")
-            if isFourSlotFixture {
+            if isFourSlotFixture || isRecordingMapFixture {
                 var disabled = pose.transforms[region01Placement] ?? HUDSourceTransformOverride()
                 disabled.active = false; pose.transforms[region01Placement] = disabled
                 var enabled = pose.transforms[region02Placement] ?? HUDSourceTransformOverride()
                 enabled.active = true; pose.transforms[region02Placement] = enabled
             }
             var domainState = HUDSourceDomainAnimation.State(ambientTime: ambient ?? opening ?? closing ?? 0)
-            if isFourSlotFixture {
+            if isRecordingMapFixture {
+                domainState.currentLevelID = "map02_lv007"
+                domainState.selectionElapsed = nil
+            } else if isFourSlotFixture {
                 domainState.currentLevelID = "map02_lv008"
                 if name.hasSuffix("-hover") { domainState.hoverClipTimes = ["map02_lv008": hoverEndpointTime] }
             } else if name.hasPrefix("domain-") {
@@ -504,7 +539,7 @@ enum RenderSourceWatchPreviews {
                     widgetRegression["bannerNormalizedPosition"] = sample.normalizedPosition
                     widgetRegression["bannerExpectedNormalizedPosition"] = expectedPosition
                     widgetRegression["bannerSelectedPage"] = sample.selectedIndex
-                    widgetRegression["bannerFrameOrder"] = "Adapter tween, sampled center callback, then hold tick; original cross-frame scheduling remains unverified"
+                    widgetRegression["bannerFrameOrder"] = "Adapter page tween, actual normalized setter, ScrollRect LateUpdate, sampled center callback, then Lua hold tick; original cross-frame scheduling remains unverified"
                 }
                 if isColorFixture {
                     let expectedAlpha: Float
@@ -556,6 +591,53 @@ enum RenderSourceWatchPreviews {
                 }
                 try JSONSerialization.data(withJSONObject: materialRegression, options: [.prettyPrinted, .sortedKeys])
                     .write(to: output.appendingPathComponent(name + "-material-regression.json"))
+            }
+            var recordingMapRegression: [String: Any] = [:]
+            if isRecordingMapFixture {
+                guard region01Placement.rawValue == "CAB-194e41a66c2317b9df19269f505210be:-9089387680032723753",
+                      region02Placement.rawValue == "CAB-194e41a66c2317b9df19269f505210be:-3569935289392206633",
+                      frame.resolved[region01Placement]?.activeInHierarchy == false,
+                      let placement = frame.resolved[region02Placement], placement.activeInHierarchy,
+                      domainState.currentLevelID == "map02_lv007", domainState.selectionElapsed == nil else {
+                    throw HUDSourceError.invalid("Explicit recording-map source placement/selection differs")
+                }
+                let source = try recordingRegion02.frame(domainWorld: simd_mul(view.worldRoot, placement.worldMatrix),
+                    parentRect: placement.rect, animationState: domainState)
+                let sourceModels = source.meshes.filter { $0.nodeID == recordingModelRoot }
+                let targetBatches = frame.batches.filter { $0.sourceNodeID == recordingModelRoot.rawValue }
+                guard source.nodes[recordingModelRoot]?.activeInHierarchy == true, sourceModels.count == 1,
+                      sourceModels[0].materialIDs.compactMap({ $0?.rawValue }) == recordingMaterialIDs,
+                      targetBatches.count == 2, targetBatches.map(\.material) == recordingMaterialIDs else {
+                    throw HUDSourceError.invalid("Active recording-map lv007 did not produce its two original slots")
+                }
+                var slots: [[String: Any]] = []
+                for (slot, batch) in targetBatches.enumerated() {
+                    var expected: [String: [Float]] = [:]
+                    for (property, sourceValue) in recordingSelectedEndpoint {
+                        let gpuValue = activeRenderer.gpuMaterialValue(sourceValue, property: property, materialKey: batch.material)
+                        guard let actual = batch.uniformOverrides[property], actual.count == gpuValue.count,
+                              zip(actual, gpuValue).allSatisfy({ $0.0.isFinite && abs($0.0 - $0.1) < 0.000001 }) else {
+                            throw HUDSourceError.invalid("Original selected lv007 \(property) differs on slot \(slot)")
+                        }
+                        expected[property] = gpuValue
+                    }
+                    slots.append(["slot": slot, "materialID": batch.material,
+                        "expectedGPUValues": expected.mapValues { $0.map(Double.init) },
+                        "actualGPUValues": batch.uniformOverrides.filter { expected[$0.key] != nil }.mapValues { $0.map(Double.init) },
+                        "indexFirst": batch.indexRange?.lowerBound ?? -1, "indexCount": batch.indexRange?.count ?? -1])
+                }
+                recordingMapRegression = ["policy": "Controlled recording-map content reference; no account/current-level/unlock inference",
+                    "currentLevelID": "map02_lv007", "selectionElapsed": NSNull(), "requestedLoadedLevelIDs": NSNull(),
+                    "loadedLevelIDs": recordingRegion02.loadedLevelIDs.sorted(), "loadPolicy": recordingRegion02.selectionPolicy,
+                    "unlockPolicy": "No unlockedLevelIDs supplied; original source active flags retained, not a reconstructed player's loaded set",
+                    "region01PlacementID": region01Placement.rawValue, "region02PlacementID": region02Placement.rawValue,
+                    "modelNodeID": recordingModelRoot.rawValue, "selectedSourceClipID": recordingSelectedClipID,
+                    "selectedSourceClipTime": recordingSelectedClip["last_key_time"].float(), "slots": slots,
+                    "controllerColorEvidence": ["file": "game-reference/precision-reference/map-dynamic/controller-colors/controller-color-contract.json",
+                        "sha256": "36054c56588ca372d0705c0f9aab21225f0bcf364b14f523f43af94742bd78bc",
+                        "scope": "Setter/serialized values proven; Watch invocation unproven. No blanket normal/selected controller MPB color injected."]]
+                try JSONSerialization.data(withJSONObject: recordingMapRegression, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: output.appendingPathComponent(name + "-map-regression.json"))
             }
             if name == "stable" {
                 let batches: [[String: Any]] = frame.batches.map { batch in
@@ -632,6 +714,7 @@ enum RenderSourceWatchPreviews {
                 "openingElapsed": timestamp(opening), "ambientClipTime": timestamp(ambient),
                 "domainCurrentLevel": domainState.currentLevelID.map { $0 as Any } ?? NSNull(),
                 "domainName": activeBuilder.domain.domainName, "rendererWideMaterialRegression": materialRegression,
+                "recordingMapReference": recordingMapRegression,
                 "domainSelectionElapsed": timestamp(domainState.selectionElapsed), "domainHoverClipTimes": domainState.hoverClipTimes,
                 "closingElapsed": timestamp(closing), "hoverElapsed": timestamp(hover)])
             print(name + ": " + String(frame.batches.count) + " source batches; " + String(diagnostics.count) + " diagnostics")

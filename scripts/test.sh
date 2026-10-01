@@ -16,6 +16,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDSourceWatchAnimation.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchDocument.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchWidgets.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceBannerScroll.swift" \
     "$PROJECT_DIR/Sources/HUDSourceSelectableColor.swift" \
     "$PROJECT_DIR/Sources/HUDSourceImageGeometry.swift" \
     "$PROJECT_DIR/Sources/HUDSourceTextGeometry.swift" \
@@ -123,6 +124,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDSourceSceneTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchAnimationTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchWidgetsTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceBannerScrollTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceSelectableColorTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceImageGeometryTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceTextGeometryTests.swift" \

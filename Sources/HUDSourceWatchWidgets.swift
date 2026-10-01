@@ -35,6 +35,9 @@ final class HUDSourceWatchWidgets {
         let artworks: [String]
         let selectedIndex: Int
         let normalizedPosition: Double
+        /// Preserve the actual Float ScrollRect setter result without a
+        /// normalized division followed by a second Double multiplication.
+        var contentPosition: Double? = nil
     }
     /// The Lua hold clock discards overshoot at each >=4-second tick. DOTween
     /// runs independently of pause and starts from the current scroll position.
@@ -45,7 +48,7 @@ final class HUDSourceWatchWidgets {
         private(set) var selectedIndex = 0
         private(set) var holdTime = 0.0
         private(set) var normalizedPosition = 0.0
-        private var centerIndex = 0
+        private(set) var centerIndex = 0
         private var tweenStart = 0.0
         private var tweenTarget = 0.0
         private var tweenElapsed: Double? = nil
@@ -66,6 +69,13 @@ final class HUDSourceWatchWidgets {
         mutating func select(index: Int) throws {
             guard artworks.indices.contains(index) else { throw HUDSourceError.invalid("Invalid source banner page") }
             holdTime = 0; selectedIndex = index
+            try snapTo(index: index)
+        }
+        /// UIStep's release snap starts only its scroll tween. Lua selection
+        /// and hold change through the real center callback, unlike AutoTick
+        /// and explicit page input, which update them before starting a tween.
+        mutating func snapTo(index: Int) throws {
+            guard artworks.indices.contains(index) else { throw HUDSourceError.invalid("Invalid source banner snap") }
             tweenStart = normalizedPosition
             tweenTarget = artworks.count > 1 ? Double(index) / Double(artworks.count - 1) : 0
             tweenElapsed = 0
@@ -74,7 +84,7 @@ final class HUDSourceWatchWidgets {
         /// UIStep.OnBeginDrag kills the current DOTween with complete=false.
         mutating func beganDrag() { tweenElapsed = nil }
         mutating func scrolled(to position: Double) throws {
-            guard position.isFinite, (0...1).contains(position) else {
+            guard position.isFinite, Float(position).isFinite else {
                 throw HUDSourceError.invalid("Invalid source banner normalized position")
             }
             normalizedPosition = position
@@ -83,12 +93,19 @@ final class HUDSourceWatchWidgets {
         private mutating func updateCenter() {
             guard !artworks.isEmpty else { return }
             let center = Float(normalizedPosition) * Float(artworks.count - 1) + 0.5
-            let next = min(artworks.count - 1, max(0, Int(center.rounded(.towardZero))))
+            let bounded = min(Float(artworks.count - 1), max(0, center))
+            let next = Int(bounded.rounded(.towardZero))
             if next != centerIndex {
                 centerIndex = next; selectedIndex = next; holdTime = 0
             }
         }
         mutating func advance(delta: Double, paused: Bool = false) throws {
+            try advanceTween(delta: delta)
+            try advanceHoldClock(delta: delta, paused: paused)
+        }
+        /// The live adapter inserts ScrollRect's actual setter/LateUpdate before
+        /// sampling center callbacks and then ticking the separate Lua hold.
+        mutating func advanceTween(delta: Double, sampleCenter: Bool = true) throws {
             guard delta.isFinite, delta >= 0 else { throw HUDSourceError.invalid("Invalid source banner delta") }
             if let elapsed = tweenElapsed {
                 let next = min(Float(tweenDuration), Float(elapsed) + Float(delta))
@@ -100,11 +117,19 @@ final class HUDSourceWatchWidgets {
                 tweenElapsed = next < Float(tweenDuration) ? Double(next) : nil
                 // UIStep.UpdateShowingCells has no manual/automatic distinction;
                 // an automatic tween also emits the center-changed Lua callback.
-                updateCenter()
+                if sampleCenter { updateCenter() }
             }
+        }
+        mutating func advanceHoldClock(delta: Double, paused: Bool = false) throws {
+            guard delta.isFinite, delta >= 0 else { throw HUDSourceError.invalid("Invalid source banner delta") }
             guard !paused, !artworks.isEmpty else { return }
             holdTime += delta
             if holdTime >= holdDuration { try select(index: (selectedIndex + 1) % artworks.count) }
+        }
+        /// Explicit macOS Reduce Motion policy, independent of source physics.
+        mutating func settleTween() {
+            guard tweenElapsed != nil else { return }
+            normalizedPosition = tweenTarget; tweenElapsed = nil; updateCenter()
         }
     }
     struct BannerInstance {
@@ -309,6 +334,14 @@ final class HUDSourceWatchWidgets {
         return try BannerPlayback(artworks: artworks, holdDuration: bannerContract.holdDuration,
             tweenDuration: bannerContract.tweenDuration)
     }
+    func makeBannerScroll(pageCount: Int) throws -> HUDSourceBannerScroll {
+        let hidden = Float(max(0, pageCount - 1)) * Float(bannerContract.cellSize.x + bannerContract.spacing)
+        let geometry = try HUDSourceBannerScroll.Geometry(pageCount: pageCount,
+            viewWidth: Float(bannerContract.viewSize.x),
+            contentWidth: Float(bannerContract.viewSize.x) + hidden,
+            cellWidth: Float(bannerContract.cellSize.x))
+        return HUDSourceBannerScroll(geometry: geometry)
+    }
 
     static func merging(_ base: HUDSourceJSONValue, additions: HUDSourceJSONValue, arrays: [String]) -> HUDSourceJSONValue {
         var object = base.object
@@ -390,7 +423,7 @@ final class HUDSourceWatchWidgets {
         let banner = sample ?? BannerSample(artworks: state.bannerArtworks ?? (state.bannerArtwork.map { [$0] } ?? []), selectedIndex: 0,
             normalizedPosition: 0)
         guard banner.artworks.count <= bannerInstances.count, banner.normalizedPosition.isFinite,
-              (0...1).contains(banner.normalizedPosition),
+              Float(banner.normalizedPosition).isFinite,
               banner.artworks.isEmpty || banner.artworks.indices.contains(banner.selectedIndex) else {
             throw HUDSourceError.invalid("Invalid explicit source banner sample")
         }
@@ -406,7 +439,11 @@ final class HUDSourceWatchWidgets {
         container.pivot = HUDSourceVector2(0, 1)
         container.sizeDelta = HUDSourceVector2(banner.artworks.isEmpty ? 0 : bannerContract.viewSize.x + hiddenLength,
             bannerContract.viewSize.y)
-        container.anchoredPosition3D = HUDSourceVector3(-banner.normalizedPosition * hiddenLength, 0, 0)
+        let contentPosition = banner.contentPosition ?? (-banner.normalizedPosition * hiddenLength)
+        guard contentPosition.isFinite, Float(contentPosition).isFinite else {
+            throw HUDSourceError.invalid("Invalid source banner content position")
+        }
+        container.anchoredPosition3D = HUDSourceVector3(contentPosition, 0, 0)
         pose.transforms[bannerContract.containerID] = container
         for (index, instance) in bannerInstances.enumerated() {
             let enabled = banner.artworks.indices.contains(index)

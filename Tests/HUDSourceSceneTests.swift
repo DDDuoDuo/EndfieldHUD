@@ -130,6 +130,14 @@ enum HUDSourceSceneTests {
             let tiltedHit = perspective.hit(tiltedPoint.point, world: tiltedWorld, rect: rect, viewport: viewport)!
             close(tiltedHit.x, 0.5, "Tilted, mirrored hierarchy projects and hits using one matrix")
             close(tiltedHit.y, -0.25, "Perspective intersection supports nonuniform scale")
+            let draggedOutside = perspective.project(SIMD3(7, -0.25, 0), world: tiltedWorld, viewport: viewport)!
+            let dragPlane = perspective.pointOnPlane(draggedOutside.point, world: tiltedWorld, viewport: viewport)!
+            close(dragPlane.x, 7, "Captured drag retains tilted-plane coordinates outside the window")
+            close(dragPlane.y, -0.25, "Captured drag retains mirrored nonuniform hierarchy outside its mask")
+            check(perspective.hit(draggedOutside.point, world: tiltedWorld, rect: rect, viewport: viewport) == nil,
+                "Captured drag projection does not make clipped buttons clickable")
+            check(perspective.pointOnPlane(point.point, world: HUDSourceGeometry.scale(.zero), viewport: viewport) == nil,
+                "Captured drag safely rejects a singular viewport plane")
             check(perspective.project(.zero, world: HUDSourceGeometry.translation(SIMD3(0, 0, -5)), viewport: viewport) == nil,
                   "Geometry behind a perspective camera is not projected")
             check(perspective.hit(CGPoint(x: 210, y: 120), world: HUDSourceGeometry.translation(SIMD3(0, 0, 0.5)),
