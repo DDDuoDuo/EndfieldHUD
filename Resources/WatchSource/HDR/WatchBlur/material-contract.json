@@ -1,0 +1,1560 @@
+{
+  "schema_version": 1,
+  "material": {
+    "id": "CAB-19672075dc041493137296c53a2330a5:8413750250904750805",
+    "data": {
+      "m_Name": "M_ui_blur_bg",
+      "m_Shader": {
+        "m_FileID": 1,
+        "m_PathID": -5686924490240107124
+      },
+      "m_ValidKeywords": [
+        "STENCIL_ALPHA_BLEND"
+      ],
+      "m_InvalidKeywords": [],
+      "m_LightmapFlags": 4,
+      "m_EnableInstancingVariants": false,
+      "m_DoubleSidedGI": false,
+      "m_CustomRenderQueue": -1,
+      "stringTagMap": [],
+      "disabledShaderPasses": [
+        "ForwardOnly",
+        "DepthOnly"
+      ],
+      "m_SavedProperties": {
+        "m_TexEnvs": [
+          [
+            "_BlendTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_DissolveTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_DisturbTex1",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_DisturbTex2",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_LEDMaskTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_MainTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_MaskTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_NoiseTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_ScratchCard",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_SoftMaskTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_StretchTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_VFXMainTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_WeightTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ]
+        ],
+        "m_Ints": [],
+        "m_Floats": [
+          [
+            "_Amount",
+            0.5
+          ],
+          [
+            "_BendAmount",
+            0.0
+          ],
+          [
+            "_BendAngle",
+            1.0
+          ],
+          [
+            "_BendLeftEdge",
+            0.0
+          ],
+          [
+            "_BendPartHeight1",
+            2.0
+          ],
+          [
+            "_BendPartHeight2",
+            2.0
+          ],
+          [
+            "_BendPartHeight3",
+            2.0
+          ],
+          [
+            "_BendPartHeight4",
+            2.0
+          ],
+          [
+            "_BendPartHeight5",
+            2.0
+          ],
+          [
+            "_BendPartHeight6",
+            2.0
+          ],
+          [
+            "_BendRadius",
+            1.0
+          ],
+          [
+            "_BendRightEdge",
+            1.0
+          ],
+          [
+            "_BendUVClip",
+            0.0
+          ],
+          [
+            "_Bi_Disturb",
+            0.0
+          ],
+          [
+            "_Bi_Stretch",
+            0.0
+          ],
+          [
+            "_BlendTexUVRotate",
+            0.0
+          ],
+          [
+            "_BlendTexUseDisturb",
+            0.0
+          ],
+          [
+            "_BlendUVSet",
+            0.0
+          ],
+          [
+            "_BlockX",
+            5.0
+          ],
+          [
+            "_BlockY",
+            5.0
+          ],
+          [
+            "_ColorAmount",
+            2.0
+          ],
+          [
+            "_ColorLoopFadeOffset",
+            0.0
+          ],
+          [
+            "_ColorLoopSpeed",
+            1.0
+          ],
+          [
+            "_ColorMask",
+            15.0
+          ],
+          [
+            "_ColorPositionoffset",
+            0.0
+          ],
+          [
+            "_DissolveByDir",
+            0.0
+          ],
+          [
+            "_DissolveColorRamp",
+            0.0
+          ],
+          [
+            "_DissolveColorWidth",
+            1.0
+          ],
+          [
+            "_DissolveEdgeHardness",
+            0.0
+          ],
+          [
+            "_DissolveEdgeIntensity",
+            0.0
+          ],
+          [
+            "_DissolveEdgeWidth",
+            0.5
+          ],
+          [
+            "_DissolveScheduleOffset",
+            0.0
+          ],
+          [
+            "_DissolveTexUseDisturb",
+            0.0
+          ],
+          [
+            "_DissolveUVRotate",
+            0.0
+          ],
+          [
+            "_DissolveUVSet",
+            0.0
+          ],
+          [
+            "_DissolveUseWeight",
+            0.0
+          ],
+          [
+            "_Disturb2UVSet",
+            0.0
+          ],
+          [
+            "_DisturbTex1Normal",
+            0.0
+          ],
+          [
+            "_DisturbTex2Normal",
+            0.0
+          ],
+          [
+            "_DisturbTexUVRotate",
+            0.0
+          ],
+          [
+            "_DisturbUIntensity1",
+            0.0
+          ],
+          [
+            "_DisturbUIntensity2",
+            0.0
+          ],
+          [
+            "_DisturbUVSet",
+            0.0
+          ],
+          [
+            "_DisturbUseWeight",
+            0.0
+          ],
+          [
+            "_DisturbVIntensity1",
+            0.0
+          ],
+          [
+            "_DisturbVIntensity2",
+            0.0
+          ],
+          [
+            "_EnableBlockNoise",
+            0.0
+          ],
+          [
+            "_EnableColorLoop",
+            0.0
+          ],
+          [
+            "_EnableFilpBook",
+            0.0
+          ],
+          [
+            "_EnableGlitch",
+            0.0
+          ],
+          [
+            "_EnableGrid",
+            0.0
+          ],
+          [
+            "_EnableLinearLight",
+            0.0
+          ],
+          [
+            "_EnablePolar",
+            0.0
+          ],
+          [
+            "_EnableRotate",
+            0.0
+          ],
+          [
+            "_EnableScratchCards",
+            0.0
+          ],
+          [
+            "_EnableStencilAlphaBlend",
+            1.0
+          ],
+          [
+            "_EnableUIAlphaClip",
+            0.0
+          ],
+          [
+            "_EnableUIBlendTex",
+            0.0
+          ],
+          [
+            "_EnableUIClipOnlyChar",
+            0.0
+          ],
+          [
+            "_EnableUIClipSceneDepth",
+            0.0
+          ],
+          [
+            "_EnableUIDissolve",
+            0.0
+          ],
+          [
+            "_EnableUIDisturb",
+            0.0
+          ],
+          [
+            "_EnableUIMaskTex",
+            0.0
+          ],
+          [
+            "_EnableUIMinimapMist",
+            0.0
+          ],
+          [
+            "_EnableUIPixelStretch",
+            0.0
+          ],
+          [
+            "_EnableUIVFX",
+            0.0
+          ],
+          [
+            "_EnableUIVFXMainTex",
+            0.0
+          ],
+          [
+            "_EnableUIWeightTex",
+            0.0
+          ],
+          [
+            "_EnableWorldUI",
+            0.0
+          ],
+          [
+            "_FrameIndexOffset",
+            0.0
+          ],
+          [
+            "_Freq",
+            5.0
+          ],
+          [
+            "_GridScale",
+            0.10000000149011612
+          ],
+          [
+            "_GridTilling",
+            20.0
+          ],
+          [
+            "_Intensity",
+            0.005900000222027302
+          ],
+          [
+            "_LEDBlendFactor",
+            1.0
+          ],
+          [
+            "_LEDIntensity",
+            1.0
+          ],
+          [
+            "_Linear2Gamma",
+            0.0
+          ],
+          [
+            "_LinesWidth",
+            0.800000011920929
+          ],
+          [
+            "_MainProperties",
+            0.0
+          ],
+          [
+            "_MainTexUVRotate",
+            0.0
+          ],
+          [
+            "_MainTexUseDisturb",
+            1.0
+          ],
+          [
+            "_MainUVSet",
+            0.0
+          ],
+          [
+            "_MaskTexUVRotate",
+            0.0
+          ],
+          [
+            "_MaskTexUseDisturb",
+            0.0
+          ],
+          [
+            "_MaskUVSet",
+            0.0
+          ],
+          [
+            "_NoiseTime",
+            0.0
+          ],
+          [
+            "_Offset",
+            1.0
+          ],
+          [
+            "_OnlyBendPart",
+            0.0
+          ],
+          [
+            "_Stencil",
+            0.0
+          ],
+          [
+            "_StencilAlpha",
+            0.15000000596046448
+          ],
+          [
+            "_StencilAlphaBlend",
+            32.0
+          ],
+          [
+            "_StencilAlphaBlendComp",
+            3.0
+          ],
+          [
+            "_StencilAlphaBlendOp",
+            0.0
+          ],
+          [
+            "_StencilAlphaBlendReadMask",
+            255.0
+          ],
+          [
+            "_StencilAlphaBlendWriteMask",
+            255.0
+          ],
+          [
+            "_StencilComp",
+            3.0
+          ],
+          [
+            "_StencilOp",
+            0.0
+          ],
+          [
+            "_StencilReadMask",
+            255.0
+          ],
+          [
+            "_StencilWriteMask",
+            255.0
+          ],
+          [
+            "_StretchIntensity",
+            1.0
+          ],
+          [
+            "_StretchTexUVRotate",
+            0.0
+          ],
+          [
+            "_StretchUseDisturb",
+            0.0
+          ],
+          [
+            "_StretchUseWeight",
+            0.0
+          ],
+          [
+            "_Threshold",
+            0.5
+          ],
+          [
+            "_TimeAnamtionSpeed",
+            20.0
+          ],
+          [
+            "_TintColorAlpha",
+            1.0
+          ],
+          [
+            "_TintColorIntensity",
+            1.0
+          ],
+          [
+            "_UIImageBlurToggle",
+            0.0
+          ],
+          [
+            "_UIImageOpaque",
+            1.0
+          ],
+          [
+            "_UIVFXParameters",
+            0.0
+          ],
+          [
+            "_UseAdditiveBlendMode",
+            0.0
+          ],
+          [
+            "_UseBendPartFade",
+            0.0
+          ],
+          [
+            "_UseDisturb",
+            0.0
+          ],
+          [
+            "_UseDisturb2",
+            0.0
+          ],
+          [
+            "_UseLEDScreen",
+            0.0
+          ],
+          [
+            "_UseMainTexAsAlpha",
+            1.0
+          ],
+          [
+            "_UseMaskTexAsAlpha",
+            1.0
+          ],
+          [
+            "_VFXBlendMode",
+            0.0
+          ],
+          [
+            "_WeightTexIntensity",
+            1.0
+          ],
+          [
+            "_WeightTexUVRotate",
+            0.0
+          ],
+          [
+            "_WeightUVSet",
+            0.0
+          ],
+          [
+            "_ZTestUI",
+            8.0
+          ],
+          [
+            "_farPlaneDepthOffset",
+            0.004999999888241291
+          ],
+          [
+            "_isFarPlaneDepth",
+            0.0
+          ],
+          [
+            "_isZDepthOffset",
+            0.0
+          ],
+          [
+            "_zDepthOffset",
+            0.004999999888241291
+          ]
+        ],
+        "m_Colors": [
+          [
+            "_BendPoint",
+            {
+              "r": 0.5,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.5
+            }
+          ],
+          [
+            "_BlendTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_BlendTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_BlendTint",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_Color",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_DissolveDir",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolveEmissiveColor",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolveEmissiveColor2",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolvePoint",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolveUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_DissolveUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DisturbTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_DisturbUVSpeed1",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DisturbUVSpeed2",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_GridColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_InnerSoftMask",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_InnerSoftMaskPos",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_InnerSoftMaskUV",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_LoopColor1",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_LoopColor2",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_LoopColor3",
+            {
+              "r": 0.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_LoopColor4",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MainTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MainTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_MaskTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MaskTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_PolarTilingOffset",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_RightEdgeColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_RowsColumns",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_SoftMaskPos",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_StretchDir",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_StretchTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_StretchUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_WeightTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_WeightTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ]
+        ]
+      },
+      "m_BuildTextureStacks": [],
+      "m_SubsurfaceProfile": {
+        "m_FileID": 0,
+        "m_PathID": 0
+      }
+    },
+    "raw_sha256": "32128b6752024efedcd49fcf74d011a951952a086b1758364b5542f2113ad32f",
+    "shader_id": "CAB-a9639464a220db7366f9e133dbb4751c:-5686924490240107124",
+    "source_file": "precision-reference/blur-cursor/objects/CAB-19672075dc041493137296c53a2330a5--8413750250904750805.json",
+    "runtime_texture_name": "_MainTex",
+    "runtime_texture_source": "UIBlurRT-owned extracted main-camera texture; source serialized m_Texture is null."
+  },
+  "source_shader_id": "CAB-a9639464a220db7366f9e133dbb4751c:-5686924490240107124",
+  "exact_shader_state": {
+    "subshader": 0,
+    "pass_index": 1,
+    "state": {
+      "m_Name": "Default-Stencil-Alpha-Blend",
+      "rtBlend0": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 10.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 10.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 0.0,
+          "name": "_ColorMask"
+        }
+      },
+      "rtBlend1": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 2.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtBlend2": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 15.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtBlend3": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 15.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtBlend4": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 15.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtBlend5": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 15.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtBlend6": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 15.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtBlend7": {
+        "srcBlend": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlend": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "srcBlendAlpha": {
+          "val": 1.0,
+          "name": "<noninit>"
+        },
+        "destBlendAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOp": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "blendOpAlpha": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "colMask": {
+          "val": 15.0,
+          "name": "<noninit>"
+        }
+      },
+      "rtSeparateBlend": false,
+      "zClip": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "zTest": {
+        "val": 0.0,
+        "name": "_ZTestUI"
+      },
+      "zWrite": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "culling": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "conservative": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "offsetFactor": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "offsetUnits": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "alphaToMask": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "stencilOp": {
+        "pass": {
+          "val": 0.0,
+          "name": "_StencilAlphaBlendOp"
+        },
+        "fail": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "zFail": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "comp": {
+          "val": 0.0,
+          "name": "_StencilAlphaBlendComp"
+        }
+      },
+      "stencilOpFront": {
+        "pass": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "fail": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "zFail": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "comp": {
+          "val": 8.0,
+          "name": "<noninit>"
+        }
+      },
+      "stencilOpBack": {
+        "pass": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "fail": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "zFail": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "comp": {
+          "val": 8.0,
+          "name": "<noninit>"
+        }
+      },
+      "stencilReadMask": {
+        "val": 0.0,
+        "name": "_StencilAlphaBlendReadMask"
+      },
+      "stencilWriteMask": {
+        "val": 0.0,
+        "name": "_StencilAlphaBlendWriteMask"
+      },
+      "stencilRef": {
+        "val": 0.0,
+        "name": "_StencilAlphaBlend"
+      },
+      "fogStart": {
+        "val": 0.0,
+        "name": "unity_FogStart"
+      },
+      "fogEnd": {
+        "val": 0.0,
+        "name": "unity_FogEnd"
+      },
+      "fogDensity": {
+        "val": 0.0,
+        "name": "unity_FogDensity"
+      },
+      "fogColor": {
+        "x": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "y": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "z": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "w": {
+          "val": 0.0,
+          "name": "<noninit>"
+        },
+        "name": "unity_FogColor"
+      },
+      "fogMode": -1,
+      "gpuProgramID": 128030,
+      "m_Tags": {
+        "tags": [
+          [
+            "CanUseSpriteAtlas",
+            "true"
+          ],
+          [
+            "IGNOREPROJECTOR",
+            "true"
+          ],
+          [
+            "LIGHTMODE",
+            "StencilAlphaBlend"
+          ],
+          [
+            "PreviewType",
+            "Plane"
+          ],
+          [
+            "QUEUE",
+            "Transparent"
+          ],
+          [
+            "RenderPipeline",
+            "HGRenderPipeline"
+          ],
+          [
+            "RenderType",
+            "Transparent"
+          ]
+        ]
+      },
+      "m_LOD": 0,
+      "lighting": false
+    },
+    "bindings": [
+      {
+        "stage": "progVertex",
+        "keywords": [
+          "STENCIL_ALPHA_BLEND"
+        ],
+        "gpu_program_type": 33
+      },
+      {
+        "stage": "progVertex",
+        "keywords": [
+          "STENCIL_ALPHA_BLEND"
+        ],
+        "gpu_program_type": 25
+      }
+    ]
+  },
+  "shader_manifest": "WatchBlur/image-stencil-shader.json",
+  "reusable_existing_resources": [
+    {
+      "existing_resource": "Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program1615.vertex.metal",
+      "sha256": "4f8c2e4232a8638f0839fcd34c9cc4952bd0de6582204a9e8d74f2f988c6bbea",
+      "original_conversion_path": "game-reference/watch-render-pipeline/metal-conversion/HGRP_UI_Default-ss0-p18-seg0-program1615.vertex.metal"
+    },
+    {
+      "existing_resource": "Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program1615.fragment.metal",
+      "sha256": "15c68ad349f730a96521a6d2ba56ba31762b6604fdb7fa3fa18463e945d48f79",
+      "original_conversion_path": "game-reference/watch-render-pipeline/metal-conversion/HGRP_UI_Default-ss0-p18-seg0-program1615.fragment.metal"
+    }
+  ],
+  "texture_binding": {
+    "property": "_MainTex",
+    "source": "UIBlurRT-owned main-camera BlurredSceneColorPS extraction",
+    "serialized_texture": null,
+    "requires_dynamic_capture": true
+  },
+  "geometry": {
+    "source": "WatchBlur/scene.json",
+    "component_id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:4667585945048214165",
+    "component_type": "UnityEngine.UI.RawImage",
+    "source_rgb": [
+      0.2980392277240753,
+      0.2980392277240753,
+      0.2980392277240753
+    ],
+    "source_alpha": 1,
+    "caution": "Panel root has serialized zero size/scale. Original UIManager/Canvas initialization supplies runtime root rectangle; retain child anchors and RawImage UV rect."
+  },
+  "boundary": "Current game scene pixels and global scene volume state are not installed source assets."
+}

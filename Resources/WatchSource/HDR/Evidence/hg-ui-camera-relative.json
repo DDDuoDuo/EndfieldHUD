@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "scope": "Read-only original default code audit, symbolic instruction verification and adapter algebra. No original DLL execution or live-state observation.",
+  "shader_pair": {
+    "injected": "Normal newly created offscreen UI draw has _RenderPathInjected=1, as proved by the original null payload constructor/callback in hg-ui-render-target.json.",
+    "world_camera_position": {
+      "name": "_WorldSpaceCameraPos_Internal",
+      "cb_offset": 704,
+      "source_api": "Camera.transform.position",
+      "transform_getter_call": "0x183537e43",
+      "position_getter_call": "0x183537e74",
+      "position_resolution": "0x184b3fbf7",
+      "api_string": "UnityEngine.Transform::get_position_Injected(UnityEngine.Vector3&)",
+      "update_call": "0x183537f26",
+      "argument": "cameraPosition (seventh managed parameter, stack [rsp+0x28])",
+      "view_constants_native_offset": "0x5c0",
+      "hg_camera_object_offset": "0x638",
+      "stores": [
+        "0x182deb6b1",
+        "0x182deb6c0"
+      ],
+      "cb_copy": {
+        "loads": [
+          "0x18399cc0b",
+          "0x18399cc11"
+        ],
+        "conversion_call": "0x18399cc23",
+        "conversion": "0x1835943d0",
+        "store": "0x18399cc2b"
+      },
+      "tuple": [
+        "cameraTransform.position.x",
+        "cameraTransform.position.y",
+        "cameraTransform.position.z",
+        0
+      ],
+      "convention": "World position is copied unchanged. The camera-view Z reflection affects the matrix basis, not this position vector."
+    },
+    "no_translation_view_projection": {
+      "name": "_NonJitteredViewNoTransProjMatrix",
+      "cb_offset": 512,
+      "source_view": "UnityEngine.Camera.get_worldToCameraMatrix_Injected, getter call 0x183537de6.",
+      "zero_translation": {
+        "source": "Original source-view columns 0..2 are preserved exactly; column 3 becomes (0,0,0,1).",
+        "writes": [
+          "0x182deaf80",
+          "0x182deaf84",
+          "0x182deaf90"
+        ],
+        "source_columns_load": [
+          "0x182deaeeb",
+          "0x182deaef0",
+          "0x182deaef6"
+        ],
+        "symbolic_columns": [
+          [
+            "v00",
+            "v10",
+            "v20",
+            "v30"
+          ],
+          [
+            "v01",
+            "v11",
+            "v21",
+            "v31"
+          ],
+          [
+            "v02",
+            "v12",
+            "v22",
+            "v32"
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "source_projection": "GL.GetGPUProjectionMatrix(original non-jittered projection, true)",
+      "gpu_projection_call": "0x182deae83",
+      "render_into_texture": true,
+      "matrix_multiply": "0x182deb060: nonJitteredGpuProjection × zeroTranslation(sourceView)",
+      "view_constants_native_offset": "0x240",
+      "hg_camera_object_offset": "0x2b8",
+      "source_stores": [
+        "0x182deb64d",
+        "0x182deb65f",
+        "0x182deb674",
+        "0x182deb67f"
+      ],
+      "cb_prepare": {
+        "source_loads": [
+          "0x18399cad4",
+          "0x18399caa8",
+          "0x18399cadf",
+          "0x18399cabc"
+        ],
+        "multiplication": "0x18399cb14: preTransformMatrix × sourceNonJitteredViewNoTransProjMatrix",
+        "multiplication_api": "UnityEngine.Matrix4x4::HGMultiplyMatrix4x4Fast_Injected",
+        "stores": [
+          "0x18399cb26",
+          "0x18399cb31",
+          "0x18399cb3c",
+          "0x18399cb43"
+        ]
+      },
+      "offscreen_pretransform": {
+        "caller": "0x188ebd96d passes whether any color attachment is a backbuffer to HGUtils.GetPreTransformMatrix",
+        "getter": "0x188eef730",
+        "false_branch": "0x188eef757 -> 0x188eef77f",
+        "value": "UnityEngine.Matrix4x4.identityMatrix, static offset 0x40",
+        "callback_prepare": "0x188ebd9e5 calls PrepareBasicCameraTransforms with the returned matrix"
+      },
+      "formula": "CB512 = preTransform × GPUProjectionNonJittered(renderIntoTexture=true) × zeroTranslation(sourceCameraView)"
+    }
+  },
+  "callback_upload": {
+    "owner": "HGRenderPathBase.OnRenderPassExecution (0x188ebd808)",
+    "prepare_call": "0x188ebd9e5",
+    "prepare_condition": "Camera identity or backbuffer classification changed from the previous callback; retained prepared constants are used otherwise.",
+    "current_cb_upload": "0x188ebdabb copies the first 720 bytes of BasicTransformConstants (CurrentViewTransformConstants), then 0x188ebdaf4 appends 64 bytes of UIShaderVariablesGlobal.",
+    "whole_buffer_bind": "0x188ebdb3e",
+    "shader_name": "_UIRenderingConstants",
+    "bytes": 784,
+    "separate_basic_transform_upload": {
+      "bind": "0x188ebdc34",
+      "shader_name": "_TransformVariables",
+      "bytes": 1312,
+      "copy": "0x188ebdbd3"
+    },
+    "render_graph_path": "Original UI pass SetupRenderFunc/ExecuteSubpassRenderFunc -> HGRenderGraph.InvokeOwnerCallback -> this owner callback, before rendering the pass."
+  },
+  "adaptation": {
+    "requirement": "Set Injected=1 together with camera world position and a matching no-translation VP. Do not subtract camera position then multiply an absolute VP that already contains its translation.",
+    "equality": "For the original normal transform-derived affine view V and camera C: zeroTranslation(V) × (world.xyz-C,1) = V × (world.xyz,1). Multiplying either side by the same GPU P and preTransform preserves clip position.",
+    "original_default_view": "Camera API view contains the engine Z reflection S=diag(1,1,-1), previously proved in hg-ui-camera-constants.json. Keep it paired with the projection/basis adapter. Do not negate camera position Z to imitate this reflection.",
+    "gpu_y": "Source non-jittered P is built through GL.GetGPUProjectionMatrix(...,true). The source final shader clip-Y conversion and Metal adapter projection/RT convention must remain coordinated; translation removal adds no Y flip.",
+    "custom_view_boundary": "The source still reads actual Transform.position if a custom view matrix were installed; the affine equivalence above assumes the normal transform-derived camera view. No Watch-specific custom-view setter was proved in the bounded earlier audit.",
+    "verification": {
+      "symbolic_columns_preserved": true,
+      "world_position_no_axis_conversion": true,
+      "algebra_points": 3,
+      "maximum_residual": 2.842170943040401e-14
+    },
+    "not_established": [
+      "Complete C++ alternative render-path equivalence or runtime IFix replacements.",
+      "Live camera/RT orientation, external volume state, or pixel-equivalence to the recording."
+    ]
+  },
+  "evidence": [
+    {
+      "path": "precision-reference/postprocess/native/HGCamera--UpdateAllViewConstants--268413.asm.txt",
+      "bytes": 23060,
+      "sha256": "6c4dfdebcdecf438d251c750f811595833e5e0b3ce07e615ee7efc1a19531ec5"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGCamera--UpdateViewConstants--268415.asm.txt",
+      "bytes": 121791,
+      "sha256": "9e6e077581c75e33a441da9c1bc661559e79bac86c4b7a20e54a1c1d3a33f58e"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGCamera--PrepareBasicCameraTransforms--268403.asm.txt",
+      "bytes": 40313,
+      "sha256": "eb3bfd893982ec83762034dc3ee9969028a4c2ee888ef8ffe98d2861e90a6a6a"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGRenderPathBase--HG_Rendering_RenderGraphModule_IRenderGraphCallbackOwner_OnRenderPassExecution--269585.asm.txt",
+      "bytes": 31404,
+      "sha256": "905d9ab4b1c77877d31222ab2c438530af0a897133bc34a5bb10051b50512cf7"
+    },
+    {
+      "path": "precision-reference/postprocess/native/HGUtils--GetPreTransformMatrix--270003.asm.txt",
+      "bytes": 7295,
+      "sha256": "e48354ed50a653ed77ad8f0985ff4c035866d18d85d166b0d2aa9461fa30bc30"
+    },
+    {
+      "path": "precision-reference/postprocess/engine/1835943d0-183594411.asm.txt",
+      "bytes": 1093,
+      "sha256": "1b1e9c88693484801bcd29b288caca1aa774f455dc733b371fcdf6f3b8c7cfec"
+    },
+    {
+      "path": "precision-reference/postprocess/camera-relative-fields.json",
+      "bytes": 24901,
+      "sha256": "0cb33bd3c469c854caeb173ff29c2d22e3017b4a607edc8734ca8afdd6ee4f8f"
+    },
+    {
+      "path": "precision-reference/postprocess/composite-constructor-fields.json",
+      "bytes": 263251,
+      "sha256": "b798c254eefce03cc05fcdb685bd77fb6b142f832a6ebc495bf56aa4de7b6ef1"
+    },
+    {
+      "path": "precision-reference/postprocess/hg-ui-render-target.json",
+      "bytes": 19600,
+      "sha256": "a0d894880148f42bd549065f7c332e8b4a8f1c931e7e4a13ca2df62d4168d2a6"
+    },
+    {
+      "path": "precision-reference/postprocess/hg-ui-camera-constants.json",
+      "bytes": 13605,
+      "sha256": "cf8f06749813b99e52bad83bbd631de660ced26deb8f236f793f01cf49a8b68b"
+    }
+  ]
+}

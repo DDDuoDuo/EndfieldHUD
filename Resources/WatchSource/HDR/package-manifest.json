@@ -1,0 +1,639 @@
+{
+  "schema_version": 1,
+  "policy": "Outer-only bounded source resource package; no game execution or production modification.",
+  "source_shader": {
+    "id": "CAB-feee320eebbc6443871160405c47e630:-2664880953429036268",
+    "name": "HGRP/PostProcessing/UberPost",
+    "raw_sha256": "e2ebdf125bd63641d81e2e13ece530e784f705c9c5b6f0a027a1acca8fd0676f",
+    "source_asset": "Packages/com.hg.render-pipelines/Runtime/Shaders/PostProcessing/UberPost.shader"
+  },
+  "source_bundle": {
+    "layer": "Persistent",
+    "group": "InitBundle",
+    "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+    "name": "Data/Bundles/Windows/initial/4e05ece956bf6fec2be13d66.ab",
+    "name_hash": "3188574BEB66E5DE",
+    "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+    "md5": "76D0D1DBF38C77151A18EDFBDB765DEA",
+    "offset": 28715925,
+    "length": 656975,
+    "block_type": 2,
+    "encrypted": false,
+    "flags": 0,
+    "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\extracted\\Persistent\\Data\\Bundles\\Windows\\initial\\4e05ece956bf6fec2be13d66.ab",
+    "sha256": "318e03afe2cdaa948bdf7b4a59655f8b8f134751bb0fd57804d5577013e3db50",
+    "md5_verified": true
+  },
+  "composite_variants": 6,
+  "composite_stages": 12,
+  "files": [
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry720.bin",
+      "bytes": 264,
+      "sha256": "ce984c212ad82db844a2a648c4f832f9c923dfeda52b134d990db6afb2e7a4b5",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry720.bin",
+      "source_sha256": "ce984c212ad82db844a2a648c4f832f9c923dfeda52b134d990db6afb2e7a4b5",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry721.bin",
+      "bytes": 636,
+      "sha256": "d73b7d6bae5f8b4033649f1f161bde9bce952b465f76f4da651a91f2c86de421",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry721.bin",
+      "source_sha256": "d73b7d6bae5f8b4033649f1f161bde9bce952b465f76f4da651a91f2c86de421",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry722.bin",
+      "bytes": 480,
+      "sha256": "e7ee9312fc7ff2c603087c4ce2ab2b63d5940d38971582a6f1a386909fa7dd5d",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry722.bin",
+      "source_sha256": "e7ee9312fc7ff2c603087c4ce2ab2b63d5940d38971582a6f1a386909fa7dd5d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry723.bin",
+      "bytes": 524,
+      "sha256": "4f87ffa582b2dc5022f23de97bc329091a6b8a414c6d663828fa020c74f36e7f",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry723.bin",
+      "source_sha256": "4f87ffa582b2dc5022f23de97bc329091a6b8a414c6d663828fa020c74f36e7f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry724.bin",
+      "bytes": 832,
+      "sha256": "a75bd22f241603fa97caed29bf09615c621a8f279a6a4cfdf9ded1420f201219",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry724.bin",
+      "source_sha256": "a75bd22f241603fa97caed29bf09615c621a8f279a6a4cfdf9ded1420f201219",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry725.bin",
+      "bytes": 676,
+      "sha256": "a42f435356966c7ad6c20e9003969b7cb9aa7535ebbec7dfed1e42c23e66c687",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry725.bin",
+      "source_sha256": "a42f435356966c7ad6c20e9003969b7cb9aa7535ebbec7dfed1e42c23e66c687",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.bindings.json",
+      "bytes": 324,
+      "sha256": "74d6d4ed2c40a7b3213b196fa2cd17bf5018d12ff58dc11ebe992369dfee7daf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.bindings.json",
+      "source_sha256": "74d6d4ed2c40a7b3213b196fa2cd17bf5018d12ff58dc11ebe992369dfee7daf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.metal",
+      "bytes": 450,
+      "sha256": "06d581042ee67277111054e6f5b9d4e71e30daa8af3f3308ed55b43db0b3d793",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.metal",
+      "source_sha256": "06d581042ee67277111054e6f5b9d4e71e30daa8af3f3308ed55b43db0b3d793",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.reflection.json",
+      "bytes": 512,
+      "sha256": "6d09868332208ed68de25a7d9d72c18d6f2684b40ece479ef4c64d951554f7bb",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.reflection.json",
+      "source_sha256": "6d09868332208ed68de25a7d9d72c18d6f2684b40ece479ef4c64d951554f7bb",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.spv",
+      "bytes": 764,
+      "sha256": "4eaf1483a70ae8db0f151a7323d5aef050a94a7c8bf314d93a6433da1ce8b7dd",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.spv",
+      "source_sha256": "4eaf1483a70ae8db0f151a7323d5aef050a94a7c8bf314d93a6433da1ce8b7dd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.bindings.json",
+      "bytes": 657,
+      "sha256": "ee254056c2f05b4871cca7ba68831263fe04592fe7db3be7713241c3bb0b11a4",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.bindings.json",
+      "source_sha256": "ee254056c2f05b4871cca7ba68831263fe04592fe7db3be7713241c3bb0b11a4",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.metal",
+      "bytes": 3774,
+      "sha256": "57272aaff648de23b5c09eef654c07a59dcaa5ee1f164cbace9ffd3ba07e8400",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.metal",
+      "source_sha256": "57272aaff648de23b5c09eef654c07a59dcaa5ee1f164cbace9ffd3ba07e8400",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.reflection.json",
+      "bytes": 18828,
+      "sha256": "dc37783405fb34512dcff0d9311f9895f3a39fe7b1e884834bec80fe6c4a4f32",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.reflection.json",
+      "source_sha256": "dc37783405fb34512dcff0d9311f9895f3a39fe7b1e884834bec80fe6c4a4f32",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.spv",
+      "bytes": 6208,
+      "sha256": "fb1b5d513e3d4933ebf6880f3cc146498130077337675034d4b81ee3ba29426f",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.spv",
+      "source_sha256": "fb1b5d513e3d4933ebf6880f3cc146498130077337675034d4b81ee3ba29426f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.bindings.json",
+      "bytes": 815,
+      "sha256": "036e67e8451962b5891a7d7f86eb136f094b2cecee90341965fb2ae2c78dff60",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.bindings.json",
+      "source_sha256": "036e67e8451962b5891a7d7f86eb136f094b2cecee90341965fb2ae2c78dff60",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.metal",
+      "bytes": 1357,
+      "sha256": "1f89977ab45b918680621523521da0b739f1541f45c1720bbc387143b1805a76",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.metal",
+      "source_sha256": "1f89977ab45b918680621523521da0b739f1541f45c1720bbc387143b1805a76",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.reflection.json",
+      "bytes": 3423,
+      "sha256": "fe81bff46f98c5faa9a115f5e7446b319c9e2f93877aaa1c63ff2b488380ffd8",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.reflection.json",
+      "source_sha256": "fe81bff46f98c5faa9a115f5e7446b319c9e2f93877aaa1c63ff2b488380ffd8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.spv",
+      "bytes": 2244,
+      "sha256": "1c7f9718060057c938db4f4480b6ea18b90a48e943e023c1ba55e41b2d57bdfd",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.spv",
+      "source_sha256": "1c7f9718060057c938db4f4480b6ea18b90a48e943e023c1ba55e41b2d57bdfd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.bindings.json",
+      "bytes": 653,
+      "sha256": "395e5a90f9f9ee7d0f2ceb5e6b86d5ae0fb8a0d49094142475bc56eb7b5f8c5e",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.bindings.json",
+      "source_sha256": "395e5a90f9f9ee7d0f2ceb5e6b86d5ae0fb8a0d49094142475bc56eb7b5f8c5e",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.metal",
+      "bytes": 1592,
+      "sha256": "2d895ac7319e2ee9d37a66c1f98d3252fab0e86ebfa1490d690f3e3d81efa55e",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.metal",
+      "source_sha256": "2d895ac7319e2ee9d37a66c1f98d3252fab0e86ebfa1490d690f3e3d81efa55e",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.reflection.json",
+      "bytes": 3329,
+      "sha256": "866eec563fac181fd269394cebbe7ee4affb0455accc76f629db3976539919a5",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.reflection.json",
+      "source_sha256": "866eec563fac181fd269394cebbe7ee4affb0455accc76f629db3976539919a5",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.spv",
+      "bytes": 2964,
+      "sha256": "6e4abc6aa24936f8e0ff4ce501b10d9bcd39993bbfa4bca9201ae4f8fa1cc37b",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.spv",
+      "source_sha256": "6e4abc6aa24936f8e0ff4ce501b10d9bcd39993bbfa4bca9201ae4f8fa1cc37b",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.bindings.json",
+      "bytes": 819,
+      "sha256": "0e69c5900cb164860cc88aee416d89fca182aae308e22a7cd3bf683e7da6b1cc",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.bindings.json",
+      "source_sha256": "0e69c5900cb164860cc88aee416d89fca182aae308e22a7cd3bf683e7da6b1cc",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.metal",
+      "bytes": 4451,
+      "sha256": "e727be9f2620512b677e34dc4711c5ab13a77543c511287659d5b9e2af9edd76",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.metal",
+      "source_sha256": "e727be9f2620512b677e34dc4711c5ab13a77543c511287659d5b9e2af9edd76",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.reflection.json",
+      "bytes": 18924,
+      "sha256": "5013e16657ae0eb1d6bf9dffac780bd72e2a536eba318027e736f0338c443a5c",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.reflection.json",
+      "source_sha256": "5013e16657ae0eb1d6bf9dffac780bd72e2a536eba318027e736f0338c443a5c",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.spv",
+      "bytes": 7604,
+      "sha256": "9befd2caaff1bf566f1e4fb57918100f678b24efa50dce542ad33d1b72901340",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.spv",
+      "source_sha256": "9befd2caaff1bf566f1e4fb57918100f678b24efa50dce542ad33d1b72901340",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.bindings.json",
+      "bytes": 977,
+      "sha256": "bb3d2bd70f30a5433d5c5a1098898fcd413c1da441023d73834fcb5b71e57227",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.bindings.json",
+      "source_sha256": "bb3d2bd70f30a5433d5c5a1098898fcd413c1da441023d73834fcb5b71e57227",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.metal",
+      "bytes": 2036,
+      "sha256": "8d10ca4a0449fa9596df18b5008b02f4564181d0485b5624bd68514ddef95101",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.metal",
+      "source_sha256": "8d10ca4a0449fa9596df18b5008b02f4564181d0485b5624bd68514ddef95101",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.reflection.json",
+      "bytes": 3519,
+      "sha256": "5c99688fa23c4a9eec9018c0fc1b216cfac86df4302986dcca741afc03de23fb",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.reflection.json",
+      "source_sha256": "5c99688fa23c4a9eec9018c0fc1b216cfac86df4302986dcca741afc03de23fb",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.spv",
+      "bytes": 3672,
+      "sha256": "8dc8acf984a11a0bc218c20bf4675add561f893f1a030c3ef2ccdfd257698d1d",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.spv",
+      "source_sha256": "8dc8acf984a11a0bc218c20bf4675add561f893f1a030c3ef2ccdfd257698d1d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/manifest.json",
+      "bytes": 147956,
+      "sha256": "c6228c94683b8ea7888f2abd83f00f291cdf07ef75d36b75700b7ede11d51837",
+      "source_refs": [
+        {
+          "path": "game-reference/precision-reference/postprocess/ui-composite-port-manifest.json",
+          "sha256": "efeb633cbbc86fb59a2576c7a3760dd10315aa695b5c4115506775bea95da188",
+          "bundle": {
+            "layer": "Persistent",
+            "group": "InitBundle",
+            "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+            "name": "Data/Bundles/Windows/initial/4e05ece956bf6fec2be13d66.ab",
+            "name_hash": "3188574BEB66E5DE",
+            "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+            "md5": "76D0D1DBF38C77151A18EDFBDB765DEA",
+            "offset": 28715925,
+            "length": 656975,
+            "block_type": 2,
+            "encrypted": false,
+            "flags": 0,
+            "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\extracted\\Persistent\\Data\\Bundles\\Windows\\initial\\4e05ece956bf6fec2be13d66.ab",
+            "sha256": "318e03afe2cdaa948bdf7b4a59655f8b8f134751bb0fd57804d5577013e3db50",
+            "md5_verified": true
+          }
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "Evidence/composite-enum-defaults.json",
+      "bytes": 36922,
+      "sha256": "3cc6fc7667fb96ee1231941d463fa77b72b90347fa9fe48b5e0456b6a048b7a8",
+      "source_path": "game-reference/precision-reference/postprocess/composite-enum-defaults.json",
+      "source_sha256": "3cc6fc7667fb96ee1231941d463fa77b72b90347fa9fe48b5e0456b6a048b7a8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/conversion-report.json",
+      "bytes": 18475,
+      "sha256": "ebc8d4b8affb581cd3c75e2dc141b89cadf610a6c204f409ce8e7719d3383006",
+      "source_path": "game-reference/precision-reference/postprocess/shader/conversion-report.json",
+      "source_sha256": "ebc8d4b8affb581cd3c75e2dc141b89cadf610a6c204f409ce8e7719d3383006",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-camera-relative.json",
+      "bytes": 9053,
+      "sha256": "27b540182fedab0b00176100616e7a54b444d8740d383900e2624b669ed2fbc8",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-camera-relative.json",
+      "source_sha256": "27b540182fedab0b00176100616e7a54b444d8740d383900e2624b669ed2fbc8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-camera-relative.md",
+      "bytes": 2962,
+      "sha256": "a8f07587d3031916420802299d8375f36853c95e36e2ee38894df2e56b3ac824",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-camera-relative.md",
+      "source_sha256": "a8f07587d3031916420802299d8375f36853c95e36e2ee38894df2e56b3ac824",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-render-target.json",
+      "bytes": 21701,
+      "sha256": "72a22049b954e218e651faa1e64ab28c5fe40b5926e5c12300aaf79e029d4931",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-render-target.json",
+      "source_sha256": "72a22049b954e218e651faa1e64ab28c5fe40b5926e5c12300aaf79e029d4931",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-render-target.md",
+      "bytes": 6626,
+      "sha256": "ea8f1ee1b9eb1ac272b4e41106b33ecb188ea2a05a18c4515ce3954b2d374444",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-render-target.md",
+      "source_sha256": "ea8f1ee1b9eb1ac272b4e41106b33ecb188ea2a05a18c4515ce3954b2d374444",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/ui-composite-graph.json",
+      "bytes": 44570,
+      "sha256": "f70b1fac8efc78ce90683cdeb8cb96a31b90f726f9369c8221527486cd5e94ed",
+      "source_path": "game-reference/precision-reference/postprocess/ui-composite-graph.json",
+      "source_sha256": "f70b1fac8efc78ce90683cdeb8cb96a31b90f726f9369c8221527486cd5e94ed",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/ui-composite-graph.md",
+      "bytes": 5571,
+      "sha256": "006224d13ca572fb54cd217e7711770d000cc7da567a5b1f7f6bd36d0638a28b",
+      "source_path": "game-reference/precision-reference/postprocess/ui-composite-graph.md",
+      "source_sha256": "006224d13ca572fb54cd217e7711770d000cc7da567a5b1f7f6bd36d0638a28b",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/ui-composite-shader-decode.json",
+      "bytes": 1007,
+      "sha256": "82b232075a2137785ee8e47202b5dbe42d6094891c347c5f69239dfc9f642129",
+      "source_path": "game-reference/precision-reference/postprocess/ui-composite-shader-decode.json",
+      "source_sha256": "82b232075a2137785ee8e47202b5dbe42d6094891c347c5f69239dfc9f642129",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2135,
+      "sha256": "70a57af3d95a8d4f72cb08d17902570d4f166f7b9629a357713393d0bf90ca56",
+      "source_refs": [
+        {
+          "path": "game-reference/package_source_hdr_assets.py",
+          "sha256": "3e8b5741fcc1adeec4ec8aebf9c02a625d3b33e86414879c4a4f5c0e4fe9d756"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/HGRP_UI_Default-ss0-p18-seg0-program1615.fragment.metal",
+      "bytes": 1239,
+      "sha256": "15c68ad349f730a96521a6d2ba56ba31762b6604fdb7fa3fa18463e945d48f79",
+      "source_path": "EndfieldHUD/Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program1615.fragment.metal",
+      "source_sha256": "15c68ad349f730a96521a6d2ba56ba31762b6604fdb7fa3fa18463e945d48f79",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/HGRP_UI_Default-ss0-p18-seg0-program1615.vertex.metal",
+      "bytes": 3674,
+      "sha256": "4f8c2e4232a8638f0839fcd34c9cc4952bd0de6582204a9e8d74f2f988c6bbea",
+      "source_path": "EndfieldHUD/Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program1615.vertex.metal",
+      "source_sha256": "4f8c2e4232a8638f0839fcd34c9cc4952bd0de6582204a9e8d74f2f988c6bbea",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/image-stencil-shader.json",
+      "bytes": 22693,
+      "sha256": "da04f81016afd24057966bff5ea52fdf30c90ecbc7fd4e0ed95740db83b181c6",
+      "source_refs": [
+        {
+          "path": "EndfieldHUD/Resources/WatchSource/image-stencil-shader.json",
+          "sha256": "d17214dce7638e649df1e50aa31a2e8c37c118333b4b0305f933cb3aedaebeb4"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/material-contract.json",
+      "bytes": 34328,
+      "sha256": "89ff2423143d1bc70cdf0795052751cae8e4d36e90c3a5810fae595f52d86af7",
+      "source_refs": [
+        {
+          "path": "game-reference/precision-reference/postprocess/watch-blur-composite-scene.json",
+          "sha256": "0ec2d2abf7672c9cdba777959ea6bc372f83e305879924318da8e610bf735987"
+        },
+        {
+          "path": "game-reference/watch-render-pipeline/shaders/HGRP_UI_Default.parsed.json",
+          "sha256": "62965f66da8bb40ceff750c350f81d71a390061d0b9a53e2586057200221faae"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/scene.json",
+      "bytes": 91174,
+      "sha256": "0ec2d2abf7672c9cdba777959ea6bc372f83e305879924318da8e610bf735987",
+      "source_path": "game-reference/precision-reference/postprocess/watch-blur-composite-scene.json",
+      "source_sha256": "0ec2d2abf7672c9cdba777959ea6bc372f83e305879924318da8e610bf735987",
+      "transformation": "byte-identical copy"
+    }
+  ],
+  "integrity": {
+    "each_file_hash_verified": true,
+    "source_bundle_sha256_verified": true,
+    "existing_stencil_stages_original_byte_equal": true
+  },
+  "boundaries": [
+    "Dynamic player scene capture pixels absent from installed assets.",
+    "Global volume weights and runtime config values were not observed.",
+    "Metal final RT UV orientation, target sRGB policy and HDR format fallback require an explicit platform adapter.",
+    "No production resources copied by this script."
+  ]
+}
