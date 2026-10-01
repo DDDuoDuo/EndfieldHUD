@@ -72,6 +72,15 @@ enum HUDSourceWatchWidgetsTests {
                 empty.transforms[id("5176234855714047131")]?.active == false,
                 "Source hidden head-level/activity/season gates and unproved birthday state stay hidden")
             let firstBanner = widget.bannerInstances[0], secondBanner = widget.bannerInstances[1]
+            check(empty.properties[firstBanner.lightNodeID]?["m_Color.a"] == nil &&
+                abs((document.component("UIImage", on: firstBanner.lightNodeID)?["m_Color"]["a"].float() ?? -1)
+                    - 0.20000000298023224) < 1e-9,
+                "Widgets preserve the original Light Graphic alpha for independent Selectable tint")
+            var animatedLight = HUDSourceWatchPose(transforms: [:])
+            animatedLight.properties[firstBanner.lightNodeID] = ["m_Color.a": 0.37]
+            _ = try widget.apply(to: &animatedLight, state: .desktopReference, at: 0)
+            check(animatedLight.properties[firstBanner.lightNodeID]?["m_Color.a"] == 0.37,
+                "Widget population cannot overwrite an independently sampled Graphic color curve")
             check(unaccounted.sprites[firstBanner.imageComponentID] == "CAB-453a2bda20bf8e297e653335ba1e9836:4250958573640483290",
                 "The default banner is one explicit Yvonne source artwork, not a table-wide account rotation")
             check(original.scene.node(widget.bannerImageNodeID)?.parentID != firstBanner.rootID &&

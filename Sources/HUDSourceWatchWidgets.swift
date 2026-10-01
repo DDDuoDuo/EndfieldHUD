@@ -418,10 +418,10 @@ final class HUDSourceWatchWidgets {
                 + Double(index) * (bannerContract.cellSize.x + bannerContract.spacing),
                 -(bannerContract.viewSize.y - bannerContract.cellSize.y) / 2, 0)
             pose.transforms[instance.rootID] = cell
-            // Original Selectable ColorTint starts in Normal (target alpha0).
-            if pose.properties[instance.lightNodeID]?["m_Color.a"] == nil {
-                pose.properties[instance.lightNodeID, default: [:]]["m_Color.a"] = 0
-            }
+            // Keep the authored Light Graphic alpha. The independent
+            // CanvasRenderer ColorTint channel hides it in Normal and fades
+            // it for Highlighted/Pressed; changing Graphic here would also
+            // erase those source transitions and any Animator color curve.
             guard enabled else { continue }
             let name = banner.artworks[index]
             guard let spriteID = artwork[name] else { throw HUDSourceError.invalid("Unsupported explicit banner artwork: " + name) }
