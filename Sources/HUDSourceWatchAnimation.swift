@@ -137,7 +137,8 @@ struct HUDSourceWatchAnimation {
             // The RectTransform-specific handler covers anchors/size/pivot
             // and Z. Legacy inherited position/scale components also bind
             // through the native Serialized TypeTree float fallback. Keep
-            // their original class ID; layout later rewrites driven axes.
+            // their original class ID and sampled serialized values. The
+            // RectTransform finalizer restores visible XY from its anchors.
             // Other properties remain diagnosed outside this verified set.
             if curve.group == "m_FloatCurves", curve.classID == 224,
                !Self.rectTransformScalarAttributes.contains(curve.attribute) {
@@ -159,7 +160,16 @@ struct HUDSourceWatchAnimation {
                     switch curve.attribute {
                     case "m_IsActive": transform.active = scalar >= 0.5
                     case "m_LocalPosition.x", "m_LocalPosition.y", "m_LocalPosition.z":
-                        transform.positionComponents[Self.axis(curve.attribute)] = scalar
+                        if curve.classID == 224, node.transform.kind == .rectTransform,
+                           Self.axis(curve.attribute) < 2 {
+                            // Native TypeTree writes the inherited serialized
+                            // field, then RectTransform's animation finalizer
+                            // derives graph XY from anchoredPosition/anchors/
+                            // pivot. These cache fields are not graph setters.
+                            pose.properties[id, default: [:]][curve.attribute] = scalar
+                        } else {
+                            transform.positionComponents[Self.axis(curve.attribute)] = scalar
+                        }
                     case "m_LocalScale.x", "m_LocalScale.y", "m_LocalScale.z":
                         transform.localScale = Self.replace((transform.localScale ?? node.transform.localScale).simd,
                             attribute: curve.attribute, value: scalar)
