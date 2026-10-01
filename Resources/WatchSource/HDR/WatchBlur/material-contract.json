@@ -1556,5 +1556,12 @@
     "source_alpha": 1,
     "caution": "Panel root has serialized zero size/scale. Original UIManager/Canvas initialization supplies runtime root rectangle; retain child anchors and RawImage UV rect."
   },
-  "boundary": "Current game scene pixels and global scene volume state are not installed source assets."
+  "boundary": "Current game scene pixels and global scene volume state are not installed source assets.",
+  "runtime_material_record": "WatchBlur/material-runtime.json",
+  "enabled_material_passes": [
+    "Default",
+    "Default-Stencil-Alpha-Blend"
+  ],
+  "default_shader_manifest": "WatchBlur/image-shader.json",
+  "stencil_boundary": "Original serialized Default is Equal0/Keep, second pass Equal32/Keep. Default shader does not emit stencil. Native HGDrawUIRendererList dynamic overrides are not closed; do not assert Default writes32 or select only second pass on clear0."
 }

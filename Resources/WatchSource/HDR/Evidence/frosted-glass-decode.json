@@ -1,0 +1,54 @@
+[
+  {
+    "nodes": [
+      {
+        "bytes": 111736,
+        "sha256": "6e8c77e76ee3c8fee32916b727b619696ed408fa3135f4a1c7313ed6803d16cd",
+        "path": "CAB-319d31cdd969435718e4a0dcdbec6255"
+      }
+    ],
+    "source": {
+      "layer": "Persistent",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+      "name": "Data/Bundles/Windows/initial/01249634e25ada23e52ef2ed.ab",
+      "name_hash": "42D24D7BBED23B7F",
+      "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+      "md5": "DDE3AFD19AB7BFF455C40B554C557C53",
+      "offset": 6656839,
+      "length": 25446,
+      "block_type": 2,
+      "encrypted": false,
+      "flags": 0,
+      "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\bundles\\01249634e25ada23e52ef2ed.ab",
+      "sha256": "7fbbe1f3412bd7bbf190586532e3f5b81984911ed5026787734e3c187e8580e1",
+      "md5_verified": true,
+      "signature": "fc39d51c955b3c9b"
+    }
+  },
+  {
+    "nodes": [
+      {
+        "bytes": 107992,
+        "sha256": "5598bbeb86d65970738937282b491487f8c591f8cc4d6fa6a3663608d25f762a",
+        "path": "CAB-b082e5ab245c784edd5281cc07e7478b"
+      }
+    ],
+    "source": {
+      "layer": "Persistent",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+      "name": "Data/Bundles/Windows/initial/2457516cc7aa32bc3e4aaba3.ab",
+      "name_hash": "E574DA64710C4F47",
+      "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+      "md5": "0140A65D0105E9C9BDA3A72E858CBF87",
+      "offset": 7830371,
+      "length": 31696,
+      "block_type": 2,
+      "encrypted": false,
+      "flags": 0,
+      "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\bundles\\2457516cc7aa32bc3e4aaba3.ab",
+      "sha256": "a57bcb8550d4af600b8aa53f98f63d86a139f2dba74d5ed94ac5885b48d283ae",
+      "md5_verified": true,
+      "signature": "2b6889f2bba561de"
+    }
+  }
+]

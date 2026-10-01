@@ -1,0 +1,867 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "frag"
+    }
+  ],
+  "types": {
+    "_5": {
+      "name": "_5",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 16
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 32
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 48
+        },
+        {
+          "name": "_m4",
+          "type": "vec4",
+          "offset": 64
+        },
+        {
+          "name": "_m5",
+          "type": "vec4",
+          "offset": 80
+        },
+        {
+          "name": "_m6",
+          "type": "vec4",
+          "array": [
+            6
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 96,
+          "array_stride": 16
+        },
+        {
+          "name": "_m7",
+          "type": "vec4",
+          "array": [
+            6
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 192,
+          "array_stride": 16
+        },
+        {
+          "name": "_m8",
+          "type": "vec4",
+          "offset": 288
+        },
+        {
+          "name": "_m9",
+          "type": "vec4",
+          "offset": 304
+        },
+        {
+          "name": "_m10",
+          "type": "vec4",
+          "offset": 320
+        },
+        {
+          "name": "_m11",
+          "type": "vec4",
+          "offset": 336
+        },
+        {
+          "name": "_m12",
+          "type": "vec4",
+          "offset": 352
+        },
+        {
+          "name": "_m13",
+          "type": "vec4",
+          "offset": 368
+        },
+        {
+          "name": "_m14",
+          "type": "vec4",
+          "offset": 384
+        },
+        {
+          "name": "_m15",
+          "type": "vec4",
+          "offset": 400
+        },
+        {
+          "name": "_m16",
+          "type": "float",
+          "offset": 416
+        },
+        {
+          "name": "_m17",
+          "type": "float",
+          "offset": 420
+        },
+        {
+          "name": "_m18",
+          "type": "float",
+          "offset": 424
+        },
+        {
+          "name": "_m19",
+          "type": "uint",
+          "offset": 428
+        },
+        {
+          "name": "_m20",
+          "type": "vec4",
+          "offset": 432
+        },
+        {
+          "name": "_m21",
+          "type": "ivec4",
+          "offset": 448
+        },
+        {
+          "name": "_m22",
+          "type": "vec4",
+          "offset": 464
+        },
+        {
+          "name": "_m23",
+          "type": "vec4",
+          "offset": 480
+        },
+        {
+          "name": "_m24",
+          "type": "vec4",
+          "offset": 496
+        },
+        {
+          "name": "_m25",
+          "type": "vec4",
+          "offset": 512
+        },
+        {
+          "name": "_m26",
+          "type": "vec4",
+          "offset": 528
+        },
+        {
+          "name": "_m27",
+          "type": "vec4",
+          "offset": 544
+        },
+        {
+          "name": "_m28",
+          "type": "vec4",
+          "offset": 560
+        },
+        {
+          "name": "_m29",
+          "type": "vec4",
+          "offset": 576
+        },
+        {
+          "name": "_m30",
+          "type": "vec4",
+          "offset": 592
+        },
+        {
+          "name": "_m31",
+          "type": "vec4",
+          "offset": 608
+        },
+        {
+          "name": "_m32",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 624,
+          "array_stride": 16
+        },
+        {
+          "name": "_m33",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 688,
+          "array_stride": 16
+        },
+        {
+          "name": "_m34",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 752,
+          "array_stride": 16
+        },
+        {
+          "name": "_m35",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 816,
+          "array_stride": 16
+        },
+        {
+          "name": "_m36",
+          "type": "vec4",
+          "offset": 880
+        },
+        {
+          "name": "_m37",
+          "type": "vec4",
+          "offset": 896
+        },
+        {
+          "name": "_m38",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 912,
+          "array_stride": 16
+        },
+        {
+          "name": "_m39",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 976,
+          "array_stride": 16
+        },
+        {
+          "name": "_m40",
+          "type": "vec4",
+          "array": [
+            4
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 1040,
+          "array_stride": 16
+        },
+        {
+          "name": "_m41",
+          "type": "vec4",
+          "offset": 1104
+        },
+        {
+          "name": "_m42",
+          "type": "vec4",
+          "offset": 1120
+        },
+        {
+          "name": "_m43",
+          "type": "vec4",
+          "offset": 1136
+        },
+        {
+          "name": "_m44",
+          "type": "vec4",
+          "offset": 1152
+        },
+        {
+          "name": "_m45",
+          "type": "vec4",
+          "offset": 1168
+        },
+        {
+          "name": "_m46",
+          "type": "vec4",
+          "offset": 1184
+        },
+        {
+          "name": "_m47",
+          "type": "vec4",
+          "offset": 1200
+        },
+        {
+          "name": "_m48",
+          "type": "vec4",
+          "offset": 1216
+        },
+        {
+          "name": "_m49",
+          "type": "vec4",
+          "offset": 1232
+        },
+        {
+          "name": "_m50",
+          "type": "vec4",
+          "offset": 1248
+        },
+        {
+          "name": "_m51",
+          "type": "vec4",
+          "offset": 1264
+        },
+        {
+          "name": "_m52",
+          "type": "vec4",
+          "offset": 1280
+        },
+        {
+          "name": "_m53",
+          "type": "vec4",
+          "offset": 1296
+        },
+        {
+          "name": "_m54",
+          "type": "vec4",
+          "offset": 1312
+        },
+        {
+          "name": "_m55",
+          "type": "vec4",
+          "offset": 1328
+        },
+        {
+          "name": "_m56",
+          "type": "vec4",
+          "offset": 1344
+        },
+        {
+          "name": "_m57",
+          "type": "vec4",
+          "offset": 1360
+        },
+        {
+          "name": "_m58",
+          "type": "vec4",
+          "offset": 1376
+        },
+        {
+          "name": "_m59",
+          "type": "vec4",
+          "offset": 1392
+        },
+        {
+          "name": "_m60",
+          "type": "vec4",
+          "offset": 1408
+        },
+        {
+          "name": "_m61",
+          "type": "vec4",
+          "offset": 1424
+        },
+        {
+          "name": "_m62",
+          "type": "vec4",
+          "offset": 1440
+        },
+        {
+          "name": "_m63",
+          "type": "vec4",
+          "offset": 1456
+        },
+        {
+          "name": "_m64",
+          "type": "vec4",
+          "offset": 1472
+        },
+        {
+          "name": "_m65",
+          "type": "vec4",
+          "offset": 1488
+        },
+        {
+          "name": "_m66",
+          "type": "vec4",
+          "offset": 1504
+        },
+        {
+          "name": "_m67",
+          "type": "vec4",
+          "offset": 1520
+        },
+        {
+          "name": "_m68",
+          "type": "vec4",
+          "offset": 1536
+        },
+        {
+          "name": "_m69",
+          "type": "vec4",
+          "offset": 1552
+        },
+        {
+          "name": "_m70",
+          "type": "vec4",
+          "offset": 1568
+        },
+        {
+          "name": "_m71",
+          "type": "vec4",
+          "offset": 1584
+        },
+        {
+          "name": "_m72",
+          "type": "vec4",
+          "offset": 1600
+        },
+        {
+          "name": "_m73",
+          "type": "vec4",
+          "offset": 1616
+        },
+        {
+          "name": "_m74",
+          "type": "vec4",
+          "offset": 1632
+        },
+        {
+          "name": "_m75",
+          "type": "vec4",
+          "offset": 1648
+        },
+        {
+          "name": "_m76",
+          "type": "vec4",
+          "offset": 1664
+        },
+        {
+          "name": "_m77",
+          "type": "vec4",
+          "offset": 1680
+        },
+        {
+          "name": "_m78",
+          "type": "vec4",
+          "offset": 1696
+        },
+        {
+          "name": "_m79",
+          "type": "vec4",
+          "offset": 1712
+        },
+        {
+          "name": "_m80",
+          "type": "vec4",
+          "offset": 1728
+        },
+        {
+          "name": "_m81",
+          "type": "vec4",
+          "offset": 1744
+        },
+        {
+          "name": "_m82",
+          "type": "vec4",
+          "offset": 1760
+        },
+        {
+          "name": "_m83",
+          "type": "vec4",
+          "offset": 1776
+        },
+        {
+          "name": "_m84",
+          "type": "vec4",
+          "offset": 1792
+        },
+        {
+          "name": "_m85",
+          "type": "vec4",
+          "offset": 1808
+        },
+        {
+          "name": "_m86",
+          "type": "vec4",
+          "offset": 1824
+        },
+        {
+          "name": "_m87",
+          "type": "vec4",
+          "offset": 1840
+        },
+        {
+          "name": "_m88",
+          "type": "vec4",
+          "offset": 1856
+        },
+        {
+          "name": "_m89",
+          "type": "vec4",
+          "offset": 1872
+        },
+        {
+          "name": "_m90",
+          "type": "vec4",
+          "offset": 1888
+        },
+        {
+          "name": "_m91",
+          "type": "vec4",
+          "offset": 1904
+        },
+        {
+          "name": "_m92",
+          "type": "vec4",
+          "offset": 1920
+        },
+        {
+          "name": "_m93",
+          "type": "vec4",
+          "offset": 1936
+        },
+        {
+          "name": "_m94",
+          "type": "vec4",
+          "offset": 1952
+        },
+        {
+          "name": "_m95",
+          "type": "vec4",
+          "offset": 1968
+        },
+        {
+          "name": "_m96",
+          "type": "vec4",
+          "offset": 1984
+        },
+        {
+          "name": "_m97",
+          "type": "vec4",
+          "offset": 2000
+        },
+        {
+          "name": "_m98",
+          "type": "vec4",
+          "offset": 2016
+        },
+        {
+          "name": "_m99",
+          "type": "vec4",
+          "array": [
+            2
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 2032,
+          "array_stride": 16
+        },
+        {
+          "name": "_m100",
+          "type": "vec4",
+          "array": [
+            2
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 2064,
+          "array_stride": 16
+        },
+        {
+          "name": "_m101",
+          "type": "float",
+          "offset": 2096
+        },
+        {
+          "name": "_m102",
+          "type": "float",
+          "offset": 2100
+        },
+        {
+          "name": "_m103",
+          "type": "float",
+          "offset": 2104
+        },
+        {
+          "name": "_m104",
+          "type": "float",
+          "offset": 2108
+        },
+        {
+          "name": "_m105",
+          "type": "vec4",
+          "offset": 2112
+        },
+        {
+          "name": "_m106",
+          "type": "vec4",
+          "offset": 2128
+        },
+        {
+          "name": "_m107",
+          "type": "vec4",
+          "offset": 2144
+        },
+        {
+          "name": "_m108",
+          "type": "vec4",
+          "offset": 2160
+        },
+        {
+          "name": "_m109",
+          "type": "vec4",
+          "offset": 2176
+        },
+        {
+          "name": "_m110",
+          "type": "vec4",
+          "offset": 2192
+        },
+        {
+          "name": "_m111",
+          "type": "vec4",
+          "offset": 2208
+        },
+        {
+          "name": "_m112",
+          "type": "vec4",
+          "offset": 2224
+        },
+        {
+          "name": "_m113",
+          "type": "vec4",
+          "offset": 2240
+        },
+        {
+          "name": "_m114",
+          "type": "vec4",
+          "offset": 2256
+        },
+        {
+          "name": "_m115",
+          "type": "vec4",
+          "offset": 2272
+        },
+        {
+          "name": "_m116",
+          "type": "vec4",
+          "offset": 2288
+        },
+        {
+          "name": "_m117",
+          "type": "vec4",
+          "offset": 2304
+        },
+        {
+          "name": "_m118",
+          "type": "vec4",
+          "offset": 2320
+        },
+        {
+          "name": "_m119",
+          "type": "vec4",
+          "offset": 2336
+        },
+        {
+          "name": "_m120",
+          "type": "vec4",
+          "offset": 2352
+        },
+        {
+          "name": "_m121",
+          "type": "vec4",
+          "offset": 2368
+        },
+        {
+          "name": "_m122",
+          "type": "vec4",
+          "offset": 2384
+        },
+        {
+          "name": "_m123",
+          "type": "vec4",
+          "offset": 2400
+        },
+        {
+          "name": "_m124",
+          "type": "vec4",
+          "offset": 2416
+        },
+        {
+          "name": "_m125",
+          "type": "vec4",
+          "offset": 2432
+        },
+        {
+          "name": "_m126",
+          "type": "vec4",
+          "offset": 2448
+        },
+        {
+          "name": "_m127",
+          "type": "vec4",
+          "offset": 2464
+        },
+        {
+          "name": "_m128",
+          "type": "vec4",
+          "offset": 2480
+        },
+        {
+          "name": "_m129",
+          "type": "vec4",
+          "offset": 2496
+        },
+        {
+          "name": "_m130",
+          "type": "vec4",
+          "offset": 2512
+        },
+        {
+          "name": "_m131",
+          "type": "vec4",
+          "offset": 2528
+        },
+        {
+          "name": "_m132",
+          "type": "vec4",
+          "offset": 2544
+        },
+        {
+          "name": "_m133",
+          "type": "vec4",
+          "offset": 2560
+        },
+        {
+          "name": "_m134",
+          "type": "vec4",
+          "offset": 2576
+        },
+        {
+          "name": "_m135",
+          "type": "mat4",
+          "offset": 2592,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m136",
+          "type": "vec4",
+          "offset": 2656
+        },
+        {
+          "name": "_m137",
+          "type": "vec4",
+          "offset": 2672
+        },
+        {
+          "name": "_m138",
+          "type": "vec4",
+          "array": [
+            32
+          ],
+          "array_size_is_literal": [
+            true
+          ],
+          "offset": 2688,
+          "array_stride": 16
+        }
+      ]
+    },
+    "_11": {
+      "name": "_11",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 16
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 32
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 48
+        }
+      ]
+    }
+  },
+  "inputs": [
+    {
+      "type": "vec2",
+      "name": "_3",
+      "location": 0
+    }
+  ],
+  "outputs": [
+    {
+      "type": "vec4",
+      "name": "_4",
+      "location": 0
+    }
+  ],
+  "separate_images": [
+    {
+      "type": "texture2D",
+      "name": "_10",
+      "set": 3,
+      "binding": 1
+    }
+  ],
+  "separate_samplers": [
+    {
+      "type": "sampler",
+      "name": "_8",
+      "set": 3,
+      "binding": 0
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_5",
+      "name": "_5_6",
+      "block_size": 3200,
+      "set": 3,
+      "binding": 2
+    },
+    {
+      "type": "_11",
+      "name": "_11_12",
+      "block_size": 64,
+      "set": 3,
+      "binding": 3
+    }
+  ]
+}

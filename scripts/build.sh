@@ -60,6 +60,12 @@ STAGED_APP="$STAGE/$APP_NAME.app"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 
 SOURCES=("$PROJECT_DIR"/Sources/*.swift)
+BACKDROP_LINK_FLAGS=()
+if [ -d "$SELECTED_SDK/System/Library/Frameworks/ScreenCaptureKit.framework" ]; then
+    # Screen pixels use a guarded macOS 14 path; older deployment targets
+    # must still launch when that system framework is absent.
+    BACKDROP_LINK_FLAGS=(-Xlinker -weak_framework -Xlinker ScreenCaptureKit)
+fi
 if [ ! -f "${SOURCES[0]}" ]; then
     printf 'No Swift source files found in %s/Sources.\n' "$PROJECT_DIR" >&2
     exit 1
@@ -78,7 +84,8 @@ for ARCH in "${ARCHITECTURES[@]}"; do
         -file-prefix-map "$PROJECT_DIR=/EndfieldHUD" \
         -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
         -module-cache-path "$BUILD_DIR/module-cache" \
-        -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit -lsqlite3 \
+        -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit \
+        "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 \
         "${SOURCES[@]}" -o "$BINARY"
     BINARIES+=("$BINARY")
 done

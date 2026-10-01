@@ -1,4 +1,5 @@
 import AppKit
+import MetalKit
 import QuartzCore
 import simd
 
@@ -43,6 +44,34 @@ final class HUDSourceWatchView: NSView {
     private var accessibilityButtons: [HUDSourceID: HUDSourceWatchAccessibilityButton] = [:]
     private var observers: [NSObjectProtocol] = []
     private var timer: Timer?
+    private var sourceBackdrop: HUDSourceWatchBackdrop?
+    private var backdropAdapter: HUDSourceWatchBackdrop?
+    private var backdropTask: Task<Void, Never>?
+    private var backdropGeneration: UInt64 = 0
+    private struct BackdropGeometry: Equatable {
+        let windowNumber: Int
+        let rectangle: CGRect
+        let drawableSize: CGSize
+        let backingScale: CGFloat
+        let screenNumber: UInt32
+    }
+    private var backdropGeometry: BackdropGeometry?
+    private struct PendingOpening {
+        let heldTime: Double
+        let ready: () -> Void
+        let completion: () -> Void
+    }
+    private var pendingOpening: PendingOpening?
+    private var backdropTransitionStart: Double = 0
+    private(set) var backdropDiagnostics: [String] = []
+    /// Native verification and exported previews never read the desktop or
+    /// invoke its screen-capture permission APIs.
+    private var canCaptureDesktopBackdrop: Bool {
+        let process = ProcessInfo.processInfo
+        guard process.environment["GITHUB_ACTIONS"] != "true", process.environment["CI"] != "true" else { return false }
+        return !CommandLine.arguments.contains { $0 == "--ui-test" || $0.hasSuffix("smoke-test")
+            || $0 == "--smoke-test" || $0.hasPrefix("--render-") }
+    }
     private var tracking: NSTrackingArea?
     private let cursorBitmap: CGImage
     private let cursorHotspotPixels: CGPoint
@@ -168,9 +197,23 @@ final class HUDSourceWatchView: NSView {
             }
         }
         setAccessibilityChildren(document.buttons.compactMap { accessibilityButtons[$0.nodeID] })
+        if #available(macOS 14.0, *), canCaptureDesktopBackdrop {
+            do {
+                // Compile the original filter and HDR materials while the view
+                // is being created, before a visible opening animation starts.
+                backdropAdapter = try HUDSourceWatchBackdrop(renderer: renderer,
+                    resourceRoot: document.root.deletingLastPathComponent())
+                try renderer.enableSourceRGBHDR()
+                try renderer.disableSourceRGBHDR()
+            } catch {
+                backdropAdapter = nil; try? renderer.disableSourceRGBHDR()
+                backdropDiagnostics = [String(describing: error)]
+            }
+        }
     }
     required init?(coder: NSCoder) { fatalError("Use the source-resource initializer") }
     deinit {
+        backdropTask?.cancel()
         previousCursor?.set()
         timer?.invalidate(); observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
@@ -180,6 +223,7 @@ final class HUDSourceWatchView: NSView {
         renderer.frame = bounds
         renderer.drawableSize = CGSize(width: bounds.width * (window?.backingScaleFactor ?? 1),
                                        height: bounds.height * (window?.backingScaleFactor ?? 1))
+        refreshBackdropGeometry()
         render(at: now)
     }
     override func viewDidMoveToWindow() {
@@ -189,18 +233,29 @@ final class HUDSourceWatchView: NSView {
         if let window {
             for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
                          NSWindow.didDeminiaturizeNotification, NSWindow.willCloseNotification,
-                         NSWindow.didResignKeyNotification, NSWindow.didBecomeKeyNotification] {
+                         NSWindow.didResignKeyNotification, NSWindow.didBecomeKeyNotification,
+                         NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+                         NSWindow.didChangeScreenNotification] {
                 observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
                     guard let self else { return }
                     if note.name == NSWindow.willCloseNotification { self.conceal() }
-                    else { self.refreshPlaybackScheduling() }
+                    else {
+                        self.refreshBackdropGeometry()
+                        self.refreshPlaybackScheduling()
+                    }
                 })
             }
-        } else { stopTimer() }
+        } else {
+            cancelBackdropCapture(); sourceBackdrop = nil; backdropGeometry = nil
+            try? renderer.disableSourceRGBHDR()
+            stopTimer()
+        }
+        refreshBackdropGeometry()
         refreshPlaybackScheduling()
     }
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties(); needsLayout = true
+        refreshBackdropGeometry()
         sourceCursor = nil; refreshSourceCursor()
     }
     override func updateTrackingAreas() {
@@ -209,20 +264,41 @@ final class HUDSourceWatchView: NSView {
         tracking = area; addTrackingArea(area); super.updateTrackingAreas()
     }
 
-    func open(completion: @escaping () -> Void = {}) {
+    func open(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
         isHidden = false
+        pendingOpening = nil
+        backdropTransitionStart = now
         hovered = nil; pressed = nil
+        if #available(macOS 14.0, *), canCaptureDesktopBackdrop,
+           HUDSourceDesktopBackdrop.preflightPermission() == .granted {
+            // Hold the original initial pose while preparing its real input.
+            // Menu and blur start together; capture latency cannot consume the
+            // source's short 0.133-second background entrance.
+            pendingOpening = PendingOpening(heldTime: now, ready: ready, completion: completion)
+            playback.open(at: now, reduceMotion: false)
+            refreshPlaybackScheduling()
+            requestDesktopBackdrop()
+            return
+        }
+        ready()
         buttonAnimation.reset(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion)
         playback.open(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion, completion: completion)
         updateAnimatorStates(at: now)
         refreshPlaybackScheduling()
+        requestDesktopBackdrop()
     }
     func showStable() {
         isHidden = false
+        pendingOpening = nil
+        backdropTransitionStart = now
         playback.showStable(at: now)
         refreshPlaybackScheduling()
+        requestDesktopBackdrop()
     }
     func close(completion: @escaping () -> Void = {}) {
+        pendingOpening = nil
+        cancelBackdropCapture()
+        backdropTransitionStart = now
         inputEnabled = false
         playback.close(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion) { [weak self] in
             self?.stopTimer(); self?.isHidden = true; completion()
@@ -230,12 +306,16 @@ final class HUDSourceWatchView: NSView {
         refreshPlaybackScheduling()
     }
     func conceal() {
+        pendingOpening = nil
+        cancelBackdropCapture()
         playback.conceal(); inputEnabled = false; hovered = nil; pressed = nil
         stopTimer(); isHidden = true
         try? gyro.stop(at: now)
         renderedFrame = nil; renderedCamera = nil; lastPose = nil
     }
     func suspendForConcealment() {
+        pendingOpening = nil
+        cancelBackdropCapture()
         // Cancellation drops wrapper callbacks before input invalidation can
         // schedule a render. Preserve the last drawable until the owner hides
         // the view or chooses a new stable/opening pose.
@@ -270,6 +350,7 @@ final class HUDSourceWatchView: NSView {
         refreshSourceCursor()
         guard !isHidden, playback.phase != .concealed else { return }
         render(at: now)
+        guard pendingOpening == nil else { return }
         guard isOnScreen else { return }
         let finite = playback.phase == .opening || playback.phase == .closing || gyro.isAnimating || buttonAnimation.requiresFrames(at: now)
         guard !HUDRuntimeAppearance.reduceMotion && (finite || HUDRuntimeAppearance.ambientEnabled) else { return }
@@ -287,11 +368,113 @@ final class HUDSourceWatchView: NSView {
     }
     private func stopTimer() { timer?.invalidate(); timer = nil }
 
-    private func render(at time: Double) {
+    private func cancelBackdropCapture() {
+        backdropGeneration &+= 1
+        backdropTask?.cancel(); backdropTask = nil
+    }
+
+    private func currentBackdropGeometry() -> BackdropGeometry? {
+        guard let window, bounds.width > 0, bounds.height > 0,
+              renderer.drawableSize.width > 0, renderer.drawableSize.height > 0 else { return nil }
+        let screenNumber = (window.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0
+        return BackdropGeometry(windowNumber: window.windowNumber,
+            rectangle: window.convertToScreen(convert(bounds, to: nil)),
+            drawableSize: renderer.drawableSize, backingScale: window.backingScaleFactor,
+            screenNumber: screenNumber)
+    }
+
+    private func refreshBackdropGeometry() {
+        guard canCaptureDesktopBackdrop, !isHidden, playback.phase != .concealed,
+              let geometry = currentBackdropGeometry(), geometry != backdropGeometry else { return }
+        // An old display crop must never stretch across a moved/resized HUD.
+        if playback.phase == .closing {
+            cancelBackdropCapture(); sourceBackdrop = nil; backdropGeometry = geometry
+            try? renderer.disableSourceRGBHDR()
+        } else { requestDesktopBackdrop() }
+    }
+
+    private func requestDesktopBackdrop() {
+        cancelBackdropCapture()
+        defer { if backdropTask == nil { startPendingOpening() } }
+        guard canCaptureDesktopBackdrop else { return }
+        sourceBackdrop = nil
+        backdropGeometry = nil
+        do { try renderer.disableSourceRGBHDR() }
+        catch { backdropDiagnostics = [String(describing: error)]; return }
+        guard #available(macOS 14.0, *), let window,
+              let geometry = currentBackdropGeometry(),
+              HUDSourceDesktopBackdrop.preflightPermission() == .granted else { return }
+        backdropGeometry = geometry
+        let generation = backdropGeneration
+        let rectangle = geometry.rectangle
+        backdropTask = Task { @MainActor [weak self, weak window] in
+            defer {
+                if let self, self.backdropGeneration == generation {
+                    self.backdropTask = nil
+                    self.startPendingOpening()
+                }
+            }
+            do {
+                // Allow the just-opened HUD to enter WindowServer's inventory.
+                // This delay owns no display loop and cancellation ends it.
+                try await Task.sleep(nanoseconds: 33_333_333)
+                guard let window else { return }
+                let captured = try await HUDSourceDesktopBackdrop().captureBelowHUD(
+                    window: window, appKitGlobalRect: rectangle)
+                try Task.checkCancellation()
+                guard let self, self.backdropGeneration == generation,
+                      !self.isHidden, self.playback.phase != .concealed && self.playback.phase != .closing,
+                      self.window === window,
+                      self.currentBackdropGeometry() == geometry else { return }
+                let backdrop: HUDSourceWatchBackdrop
+                if let preparedAdapter = self.backdropAdapter { backdrop = preparedAdapter }
+                else {
+                    backdrop = try HUDSourceWatchBackdrop(renderer: self.renderer,
+                        resourceRoot: self.document.root.deletingLastPathComponent())
+                    self.backdropAdapter = backdrop
+                }
+                try backdrop.prepare(frame: captured, drawableSize: geometry.drawableSize)
+                self.sourceBackdrop = backdrop; self.backdropDiagnostics = []
+                self.render(at: self.now)
+            } catch is CancellationError {
+                // Concealment invalidates the capture without touching a newer task.
+            } catch {
+                guard let self, self.backdropGeneration == generation else { return }
+                self.backdropDiagnostics = [String(describing: error)]
+                NSLog("Source Watch desktop backdrop: %@", String(describing: error))
+            }
+        }
+    }
+
+    private func startPendingOpening() {
+        guard let pending = pendingOpening else { return }
+        pendingOpening = nil
+        guard !isHidden, playback.phase == .opening else { return }
+        backdropTransitionStart = now
+        pending.ready()
+        buttonAnimation.reset(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion)
+        playback.open(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion, completion: pending.completion)
+        updateAnimatorStates(at: now)
+        refreshPlaybackScheduling()
+    }
+
+    private func backdropAlpha(at time: Double, reduceMotion: Bool) -> Float {
+        guard !reduceMotion else { return playback.phase == .concealed ? 0 : 1 }
+        let elapsed = max(0, time - backdropTransitionStart)
+        switch playback.phase {
+        case .opening: return Float(document.blurAnimation.entrance.alpha(at: elapsed) ?? document.blurAnimation.entrance.endAlpha)
+        case .closing: return Float(document.blurAnimation.exit.alpha(at: elapsed) ?? document.blurAnimation.exit.endAlpha)
+        case .visible: return 1
+        case .concealed: return 0
+        }
+    }
+
+    private func render(at requestedTime: Double) {
         guard bounds.width > 0, bounds.height > 0, !isHidden, playback.phase != .concealed else { return }
+        let time = pendingOpening?.heldTime ?? requestedTime
         do {
             let screen = SIMD2<Double>(Double(bounds.width), Double(bounds.height))
-            let reduce = HUDRuntimeAppearance.reduceMotion
+            let reduce = pendingOpening == nil && HUDRuntimeAppearance.reduceMotion
             let pointerPoint = window.map { window in
                 convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
             }
@@ -341,6 +524,12 @@ final class HUDSourceWatchView: NSView {
             var gpuProjection = HUDSourceGeometry.floatMatrix(camera.camera.projection)
             var gpuVP = HUDSourceGeometry.floatMatrix(camera.camera.viewProjection)
             for column in 0..<4 { gpuProjection[column].y = -gpuProjection[column].y; gpuVP[column].y = -gpuVP[column].y }
+            var batches = frame.batches
+            if let background = sourceBackdrop?.batch(alpha: backdropAlpha(at: time, reduceMotion: reduce)) {
+                // Source WatchBlur's UI3D category sorts before Watch's Window
+                // category; its screen-space batch uses its own projection.
+                batches.insert(background, at: 0)
+            }
             renderer.submit(camera: HUDSourceMetalRenderer.Camera(
                 viewProjection: gpuVP,
                 viewNoTranslationProjection: try HUDSourceWatchCamera.viewNoTranslationProjection(
@@ -353,7 +542,7 @@ final class HUDSourceWatchView: NSView {
                 projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(cameraModel.shaderCameraToWorld),
                 uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
                     near: Float(cameraModel.near), far: Float(cameraModel.far))),
-                batches: frame.batches)
+                batches: batches)
             renderedFrameCount += 1
             updateAccessibility(frame: frame, camera: camera.camera)
             refreshSourceCursor()

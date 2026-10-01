@@ -1433,10 +1433,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             }
             return
         }
-        if !HUDRuntimeAppearance.reduceMotion {
-            animateSourceBlur(sourceWatch.document.blurAnimation.entrance)
-        }
-        sourceWatch.open { [weak self] in
+        sourceWatch.open(ready: { [weak self, weak sourceWatch] in
+            guard let self, let sourceWatch, self.generation == token else { return }
+            if !HUDRuntimeAppearance.reduceMotion {
+                self.animateSourceBlur(sourceWatch.document.blurAnimation.entrance)
+            }
+        }) { [weak self] in
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == token else { return }
                 self.transitioning = false; self.transitionCompletion = nil

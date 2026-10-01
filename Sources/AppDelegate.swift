@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var suspended: Bool { !suspensionReasons.isEmpty }
     private var terminating = false
     private var completedNormalStartup = false
+    private var backdropPermissionRequested = false
 
     override init() {
         // Diagnostics use an empty preferences domain and never touch the user's configuration.
@@ -576,13 +577,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self = self, !self.suspended, !self.terminating else { return }
             self.presentLatestSnapshot()
         }
-        shortcut.onToggle = { [weak self] in self?.toggleSystemOverlay() ?? false }
+        shortcut.onToggle = { [weak self] in
+            guard let self else { return false }
+            self.authorizeBackdropForUserOpening()
+            return self.toggleSystemOverlay()
+        }
         shortcut.onStatusChange = { [weak self] _ in self?.hudSettings.refreshExternalStatus() }
     }
 
     @objc private func openSystemOverlay(_ sender: Any?) {
         guard !overlay.isSystemOverlayActive else { return }
+        authorizeBackdropForUserOpening()
         _ = toggleSystemOverlay()
+    }
+
+    /// The OS prompt belongs to a user's menu/shortcut action. Automatic
+    /// presentation, diagnostics, previews and capture never request access.
+    private func authorizeBackdropForUserOpening() {
+        guard #available(macOS 14.0, *), !backdropPermissionRequested,
+              !suspended, !terminating, !overlay.isEditingPosition, overlay.systemPhase == .closed,
+              ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] != "true",
+              ProcessInfo.processInfo.environment["CI"] != "true",
+              !CommandLine.arguments.contains(where: { $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-") }) else { return }
+        guard HUDSourceDesktopBackdrop.preflightPermission() != .granted else { return }
+        backdropPermissionRequested = true
+        _ = HUDSourceDesktopBackdrop.requestPermissionFromUserAction()
     }
 
     @objc private func about(_ sender: Any?) { openSettingsModule(.about) }
