@@ -1434,7 +1434,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             return
         }
         if !HUDRuntimeAppearance.reduceMotion {
-            animateBlur(from: 0, to: 1, duration: sourceWatch.document.animation.entrance.lastKeyTime)
+            animateSourceBlur(sourceWatch.document.blurAnimation.entrance)
         }
         sourceWatch.open { [weak self] in
             DispatchQueue.main.async { [weak self] in
@@ -1446,7 +1446,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func animateSourceExit(completion: @escaping () -> Void) {
-        let blur = blurBackdrop.layer?.presentation()?.opacity ?? blurBackdrop.layer?.opacity ?? 0
         cancelAnimations(preserveClickFeedback: true)
         transitioning = true; retracting = true; transitionCompletion = completion
         let token = generation
@@ -1464,7 +1463,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         withoutActions { self.blurBackdrop.layer?.opacity = 0 }
         guard let sourceWatch, sourceWatchFailureReason == nil else { finish(); return }
         if !HUDRuntimeAppearance.reduceMotion {
-            animateBlur(from: blur, to: 0, duration: sourceWatch.document.animation.exit.lastKeyTime)
+            animateSourceBlur(sourceWatch.document.blurAnimation.exit)
         }
         sourceWatch.close(completion: finish)
     }
@@ -2053,6 +2052,16 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = from; fade.toValue = to; fade.duration = duration
         fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        blurLayer.add(fade, forKey: "deployment.opacity")
+    }
+
+    private func animateSourceBlur(_ track: HUDSourceWatchBlurAnimation.Track) {
+        guard let blurLayer = blurBackdrop.layer else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = track.startAlpha; fade.toValue = track.endAlpha
+        fade.duration = track.duration
+        let c = track.controlPoints
+        fade.timingFunction = CAMediaTimingFunction(controlPoints: c.x, c.y, c.z, c.w)
         blurLayer.add(fade, forKey: "deployment.opacity")
     }
 

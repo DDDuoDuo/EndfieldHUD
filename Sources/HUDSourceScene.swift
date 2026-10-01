@@ -577,6 +577,7 @@ struct HUDSourceAnimationCurve: Codable {
     let group: String
     let path: String
     let attribute: String
+    let classID: Int?
     let nodeIDs: [HUDSourceID]
     let body: Body
     private let channels: [HUDSourceScalarCurve]
@@ -586,9 +587,9 @@ struct HUDSourceAnimationCurve: Codable {
         let postInfinity: Int
         enum CodingKeys: String, CodingKey { case keys = "m_Curve", preInfinity = "m_PreInfinity", postInfinity = "m_PostInfinity" }
     }
-    private struct Raw: Codable { let curve: Body }
-    private enum CodingKeys: String, CodingKey { case group, path, attribute, nodeIDs = "node_matches", raw }
-    init(group: String, path: String, attribute: String, nodeIDs: [HUDSourceID], body: Body) throws {
+    private struct Raw: Codable { let curve: Body; var classID: Int? = nil }
+    private enum CodingKeys: String, CodingKey { case group, path, attribute, classID = "class_id", nodeIDs = "node_matches", raw }
+    init(group: String, path: String, attribute: String, nodeIDs: [HUDSourceID], body: Body, classID: Int? = nil) throws {
         guard let first = body.keys.first, body.preInfinity == 2, body.postInfinity == 2 else {
             throw HUDSourceError.invalid("Empty curve or unsupported infinity mode")
         }
@@ -612,16 +613,19 @@ struct HUDSourceAnimationCurve: Codable {
         }
         channels = try scalarKeys.map { try HUDSourceScalarCurve(keys: $0) }
         self.group = group; self.path = path; self.attribute = attribute; self.nodeIDs = nodeIDs; self.body = body
+        self.classID = classID
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let raw = try c.decode(Raw.self, forKey: .raw)
         try self.init(group: c.decode(String.self, forKey: .group), path: c.decode(String.self, forKey: .path),
             attribute: c.decode(String.self, forKey: .attribute), nodeIDs: c.decode([HUDSourceID].self, forKey: .nodeIDs),
-            body: c.decode(Raw.self, forKey: .raw).curve)
+            body: raw.curve, classID: c.decodeIfPresent(Int.self, forKey: .classID) ?? raw.classID)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(group, forKey: .group); try c.encode(path, forKey: .path); try c.encode(attribute, forKey: .attribute)
+        try c.encodeIfPresent(classID, forKey: .classID)
         try c.encode(nodeIDs, forKey: .nodeIDs); try c.encode(Raw(curve: body), forKey: .raw)
     }
     func sample(at time: Double) -> HUDSourceCurveValue? {

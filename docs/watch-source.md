@@ -18,6 +18,16 @@ macOS functions. Those feature panels retain their existing desktop interfaces.
   clips. Their wrapper advances with OutQuad; the 13.683333-second ambient clip
   advances linearly. Weighted scalar keys invert the time handles before
   sampling; baked quaternion keys are retained.
+- Legacy scalar curves preserve their source class ID. The installed player's
+  RectTransform registry accepts Z, anchored position, anchors, size and pivot;
+  its hash resolver rejects unregistered local X/Y. These serialized curves are
+  retained in the resource but ignored during playback, matching the native
+  binding. Transform-class vector/packed position and scale tracks still run.
+- Background opacity follows WatchBlur's separate Linear wrapper and original
+  0.13333334-second alpha keys: an unweighted Hermite entrance and near-linear
+  exit. These keys are not stretched to the main menu's duration. The desktop
+  still supplies system blur; the game's captured scene input and capture-pass
+  schedule have not been reproduced.
 - Each button uses its own bound Animator clips. Highlighted is a finite flash
   with source local-Z channels, followed by its held endpoint. Normal and
   Pressed use the original transition duration. Rapid changes preserve the
