@@ -37,6 +37,7 @@ final class HUDSourceWatchView: NSView {
     let frameBuilder: HUDSourceWatchFrameBuilder
     let playback: HUDSourceWatchPlayback
     let buttonAnimation: HUDSourceWatchButtonAnimation
+    let selectableColor: HUDSourceSelectableColor
     private var gyro: HUDSourceWatchGyroMotion
     private var animatorButtons: [HUDSourceID: HUDSourceID] = [:]
     private var actionsByID: [HUDSourceID: ButtonAction] = [:]
@@ -172,6 +173,7 @@ final class HUDSourceWatchView: NSView {
         frameBuilder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer)
         playback = HUDSourceWatchPlayback(animation: document.animation)
         buttonAnimation = try HUDSourceWatchButtonAnimation(document: document)
+        selectableColor = try HUDSourceSelectableColor(document: document)
         super.init(frame: frame)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -296,6 +298,7 @@ final class HUDSourceWatchView: NSView {
 
     func open(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
         isHidden = false
+        selectableColor.reset(at: now)
         cancelPendingOpening()
         frameBuilder.resetWidgetBannerClock()
         backdropTransitionStart = now
@@ -330,6 +333,7 @@ final class HUDSourceWatchView: NSView {
     }
     func showStable() {
         isHidden = false
+        if playback.phase == .concealed { selectableColor.reset(at: now) }
         cancelPendingOpening()
         frameBuilder.resetWidgetBannerClock()
         backdropTransitionStart = now
@@ -402,14 +406,15 @@ final class HUDSourceWatchView: NSView {
         guard pendingOpening == nil else { return }
         guard isOnScreen else { return }
         let finite = playback.phase == .opening || playback.phase == .closing || gyro.isAnimating || buttonAnimation.requiresFrames(at: now)
-            || frameBuilder.requiresWidgetFrames
+            || frameBuilder.requiresWidgetFrames || selectableColor.requiresFrames(at: now)
         guard !HUDRuntimeAppearance.reduceMotion && (finite || HUDRuntimeAppearance.ambientEnabled) else { return }
         let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
             guard let self else { return }
             guard self.isOnScreen, self.playback.phase != .concealed else { self.stopTimer(); return }
             self.render(at: self.now)
             if !HUDRuntimeAppearance.ambientEnabled && self.playback.phase == .visible && !self.gyro.isAnimating
-                && !self.buttonAnimation.requiresFrames(at: self.now) && !self.frameBuilder.requiresWidgetFrames {
+                && !self.buttonAnimation.requiresFrames(at: self.now) && !self.frameBuilder.requiresWidgetFrames
+                && !self.selectableColor.requiresFrames(at: self.now) {
                 self.stopTimer()
             }
         }
@@ -580,7 +585,7 @@ final class HUDSourceWatchView: NSView {
             let domainState = HUDSourceDomainAnimation.State(ambientTime: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : time)
             var frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
                                                verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState,
-                                               widgetTime: time)
+                                               widgetTime: time, selectableTints: selectableColor.colors(at: time, reduceMotion: reduce))
             // Source EventSystem raycasts each frame, including stationary
             // pointers while the menu or gyro moves. Retarget at this same
             // clock instant, then rebuild once; do not recurse into the timer.
@@ -596,7 +601,7 @@ final class HUDSourceWatchView: NSView {
                 document.applyMacButtonAvailability(to: &pose)
                 frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
                                                 verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState,
-                                                widgetTime: time)
+                                                widgetTime: time, selectableTints: selectableColor.colors(at: time, reduceMotion: reduce))
             }
             lastPose = pose; renderedFrame = frame; renderedCamera = camera
             diagnostics = frame.diagnostics
@@ -637,6 +642,13 @@ final class HUDSourceWatchView: NSView {
 
     private func updateAnimatorStates(at time: Double) {
         let reduce = HUDRuntimeAppearance.reduceMotion
+        for binding in selectableColor.bindings {
+            let desired: HUDSourceSelectableColor.State = !binding.sourceInteractable ? .disabled
+                : (binding.buttonNodeID == pressed ? .pressed : (binding.buttonNodeID == hovered ? .highlighted : .normal))
+            if selectableColor.state(on: binding.buttonNodeID) != desired {
+                selectableColor.setState(desired, on: binding.buttonNodeID, at: time, reduceMotion: reduce)
+            }
+        }
         for (root, button) in animatorButtons {
             if buttonAnimation.state(on: root) == .disabled { continue }
             let desired: HUDSourceWatchButtonAnimation.State = button == pressed ? .pressed : (button == hovered ? .highlighted : .normal)

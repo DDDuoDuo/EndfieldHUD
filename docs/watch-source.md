@@ -240,6 +240,22 @@ Controlled GPU fixtures use generic profile text and original artwork without
 publishing the supplied recording's personal name or UID. Widget source/projection
 provenance is recorded in Scene/Widgets/provenance.json.
 
+Selectable ColorTint is sampled separately from Graphic.m_Color and Animator
+curves. Original target-Graphic pointers, ColorBlock RGBA, multiplier and fade
+duration supply Normal, Highlighted, Pressed, Selected and Disabled states.
+The banner Light retains its original Graphic alpha 0.2; the independent normal
+tint alpha is zero, highlighted alpha is one and pressed alpha is 0.2. Source
+RGBA transitions interpolate linearly over the serialized 0.1-second duration,
+cancel from the current color and use an unscaled clock. Actual state changes
+keep finite frames alive even with ambient motion off. Default reset represents
+OnEnable without pointer or navigation selection; component disable resets to
+white, distinct from its Disabled selection color. Continuous host sampling and
+Reduce Motion endpoints are desktop adaptations. The current renderer multiplies
+its Color32 Graphic color by the tint before its existing Canvas RGB conversion.
+The original engine's final tint/vertex packing and non-white RGB conversion
+order remain unobserved; white-RGB alpha fixtures verify this adapter separately
+from source final-pixel equivalence.
+
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
 outline Texture2D as `_BuildingTex`. The source checks every shared-material
