@@ -76,6 +76,10 @@ does not disable its mask: the original map mask has alpha zero. The 132 bundled
 Metal stages include the original default/TMP/VFX/world/stencil soft-mask
 combinations, preserving their texture slots and existing material keywords.
 Missing mask inputs are diagnosed rather than replaced with a white texture.
+RectMask2D softness is taken from the nearest active ancestor mask, excluding
+the graphic's own mask. Native CanvasRenderer forwards the two source axes
+without a scale conversion; the Watch viewport therefore keeps its original
+48-unit vertical feather, independently of HG's four-edge softness.
 
 The original PlayerSettings prefix proves Linear color space. Canvas vertex
 colors and original Color/Gamma material properties follow their separate
@@ -116,6 +120,11 @@ assembly. The Metal probe compiles each bundled stage with Apple's compiler and
 checks reflected interfaces. Bundle validation checks every WatchSource file
 against the source bytes. Lifecycle and navigation checks exercise real source
 phase, timer, drawable and hits as well as the retained macOS functions.
+The runtime allocates constant bytes using the compiled Metal argument size,
+including any MSL struct tail padding while preserving source member offsets.
+The GPU fixture records these sizes in `source-constant-buffer-abi.json`.
+Live verification prints the specific failed assertion and source hit/frame
+state before terminating, so a native check failure remains actionable.
 
 The `watch-source-previews` CI artifact captures the actual Metal drawable at
 explicit source times. It includes geometry and diagnostics and refuses a stale

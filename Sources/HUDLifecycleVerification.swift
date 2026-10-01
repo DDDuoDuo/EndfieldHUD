@@ -52,7 +52,7 @@ enum HUDLifecycleVerification {
             configuration.perspectiveIntensity = 1
             let screen = HUDDisplayPolicy.targetScreen(configuration: configuration, screens: NSScreen.screens)
                 ?? NSScreen.main
-            guard let screen else { preconditionFailure("Lifecycle verification requires an attached display") }
+            guard let screen else { fail("Lifecycle verification requires an attached display") }
             screenPointer = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
             overlay.systemPointerLocationProviderForVerification = { [weak self] in self?.screenPointer ?? .zero }
             overlay.onSystemClosed = { [weak self] in self?.normalCloses += 1 }
@@ -89,7 +89,7 @@ enum HUDLifecycleVerification {
         private func checkOpenAndCancel() {
             check(overlay.systemPhase == .open, "Deployment completes before normal controls activate")
             guard let source = overlay.systemSourceWatchForVerification else {
-                preconditionFailure("Original Watch view unavailable: \(overlay.systemSourceFailureForVerification ?? "missing")")
+                fail("Original Watch view unavailable: \(overlay.systemSourceFailureForVerification ?? "missing")")
             }
             check(source.playback.phase == .visible && source.document.buttons.count == 22,
                   "Opening reaches the original Watch endpoint with all 22 original button definitions")
@@ -104,7 +104,7 @@ enum HUDLifecycleVerification {
             do {
                 let image = try source.renderedImageForVerification()
                 check(image.width > 0 && image.height > 0, "The displayed original menu produces an actual Metal drawable")
-            } catch { preconditionFailure("Source drawable verification failed: \(error)") }
+            } catch { fail("Source drawable verification failed: \(error)") }
             overlay.selectSystemModule(.eventLog, animated: false)
             check(!source.hasDisplayTimerForVerification && source.playback.phase == .concealed,
                   "Entering a macOS module suspends the hidden original menu")
@@ -234,7 +234,7 @@ enum HUDLifecycleVerification {
             screenPointer.x += x; screenPointer.y += y
             if overlay.systemSelectedModule == .power { return screenPointer }
             guard let point = overlay.systemCurrentPointerTargetForVerification else {
-                preconditionFailure("The live HUD must provide its normalized pointer target")
+                fail("The live HUD must provide its normalized pointer target")
             }
             overlay.setSystemPointerForVerification(point)
             return point
@@ -243,7 +243,7 @@ enum HUDLifecycleVerification {
         private func checkTransitionMotion(_ point: CGPoint, phase: SystemOverlayPhase) {
             if overlay.systemSelectedModule == .power {
                 guard let source = overlay.systemSourceWatchForVerification else {
-                    preconditionFailure("Source Watch transition must retain its renderer")
+                    fail("Source Watch transition must retain its renderer")
                 }
                 let expected: HUDSourceWatchPlayback.Phase = phase == .opening ? .opening : .closing
                 check(overlay.systemPhase == phase && source.playback.phase == expected && source.hasDisplayTimerForVerification,
@@ -272,7 +272,46 @@ enum HUDLifecycleVerification {
         }
 
         private func currentWindowIDs() -> Set<ObjectIdentifier> { Set(NSApp.windows.map { ObjectIdentifier($0) }) }
-        private func check(_ value: Bool, _ message: String) { assertions += 1; precondition(value, message) }
+        private func check(_ value: Bool, _ message: String) {
+            assertions += 1
+            if !value { fail("Assertion \(assertions): \(message)") }
+        }
+        /// Optimized Swift preconditions can trap without printing their text.
+        /// Emit the original contract and live state before retaining the trap;
+        /// a drawable-only fixture cannot diagnose the view's input lifecycle.
+        private func fail(_ message: String) -> Never {
+            var lines = [
+                "FAIL: HUD lifecycle verification: \(message)",
+                "overlay phase=\(overlay.systemPhase.rawValue) module=\(overlay.systemSelectedModule?.rawValue ?? "nil") visible=\(overlay.systemWindowVisibleForVerification) shell=\(String(describing: overlay.systemShellIdentity))",
+                "motion fixtureReduced=\(reduced) currentReduced=\(HUDRuntimeAppearance.reduceMotion) ambientEnabled=\(HUDRuntimeAppearance.ambientEnabled) legacyAmbient=\(overlay.systemAmbientAnimationCount) legacyParallax=\(overlay.systemParallaxAnimationCount)",
+                "callbacks normal=\(normalCloses) acceptedQuit=\(acceptedQuits) completedQuit=\(completedQuits) handoff=\(genericHandoffs) windows=\(currentWindowIDs().count) initialWindows=\(windowIDs.count)",
+                "source failure=\(overlay.systemSourceFailureForVerification ?? "nil")",
+            ]
+            if let source = overlay.systemSourceWatchForVerification {
+                lines.append("source phase=\(source.playback.phase) hidden=\(source.isHiddenOrHasHiddenAncestor) input=\(source.inputEnabled) timer=\(source.hasDisplayTimerForVerification) frames=\(source.renderedFrameCount) openingFrames=\(openingSourceFrames) buttons=\(source.document.buttons.count)")
+                lines.append("source window=\(source.window != nil) key=\(source.window?.isKeyWindow ?? false) occlusion=\(String(describing: source.window?.occlusionState)) appActive=\(NSApp.isActive) bounds=\(source.bounds)")
+                lines.append("source frame=\(source.currentFrameForVerification != nil) camera=\(source.currentCameraForVerification != nil) hits=\(source.currentFrameForVerification?.hits.count ?? 0) batches=\(source.currentFrameForVerification?.batches.count ?? 0)")
+                if let frame = source.currentFrameForVerification, let camera = source.currentCameraForVerification {
+                    let mainIDs = Set(source.document.buttons.map(\.nodeID))
+                    let mainHits = frame.hits.filter { mainIDs.contains($0.buttonID) }
+                    lines.append("source mainHitButtons=\(Set(mainHits.map(\.buttonID)).count)")
+                    for hit in mainHits.prefix(4) {
+                        let center = hit.rect.origin + hit.rect.size * 0.5
+                        let point = camera.camera.project(SIMD3<Double>(center.x, center.y, 0),
+                            world: hit.world, viewport: source.bounds)?.point
+                        let winner = point.flatMap { frame.button(at: $0, camera: camera.camera, viewport: source.bounds) }
+                        let buttonPath = source.document.scene.node(hit.buttonID)?.path ?? hit.buttonID.rawValue
+                        lines.append("source hitProbe=\(buttonPath) point=\(String(describing: point)) inBounds=\(point.map { source.bounds.contains($0) } ?? false) winner=\(winner?.rawValue ?? "nil") masks=\(hit.masks.count)")
+                    }
+                }
+                lines.append("source diagnostics=\(source.diagnostics.prefix(8).joined(separator: "; "))")
+                lines.append("GPU diagnostics=\(source.renderer.diagnostics.prefix(8).joined(separator: "; "))")
+            }
+            lines.append("closed tracks=\(overlay.lastClosedAnimationCount) sourceTimer=\(overlay.lastClosedSourceTimerActive) sourcePhase=\(String(describing: overlay.lastClosedSourcePhase))")
+            FileHandle.standardError.write(Data((lines.joined(separator: "\n") + "\n").utf8))
+            fflush(stderr)
+            preconditionFailure(message)
+        }
         private func later(_ delay: TimeInterval, _ action: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
         }
