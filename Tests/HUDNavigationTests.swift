@@ -336,13 +336,30 @@ enum HUDNavigationTests {
             check(clip.path == plate.path && CATransform3DIsIdentity(contentClip.transform)
                   && zip(contents.sublayers ?? [], glyphs).allSatisfy { CATransform3DEqualToTransform($0.0.transform, $0.1) },
                   "A stationary face-shaped mask contains the raised glyphs while preserving their individual sizes")
-            check((lamp.animationKeys() ?? []).isEmpty && lamp.opacity == 0.72,
-                  "Hover highlight stays steady without blink or opacity tracks")
+            check(lamp.opacity == 0.72 && plate.fillColor == NSColor(white: 1, alpha: 1).cgColor,
+                  "Hover commits a steady opaque white face and lamp after its finite activation")
+            let activation = plate.animation(forKey: "navigation.fillColor") as? CAKeyframeAnimation
+            if !HUDRuntimeAppearance.reduceMotion {
+                let colors = activation?.values as? [CGColor]
+                check(activation?.duration == 1.0 / 6.0
+                      && activation?.keyTimes == [0, 0.2, 0.4, 0.6, 1]
+                      && activation?.timingFunctions?.count == 4
+                      && activation?.repeatCount == 0 && activation?.autoreverses == false
+                      && colors?.count == 5 && colors?[1] == colors?[3] && colors?[3] == colors?[4]
+                      && colors?[0] == colors?[2] && colors?[0] != colors?[1],
+                      "Highlighted replays two 30 Hz brightness activations over one sixth second and then holds")
+                check(lamp.animation(forKey: "navigation.opacity")?.duration == HUDNavigation.hoverTransitionDuration,
+                      "The lamp joins the finite activation instead of changing opacity abruptly")
+            } else {
+                check(activation == nil && (lamp.animationKeys() ?? []).isEmpty,
+                      "Reduce Motion commits the steady highlight without either brightness activation")
+            }
             let liftBegan = entry.faceLayer.animation(forKey: "navigation.transform")?.beginTime
+            let activationBegan = activation?.beginTime
             depth.hover(entry.module)
-            check((lamp.animationKeys() ?? []).isEmpty
+            check(plate.animation(forKey: "navigation.fillColor")?.beginTime == activationBegan
                   && entry.faceLayer.animation(forKey: "navigation.transform")?.beginTime == liftBegan,
-                  "Repeated hover neither flashes the highlight nor restarts the lift")
+                  "Repeated pointer samples restart neither the brightness activation nor the lift")
             guard let border = entry.faceLayer.sublayers?.first(where: { $0.name == "navigation.outerBorder" }) as? CAShapeLayer,
                   let faceBounds = plate.path?.boundingBoxOfPath, let borderBounds = border.path?.boundingBoxOfPath else {
                 fatalError("Side buttons need a detached outer border")
@@ -352,7 +369,11 @@ enum HUDNavigationTests {
                   "The only face outline sits outside the filled tile with a three-point clear gap")
             depth.hover(nil)
             check(lamp.animation(forKey: "navigation.hoverBlink") == nil && lamp.opacity == 0
-                  && CATransform3DIsIdentity(contents.transform), "Leaving immediately removes the lamp cue and restores glyph depth")
+                  && CATransform3DIsIdentity(contents.transform), "Leaving commits the resting lamp and glyph depth without a repeating blink")
+            check(HUDRuntimeAppearance.reduceMotion
+                  ? lamp.animation(forKey: "navigation.opacity") == nil
+                  : lamp.animation(forKey: "navigation.opacity")?.duration == HUDNavigation.hoverExitDuration,
+                  "Leaving follows the controller's 0.1 second Normal blend, respecting Reduce Motion")
             depth.cancelAnimations()
         }
         let stableNote = depth.entries.first { $0.module == .notes }!
@@ -367,10 +388,47 @@ enum HUDNavigationTests {
         depth.hover(nil); depth.hover(.notes)
         RunLoop.main.run(until: Date().addingTimeInterval(0.30))
         check(animationCount(depth.layer) == 0 && lamp.opacity == 0.72,
-              "Reentering settles to a steady highlight with no pending blink or hover tracks")
+              "Reentering settles to a steady highlight after the finite brightness activation")
         depth.hover(nil); depth.hover(.notes); depth.cancelAnimations()
         check(animationCount(depth.layer) == 0 && lamp.opacity == 0 && near(stableNote.faceLayer.transform.m42, 0),
               "Hiding removes all pending feedback and commits the resting pose")
+
+        if !HUDRuntimeAppearance.reduceMotion {
+            let plate = stableNote.faceLayer.sublayers!.first { $0.name == "navigation.plate" } as! CAShapeLayer
+            let border = stableNote.faceLayer.sublayers!.first { $0.name == "navigation.outerBorder" } as! CAShapeLayer
+            let backing = stableNote.layer.sublayers!.first { $0.name == "navigation.backingPlate" } as! CAShapeLayer
+            depth.hover(.notes)
+            let shownColor = plate.presentation()?.fillColor ?? plate.fillColor!
+            let shownLamp = lamp.presentation()?.opacity ?? lamp.opacity
+            depth.hover(nil)
+            let exit = plate.animation(forKey: "navigation.fillColor") as? CABasicAnimation
+            let lampExit = lamp.animation(forKey: "navigation.opacity") as? CABasicAnimation
+            check((exit == nil ? shownColor == plate.fillColor : exit?.fromValue as? CGColor == shownColor)
+                  && (lampExit == nil ? shownLamp == lamp.opacity : lampExit?.fromValue as? Float == shownLamp),
+                  "A fast exit retargets the rendered color and opacity instead of restarting from an idle value")
+            for _ in 0..<16 {
+                depth.hover(.notes); depth.hover(nil)
+                check((plate.animationKeys() ?? []).count <= 2
+                      && (lamp.animationKeys() ?? []).count <= 1
+                      && plate.fillColor != NSColor(white: 1, alpha: 1).cgColor && lamp.opacity == 0,
+                      "Rapid enter and exit replace finite feedback tracks without accumulating animations")
+            }
+            depth.hover(.notes)
+            check(border.animation(forKey: "navigation.strokeColor") != nil
+                  && backing.animation(forKey: "navigation.fillColor") != nil,
+                  "The detached outline and subdued backing smoothly join the hover state")
+            let appearance = HUDRuntimeAppearance.configuration
+            HUDRuntimeAppearance.configuration.reduceMotion = true
+            depth.update(dark: true, accent: HUDRuntimeAppearance.accent, contentsScale: 2)
+            check(animationCount(depth.layer) == 0 && lamp.opacity == 0.72
+                  && plate.fillColor == NSColor(white: 1, alpha: 1).cgColor,
+                  "Enabling Reduce Motion cancels in-flight feedback and preserves the steady hovered state")
+            depth.hover(nil)
+            check(animationCount(depth.layer) == 0 && lamp.opacity == 0,
+                  "Reduce Motion also makes hover exit immediate without retaining finite tracks")
+            HUDRuntimeAppearance.configuration = appearance
+            depth.cancelAnimations()
+        }
 
         check(navigation.hitTest(point: CGPoint(x: CGFloat.nan, y: 0)) == nil
               && navigation.hitTest(point: CGPoint(x: -1000, y: -1000)) == nil,
@@ -704,7 +762,7 @@ enum HUDNavigationTests {
                       "Hover preserves side-card size, lifts them gently, and keeps bottom sectors fixed inside reserved hit geometry")
                 if side {
                     check(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? first == nil
-                          : first is CABasicAnimation && !(first is CASpringAnimation) && first!.duration == 0.18
+                          : first is CABasicAnimation && !(first is CASpringAnimation) && first!.duration == HUDNavigation.hoverTransitionDuration
                             && entry.faceLayer.animation(forKey: "navigation.transform")?.beginTime == first!.beginTime,
                           "Hover uses one monotonic lift that repeated pointer samples do not restart")
                 }

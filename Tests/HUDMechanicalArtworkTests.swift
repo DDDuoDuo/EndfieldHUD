@@ -8,6 +8,13 @@ enum HUDMechanicalArtworkTests {
             assertions += 1
             if !value { fatalError(message, file: file, line: line) }
         }
+        func isLinear(_ timing: CAMediaTimingFunction?) -> Bool {
+            guard let timing else { return false }
+            var first: [Float] = [0, 0], second: [Float] = [0, 0]
+            first.withUnsafeMutableBufferPointer { timing.getControlPoint(at: 1, values: $0.baseAddress!) }
+            second.withUnsafeMutableBufferPointer { timing.getControlPoint(at: 2, values: $0.baseAddress!) }
+            return abs(first[0] - first[1]) < 0.00001 && abs(second[0] - second[1]) < 0.00001
+        }
         let artwork = HUDMechanicalArtwork()
         let rails = (artwork.rim.sublayers ?? []).filter { $0.name?.hasPrefix("hud.rim.white.") == true }
         check(rails.filter { $0.name?.contains(".right.") == true }.count == 2
@@ -34,12 +41,16 @@ enum HUDMechanicalArtworkTests {
         let trianglePaths = artwork.triangleRotors.compactMap { ($0.sublayers?.first as? CAShapeLayer)?.path }
         for dark in [true, false] {
             artwork.update(dark: dark, chargeColor: chargeGreen, accentColor: themeBlue)
-            let themedLayers = artwork.triangleRotors.compactMap { $0.sublayers?.first as? CAShapeLayer } + [accentRing].compactMap { $0 }
-            check(themedLayers.count == 4 && themedLayers.allSatisfy {
+            let themedLayers = [accentRing].compactMap { $0 }
+            check(themedLayers.count == 1 && themedLayers.allSatisfy {
                 guard let cg = $0.strokeColor, let rgb = NSColor(cgColor: cg)?.usingColorSpace(.sRGB) else { return false }
                 return abs(rgb.redComponent - 0.12) < 0.001 && abs(rgb.greenComponent - 0.42) < 0.001
                     && abs(rgb.blueComponent - 0.96) < 0.001 && abs(rgb.alphaComponent - (dark ? 0.96 : 1)) < 0.001
-            }, "The secondary ring and every floating triangle follow the supplied theme accent in both appearances")
+            }, "The secondary ring follows the supplied theme accent in both appearances")
+            let triangleImage = HUDWatchArtwork.image(.triangle, tint: themeBlue)
+            check(triangleImage != nil && artwork.triangleRotors.allSatisfy {
+                ($0.sublayers?.first?.sublayers?.first?.contents as? CGImage) === triangleImage
+            }, "Every marker uses the cached source triangle tinted to the chosen accent")
             let indicator = artwork.indicatorGlow.sublayers?.first as? CAShapeLayer
             check(indicator?.strokeColor == chargeGreen.cgColor,
                   "Changing a decorative accent does not overwrite the semantic battery indicator color")
@@ -71,77 +82,81 @@ enum HUDMechanicalArtworkTests {
             check(zip(row, row.dropFirst()).allSatisfy { $1 - $0 == spacing },
                   "Clipping leaves no irregular gaps between adjacent dots in a row")
         }
-        let gridLayers = (artwork.inner.sublayers ?? []).filter { $0.name == "hud.backplane.dots" }
+        let gridLayers = (artwork.meshRotor.sublayers ?? []).filter { $0.name == "hud.backplane.dots" }
         check(gridLayers.count == 1 && (gridLayers.first as? CAShapeLayer)?.path != nil,
               "All dots share one cached vector layer instead of separate animated particles")
+        check(artwork.meshRotor.superlayer?.mask != nil && artwork.meshRotor.position == center,
+              "The mesh rotates about the instrument's center inside a stationary clipping disc")
+        let midRing = artwork.secondaryRotor.sublayers?.first { $0.name == "hud.watch.midRing" }
+        check(midRing?.contents != nil && midRing?.superlayer === artwork.secondaryRotor,
+              "The source segmented ticks share the ring's motion behind the readout well")
 
         let rotors = artwork.triangleRotors
         let rotorIDs = rotors.map(ObjectIdentifier.init)
         let markerIDs = rotors.compactMap { $0.sublayers?.first }.map(ObjectIdentifier.init)
-        check(rotors.count == 3 && Set(rotorIDs).count == 3 && markerIDs.count == 3,
+        check(rotors.count == 6 && Set(rotorIDs).count == 6 && markerIDs.count == 6,
               "Each triangle owns a distinct permanent rotor and marker child")
         check(rotors.allSatisfy {
             $0.bounds == CGRect(x: 0, y: 0, width: 500, height: 500) && $0.position == center
         }, "Triangle rotors share a stable central pivot")
 
-        var generator = SeededGenerator(seed: 0x454E_4446_4945_4C44)
-        var previous: [HUDMechanicalArtwork.TriangleOrbit] = []
-        for _ in 0..<12 {
-            let orbits = artwork.randomizeTriangleOrbits(using: &generator)
-            check(orbits.count == 3 && orbits != previous, "Each opening receives new orbit phases, speeds and directions")
-            check(orbits.allSatisfy { $0.phase >= 0 && $0.phase < .pi * 2 && (28...64).contains($0.period) },
-                  "Every orbit has a finite circular phase and a slow bounded period")
-            check(Set(orbits.map(\.period)).count == 3 && Set(orbits.map(\.direction)) == Set([CGFloat(-1), 1]),
-                  "The triangles always have independent speeds and both rotation directions")
-            let phases = orbits.map(\.phase).sorted()
-            let separations = [phases[1] - phases[0], phases[2] - phases[1], phases[0] + .pi * 2 - phases[2]]
-            check(separations.allSatisfy { $0 > .pi / 3 }, "Random initial positions do not clump together")
-            check(orbits.allSatisfy { $0.fromValue == 0 && abs($0.toValue) == .pi * 2 },
-                  "Animation offsets make one signed turn without duplicating the static random phase")
-            check(rotors.enumerated().allSatisfy { index, rotor in
-                guard let marker = rotor.sublayers?.first else { return false }
-                return CATransform3DIsIdentity(rotor.transform)
-                    && CATransform3DEqualToTransform(marker.transform, CATransform3DMakeRotation(orbits[index].phase, 0, 0, 1))
-            }, "Randomization changes only marker children, preserving motion-managed rotor baselines")
-            previous = orbits
-        }
+        let phases = HUDMechanicalArtwork.trianglePhases
+        check(zip(phases, phases.dropFirst()).allSatisfy { abs($0 - $1 - .pi / 3) < 0.00001 },
+              "The six PC menu markers remain equally spaced instead of randomizing on opening")
+        check(rotors.enumerated().allSatisfy { index, rotor in
+            guard let marker = rotor.sublayers?.first else { return false }
+            return CATransform3DIsIdentity(rotor.transform)
+                && CATransform3DEqualToTransform(marker.transform, CATransform3DMakeRotation(phases[index], 0, 0, 1))
+        }, "Static child phases remain independent of motion-managed rotor baselines")
         check(artwork.triangleRotors.map(ObjectIdentifier.init) == rotorIDs
               && artwork.triangleRotors.compactMap { $0.sublayers?.first }.map(ObjectIdentifier.init) == markerIDs,
               "Repeated openings retain every rotor and marker layer")
 
         let motion = HUDMotionController(planes: [])
         func registerOrbits() {
-            for (index, orbit) in artwork.triangleOrbits.enumerated() {
-                _ = motion.registerAmbient(layer: rotors[index], key: "triangle.\(index)", keyPath: "transform.rotation.z",
-                    fromValue: orbit.fromValue, toValue: orbit.toValue, duration: orbit.period, autoreverses: false)
+            for (index, rotor) in rotors.enumerated() {
+                _ = motion.registerAmbient(layer: rotor, key: "triangle.\(index)", keyPath: "transform.rotation.z",
+                    fromValue: 0, toValue: HUDMechanicalArtwork.watchRingExcursion,
+                    duration: HUDMechanicalArtwork.watchLoopLegDuration, timingFunction: .linear)
             }
+            _ = motion.registerAmbient(layer: artwork.meshRotor, key: "mesh", keyPath: "transform.rotation.z",
+                fromValue: 0, toValue: HUDMechanicalArtwork.watchMeshExcursion,
+                duration: HUDMechanicalArtwork.watchLoopLegDuration, timingFunction: .linear)
         }
         registerOrbits()
         motion.start(reducedMotion: false)
-        check(motion.ambientAnimationCount == 3, "Only three Core Animation tracks drive the three independent triangles")
+        check(motion.ambientAnimationCount == 7, "Six grouped markers and one mesh use only retained Core Animation tracks")
         check(rotors.enumerated().allSatisfy { index, rotor in
             guard let animation = rotor.animation(forKey: "ambient.triangle.\(index)") as? CABasicAnimation else { return false }
-            return animation.isAdditive && !animation.autoreverses && animation.duration == artwork.triangleOrbits[index].period
-        }, "Triangle rotation remains linear, additive and independent of model poses")
+            return animation.isAdditive && animation.autoreverses
+                && animation.duration == HUDMechanicalArtwork.watchLoopLegDuration
+                && animation.toValue as? CGFloat == HUDMechanicalArtwork.watchRingExcursion
+                && isLinear(animation.timingFunction)
+        }, "Triangle rotation uses the source's bounded linear excursion without full spins")
+        let starts = rotors.enumerated().compactMap { index, rotor in
+            rotor.animation(forKey: "ambient.triangle.\(index)")?.beginTime
+        }
+        check(Set(starts).count == 1, "Every marker shares one loop phase rather than six unrelated clocks")
+        let mesh = artwork.meshRotor.animation(forKey: "ambient.mesh") as? CABasicAnimation
+        check(mesh?.toValue as? CGFloat == HUDMechanicalArtwork.watchMeshExcursion
+              && mesh?.beginTime == starts.first && mesh?.duration == HUDMechanicalArtwork.watchLoopLegDuration,
+              "The mesh turns in the opposite direction on the same loop clock")
+        motion.configure(parallax: 1, perspective: 1, ambient: false)
+        check(motion.ambientAnimationCount == 0 && CATransform3DIsIdentity(artwork.meshRotor.transform),
+              "Disabling ambient motion clears the ring and mesh tracks and restores their static poses")
+        motion.configure(parallax: 1, perspective: 1, ambient: true)
+        check(motion.ambientAnimationCount == 7, "Enabling ambient resumes one track per retained rotor")
         motion.stop(freezePresentation: false)
         check(motion.ambientAnimationCount == 0, "Stopping removes all triangle animation tracks")
-        artwork.randomizeTriangleOrbits(using: &generator)
         registerOrbits()
         let staticPoses = rotors.compactMap { $0.sublayers?.first?.transform }
         motion.start(reducedMotion: true)
         check(motion.ambientAnimationCount == 0 && rotors.enumerated().allSatisfy { index, rotor in
             guard let marker = rotor.sublayers?.first else { return false }
             return CATransform3DEqualToTransform(marker.transform, staticPoses[index])
-        }, "Reduce Motion preserves newly randomized static positions without installing ambient motion")
+        }, "Reduce Motion preserves the six authored static positions without installing ambient motion")
         motion.stop(freezePresentation: false)
         return assertions
     }
 
-    private struct SeededGenerator: RandomNumberGenerator {
-        var seed: UInt64
-        mutating func next() -> UInt64 {
-            seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            return seed
-        }
-    }
 }
