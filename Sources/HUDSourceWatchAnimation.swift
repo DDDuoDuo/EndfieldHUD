@@ -47,6 +47,12 @@ struct HUDSourceWatchAnimation {
         // root and resets scale/position. It is not the serialized scale zero.
         root.localScale = HUDSourceVector3(1, 1, 1)
         root.anchoredPosition3D = HUDSourceVector3(0, 0, 0)
+        root.anchorMin = HUDSourceVector2(0, 0)
+        root.anchorMax = HUDSourceVector2(1, 1)
+        root.pivot = HUDSourceVector2(0.5, 0.5)
+        // The exported hierarchy excludes its live WorldUIRoot parent. Store
+        // the resulting full rect as sizeDelta in this virtual-root resolver;
+        // the real engine uses stretched anchors with sizeDelta zero instead.
         root.sizeDelta = HUDSourceVector2(canvasResolution.x, canvasResolution.y)
         initial[scene.rootID] = root
         var pose = HUDSourceWatchPose(transforms: initial)
@@ -158,9 +164,19 @@ final class HUDSourceWatchPlayback {
         }
         guard phase != .concealed else { return nil }
         return try animation.pose(
-            entranceTime: phase == .opening ? max(0, time - phaseStart) : animation.entrance.lastKeyTime,
+            entranceTime: phase == .opening ? Self.clipTime(elapsed: time - phaseStart, length: animation.entrance.lastKeyTime) : animation.entrance.lastKeyTime,
             ambientTime: phase == .opening || reduceMotion ? nil : max(0, time - loopStart),
-            exitTime: phase == .closing ? max(0, time - phaseStart) : nil,
+            exitTime: phase == .closing ? Self.clipTime(elapsed: time - phaseStart, length: animation.exit.lastKeyTime) : nil,
             canvasResolution: canvasResolution, runtimeOverrides: runtimeOverrides)
+    }
+
+    /// UIAnimationWrapper.PlayWithTween uses the serialized animEase=6
+    /// (OutQuad) for finite clips. UIAnimationTween._SetValue multiplies this
+    /// eased progress by AnimationState.length before SampleClip. Looping
+    /// wrapper clips explicitly use ease=1 (Linear), so ambient stays linear.
+    static func clipTime(elapsed: Double, length: Double) -> Double {
+        guard length > 0 else { return 0 }
+        let progress = min(1, max(0, elapsed / length))
+        return (2 * progress - progress * progress) * length
     }
 }

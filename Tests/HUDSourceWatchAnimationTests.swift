@@ -47,6 +47,10 @@ enum HUDSourceWatchAnimationTests {
             check(pose.unboundPaths == ["Child"], "Source residual bindings are reported rather than mapped to another node")
 
             let playback = HUDSourceWatchPlayback(animation: animation)
+            check(abs(HUDSourceWatchPlayback.clipTime(elapsed: 0.375, length: 0.75) - 0.5625) < 1e-12,
+                  "Finite wrapper OutQuad maps half wall time to three-quarter source clip time")
+            check(HUDSourceWatchPlayback.clipTime(elapsed: -1, length: 0.75) == 0 && HUDSourceWatchPlayback.clipTime(elapsed: 10, length: 0.75) == 0.75,
+                  "Finite clip easing clamps before and after its source endpoints")
             let resolution = SIMD2<Double>(2400, 1350)
             var firstOpen = 0, close = 0, secondOpen = 0
             playback.open(at: 10, reduceMotion: false) { firstOpen += 1 }

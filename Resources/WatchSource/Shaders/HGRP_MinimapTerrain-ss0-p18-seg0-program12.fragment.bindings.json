@@ -1,0 +1,20 @@
+[
+  {
+    "id": 7,
+    "name": "_6_7",
+    "resource_type": 1,
+    "base_type_id": 6,
+    "type_id": 25,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 9,
+    "name": "_8_9",
+    "resource_type": 1,
+    "base_type_id": 8,
+    "type_id": 26,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  }
+]

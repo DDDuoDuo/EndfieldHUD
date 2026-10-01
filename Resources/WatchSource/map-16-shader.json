@@ -1,0 +1,1079 @@
+{
+  "schema_version": 1,
+  "shader": "HGRP/MinimapTerrain",
+  "program": 16,
+  "parameter_prefix": {
+    "serialized_version": 202506210,
+    "buffers": [
+      {
+        "name": "",
+        "size": 0,
+        "fields": []
+      },
+      {
+        "name": "$Globals",
+        "size": 176,
+        "fields": [
+          {
+            "name": "_WatchWorldToLocalMatrix",
+            "offset": 112,
+            "serialized_fields": [
+              0,
+              4,
+              4,
+              1,
+              0,
+              112
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnityPerMaterial",
+        "size": 80,
+        "fields": [
+          {
+            "name": "_Lightness",
+            "offset": 4,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              4
+            ]
+          },
+          {
+            "name": "_QuadRadius",
+            "offset": 48,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              48
+            ]
+          },
+          {
+            "name": "_PointDissolveStart",
+            "offset": 56,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              56
+            ]
+          },
+          {
+            "name": "_PointDissolveEnd",
+            "offset": 52,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              52
+            ]
+          },
+          {
+            "name": "_PointCloudColor",
+            "offset": 32,
+            "serialized_fields": [
+              0,
+              1,
+              4,
+              0,
+              0,
+              32
+            ]
+          },
+          {
+            "name": "_Alpha",
+            "offset": 8
+          },
+          {
+            "name": "_RegionMapEditor",
+            "offset": 20
+          },
+          {
+            "name": "_WatchToMinimapEclosion",
+            "offset": 24
+          },
+          {
+            "name": "_WatchToMinimapRadius",
+            "offset": 28
+          }
+        ]
+      },
+      {
+        "name": "UnityPerDraw",
+        "size": 112,
+        "fields": [
+          {
+            "name": "unity_ObjectToWorld",
+            "offset": 0,
+            "serialized_fields": [
+              0,
+              4,
+              4,
+              1,
+              0,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnityPerFrame",
+        "size": 368,
+        "fields": [
+          {
+            "name": "unity_MatrixInvV",
+            "offset": 208,
+            "serialized_fields": [
+              0,
+              4,
+              4,
+              1,
+              0,
+              208
+            ]
+          },
+          {
+            "name": "unity_MatrixVP",
+            "offset": 272
+          }
+        ]
+      },
+      {
+        "name": "_PerPassConstants",
+        "size": 16,
+        "fields": [
+          {
+            "name": "_RenderPathInjected",
+            "offset": 0
+          },
+          {
+            "name": "_HGFlipX",
+            "offset": 4
+          },
+          {
+            "name": "_HGFlipY",
+            "offset": 8
+          }
+        ]
+      },
+      {
+        "name": "_UIRenderingConstants",
+        "size": 784,
+        "fields": [
+          {
+            "name": "_InvViewMatrix",
+            "offset": 64,
+            "serialized_fields": [
+              0,
+              4,
+              4,
+              1,
+              0,
+              64
+            ]
+          },
+          {
+            "name": "_WorldSpaceCameraPos_Internal",
+            "offset": 704
+          },
+          {
+            "name": "_UIProjectionParams",
+            "offset": 736
+          },
+          {
+            "name": "_NonJitteredViewNoTransProjMatrix",
+            "offset": 512
+          }
+        ]
+      }
+    ],
+    "parsed_prefix_bytes": 624,
+    "unparsed_tail_hex": "030000000800000024476c6f62616c7301000000000003090000000010000000556e6974795065724d6174657269616c010000000000010d000000000c000000556e697479506572447261770100000000000205000000000400000006000000476c6f62616c0000000000000300000002000000150000005f554952656e646572696e67436f6e7374616e747300000000000000060000000300000005000100110000005f50657250617373436f6e7374616e7473000000010000000600000003000000040001000d000000556e6974795065724672616d65000000020000000600000003000000030001000b0000005065724d6174657269616c0001000000010000000000000010000000556e6974795065724d6174657269616c00000000060000000300000001000100090000005065724f626a6563740000000200000001000000000000000c000000556e69747950657244726177000000000600000001000000020001000c00000044656661756c745365745f330300000001000000000000000800000024476c6f62616c7300000000060000000200000000000100"
+  },
+  "descriptor_tail": {
+    "legacy_resources": [
+      {
+        "source_offset": 628,
+        "name": "$Globals",
+        "kind": 1,
+        "fields": [
+          151191552,
+          0
+        ]
+      },
+      {
+        "source_offset": 652,
+        "name": "UnityPerMaterial",
+        "kind": 1,
+        "fields": [
+          218169344,
+          0
+        ]
+      },
+      {
+        "source_offset": 684,
+        "name": "UnityPerDraw",
+        "kind": 1,
+        "fields": [
+          84017152,
+          0
+        ]
+      }
+    ],
+    "descriptor_sets": [
+      {
+        "name": "Global",
+        "set": 0,
+        "max_binding": 2,
+        "resources": [
+          {
+            "source_offset": 740,
+            "name": "_UIRenderingConstants",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65541
+          },
+          {
+            "source_offset": 784,
+            "name": "_PerPassConstants",
+            "binding": 1,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65540
+          },
+          {
+            "source_offset": 824,
+            "name": "UnityPerFrame",
+            "binding": 2,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65539
+          }
+        ]
+      },
+      {
+        "name": "PerMaterial",
+        "set": 1,
+        "max_binding": 0,
+        "resources": [
+          {
+            "source_offset": 888,
+            "name": "UnityPerMaterial",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65537
+          }
+        ]
+      },
+      {
+        "name": "PerObject",
+        "set": 2,
+        "max_binding": 0,
+        "resources": [
+          {
+            "source_offset": 952,
+            "name": "UnityPerDraw",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 1,
+            "flags": 65538
+          }
+        ]
+      },
+      {
+        "name": "DefaultSet_3",
+        "set": 3,
+        "max_binding": 0,
+        "resources": [
+          {
+            "source_offset": 1012,
+            "name": "$Globals",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 2,
+            "flags": 65536
+          }
+        ]
+      }
+    ],
+    "source_bytes_consumed": 416
+  },
+  "stages": {
+    "vertex": {
+      "file": "Shaders/HGRP_MinimapTerrain-ss0-p18-seg0-program16.vertex.metal",
+      "function": "main0",
+      "uniforms": [
+        {
+          "name": "UnityPerDraw",
+          "size": 112,
+          "index": 0,
+          "fields": [
+            {
+              "name": "unity_ObjectToWorld",
+              "offset": 0,
+              "serialized_fields": [
+                0,
+                4,
+                4,
+                1,
+                0,
+                0
+              ]
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "mat4",
+              "offset": 0,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 80
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 96
+            }
+          ]
+        },
+        {
+          "name": "UnityPerFrame",
+          "size": 368,
+          "index": 1,
+          "fields": [
+            {
+              "name": "unity_MatrixInvV",
+              "offset": 208,
+              "serialized_fields": [
+                0,
+                4,
+                4,
+                1,
+                0,
+                208
+              ]
+            },
+            {
+              "name": "unity_MatrixVP",
+              "offset": 272
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m4",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 80,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 144,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 208,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 272,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "int",
+              "offset": 336
+            },
+            {
+              "name": "_m10",
+              "type": "vec4",
+              "offset": 352
+            }
+          ]
+        },
+        {
+          "name": "_PerPassConstants",
+          "size": 16,
+          "index": 2,
+          "fields": [
+            {
+              "name": "_RenderPathInjected",
+              "offset": 0
+            },
+            {
+              "name": "_HGFlipX",
+              "offset": 4
+            },
+            {
+              "name": "_HGFlipY",
+              "offset": 8
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 8
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 12
+            }
+          ]
+        },
+        {
+          "name": "_UIRenderingConstants",
+          "size": 784,
+          "index": 3,
+          "fields": [
+            {
+              "name": "_InvViewMatrix",
+              "offset": 64,
+              "serialized_fields": [
+                0,
+                4,
+                4,
+                1,
+                0,
+                64
+              ]
+            },
+            {
+              "name": "_WorldSpaceCameraPos_Internal",
+              "offset": 704
+            },
+            {
+              "name": "_UIProjectionParams",
+              "offset": 736
+            },
+            {
+              "name": "_NonJitteredViewNoTransProjMatrix",
+              "offset": 512
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "mat4",
+              "offset": 0,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m1",
+              "type": "mat4",
+              "offset": 64,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m2",
+              "type": "mat4",
+              "offset": 128,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m3",
+              "type": "mat4",
+              "offset": 192,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m4",
+              "type": "mat4",
+              "offset": 256,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 320,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 384,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 448,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 512,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "mat4",
+              "offset": 576,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m10",
+              "type": "mat4",
+              "offset": 640,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m11",
+              "type": "vec4",
+              "offset": 704
+            },
+            {
+              "name": "_m12",
+              "type": "vec4",
+              "offset": 720
+            },
+            {
+              "name": "_m13",
+              "type": "vec4",
+              "offset": 736
+            },
+            {
+              "name": "_m14",
+              "type": "vec4",
+              "offset": 752
+            },
+            {
+              "name": "_m15",
+              "type": "vec4",
+              "offset": 768
+            }
+          ]
+        },
+        {
+          "name": "UnityPerMaterial",
+          "size": 80,
+          "index": 4,
+          "fields": [
+            {
+              "name": "_Lightness",
+              "offset": 4,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                4
+              ]
+            },
+            {
+              "name": "_QuadRadius",
+              "offset": 48,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                48
+              ]
+            },
+            {
+              "name": "_PointDissolveStart",
+              "offset": 56,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                56
+              ]
+            },
+            {
+              "name": "_PointDissolveEnd",
+              "offset": 52,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                52
+              ]
+            },
+            {
+              "name": "_PointCloudColor",
+              "offset": 32,
+              "serialized_fields": [
+                0,
+                1,
+                4,
+                0,
+                0,
+                32
+              ]
+            },
+            {
+              "name": "_Alpha",
+              "offset": 8
+            },
+            {
+              "name": "_RegionMapEditor",
+              "offset": 20
+            },
+            {
+              "name": "_WatchToMinimapEclosion",
+              "offset": 24
+            },
+            {
+              "name": "_WatchToMinimapRadius",
+              "offset": 28
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 8
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 12
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 16
+            },
+            {
+              "name": "_m5",
+              "type": "float",
+              "offset": 20
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 24
+            },
+            {
+              "name": "_m7",
+              "type": "float",
+              "offset": 28
+            },
+            {
+              "name": "_m8",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 48
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 52
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 56
+            },
+            {
+              "name": "_m12",
+              "type": "vec4",
+              "offset": 64
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "type": "vec4",
+          "name": "_3",
+          "location": 0
+        },
+        {
+          "type": "vec2",
+          "name": "_4",
+          "location": 1
+        },
+        {
+          "type": "vec2",
+          "name": "_5",
+          "location": 2
+        },
+        {
+          "type": "vec3",
+          "name": "_6",
+          "location": 3
+        },
+        {
+          "type": "vec4",
+          "name": "_7",
+          "location": 5
+        }
+      ],
+      "outputs": [
+        {
+          "type": "vec4",
+          "name": "_9",
+          "location": 0
+        },
+        {
+          "type": "vec4",
+          "name": "_12",
+          "location": 3
+        },
+        {
+          "type": "vec4",
+          "name": "_14",
+          "location": 5
+        }
+      ]
+    },
+    "fragment": {
+      "file": "Shaders/HGRP_MinimapTerrain-ss0-p18-seg0-program16.fragment.metal",
+      "function": "main0",
+      "uniforms": [
+        {
+          "name": "$Globals",
+          "size": 176,
+          "index": 0,
+          "fields": [
+            {
+              "name": "_WatchWorldToLocalMatrix",
+              "offset": 112,
+              "serialized_fields": [
+                0,
+                4,
+                4,
+                1,
+                0,
+                112
+              ]
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m4",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m5",
+              "type": "vec4",
+              "offset": 80
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 96
+            },
+            {
+              "name": "_m7",
+              "type": "float",
+              "offset": 100
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 104
+            },
+            {
+              "name": "_m9",
+              "type": "mat4",
+              "offset": 112,
+              "matrix_stride": 16,
+              "row_major": true
+            }
+          ]
+        },
+        {
+          "name": "UnityPerMaterial",
+          "size": 80,
+          "index": 1,
+          "fields": [
+            {
+              "name": "_Lightness",
+              "offset": 4,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                4
+              ]
+            },
+            {
+              "name": "_QuadRadius",
+              "offset": 48,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                48
+              ]
+            },
+            {
+              "name": "_PointDissolveStart",
+              "offset": 56,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                56
+              ]
+            },
+            {
+              "name": "_PointDissolveEnd",
+              "offset": 52,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                52
+              ]
+            },
+            {
+              "name": "_PointCloudColor",
+              "offset": 32,
+              "serialized_fields": [
+                0,
+                1,
+                4,
+                0,
+                0,
+                32
+              ]
+            },
+            {
+              "name": "_Alpha",
+              "offset": 8
+            },
+            {
+              "name": "_RegionMapEditor",
+              "offset": 20
+            },
+            {
+              "name": "_WatchToMinimapEclosion",
+              "offset": 24
+            },
+            {
+              "name": "_WatchToMinimapRadius",
+              "offset": 28
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 8
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 12
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 16
+            },
+            {
+              "name": "_m5",
+              "type": "float",
+              "offset": 20
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 24
+            },
+            {
+              "name": "_m7",
+              "type": "float",
+              "offset": 28
+            },
+            {
+              "name": "_m8",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 48
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 52
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 56
+            },
+            {
+              "name": "_m12",
+              "type": "vec4",
+              "offset": 64
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "type": "vec4",
+          "name": "_3",
+          "location": 0
+        },
+        {
+          "type": "vec4",
+          "name": "_4",
+          "location": 3
+        },
+        {
+          "type": "vec4",
+          "name": "_5",
+          "location": 5
+        }
+      ],
+      "outputs": [
+        {
+          "type": "vec4",
+          "name": "_6",
+          "location": 0
+        }
+      ]
+    }
+  },
+  "textures": [],
+  "status": "Actual translated source program; exact named descriptors and reflected offsets"
+}

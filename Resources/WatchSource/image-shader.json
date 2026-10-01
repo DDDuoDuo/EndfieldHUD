@@ -1,0 +1,894 @@
+{
+  "schema_version": 1,
+  "shader": "HGRP/UI/Default",
+  "program": 194,
+  "parameter_prefix": {
+    "serialized_version": 202506210,
+    "buffers": [
+      {
+        "name": "",
+        "size": 0,
+        "fields": []
+      },
+      {
+        "name": "UnityInstancing_SRP_UnityPerDraw",
+        "size": 144,
+        "fields": [
+          {
+            "name": "mainTexTexelSize",
+            "offset": 64
+          },
+          {
+            "name": "textureSampleAdd",
+            "offset": 80
+          },
+          {
+            "name": "clipRect",
+            "offset": 96
+          },
+          {
+            "name": "uiMaskHGSoftness",
+            "offset": 112
+          },
+          {
+            "name": "clipRectParam",
+            "offset": 128
+          },
+          {
+            "name": "ObjectToWorld",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "name": "UnityPerMaterial",
+        "size": 196,
+        "fields": [
+          {
+            "name": "_UIImageOpaque",
+            "offset": 192,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              192
+            ]
+          },
+          {
+            "name": "_UseAdditiveBlendMode",
+            "offset": 176
+          },
+          {
+            "name": "_TintColorAlpha",
+            "offset": 188
+          },
+          {
+            "name": "_Color",
+            "offset": 128
+          },
+          {
+            "name": "_MainTex_ST",
+            "offset": 144
+          },
+          {
+            "name": "_UIVFXParameters",
+            "offset": 180
+          },
+          {
+            "name": "_TintColorIntensity",
+            "offset": 184
+          }
+        ]
+      },
+      {
+        "name": "UnityPerFrame",
+        "size": 368,
+        "fields": [
+          {
+            "name": "glstate_matrix_projection",
+            "offset": 80
+          },
+          {
+            "name": "unity_MatrixVP",
+            "offset": 272
+          }
+        ]
+      },
+      {
+        "name": "_PerPassConstants",
+        "size": 16,
+        "fields": [
+          {
+            "name": "_RenderPathInjected",
+            "offset": 0
+          },
+          {
+            "name": "_HGFlipX",
+            "offset": 4
+          },
+          {
+            "name": "_HGFlipY",
+            "offset": 8
+          }
+        ]
+      },
+      {
+        "name": "_UIRenderingConstants",
+        "size": 784,
+        "fields": [
+          {
+            "name": "_WorldSpaceCameraPos_Internal",
+            "offset": 704
+          },
+          {
+            "name": "_UIProjectionParams",
+            "offset": 736
+          },
+          {
+            "name": "_UIScreenParams",
+            "offset": 752
+          },
+          {
+            "name": "_ProjMatrix",
+            "offset": 128
+          },
+          {
+            "name": "_NonJitteredViewNoTransProjMatrix",
+            "offset": 512
+          }
+        ]
+      }
+    ],
+    "parsed_prefix_bytes": 256,
+    "unparsed_tail_hex": "02000000080000005f4d61696e5465780000000001000389000003090400000020000000556e697479496e7374616e63696e675f5352505f556e69747950657244726177010000000000020d000000000400000006000000476c6f62616c0000000000000300000002000000150000005f554952656e646572696e67436f6e7374616e747300000000000000060000000300000004000100110000005f50657250617373436f6e7374616e7473000000010000000600000003000000030001000d000000556e6974795065724672616d65000000020000000600000003000000020001000b0000005065724d6174657269616c0001000000010000000000000010000000556e6974795065724d6174657269616c00000000060000000300000001000100090000005065724f626a65637400000002000000010000000000000020000000556e697479496e7374616e63696e675f5352505f556e697479506572447261770000000006000000030000000000010008000000437573746f6d5632030000000200000001000000080000005f4d61696e546578000000000000000002000000ffff0100080000005f4d61696e54657801000000020000000200000000020100"
+  },
+  "descriptor_tail": {
+    "legacy_resources": [
+      {
+        "source_offset": 260,
+        "name": "_MainTex",
+        "kind": 0,
+        "fields": [
+          2298675201,
+          151191552,
+          4
+        ]
+      },
+      {
+        "source_offset": 288,
+        "name": "UnityInstancing_SRP_UnityPerDraw",
+        "kind": 1,
+        "fields": [
+          218234880,
+          0
+        ]
+      }
+    ],
+    "descriptor_sets": [
+      {
+        "name": "Global",
+        "set": 0,
+        "max_binding": 2,
+        "resources": [
+          {
+            "source_offset": 364,
+            "name": "_UIRenderingConstants",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65540
+          },
+          {
+            "source_offset": 408,
+            "name": "_PerPassConstants",
+            "binding": 1,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65539
+          },
+          {
+            "source_offset": 448,
+            "name": "UnityPerFrame",
+            "binding": 2,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65538
+          }
+        ]
+      },
+      {
+        "name": "PerMaterial",
+        "set": 1,
+        "max_binding": 0,
+        "resources": [
+          {
+            "source_offset": 512,
+            "name": "UnityPerMaterial",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65537
+          }
+        ]
+      },
+      {
+        "name": "PerObject",
+        "set": 2,
+        "max_binding": 0,
+        "resources": [
+          {
+            "source_offset": 576,
+            "name": "UnityInstancing_SRP_UnityPerDraw",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65536
+          }
+        ]
+      },
+      {
+        "name": "CustomV2",
+        "set": 3,
+        "max_binding": 1,
+        "resources": [
+          {
+            "source_offset": 652,
+            "name": "_MainTex",
+            "binding": 0,
+            "resource_type": 0,
+            "stage_mask": 2,
+            "flags": 131071
+          },
+          {
+            "source_offset": 680,
+            "name": "_MainTex",
+            "binding": 1,
+            "resource_type": 2,
+            "stage_mask": 2,
+            "flags": 66048
+          }
+        ]
+      }
+    ],
+    "source_bytes_consumed": 452
+  },
+  "stages": {
+    "vertex": {
+      "file": "Shaders/HGRP_UI_Default-ss0-p18-seg0-program194.vertex.metal",
+      "function": "main0",
+      "uniforms": [
+        {
+          "name": "UnityPerFrame",
+          "size": 368,
+          "index": 0,
+          "fields": [
+            {
+              "name": "glstate_matrix_projection",
+              "offset": 80
+            },
+            {
+              "name": "unity_MatrixVP",
+              "offset": 272
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m4",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 80,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 144,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 208,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 272,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "int",
+              "offset": 336
+            },
+            {
+              "name": "_m10",
+              "type": "vec4",
+              "offset": 352
+            }
+          ]
+        },
+        {
+          "name": "_PerPassConstants",
+          "size": 16,
+          "index": 1,
+          "fields": [
+            {
+              "name": "_RenderPathInjected",
+              "offset": 0
+            },
+            {
+              "name": "_HGFlipX",
+              "offset": 4
+            },
+            {
+              "name": "_HGFlipY",
+              "offset": 8
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 8
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 12
+            }
+          ]
+        },
+        {
+          "name": "_UIRenderingConstants",
+          "size": 784,
+          "index": 2,
+          "fields": [
+            {
+              "name": "_WorldSpaceCameraPos_Internal",
+              "offset": 704
+            },
+            {
+              "name": "_UIProjectionParams",
+              "offset": 736
+            },
+            {
+              "name": "_UIScreenParams",
+              "offset": 752
+            },
+            {
+              "name": "_ProjMatrix",
+              "offset": 128
+            },
+            {
+              "name": "_NonJitteredViewNoTransProjMatrix",
+              "offset": 512
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "mat4",
+              "offset": 0,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m1",
+              "type": "mat4",
+              "offset": 64,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m2",
+              "type": "mat4",
+              "offset": 128,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m3",
+              "type": "mat4",
+              "offset": 192,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m4",
+              "type": "mat4",
+              "offset": 256,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 320,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 384,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 448,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 512,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "mat4",
+              "offset": 576,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m10",
+              "type": "mat4",
+              "offset": 640,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m11",
+              "type": "vec4",
+              "offset": 704
+            },
+            {
+              "name": "_m12",
+              "type": "vec4",
+              "offset": 720
+            },
+            {
+              "name": "_m13",
+              "type": "vec4",
+              "offset": 736
+            },
+            {
+              "name": "_m14",
+              "type": "vec4",
+              "offset": 752
+            },
+            {
+              "name": "_m15",
+              "type": "vec4",
+              "offset": 768
+            }
+          ]
+        },
+        {
+          "name": "UnityInstancing_SRP_UnityPerDraw",
+          "size": 144,
+          "index": 3,
+          "fields": [
+            {
+              "name": "mainTexTexelSize",
+              "offset": 64
+            },
+            {
+              "name": "textureSampleAdd",
+              "offset": 80
+            },
+            {
+              "name": "clipRect",
+              "offset": 96
+            },
+            {
+              "name": "uiMaskHGSoftness",
+              "offset": 112
+            },
+            {
+              "name": "clipRectParam",
+              "offset": 128
+            },
+            {
+              "name": "ObjectToWorld",
+              "offset": 0
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "_19",
+              "array": [
+                1
+              ],
+              "array_size_is_literal": [
+                true
+              ],
+              "offset": 0,
+              "array_stride": 144
+            }
+          ]
+        },
+        {
+          "name": "UnityPerMaterial",
+          "size": 196,
+          "index": 4,
+          "fields": [
+            {
+              "name": "_UIImageOpaque",
+              "offset": 192,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                192
+              ]
+            },
+            {
+              "name": "_UseAdditiveBlendMode",
+              "offset": 176
+            },
+            {
+              "name": "_TintColorAlpha",
+              "offset": 188
+            },
+            {
+              "name": "_Color",
+              "offset": 128
+            },
+            {
+              "name": "_MainTex_ST",
+              "offset": 144
+            },
+            {
+              "name": "_UIVFXParameters",
+              "offset": 180
+            },
+            {
+              "name": "_TintColorIntensity",
+              "offset": 184
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "mat4",
+              "offset": 16,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 80
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 96
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 112
+            },
+            {
+              "name": "_m5",
+              "type": "vec4",
+              "offset": 128
+            },
+            {
+              "name": "_m6",
+              "type": "vec4",
+              "offset": 144
+            },
+            {
+              "name": "_m7",
+              "type": "vec4",
+              "offset": 160
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 176
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 180
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 184
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 188
+            },
+            {
+              "name": "_m12",
+              "type": "float",
+              "offset": 192
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "type": "vec4",
+          "name": "_3",
+          "location": 0
+        },
+        {
+          "type": "vec4",
+          "name": "_4",
+          "location": 1
+        },
+        {
+          "type": "vec2",
+          "name": "_5",
+          "location": 2
+        }
+      ],
+      "outputs": [
+        {
+          "type": "vec4",
+          "name": "_7",
+          "location": 0
+        },
+        {
+          "type": "vec2",
+          "name": "_8",
+          "location": 1
+        }
+      ]
+    },
+    "fragment": {
+      "file": "Shaders/HGRP_UI_Default-ss0-p18-seg0-program194.fragment.metal",
+      "function": "main0",
+      "uniforms": [
+        {
+          "name": "UnityInstancing_SRP_UnityPerDraw",
+          "size": 144,
+          "index": 0,
+          "fields": [
+            {
+              "name": "mainTexTexelSize",
+              "offset": 64
+            },
+            {
+              "name": "textureSampleAdd",
+              "offset": 80
+            },
+            {
+              "name": "clipRect",
+              "offset": 96
+            },
+            {
+              "name": "uiMaskHGSoftness",
+              "offset": 112
+            },
+            {
+              "name": "clipRectParam",
+              "offset": 128
+            },
+            {
+              "name": "ObjectToWorld",
+              "offset": 0
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "_9",
+              "array": [
+                1
+              ],
+              "array_size_is_literal": [
+                true
+              ],
+              "offset": 0,
+              "array_stride": 144
+            }
+          ]
+        },
+        {
+          "name": "UnityPerMaterial",
+          "size": 196,
+          "index": 1,
+          "fields": [
+            {
+              "name": "_UIImageOpaque",
+              "offset": 192,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                192
+              ]
+            },
+            {
+              "name": "_UseAdditiveBlendMode",
+              "offset": 176
+            },
+            {
+              "name": "_TintColorAlpha",
+              "offset": 188
+            },
+            {
+              "name": "_Color",
+              "offset": 128
+            },
+            {
+              "name": "_MainTex_ST",
+              "offset": 144
+            },
+            {
+              "name": "_UIVFXParameters",
+              "offset": 180
+            },
+            {
+              "name": "_TintColorIntensity",
+              "offset": 184
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "mat4",
+              "offset": 16,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 80
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 96
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 112
+            },
+            {
+              "name": "_m5",
+              "type": "vec4",
+              "offset": 128
+            },
+            {
+              "name": "_m6",
+              "type": "vec4",
+              "offset": 144
+            },
+            {
+              "name": "_m7",
+              "type": "vec4",
+              "offset": 160
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 176
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 180
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 184
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 188
+            },
+            {
+              "name": "_m12",
+              "type": "float",
+              "offset": 192
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "type": "vec4",
+          "name": "_3",
+          "location": 0
+        },
+        {
+          "type": "vec2",
+          "name": "_4",
+          "location": 1
+        }
+      ],
+      "outputs": [
+        {
+          "type": "vec4",
+          "name": "_5",
+          "location": 0
+        }
+      ]
+    }
+  },
+  "textures": [
+    {
+      "name": "_MainTex",
+      "index": 0,
+      "sampler_index": 0,
+      "stage": "fragment"
+    }
+  ],
+  "status": "Actual translated source program; exact named descriptors and reflected offsets"
+}
