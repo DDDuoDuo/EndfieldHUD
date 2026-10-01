@@ -66,6 +66,7 @@ final class HUDSourceWatchFrameBuilder {
         bannerClockTime = time
     }
     private let renderer: HUDSourceMetalRenderer
+    private let defaultSelectableTints: [HUDSourceID: SIMD4<Float>]
     private let materials: [HUDSourceID: HUDSourceJSONValue]
     private var sprites: [HUDSourceID: HUDSourceImageGeometry.Sprite] = [:]
     private var sourceSprites: [String: HUDSourceImageGeometry.Sprite] = [:]
@@ -98,6 +99,7 @@ final class HUDSourceWatchFrameBuilder {
     init(document: HUDSourceWatchDocument, renderer: HUDSourceMetalRenderer,
          domain: HUDSourceWatchDomain? = nil) throws {
         self.document = document; self.renderer = renderer
+        defaultSelectableTints = try HUDSourceSelectableColor(document: document).colors(at: 0)
         canvasSorting = HUDSourceCanvasSorting(scene: document.scene, components: document.components)
         let sourceDomain = try domain ?? HUDSourceWatchDomain(resourceRoot: document.root.appendingPathComponent("Domain"))
         self.domain = sourceDomain
@@ -167,7 +169,8 @@ final class HUDSourceWatchFrameBuilder {
     func build(pose input: HUDSourceWatchPose, worldRoot: simd_double4x4,
                verticalNormalizedPosition: Double = 1,
                domainAnimationState: HUDSourceDomainAnimation.State = .init(),
-               widgetTime: Double = 0) throws -> Frame {
+               widgetTime: Double = 0,
+               selectableTints: [HUDSourceID: SIMD4<Float>] = [:]) throws -> Frame {
         var pose = input
         try updateWidgetBanner(at: widgetTime)
         let widget = try document.widgets?.apply(to: &pose, state: widgetState, at: widgetTime,
@@ -287,6 +290,12 @@ final class HUDSourceWatchFrameBuilder {
                     // Graphic/TMP vertex streams carry Color32, before
                     // CanvasRenderer multiplies inherited CanvasGroup alpha.
                     color[axis] = (min(1, max(0, sampled)) * 255).rounded(.toNearestOrEven) / 255
+                }
+                // CanvasRenderer tint is independent of Graphic.m_Color and
+                // its Animator curves. Apply the authored Normal/Disabled tint
+                // even in a static fixture; dynamic states replace that tint.
+                if let tint = selectableTints[id] ?? defaultSelectableTints[id] {
+                    color *= tint
                 }
                 color = Self.canvasVertexColor(color, alwaysGamma: document.component("Canvas", on: canvasID)?["m_VertexColorAlwaysGammaSpace"].flag() ?? false)
                 color.w *= Float(alpha[id] ?? 1)

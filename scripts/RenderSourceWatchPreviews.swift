@@ -372,7 +372,13 @@ enum RenderSourceWatchPreviews {
             ("widgets-banner-midpoint", nil, 4.1, nil, nil),
             ("widgets-banner-endpoint", nil, 4.200000002980232, nil, nil),
             ("widgets-banner-reverse-midpoint", nil, 4.4, nil, nil),
-            ("widgets-banner-reverse-endpoint", nil, 4.500000002980232, nil, nil)
+            ("widgets-banner-reverse-endpoint", nil, 4.500000002980232, nil, nil),
+            ("widgets-banner-tint-normal", nil, 0, nil, nil),
+            ("widgets-banner-tint-hover-000", nil, 0, nil, nil),
+            ("widgets-banner-tint-hover-midpoint", nil, 0.05000000074505806, nil, nil),
+            ("widgets-banner-tint-hover-endpoint", nil, 0.10000000149011612, nil, nil),
+            ("widgets-banner-tint-pressed-midpoint", nil, 0.15000000223517418, nil, nil),
+            ("widgets-banner-tint-pressed-endpoint", nil, 0.20000000298023224, nil, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
@@ -436,8 +442,22 @@ enum RenderSourceWatchPreviews {
                     try activeBuilder.selectWidgetBanner(index: 0, at: 4.3)
                 }
             }
+            let colors = try HUDSourceSelectableColor(document: document)
+            let isColorFixture = name.hasPrefix("widgets-banner-tint-")
+            if isColorFixture {
+                guard let cell = document.widgets?.bannerInstances.first else {
+                    throw HUDSourceError.invalid("Original banner ColorTint target missing")
+                }
+                if name != "widgets-banner-tint-normal" {
+                    colors.setState(.highlighted, on: cell.buttonNodeID, at: 0)
+                }
+                if name.hasPrefix("widgets-banner-tint-pressed-") {
+                    colors.setState(.pressed, on: cell.buttonNodeID, at: 0.10000000149011612)
+                }
+            }
             let frame = try activeBuilder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState,
-                                                widgetTime: ambient ?? opening ?? closing ?? 0)
+                                                widgetTime: ambient ?? opening ?? closing ?? 0,
+                                                selectableTints: colors.colors(at: ambient ?? opening ?? closing ?? 0))
             if let missing = frame.diagnostics.first(where: { $0.hasPrefix("Unresolved original UIImage Sprite:") }) {
                 throw HUDSourceError.invalid("Active source artwork was skipped: " + missing)
             }
@@ -485,6 +505,25 @@ enum RenderSourceWatchPreviews {
                     widgetRegression["bannerExpectedNormalizedPosition"] = expectedPosition
                     widgetRegression["bannerSelectedPage"] = sample.selectedIndex
                     widgetRegression["bannerFrameOrder"] = "Adapter tween, sampled center callback, then hold tick; original cross-frame scheduling remains unverified"
+                }
+                if isColorFixture {
+                    let expectedAlpha: Float
+                    switch name {
+                    case "widgets-banner-tint-hover-midpoint": expectedAlpha = 0.1
+                    case "widgets-banner-tint-hover-endpoint": expectedAlpha = 0.2
+                    case "widgets-banner-tint-pressed-midpoint": expectedAlpha = 0.12
+                    case "widgets-banner-tint-pressed-endpoint": expectedAlpha = 0.04
+                    default: expectedAlpha = 0
+                    }
+                    let lights = frame.batches.filter { $0.sourceNodeID == widgets.bannerInstances[0].lightNodeID.rawValue }
+                    let matchesAlpha = expectedAlpha == 0 ? lights.isEmpty
+                        : (!lights.isEmpty && lights.allSatisfy { abs($0.color.w - expectedAlpha) < 0.000001 })
+                    guard matchesAlpha else {
+                        throw HUDSourceError.invalid("Source ColorTint did not multiply the original Light alpha: " + name)
+                    }
+                    widgetRegression["bannerLightExpectedAlpha"] = expectedAlpha
+                    widgetRegression["bannerLightBatchAlpha"] = lights.map { $0.color.w }
+                    widgetRegression["colorTint"] = "Adapter independent CanvasRenderer RGBA channel; original Graphic alpha 0.2 retained; original final vertex packing remains unobserved"
                 }
             }
             var materialRegression: [[String: Any]] = []
