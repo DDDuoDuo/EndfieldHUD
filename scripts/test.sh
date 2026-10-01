@@ -12,6 +12,8 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/Models.swift" \
     "$PROJECT_DIR/Sources/HUDResources.swift" \
     "$PROJECT_DIR/Sources/HUDWatchArtwork.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceScene.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceWatchAnimation.swift" \
     "$PROJECT_DIR/Sources/HUDGitHubRelease.swift" \
     "$PROJECT_DIR/Sources/HUDUpdateState.swift" \
     "$PROJECT_DIR/Sources/HUDDisplayPolicy.swift" \
@@ -105,6 +107,8 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDApplicationIconTests.swift" \
     "$PROJECT_DIR/Tests/HUDMechanicalArtworkTests.swift" \
     "$PROJECT_DIR/Tests/HUDWatchArtworkTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceSceneTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceWatchAnimationTests.swift" \
     "$PROJECT_DIR/Tests/HUDChargeBadgeTests.swift" \
     "$PROJECT_DIR/Tests/HUDModuleTests.swift" \
     "$PROJECT_DIR/Tests/HUDNavigationTests.swift" \
