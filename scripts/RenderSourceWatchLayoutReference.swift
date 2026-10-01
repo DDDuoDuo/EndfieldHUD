@@ -78,7 +78,9 @@ enum RenderSourceWatchLayoutReference {
                 exitTime: closing, canvasResolution: camera.layout.canvasSize)
             buttons.apply(to: &pose, at: sample.hover ?? 0)
             document.applyMacButtonAvailability(to: &pose)
-            let layout = HUDSourceWatchLayout(document: document) { id, _ in try? text.preferredSize(on: id) }
+            let widget = try document.widgets?.apply(to: &pose, state: .desktopReference,
+                at: sample.ambient ?? sample.opening ?? sample.closing ?? 0) ?? HUDSourceWatchWidgets.Overrides()
+            let layout = HUDSourceWatchLayout(document: document) { id, _ in try? text.preferredSize(on: id, literal: widget.text[id]) }
             let layoutReport = try layout.apply(to: &pose, worldRoot: camera.worldRoot)
             let resolved = try document.scene.resolve(overrides: pose.transforms)
             let inheritedAlpha = document.inheritedAlpha(pose: pose)

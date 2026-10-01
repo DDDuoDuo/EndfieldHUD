@@ -17,7 +17,9 @@ enum HUDSourceTextGeometryTests {
             do { try operation(); check(false, message) } catch { check(true, message) }
         }
         do {
-            let document = try HUDSourceWatchDocument()
+            // Keep the frozen 28-label WatchPanel_PC baseline independent of
+            // the separately validated runtime-loaded business-card subtree.
+            let document = try HUDSourceWatchDocument(includeWidgets: false)
             let generator = try HUDSourceTextGeometry(document: document)
             let resolved = try document.scene.resolve()
             guard let label = document.buttons.compactMap({ $0.label }).first(where: { $0.literal == "干员" }) else {

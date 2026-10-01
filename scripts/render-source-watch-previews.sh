@@ -5,7 +5,7 @@ OUTPUT="$TASK_ROOT/build/watch-source-previews"
 RUNTIME="$TASK_ROOT/build/watch-source-runtime"
 SDK="$("$TASK_ROOT/scripts/build.sh" --print-sdk)"
 mkdir -p "$OUTPUT" "$RUNTIME/module-cache"
-SOURCE_NAMES=(HUDResources HUDSourceScene HUDSourceWatchAnimation HUDSourceWatchDocument
+SOURCE_NAMES=(HUDResources HUDSourceScene HUDSourceWatchAnimation HUDSourceWatchDocument HUDSourceWatchWidgets
     HUDSourceImageGeometry HUDSourceTextGeometry HUDSourceWatchLayout HUDSourceWatchButtonAnimation HUDSourceWatchDomain HUDSourceRectClipping HUDSourceCanvasSorting
     HUDSourceWatchCamera HUDSourceDomainAnimation HUDSourceDrawableReadback HUDSourceUIComposite HUDSourceMetalRenderer HUDSourceWatchFrameBuilder)
 SOURCE_FILES=()

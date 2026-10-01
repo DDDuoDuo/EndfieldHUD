@@ -13113,5 +13113,3196 @@
     "decoded_mips_file": "Textures/deco_04--2e4c429a--6834532711761410188.bgra-mips.bin",
     "decoded_mips_sha256": "798332f2caf84fa936fe1473a6dc30a6435bd9496e54d7d1021e8a3d834a8deb",
     "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip"
+  },
+  {
+    "id": "CAB-0312882f199140c0b37665cece303d21:-7432388592649361033",
+    "cab": "CAB-0312882f199140c0b37665cece303d21",
+    "path_id": "-7432388592649361033",
+    "type": "Texture2D",
+    "name": "ui_main_menu_factory_icon",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/watch/ui_main_menu_factory_icon.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/4a92ee5b0215109b373bb4ce.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 209988139,
+      "length": 5122,
+      "md5": "CD07EC77E7C0B03AF15A9F78A7EC87AE",
+      "sha256": "a3678443212c85d5dbba99bbfd9664489cfd45814df3dd3cc3886f7128a5de71",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "607fd4e1a83d8164cb24c8b2d7e37e63eec75018c8ddca9521fb7266ddc2ad3e",
+    "width": 40,
+    "height": 40,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 0,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1600,
+      "path": "archive:/CAB-0312882f199140c0b37665cece303d21/CAB-0312882f199140c0b37665cece303d21.resS"
+    },
+    "png": {
+      "file": "textures/ui_main_menu_factory_icon--0312882f---7432388592649361033.png",
+      "sha256": "e82772c2965b8c57e0c78560e02564ad208a06baa2ee432dc266b7b158b34646",
+      "width": 40,
+      "height": 40,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/ui_main_menu_factory_icon--0312882f---7432388592649361033.bin",
+      "bytes": 1600,
+      "sha256": "6e9ef1a81d70d4f5a4a3d16816807215fad15b2ca934c1bf6c670c6dcb10538b"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 40,
+        "height": 40,
+        "offset": 0,
+        "length": 1600,
+        "sha256": "6e9ef1a81d70d4f5a4a3d16816807215fad15b2ca934c1bf6c670c6dcb10538b"
+      }
+    ],
+    "data_file": "Textures/ui_main_menu_factory_icon--0312882f---7432388592649361033.bin",
+    "data_sha256": "6e9ef1a81d70d4f5a4a3d16816807215fad15b2ca934c1bf6c670c6dcb10538b",
+    "decoded_mips_file": "Textures/ui_main_menu_factory_icon--0312882f---7432388592649361033.bgra-mips.bin",
+    "decoded_mips_sha256": "f059e8c272377763fd545b3f9d3d1fb18e06e6d91559fd84777556e8ca4bffc4",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-087a11ecaae81863b3f301b7bec84107:-6283680980313229020",
+    "cab": "CAB-087a11ecaae81863b3f301b7bec84107",
+    "path_id": "-6283680980313229020",
+    "type": "Texture2D",
+    "name": "tag_seasontower_splus_small",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/seasontower/tag_seasontower_splus_small.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/6848b78d72a37384ad2337bf.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 1071933127,
+      "length": 303395,
+      "md5": "700F93BC4A3A0EF059E5495BDF78A4B9",
+      "sha256": "3e9bec57519ec21362329757b822ea3401f81a1f4c6be07afe2a6d03a8714346",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "74cb3daa52c59253e668dcb03c1efa670853939f7f948d9193f46da5e42c0251",
+    "width": 156,
+    "height": 80,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 389952,
+      "size": 12480,
+      "path": "archive:/CAB-087a11ecaae81863b3f301b7bec84107/CAB-087a11ecaae81863b3f301b7bec84107.resS"
+    },
+    "png": {
+      "file": "textures/tag_seasontower_splus_small--087a11ec---6283680980313229020.png",
+      "sha256": "301b3ef929f12d26ef13322189d0d9bfb3b6ec40de26223c50148aba9c40a4a1",
+      "width": 156,
+      "height": 80,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/tag_seasontower_splus_small--087a11ec---6283680980313229020.bin",
+      "bytes": 12480,
+      "sha256": "46d3d8f7942b1a29a70306c9529469e85898dcb8c2554f7e9d4beb01aab2e896"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 156,
+        "height": 80,
+        "offset": 0,
+        "length": 12480,
+        "sha256": "46d3d8f7942b1a29a70306c9529469e85898dcb8c2554f7e9d4beb01aab2e896"
+      }
+    ],
+    "data_file": "Textures/tag_seasontower_splus_small--087a11ec---6283680980313229020.bin",
+    "data_sha256": "46d3d8f7942b1a29a70306c9529469e85898dcb8c2554f7e9d4beb01aab2e896",
+    "decoded_mips_file": "Textures/tag_seasontower_splus_small--087a11ec---6283680980313229020.bgra-mips.bin",
+    "decoded_mips_sha256": "e1fc0b118214975451d6a59149466c8c018c0c5ca6829ab4b0ba7b4d36de25f0",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-087a11ecaae81863b3f301b7bec84107:-8255304472001022337",
+    "cab": "CAB-087a11ecaae81863b3f301b7bec84107",
+    "path_id": "-8255304472001022337",
+    "type": "Texture2D",
+    "name": "tag_seasontower_splus_gray",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/seasontower/tag_seasontower_splus_gray.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/6848b78d72a37384ad2337bf.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 1071933127,
+      "length": 303395,
+      "md5": "700F93BC4A3A0EF059E5495BDF78A4B9",
+      "sha256": "3e9bec57519ec21362329757b822ea3401f81a1f4c6be07afe2a6d03a8714346",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "0bc7659d92e475e3d8b9fe029136433962f3814bcdbf7e3cb0b41a849d2708da",
+    "width": 224,
+    "height": 112,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 4624,
+      "size": 25088,
+      "path": "archive:/CAB-087a11ecaae81863b3f301b7bec84107/CAB-087a11ecaae81863b3f301b7bec84107.resS"
+    },
+    "png": {
+      "file": "textures/tag_seasontower_splus_gray--087a11ec---8255304472001022337.png",
+      "sha256": "991c47f2e3670988e7f96562fdb6a63506e6cd1eb6eb5f375543c34ea15d11b3",
+      "width": 224,
+      "height": 112,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/tag_seasontower_splus_gray--087a11ec---8255304472001022337.bin",
+      "bytes": 25088,
+      "sha256": "4bb25b88d2ae798428d3155cd7cccf4ccd7c2c8f37faf47b43995e2bf8c3b724"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 224,
+        "height": 112,
+        "offset": 0,
+        "length": 25088,
+        "sha256": "4bb25b88d2ae798428d3155cd7cccf4ccd7c2c8f37faf47b43995e2bf8c3b724"
+      }
+    ],
+    "data_file": "Textures/tag_seasontower_splus_gray--087a11ec---8255304472001022337.bin",
+    "data_sha256": "4bb25b88d2ae798428d3155cd7cccf4ccd7c2c8f37faf47b43995e2bf8c3b724",
+    "decoded_mips_file": "Textures/tag_seasontower_splus_gray--087a11ec---8255304472001022337.bgra-mips.bin",
+    "decoded_mips_sha256": "a2602295474b9a5cec149070cfce519d0ea95e30e9b68d18d1cd2c49ea9d0ee1",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-1d0a4c08b5a9c475680941da45a0073d:-3936017606796499761",
+    "cab": "CAB-1d0a4c08b5a9c475680941da45a0073d",
+    "path_id": "-3936017606796499761",
+    "type": "Texture2D",
+    "name": "icon_chr_0004_pelica",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/charremoteicon/icon_chr_0004_pelica.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/e47c48f1295760d7fb349486.ab",
+      "layer": "Persistent",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "3F4E2AF6AB775E91E99D276F0568AEB3",
+      "offset": 161409640,
+      "length": 2604536,
+      "md5": "814EEA072D8EB2973E0FB8268A9F6214",
+      "sha256": "adccaf82dce5bf2665a0a3f713e56c23bc60e8e7c31962eebc9a556b99c06b46",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "fda55b8ec50b0ee6bf92d208f889068c2afd491a61dacd9efa7bd72a1aa24caf",
+    "width": 200,
+    "height": 200,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 760000,
+      "size": 40000,
+      "path": "archive:/CAB-1d0a4c08b5a9c475680941da45a0073d/CAB-1d0a4c08b5a9c475680941da45a0073d.resS"
+    },
+    "png": {
+      "file": "textures/icon_chr_0004_pelica--1d0a4c08---3936017606796499761.png",
+      "sha256": "746ee63ea47e87b04335764ddaa7ab1a9b70456d665918f6161e63a7519ff58d",
+      "width": 200,
+      "height": 200,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_chr_0004_pelica--1d0a4c08---3936017606796499761.bin",
+      "bytes": 40000,
+      "sha256": "451c8e70134cb22a21059f6c03da58bdd1ea2258b93a8598ad0a90271ea0200c"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 200,
+        "height": 200,
+        "offset": 0,
+        "length": 40000,
+        "sha256": "451c8e70134cb22a21059f6c03da58bdd1ea2258b93a8598ad0a90271ea0200c"
+      }
+    ],
+    "data_file": "Textures/icon_chr_0004_pelica--1d0a4c08---3936017606796499761.bin",
+    "data_sha256": "451c8e70134cb22a21059f6c03da58bdd1ea2258b93a8598ad0a90271ea0200c",
+    "decoded_mips_file": "Textures/icon_chr_0004_pelica--1d0a4c08---3936017606796499761.bgra-mips.bin",
+    "decoded_mips_sha256": "7fe51793859552299237316088416fefe9f6ac2e9cb8ce6f1a51316874247ef8",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-1d0a4c08b5a9c475680941da45a0073d:-6666574239406991612",
+    "cab": "CAB-1d0a4c08b5a9c475680941da45a0073d",
+    "path_id": "-6666574239406991612",
+    "type": "Texture2D",
+    "name": "icon_chr_0011_seraph",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/charremoteicon/icon_chr_0011_seraph.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/e47c48f1295760d7fb349486.ab",
+      "layer": "Persistent",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "3F4E2AF6AB775E91E99D276F0568AEB3",
+      "offset": 161409640,
+      "length": 2604536,
+      "md5": "814EEA072D8EB2973E0FB8268A9F6214",
+      "sha256": "adccaf82dce5bf2665a0a3f713e56c23bc60e8e7c31962eebc9a556b99c06b46",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "59ee18ebc3d16656d29e4a2f7372d23299818d08ec37d50004fc99618eb18b99",
+    "width": 200,
+    "height": 200,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 320000,
+      "size": 40000,
+      "path": "archive:/CAB-1d0a4c08b5a9c475680941da45a0073d/CAB-1d0a4c08b5a9c475680941da45a0073d.resS"
+    },
+    "png": {
+      "file": "textures/icon_chr_0011_seraph--1d0a4c08---6666574239406991612.png",
+      "sha256": "adf767081aa41e8dfd9d1bb83ceb203cec7df050e1c6966bc24f4d4f1563923e",
+      "width": 200,
+      "height": 200,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_chr_0011_seraph--1d0a4c08---6666574239406991612.bin",
+      "bytes": 40000,
+      "sha256": "ffa5da96062c2d5b845b23c831a0c556654dd56db80ac998f4eddc6806794e9d"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 200,
+        "height": 200,
+        "offset": 0,
+        "length": 40000,
+        "sha256": "ffa5da96062c2d5b845b23c831a0c556654dd56db80ac998f4eddc6806794e9d"
+      }
+    ],
+    "data_file": "Textures/icon_chr_0011_seraph--1d0a4c08---6666574239406991612.bin",
+    "data_sha256": "ffa5da96062c2d5b845b23c831a0c556654dd56db80ac998f4eddc6806794e9d",
+    "decoded_mips_file": "Textures/icon_chr_0011_seraph--1d0a4c08---6666574239406991612.bgra-mips.bin",
+    "decoded_mips_sha256": "c5ebb803bd59d2fbfffb7044a110df07440aef7ef11012ace6cb8610d0143c94",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-1e9110703bab5c74ab15ee8bbe322264:6604503700508031526",
+    "cab": "CAB-1e9110703bab5c74ab15ee8bbe322264",
+    "path_id": "6604503700508031526",
+    "type": "Texture2D",
+    "name": "business_card_topic_bp_1_3",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/business_card_topic_bp_1_3.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/5d9678228460435f824aa45c.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+      "offset": 150126532,
+      "length": 80503,
+      "md5": "6688E1234233BD74510B2AA7ABAA412A",
+      "sha256": "f35e38f5fcfd12ad9bb7b09eb5f9d1ef3e0c00851842e2bee16834c7fab213f5",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "091ad6cd6c556653e85ec25a866701b479e806ed376b99bed925a356159fa303",
+    "width": 532,
+    "height": 204,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 108528,
+      "path": "archive:/CAB-1e9110703bab5c74ab15ee8bbe322264/CAB-1e9110703bab5c74ab15ee8bbe322264.resS"
+    },
+    "png": {
+      "file": "textures/business_card_topic_bp_1_3--1e911070--6604503700508031526.png",
+      "sha256": "bd485d012c3defb58c7f12274f563c7f95b39587c51e772cb4142ddb60354209",
+      "width": 532,
+      "height": 204,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/business_card_topic_bp_1_3--1e911070--6604503700508031526.bin",
+      "bytes": 108528,
+      "sha256": "cb7dfb212cea13cbb0a8b83cc48cb08924efa7330048f8ffdd088c9b53dbb323"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 532,
+        "height": 204,
+        "offset": 0,
+        "length": 108528,
+        "sha256": "cb7dfb212cea13cbb0a8b83cc48cb08924efa7330048f8ffdd088c9b53dbb323"
+      }
+    ],
+    "data_file": "Textures/business_card_topic_bp_1_3--1e911070--6604503700508031526.bin",
+    "data_sha256": "cb7dfb212cea13cbb0a8b83cc48cb08924efa7330048f8ffdd088c9b53dbb323",
+    "decoded_mips_file": "Textures/business_card_topic_bp_1_3--1e911070--6604503700508031526.bgra-mips.bin",
+    "decoded_mips_sha256": "503f22ea9f06815e6b85fb84d3e576418ba56098b54d861f584f9cbda3f07334",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-21fa3e4db2ab8ba19d63e38ee4c3bc76:-7837820514655709531",
+    "cab": "CAB-21fa3e4db2ab8ba19d63e38ee4c3bc76",
+    "path_id": "-7837820514655709531",
+    "type": "Texture2D",
+    "name": "common_head_border_line",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/common/common_head_border_line.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/7d907bb8f356528d60575e87.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 183821836,
+      "length": 4740,
+      "md5": "B32699AFE681112B2123B17CCE95F4B7",
+      "sha256": "12fccfc06ea19ff90c9c158514f93565d9511de69dcfa7079114ed2fc5f8f731",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "211038e6aaa79e4e3bdba7341c0a97a6ffba163801222a613ba1afb755e3bcee",
+    "width": 24,
+    "height": 36,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 864,
+      "path": "archive:/CAB-21fa3e4db2ab8ba19d63e38ee4c3bc76/CAB-21fa3e4db2ab8ba19d63e38ee4c3bc76.resS"
+    },
+    "png": {
+      "file": "textures/common_head_border_line--21fa3e4d---7837820514655709531.png",
+      "sha256": "223fc09e9bdbd638587f8fd632820eafef792593b9bfc1e24b329885c6122fde",
+      "width": 24,
+      "height": 36,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/common_head_border_line--21fa3e4d---7837820514655709531.bin",
+      "bytes": 864,
+      "sha256": "b00d1b7a02aba76603b6b77d45b60f51d0d5f3369bfa16490ac432b9a6d04b59"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 24,
+        "height": 36,
+        "offset": 0,
+        "length": 864,
+        "sha256": "b00d1b7a02aba76603b6b77d45b60f51d0d5f3369bfa16490ac432b9a6d04b59"
+      }
+    ],
+    "data_file": "Textures/common_head_border_line--21fa3e4d---7837820514655709531.bin",
+    "data_sha256": "b00d1b7a02aba76603b6b77d45b60f51d0d5f3369bfa16490ac432b9a6d04b59",
+    "decoded_mips_file": "Textures/common_head_border_line--21fa3e4d---7837820514655709531.bgra-mips.bin",
+    "decoded_mips_sha256": "de6acbf12bd027a785131ad1eed016d8b77a9ee0ec19f531afc0581e32247f26",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-2321ab8d4e73803c9463a61c89eef3e6:-5617890141016146480",
+    "cab": "CAB-2321ab8d4e73803c9463a61c89eef3e6",
+    "path_id": "-5617890141016146480",
+    "type": "Texture2D",
+    "name": "icon_friend_cell_char_block",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/friend/icon_friend_cell_char_block.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/74e4f8c1afc52ea61c6747fd.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 232844511,
+      "length": 5537,
+      "md5": "69CDF438128F290FE8C8CBE8EE6C1159",
+      "sha256": "1e29b2ac46c84063ebbe04a451248fe0bbb5e36b88953d8feb7cf6703468137f",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "cbb9a4a391baa4e54d6c5a7f75f70b577b6389adf871566176b713335e6e2133",
+    "width": 52,
+    "height": 52,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 2704,
+      "path": "archive:/CAB-2321ab8d4e73803c9463a61c89eef3e6/CAB-2321ab8d4e73803c9463a61c89eef3e6.resS"
+    },
+    "png": {
+      "file": "textures/icon_friend_cell_char_block--2321ab8d---5617890141016146480.png",
+      "sha256": "95ebd7a477c8d484122a8d9d9a79691b420b76c04dc6e5bc2e554999c9510667",
+      "width": 52,
+      "height": 52,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_friend_cell_char_block--2321ab8d---5617890141016146480.bin",
+      "bytes": 2704,
+      "sha256": "47e7f1a385c3c03703834df437b98643db0edb25be6d369d54be71f808ac1a26"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 52,
+        "height": 52,
+        "offset": 0,
+        "length": 2704,
+        "sha256": "47e7f1a385c3c03703834df437b98643db0edb25be6d369d54be71f808ac1a26"
+      }
+    ],
+    "data_file": "Textures/icon_friend_cell_char_block--2321ab8d---5617890141016146480.bin",
+    "data_sha256": "47e7f1a385c3c03703834df437b98643db0edb25be6d369d54be71f808ac1a26",
+    "decoded_mips_file": "Textures/icon_friend_cell_char_block--2321ab8d---5617890141016146480.bgra-mips.bin",
+    "decoded_mips_sha256": "4a4cd1785e018d22caf5d703f823cb2625ac3fc4c39041db40f101c8d706ec49",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-2e174e70d0b78db7c620b4c91ac39c7e:-7307584321334895209",
+    "cab": "CAB-2e174e70d0b78db7c620b4c91ac39c7e",
+    "path_id": "-7307584321334895209",
+    "type": "Texture2D",
+    "name": "deco_bg_sss",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/activity/activityseasontower/deco_bg_sss.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/38fe36ae3a90abf6b58e87c7.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 192290816,
+      "length": 17176,
+      "md5": "0EE067CF228736A43B6538BF4EAFBDC8",
+      "sha256": "73db2e67961042b0deefa199325b36cffd85da0f51e8b099add4d436cf7caced",
+      "md5_verified": true
+    },
+    "source_object_bytes": 212,
+    "source_object_sha256": "5b556d76cead59bacbdb94642847b5c2f77d66f273b280ce2d14f41c61366de7",
+    "width": 236,
+    "height": 104,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 24544,
+      "path": "archive:/CAB-2e174e70d0b78db7c620b4c91ac39c7e/CAB-2e174e70d0b78db7c620b4c91ac39c7e.resS"
+    },
+    "png": {
+      "file": "textures/deco_bg_sss--2e174e70---7307584321334895209.png",
+      "sha256": "bd1c1476fbc3fa76fb1f070c44ba96b17a7f03f241f4d4cd58ed77c552422ab6",
+      "width": 236,
+      "height": 104,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_bg_sss--2e174e70---7307584321334895209.bin",
+      "bytes": 24544,
+      "sha256": "8bdd50d576e0d2056788e92d848ef0c12c4609ffd667cb0fdc8c2b698039925b"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 236,
+        "height": 104,
+        "offset": 0,
+        "length": 24544,
+        "sha256": "8bdd50d576e0d2056788e92d848ef0c12c4609ffd667cb0fdc8c2b698039925b"
+      }
+    ],
+    "data_file": "Textures/deco_bg_sss--2e174e70---7307584321334895209.bin",
+    "data_sha256": "8bdd50d576e0d2056788e92d848ef0c12c4609ffd667cb0fdc8c2b698039925b",
+    "decoded_mips_file": "Textures/deco_bg_sss--2e174e70---7307584321334895209.bgra-mips.bin",
+    "decoded_mips_sha256": "29b0fe6c13baac1b1387e2a4a85056e20fd174bb34167a3fe734cdb4ab49219c",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-31312492155b19d92caa19aefe62abdb:536018404453109699",
+    "cab": "CAB-31312492155b19d92caa19aefe62abdb",
+    "path_id": "536018404453109699",
+    "type": "Texture2D",
+    "name": "wiki_guide_icon",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/wiki/wiki_guide_icon.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/16d52e7e5b019b4d23653aa1.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 465339974,
+      "length": 8226,
+      "md5": "F835395F70E37BE20397EA24C5638703",
+      "sha256": "6774e3920ee26124520499390dd0dbcf8f53c87098dbf7ecf04d82d9803729b2",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "235f7888e4355ddfe77fad232083ddbced2d90eda6d2353222be721a9befb51b",
+    "width": 184,
+    "height": 184,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 3872,
+      "size": 33856,
+      "path": "archive:/CAB-31312492155b19d92caa19aefe62abdb/CAB-31312492155b19d92caa19aefe62abdb.resS"
+    },
+    "png": {
+      "file": "textures/wiki_guide_icon--31312492--536018404453109699.png",
+      "sha256": "2f5e6e728a87c99bacf4f76786841e5ea6711dcb389bbcc0b9c7a4264ac7f10e",
+      "width": 184,
+      "height": 184,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/wiki_guide_icon--31312492--536018404453109699.bin",
+      "bytes": 33856,
+      "sha256": "4f3b325e4a273c2a43ad14588d5a3f63c1ce9d798cfd10865b15c87f8dd6be98"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 184,
+        "height": 184,
+        "offset": 0,
+        "length": 33856,
+        "sha256": "4f3b325e4a273c2a43ad14588d5a3f63c1ce9d798cfd10865b15c87f8dd6be98"
+      }
+    ],
+    "data_file": "Textures/wiki_guide_icon--31312492--536018404453109699.bin",
+    "data_sha256": "4f3b325e4a273c2a43ad14588d5a3f63c1ce9d798cfd10865b15c87f8dd6be98",
+    "decoded_mips_file": "Textures/wiki_guide_icon--31312492--536018404453109699.bgra-mips.bin",
+    "decoded_mips_sha256": "aed243949faf2ae491b31c4b4eca7f4fcb59d6c3b56c22da388e41d06e102266",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-319a8368749a488df6051e7cb00f8373:4912919567347065062",
+    "cab": "CAB-319a8368749a488df6051e7cb00f8373",
+    "path_id": "4912919567347065062",
+    "type": "Texture2D",
+    "name": "deco_icon_sss",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/activity/activityseasontower/deco_icon_sss.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/ec2ee105118dbb298791679e.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 178532183,
+      "length": 14448,
+      "md5": "079A9480B47408EC1629B80DD1774AF9",
+      "sha256": "19833e17266ae8a7e25f71f3cfd6d9b01c4cbd6fc9e0a005b949b4a24506d82c",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "db2c00123ff664e8f6ac515eed34bb8dd1d2087b715d5ecb59f294f14bde8c57",
+    "width": 188,
+    "height": 100,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 18800,
+      "path": "archive:/CAB-319a8368749a488df6051e7cb00f8373/CAB-319a8368749a488df6051e7cb00f8373.resS"
+    },
+    "png": {
+      "file": "textures/deco_icon_sss--319a8368--4912919567347065062.png",
+      "sha256": "f723fc683f3c3593994852dd1cd1c347bbc106a46361f717e27920dbee654693",
+      "width": 188,
+      "height": 100,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_icon_sss--319a8368--4912919567347065062.bin",
+      "bytes": 18800,
+      "sha256": "02bf38c5fa4bcf86600eb4b0d9813bca7f61620096884aa181a67cd5069b8372"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 188,
+        "height": 100,
+        "offset": 0,
+        "length": 18800,
+        "sha256": "02bf38c5fa4bcf86600eb4b0d9813bca7f61620096884aa181a67cd5069b8372"
+      }
+    ],
+    "data_file": "Textures/deco_icon_sss--319a8368--4912919567347065062.bin",
+    "data_sha256": "02bf38c5fa4bcf86600eb4b0d9813bca7f61620096884aa181a67cd5069b8372",
+    "decoded_mips_file": "Textures/deco_icon_sss--319a8368--4912919567347065062.bgra-mips.bin",
+    "decoded_mips_sha256": "cb11f04cf75548482e9d38b59dd491e3d4b0dc484c317f2d09c256bebf783f0b",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-35a7cca9302ef10ec2d1a1bf58fcd9ed:316596898254617328",
+    "cab": "CAB-35a7cca9302ef10ec2d1a1bf58fcd9ed",
+    "path_id": "316596898254617328",
+    "type": "Texture2D",
+    "name": "bg_seasontower_13",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/activity/activityseasontower/bg_seasontower_13.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/cb7135878c314cefc0b5baba.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 55058350,
+      "length": 5052,
+      "md5": "3CDB666645DA6951CB5904866647FB4E",
+      "sha256": "48767e857bb6053051fdf535a7249bf6d2c71d12e33894e468c5cbc0f65d6f53",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "e365364534c5aaf6aa309258dde65a73d967fed7697bbf2cd9147e0243ceece4",
+    "width": 68,
+    "height": 16,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1088,
+      "path": "archive:/CAB-35a7cca9302ef10ec2d1a1bf58fcd9ed/CAB-35a7cca9302ef10ec2d1a1bf58fcd9ed.resS"
+    },
+    "png": {
+      "file": "textures/bg_seasontower_13--35a7cca9--316596898254617328.png",
+      "sha256": "63a15589d15448d62f8d2dee3de28c4b0be9a304745102eddbf4ebd3ef292339",
+      "width": 68,
+      "height": 16,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_seasontower_13--35a7cca9--316596898254617328.bin",
+      "bytes": 1088,
+      "sha256": "b4de737364dcb383909c7694ecb169c94eff2ea467205e45e9e663fe93378753"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 68,
+        "height": 16,
+        "offset": 0,
+        "length": 1088,
+        "sha256": "b4de737364dcb383909c7694ecb169c94eff2ea467205e45e9e663fe93378753"
+      }
+    ],
+    "data_file": "Textures/bg_seasontower_13--35a7cca9--316596898254617328.bin",
+    "data_sha256": "b4de737364dcb383909c7694ecb169c94eff2ea467205e45e9e663fe93378753",
+    "decoded_mips_file": "Textures/bg_seasontower_13--35a7cca9--316596898254617328.bgra-mips.bin",
+    "decoded_mips_sha256": "9d7c30a268d5c0494b74007c9cdef1c8fcc73e8fe8005e3ae7ff4cabf48e8926",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-453a2bda20bf8e297e653335ba1e9836:569085612372656602",
+    "cab": "CAB-453a2bda20bf8e297e653335ba1e9836",
+    "path_id": "569085612372656602",
+    "type": "Texture2D",
+    "name": "yvonne_banner",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/watch/banner/yvonne_banner.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/fc68ff642d4cd237b852e8a2.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+      "offset": 286887688,
+      "length": 662635,
+      "md5": "2E99C2AB631C8044D4CEB580EABD5CBA",
+      "sha256": "3b8a878d011c9b22546c66275e2e6176a7271d3d8a928f9958c9e0837fb9620e",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "edd1bc12c35d26ef1b5767fb14ce29a43195682404bda07d9c9641e1ed1df123",
+    "width": 660,
+    "height": 232,
+    "texture_format": 4,
+    "format_name": "RGBA32",
+    "color_space": 0,
+    "mip_count": 10,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 816400,
+      "path": "archive:/CAB-453a2bda20bf8e297e653335ba1e9836/CAB-453a2bda20bf8e297e653335ba1e9836.resS"
+    },
+    "png": {
+      "file": "textures/yvonne_banner--453a2bda--569085612372656602.png",
+      "sha256": "fd9d04cefba12497ed544e576c0a759e24cdde2c5bafbe294379a62a2864fe46",
+      "width": 660,
+      "height": 232,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/yvonne_banner--453a2bda--569085612372656602.bin",
+      "bytes": 816400,
+      "sha256": "43f436f70a930167f23c56917a4ed79854107ae2f4ecbfec8a13aefbb39ce564"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 660,
+        "height": 232,
+        "offset": 0,
+        "length": 612480,
+        "sha256": "49ea3f2c9df7285ffcbc939e28cc342c2aacb6e6c1f71bdba582af49ea24e04e"
+      },
+      {
+        "level": 1,
+        "width": 330,
+        "height": 116,
+        "offset": 612480,
+        "length": 153120,
+        "sha256": "dfd7a8b0bc296419030f111d1ff55fb3e6b93de8cceb59a4030b2f1c58f84bcd"
+      },
+      {
+        "level": 2,
+        "width": 165,
+        "height": 58,
+        "offset": 765600,
+        "length": 38280,
+        "sha256": "33235db91cbabdb4cddeaaafb93eaff68e08a468722582402b8a80594279dc3e"
+      },
+      {
+        "level": 3,
+        "width": 82,
+        "height": 29,
+        "offset": 803880,
+        "length": 9512,
+        "sha256": "f3a0feb535de87a8004eb5f2df1efa7942923c12f600e783b24f393a52bab923"
+      },
+      {
+        "level": 4,
+        "width": 41,
+        "height": 14,
+        "offset": 813392,
+        "length": 2296,
+        "sha256": "ade5978493e38eb44ee3cea29507ff28a7aa358a2e746655a99ad3abbad147a6"
+      },
+      {
+        "level": 5,
+        "width": 20,
+        "height": 7,
+        "offset": 815688,
+        "length": 560,
+        "sha256": "75b0f679283e05269edcffd324279d99ef3a8bf667240fd985e765df46667fbc"
+      },
+      {
+        "level": 6,
+        "width": 10,
+        "height": 3,
+        "offset": 816248,
+        "length": 120,
+        "sha256": "d4f66a118c27fe8702f250700753bef5ab9b2a7afc8a26b979cb164ce18b5a79"
+      },
+      {
+        "level": 7,
+        "width": 5,
+        "height": 1,
+        "offset": 816368,
+        "length": 20,
+        "sha256": "0aa9b39cdfc8cdd19fab0aae2912fdc4829608962d653c2972b2183514ebee84"
+      },
+      {
+        "level": 8,
+        "width": 2,
+        "height": 1,
+        "offset": 816388,
+        "length": 8,
+        "sha256": "3fb607b16141710db71bab64f5f2303186c81e945884159d7958a7a5e2c3f8e4"
+      },
+      {
+        "level": 9,
+        "width": 1,
+        "height": 1,
+        "offset": 816396,
+        "length": 4,
+        "sha256": "28bce961525ae4fb34fb33d51eb0f864eab2b0734856f032db454a53e2d6960d"
+      }
+    ],
+    "data_file": "Textures/yvonne_banner--453a2bda--569085612372656602.bin",
+    "data_sha256": "43f436f70a930167f23c56917a4ed79854107ae2f4ecbfec8a13aefbb39ce564",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-469bb0f192c662bbc3d1da6f2fb0c5d3:8325197967690250039",
+    "cab": "CAB-469bb0f192c662bbc3d1da6f2fb0c5d3",
+    "path_id": "8325197967690250039",
+    "type": "Texture2D",
+    "name": "bg_activitylevel_line",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/activity/activitylevel/bg_activitylevel_line.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/905075559cd1c5e83720b4b9.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 182703233,
+      "length": 4715,
+      "md5": "3300FA57B1AF80036999E0045B9E3A8E",
+      "sha256": "f0e925951f6cf9e1d802bdb0b4081b974e925f26619a2d1ce38f6071905f61d3",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "28d75de39a5bd5bd981662c134870d3d0975ce2bbc9b39ce3064cce6d9c1ad16",
+    "width": 16,
+    "height": 20,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 320,
+      "path": "archive:/CAB-469bb0f192c662bbc3d1da6f2fb0c5d3/CAB-469bb0f192c662bbc3d1da6f2fb0c5d3.resS"
+    },
+    "png": {
+      "file": "textures/bg_activitylevel_line--469bb0f1--8325197967690250039.png",
+      "sha256": "26f4a4af174d50641e238f9244537234e6cb9924ff5aa38c50c108339da106e9",
+      "width": 16,
+      "height": 20,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_activitylevel_line--469bb0f1--8325197967690250039.bin",
+      "bytes": 320,
+      "sha256": "d38fb104d1d655773074d216af3528f87601a167cc3e2eb4b8e0163ea66197ce"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 16,
+        "height": 20,
+        "offset": 0,
+        "length": 320,
+        "sha256": "d38fb104d1d655773074d216af3528f87601a167cc3e2eb4b8e0163ea66197ce"
+      }
+    ],
+    "data_file": "Textures/bg_activitylevel_line--469bb0f1--8325197967690250039.bin",
+    "data_sha256": "d38fb104d1d655773074d216af3528f87601a167cc3e2eb4b8e0163ea66197ce",
+    "decoded_mips_file": "Textures/bg_activitylevel_line--469bb0f1--8325197967690250039.bgra-mips.bin",
+    "decoded_mips_sha256": "50795cadd56937affe52f3dddf52708e303be659e6821395065f0e0fbed37292",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-4a2267055b2c5652681adcf56a5c9ac3:-4827637915678035611",
+    "cab": "CAB-4a2267055b2c5652681adcf56a5c9ac3",
+    "path_id": "-4827637915678035611",
+    "type": "Texture2D",
+    "name": "business_card_topic_normal_1",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/business_card_topic_normal_1.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/975f70d52a922c35823437d5.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+      "offset": 728453218,
+      "length": 69622,
+      "md5": "1B88C874086AF02F6044241FB7499F3E",
+      "sha256": "3bc2b489fc8df55d16a71fcbd4f05482aa3d2b7b46f8b7ed9a0ea92fb9bc14a7",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "9d357e84f319f6f8f1d9fd660b5c4d7f450cb51209de79fbc0ca81c13fd2c45d",
+    "width": 532,
+    "height": 204,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 108528,
+      "path": "archive:/CAB-4a2267055b2c5652681adcf56a5c9ac3/CAB-4a2267055b2c5652681adcf56a5c9ac3.resS"
+    },
+    "png": {
+      "file": "textures/business_card_topic_normal_1--4a226705---4827637915678035611.png",
+      "sha256": "168019747cbe7e719b625ceb433bd7931d6498650e7ae7b5bfda6acf710fb38b",
+      "width": 532,
+      "height": 204,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/business_card_topic_normal_1--4a226705---4827637915678035611.bin",
+      "bytes": 108528,
+      "sha256": "a493790848ada6ea8e52b0e5722b38798ec312b7c6985b4331505f4268c5d96a"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 532,
+        "height": 204,
+        "offset": 0,
+        "length": 108528,
+        "sha256": "a493790848ada6ea8e52b0e5722b38798ec312b7c6985b4331505f4268c5d96a"
+      }
+    ],
+    "data_file": "Textures/business_card_topic_normal_1--4a226705---4827637915678035611.bin",
+    "data_sha256": "a493790848ada6ea8e52b0e5722b38798ec312b7c6985b4331505f4268c5d96a",
+    "decoded_mips_file": "Textures/business_card_topic_normal_1--4a226705---4827637915678035611.bgra-mips.bin",
+    "decoded_mips_sha256": "3991ce4ab7eed27bb724a6c930f8a24faed2bc6d2c79bd372ede4372b464e2d3",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-4b5ec4694c532299b6753cca407c6019:1938194382649467457",
+    "cab": "CAB-4b5ec4694c532299b6753cca407c6019",
+    "path_id": "1938194382649467457",
+    "type": "Texture2D",
+    "name": "bg_common_r18_p2",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/common/square/bg_common_r18_p2.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/aff90d13e181a4289015e015.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 864667068,
+      "length": 24521,
+      "md5": "60488E7A2676ECCB370E59AE74D265E5",
+      "sha256": "d76b18ca2ea5c8827d722351aefcb8e0d7e4ad90853c397cb33a52bf36246adb",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "90743701ff8b13ef80965b149246c94ac2ec5f0970b04b1f83a892be2b09bf4b",
+    "width": 52,
+    "height": 44,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 46320,
+      "size": 2288,
+      "path": "archive:/CAB-4b5ec4694c532299b6753cca407c6019/CAB-4b5ec4694c532299b6753cca407c6019.resS"
+    },
+    "png": {
+      "file": "textures/bg_common_r18_p2--4b5ec469--1938194382649467457.png",
+      "sha256": "7f780efeab898447d24b5d5fbf3f0764c278a78db382102d68399f858a643110",
+      "width": 52,
+      "height": 44,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_common_r18_p2--4b5ec469--1938194382649467457.bin",
+      "bytes": 2288,
+      "sha256": "2ad2e1ea36934031180e12ac0e9da0dc4a75c028c0dd66385b3b6e7afe621d01"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 52,
+        "height": 44,
+        "offset": 0,
+        "length": 2288,
+        "sha256": "2ad2e1ea36934031180e12ac0e9da0dc4a75c028c0dd66385b3b6e7afe621d01"
+      }
+    ],
+    "data_file": "Textures/bg_common_r18_p2--4b5ec469--1938194382649467457.bin",
+    "data_sha256": "2ad2e1ea36934031180e12ac0e9da0dc4a75c028c0dd66385b3b6e7afe621d01",
+    "decoded_mips_file": "Textures/bg_common_r18_p2--4b5ec469--1938194382649467457.bgra-mips.bin",
+    "decoded_mips_sha256": "4198eab22a7f38b0a189e5f550d4006a66ba819ec505384b2bc8deaa6f40fa63",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-520854379894316bbed598088030cd9c:-2921224509596559758",
+    "cab": "CAB-520854379894316bbed598088030cd9c",
+    "path_id": "-2921224509596559758",
+    "type": "Texture2D",
+    "name": "weapon_typhoeus_banner",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/watch/banner/weapon_typhoeus_banner.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/33705d13ab609cc6d6202b4b.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+      "offset": 602249676,
+      "length": 494403,
+      "md5": "F8A1B35E4E1EA10341FC57F49C82CAA8",
+      "sha256": "af0ef1bf8db38f681718fc0efcb14b45b7c6826801e5197050febb4af7665ce0",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "8cf74156be6e12f3f89ee0fa22f2f040be96685a2be7ca3846610752db8d5dc2",
+    "width": 660,
+    "height": 232,
+    "texture_format": 4,
+    "format_name": "RGBA32",
+    "color_space": 0,
+    "mip_count": 10,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 816400,
+      "path": "archive:/CAB-520854379894316bbed598088030cd9c/CAB-520854379894316bbed598088030cd9c.resS"
+    },
+    "png": {
+      "file": "textures/weapon_typhoeus_banner--52085437---2921224509596559758.png",
+      "sha256": "6acebd488f18ca2ea20908f891a59138c638cf7e144ce72a8f4fe8662e80fe35",
+      "width": 660,
+      "height": 232,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/weapon_typhoeus_banner--52085437---2921224509596559758.bin",
+      "bytes": 816400,
+      "sha256": "8a10f6e89dcf789bad7c66d661c1af92a8d604ad7218570ce19d3e6ec7ea9643"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 660,
+        "height": 232,
+        "offset": 0,
+        "length": 612480,
+        "sha256": "824a107e157c13125839f7111039fd1933ec8e5c9867835a38f68f00fbf6dd82"
+      },
+      {
+        "level": 1,
+        "width": 330,
+        "height": 116,
+        "offset": 612480,
+        "length": 153120,
+        "sha256": "2bec4fff784426cb95bcbb0d602cf35ad06bedc2b20ae48daa4cd81bad6e2bdd"
+      },
+      {
+        "level": 2,
+        "width": 165,
+        "height": 58,
+        "offset": 765600,
+        "length": 38280,
+        "sha256": "75c5c7d74852804821b0a74ba3a0a0d6d517378993b1dc00eca1c4cd2b71ad24"
+      },
+      {
+        "level": 3,
+        "width": 82,
+        "height": 29,
+        "offset": 803880,
+        "length": 9512,
+        "sha256": "7562ccec3d3175e2c48f13c37e4bb074ba7573ba48af0c6a2cea88cd9f93a402"
+      },
+      {
+        "level": 4,
+        "width": 41,
+        "height": 14,
+        "offset": 813392,
+        "length": 2296,
+        "sha256": "1b1daae469a0f2defeaed5204edd578e3fee981a76f215aa06e12c898368a0e9"
+      },
+      {
+        "level": 5,
+        "width": 20,
+        "height": 7,
+        "offset": 815688,
+        "length": 560,
+        "sha256": "b4562d882e1141a8ab5b645be07f5a20d76d93e431394e26dcf34d06cd916617"
+      },
+      {
+        "level": 6,
+        "width": 10,
+        "height": 3,
+        "offset": 816248,
+        "length": 120,
+        "sha256": "7c9859f48bfaa1d2485ece06bb94a8994b662414ecdc2f3707bad6721ca21f27"
+      },
+      {
+        "level": 7,
+        "width": 5,
+        "height": 1,
+        "offset": 816368,
+        "length": 20,
+        "sha256": "a160ef6d15009fc5a643d69d8440617cfbf887bd4426bea1e75155ef461cabc1"
+      },
+      {
+        "level": 8,
+        "width": 2,
+        "height": 1,
+        "offset": 816388,
+        "length": 8,
+        "sha256": "af62ca36d6a80d629c725b97c8a70f65cb134407c6eef27aff2a46adba55739a"
+      },
+      {
+        "level": 9,
+        "width": 1,
+        "height": 1,
+        "offset": 816396,
+        "length": 4,
+        "sha256": "ebcc36c46f9ba862726a7d64064995d3e394ec979ad3273781c2a663aade36da"
+      }
+    ],
+    "data_file": "Textures/weapon_typhoeus_banner--52085437---2921224509596559758.bin",
+    "data_sha256": "8a10f6e89dcf789bad7c66d661c1af92a8d604ad7218570ce19d3e6ec7ea9643",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-5afab0f1255f77e60af14605feaf2c66:3512998325388039613",
+    "cab": "CAB-5afab0f1255f77e60af14605feaf2c66",
+    "path_id": "3512998325388039613",
+    "type": "Texture2D",
+    "name": "deco_friend_card_head_02",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/friend/deco_friend_card_head_02.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/2a18355be704fa45f31f6cc2.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 556127333,
+      "length": 9953,
+      "md5": "3895BB478376D52F45FB251C8720784F",
+      "sha256": "eaf608570831ef57dcf297d9bcf3fc9fa76dee4101c1952da26196932dfd9b96",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "feafed93f89d5f73b7c61142fb729c9adc0a57b419cf3ea2cf82b974b35102d9",
+    "width": 172,
+    "height": 68,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 11696,
+      "path": "archive:/CAB-5afab0f1255f77e60af14605feaf2c66/CAB-5afab0f1255f77e60af14605feaf2c66.resS"
+    },
+    "png": {
+      "file": "textures/deco_friend_card_head_02--5afab0f1--3512998325388039613.png",
+      "sha256": "dce6851b7ebbe48d127e9bf499c27d800cf6ccb641997a7e3652e6c27b9bdd9a",
+      "width": 172,
+      "height": 68,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_friend_card_head_02--5afab0f1--3512998325388039613.bin",
+      "bytes": 11696,
+      "sha256": "9597cc841d6b021f2b62d8883274b5cff7a1e212727dd507b648576bf74c63d1"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 172,
+        "height": 68,
+        "offset": 0,
+        "length": 11696,
+        "sha256": "9597cc841d6b021f2b62d8883274b5cff7a1e212727dd507b648576bf74c63d1"
+      }
+    ],
+    "data_file": "Textures/deco_friend_card_head_02--5afab0f1--3512998325388039613.bin",
+    "data_sha256": "9597cc841d6b021f2b62d8883274b5cff7a1e212727dd507b648576bf74c63d1",
+    "decoded_mips_file": "Textures/deco_friend_card_head_02--5afab0f1--3512998325388039613.bgra-mips.bin",
+    "decoded_mips_sha256": "2b5d4923c02c735e8d76db91fc94fe319f3a940886d906c506eb8733e4b1a2b6",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-5e16a5aceddad45f5241b9cb5a12d02f:-4854298880539517495",
+    "cab": "CAB-5e16a5aceddad45f5241b9cb5a12d02f",
+    "path_id": "-4854298880539517495",
+    "type": "Texture2D",
+    "name": "bg_play_slider_new",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/bg_play_slider_new.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/acfbc6ccbc0b9d6012e7f4c5.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 203511341,
+      "length": 4983,
+      "md5": "B3F00F52A6073701082E8E6C091D7AED",
+      "sha256": "3f9582f50ede2c00e6e8e07e1b8878956ffc5f21fcb33969b15debfd89843b07",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "14d7e167c855d7c556c6d2dd7cb47e1b697476d2e40fb71111ab645ec1a8442d",
+    "width": 200,
+    "height": 20,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 4000,
+      "path": "archive:/CAB-5e16a5aceddad45f5241b9cb5a12d02f/CAB-5e16a5aceddad45f5241b9cb5a12d02f.resS"
+    },
+    "png": {
+      "file": "textures/bg_play_slider_new--5e16a5ac---4854298880539517495.png",
+      "sha256": "894c0935597498f2e5b5290c1e61c617fc267feefd68daf1a7d712c08cb569b0",
+      "width": 200,
+      "height": 20,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_play_slider_new--5e16a5ac---4854298880539517495.bin",
+      "bytes": 4000,
+      "sha256": "5af8db397c142c451da3b800f56f9c161ed656f0b6dca1d4dcbb974566a098b0"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 200,
+        "height": 20,
+        "offset": 0,
+        "length": 4000,
+        "sha256": "5af8db397c142c451da3b800f56f9c161ed656f0b6dca1d4dcbb974566a098b0"
+      }
+    ],
+    "data_file": "Textures/bg_play_slider_new--5e16a5ac---4854298880539517495.bin",
+    "data_sha256": "5af8db397c142c451da3b800f56f9c161ed656f0b6dca1d4dcbb974566a098b0",
+    "decoded_mips_file": "Textures/bg_play_slider_new--5e16a5ac---4854298880539517495.bgra-mips.bin",
+    "decoded_mips_sha256": "ed3efdc9eb308cb9c70fa4269e420ba27f05654d27d6e7b63307739ff5b33254",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-5f6a225d6033240b64dfdb22b7c22b2b:7576613479449390581",
+    "cab": "CAB-5f6a225d6033240b64dfdb22b7c22b2b",
+    "path_id": "7576613479449390581",
+    "type": "Texture2D",
+    "name": "icon_friend_sony",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/friend/icon_friend_sony.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/0f24a3a0cc5c1fa22051f76d.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 360330263,
+      "length": 6311,
+      "md5": "12C43F74277257A84A7D81272EE4A50D",
+      "sha256": "788c0244d6adbf9f027ef799299566da56615715e030d1d75b4eafa723fd1fee",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "bd641ef367d9b6b54a0edd3e1165c00616fd7cc69090228bbe22201c79357dee",
+    "width": 44,
+    "height": 44,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1936,
+      "path": "archive:/CAB-5f6a225d6033240b64dfdb22b7c22b2b/CAB-5f6a225d6033240b64dfdb22b7c22b2b.resS"
+    },
+    "png": {
+      "file": "textures/icon_friend_sony--5f6a225d--7576613479449390581.png",
+      "sha256": "19dda71f1281cd7273dd5c767f1ae7eca743e69be144509c3a6a7fc8dc4869aa",
+      "width": 44,
+      "height": 44,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_friend_sony--5f6a225d--7576613479449390581.bin",
+      "bytes": 1936,
+      "sha256": "1e65255525387bd699530f5867635b7c3b300116ff4ea90aee423b57e6646116"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 44,
+        "height": 44,
+        "offset": 0,
+        "length": 1936,
+        "sha256": "1e65255525387bd699530f5867635b7c3b300116ff4ea90aee423b57e6646116"
+      }
+    ],
+    "data_file": "Textures/icon_friend_sony--5f6a225d--7576613479449390581.bin",
+    "data_sha256": "1e65255525387bd699530f5867635b7c3b300116ff4ea90aee423b57e6646116",
+    "decoded_mips_file": "Textures/icon_friend_sony--5f6a225d--7576613479449390581.bgra-mips.bin",
+    "decoded_mips_sha256": "4a8cfc787e2431ffd08f31907ddb38912203c997b3139c6e3bd9e82e5b3b7933",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-63c7ff925764ef7e901f962df477c835:-972626935785960784",
+    "cab": "CAB-63c7ff925764ef7e901f962df477c835",
+    "path_id": "-972626935785960784",
+    "type": "Texture2D",
+    "name": "icon_user_avatar_frame_bp_1",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/headframeicon/icon_user_avatar_frame_bp_1.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/0192f0cd74aeeb033cb27596.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "FF47E1296FA156B7B97B7B354CA6905D",
+      "offset": 468860667,
+      "length": 644096,
+      "md5": "56A865495EA10CD4D8C06A65996975CE",
+      "sha256": "c591b956e24d9c4e369cd76444130a2ec2393571a754a2fa04cb6ff04198a601",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "685890ec54c2b4743e0e17152e9c95c889c5d95007c9c09014c4f6e37366c7b4",
+    "width": 256,
+    "height": 256,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 851968,
+      "size": 65536,
+      "path": "archive:/CAB-63c7ff925764ef7e901f962df477c835/CAB-63c7ff925764ef7e901f962df477c835.resS"
+    },
+    "png": {
+      "file": "textures/icon_user_avatar_frame_bp_1--63c7ff92---972626935785960784.png",
+      "sha256": "629cff23c8f42b78defedfe5e5ab82362faeb56a742f6fb0999d4a4039a0a1ae",
+      "width": 256,
+      "height": 256,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_user_avatar_frame_bp_1--63c7ff92---972626935785960784.bin",
+      "bytes": 65536,
+      "sha256": "75cd0fc534c6e78513c6450526c5a24944c30f25120bc3bd9060e67216a7362c"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 256,
+        "height": 256,
+        "offset": 0,
+        "length": 65536,
+        "sha256": "75cd0fc534c6e78513c6450526c5a24944c30f25120bc3bd9060e67216a7362c"
+      }
+    ],
+    "data_file": "Textures/icon_user_avatar_frame_bp_1--63c7ff92---972626935785960784.bin",
+    "data_sha256": "75cd0fc534c6e78513c6450526c5a24944c30f25120bc3bd9060e67216a7362c",
+    "decoded_mips_file": "Textures/icon_user_avatar_frame_bp_1--63c7ff92---972626935785960784.bgra-mips.bin",
+    "decoded_mips_sha256": "5ba841ab2cc88cc3bd6a459dc3422c2983b010de84a004373f0161b8413dac9d",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-63c7ff925764ef7e901f962df477c835:7647223879671712896",
+    "cab": "CAB-63c7ff925764ef7e901f962df477c835",
+    "path_id": "7647223879671712896",
+    "type": "Texture2D",
+    "name": "icon_user_avatar_frame_endfield_1",
+    "asset_paths": [
+      "assets/beyond/dynamicassets/gameplay/ui/sprites/headframeicon/icon_user_avatar_frame_endfield_1.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/0192f0cd74aeeb033cb27596.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "FF47E1296FA156B7B97B7B354CA6905D",
+      "offset": 468860667,
+      "length": 644096,
+      "md5": "56A865495EA10CD4D8C06A65996975CE",
+      "sha256": "c591b956e24d9c4e369cd76444130a2ec2393571a754a2fa04cb6ff04198a601",
+      "md5_verified": true
+    },
+    "source_object_bytes": 236,
+    "source_object_sha256": "e478ae3af6723c29344d582578452749df8eb9045003cf6420f2ea9a91d8ab10",
+    "width": 256,
+    "height": 256,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 1706000,
+      "size": 65536,
+      "path": "archive:/CAB-63c7ff925764ef7e901f962df477c835/CAB-63c7ff925764ef7e901f962df477c835.resS"
+    },
+    "png": {
+      "file": "textures/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.png",
+      "sha256": "302aaaa16ebdddcfccbced60a5b1487d45ba5c9246982a028ff1457c99b4c7b4",
+      "width": 256,
+      "height": 256,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.bin",
+      "bytes": 65536,
+      "sha256": "46ae5377149b70efe6fa4715bf546892810a5b4f40bb1996a6fe192903802eb5"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 256,
+        "height": 256,
+        "offset": 0,
+        "length": 65536,
+        "sha256": "46ae5377149b70efe6fa4715bf546892810a5b4f40bb1996a6fe192903802eb5"
+      }
+    ],
+    "data_file": "Textures/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.bin",
+    "data_sha256": "46ae5377149b70efe6fa4715bf546892810a5b4f40bb1996a6fe192903802eb5",
+    "decoded_mips_file": "Textures/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.bgra-mips.bin",
+    "decoded_mips_sha256": "4af56ab7ed155e9475193ab04467c3f030cf6c573b117cb9f4ca03832a35e2c7",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-68732eb3389e32dbc4ba5f33cd6a32a0:-473964426479086428",
+    "cab": "CAB-68732eb3389e32dbc4ba5f33cd6a32a0",
+    "path_id": "-473964426479086428",
+    "type": "Texture2D",
+    "name": "common_head_left_border",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/common/common_head_left_border.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/16460027ba9e700f137412cf.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 451373191,
+      "length": 7961,
+      "md5": "CD399D8F0C2224B86B16033641E80E7C",
+      "sha256": "bfd286d3a8051d595356ca8b425bed40aeb90347d18fe4fe828323898a55067f",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "85e077f66400e95e1c3812a0a1b1d59ca4df972b568647ded43b8a37e007fe50",
+    "width": 40,
+    "height": 144,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 5760,
+      "path": "archive:/CAB-68732eb3389e32dbc4ba5f33cd6a32a0/CAB-68732eb3389e32dbc4ba5f33cd6a32a0.resS"
+    },
+    "png": {
+      "file": "textures/common_head_left_border--68732eb3---473964426479086428.png",
+      "sha256": "40e1cfa5b19da68fa5b31e538c111fbdffd1ba5a2b965d274e80368030efb2ab",
+      "width": 40,
+      "height": 144,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/common_head_left_border--68732eb3---473964426479086428.bin",
+      "bytes": 5760,
+      "sha256": "3e4494273c23189e92ed1efdb43bb1df08101bce00527b26c93cfbe7d62325df"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 40,
+        "height": 144,
+        "offset": 0,
+        "length": 5760,
+        "sha256": "3e4494273c23189e92ed1efdb43bb1df08101bce00527b26c93cfbe7d62325df"
+      }
+    ],
+    "data_file": "Textures/common_head_left_border--68732eb3---473964426479086428.bin",
+    "data_sha256": "3e4494273c23189e92ed1efdb43bb1df08101bce00527b26c93cfbe7d62325df",
+    "decoded_mips_file": "Textures/common_head_left_border--68732eb3---473964426479086428.bgra-mips.bin",
+    "decoded_mips_sha256": "a8714e6f5cfc31e8fe6f176ca37b789dd58349e4361cf9e29ff364d5c7b6cf1d",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-6f271997816c572beae9aa23e3c4685d:4724295821681277709",
+    "cab": "CAB-6f271997816c572beae9aa23e3c4685d",
+    "path_id": "4724295821681277709",
+    "type": "Texture2D",
+    "name": "deco_friend_card_head_01",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/friend/deco_friend_card_head_01.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/01574a184d4841365b3de5e6.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 194275380,
+      "length": 4840,
+      "md5": "42897741F7DB058EE399CF5227B87C0D",
+      "sha256": "2e987fc4326d802d36611fe51aa6b38a3a1944ce1ed3af10ee1985be0366afb5",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "9e6f99cdaba920ff35fee617c795b1717095e0ec90c39e3e39e0bd6f50104bdd",
+    "width": 180,
+    "height": 124,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 22320,
+      "path": "archive:/CAB-6f271997816c572beae9aa23e3c4685d/CAB-6f271997816c572beae9aa23e3c4685d.resS"
+    },
+    "png": {
+      "file": "textures/deco_friend_card_head_01--6f271997--4724295821681277709.png",
+      "sha256": "fe8736ecd8b35291e2835288d3da723c43dbfa0f50d263a44deab66cc2cfd7ec",
+      "width": 180,
+      "height": 124,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_friend_card_head_01--6f271997--4724295821681277709.bin",
+      "bytes": 22320,
+      "sha256": "2d6f9088febe4ddc8fa00d19f1e3c6a5f63d57f519bbac97496ff3cb0cf805c7"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 180,
+        "height": 124,
+        "offset": 0,
+        "length": 22320,
+        "sha256": "2d6f9088febe4ddc8fa00d19f1e3c6a5f63d57f519bbac97496ff3cb0cf805c7"
+      }
+    ],
+    "data_file": "Textures/deco_friend_card_head_01--6f271997--4724295821681277709.bin",
+    "data_sha256": "2d6f9088febe4ddc8fa00d19f1e3c6a5f63d57f519bbac97496ff3cb0cf805c7",
+    "decoded_mips_file": "Textures/deco_friend_card_head_01--6f271997--4724295821681277709.bgra-mips.bin",
+    "decoded_mips_sha256": "4e04d836a396fbfa55d63b6a0c339472c1d4ea9dedb0c584da33d46115513854",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-7ef70e0d7d12df13ce31f0a0854e2ea3:2316211278412445563",
+    "cab": "CAB-7ef70e0d7d12df13ce31f0a0854e2ea3",
+    "path_id": "2316211278412445563",
+    "type": "Texture2D",
+    "name": "common_head_shadow_bg",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/common/common_head_shadow_bg.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/c047b14d25a2fdffaf752f6f.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 477858408,
+      "length": 8617,
+      "md5": "A0B5F97B22E3AA0AB73ED40561305EDE",
+      "sha256": "12d24ef9a7f546b1d3d2e5c8b1de9bd63db6c714d85bd90d3918820faebee840",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "ade531ee0021a86184b0f8cbe64d23067e4f2b5e711e181be0c7372a3a4ea275",
+    "width": 92,
+    "height": 84,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 7728,
+      "path": "archive:/CAB-7ef70e0d7d12df13ce31f0a0854e2ea3/CAB-7ef70e0d7d12df13ce31f0a0854e2ea3.resS"
+    },
+    "png": {
+      "file": "textures/common_head_shadow_bg--7ef70e0d--2316211278412445563.png",
+      "sha256": "0c3b65c6784f6ff8e23a20140e310138a9bc3ddeb913b1a985c340316f9d7ecb",
+      "width": 92,
+      "height": 84,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/common_head_shadow_bg--7ef70e0d--2316211278412445563.bin",
+      "bytes": 7728,
+      "sha256": "b0c02b3e75a776b4dc9fd973026564ab2d9f19ae98511372030a5d4e652377c3"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 92,
+        "height": 84,
+        "offset": 0,
+        "length": 7728,
+        "sha256": "b0c02b3e75a776b4dc9fd973026564ab2d9f19ae98511372030a5d4e652377c3"
+      }
+    ],
+    "data_file": "Textures/common_head_shadow_bg--7ef70e0d--2316211278412445563.bin",
+    "data_sha256": "b0c02b3e75a776b4dc9fd973026564ab2d9f19ae98511372030a5d4e652377c3",
+    "decoded_mips_file": "Textures/common_head_shadow_bg--7ef70e0d--2316211278412445563.bgra-mips.bin",
+    "decoded_mips_sha256": "34079e750de7b0565a8ea28b55893967dc275e87e427204e0baba71b6fb8f717",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-83641ec861226c5df6a079b5fc252eb6:-2594488112794597847",
+    "cab": "CAB-83641ec861226c5df6a079b5fc252eb6",
+    "path_id": "-2594488112794597847",
+    "type": "Texture2D",
+    "name": "deco_adventure_halo_arrow",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/adventure/deco_adventure_halo_arrow.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/4d196fbcdf12b026691fe1ec.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 188464513,
+      "length": 4820,
+      "md5": "2E7D88847C32F463A9CB46CAE6CBC318",
+      "sha256": "5596180806ed4585820505de64a21be8b33962925e5f44a667d47324b20edbd7",
+      "md5_verified": true
+    },
+    "source_object_bytes": 228,
+    "source_object_sha256": "3ba71ef336725af99c56059d8dfe5962a2c618b913207a339efbd1b7475d27f6",
+    "width": 32,
+    "height": 32,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1024,
+      "path": "archive:/CAB-83641ec861226c5df6a079b5fc252eb6/CAB-83641ec861226c5df6a079b5fc252eb6.resS"
+    },
+    "png": {
+      "file": "textures/deco_adventure_halo_arrow--83641ec8---2594488112794597847.png",
+      "sha256": "bf82fa2943da9c04133d5c93b997105b16fd028e086fc0b0cc1cea618a986526",
+      "width": 32,
+      "height": 32,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_adventure_halo_arrow--83641ec8---2594488112794597847.bin",
+      "bytes": 1024,
+      "sha256": "e4d887533cc3589fb7b69b4b0070a76b597fc0c85f8d1c15fb8a1138b86141ed"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 32,
+        "height": 32,
+        "offset": 0,
+        "length": 1024,
+        "sha256": "e4d887533cc3589fb7b69b4b0070a76b597fc0c85f8d1c15fb8a1138b86141ed"
+      }
+    ],
+    "data_file": "Textures/deco_adventure_halo_arrow--83641ec8---2594488112794597847.bin",
+    "data_sha256": "e4d887533cc3589fb7b69b4b0070a76b597fc0c85f8d1c15fb8a1138b86141ed",
+    "decoded_mips_file": "Textures/deco_adventure_halo_arrow--83641ec8---2594488112794597847.bgra-mips.bin",
+    "decoded_mips_sha256": "28bfeb6eb68f311e27786a4c9509d512d971da30672bbf4d1ec219c0348b8322",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-842bfdb00b6e10a3fb4eb67982915d3a:-3522140888998863637",
+    "cab": "CAB-842bfdb00b6e10a3fb4eb67982915d3a",
+    "path_id": "-3522140888998863637",
+    "type": "Texture2D",
+    "name": "icon_play_tipsbg",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/icon_play_tipsbg.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/fafaca2d9e5b0320d5283282.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 53783559,
+      "length": 4941,
+      "md5": "5CD8E2A07DE3C014E708D51675AF444E",
+      "sha256": "b88fec42219b64fe7877e51220c05fc6d67a66294f04d18910bd6384b8ce92ee",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "afc8f9a1d6c26a5aca7746092b1175fce35d1b72bfc4c1042f864b50643c2552",
+    "width": 36,
+    "height": 36,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1296,
+      "path": "archive:/CAB-842bfdb00b6e10a3fb4eb67982915d3a/CAB-842bfdb00b6e10a3fb4eb67982915d3a.resS"
+    },
+    "png": {
+      "file": "textures/icon_play_tipsbg--842bfdb0---3522140888998863637.png",
+      "sha256": "3aeb9d6787e7ee1c99b619b3c968b4d225bbc3c86d1746718be80f147c56eeae",
+      "width": 36,
+      "height": 36,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_play_tipsbg--842bfdb0---3522140888998863637.bin",
+      "bytes": 1296,
+      "sha256": "a0a9c214f93c9a10f87bf617945975c4a6e6071e23b80b6ad367f6b294dcfcd0"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 36,
+        "height": 36,
+        "offset": 0,
+        "length": 1296,
+        "sha256": "a0a9c214f93c9a10f87bf617945975c4a6e6071e23b80b6ad367f6b294dcfcd0"
+      }
+    ],
+    "data_file": "Textures/icon_play_tipsbg--842bfdb0---3522140888998863637.bin",
+    "data_sha256": "a0a9c214f93c9a10f87bf617945975c4a6e6071e23b80b6ad367f6b294dcfcd0",
+    "decoded_mips_file": "Textures/icon_play_tipsbg--842bfdb0---3522140888998863637.bgra-mips.bin",
+    "decoded_mips_sha256": "919895038a4f16c47ffdf4a32871cb352bebaaa423400b08db3254c3208c110c",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-85bbbaad49693a20536c970ee1171505:1279771994715387770",
+    "cab": "CAB-85bbbaad49693a20536c970ee1171505",
+    "path_id": "1279771994715387770",
+    "type": "Texture2D",
+    "name": "icon_rename",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/charformation/icon_rename.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/edef06276257f46b6d7a8503.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 206513151,
+      "length": 5058,
+      "md5": "92F36D4681A59C826CC95A8A0352BAAE",
+      "sha256": "64a18733a0c1eb334442296b78dad95a6c5cc1287a2ed17095244149231b11de",
+      "md5_verified": true
+    },
+    "source_object_bytes": 212,
+    "source_object_sha256": "8c157658757cb0c4b0d4c2b06fb0a1ba4fd771e9146a2a4c3a5d1e877202e769",
+    "width": 32,
+    "height": 32,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1024,
+      "path": "archive:/CAB-85bbbaad49693a20536c970ee1171505/CAB-85bbbaad49693a20536c970ee1171505.resS"
+    },
+    "png": {
+      "file": "textures/icon_rename--85bbbaad--1279771994715387770.png",
+      "sha256": "bc2bdfb6e40d3fadc3c5a4fe44cc53066d2109f0498009dd3999deab4c8c7aa8",
+      "width": 32,
+      "height": 32,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_rename--85bbbaad--1279771994715387770.bin",
+      "bytes": 1024,
+      "sha256": "31e8264e79a3b15fcc9f2051312fd637d56a175cd1566196de4b773d155ded5a"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 32,
+        "height": 32,
+        "offset": 0,
+        "length": 1024,
+        "sha256": "31e8264e79a3b15fcc9f2051312fd637d56a175cd1566196de4b773d155ded5a"
+      }
+    ],
+    "data_file": "Textures/icon_rename--85bbbaad--1279771994715387770.bin",
+    "data_sha256": "31e8264e79a3b15fcc9f2051312fd637d56a175cd1566196de4b773d155ded5a",
+    "decoded_mips_file": "Textures/icon_rename--85bbbaad--1279771994715387770.bgra-mips.bin",
+    "decoded_mips_sha256": "c0aae425fb87c9ae276c176dfeec01a0b72f7b215a588815f72ab09d14d5f14c",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-8999d03f559a81e5e92594b0648b267d:5148809778073028939",
+    "cab": "CAB-8999d03f559a81e5e92594b0648b267d",
+    "path_id": "5148809778073028939",
+    "type": "Texture2D",
+    "name": "deco_play_right_shadow",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/deco_play_right_shadow.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/5d8ab56cda65bf28ad58bd63.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 604689996,
+      "length": 11146,
+      "md5": "87C00732D1A6284081B35D767C762404",
+      "sha256": "eb4711bc4b77376273927cb31325190f9e525b49317b73bc4202d12038f568f5",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "6b2d3d5eea521efaba2d618fe7b12cca320b3674f595355351a61fdaa0ef81b3",
+    "width": 128,
+    "height": 88,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 11264,
+      "path": "archive:/CAB-8999d03f559a81e5e92594b0648b267d/CAB-8999d03f559a81e5e92594b0648b267d.resS"
+    },
+    "png": {
+      "file": "textures/deco_play_right_shadow--8999d03f--5148809778073028939.png",
+      "sha256": "5c253ec3168d1f5989799df3bd3b712ba762db6f5cdc9a147b661341a75f8c2c",
+      "width": 128,
+      "height": 88,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_play_right_shadow--8999d03f--5148809778073028939.bin",
+      "bytes": 11264,
+      "sha256": "256c1d7882c5c4854d8783f23ecab89cd8df5f7204e6828fc5c8af9fe92f4c70"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 128,
+        "height": 88,
+        "offset": 0,
+        "length": 11264,
+        "sha256": "256c1d7882c5c4854d8783f23ecab89cd8df5f7204e6828fc5c8af9fe92f4c70"
+      }
+    ],
+    "data_file": "Textures/deco_play_right_shadow--8999d03f--5148809778073028939.bin",
+    "data_sha256": "256c1d7882c5c4854d8783f23ecab89cd8df5f7204e6828fc5c8af9fe92f4c70",
+    "decoded_mips_file": "Textures/deco_play_right_shadow--8999d03f--5148809778073028939.bgra-mips.bin",
+    "decoded_mips_sha256": "9be7e57044c1d772ac686548ea50ede0a1a7e304427145bc1bb7d373e0f62091",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-998b7a85d51895c797eb50cc3c0a1329:996604966726403669",
+    "cab": "CAB-998b7a85d51895c797eb50cc3c0a1329",
+    "path_id": "996604966726403669",
+    "type": "Texture2D",
+    "name": "deco_play_name_01",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/deco_play_name_01.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/ae364ab01259ffc98e605b55.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 199647957,
+      "length": 4906,
+      "md5": "79A836F018659E7B577239A0368BD49C",
+      "sha256": "9d9aca564da07c030672ff8d52e6666289abceff0798f42eafdd1ae7249ce021",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "3b329626219d9fca302313f20e53cd81fa2410f87467f67d42d0ae7952985d40",
+    "width": 52,
+    "height": 16,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 832,
+      "path": "archive:/CAB-998b7a85d51895c797eb50cc3c0a1329/CAB-998b7a85d51895c797eb50cc3c0a1329.resS"
+    },
+    "png": {
+      "file": "textures/deco_play_name_01--998b7a85--996604966726403669.png",
+      "sha256": "dbe0ebecb16fa5dc4959cc6e9250b3bdcda4eda1d35ff522eda614217be38628",
+      "width": 52,
+      "height": 16,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_play_name_01--998b7a85--996604966726403669.bin",
+      "bytes": 832,
+      "sha256": "855be7563425ea930903333e569bc8292ccd819be9a40e1bff1e453e18be180d"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 52,
+        "height": 16,
+        "offset": 0,
+        "length": 832,
+        "sha256": "855be7563425ea930903333e569bc8292ccd819be9a40e1bff1e453e18be180d"
+      }
+    ],
+    "data_file": "Textures/deco_play_name_01--998b7a85--996604966726403669.bin",
+    "data_sha256": "855be7563425ea930903333e569bc8292ccd819be9a40e1bff1e453e18be180d",
+    "decoded_mips_file": "Textures/deco_play_name_01--998b7a85--996604966726403669.bgra-mips.bin",
+    "decoded_mips_sha256": "e6543c1e20c58df8000e68f2378be5ed6e45056311c239771cb1dea2c49b854f",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-9b24f1b95922646821100b5142302b8c:-1959326597459816875",
+    "cab": "CAB-9b24f1b95922646821100b5142302b8c",
+    "path_id": "-1959326597459816875",
+    "type": "Texture2D",
+    "name": "icon_friend_pc",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/friend/icon_friend_pc.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/f14dc5dee50fd961f3b71252.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 213662461,
+      "length": 5222,
+      "md5": "4E7123AF89DE60D02A125A0552EFA7DB",
+      "sha256": "809ad637c1a6465f1df60153d6920d8abfb182a4b9b1a8efa13723391ad309e2",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "29bc4d7bb75ace34c042489f6e323d2bd2534b558cc9905533587dc9c8fbcf90",
+    "width": 44,
+    "height": 44,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1936,
+      "path": "archive:/CAB-9b24f1b95922646821100b5142302b8c/CAB-9b24f1b95922646821100b5142302b8c.resS"
+    },
+    "png": {
+      "file": "textures/icon_friend_pc--9b24f1b9---1959326597459816875.png",
+      "sha256": "a6208626b5cd346b748413c52a06df7ddaa31ee3969d9a26792db761f688ef48",
+      "width": 44,
+      "height": 44,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_friend_pc--9b24f1b9---1959326597459816875.bin",
+      "bytes": 1936,
+      "sha256": "9645c39e64767e246c59ad58f7fe8516dfcf1503ba7b8c68b55bf92a9e350de2"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 44,
+        "height": 44,
+        "offset": 0,
+        "length": 1936,
+        "sha256": "9645c39e64767e246c59ad58f7fe8516dfcf1503ba7b8c68b55bf92a9e350de2"
+      }
+    ],
+    "data_file": "Textures/icon_friend_pc--9b24f1b9---1959326597459816875.bin",
+    "data_sha256": "9645c39e64767e246c59ad58f7fe8516dfcf1503ba7b8c68b55bf92a9e350de2",
+    "decoded_mips_file": "Textures/icon_friend_pc--9b24f1b9---1959326597459816875.bgra-mips.bin",
+    "decoded_mips_sha256": "2a54ba1b624f1a0a7e7fef62a78a807839d2da07f0111a13388d4f10ea9b7055",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-a725c4827e7ea40d7a4b806b12b3f1ad:5938234194269448460",
+    "cab": "CAB-a725c4827e7ea40d7a4b806b12b3f1ad",
+    "path_id": "5938234194269448460",
+    "type": "Texture2D",
+    "name": "bg_common_r26",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/common/square/bg_common_r26.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/298d468a8471f4d1b4f2f491.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 212416988,
+      "length": 5191,
+      "md5": "1A52A3BD5C4E3CD01AD7988BD59F7CAA",
+      "sha256": "724eec2d1fbee0890a613bfd97e4aece50ff68ea33e1583f71afc36e26dae812",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "6ec109aded55ded9ff9316faf4aa947a68ba1e9b4f359064ce70e95d4282bc39",
+    "width": 84,
+    "height": 84,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 7056,
+      "path": "archive:/CAB-a725c4827e7ea40d7a4b806b12b3f1ad/CAB-a725c4827e7ea40d7a4b806b12b3f1ad.resS"
+    },
+    "png": {
+      "file": "textures/bg_common_r26--a725c482--5938234194269448460.png",
+      "sha256": "d10bc6afc2eec4935e542aefc63385bbc427f6258ee44f86bf31b4974c16e3dd",
+      "width": 84,
+      "height": 84,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_common_r26--a725c482--5938234194269448460.bin",
+      "bytes": 7056,
+      "sha256": "42aa918f887dd480f20f1937d584b0a84271de128c42640aba0dec9b8fcf7626"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 84,
+        "height": 84,
+        "offset": 0,
+        "length": 7056,
+        "sha256": "42aa918f887dd480f20f1937d584b0a84271de128c42640aba0dec9b8fcf7626"
+      }
+    ],
+    "data_file": "Textures/bg_common_r26--a725c482--5938234194269448460.bin",
+    "data_sha256": "42aa918f887dd480f20f1937d584b0a84271de128c42640aba0dec9b8fcf7626",
+    "decoded_mips_file": "Textures/bg_common_r26--a725c482--5938234194269448460.bgra-mips.bin",
+    "decoded_mips_sha256": "fb569d5a47c2a3838c12c4ff52120943f843e395c9b5c5e2f8031461d1defbe7",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-ad8b705c66d92a94bf1837182e075bb0:-8453182628307212728",
+    "cab": "CAB-ad8b705c66d92a94bf1837182e075bb0",
+    "path_id": "-8453182628307212728",
+    "type": "Texture2D",
+    "name": "deco_friend_cell_head_level_shadow",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/friend/deco_friend_cell_head_level_shadow.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/252030d6c3d7b81c73c956ac.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 377621204,
+      "length": 6883,
+      "md5": "BA594C977B2F9A00D6C5D0EFAF3928DD",
+      "sha256": "619793861593d0fff72040d6d4ca635e22c1633ec89cceaf15a339966ea1927b",
+      "md5_verified": true
+    },
+    "source_object_bytes": 236,
+    "source_object_sha256": "24726bbd11dd39cec224919180c1f4cabb37b1f4553a8a5b3eed51013dc617fc",
+    "width": 80,
+    "height": 60,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 4800,
+      "path": "archive:/CAB-ad8b705c66d92a94bf1837182e075bb0/CAB-ad8b705c66d92a94bf1837182e075bb0.resS"
+    },
+    "png": {
+      "file": "textures/deco_friend_cell_head_level_shadow--ad8b705c---8453182628307212728.png",
+      "sha256": "7bde9fb7557c9b41a71870146335fe83a3103183a22287417ef6de5796575b92",
+      "width": 80,
+      "height": 60,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_friend_cell_head_level_shadow--ad8b705c---8453182628307212728.bin",
+      "bytes": 4800,
+      "sha256": "479709c0ccd8d42964e652fd3897af3989436c931598e86189addff9d4d929d0"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 80,
+        "height": 60,
+        "offset": 0,
+        "length": 4800,
+        "sha256": "479709c0ccd8d42964e652fd3897af3989436c931598e86189addff9d4d929d0"
+      }
+    ],
+    "data_file": "Textures/deco_friend_cell_head_level_shadow--ad8b705c---8453182628307212728.bin",
+    "data_sha256": "479709c0ccd8d42964e652fd3897af3989436c931598e86189addff9d4d929d0",
+    "decoded_mips_file": "Textures/deco_friend_cell_head_level_shadow--ad8b705c---8453182628307212728.bgra-mips.bin",
+    "decoded_mips_sha256": "b7a406199893b446c1fd4b8e8d20063a41486c18ef58b4a5707e008573016d7b",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-bafe084bceb70adcc12d7e4131951600:-5358264342952264872",
+    "cab": "CAB-bafe084bceb70adcc12d7e4131951600",
+    "path_id": "-5358264342952264872",
+    "type": "Texture2D",
+    "name": "bg_assembly_01",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/factory/common/bg_assembly_01.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/2d669cefcdb5837f9d078916.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 229513520,
+      "length": 5473,
+      "md5": "1C04112C6AACFF5E8866B642AFD1D859",
+      "sha256": "1434e393b4e8faeeb8868e0590b99ee6bef0d042d48b6d57daf1d98670e2490f",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "56169a257c92cf795012937ba315c2ccd150cbaa6d53c22bc5746f56feb145fc",
+    "width": 52,
+    "height": 52,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 2704,
+      "path": "archive:/CAB-bafe084bceb70adcc12d7e4131951600/CAB-bafe084bceb70adcc12d7e4131951600.resS"
+    },
+    "png": {
+      "file": "textures/bg_assembly_01--bafe084b---5358264342952264872.png",
+      "sha256": "a4bdeeba4e2532cb89910216af36fcc2289480baa921d05d704875dd09027bff",
+      "width": 52,
+      "height": 52,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_assembly_01--bafe084b---5358264342952264872.bin",
+      "bytes": 2704,
+      "sha256": "e187609c953ba507a7f141ad92cad27d066d6eedcf87b60cdf423115a1e8a506"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 52,
+        "height": 52,
+        "offset": 0,
+        "length": 2704,
+        "sha256": "e187609c953ba507a7f141ad92cad27d066d6eedcf87b60cdf423115a1e8a506"
+      }
+    ],
+    "data_file": "Textures/bg_assembly_01--bafe084b---5358264342952264872.bin",
+    "data_sha256": "e187609c953ba507a7f141ad92cad27d066d6eedcf87b60cdf423115a1e8a506",
+    "decoded_mips_file": "Textures/bg_assembly_01--bafe084b---5358264342952264872.bgra-mips.bin",
+    "decoded_mips_sha256": "483af964b84fe5a20b6a29a07acd761b06c0b54a9a562484cced2af75010dda6",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-c532c5282d24c29cccc7340b3ccbc5c7:6591727633268659541",
+    "cab": "CAB-c532c5282d24c29cccc7340b3ccbc5c7",
+    "path_id": "6591727633268659541",
+    "type": "Texture2D",
+    "name": "bg_sns_tweet_decorate_35",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/sns/bg_sns_tweet_decorate_35.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/13e6fb00f40162800aff7ae5.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 173373149,
+      "length": 4565,
+      "md5": "4319BF9712F23FBEC4C3235E66E47392",
+      "sha256": "1920759d7e9928ae9a4a8b1dc79d2646598d47974ca4cf141af3717738aca644",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "f7eafef0a521ddab259a8fa6d62c89fcf591895ff9b46a52dafbe6fef0988f9b",
+    "width": 8,
+    "height": 20,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 160,
+      "path": "archive:/CAB-c532c5282d24c29cccc7340b3ccbc5c7/CAB-c532c5282d24c29cccc7340b3ccbc5c7.resS"
+    },
+    "png": {
+      "file": "textures/bg_sns_tweet_decorate_35--c532c528--6591727633268659541.png",
+      "sha256": "7070a427895c7d7fa5a0c9792e327225106f44bafffea67b1b49e72627d459cf",
+      "width": 8,
+      "height": 20,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_sns_tweet_decorate_35--c532c528--6591727633268659541.bin",
+      "bytes": 160,
+      "sha256": "e4b558b1c646781ca196571296bb194b05f49b668e62b6b1ba42a47f90e58044"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 8,
+        "height": 20,
+        "offset": 0,
+        "length": 160,
+        "sha256": "e4b558b1c646781ca196571296bb194b05f49b668e62b6b1ba42a47f90e58044"
+      }
+    ],
+    "data_file": "Textures/bg_sns_tweet_decorate_35--c532c528--6591727633268659541.bin",
+    "data_sha256": "e4b558b1c646781ca196571296bb194b05f49b668e62b6b1ba42a47f90e58044",
+    "decoded_mips_file": "Textures/bg_sns_tweet_decorate_35--c532c528--6591727633268659541.bgra-mips.bin",
+    "decoded_mips_sha256": "aedc582756a54ec2ef8c108edae8d39e3dfb907e77041e839603924e74fc3b32",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-cb07a3ef6b17f98f89cad785fad5f999:-5034372977490163095",
+    "cab": "CAB-cb07a3ef6b17f98f89cad785fad5f999",
+    "path_id": "-5034372977490163095",
+    "type": "Texture2D",
+    "name": "icon_contract_tag_high",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/contingencycontract/icon_contract_tag_high.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/d4abaf9c99cb1ebaaf66f02c.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+      "offset": 26509458,
+      "length": 7079,
+      "md5": "C133C80E191AB9A9689BF67F0DBE807A",
+      "sha256": "bf018e133028c6aa6f871b05bcbab43c89d9c817d010c4718cee0720c671ccee",
+      "md5_verified": true
+    },
+    "source_object_bytes": 224,
+    "source_object_sha256": "701922675ea2514736f3bee240360ca926f356cb185e2ff3f9a8d2dbf1bef687",
+    "width": 72,
+    "height": 72,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 5184,
+      "path": "archive:/CAB-cb07a3ef6b17f98f89cad785fad5f999/CAB-cb07a3ef6b17f98f89cad785fad5f999.resS"
+    },
+    "png": {
+      "file": "textures/icon_contract_tag_high--cb07a3ef---5034372977490163095.png",
+      "sha256": "7b8f4382d0506532cd0e09ed912a8c330d6aaa2316ec02e6ec8bbacca5534109",
+      "width": 72,
+      "height": 72,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_contract_tag_high--cb07a3ef---5034372977490163095.bin",
+      "bytes": 5184,
+      "sha256": "2053492e2b7aa1ab55df15e71fab6d6d6ea4a3224daf1ffbb74b388f584b0501"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 72,
+        "height": 72,
+        "offset": 0,
+        "length": 5184,
+        "sha256": "2053492e2b7aa1ab55df15e71fab6d6d6ea4a3224daf1ffbb74b388f584b0501"
+      }
+    ],
+    "data_file": "Textures/icon_contract_tag_high--cb07a3ef---5034372977490163095.bin",
+    "data_sha256": "2053492e2b7aa1ab55df15e71fab6d6d6ea4a3224daf1ffbb74b388f584b0501",
+    "decoded_mips_file": "Textures/icon_contract_tag_high--cb07a3ef---5034372977490163095.bgra-mips.bin",
+    "decoded_mips_sha256": "db0aacf1f21eeac9aca61a429e32778222da660a5806f13a245c9e32fce00107",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-cd30ea2206a2ef01733ddbd453d0ccab:-6002316461495314111",
+    "cab": "CAB-cd30ea2206a2ef01733ddbd453d0ccab",
+    "path_id": "-6002316461495314111",
+    "type": "Texture2D",
+    "name": "common_whiteline_img",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/common/common_whiteline_img.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/27fb3e589ca582de731e4a50.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 177608463,
+      "length": 4602,
+      "md5": "D87008317800BCA453F9E2F6B0E6FF1F",
+      "sha256": "4dd186541a3747206c0e1a0983ded67c61de88b283e2c8afac719450ad3050ce",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "dff943c5bb1cf42d3dfa63c2dfc0532bd752e6d2144e0432b87b32ed75fb2b00",
+    "width": 12,
+    "height": 12,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 144,
+      "path": "archive:/CAB-cd30ea2206a2ef01733ddbd453d0ccab/CAB-cd30ea2206a2ef01733ddbd453d0ccab.resS"
+    },
+    "png": {
+      "file": "textures/common_whiteline_img--cd30ea22---6002316461495314111.png",
+      "sha256": "caf4bfa327a0eac8e8050ba5c3737ca859a296d0d9c61b8c568fe16d05318543",
+      "width": 12,
+      "height": 12,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/common_whiteline_img--cd30ea22---6002316461495314111.bin",
+      "bytes": 144,
+      "sha256": "879fbf8e8f2e4024beb8fc9c8f3e6bcef8f2d0143e09d1917c7089b8dfb6d103"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 12,
+        "height": 12,
+        "offset": 0,
+        "length": 144,
+        "sha256": "879fbf8e8f2e4024beb8fc9c8f3e6bcef8f2d0143e09d1917c7089b8dfb6d103"
+      }
+    ],
+    "data_file": "Textures/common_whiteline_img--cd30ea22---6002316461495314111.bin",
+    "data_sha256": "879fbf8e8f2e4024beb8fc9c8f3e6bcef8f2d0143e09d1917c7089b8dfb6d103",
+    "decoded_mips_file": "Textures/common_whiteline_img--cd30ea22---6002316461495314111.bgra-mips.bin",
+    "decoded_mips_sha256": "b44b9708896e463babfc9c9b22288c31a40e943240a4d02300faf2080d27a301",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-db754200ac9a164478218c58d9a6ce71:6349671078421088745",
+    "cab": "CAB-db754200ac9a164478218c58d9a6ce71",
+    "path_id": "6349671078421088745",
+    "type": "Texture2D",
+    "name": "icon_right",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/adventure/icon_right.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/5965d15010c7a639e1da5c27.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 216807236,
+      "length": 5309,
+      "md5": "C43242CB0897ACBF4057395402DC74A3",
+      "sha256": "94169a2e42e8116ce51ebe6ade4b88dda6f3fddac66a4d87154dd9b5d3770e8e",
+      "md5_verified": true
+    },
+    "source_object_bytes": 212,
+    "source_object_sha256": "a98745b68824a8ee1e798e2216e15e5e2cdd89687628774982d2b23da08fd1c2",
+    "width": 40,
+    "height": 40,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 1600,
+      "path": "archive:/CAB-db754200ac9a164478218c58d9a6ce71/CAB-db754200ac9a164478218c58d9a6ce71.resS"
+    },
+    "png": {
+      "file": "textures/icon_right--db754200--6349671078421088745.png",
+      "sha256": "d3bacbc6f7ed74cdf4afbc528e9e248b4c12e6e6e8db9133faa464861b73a2dc",
+      "width": 40,
+      "height": 40,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/icon_right--db754200--6349671078421088745.bin",
+      "bytes": 1600,
+      "sha256": "ed195d3dc35e442410e46bb76a5b085f6adc02d4c302b0eb12c4adf72b9f13a5"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 40,
+        "height": 40,
+        "offset": 0,
+        "length": 1600,
+        "sha256": "ed195d3dc35e442410e46bb76a5b085f6adc02d4c302b0eb12c4adf72b9f13a5"
+      }
+    ],
+    "data_file": "Textures/icon_right--db754200--6349671078421088745.bin",
+    "data_sha256": "ed195d3dc35e442410e46bb76a5b085f6adc02d4c302b0eb12c4adf72b9f13a5",
+    "decoded_mips_file": "Textures/icon_right--db754200--6349671078421088745.bgra-mips.bin",
+    "decoded_mips_sha256": "28e32fba4cae1aa6f5da7f54e47ea137e7068ddf19da929cfcb44280a0d7e68d",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-dccbc05df41624aba7f420c75ae991f8:-8070658409433931058",
+    "cab": "CAB-dccbc05df41624aba7f420c75ae991f8",
+    "path_id": "-8070658409433931058",
+    "type": "Texture2D",
+    "name": "deco_play_head",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/deco_play_head.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/bce4625ed01d59f8b56e6014.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 211069880,
+      "length": 5151,
+      "md5": "492B3103F71482880B128448DD4528F8",
+      "sha256": "8999efd4e9338a94cdc316f52d91b7a1ba9e66d5cc4208030ec54a57f917ce9f",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "4a4cba90a5faa364d23941542374a0929bf68fd55816745418bbe60827eac883",
+    "width": 112,
+    "height": 20,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 2240,
+      "path": "archive:/CAB-dccbc05df41624aba7f420c75ae991f8/CAB-dccbc05df41624aba7f420c75ae991f8.resS"
+    },
+    "png": {
+      "file": "textures/deco_play_head--dccbc05d---8070658409433931058.png",
+      "sha256": "a4169ccda63c408de0160ac24b571d3eee157911e1618fa92d5780aceb1ef450",
+      "width": 112,
+      "height": 20,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_play_head--dccbc05d---8070658409433931058.bin",
+      "bytes": 2240,
+      "sha256": "e123445504849a8769512f2e5ea9922f6603acaf89b8de53b90e3dff7301d578"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 112,
+        "height": 20,
+        "offset": 0,
+        "length": 2240,
+        "sha256": "e123445504849a8769512f2e5ea9922f6603acaf89b8de53b90e3dff7301d578"
+      }
+    ],
+    "data_file": "Textures/deco_play_head--dccbc05d---8070658409433931058.bin",
+    "data_sha256": "e123445504849a8769512f2e5ea9922f6603acaf89b8de53b90e3dff7301d578",
+    "decoded_mips_file": "Textures/deco_play_head--dccbc05d---8070658409433931058.bgra-mips.bin",
+    "decoded_mips_sha256": "4611c166cf1eba5003249734d2d76b648b283f1005e195bc5b689b66326be3bd",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-efb43652871651599301eec551ccf3c0:2528983727120053097",
+    "cab": "CAB-efb43652871651599301eec551ccf3c0",
+    "path_id": "2528983727120053097",
+    "type": "Texture2D",
+    "name": "bg_contract_tag_high",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/contingencycontract/bg_contract_tag_high.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/997c537428a987d5d173d72f.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+      "offset": 29731123,
+      "length": 7655,
+      "md5": "6E6E8BA4653AF4AF3DBEBC11B5BE8384",
+      "sha256": "9ed7421a001dd089a7bb810a8cecad36c0808c4e6e3d7d0073d7f6cb60cbb35a",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "6fd7b32a0f000bd34ba8f3b465e3b2e725fa97b5f7b1b8cd2d149aa20c5095e0",
+    "width": 128,
+    "height": 52,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 6656,
+      "path": "archive:/CAB-efb43652871651599301eec551ccf3c0/CAB-efb43652871651599301eec551ccf3c0.resS"
+    },
+    "png": {
+      "file": "textures/bg_contract_tag_high--efb43652--2528983727120053097.png",
+      "sha256": "3123c35606c57eb8b5e32d6edc9fe3b8e71a660ff6f3307b7ddde9a65b3675e0",
+      "width": 128,
+      "height": 52,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_contract_tag_high--efb43652--2528983727120053097.bin",
+      "bytes": 6656,
+      "sha256": "1990e7c6a236ced9509424424a86290e0887b25a1672d9a98e5744de276bb445"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 128,
+        "height": 52,
+        "offset": 0,
+        "length": 6656,
+        "sha256": "1990e7c6a236ced9509424424a86290e0887b25a1672d9a98e5744de276bb445"
+      }
+    ],
+    "data_file": "Textures/bg_contract_tag_high--efb43652--2528983727120053097.bin",
+    "data_sha256": "1990e7c6a236ced9509424424a86290e0887b25a1672d9a98e5744de276bb445",
+    "decoded_mips_file": "Textures/bg_contract_tag_high--efb43652--2528983727120053097.bgra-mips.bin",
+    "decoded_mips_sha256": "e89dd97f9843db2b4e22c3ba64868b56070907474be52febfb0bac2e627152af",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-fbff487e283d324d08e8013164cb56fd:-4254894133338498107",
+    "cab": "CAB-fbff487e283d324d08e8013164cb56fd",
+    "path_id": "-4254894133338498107",
+    "type": "Texture2D",
+    "name": "bg_seasontower_14",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/activity/activityseasontower/bg_seasontower_14.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/3b2bad365a4f588af9fca6cf.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 70504193,
+      "length": 6292,
+      "md5": "91C6274F1D385711FB5888A9602DB99C",
+      "sha256": "6b9a2ca3bb5e67a1da67787b2d36e7ba74a9f69bf23613a0afe783457a93daa3",
+      "md5_verified": true
+    },
+    "source_object_bytes": 220,
+    "source_object_sha256": "2b6610e162ece9fdbac1edd38d5b9f0025fa9b0f3b7cd13a96136209afeeade0",
+    "width": 120,
+    "height": 56,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 6720,
+      "path": "archive:/CAB-fbff487e283d324d08e8013164cb56fd/CAB-fbff487e283d324d08e8013164cb56fd.resS"
+    },
+    "png": {
+      "file": "textures/bg_seasontower_14--fbff487e---4254894133338498107.png",
+      "sha256": "a8f9b607e0cc0d6d84231d0302e925f9983ae3d0795ee157a38bc0262fe125bc",
+      "width": 120,
+      "height": 56,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/bg_seasontower_14--fbff487e---4254894133338498107.bin",
+      "bytes": 6720,
+      "sha256": "ce49aba1c910c70c72d522aec6a0a17c4f755ba8aeb9c3a3018f213cc7439d70"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 120,
+        "height": 56,
+        "offset": 0,
+        "length": 6720,
+        "sha256": "ce49aba1c910c70c72d522aec6a0a17c4f755ba8aeb9c3a3018f213cc7439d70"
+      }
+    ],
+    "data_file": "Textures/bg_seasontower_14--fbff487e---4254894133338498107.bin",
+    "data_sha256": "ce49aba1c910c70c72d522aec6a0a17c4f755ba8aeb9c3a3018f213cc7439d70",
+    "decoded_mips_file": "Textures/bg_seasontower_14--fbff487e---4254894133338498107.bgra-mips.bin",
+    "decoded_mips_sha256": "ffc1c55b21e887e1ba78a89174de08a94fd82dc116488064f2380eb4fd49dffa",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-fe12ae679ecff8a646bc828bb15ee580:-1764866413146737665",
+    "cab": "CAB-fe12ae679ecff8a646bc828bb15ee580",
+    "path_id": "-1764866413146737665",
+    "type": "Texture2D",
+    "name": "deco_play_right",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/deco_play_right.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/55d815b86be9c318940ad03b.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+      "offset": 487406267,
+      "length": 8978,
+      "md5": "13C6152ECC97DCFED0DB9BF3DDE5694A",
+      "sha256": "9582874fc87afa0de5b794f8a03332501a278b42594e6b1f1ee149f639690ea2",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "f18dadd08a4590578fdd79852dc1355d9bde3378e0d082121082ae7e8735c2a7",
+    "width": 108,
+    "height": 60,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 6480,
+      "path": "archive:/CAB-fe12ae679ecff8a646bc828bb15ee580/CAB-fe12ae679ecff8a646bc828bb15ee580.resS"
+    },
+    "png": {
+      "file": "textures/deco_play_right--fe12ae67---1764866413146737665.png",
+      "sha256": "abc531cb2358d61d8ad782672fb0f5f272567dab45b09591fe9894f7418f0b1b",
+      "width": 108,
+      "height": 60,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_play_right--fe12ae67---1764866413146737665.bin",
+      "bytes": 6480,
+      "sha256": "9529b7afd4181a012d98845312d8a06cdf3c64eeec02a549caf24560308a1297"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 108,
+        "height": 60,
+        "offset": 0,
+        "length": 6480,
+        "sha256": "9529b7afd4181a012d98845312d8a06cdf3c64eeec02a549caf24560308a1297"
+      }
+    ],
+    "data_file": "Textures/deco_play_right--fe12ae67---1764866413146737665.bin",
+    "data_sha256": "9529b7afd4181a012d98845312d8a06cdf3c64eeec02a549caf24560308a1297",
+    "decoded_mips_file": "Textures/deco_play_right--fe12ae67---1764866413146737665.bgra-mips.bin",
+    "decoded_mips_sha256": "02d71bcd07ee4dc0284cb62e0664a9efa6f16ec95e0d9368ce49d0969ee5b5eb",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
+  },
+  {
+    "id": "CAB-fe38ae0fbd568d14b5e01872f55cc263:1050045739101015854",
+    "cab": "CAB-fe38ae0fbd568d14b5e01872f55cc263",
+    "path_id": "1050045739101015854",
+    "type": "Texture2D",
+    "name": "deco_play_tipsbg",
+    "asset_paths": [
+      "assets/beyond/arts/ui/sprites/watch/playinfo/deco_play_tipsbg.png"
+    ],
+    "source": {
+      "name": "Data/Bundles/Windows/main/071069cb8ec7a6a7311deaf7.ab",
+      "layer": "StreamingAssets",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+      "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+      "offset": 102783111,
+      "length": 8595,
+      "md5": "60309401960579548FFDE7BC158CEF96",
+      "sha256": "ca3ad75277d1df0ffd259cbd362334d8c1de85494326392f6df2c9a9f9914632",
+      "md5_verified": true
+    },
+    "source_object_bytes": 216,
+    "source_object_sha256": "2b8bc9551757754b7b11675b18426689128b72c624fa0032515e43a67cb13df2",
+    "width": 212,
+    "height": 80,
+    "texture_format": 25,
+    "format_name": "BC7",
+    "color_space": 0,
+    "mip_count": 1,
+    "sampler": {
+      "m_FilterMode": 1,
+      "m_Aniso": 1,
+      "m_MipBias": 0.0,
+      "m_WrapU": 1,
+      "m_WrapV": 1,
+      "m_WrapW": 1,
+      "m_TextureGroup": 0
+    },
+    "stream_data": {
+      "offset": 0,
+      "size": 16960,
+      "path": "archive:/CAB-fe38ae0fbd568d14b5e01872f55cc263/CAB-fe38ae0fbd568d14b5e01872f55cc263.resS"
+    },
+    "png": {
+      "file": "textures/deco_play_tipsbg--fe38ae0f--1050045739101015854.png",
+      "sha256": "d90116e88ef5a91e0eff672e89c0b878b2eda6b2b25b71c8912315225772ddda",
+      "width": 212,
+      "height": 80,
+      "orientation": "UnityPy Texture2D.image final vertical flip; PNG top-origin, original UV bottom-origin."
+    },
+    "raw": {
+      "file": "texture-mips/deco_play_tipsbg--fe38ae0f--1050045739101015854.bin",
+      "bytes": 16960,
+      "sha256": "3ac9f439b6258e12466462b08637406bdd5c2405378d060bcafe8136dd6ea3db"
+    },
+    "mips": [
+      {
+        "level": 0,
+        "width": 212,
+        "height": 80,
+        "offset": 0,
+        "length": 16960,
+        "sha256": "3ac9f439b6258e12466462b08637406bdd5c2405378d060bcafe8136dd6ea3db"
+      }
+    ],
+    "data_file": "Textures/deco_play_tipsbg--fe38ae0f--1050045739101015854.bin",
+    "data_sha256": "3ac9f439b6258e12466462b08637406bdd5c2405378d060bcafe8136dd6ea3db",
+    "decoded_mips_file": "Textures/deco_play_tipsbg--fe38ae0f--1050045739101015854.bgra-mips.bin",
+    "decoded_mips_sha256": "7c5dcdbc6ed2ea4c6783fbb3c2dac605f0bca7d653135ef5f85fbc3072ce28e6",
+    "decoded_mips_policy": "Each authored BC7 mip individually decoded to BGRA8; no mip generation; base mip byte-equal to original PNG after its documented export Y flip",
+    "provenance": "Scene/Widgets/provenance.json"
   }
 ]

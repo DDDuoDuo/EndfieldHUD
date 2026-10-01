@@ -96,8 +96,9 @@ final class HUDSourceWatchDocument {
     let labels: HUDSourceJSONValue
     let materials: HUDSourceJSONValue
     let spriteByComponent: [HUDSourceID: HUDSourceJSONValue]
+    let widgets: HUDSourceWatchWidgets?
 
-    init(resourceRoot: URL? = nil) throws {
+    init(resourceRoot: URL? = nil, includeWidgets: Bool = true) throws {
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource/Scene") else {
             throw HUDSourceError.invalid("Watch source scene resources are missing")
         }
@@ -105,18 +106,31 @@ final class HUDSourceWatchDocument {
         let decoder = HUDSourceJSON.decoder()
         func data(_ name: String) throws -> Data { try Data(contentsOf: root.appendingPathComponent(name + ".json")) }
         let sceneData = try data("scene"), clipData = try data("clips")
-        scene = try decoder.decode(HUDSourceScene.self, from: sceneData)
+        let originalScene = try decoder.decode(HUDSourceScene.self, from: sceneData)
+        let widgetURL = root.appendingPathComponent("Widgets/widget.json")
+        let widgets: HUDSourceWatchWidgets?
+        if includeWidgets && FileManager.default.fileExists(atPath: widgetURL.path) {
+            widgets = try HUDSourceWatchWidgets(data: Data(contentsOf: widgetURL))
+        } else { widgets = nil }
+        self.widgets = widgets
+        scene = try widgets?.mounted(in: originalScene) ?? originalScene
         let details = try decoder.decode(Details.self, from: sceneData)
         components = Dictionary(uniqueKeysWithValues: details.nodes.map { ($0.id, $0.components) })
+            .merging(widgets?.components ?? [:]) { original, _ in original }
         buttons = details.buttons
         library = try decoder.decode(HUDSourceAnimationLibrary.self, from: clipData)
         animation = try HUDSourceWatchAnimation(scene: scene, library: library)
         blurAnimation = try HUDSourceWatchBlurAnimation(data: data("watch-blur"))
         animators = try decoder.decode(ExtraAnimations.self, from: clipData).animators
-        sprites = try decoder.decode(HUDSourceJSONValue.self, from: data("sprites"))
+        let originalSprites = try decoder.decode(HUDSourceJSONValue.self, from: data("sprites"))
+        sprites = widgets.map { HUDSourceWatchWidgets.merging(originalSprites, additions: $0.sprites,
+            arrays: ["sprites", "source_textures"]) } ?? originalSprites
         fonts = try decoder.decode(HUDSourceJSONValue.self, from: data("fonts"))
-        labels = try decoder.decode(HUDSourceJSONValue.self, from: data("labels"))
-        materials = try decoder.decode(HUDSourceJSONValue.self, from: data("materials"))
+        let originalLabels = try decoder.decode(HUDSourceJSONValue.self, from: data("labels"))
+        labels = widgets.map { HUDSourceWatchWidgets.merging(originalLabels, additions: $0.labels, arrays: ["nodes"]) } ?? originalLabels
+        let originalMaterials = try decoder.decode(HUDSourceJSONValue.self, from: data("materials"))
+        materials = widgets.map { HUDSourceWatchWidgets.merging(originalMaterials, additions: $0.materials,
+            arrays: ["materials"]) } ?? originalMaterials
         var joined: [HUDSourceID: HUDSourceJSONValue] = [:]
         for sprite in sprites["sprites"].array {
             for binding in sprite["bindings"].array {
