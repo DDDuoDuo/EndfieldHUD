@@ -71,7 +71,8 @@ final class HUDSourceWatchView: NSView {
             }
         }
     }
-    var backdropPreparingForVerification: Bool { pendingOpening != nil }
+    var isPreparingBackdrop: Bool { pendingOpening != nil }
+    var backdropPreparingForVerification: Bool { isPreparingBackdrop }
     var backdropStartForVerification: Double { backdropTransitionStart }
     private var backdropPreparationDeadline: DispatchWorkItem?
     private var backdropTransitionStart: Double = 0
@@ -104,6 +105,10 @@ final class HUDSourceWatchView: NSView {
     var onAction: ((ButtonAction) -> Void)?
     var onClose: (() -> Void)?
     var onFailure: ((String) -> Void)?
+    var widgetState: HUDSourceWatchWidgets.State {
+        get { frameBuilder.widgetState }
+        set { frameBuilder.widgetState = newValue; refreshPlaybackScheduling() }
+    }
     var inputEnabled = false {
         didSet {
             if !inputEnabled { hovered = nil; pressed = nil; updateAnimatorStates(at: now) }
@@ -206,6 +211,10 @@ final class HUDSourceWatchView: NSView {
             if let entry = Self.auxiliaryActions.first(where: { node.path.hasSuffix("/" + $0.key) }) {
                 let source = HUDSourceWatchButton(nodeID: id, path: node.path, labels: [])
                 actionsByID[id] = ButtonAction(source: source, module: entry.value)
+            }
+            if document.widgets?.profileButtonIDs.contains(id) == true {
+                let source = HUDSourceWatchButton(nodeID: id, path: node.path, labels: [])
+                actionsByID[id] = ButtonAction(source: source, module: .profile)
             }
         }
         setAccessibilityChildren(document.buttons.compactMap { accessibilityButtons[$0.nodeID] })
@@ -557,7 +566,8 @@ final class HUDSourceWatchView: NSView {
             document.applyMacButtonAvailability(to: &pose)
             let domainState = HUDSourceDomainAnimation.State(ambientTime: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : time)
             var frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
-                                               verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState)
+                                               verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState,
+                                               widgetTime: time)
             // Source EventSystem raycasts each frame, including stationary
             // pointers while the menu or gyro moves. Retarget at this same
             // clock instant, then rebuild once; do not recurse into the timer.
@@ -572,7 +582,8 @@ final class HUDSourceWatchView: NSView {
                 buttonAnimation.apply(to: &pose, at: time, reduceMotion: reduce)
                 document.applyMacButtonAvailability(to: &pose)
                 frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
-                                                verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState)
+                                                verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState,
+                                                widgetTime: time)
             }
             lastPose = pose; renderedFrame = frame; renderedCamera = camera
             diagnostics = frame.diagnostics

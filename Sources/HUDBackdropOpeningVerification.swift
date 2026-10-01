@@ -64,7 +64,20 @@ enum HUDBackdropOpeningVerification {
         }
 
         func close(_ next: @escaping () -> Void) {
+            let heldView = overlay.systemSourceWatchForVerification
+            let heldOpening = heldView?.backdropPreparingForVerification == true
+            let frameCount = heldView?.renderedFrameCount
             overlay.closeSystemOverlay()
+            check(overlay.systemPhase == .closing || overlay.systemPhase == .closed,
+                  "Dismissal starts immediately, including while an input is pending")
+            if let view = overlay.systemSourceWatchForVerification {
+                check(!view.backdropPreparingForVerification,
+                      "Dismissal cancels the pending input and its preparation deadline")
+                if heldOpening {
+                    check(view.playback.phase == .concealed && view.isHidden && view.renderedFrameCount == frameCount,
+                          "Cancelling a held initial pose never renders the fully deployed exit pose")
+                }
+            }
             later(SystemHUDView.exitDuration + 0.30) { [self] in
                 check(overlay.systemPhase == .closed && !overlay.systemWindowVisibleForVerification
                       && !overlay.lastClosedSourceTimerActive && overlay.lastClosedAnimationCount == 0,

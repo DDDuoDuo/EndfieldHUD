@@ -419,7 +419,11 @@ final class OverlayController: NSObject {
         // AppKit owns the native drag loop. Its source view and window must
         // survive until endedAt, including a dismissal requested mid-drag.
         if systemView?.isDraggingShelfItem == true || shelfDragPresentation.isActive { closeAfterShelfDrag = true; return }
-        performSystemAction(systemState.requestClose())
+        // No entrance is running while the source holds its initial pose for
+        // background input. Cancel that wait immediately rather than queueing
+        // dismissal behind an input that may never arrive.
+        let heldOpening = systemView?.isPreparingSourceBackdrop == true
+        performSystemAction(systemState.requestClose(interruptOpening: heldOpening))
     }
 
     /// Accepted updater relaunch only. Keep the current panel alive through its

@@ -366,7 +366,8 @@ enum RenderSourceWatchPreviews {
             ("domain-hover-hold", nil, 0, nil, nil),
             ("domain-region02-lv008-selected", nil, 0, nil, nil),
             ("domain-region02-lv008-hover", nil, 0, nil, nil),
-            ("hdr-stable", nil, 0, nil, nil), ("hdr-hover-hold", nil, 0, nil, 1)
+            ("hdr-stable", nil, 0, nil, nil), ("hdr-hover-hold", nil, 0, nil, 1),
+            ("widgets-reference", nil, 0, nil, nil), ("widgets-weapon-reference", nil, 0, nil, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
@@ -418,7 +419,40 @@ enum RenderSourceWatchPreviews {
                 if name == "domain-selected-083" { domainState.selectionElapsed = 0.1666666716337204 / 2 }
                 if name == "domain-hover-hold" { domainState.hoverClipTimes = ["map01_lv001": 0.1666666716337204] }
             }
-            let frame = try activeBuilder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState)
+            let isWidgetFixture = name.hasPrefix("widgets-")
+            activeBuilder.widgetState = isWidgetFixture ? .recordReference : .desktopReference
+            if name == "widgets-weapon-reference" {
+                activeBuilder.widgetState.bannerArtwork = "weapon_typhoeus_banner"
+            }
+            let frame = try activeBuilder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState,
+                                                widgetTime: ambient ?? opening ?? closing ?? 0)
+            if let missing = frame.diagnostics.first(where: { $0.hasPrefix("Unresolved original UIImage Sprite:") }) {
+                throw HUDSourceError.invalid("Active source artwork was skipped: " + missing)
+            }
+            var widgetRegression: [String: Any] = [:]
+            if isWidgetFixture {
+                guard let widgets = document.widgets,
+                      let root = frame.resolved[widgets.sourceScene.rootID], root.activeInHierarchy,
+                      root.rect?.size == SIMD2<Double>(364, 128) else {
+                    throw HUDSourceError.invalid("Original BP13 widget is missing, inactive or resized")
+                }
+                let widgetCAB = "CAB-7979328e8a85d73c8b989cdca5a79bf8:"
+                let requiredNodes = [widgetCAB + "-6424786528150829925", widgetCAB + "6805299908380312731",
+                    widgetCAB + "4639931523971466395", "CAB-194e41a66c2317b9df19269f505210be:-2839740590567297833"]
+                var textures: [String: String] = [:]
+                for id in requiredNodes {
+                    guard let batch = frame.batches.first(where: { $0.sourceNodeID == id }),
+                          let texture = batch.textureOverrides["_MainTex"] else {
+                        throw HUDSourceError.invalid("Explicit widget artwork did not produce its original batch: " + id)
+                    }
+                    textures[id] = texture
+                }
+                let hits = frame.hits.filter { widgets.profileButtonIDs.contains($0.buttonID) }
+                guard !hits.isEmpty else { throw HUDSourceError.invalid("Original widget has no profile raycasts") }
+                widgetRegression = ["sourceRootID": widgets.sourceScene.rootID.rawValue,
+                    "localSize": [364, 128], "drawnArtworkTextures": textures,
+                    "profileHitCount": hits.count, "accountData": "Controlled generic fixture; no personal name or UID"]
+            }
             var materialRegression: [[String: Any]] = []
             if isFourSlotFixture {
                 guard frame.resolved[region02Placement]?.activeInHierarchy == true,
@@ -513,6 +547,9 @@ enum RenderSourceWatchPreviews {
             let diagnostics = frame.diagnostics + activeRenderer.diagnostics
             manifest.append(["file": file, "rawPixelReport": pixelReportFile, "batches": frame.batches.count, "hits": frame.hits.count,
                 "sceneColorMode": isHDR ? "sourceRGBHDR" : "directLDR", "hdr": hdrFiles,
+                "widgetFixture": isWidgetFixture ? "Explicit original artwork and generic profile; no personal name or UID" : "No inferred game account fields",
+                "bannerArtwork": activeBuilder.widgetState.bannerArtwork.map { $0 as Any } ?? NSNull(),
+                "widgetRegression": widgetRegression,
                 "canvasSize": [view.layout.canvasSize.x, view.layout.canvasSize.y], "worldScale": view.layout.scale,
                 "standardVerticalFOV": camera.verticalFieldOfViewDegrees,
                 "runtimeVerticalFOV": view.layout.runtimeVerticalFieldOfViewDegrees,

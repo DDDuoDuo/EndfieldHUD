@@ -32,6 +32,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var sourceOverviewPresented = false
     private var displaysSourceOverview: Bool { selectedModule == .power }
     var sourceWatchForVerification: HUDSourceWatchView? { sourceWatch }
+    var isPreparingSourceBackdrop: Bool { sourceWatch?.isPreparingBackdrop == true }
     var sourceFailureForVerification: String? { sourceWatchFailureReason }
     var workFocusStatusMessage: String? {
         didSet { workCanvas.setFocusStatusMessage(workFocusStatusMessage) }
@@ -1377,6 +1378,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 self.presentSourceFailure(reason)
             }
             sourceWatch = view
+            if let store = profileStore { updateSourceProfile(store.profile) }
             addSubview(view)
         } catch { presentSourceFailure(String(describing: error)) }
     }
@@ -1451,6 +1453,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func animateSourceExit(completion: @escaping () -> Void) {
+        let heldOpening = sourceWatch?.isPreparingBackdrop == true
         cancelAnimations(preserveClickFeedback: true)
         transitioning = true; retracting = true; transitionCompletion = completion
         let token = generation
@@ -1467,6 +1470,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         withoutActions { self.blurBackdrop.layer?.opacity = 0 }
         guard let sourceWatch, sourceWatchFailureReason == nil else { finish(); return }
+        if heldOpening {
+            // The original exit clip begins from a fully deployed menu. An
+            // opening held at its initial pose must disappear without sampling
+            // that complete pose or briefly flashing its unprepared background.
+            sourceWatch.conceal()
+            finish()
+            return
+        }
         if !HUDRuntimeAppearance.reduceMotion {
             animateSourceBlur(sourceWatch.document.blurAnimation.exit)
         }
@@ -2259,6 +2270,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             guard let self, let store = self.profileStore else { return }
             self.identityCard.setProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
                                          avatarOrientation: store.imageOrientation(for: .avatar))
+            self.updateSourceProfile(profile)
         }
         profileInteraction = input
     }
@@ -2274,6 +2286,18 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard let store = profileStore else { return }
         identityCard.setProfile(store.profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
                                 avatarOrientation: store.imageOrientation(for: .avatar))
+        updateSourceProfile(store.profile)
+    }
+
+    private func updateSourceProfile(_ profile: UserProfile) {
+        guard let sourceWatch else { return }
+        var state = sourceWatch.widgetState
+        // These are the desktop application's existing editable profile fields.
+        // Experience, maximum-level gates and live game-account state are not inferred.
+        state.profile = HUDSourceWatchWidgets.Profile(displayName: profile.name,
+            identifier: profile.uid, level: profile.permissionLevel,
+            avatarArtwork: "icon_chr_0004_pelica", frameArtwork: "icon_user_avatar_frame_bp_1")
+        sourceWatch.widgetState = state
     }
 
     private func configureTelemetryInteractions() {

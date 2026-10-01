@@ -12,6 +12,7 @@ enum VerifySourceBackdropGPU {
     private static var frostedProgress: [[String: Any]] = []
     private static var rawImageProgress: [[String: Any]] = []
     private static var tileProgress: [[String: Any]] = []
+    private static var sidecarProgress: [String: Any] = [:]
     private static var formatProgress: [String: Any] = [:]
     private enum AttachmentRounding: String, CaseIterable, Hashable {
         case nearestEven, towardZero, halfThenTowardZero
@@ -608,6 +609,47 @@ enum VerifySourceBackdropGPU {
         if exponent == 31 { return fraction == 0 ? .infinity : .nan }
         return Float((1 + Double(fraction) / Double(1 << fractionBits)) * pow(2, Double(exponent - 15)))
     }
+    private static func verifyOriginalSidecarParsing(root: URL) throws -> [String: Any] {
+        let supplied = #"{"id":9223372036854775806,"positive":Infinity,"negative":-Infinity,"nan":NaN,"literal":"Infinity -Infinity NaN","escaped":"quote\" Infinity","items":[Infinity,-Infinity,NaN]}"#
+        let parsed = try HUDSourceWatchBackdrop.originalSidecarObject(from: Data(supplied.utf8))
+        try require((parsed["id"] as? NSNumber)?.stringValue == "9223372036854775806" &&
+            parsed["positive"] as? String == "Infinity" && parsed["negative"] as? String == "-Infinity" &&
+            parsed["nan"] as? String == "NaN" && parsed["literal"] as? String == "Infinity -Infinity NaN" &&
+            parsed["escaped"] as? String == "quote\" Infinity" &&
+            parsed["items"] as? [String] == ["Infinity", "-Infinity", "NaN"],
+            "Original sidecar normalization changed text, integer IDs or non-finite value identity")
+        for malformed in [#"{"value":InfinitySuffix}"#, #"{Infinity:1}"#, #"{"value":1Infinity}"#, #"{"value":"unterminated}"#] {
+            var rejected = false
+            do { _ = try HUDSourceWatchBackdrop.originalSidecarObject(from: Data(malformed.utf8)) }
+            catch { rejected = true }
+            try require(rejected, "Original sidecar normalization made malformed JSON valid")
+        }
+        let file = root.appendingPathComponent("HDR/WatchBlur/scene.json")
+        let bytes = try Data(contentsOf: file)
+        let scene = try HUDSourceWatchBackdrop.originalSidecarObject(from: bytes)
+        guard let objects = scene["objects"] as? [[String: Any]] else {
+            throw HUDSourceError.invalid("Original WatchBlur complete scene objects unavailable")
+        }
+        func nonFiniteCount(_ value: Any) -> Int {
+            if let string = value as? String { return ["Infinity", "-Infinity", "NaN"].contains(string) ? 1 : 0 }
+            if let array = value as? [Any] { return array.reduce(0) { $0 + nonFiniteCount($1) } }
+            if let object = value as? [String: Any] { return object.values.reduce(0) { $0 + nonFiniteCount($1) } }
+            return 0
+        }
+        let count = nonFiniteCount(scene)
+        let clipNames = objects.filter { $0["type"] as? String == "AnimationClip" }.compactMap {
+            ($0["data"] as? [String: Any])?["m_Name"] as? String
+        }.sorted()
+        try require(count == 6 && objects.count == 23 && clipNames == ["watch_blur_in", "watch_blur_out"],
+            "Original WatchBlur sidecar lost its complete animation/non-finite evidence")
+        let result: [String: Any] = ["passed": true, "syntheticIdentityChecks": true,
+            "malformedControlsRejected": 4, "originalSceneSHA256": SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined(),
+            "originalObjectCount": objects.count, "preservedNonFiniteValues": count,
+            "originalClipNames": clipNames,
+            "contract": "Quote only bare non-finite value tokens outside strings, then strictly parse the complete object; no resource rewrite or clip exclusion"]
+        sidecarProgress = result
+        return result
+    }
     private static func word(_ bytes: Data, _ offset: Int) -> UInt32 {
         UInt32(bytes[offset]) | (UInt32(bytes[offset + 1]) << 8) |
             (UInt32(bytes[offset + 2]) << 16) | (UInt32(bytes[offset + 3]) << 24)
@@ -757,6 +799,7 @@ enum VerifySourceBackdropGPU {
             report["attachmentConversionProbe"] = try verifyAttachmentConversion(device: device, root: root)
             report["frostedTests"] = try verifyFrosted(device: device, root: root)
             report["tileTests"] = try verifyCompositeTiles(device: device)
+            report["sourceSidecarParsing"] = try verifyOriginalSidecarParsing(root: root)
             report["rawImageTests"] = try verifyRawImage(root: root)
             report["rawImageTwoPassGPUVerified"] = true
             report["passed"] = true
@@ -768,6 +811,7 @@ enum VerifySourceBackdropGPU {
             if report["attachmentConversionProbe"] == nil { report["attachmentConversionProbe"] = formatProgress }
             if report["frostedTests"] == nil { report["frostedTests"] = frostedProgress }
             if report["tileTests"] == nil { report["tileTests"] = tileProgress }
+            if report["sourceSidecarParsing"] == nil { report["sourceSidecarParsing"] = sidecarProgress }
             if report["rawImageTests"] == nil { report["rawImageTests"] = rawImageProgress }
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: output.appendingPathComponent("source-backdrop-gpu-regression.json"))

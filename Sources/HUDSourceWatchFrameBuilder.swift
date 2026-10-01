@@ -32,14 +32,17 @@ final class HUDSourceWatchFrameBuilder {
     let document: HUDSourceWatchDocument
     let text: HUDSourceTextGeometry
     let domain: HUDSourceWatchDomain
+    var widgetState: HUDSourceWatchWidgets.State = .desktopReference
     private let renderer: HUDSourceMetalRenderer
     private let materials: [HUDSourceID: HUDSourceJSONValue]
     private var sprites: [HUDSourceID: HUDSourceImageGeometry.Sprite] = [:]
+    private var sourceSprites: [String: HUDSourceImageGeometry.Sprite] = [:]
     private var textureSizes: [String: SIMD2<Float>] = ["__white": SIMD2(1, 1)]
     private var sourceMeshNames: [HUDSourceID: String] = [:]
     private var registeredDomainMeshes: Set<HUDSourceID> = []
     private var geometryKeys: [HUDSourceID: [Double]] = [:]
-    private var textMeshes: [HUDSourceID: (key: [Double], mesh: HUDSourceTextGeometry.Mesh)] = [:]
+    private var geometryContentKeys: [HUDSourceID: String] = [:]
+    private var textMeshes: [HUDSourceID: (key: [Double], literal: String, mesh: HUDSourceTextGeometry.Mesh)] = [:]
     private let buttonIDs: Set<HUDSourceID>
     private let canvasSorting: HUDSourceCanvasSorting
     private struct SoftMask {
@@ -90,6 +93,13 @@ final class HUDSourceWatchFrameBuilder {
             }
             textureSizes[id] = SIMD2(Float(texture["width"].float()), Float(texture["height"].float()))
         }
+        for sprite in document.sprites["sprites"].array {
+            guard let id = sprite["id"].string, let textureID = sprite["texture"]["id"].string,
+                  let texture = textures[textureID] else {
+                throw HUDSourceError.invalid("Unresolved original named Sprite texture")
+            }
+            sourceSprites[id] = try HUDSourceImageGeometry.Sprite(source: sprite, texture: texture)
+        }
         for (component, sprite) in document.spriteByComponent {
             guard let id = sprite["texture"]["id"].string, let texture = textures[id] else {
                 throw HUDSourceError.invalid("Unresolved original Sprite texture: \(component)")
@@ -124,11 +134,13 @@ final class HUDSourceWatchFrameBuilder {
 
     func build(pose input: HUDSourceWatchPose, worldRoot: simd_double4x4,
                verticalNormalizedPosition: Double = 1,
-               domainAnimationState: HUDSourceDomainAnimation.State = .init()) throws -> Frame {
+               domainAnimationState: HUDSourceDomainAnimation.State = .init(),
+               widgetTime: Double = 0) throws -> Frame {
         var pose = input
+        let widget = try document.widgets?.apply(to: &pose, state: widgetState, at: widgetTime) ?? HUDSourceWatchWidgets.Overrides()
         let layout = HUDSourceWatchLayout(document: document) { [weak self] id, _ in
             guard let self else { return nil }
-            return try? self.text.preferredSize(on: id)
+            return try? self.text.preferredSize(on: id, literal: widget.text[id])
         }
         let report = try layout.apply(to: &pose, verticalNormalizedPosition: verticalNormalizedPosition, worldRoot: worldRoot)
         let resolved = try document.scene.resolve(overrides: pose.transforms)
@@ -192,11 +204,13 @@ final class HUDSourceWatchFrameBuilder {
                 var textureID = "__white"
                 var materialID = component["m_Material"].targetID
                 var key = [rect.origin.x, rect.origin.y, rect.size.x, rect.size.y]
+                var contentKey = ""
                 if isText {
-                    guard let literal = text.literal(on: id), !literal.isEmpty else { continue }
+                    guard let literal = widget.text[id] ?? text.literal(on: id), !literal.isEmpty else { continue }
+                    contentKey = literal
                     let sdfScale = simd_length(SIMD3(world.columns.1.x, world.columns.1.y, world.columns.1.z))
                     do {
-                        let mesh = try localText(on: id, rect: rect, sdfScale: sdfScale)
+                        let mesh = try localText(on: id, rect: rect, sdfScale: sdfScale, literal: literal)
                         localPositions = mesh.positions; uv = mesh.uv; indices = mesh.indices
                         normals = mesh.normals; uv1 = mesh.uv2; color = mesh.color
                         materialID = mesh.materialID; textureID = mesh.atlasID.rawValue
@@ -215,7 +229,12 @@ final class HUDSourceWatchFrameBuilder {
                         materialID = animation["_material"].targetID ?? materialID
                     }
                 } else {
-                    if sprites[component.id] == nil {
+                    let selectedSprite: HUDSourceImageGeometry.Sprite?
+                    if let id = widget.sprites[component.id] {
+                        guard let original = sourceSprites[id] else { throw HUDSourceError.invalid("Explicit widget Sprite missing: " + id) }
+                        selectedSprite = original; contentKey = id
+                    } else { selectedSprite = sprites[component.id] }
+                    if selectedSprite == nil {
                         let dynamicPath = component["imgRefPath"].string ?? ""
                         if component["m_Sprite"].targetID != nil || !dynamicPath.isEmpty {
                             diagnostics.append("Unresolved original UIImage Sprite: \(n.node.path) / \(dynamicPath)")
@@ -224,9 +243,9 @@ final class HUDSourceWatchFrameBuilder {
                     }
                     let fill = pose.value("m_FillAmount", on: id, fallback: component["m_FillAmount"].float(1))
                     let pivot = pose.transforms[id]?.pivot?.simd ?? n.node.transform.rect?.pivot.simd ?? SIMD2(0.5, 0.5)
-                    let mesh = try HUDSourceImageGeometry.build(image: component, sprite: sprites[component.id], rect: rect, pivot: pivot, fillAmount: fill)
+                    let mesh = try HUDSourceImageGeometry.build(image: component, sprite: selectedSprite, rect: rect, pivot: pivot, fillAmount: fill)
                     localPositions = mesh.positions; uv = mesh.uv; indices = mesh.indices
-                    textureID = sprites[component.id]?.textureID ?? "__white"; key.append(fill)
+                    textureID = selectedSprite?.textureID ?? "__white"; key.append(fill)
                 }
                 let colorPrefix = isText ? "m_fontColor" : "m_Color"
                 for (axis, suffix) in ["r", "g", "b", "a"].enumerated() {
@@ -256,7 +275,7 @@ final class HUDSourceWatchFrameBuilder {
                 }
                 key.append(contentsOf: Self.flatten(toCanvas).map(Double.init))
                 let meshName = "ui/" + component.id.rawValue
-                if geometryKeys[component.id] != key {
+                if geometryKeys[component.id] != key || geometryContentKeys[component.id] != contentKey {
                     let normalMatrix = simd_double3x3(columns: (SIMD3(toCanvas.columns.0.x, toCanvas.columns.0.y, toCanvas.columns.0.z),
                         SIMD3(toCanvas.columns.1.x, toCanvas.columns.1.y, toCanvas.columns.1.z), SIMD3(toCanvas.columns.2.x, toCanvas.columns.2.y, toCanvas.columns.2.z))).inverse.transpose
                     let bakedNormals = normals.map { normal -> SIMD3<Float> in
@@ -265,6 +284,7 @@ final class HUDSourceWatchFrameBuilder {
                     }
                     try renderer.registerGeometry(named: meshName, positions: positions, uv: uv, indices: indices, normals: bakedNormals, uv1: uv1)
                     geometryKeys[component.id] = key
+                    geometryContentKeys[component.id] = contentKey
                 }
                 let baseMaterial = materialID?.rawValue ?? "__ui_default"
                 let maskable = document.component("UISoftMaskable", on: id) != nil
@@ -279,6 +299,7 @@ final class HUDSourceWatchFrameBuilder {
                 else { diagnostics.append("Unresolved original material clipping variant: \(n.node.path)"); continue }
                 var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: material,
                     world: HUDSourceGeometry.floatMatrix(canvasWorld), color: color, textureOverrides: ["_MainTex": textureID])
+                batch.sourceNodeID = id.rawValue
                 if let size = textureSizes[textureID] { batch.uniformOverrides["mainTexTexelSize"] = [1 / size.x, 1 / size.y, size.x, size.y] }
                 if let clip {
                     batch.uniformOverrides["clipRect"] = clip
@@ -572,11 +593,13 @@ final class HUDSourceWatchFrameBuilder {
         return value
     }
 
-    private func localText(on id: HUDSourceID, rect: HUDSourceRect, sdfScale: Double) throws -> HUDSourceTextGeometry.Mesh {
+    private func localText(on id: HUDSourceID, rect: HUDSourceRect, sdfScale: Double,
+                           literal replacement: String? = nil) throws -> HUDSourceTextGeometry.Mesh {
         let key = [rect.origin.x, rect.origin.y, rect.size.x, rect.size.y, sdfScale]
-        if let cached = textMeshes[id], cached.key == key { return cached.mesh }
-        let mesh = try text.build(on: id, rect: rect, sdfScale: sdfScale)
-        textMeshes[id] = (key, mesh); return mesh
+        let literal = replacement ?? text.literal(on: id) ?? ""
+        if let cached = textMeshes[id], cached.key == key, cached.literal == literal { return cached.mesh }
+        let mesh = try text.build(on: id, rect: rect, sdfScale: sdfScale, literal: replacement)
+        textMeshes[id] = (key, literal, mesh); return mesh
     }
     private func buttonAncestor(_ id: HUDSourceID) -> HUDSourceID? {
         var current: HUDSourceID? = id

@@ -190,6 +190,8 @@ then starts the menu and blur clocks together. Capture delay cannot consume
 the short blur entrance; cancellation prevents a late result reopening the menu.
 An asynchronous preparation deadline falls back after three seconds; the host's
 normal opening deadline starts again when the original animation becomes ready.
+Closing during preparation cancels the held pose directly. It does not sample
+the normal exit clip's fully deployed starting frame or wait for background input.
 Successful geometry-matched inputs survive the opening-to-stable transition.
 The deadline cannot interrupt synchronous work already running on the main thread.
 
@@ -207,6 +209,23 @@ profiles. Missing or non-RGB profiles are rejected.
 The explicit native lifecycle fixture also supplies delayed preparation completion,
 closes while input is pending, and waits for the real three-second timeout. It
 checks the existing source view and host deadlines without invoking capture APIs.
+
+WatchCtrl loads the BP13 business-card prefab separately. Its 101-node subtree
+is mounted under the original PlayInfoPosNode with unchanged local TRS and its
+364-by-128 size, inside the 492-by-164 parent slot. Source UIImage pixels, native
+texture mip chains and CN3500 glyphs supply the card, Pelica portrait, BP1 frame,
+Yvonne banner and an explicit Typhoeus weapon-banner fixture. The desktop profile
+supplies its existing name, UID and permission level; game experience, rewards,
+birthdays, seasons and account eligibility are not inferred. Original profile
+UIButton targets open the existing macOS personal-profile module.
+
+The default banner is static. The original four-second interval, 0.2-second
+transition and ease3 contract are retained as evidence, but an eligible multi-cell
+carousel is not yet implemented. Three activity decoration materials require
+additional source shader variants and remain behind the original inactive gates.
+Controlled GPU fixtures use generic profile text and original artwork without
+publishing the supplied recording's personal name or UID. Widget source/projection
+provenance is recorded in Scene/Widgets/provenance.json.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original

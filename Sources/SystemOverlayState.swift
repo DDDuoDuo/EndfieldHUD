@@ -23,9 +23,15 @@ struct SystemOverlayState {
         }
     }
 
-    mutating func requestClose() -> Action {
+    mutating func requestClose(interruptOpening: Bool = false) -> Action {
         switch phase {
-        case .opening: closeAfterOpening = true; return .none
+        case .opening:
+            if interruptOpening {
+                closeAfterOpening = false
+                phase = .closing
+                return .close(generation)
+            }
+            closeAfterOpening = true; return .none
         case .open:
             phase = .closing
             return .close(generation)

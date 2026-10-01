@@ -23,6 +23,13 @@ enum SystemOverlayStateTests {
         expect(state.didOpen(next) == .close(next))
         expect(state.didClose(next) && !state.isActive)
         _ = state.toggle()
+        let heldOpening = state.generation
+        expect(state.requestClose(interruptOpening: true) == .close(heldOpening))
+        expect(state.phase == .closing && !state.closeAfterOpening)
+        expect(state.didOpen(heldOpening) == .none && state.phase == .closing)
+        expect(state.didClose(heldOpening) && !state.isActive)
+        expect(state.didOpen(heldOpening) == .none && !state.isActive)
+        _ = state.toggle()
         let interrupted = state.generation
         state.forceClose()
         expect(state.didOpen(interrupted) == .none && !state.isActive)

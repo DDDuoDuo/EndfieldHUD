@@ -62,10 +62,7 @@ final class HUDSourceWatchBackdrop {
         }
         let root = resourceRoot.appendingPathComponent("HDR/WatchBlur")
         func object(_ file: String) throws -> [String: Any] {
-            guard let value = try JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent(file))) as? [String: Any] else {
-                throw HUDSourceError.invalid("Original WatchBlur contract is malformed: " + file)
-            }
-            return value
+            try Self.originalSidecarObject(from: Data(contentsOf: root.appendingPathComponent(file)))
         }
         let contract = try object("material-contract.json")
         let runtime = try object("material-runtime.json")
@@ -150,6 +147,52 @@ final class HUDSourceWatchBackdrop {
         try renderer.registerGeometry(named: geometryName,
             positions: [SIMD4(-1, -1, 0, 1), SIMD4(1, -1, 0, 1), SIMD4(1, 1, 0, 1), SIMD4(-1, 1, 0, 1)],
             uv: [SIMD2(0, 1), SIMD2(1, 1), SIMD2(1, 0), SIMD2(0, 0)], indices: [0, 1, 2, 2, 3, 0])
+    }
+
+    /// Original typetree evidence includes Python's bare non-finite curve slopes.
+    /// Preserve those values as the same named strings used by HUDSourceJSON;
+    /// all quoted text, integer digits and source file bytes remain unchanged.
+    /// Foundation then validates the complete object, including every clip.
+    static func originalSidecarObject(from data: Data) throws -> [String: Any] {
+        let bytes = [UInt8](data)
+        let tokens = [Array("-Infinity".utf8), Array("Infinity".utf8), Array("NaN".utf8)]
+        var normalized = [UInt8](); normalized.reserveCapacity(bytes.count)
+        var index = 0, inString = false, escaped = false
+        func whitespace(_ byte: UInt8) -> Bool { byte == 32 || byte == 9 || byte == 10 || byte == 13 }
+        while index < bytes.count {
+            let byte = bytes[index]
+            if inString {
+                normalized.append(byte)
+                if escaped { escaped = false }
+                else if byte == 92 { escaped = true }
+                else if byte == 34 { inString = false }
+                index += 1
+                continue
+            }
+            if byte == 34 { inString = true; normalized.append(byte); index += 1; continue }
+            var matched = false
+            if byte == 45 || byte == 73 || byte == 78 {
+                for token in tokens where bytes.count - index >= token.count {
+                    let end = index + token.count
+                    guard bytes[index..<end].elementsEqual(token) else { continue }
+                    var previous = index - 1, following = end
+                    while previous >= 0 && whitespace(bytes[previous]) { previous -= 1 }
+                    while following < bytes.count && whitespace(bytes[following]) { following += 1 }
+                    // Only complete object/array *values*. In particular do not
+                    // make malformed bare object keys or numeric suffixes valid.
+                    guard previous >= 0, [UInt8(58), 91, 44].contains(bytes[previous]),
+                          following < bytes.count, [UInt8(44), 93, 125].contains(bytes[following]) else { continue }
+                    normalized.append(34); normalized.append(contentsOf: token); normalized.append(34)
+                    index = end; matched = true
+                    break
+                }
+            }
+            if !matched { normalized.append(byte); index += 1 }
+        }
+        guard let object = try JSONSerialization.jsonObject(with: Data(normalized)) as? [String: Any] else {
+            throw HUDSourceError.invalid("Original WatchBlur sidecar must be a complete JSON object")
+        }
+        return object
     }
 
     /// A profile name is descriptive, not a whitelist: reconstructed RGB ICC profiles
