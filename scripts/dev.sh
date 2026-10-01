@@ -98,6 +98,7 @@ if [ ! -d "$DEV_APP" ]; then
     # Prepared cells replace the full atlas in the running app. Keep the original in source.
     if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
+    ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
     cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$STAGED_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
@@ -118,6 +119,7 @@ else
     # Prepared cells replace the full atlas in the running app. Keep the original in source.
     if [ -d "$DEV_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$DEV_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$DEV_APP/Contents/Resources/WorldMap"
+    ditto "$PROJECT_DIR/Resources/Watch" "$DEV_APP/Contents/Resources/Watch"
     cp "$PROJECT_DIR/CREDITS.md" "$DEV_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$DEV_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$DEV_APP" "$SPARKLE_DIR"
