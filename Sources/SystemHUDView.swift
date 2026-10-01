@@ -7,7 +7,9 @@ import Quartz
 /// Finite deployment, pointer response, and ambient tracks have separate owners.
 /// All motion stops before this view is hidden or released.
 final class SystemHUDView: NSView, HUDControlFeedbackHost {
-    static let entranceDuration: TimeInterval = 0.55
+    // Controller deadlines cover the original Watch wrapper's 0.75s clip.
+    // The other macOS module shells retain their existing deployment cues.
+    static let entranceDuration: TimeInterval = 0.75
     static let exitDuration: TimeInterval = HUDChargeBadge.exitDuration
     var onClose: (() -> Void)?
     var onQuitConfirmed: (() -> Void)?
@@ -24,16 +26,23 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     // Read once at deployment/start, without waiting for a mouse-moved event.
     // The graphical harness can provide a stationary screen point.
     var pointerLocationProvider: () -> CGPoint = { NSEvent.mouseLocation }
+    private var sourceWatch: HUDSourceWatchView?
+    private var sourceWatchFailure: NSTextField?
+    private var sourceWatchFailureReason: String?
+    private var sourceOverviewPresented = false
+    private var displaysSourceOverview: Bool { selectedModule == .power }
+    var sourceWatchForVerification: HUDSourceWatchView? { sourceWatch }
+    var sourceFailureForVerification: String? { sourceWatchFailureReason }
     var workFocusStatusMessage: String? {
         didSet { workCanvas.setFocusStatusMessage(workFocusStatusMessage) }
     }
     var interactionEnabled = false {
         didSet {
             updateButtonStates()
-            if interactionEnabled { scheduleVisibleMotion(); refreshChargeHover(); headerClock.setActive(window != nil) }
+            if interactionEnabled { scheduleVisibleMotion(); refreshChargeHover(); headerClock.setActive(window != nil && !displaysSourceOverview) }
             else {
                 deactivateModuleInput()
-                if motion.isPointerFollowing {
+                if motion.isPointerFollowing && !displaysSourceOverview {
                     motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion,
                                                  initialPoint: currentPointerTarget())
                 }
@@ -151,7 +160,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var summonedDuringFileDrag = false
     var isAwaitingFileDrop: Bool { (summonedDuringFileDrag || shelfNavigationDropTarget) && NSEvent.pressedMouseButtons & 1 != 0 }
     private var notesWorkspaceIsInteractive: Bool {
-        allowsModuleInput && !moduleContent.isTransitioning
+        allowsModuleInput && !displaysSourceOverview && !moduleContent.isTransitioning
     }
     private var settingsInteraction: HUDSettingsInteraction? {
         guard allowsModuleInput, !moduleContent.isTransitioning else { return nil }
@@ -368,6 +377,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                     let wasRetracting = self.retracting
                     self.cancelAnimations()
                     if wasRetracting {
+                        self.sourceOverviewPresented = false
+                        self.sourceWatch?.conceal()
+                        self.updateSourceOverviewPresentation(stable: false)
                         self.withoutActions { self.canvas.opacity = 0; self.backdrop.opacity = 0; self.blurBackdrop.layer?.opacity = 0; self.notesWorkspace.opacity = 0 }
                     } else { self.showStable() }
                     completion?()
@@ -383,6 +395,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // immediately before the first frame can be presented.
         notesCanvas.setPresentation(notesSelected: initialModule == .notes, animated: false)
         updateContent()
+        configureSourceWatch()
         prepareInitialModule(initialModule)
         withoutActions { self.backdrop.opacity = 0; self.canvas.opacity = 0 }
     }
@@ -399,6 +412,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     override func layout() {
         super.layout()
+        sourceWatch?.frame = bounds
+        sourceWatchFailure?.frame = CGRect(x: max(24, (bounds.width - 640) / 2), y: max(24, (bounds.height - 90) / 2),
+                                          width: max(1, min(640, bounds.width - 48)), height: 90)
         if notesLayoutSize != bounds.size {
             notesInteraction?.finishEditing()
             notesInteraction?.mouseUp()
@@ -469,10 +485,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             removeClickFeedbackMonitor()
             removeSettingsCaptureMonitor()
             cancelAnimations()
+            sourceWatch?.conceal()
+            sourceOverviewPresented = false
         } else {
             installClickFeedbackMonitor()
             installSettingsCaptureMonitor()
-            if interactionEnabled { scheduleVisibleMotion(); headerClock.setActive(true) }
+            if interactionEnabled { scheduleVisibleMotion(); headerClock.setActive(!displaysSourceOverview) }
         }
     }
 
@@ -496,6 +514,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         self.configuration = configuration
         headerClock.setFormat(configuration.clockFormat)
         HUDRuntimeAppearance.configuration = configuration
+        sourceWatch?.refreshMotionPreferences()
         let scaleChanged = old.hudScale != configuration.hudScale
         let layoutChanged = scaleChanged || old.hudOffsetX != configuration.hudOffsetX || old.hudOffsetY != configuration.hudOffsetY
         let previousTransform = canvas.presentation()?.transform ?? canvas.transform
@@ -538,7 +557,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// only once the controller has enabled interaction on an attached view.
     func showStable(preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false) {
         cancelAnimations(preservingChargeAnimation: preservingChargeAnimation, preservingPointerMotion: preservingPointerMotion)
-        headerClock.setActive(window != nil)
+        sourceOverviewPresented = true
+        headerClock.setActive(window != nil && !displaysSourceOverview)
         retracting = false
         if !preservingPointerMotion { motion.stop(freezePresentation: false) }
         layoutSubtreeIfNeeded()
@@ -573,11 +593,16 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             for item in self.contentGroups { item.opacity = 1; item.transform = CATransform3DIdentity }
         }
         if !preservingChargeAnimation { chargeBadge.setStable() }
+        updateSourceOverviewPresentation(stable: true)
         updateButtonStates()
     }
 
     func animateEntrance(completion: @escaping () -> Void = {}) {
         showStable()
+        if displaysSourceOverview {
+            animateSourceEntrance(completion: completion)
+            return
+        }
         motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
         // Start geography while the mechanical shell deploys. Input and pin
         // animation stay disabled until opening completes; raster work is
@@ -639,6 +664,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     func animateExit(completion: @escaping () -> Void = {}) {
+        if displaysSourceOverview {
+            animateSourceExit(completion: completion)
+            return
+        }
         let blurOpacity = blurBackdrop.layer?.presentation()?.opacity ?? blurBackdrop.layer?.opacity ?? 0
         // Freeze ambient rotations, but keep event-driven pointer response on
         // the spatial layers while the separate deployment wrappers retract.
@@ -745,6 +774,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func scheduleVisibleMotion() {
+        if displaysSourceOverview {
+            motion.stop(freezePresentation: false)
+            headerClock.setActive(false)
+            sourceWatch?.inputEnabled = allowsModuleInput
+            sourceWatch?.refreshMotionPreferences()
+            return
+        }
         if transitioning, window != nil {
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion,
                                          initialPoint: currentPointerTarget())
@@ -761,11 +797,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     func stopMotionForConcealment() {
         motion.stop(freezePresentation: true)
+        sourceWatch?.suspendForConcealment()
         headerClock.setActive(false)
     }
 
     func cancelAnimations(preserveClickFeedback: Bool = false, preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false) {
         headerClock.setActive(false)
+        sourceWatch?.suspendForConcealment()
         deactivateModuleInput()
         generation += 1 // A transaction completion can fire when animations are removed.
         transitioning = false
@@ -776,7 +814,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         identityCard.resetInteraction()
         navigation.cancelAnimations()
         navigation.select(selectedModule, animated: false)
-        if preservingPointerMotion {
+        if preservingPointerMotion && !displaysSourceOverview {
             motion.startPointerFollowing(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
         } else { motion.stop(freezePresentation: true) }
         if quitConfirmationPending {
@@ -800,6 +838,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             notesCanvas.setPresentation(notesSelected: selectedModule == .notes, animated: false)
             updateModulePresentation()
         }
+        sourceWatch?.suspendForConcealment()
         updateButtonStates()
     }
 
@@ -908,7 +947,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// Exercises the same bounded pointer path from the local lifecycle harness.
     func setPointerForVerification(_ point: CGPoint) {
-        guard window != nil, interactionEnabled || transitioning else { return }
+        guard !displaysSourceOverview, window != nil, interactionEnabled || transitioning else { return }
         motion.setParallax(normalizedPoint: point)
     }
 
@@ -979,9 +1018,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     func selectModule(_ module: HUDModule, animated: Bool = true) {
         guard allowsModuleInput else { return }
         guard module != selectedModule else { return }
+        let leavingSourceOverview = displaysSourceOverview
         deactivateModuleInput()
         selectedModule = module
-        let shouldAnimate = animated && !HUDRuntimeAppearance.reduceMotion
+        let shouldAnimate = animated && !HUDRuntimeAppearance.reduceMotion && !displaysSourceOverview
         navigation.select(module, animated: shouldAnimate)
         moduleContent.select(module: module, animated: shouldAnimate) { [weak self] in
             guard let self = self, self.interactionEnabled, !self.transitioning else { return }
@@ -1005,9 +1045,14 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         notesCanvas.setPresentation(notesSelected: module == .notes, animated: shouldAnimate)
         updateButtonStates()
         updateNavigationGeometry()
+        if leavingSourceOverview && !displaysSourceOverview {
+            motion.start(reducedMotion: HUDRuntimeAppearance.reduceMotion, initialPoint: currentPointerTarget())
+        }
+        scheduleVisibleMotion()
     }
 
     private func updateModulePresentation() {
+        updateSourceOverviewPresentation(stable: sourceOverviewPresented)
         updateProfileBackgroundPresentation()
         withoutActions {
             self.moduleContent.layer.position = CGPoint(x: 500, y: self.reportCenterY)
@@ -1068,12 +1113,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func followCurrentPointer() {
-        guard let window, window.isVisible, !window.ignoresMouseEvents,
+        guard !displaysSourceOverview, let window, window.isVisible, !window.ignoresMouseEvents,
               interactionEnabled || transitioning, !isModuleInputLocked else { return }
         motion.setParallax(normalizedPoint: currentPointerTarget())
     }
 
     private func updateHover(_ event: NSEvent) {
+        guard !displaysSourceOverview else { return }
         followCurrentPointer()
         guard allowsModuleInput, window?.ignoresMouseEvents != true else { return }
         let location = convert(event.locationInWindow, from: nil)
@@ -1087,7 +1133,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func refreshChargeHover() {
-        guard allowsModuleInput, let window, !window.ignoresMouseEvents else { return }
+        guard !displaysSourceOverview, allowsModuleInput, let window, !window.ignoresMouseEvents else { return }
         let point = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
         let notesCoverPointer = notesWorkspaceIsInteractive
             && notesWorkspacePoint(point).map { notesCanvas.containsWorkspacePoint($0) } == true
@@ -1155,6 +1201,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     /// dismisses the menu instead of activating whatever is behind it.
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
+        if quitConfirmationPending { return super.hitTest(point) }
+        if displaysSourceOverview, sourceOverviewPresented, bounds.contains(local) {
+            return sourceWatch?.isHidden == false ? sourceWatch : self
+        }
         if profileIsInteractive, profileInteraction?.capturesPointer == true,
            bounds.contains(local) {
             return profileInteraction?.hitTestEditor(at: local) ?? self
@@ -1180,6 +1230,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     override func mouseDown(with event: NSEvent) {
+        if displaysSourceOverview { return }
         guard !quitConfirmationPending, !quitCommitted else { return }
         summonedDuringFileDrag = false
         // The controller can queue an outside-click dismissal while the finite
@@ -1274,6 +1325,23 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             context.setFillColor(background)
             context.fill(bounds)
         }
+        if displaysSourceOverview {
+            guard let sourceWatch, !sourceWatch.isHidden, sourceWatchFailureReason == nil else {
+                throw HUDSourceError.invalid("Source Watch is unavailable: \(sourceWatchFailureReason ?? "concealed")")
+            }
+            let source = try sourceWatch.renderedImageForVerification()
+            // Drawable pixels already use raster top-to-bottom rows. Undo
+            // the AppKit layer-tree flip before drawing that CGImage.
+            context.scaleBy(x: 1, y: -1)
+            context.translateBy(x: 0, y: -bounds.height)
+            context.draw(source, in: bounds)
+            guard let cgImage = context.makeImage(),
+                  let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .png, properties: [:]) else {
+                throw NSError(domain: "PowerOverlay", code: 2)
+            }
+            try data.write(to: url, options: .atomic)
+            return
+        }
         (presentation ? backdrop.presentation() ?? backdrop : backdrop).render(in: context)
         context.saveGState()
         context.translateBy(x: designOrigin.x, y: designOrigin.y)
@@ -1289,6 +1357,117 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private var contentGroups: [CALayer] { [header, navigation.layer, footer] }
+
+    private func configureSourceWatch() {
+        do {
+            let view = try HUDSourceWatchView(frame: bounds)
+            view.isHidden = true
+            view.pointerLocationProvider = { [weak self] in self?.pointerLocationProvider() ?? NSEvent.mouseLocation }
+            view.onAction = { [weak self] action in
+                guard let self, self.allowsModuleInput else { return }
+                self.selectModule(action.module)
+            }
+            view.onClose = { [weak self] in
+                guard let self, self.allowsModuleInput else { return }
+                self.onClose?()
+            }
+            view.onFailure = { [weak self] reason in
+                guard let self else { return }
+                self.presentSourceFailure(reason)
+            }
+            sourceWatch = view
+            addSubview(view)
+        } catch { presentSourceFailure(String(describing: error)) }
+    }
+
+    private func presentSourceFailure(_ reason: String) {
+        sourceWatchFailureReason = reason
+        sourceWatch?.conceal()
+        let field = sourceWatchFailure ?? NSTextField(wrappingLabelWithString: "")
+        NSLog("Source Watch render failure: %@", reason)
+        field.stringValue = L10n.text("The original menu could not be rendered. Please check the log.", "原始菜单无法渲染，请查看日志。")
+        field.textColor = .labelColor
+        field.alignment = .center
+        field.font = .systemFont(ofSize: 15)
+        field.setAccessibilityRole(.staticText)
+        if sourceWatchFailure == nil { sourceWatchFailure = field; addSubview(field) }
+        field.isHidden = !displaysSourceOverview || !sourceOverviewPresented
+        needsLayout = true
+        // A render failure must not leave the overlay input locked forever.
+        // The owner still gets its finite transition completion exactly once.
+        if transitioning {
+            let handler = transitionCompletion
+            transitionCompletion = nil; transitioning = false
+            updateButtonStates()
+            handler?()
+        }
+    }
+
+    private func updateSourceOverviewPresentation(stable: Bool) {
+        let overview = displaysSourceOverview
+        if overview { motion.stop(freezePresentation: false) }
+        withoutActions {
+            self.canvas.isHidden = overview
+            self.backdrop.isHidden = overview
+            self.notesWorkspace.isHidden = overview
+            self.actionFeedback.isHidden = overview
+        }
+        headerClock.setActive(window != nil && interactionEnabled && !overview)
+        sourceWatchFailure?.isHidden = !overview || !sourceOverviewPresented || sourceWatchFailureReason == nil
+        guard let sourceWatch else { return }
+        if overview && sourceOverviewPresented && sourceWatchFailureReason == nil {
+            sourceWatch.isHidden = false
+            if stable, sourceWatch.playback.phase == .concealed { sourceWatch.showStable() }
+            sourceWatch.inputEnabled = allowsModuleInput
+        } else { sourceWatch.conceal() }
+    }
+
+    private func animateSourceEntrance(completion: @escaping () -> Void) {
+        transitioning = true; retracting = false; transitionCompletion = completion
+        let token = generation
+        updateButtonStates()
+        guard let sourceWatch, sourceWatchFailureReason == nil else {
+            transitioning = false; transitionCompletion = nil
+            DispatchQueue.main.async { [weak self] in
+                guard self?.generation == token else { return }; completion()
+            }
+            return
+        }
+        if !HUDRuntimeAppearance.reduceMotion {
+            animateBlur(from: 0, to: 1, duration: sourceWatch.document.animation.entrance.lastKeyTime)
+        }
+        sourceWatch.open { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == token else { return }
+                self.transitioning = false; self.transitionCompletion = nil
+                self.updateButtonStates(); completion()
+            }
+        }
+    }
+
+    private func animateSourceExit(completion: @escaping () -> Void) {
+        let blur = blurBackdrop.layer?.presentation()?.opacity ?? blurBackdrop.layer?.opacity ?? 0
+        cancelAnimations(preserveClickFeedback: true)
+        transitioning = true; retracting = true; transitionCompletion = completion
+        let token = generation
+        updateButtonStates()
+        let finish: () -> Void = { [weak self] in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == token else { return }
+                self.sourceOverviewPresented = false
+                self.transitioning = false; self.transitionCompletion = nil
+                self.withoutActions { self.blurBackdrop.layer?.opacity = 0 }
+                self.updateSourceOverviewPresentation(stable: false)
+                self.updateButtonStates(); completion()
+            }
+        }
+        withoutActions { self.blurBackdrop.layer?.opacity = 0 }
+        guard let sourceWatch, sourceWatchFailureReason == nil else { finish(); return }
+        if !HUDRuntimeAppearance.reduceMotion {
+            animateBlur(from: blur, to: 0, duration: sourceWatch.document.animation.exit.lastKeyTime)
+        }
+        sourceWatch.close(completion: finish)
+    }
 
     private func buildDepthLayers() {
         vignette.type = .radial
@@ -1591,6 +1770,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func updateButtonStates() {
+        sourceWatch?.inputEnabled = displaysSourceOverview && sourceOverviewPresented && allowsModuleInput
         notesInteraction?.setActive(notesWorkspaceIsInteractive)
         shelfInteraction?.setActive(shelfIsInteractive)
         clipboardInteraction?.setActive(clipboardIsInteractive)
@@ -1605,18 +1785,20 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         for (module, input) in settingsInteractions {
             input.setActive(allowsModuleInput && !moduleContent.isTransitioning && selectedModule == module)
         }
-        closeHUDButton.isEnabled = allowsModuleInput
+        closeHUDButton.isHidden = displaysSourceOverview
+        closeHUDButton.isEnabled = allowsModuleInput && !displaysSourceOverview
         closeHUDButton.setAccessibilityLabel(L10n.text("Quit EndfieldHUD", "退出 EndfieldHUD"))
         let visible = Set(navigation.visibleEntries.map(\.target))
         for entry in navigation.entries {
             guard let button = navigationButtons[entry.target] else { continue }
-            button.isHidden = !visible.contains(entry.target)
+            button.isHidden = displaysSourceOverview || !visible.contains(entry.target)
             button.isEnabled = allowsModuleInput && !button.isHidden
             button.setAccessibilityLabel(entry.navigationTitle)
             if entry.module == .power { button.setAccessibilityHelp(chargeBadge.accessibilityLabel) }
             button.setAccessibilityValue(entry.isSelected ? L10n.text("Selected", "已选择") : L10n.text("Not selected", "未选择"))
         }
         for (direction, button) in navigationScrollButtons {
+            button.isHidden = displaysSourceOverview
             button.isEnabled = allowsModuleInput && (direction < 0 ? navigation.canScrollUp : navigation.canScrollDown)
             button.setAccessibilityLabel(direction < 0 ? L10n.text("Scroll modules up", "向上滚动模块") : L10n.text("Scroll modules down", "向下滚动模块"))
         }

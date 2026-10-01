@@ -31,12 +31,33 @@
       ]
     },
     {
+      "method": "RegionMapSetting._RefreshMaterials",
+      "address": "0x18359a990",
+      "file": "RegionMapSetting--_RefreshMaterials--386895.asm.txt",
+      "facts": [
+        "Called by InitData at0x1833bd546 after source loading.",
+        "Enumerates Renderer instances and all instantiated material slots, then SetInt(_RegionMapEditor, showType != 1).",
+        "Watch showType1 sets _RegionMapEditor=0. This does not set _OuterColor."
+      ]
+    },
+    {
+      "method": "RegionMapSetting.SetControllerLevelSelectedState",
+      "address": "0x18a0bcde8",
+      "file": "RegionMapSetting--SetControllerLevelSelectedState--386906.asm.txt",
+      "facts": [
+        "Looks up cfg[level]._model root and its MeshRenderer, not every descendant mesh.",
+        "Reads existing MaterialPropertyBlock; selected flag chooses _selectedModelOuterColor (+0xb0) or _normalModelOuterColor (+0xa0); SetColor(_OuterColor) then applies the block.",
+        "No invocation from Watch InitData or extracted WatchCtrl is established. Do not default all loaded meshes to either selection color."
+      ]
+    },
+    {
       "method": "RegionMapSetting.StartRegionRectTransformMoveRotationTween",
-      "address": "0x183a07ce0",
+      "address": "0x183a07cc0",
       "file": "RegionMapSetting--StartRegionRectTransformMoveRotationTween--386904.asm.txt",
       "facts": [
-        "Rotation target _moveFinalRotation belongs to loadedRegionTransform (+0xd8), the Watch view.domainRoot passed by caller.",
-        "DORotateQuaternion applies a world quaternion, not a local Euler override on each ModelNode."
+        "Rotation target _moveFinalRotation belongs to loadedRegionTransform (+0xd8), written only by SetLoadedRegionTransform in the inspected methods.",
+        "DORotateQuaternion applies a world quaternion, not a local Euler override on each ModelNode.",
+        "WatchCtrl Lua does not call SetLoadedRegionTransform or this rotation tween. InitData does not store its domainRoot argument into +0xd8. Applying this rotation to Watch is not established."
       ]
     },
     {

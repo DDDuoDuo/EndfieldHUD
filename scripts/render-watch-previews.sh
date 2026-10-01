@@ -11,6 +11,7 @@ mkdir -p "$PREVIEW_DIR" "$RUNTIME_DIR/module-cache" \
 
 # Compile the existing fixture renderer with the app's real drawing code.
 # Keep its isolated app bundle outside the uploaded PNG/metadata directory.
+# Includes HUDSourceWatchDomain with the other app rendering sources.
 SOURCES=()
 for source in "$PROJECT_DIR"/Sources/*.swift; do
     if [[ "$source" != */main.swift ]]; then SOURCES+=("$source"); fi

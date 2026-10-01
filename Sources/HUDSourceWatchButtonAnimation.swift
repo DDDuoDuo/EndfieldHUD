@@ -92,6 +92,24 @@ final class HUDSourceWatchButtonAnimation {
     var instanceIDs: [HUDSourceID] { order }
     func state(on id: HUDSourceID) -> State? { instances[id]?.playback.state }
 
+    /// The host owns the timer. Querying demand does not advance the sampler's
+    /// monotonic clock or restart a steady Highlighted endpoint.
+    func requiresFrames(at value: Double) -> Bool {
+        guard value.isFinite else { return false }
+        let time = max(clock ?? value, value)
+        for id in order {
+            guard let instance = instances[id], let config = configurations[id] else { continue }
+            if let blend = instance.blend, time - blend.started < blend.duration { return true }
+            guard !instance.playback.endpoint, let template = config.templates[instance.playback.state],
+                  !template.clip.curves.isEmpty, template.clip.lastKeyTime > 0, template.speed != 0 else { continue }
+            let local = max(0, time - instance.playback.started) * template.speed
+                + template.cycleOffset * template.clip.lastKeyTime
+            if template.speed > 0 && local < template.clip.lastKeyTime { return true }
+            if template.speed < 0 && local > 0 { return true }
+        }
+        return false
+    }
+
     func setState(_ state: State, on id: HUDSourceID, at time: Double, reduceMotion: Bool = false) {
         guard let time = advance(time), let config = configurations[id], var instance = instances[id],
               let transition = config.transitions.first(where: { $0.destination == state && $0.source == instance.playback.state })

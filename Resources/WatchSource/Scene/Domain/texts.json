@@ -1,1 +1,4455 @@
-{"texts":[{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_ui.prefab","node_id":"CAB-6d5929a2599ef8c507c844356fe8c76c:8665760827534228738","path":"map01_lv001_ui/TxtName","component_id":"CAB-6d5929a2599ef8c507c844356fe8c76c:-2596523784930640638","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"2407739421568744706","target_id":"CAB-6d5929a2599ef8c507c844356fe8c76c:2407739421568744706"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_ui.prefab","node_id":"CAB-8ebb073c93cd47415c814dfb3e41e34c:-1497524258140407463","path":"map01_lv002_ui/TxtName","component_id":"CAB-8ebb073c93cd47415c814dfb3e41e34c:959223968083982681","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"7540450230354753881","target_id":"CAB-8ebb073c93cd47415c814dfb3e41e34c:7540450230354753881"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_ui.prefab","node_id":"CAB-e17a0bb6fc3e75c2c61fb5deffdde581:7560139542220035804","path":"map01_lv003_ui/TxtName","component_id":"CAB-e17a0bb6fc3e75c2c61fb5deffdde581:-869724752870058276","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-9052885846260394276","target_id":"CAB-e17a0bb6fc3e75c2c61fb5deffdde581:-9052885846260394276"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"aburrey quarry","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":21.450000762939453,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":16.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_ui.prefab","node_id":"CAB-2168f920aabe0b8c084050675288a7ab:-1229004509416736556","path":"map01_lv005_ui/TxtName","component_id":"CAB-2168f920aabe0b8c084050675288a7ab:2306573859115612372","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"9047473926821820628","target_id":"CAB-2168f920aabe0b8c084050675288a7ab:9047473926821820628"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"Originium science park","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":22.100000381469727,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_ui.prefab","node_id":"CAB-e1bb39562923905e19dbcb9db6b157e3:-2128798329380024834","path":"map01_lv006_ui/TxtName","component_id":"CAB-e1bb39562923905e19dbcb9db6b157e3:3243199514008931838","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-430350809157612034","target_id":"CAB-e1bb39562923905e19dbcb9db6b157e3:-430350809157612034"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"origin lodespring","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_ui.prefab","node_id":"CAB-d2d0ca2952e6ce0fe29d1cf6a256380f:-8321489901446073355","path":"map01_lv007_ui/TxtName","component_id":"CAB-d2d0ca2952e6ce0fe29d1cf6a256380f:7955504185445413877","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-4189292476577582091","target_id":"CAB-d2d0ca2952e6ce0fe29d1cf6a256380f:-4189292476577582091"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"POWER PLATEAU","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_indie_dg016_ui.prefab","node_id":"CAB-499ee57384a28998a0caeb3148f70b6f:180681154455374118","path":"map02_indie_dg016_ui/TxtName","component_id":"CAB-499ee57384a28998a0caeb3148f70b6f:-6652633376959526618","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"7137045435360250150","target_id":"CAB-499ee57384a28998a0caeb3148f70b6f:7137045435360250150"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_ui.prefab","node_id":"CAB-8aaa17ea6d2bdb9322479869be10edb2:-1200640510140957122","path":"map02_lv001_ui/TxtName","component_id":"CAB-8aaa17ea6d2bdb9322479869be10edb2:791857705947807294","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"563480140354403902","target_id":"CAB-8aaa17ea6d2bdb9322479869be10edb2:563480140354403902"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_ui.prefab","node_id":"CAB-09a447368d51795d327346353aabc9b2:3066538699244584348","path":"map02_lv002_ui/TxtName","component_id":"CAB-09a447368d51795d327346353aabc9b2:4324693133709491612","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"6798639701208939932","target_id":"CAB-09a447368d51795d327346353aabc9b2:6798639701208939932"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_ui.prefab","node_id":"CAB-da46b7f8d0cec98292ddd800baa14e5a:-3946835056180576878","path":"map02_lv003_ui/TxtName","component_id":"CAB-da46b7f8d0cec98292ddd800baa14e5a:4778113685335326098","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"2359178147410034066","target_id":"CAB-da46b7f8d0cec98292ddd800baa14e5a:2359178147410034066"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_ui.prefab","node_id":"CAB-0fe9ced5f196866b7cabc111d60c70b8:-5496766257673700385","path":"map02_lv004_ui/TxtName","component_id":"CAB-0fe9ced5f196866b7cabc111d60c70b8:-3217084775067124769","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-8704657483835409441","target_id":"CAB-0fe9ced5f196866b7cabc111d60c70b8:-8704657483835409441"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_ui.prefab","node_id":"CAB-54a8c162f3797d2324a5043d20f9a3b1:-986731719424720758","path":"map02_lv005_ui/TxtName","component_id":"CAB-54a8c162f3797d2324a5043d20f9a3b1:-2375188415740428150","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"5606104603542896778","target_id":"CAB-54a8c162f3797d2324a5043d20f9a3b1:5606104603542896778"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_ui.prefab","node_id":"CAB-621485b524b56f685af645d4cd006370:3346435656754978022","path":"map02_lv006_ui/TxtName","component_id":"CAB-621485b524b56f685af645d4cd006370:-3071924622119346970","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"7341294504911035622","target_id":"CAB-621485b524b56f685af645d4cd006370:7341294504911035622"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_ui.prefab","node_id":"CAB-5e77c3b9e0f0b26289b8761d1da11497:-2845154209081568522","path":"map02_lv007_ui/TxtName","component_id":"CAB-5e77c3b9e0f0b26289b8761d1da11497:-7464564572618403082","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-4890925514109267210","target_id":"CAB-5e77c3b9e0f0b26289b8761d1da11497:-4890925514109267210"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_ui.prefab","node_id":"CAB-37a0d67984d6954d484d9f6bbdd6cbda:-8754064123593478475","path":"map02_lv008_ui/TxtName","component_id":"CAB-37a0d67984d6954d484d9f6bbdd6cbda:6602900600624983733","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-1031186037822705995","target_id":"CAB-37a0d67984d6954d484d9f6bbdd6cbda:-1031186037822705995"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_ui.prefab","node_id":"CAB-68b6dfa62af239442a97775f4fd74fe2:2775514171056624878","path":"map02_lv009_ui/TxtName","component_id":"CAB-68b6dfa62af239442a97775f4fd74fe2:-6103518467758320402","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"4629480797823407342","target_id":"CAB-68b6dfa62af239442a97775f4fd74fe2:4629480797823407342"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"枢纽区","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":2,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":1,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":1,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/spaceship.prefab","node_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:8579064649456197964","path":"Spaceship/UINode/SpaceshipInfo/Name","component_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:8644751557541405004","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-7949345334802603700","target_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:-7949345334802603700"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":12,"m_PathID":"6848484752109354518","target_id":"CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4294967295},"m_fontColor":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":26.0,"m_fontSizeBase":26.0,"m_showPhonetic":0,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":22.0,"m_fontSizeMax":26.0,"m_fontStyle":16,"m_HorizontalAlignment":2,"m_VerticalAlignment":1024,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":0,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":0,"_textId":"ui_MapPanelNew_ship","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"ui_MapPanelNew_ship","numeric_id":"10037910997615046827","literal_cn":"O.M.V.帝江号"},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/spaceship.prefab","node_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:-2365765325148806836","path":"Spaceship/UINode/SpaceshipInfo/Grade/GradeName","component_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:7732966644710154572","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-165886221522656948","target_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:-165886221522656948"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4292664540},"m_fontColor":{"r":0.8627451062202454,"g":0.8627451062202454,"b":0.8627451062202454,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":25.549999237060547,"m_fontSizeBase":24.0,"m_showPhonetic":0,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":18.0,"m_fontSizeMax":26.0,"m_fontStyle":0,"m_HorizontalAlignment":1,"m_VerticalAlignment":256,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":0,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":0,"_textId":"ui_map_spaceship_level","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"ui_map_spaceship_level","numeric_id":"16364314346493496678","literal_cn":"总控中枢等级"},{"source_asset":"assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/spaceship.prefab","node_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:-4472264208313245364","path":"Spaceship/UINode/SpaceshipInfo/Grade/LvTxt","component_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:-231348778197343924","data":{"m_GameObject":{"m_FileID":0,"m_PathID":"-1051003215362285236","target_id":"CAB-024a4471c2adc03e62764e75f1b8ee80:-1051003215362285236"},"m_Enabled":1,"m_Script":{"m_FileID":1,"m_PathID":"-1383315689472994052","target_id":"CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"},"m_Name":"","m_Material":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_Color":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"m_RaycastTarget":0,"m_RaycastPadding":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_RaycastIgnoreMask":0,"m_Maskable":1,"m_OnCullStateChanged":{"m_PersistentCalls":{"m_Calls":[]}},"m_text":"5","m_isRightToLeft":0,"m_serializedFontAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_serializedSharedMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontSharedMaterials":[],"m_fontMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_fontMaterials":[],"m_fontColor32":{"rgba":4289769648},"m_fontColor":{"r":0.6918238401412964,"g":0.6918238401412964,"b":0.6918238401412964,"a":1.0},"m_enableVertexGradient":0,"m_colorMode":3,"m_fontColorGradient":{"topLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"topRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomLeft":{"r":1.0,"g":1.0,"b":1.0,"a":1.0},"bottomRight":{"r":1.0,"g":1.0,"b":1.0,"a":1.0}},"m_fontColorGradientPreset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_spriteAsset":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_tintAllSprites":0,"m_StyleSheet":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_TextStyleHashCode":-1183493901,"m_overrideHtmlColors":0,"m_faceColor":{"rgba":4294967295},"m_fontSize":25.549999237060547,"m_fontSizeBase":26.0,"m_showPhonetic":0,"m_needParseActionId":0,"m_fontWeight":400,"m_enableAutoSizing":1,"m_fontSizeMin":18.0,"m_fontSizeMax":26.0,"m_fontStyle":0,"m_HorizontalAlignment":1,"m_VerticalAlignment":256,"m_textAlignment":65535,"m_characterSpacing":0.0,"m_wordSpacing":0.0,"m_lineSpacing":0.0,"m_lineSpacingMax":0.0,"m_paragraphSpacing":0.0,"m_charWidthMaxAdj":0.0,"m_enableWordWrapping":1,"m_wordWrappingRatios":0.4000000059604645,"m_overflowMode":0,"m_linkedTextComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"parentLinkedComponent":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_enableKerning":1,"m_enableExtraPadding":0,"checkPaddingRequired":0,"m_isRichText":0,"m_enableHyperlink":0,"m_linkExtraPadding":{"x":0.0,"y":0.0},"m_richTextColorBlend":0.0,"m_parseCtrlCharacters":1,"m_isOrthographic":1,"m_isCullingEnabled":0,"m_horizontalMapping":0,"m_verticalMapping":0,"m_uvLineOffset":0.0,"m_geometrySortingOrder":0,"m_IsTextObjectScaleStatic":0,"m_VertexBufferAutoSizeReduction":0,"m_useMaxVisibleDescender":1,"m_pageToDisplay":1,"m_margin":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"m_isUsingLegacyAnimationComponent":0,"m_isVolumetricText":0,"m_hasFontAssetChanged":0,"m_baseMaterial":{"m_FileID":0,"m_PathID":"0","target_id":null},"m_maskOffset":{"x":0.0,"y":0.0,"z":0.0,"w":0.0},"richTextStyleSeq":0,"_loadByCode":1,"_textId":"","_devOnly":0,"_externalStaticWidth":0,"_externalStaticHeight":0,"onClickLink":{"m_PersistentCalls":{"m_Calls":[]}},"onHoverLinkChange":{"m_PersistentCalls":{"m_Calls":[]}},"_hyperlinkUITextGroupId":"","_hyperlinkUITextOrder":0,"sourceCNFontId":-430371804,"useMinMaxSize":0,"maxSize":{"x":-1.0,"y":-1.0},"minSize":{"x":-1.0,"y":-1.0}},"text_id":"","numeric_id":null,"literal_cn":null}],"policy":"Serialized UIText fields retained. TextTable/I18nTextTable_CN join only; empty or unknown IDs are not filled with guessed labels."}
+{
+  "texts": [
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_ui.prefab",
+      "node_id": "CAB-6d5929a2599ef8c507c844356fe8c76c:8665760827534228738",
+      "path": "map01_lv001_ui/TxtName",
+      "component_id": "CAB-6d5929a2599ef8c507c844356fe8c76c:-2596523784930640638",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "2407739421568744706",
+          "target_id": "CAB-6d5929a2599ef8c507c844356fe8c76c:2407739421568744706"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "枢纽区",
+      "level_id": "map01_lv001",
+      "runtime_numeric_id": "7662556729362592955",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "枢纽区",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "枢纽区",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_ui.prefab",
+      "node_id": "CAB-8ebb073c93cd47415c814dfb3e41e34c:-1497524258140407463",
+      "path": "map01_lv002_ui/TxtName",
+      "component_id": "CAB-8ebb073c93cd47415c814dfb3e41e34c:959223968083982681",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "7540450230354753881",
+          "target_id": "CAB-8ebb073c93cd47415c814dfb3e41e34c:7540450230354753881"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "谷地通道",
+      "level_id": "map01_lv002",
+      "runtime_numeric_id": "2026806972916074596",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "谷地通道",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "谷地通道",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_ui.prefab",
+      "node_id": "CAB-e17a0bb6fc3e75c2c61fb5deffdde581:7560139542220035804",
+      "path": "map01_lv003_ui/TxtName",
+      "component_id": "CAB-e17a0bb6fc3e75c2c61fb5deffdde581:-869724752870058276",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-9052885846260394276",
+          "target_id": "CAB-e17a0bb6fc3e75c2c61fb5deffdde581:-9052885846260394276"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "aburrey quarry",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 21.450000762939453,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 16.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "阿伯莉采石场",
+      "level_id": "map01_lv003",
+      "runtime_numeric_id": "15651043983173525758",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "阿伯莉采石场",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "阿伯莉采石场",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_ui.prefab",
+      "node_id": "CAB-2168f920aabe0b8c084050675288a7ab:-1229004509416736556",
+      "path": "map01_lv005_ui/TxtName",
+      "component_id": "CAB-2168f920aabe0b8c084050675288a7ab:2306573859115612372",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "9047473926821820628",
+          "target_id": "CAB-2168f920aabe0b8c084050675288a7ab:9047473926821820628"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "Originium science park",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 22.100000381469727,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "源石研究园",
+      "level_id": "map01_lv005",
+      "runtime_numeric_id": "5217299503347306584",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "源石研究园",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "源石研究园",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_ui.prefab",
+      "node_id": "CAB-e1bb39562923905e19dbcb9db6b157e3:-2128798329380024834",
+      "path": "map01_lv006_ui/TxtName",
+      "component_id": "CAB-e1bb39562923905e19dbcb9db6b157e3:3243199514008931838",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-430350809157612034",
+          "target_id": "CAB-e1bb39562923905e19dbcb9db6b157e3:-430350809157612034"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "origin lodespring",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "矿脉源区",
+      "level_id": "map01_lv006",
+      "runtime_numeric_id": "16697878615473254519",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "矿脉源区",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "矿脉源区",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_ui.prefab",
+      "node_id": "CAB-d2d0ca2952e6ce0fe29d1cf6a256380f:-8321489901446073355",
+      "path": "map01_lv007_ui/TxtName",
+      "component_id": "CAB-d2d0ca2952e6ce0fe29d1cf6a256380f:7955504185445413877",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-4189292476577582091",
+          "target_id": "CAB-d2d0ca2952e6ce0fe29d1cf6a256380f:-4189292476577582091"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "POWER PLATEAU",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "供能高地",
+      "level_id": "map01_lv007",
+      "runtime_numeric_id": "1073573170169539789",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "供能高地",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "供能高地",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_indie_dg016_ui.prefab",
+      "node_id": "CAB-499ee57384a28998a0caeb3148f70b6f:180681154455374118",
+      "path": "map02_indie_dg016_ui/TxtName",
+      "component_id": "CAB-499ee57384a28998a0caeb3148f70b6f:-6652633376959526618",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "7137045435360250150",
+          "target_id": "CAB-499ee57384a28998a0caeb3148f70b6f:7137045435360250150"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": null,
+      "level_id": "map02_indie_dg016",
+      "runtime_text_source": "SceneBasicInfo.TryGetValue returned no installed LevelDescData",
+      "runtime_localization_resolved": false
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_ui.prefab",
+      "node_id": "CAB-8aaa17ea6d2bdb9322479869be10edb2:-1200640510140957122",
+      "path": "map02_lv001_ui/TxtName",
+      "component_id": "CAB-8aaa17ea6d2bdb9322479869be10edb2:791857705947807294",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "563480140354403902",
+          "target_id": "CAB-8aaa17ea6d2bdb9322479869be10edb2:563480140354403902"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "景玉谷",
+      "level_id": "map02_lv001",
+      "runtime_numeric_id": "2302067058462212963",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "けいぎょくこく ",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "景玉谷",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "景玉谷",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_ui.prefab",
+      "node_id": "CAB-09a447368d51795d327346353aabc9b2:3066538699244584348",
+      "path": "map02_lv002_ui/TxtName",
+      "component_id": "CAB-09a447368d51795d327346353aabc9b2:4324693133709491612",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "6798639701208939932",
+          "target_id": "CAB-09a447368d51795d327346353aabc9b2:6798639701208939932"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "武陵城",
+      "level_id": "map02_lv002",
+      "runtime_numeric_id": "3661015786003670121",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "ぶりょうじょう",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "武陵城",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "武陵城",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_ui.prefab",
+      "node_id": "CAB-da46b7f8d0cec98292ddd800baa14e5a:-3946835056180576878",
+      "path": "map02_lv003_ui/TxtName",
+      "component_id": "CAB-da46b7f8d0cec98292ddd800baa14e5a:4778113685335326098",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "2359178147410034066",
+          "target_id": "CAB-da46b7f8d0cec98292ddd800baa14e5a:2359178147410034066"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "清波寨",
+      "level_id": "map02_lv003",
+      "runtime_numeric_id": "12568708434129561101",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "せいはとりで",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "清波寨",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "清波寨",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_ui.prefab",
+      "node_id": "CAB-0fe9ced5f196866b7cabc111d60c70b8:-5496766257673700385",
+      "path": "map02_lv004_ui/TxtName",
+      "component_id": "CAB-0fe9ced5f196866b7cabc111d60c70b8:-3217084775067124769",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-8704657483835409441",
+          "target_id": "CAB-0fe9ced5f196866b7cabc111d60c70b8:-8704657483835409441"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "首墩",
+      "level_id": "map02_lv004",
+      "runtime_numeric_id": "6418967170731697021",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "しゅそ",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "首墩",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "首墩",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_ui.prefab",
+      "node_id": "CAB-54a8c162f3797d2324a5043d20f9a3b1:-986731719424720758",
+      "path": "map02_lv005_ui/TxtName",
+      "component_id": "CAB-54a8c162f3797d2324a5043d20f9a3b1:-2375188415740428150",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "5606104603542896778",
+          "target_id": "CAB-54a8c162f3797d2324a5043d20f9a3b1:5606104603542896778"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "试验园区",
+      "level_id": "map02_lv005",
+      "runtime_numeric_id": "9905067915535224238",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "试验园区",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "试验园区",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_ui.prefab",
+      "node_id": "CAB-621485b524b56f685af645d4cd006370:3346435656754978022",
+      "path": "map02_lv006_ui/TxtName",
+      "component_id": "CAB-621485b524b56f685af645d4cd006370:-3071924622119346970",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "7341294504911035622",
+          "target_id": "CAB-621485b524b56f685af645d4cd006370:7341294504911035622"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "藏剑谷",
+      "level_id": "map02_lv006",
+      "runtime_numeric_id": "13689561210434687330",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "ぞうけんこく",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "藏剑谷",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "藏剑谷",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_ui.prefab",
+      "node_id": "CAB-5e77c3b9e0f0b26289b8761d1da11497:-2845154209081568522",
+      "path": "map02_lv007_ui/TxtName",
+      "component_id": "CAB-5e77c3b9e0f0b26289b8761d1da11497:-7464564572618403082",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-4890925514109267210",
+          "target_id": "CAB-5e77c3b9e0f0b26289b8761d1da11497:-4890925514109267210"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "应龙关",
+      "level_id": "map02_lv007",
+      "runtime_numeric_id": "986571157967411676",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "おうりゅうせき",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "应龙关",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "应龙关",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_ui.prefab",
+      "node_id": "CAB-37a0d67984d6954d484d9f6bbdd6cbda:-8754064123593478475",
+      "path": "map02_lv008_ui/TxtName",
+      "component_id": "CAB-37a0d67984d6954d484d9f6bbdd6cbda:6602900600624983733",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-1031186037822705995",
+          "target_id": "CAB-37a0d67984d6954d484d9f6bbdd6cbda:-1031186037822705995"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "北部禁区",
+      "level_id": "map02_lv008",
+      "runtime_numeric_id": "17763582563463374278",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "北部禁区",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "cn_literal": "北部禁区",
+      "runtime_localization_resolved": true,
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_ui.prefab",
+      "node_id": "CAB-68b6dfa62af239442a97775f4fd74fe2:2775514171056624878",
+      "path": "map02_lv009_ui/TxtName",
+      "component_id": "CAB-68b6dfa62af239442a97775f4fd74fe2:-6103518467758320402",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "4629480797823407342",
+          "target_id": "CAB-68b6dfa62af239442a97775f4fd74fe2:4629480797823407342"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "枢纽区",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 2,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 1,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 1,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": "雪松林",
+      "level_id": "map02_lv009",
+      "runtime_numeric_id": "14357278639136974169",
+      "runtime_text_source": "LevelDescData.showName / I18nTextTable_CN",
+      "phonetic_name": "せつしょうりん",
+      "phonetic_type": "DomainNamePhonetic",
+      "runtime_show_name_cn": "雪松林",
+      "serialized_text_policy": "m_text remains the original prefab placeholder; runtime CN is separate",
+      "runtime_localization_resolved": true,
+      "runtime_annotation_requires_formatter": true,
+      "cn_literal": "雪松林",
+      "runtime_locale": "CN",
+      "phonetic_markup_in_language_enum": 2
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/spaceship.prefab",
+      "node_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:8579064649456197964",
+      "path": "Spaceship/UINode/SpaceshipInfo/Name",
+      "component_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:8644751557541405004",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-7949345334802603700",
+          "target_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:-7949345334802603700"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 12,
+          "m_PathID": "6848484752109354518",
+          "target_id": "CAB-c7002abd2f88dd20507005f341a00d7a:6848484752109354518"
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4294967295
+        },
+        "m_fontColor": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 26.0,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 0,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 22.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 16,
+        "m_HorizontalAlignment": 2,
+        "m_VerticalAlignment": 1024,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 0,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 0,
+        "_textId": "ui_MapPanelNew_ship",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "ui_MapPanelNew_ship",
+      "numeric_id": "10037910997615046827",
+      "literal_cn": "O.M.V.帝江号"
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/spaceship.prefab",
+      "node_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:-2365765325148806836",
+      "path": "Spaceship/UINode/SpaceshipInfo/Grade/GradeName",
+      "component_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:7732966644710154572",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-165886221522656948",
+          "target_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:-165886221522656948"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4292664540
+        },
+        "m_fontColor": {
+          "r": 0.8627451062202454,
+          "g": 0.8627451062202454,
+          "b": 0.8627451062202454,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 25.549999237060547,
+        "m_fontSizeBase": 24.0,
+        "m_showPhonetic": 0,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 18.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 0,
+        "m_HorizontalAlignment": 1,
+        "m_VerticalAlignment": 256,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 0,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 0,
+        "_textId": "ui_map_spaceship_level",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "ui_map_spaceship_level",
+      "numeric_id": "16364314346493496678",
+      "literal_cn": "总控中枢等级"
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/spaceship.prefab",
+      "node_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:-4472264208313245364",
+      "path": "Spaceship/UINode/SpaceshipInfo/Grade/LvTxt",
+      "component_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:-231348778197343924",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": "-1051003215362285236",
+          "target_id": "CAB-024a4471c2adc03e62764e75f1b8ee80:-1051003215362285236"
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": "-1383315689472994052",
+          "target_id": "CAB-5f527d7b7706baccdad9f794cf46420c:-1383315689472994052"
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 0,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_text": "5",
+        "m_isRightToLeft": 0,
+        "m_serializedFontAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_serializedSharedMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontSharedMaterials": [],
+        "m_fontMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_fontMaterials": [],
+        "m_fontColor32": {
+          "rgba": 4289769648
+        },
+        "m_fontColor": {
+          "r": 0.6918238401412964,
+          "g": 0.6918238401412964,
+          "b": 0.6918238401412964,
+          "a": 1.0
+        },
+        "m_enableVertexGradient": 0,
+        "m_colorMode": 3,
+        "m_fontColorGradient": {
+          "topLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "topRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomLeft": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          },
+          "bottomRight": {
+            "r": 1.0,
+            "g": 1.0,
+            "b": 1.0,
+            "a": 1.0
+          }
+        },
+        "m_fontColorGradientPreset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_spriteAsset": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_tintAllSprites": 0,
+        "m_StyleSheet": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_TextStyleHashCode": -1183493901,
+        "m_overrideHtmlColors": 0,
+        "m_faceColor": {
+          "rgba": 4294967295
+        },
+        "m_fontSize": 25.549999237060547,
+        "m_fontSizeBase": 26.0,
+        "m_showPhonetic": 0,
+        "m_needParseActionId": 0,
+        "m_fontWeight": 400,
+        "m_enableAutoSizing": 1,
+        "m_fontSizeMin": 18.0,
+        "m_fontSizeMax": 26.0,
+        "m_fontStyle": 0,
+        "m_HorizontalAlignment": 1,
+        "m_VerticalAlignment": 256,
+        "m_textAlignment": 65535,
+        "m_characterSpacing": 0.0,
+        "m_wordSpacing": 0.0,
+        "m_lineSpacing": 0.0,
+        "m_lineSpacingMax": 0.0,
+        "m_paragraphSpacing": 0.0,
+        "m_charWidthMaxAdj": 0.0,
+        "m_enableWordWrapping": 1,
+        "m_wordWrappingRatios": 0.4000000059604645,
+        "m_overflowMode": 0,
+        "m_linkedTextComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "parentLinkedComponent": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_enableKerning": 1,
+        "m_enableExtraPadding": 0,
+        "checkPaddingRequired": 0,
+        "m_isRichText": 0,
+        "m_enableHyperlink": 0,
+        "m_linkExtraPadding": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_richTextColorBlend": 0.0,
+        "m_parseCtrlCharacters": 1,
+        "m_isOrthographic": 1,
+        "m_isCullingEnabled": 0,
+        "m_horizontalMapping": 0,
+        "m_verticalMapping": 0,
+        "m_uvLineOffset": 0.0,
+        "m_geometrySortingOrder": 0,
+        "m_IsTextObjectScaleStatic": 0,
+        "m_VertexBufferAutoSizeReduction": 0,
+        "m_useMaxVisibleDescender": 1,
+        "m_pageToDisplay": 1,
+        "m_margin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_isUsingLegacyAnimationComponent": 0,
+        "m_isVolumetricText": 0,
+        "m_hasFontAssetChanged": 0,
+        "m_baseMaterial": {
+          "m_FileID": 0,
+          "m_PathID": "0",
+          "target_id": null
+        },
+        "m_maskOffset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "richTextStyleSeq": 0,
+        "_loadByCode": 1,
+        "_textId": "",
+        "_devOnly": 0,
+        "_externalStaticWidth": 0,
+        "_externalStaticHeight": 0,
+        "onClickLink": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "onHoverLinkChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_hyperlinkUITextGroupId": "",
+        "_hyperlinkUITextOrder": 0,
+        "sourceCNFontId": -430371804,
+        "useMinMaxSize": 0,
+        "maxSize": {
+          "x": -1.0,
+          "y": -1.0
+        },
+        "minSize": {
+          "x": -1.0,
+          "y": -1.0
+        }
+      },
+      "text_id": "",
+      "numeric_id": null,
+      "literal_cn": null
+    }
+  ],
+  "policy": "Original UIText fields retained. Level3D CN names use the exact SceneBasicInfo runtime level key and LevelDescData.showName numeric-ID join. Spaceship/account state remains unresolved."
+}

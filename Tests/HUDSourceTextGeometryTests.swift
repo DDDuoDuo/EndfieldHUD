@@ -51,8 +51,11 @@ enum HUDSourceTextGeometryTests {
             check(doubledScale.positions == mesh.positions && doubledScale.uv == mesh.uv,
                   "Animated world scale affects SDF scale without baking world geometry into local vertices")
             close(Double(doubledScale.uv2[0].y), Double(mesh.uv2[0].y) * 2, "SDF scale retargets with the source transform", tolerance: 1e-8)
-            let narrow = try generator.build(on: label.nodeID, rect: HUDSourceRect(origin: SIMD2(-20, -25), size: SIMD2(40, 50)), sdfScale: 1)
-            close(narrow.pointSize, 20, "One-line autosizing fits two em advances into40 at20 points")
+            let narrow = try generator.build(on: label.nodeID, rect: HUDSourceRect(origin: SIMD2(-24, -25), size: SIMD2(48, 50)), sdfScale: 1)
+            close(narrow.pointSize, 24, "One-line autosizing fits two em advances into48 within the authored minimum22")
+            fails("Source minimum22 cannot be lowered to20 to avoid actual character wrapping") {
+                _ = try generator.build(on: label.nodeID, rect: HUDSourceRect(origin: .zero, size: SIMD2(40, 50)), sdfScale: 1)
+            }
             fails("Glyph wrapping below original minimum point size is explicit") {
                 _ = try generator.build(on: label.nodeID, rect: HUDSourceRect(origin: .zero, size: SIMD2(20, 50)), sdfScale: 1)
             }
@@ -62,9 +65,51 @@ enum HUDSourceTextGeometryTests {
             fails("A missing glyph cannot silently switch to a system font") {
                 _ = try generator.build(on: label.nodeID, rect: rect, sdfScale: 1, literal: "🦊")
             }
-            var builtLabels = 0
+            close(try generator.preferredSize(on: label.nodeID).x, 52.01,
+                  "Preferred width uses authored maximum26 and TMP hundredth rounding")
+            guard let original = document.component("UIText", on: label.nodeID) else { fatalError("Missing source text component") }
+            func changedGenerator(overflow: Int) throws -> HUDSourceTextGeometry {
+                var fields = original.data
+                fields["m_enableAutoSizing"] = .bool(false)
+                fields["m_fontSize"] = .number(26)
+                fields["m_enableWordWrapping"] = .bool(false)
+                fields["m_overflowMode"] = .number(Double(overflow))
+                let changed = HUDSourceWatchComponent(id: original.id, type: original.type, script: original.script, data: fields)
+                return try HUDSourceTextGeometry(document: document, additionalComponents: [label.nodeID: [changed]])
+            }
+            let tooSmall = HUDSourceRect(origin: .zero, size: SIMD2(10, 5))
+            let overflowing = try changedGenerator(overflow: 0).build(on: label.nodeID, rect: tooSmall, sdfScale: 1)
+            check(overflowing.positions.count == 8 && overflowing.clipRect == nil,
+                  "Source no-wrap Overflow preserves glyphs beyond both rectangle bounds")
+            close(overflowing.pointSize, 26, "Overflow does not invent a lower fixed point size")
+            let masked = try changedGenerator(overflow: 2).build(on: label.nodeID, rect: tooSmall, sdfScale: 1)
+            check(masked.positions == overflowing.positions && masked.clipRect?.size == tooSmall.size,
+                  "Masking retains glyph vertices and declares the renderer's local clip")
+            fails("Ellipsis cannot silently use Overflow behavior") {
+                _ = try changedGenerator(overflow: 1).build(on: label.nodeID, rect: tooSmall, sdfScale: 1)
+            }
+            var builtNew = 0
             for node in document.scene.nodes {
-                guard document.component("UIText", on: node.id) != nil,
+                guard generator.literal(on: node.id) == "NEW", let localRect = resolved[node.id]?.rect else { continue }
+                let preferred = try generator.preferredSize(on: node.id)
+                let filled = HUDSourceRect(origin: localRect.origin,
+                    size: SIMD2(max(localRect.size.x, preferred.x), max(localRect.size.y, preferred.y)))
+                let bold = try generator.build(on: node.id, rect: filled, sdfScale: 1)
+                check(bold.positions.count == 12 && bold.uv2.allSatisfy { $0.y < 0 },
+                      "Source NEW uses three source glyphs and negative SDF bold scale: \(node.path)")
+                check(bold.pointSize.isFinite && preferred.x > 0 && preferred.y > 0,
+                      "Original NEW can supply ContentSizeFitter metrics even at serialized width zero")
+                builtNew += 1
+            }
+            check(builtNew == 28, "All28 original NEW text components have the same supported source bold path")
+            var builtLabels = 0
+            let fixedLabels = Set(document.labels["nodes"].array.compactMap { value -> HUDSourceID? in
+                guard let text = value["cn_literal"].string, !text.isEmpty, text != "NEW",
+                      let node = value["node_id"].string else { return nil }
+                return HUDSourceID(rawValue: node)
+            })
+            for node in document.scene.nodes {
+                guard fixedLabels.contains(node.id), document.component("UIText", on: node.id) != nil,
                       let literal = generator.literal(on: node.id), !literal.isEmpty, literal != "NEW",
                       let localRect = resolved[node.id]?.rect else { continue }
                 let text = try generator.build(on: node.id, rect: localRect, sdfScale: 1)
@@ -77,6 +122,45 @@ enum HUDSourceTextGeometryTests {
                 builtLabels += 1
             }
             check(builtLabels == 28, "All28 serialized non-NEW fixed Watch text nodes build, including shadow twins")
+            var auditBuilt = 0, auditMissing = 0, auditErrors: [[String: String]] = []
+            for node in document.scene.nodes {
+                guard document.component("UIText", on: node.id) != nil else { continue }
+                guard let value = generator.literal(on: node.id), !value.isEmpty,
+                      let bounds = resolved[node.id]?.rect else { auditMissing += 1; continue }
+                do {
+                    let preferred = try generator.preferredSize(on: node.id)
+                    let size = SIMD2(bounds.size.x > 0 ? bounds.size.x : preferred.x,
+                                     bounds.size.y > 0 ? bounds.size.y : preferred.y)
+                    _ = try generator.build(on: node.id, rect: HUDSourceRect(origin: bounds.origin, size: size), sdfScale: 1)
+                    auditBuilt += 1
+                } catch {
+                    auditErrors.append(["path": node.path, "serializedText": value, "error": String(describing: error)])
+                }
+            }
+            check(auditBuilt == 60 && auditMissing == 15 && auditErrors.count == 2,
+                  "77-node audit accounts for60 single-line source values,15 runtime inputs and2 serialized multiline placeholders")
+            check(auditErrors.allSatisfy { $0["serializedText"]?.hasSuffix("\n") == true },
+                  "Only the two serialized Top counters' newline placeholders require the unsupported multiline path")
+            let audit: [String: Any] = ["sourceTextNodes": auditBuilt + auditMissing + auditErrors.count,
+                "singleLineBuilt": auditBuilt, "unresolvedRuntimeInputs": auditMissing, "explicitUnsupported": auditErrors]
+            let auditData = try JSONSerialization.data(withJSONObject: audit, options: [.sortedKeys])
+            print("Source text audit: " + String(decoding: auditData, as: UTF8.self))
+            let domain = try HUDSourceWatchDomain()
+            let domainGenerator = try HUDSourceTextGeometry(document: document,
+                additionalComponents: domain.components, additionalLabels: domain.labels,
+                additionalMaterials: domain.materials)
+            let domainResolved = try domain.scene.resolve()
+            var builtDomain = 0
+            for (node, components) in domain.components {
+                guard components.contains(where: { $0.kind == "UIText" }),
+                      let text = domainGenerator.literal(on: node), !text.isEmpty,
+                      let bounds = domainResolved[node]?.rect else { continue }
+                let geometry = try domainGenerator.build(on: node, rect: bounds, sdfScale: 1)
+                check(geometry.positions.count == text.unicodeScalars.count * 4,
+                      "Domain runtime CN localization uses the common original glyph geometry")
+                builtDomain += 1
+            }
+            check(builtDomain == 6, "Six loaded Region01 map labels use table-derived localized runtime names")
         } catch { fatalError("Source text geometry fixture failed: \(error)") }
         return count
     }

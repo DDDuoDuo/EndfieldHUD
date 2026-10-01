@@ -3,8 +3,8 @@ import simd
 
 /// Single-line TMP geometry from the exported font asset, not a system font.
 /// Coordinates stay in the text RectTransform's local +Y-up design plane.
-/// The supported Watch labels use normal weight, character UV mapping and no
-/// markup. Shaping, alternate weights, tags, multiline layout, width adjustment,
+/// Watch normal/bold labels use character UV mapping and no markup.
+/// Shaping, alternate typefaces, tags, multiline layout, width adjustment,
 /// ellipsis, and fallback-atlas submeshes are intentionally explicit errors.
 /// Reference algorithms (the game's modified TMP version is not exported):
 /// https://github.com/Unity-Technologies/uGUI/blob/main/com.unity.ugui/Runtime/TMP/TextMeshProUGUI.cs
@@ -29,6 +29,9 @@ struct HUDSourceTextGeometry {
         let ascender: Double
         let descender: Double
         let bounds: HUDSourceRect
+        /// Overflow keeps the complete source geometry. Masking uses this
+        /// local clip at the renderer, rather than truncating glyph vertices.
+        let clipRect: HUDSourceRect?
     }
 
     private struct Glyph {
@@ -59,6 +62,9 @@ struct HUDSourceTextGeometry {
         let baseline: Double
         let normalSpacing: Double
         let normalStyle: Double
+        let boldSpacing: Double
+        let boldStyle: Double
+        let hasBoldTypeface: Bool
         let atlasSize: SIMD2<Double>
         let atlasIDs: [HUDSourceID]
         let materialID: HUDSourceID
@@ -81,6 +87,7 @@ struct HUDSourceTextGeometry {
         let orthographicMultiplier: Double
         let characterSpacing: Double
         let wordSpacing: Double
+        let isBold: Bool
     }
 
     private struct PlacedGlyph {
@@ -104,7 +111,10 @@ struct HUDSourceTextGeometry {
     private let components: [HUDSourceID: HUDSourceWatchComponent]
     private let literals: [HUDSourceID: String]
 
-    init(document: HUDSourceWatchDocument) throws {
+    init(document: HUDSourceWatchDocument,
+         additionalComponents: [HUDSourceID: [HUDSourceWatchComponent]] = [:],
+         additionalLabels: HUDSourceJSONValue = .null,
+         additionalMaterials: [HUDSourceID: HUDSourceJSONValue] = [:]) throws {
         var loaded: [HUDSourceID: Font] = [:]
         for entry in document.fonts["fonts"].array {
             guard let id = entry["id"].string else { continue }
@@ -151,6 +161,8 @@ struct HUDSourceTextGeometry {
             loaded[fontID] = Font(id: fontID, pointSize: face["m_PointSize"].float(), scale: face["m_Scale"].float(1),
                 ascent: face["m_AscentLine"].float(), descent: face["m_DescentLine"].float(), capHeight: face["m_CapLine"].float(),
                 baseline: face["m_Baseline"].float(), normalSpacing: data["normalSpacingOffset"].float(), normalStyle: data["normalStyle"].float(),
+                boldSpacing: data["boldSpacing"].float(), boldStyle: data["boldStyle"].float(),
+                hasBoldTypeface: data["m_FontWeightTable"].array.dropFirst(7).first?["regularTypeface"].targetID != nil,
                 atlasSize: SIMD2(data["m_AtlasWidth"].float(), data["m_AtlasHeight"].float()), atlasIDs: atlasIDs,
                 materialID: material, glyphs: glyphs, characters: characters,
                 hasPairAdjustments: !data["m_FontFeatureTable"]["m_GlyphPairAdjustmentRecords"].array.isEmpty ||
@@ -172,15 +184,24 @@ struct HUDSourceTextGeometry {
         for record in document.materials["materials"].array {
             if let id = record["id"].string { loadedMaterials[HUDSourceID(rawValue: id)] = record["data"] }
         }
+        for (id, record) in additionalMaterials {
+            loadedMaterials[id] = record["data"].object.isEmpty ? record : record["data"]
+        }
         materials = loadedMaterials
         var textComponents: [HUDSourceID: HUDSourceWatchComponent] = [:]
-        for (node, records) in document.components {
+        for (node, records) in document.components.merging(additionalComponents, uniquingKeysWith: { _, added in added }) {
             if let component = records.first(where: { $0.kind == "UIText" && $0.enabled }) { textComponents[node] = component }
         }
         components = textComponents
         var joined: [HUDSourceID: String] = [:]
         for label in document.labels["nodes"].array {
             if let node = label["node_id"].string, let literal = label["cn_literal"].string {
+                joined[HUDSourceID(rawValue: node)] = literal
+            }
+        }
+        for label in additionalLabels["texts"].array + additionalLabels["nodes"].array {
+            if let node = label["node_id"].string,
+               let literal = label["cn_literal"].string ?? label["literal_cn"].string {
                 joined[HUDSourceID(rawValue: node)] = literal
             }
         }
@@ -191,6 +212,25 @@ struct HUDSourceTextGeometry {
         if let value = literals[node] { return value }
         guard let value = components[node]?["m_text"].string, !value.isEmpty else { return nil }
         return value
+    }
+
+    /// TMP's unwrapped preferred width uses the authored maximum size for
+    /// autosized text. This is independent of the current RectTransform, so
+    /// a ContentSizeFitter can resolve an originally zero-width NEW/% label.
+    /// The corresponding one-line height includes the face ascent/descent.
+    func preferredSize(on node: HUDSourceID, materialID: HUDSourceID? = nil,
+                       literal replacement: String? = nil) throws -> SIMD2<Double> {
+        guard let component = components[node], let text = replacement ?? literal(on: node) else {
+            throw HUDSourceError.invalid("Unresolved source Watch text: \(node.rawValue)")
+        }
+        let config = try configuration(component: component, literal: text,
+            rect: HUDSourceRect(origin: .zero, size: SIMD2(1e12, 1e12)), materialID: materialID)
+        let size = component["m_enableAutoSizing"].flag() ? component["m_fontSizeMax"].float() : component["m_fontSize"].float()
+        guard size.isFinite, size > 0 else { throw HUDSourceError.invalid("Invalid source TMP preferred size") }
+        let line = try measure(config, at: size)
+        let width = line.advance + max(0, config.margin.x) + max(0, config.margin.z)
+        let height = line.ascent - line.descent + max(0, config.margin.y) + max(0, config.margin.w)
+        return SIMD2(floor(width * 100 + 1) / 100, floor(height * 100 + 1) / 100)
     }
 
     /// `sdfScale` is TMP's Canvas/lossy-Y-scale multiplier. WorldSpace and
@@ -222,11 +262,11 @@ struct HUDSourceTextGeometry {
                 scalar.properties.generalCategory == .enclosingMark
         }) else { throw HUDSourceError.invalid("Source TMP multiline/control/shaping layout is unsupported") }
         guard !component["m_isRichText"].flag() || !literal.contains("<"),
-              component["m_fontStyle"].float() == 0, component["m_fontWeight"].float(400) == 400,
+              [0, 1, 16, 17].contains(Int(component["m_fontStyle"].float())), component["m_fontWeight"].float(400) == 400,
               !component["m_isRightToLeft"].flag(), !component["m_isVolumetricText"].flag(),
               !component["m_enableVertexGradient"].flag(), component["m_charWidthMaxAdj"].float() == 0,
               component["m_horizontalMapping"].float() == 0, component["m_verticalMapping"].float() == 0,
-              component["m_geometrySortingOrder"].float() == 0, component["m_overflowMode"].float() == 0 else {
+              component["m_geometrySortingOrder"].float() == 0, [0, 2].contains(Int(component["m_overflowMode"].float())) else {
             throw HUDSourceError.invalid("Source TMP tags/style/gradient/width adjustment/mapping/overflow mode is unsupported")
         }
         let explicitFont = component["m_serializedFontAsset"].targetID
@@ -237,6 +277,11 @@ struct HUDSourceTextGeometry {
         guard !font.hasPairAdjustments || !component["m_enableKerning"].flag() else {
             throw HUDSourceError.invalid("Source TMP kerning feature table is unsupported")
         }
+        let style = Int(component["m_fontStyle"].float())
+        let isBold = style & 1 != 0
+        guard !isBold || !font.hasBoldTypeface else {
+            throw HUDSourceError.invalid("Source TMP alternate bold typeface is unsupported")
+        }
         let selectedMaterial = materialID ?? component["m_fontMaterial"].targetID ??
             component["m_serializedSharedMaterial"].targetID ?? component["m_Material"].targetID ?? font.materialID
         guard let material = materials[selectedMaterial] else {
@@ -245,26 +290,37 @@ struct HUDSourceTextGeometry {
         let values = Self.materialFloats(material)
         guard let gradient = values["_GradientScale"], gradient > 0 else { throw HUDSourceError.invalid("Source TMP material is not SDF") }
         let padding = Self.materialPadding(material, values: values, extra: component["m_enableExtraPadding"].flag())
-        let stylePadding = font.normalStyle * 0.25 * gradient * (values["_ScaleRatioA"] ?? 1)
+        let stylePadding = (isBold ? font.boldStyle : font.normalStyle) * 0.25 * gradient * (values["_ScaleRatioA"] ?? 1)
         let horizontal = Int(component["m_HorizontalAlignment"].float(1))
         let vertical = Int(component["m_VerticalAlignment"].float(256))
         guard [1, 2, 4, 32].contains(horizontal), [256, 512, 1024, 2048, 4096, 8192].contains(vertical) else {
             throw HUDSourceError.invalid("Source TMP justified/unknown alignment is unsupported")
         }
         let margin = component["m_margin"]
-        return Configuration(component: component, font: font, rect: rect, literal: literal, materialID: selectedMaterial,
+        var renderedLiteral = literal
+        if style & 16 != 0 {
+            // TMP's UpperCase style performs one-character invariant casing.
+            // Never silently expand a source character into several glyphs.
+            renderedLiteral = ""
+            for scalar in literal.unicodeScalars {
+                let upper = String(scalar).uppercased()
+                guard upper.unicodeScalars.count == 1 else { throw HUDSourceError.invalid("Source TMP multi-scalar uppercase mapping is unsupported") }
+                renderedLiteral += upper
+            }
+        }
+        return Configuration(component: component, font: font, rect: rect, literal: renderedLiteral, materialID: selectedMaterial,
             padding: min(padding, max(0, gradient - stylePadding)), stylePadding: stylePadding,
             horizontal: horizontal, vertical: vertical,
             margin: SIMD4(margin["x"].float(), margin["y"].float(), margin["z"].float(), margin["w"].float()),
             orthographicMultiplier: component["m_isOrthographic"].flag(true) ? 1 : 0.1,
-            characterSpacing: component["m_characterSpacing"].float(), wordSpacing: component["m_wordSpacing"].float())
+            characterSpacing: component["m_characterSpacing"].float(), wordSpacing: component["m_wordSpacing"].float(), isBold: isBold)
     }
 
     private func measure(_ configuration: Configuration, at pointSize: Double) throws -> Line {
         let font = configuration.font
         let baseScale = pointSize / font.pointSize * font.scale * configuration.orthographicMultiplier
         let emScale = pointSize * 0.01 * configuration.orthographicMultiplier
-        let spacing = (font.normalSpacing + configuration.characterSpacing) * emScale
+        let spacing = (font.normalSpacing + configuration.characterSpacing + (configuration.isBold ? font.boldSpacing : 0)) * emScale
         var placed: [PlacedGlyph] = []
         var advance = 0.0, ascent = -Double.infinity, descent = Double.infinity, capHeight = 0.0
         for scalar in configuration.literal.unicodeScalars {
@@ -317,7 +373,12 @@ struct HUDSourceTextGeometry {
                 let step = max((upper - pointSize) / 2, 0.05)
                 pointSize = min(maximum, floor((pointSize + step) * 20 + 0.5) / 20)
             } else {
-                guard !tooLarge else { throw HUDSourceError.invalid("Source TMP text requires unsupported wrapping/overflow layout") }
+                // Source Overflow/Masking keeps geometry past the vertical
+                // bounds after auto sizing reaches its authored minimum. It
+                // still wraps a wide line when word wrapping is enabled.
+                guard line.advance <= width + 0.0001 || !component["m_enableWordWrapping"].flag() else {
+                    throw HUDSourceError.invalid("Source TMP text requires unsupported multiline wrapping")
+                }
                 return pointSize
             }
         }
@@ -370,7 +431,9 @@ struct HUDSourceTextGeometry {
                 uv.append(SIMD2(Float(textureCorners[corner].x), Float(textureCorners[corner].y)))
                 // Face/outline UVs use TMP's 9-bit quantization and 4096 stride.
                 let packed = Double(Int(faceUV[corner].x * 511)) * 4096 + Double(Int(faceUV[corner].y * 511))
-                uv2.append(SIMD2(Float(packed), Float(scale * sdfScale)))
+                // The original TMP SDF shader selects WeightBold when UV2.y
+                // is negative; geometry and atlas remain the same typeface.
+                uv2.append(SIMD2(Float(packed), Float(scale * sdfScale * (configuration.isBold ? -1 : 1))))
             }
             indices.append(contentsOf: [start, start + 1, start + 2, start + 2, start + 3, start])
         }
@@ -390,7 +453,8 @@ struct HUDSourceTextGeometry {
             positions: positions, normals: Array(repeating: SIMD3<Float>(0, 0, -1), count: positions.count), uv: uv, uv2: uv2, indices: indices,
             color: Self.color32(configuration.component["m_fontColor"].color), pointSize: pointSize, advance: line.advance,
             baseline: baseline, ascender: line.ascent, descender: line.descent,
-            bounds: HUDSourceRect(origin: minXY + SIMD2(x, baseline), size: maxXY - minXY))
+            bounds: HUDSourceRect(origin: minXY + SIMD2(x, baseline), size: maxXY - minXY),
+            clipRect: Int(configuration.component["m_overflowMode"].float()) == 2 ? configuration.rect : nil)
     }
 
     private static func materialFloats(_ material: HUDSourceJSONValue) -> [String: Double] {

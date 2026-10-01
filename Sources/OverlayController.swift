@@ -64,7 +64,7 @@ final class OverlayController: NSObject {
     private var forceCloseAfterShelfDrag = false
     private var shelfDragPresentation = ShelfDragPresentationState()
     private var shelfDragDeadline: DispatchWorkItem?
-    private var lastSystemModule: HUDModule = .map
+    private var lastSystemModule: HUDModule = .power
     private var systemState = SystemOverlayState()
     private var transitionDeadline: DispatchWorkItem?
     private var previousApplication: NSRunningApplication?
@@ -97,6 +97,10 @@ final class OverlayController: NSObject {
     var systemCenterHostIdentity: ObjectIdentifier? { systemView?.centerHostIdentity }
     var systemAmbientStartTime: TimeInterval? { systemView?.ambientStartTime }
     var systemSelectedModule: HUDModule? { systemView?.selectedModule }
+    var systemSourceWatchForVerification: HUDSourceWatchView? { systemView?.sourceWatchForVerification }
+    var systemSourceFailureForVerification: String? { systemView?.sourceFailureForVerification }
+    private(set) var lastClosedSourceTimerActive = false
+    private(set) var lastClosedSourcePhase: HUDSourceWatchPlayback.Phase?
     var systemReportGeometryMatchesSelectionForVerification: Bool { systemView?.reportGeometryMatchesSelectionForVerification ?? false }
     var systemPresentationGeneration: Int { systemState.generation }
     var systemFiniteAnimationKeys: [String] {
@@ -719,6 +723,8 @@ final class OverlayController: NSObject {
         lastSystemModule = systemView?.selectedModule ?? lastSystemModule
         systemView?.cancelAnimations()
         lastClosedAnimationCount = systemView?.activeAnimationCount ?? 0
+        lastClosedSourceTimerActive = systemView?.sourceWatchForVerification?.hasDisplayTimerForVerification ?? false
+        lastClosedSourcePhase = systemView?.sourceWatchForVerification?.playback.phase
         panel.orderOut(nil)
         panel.alphaValue = 1
         closeAfterShelfDrag = false

@@ -713,6 +713,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         func cycle(_ index: Int) {
             precondition(overlay.systemPhase == .closed)
+            overlay.initialModuleRequest = .eventLog
             precondition(overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults))
             precondition(overlay.systemPhase == .opening)
             for _ in 0..<20 { _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults) }
@@ -739,7 +740,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 precondition(overlay.systemDeploymentAnimationCount == 0, "Deployment must leave no finite tracks")
                 let ambientCount = overlay.systemAmbientAnimationCount
                 let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                precondition(reduced ? ambientCount == 0 : ambientCount == 10, "Only the ten registered ambient tracks may persist")
+                precondition(reduced ? ambientCount == 0 : ambientCount == 13, "Only the thirteen registered module ambient tracks may persist")
                 overlay.setSystemPointerForVerification(.zero)
                 overlay.setSystemPointerForVerification(CGPoint(x: 1, y: -1))
                 precondition(reduced ? overlay.systemParallaxAnimationCount == 0 : overlay.systemParallaxAnimationCount == 13,
@@ -793,7 +794,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     precondition(overlay.systemPhase == .closed && overlay.isVisible && overlay.isPersistent,
                                                  "Normal close callback must restore the persistent charging HUD")
                                     overlay.hide(animated: false)
-                                    print("PASS: 8 full Power cycles; rapid repeats; focus-close queued while opening; cancellation generations; data updates; one shared panel; ten bounded ambient tracks; thirteen pointer planes; zero hidden animations; position-edit exclusion; persistent charging HUD restored through AppDelegate")
+                                    print("PASS: 8 full macOS module cycles; rapid repeats; focus-close queued while opening; cancellation generations; data updates; one shared panel; thirteen bounded ambient tracks; thirteen pointer planes; zero hidden animations; position-edit exclusion; persistent charging HUD restored through AppDelegate")
                                     NSApp.terminate(nil)
                                 }
                             }
@@ -815,7 +816,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = overlay.clipboard.store.capture(from: clipboardBoard)
         let clipboardID = overlay.clipboard.store.items.first?.id
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let expectedAmbient = reduced ? 0 : 10
+        let expectedAmbient = reduced ? 0 : 13
         var assertionCount = 0
         func check(_ condition: Bool, _ message: String) {
             assertionCount += 1
@@ -853,8 +854,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureSystemOverlay()
         receive(demo)
+        overlay.initialModuleRequest = .eventLog
         check(overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults), "System overlay must open")
-        check(overlay.systemSelectedModule == .map, "First opening must show Map")
+        check(overlay.systemSelectedModule == .eventLog, "The macOS navigation fixture starts in Event Log")
         // Visits below are programmatic and parallax uses the injected pointer.
         // Physical mouse movement must not start a fresh hover cue just before
         // a settled-animation assertion. Hover tracks have their own fixtures.
@@ -869,7 +871,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let panels = Set(NSApp.windows.filter { $0 is NSPanel }.map { ObjectIdentifier($0) })
             let shell = overlay.systemShellIdentity
             let host = overlay.systemCenterHostIdentity
-            let ambientStart = overlay.systemAmbientStartTime
+            var ambientStart = overlay.systemAmbientStartTime
+            var wasSourceOverview = false
+            var capturedSourceOverview = false
             check(panels.count == 1 && shell != nil && host != nil, "One panel owns a shell and center host")
             check(reduced || ambientStart != nil, "Visible ambient motion must have a start time")
 
@@ -880,8 +884,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       "Every section must use the original panel")
                 check(overlay.systemShellIdentity == shell && overlay.systemCenterHostIdentity == host,
                       "Navigation must retain the shell and center host")
-                check(overlay.systemAmbientAnimationCount == expectedAmbient && overlay.systemAmbientStartTime == ambientStart,
-                      "Section changes must neither restart nor duplicate ambient motion")
+                if overlay.systemSelectedModule == .power {
+                    guard let source = overlay.systemSourceWatchForVerification else {
+                        preconditionFailure("Original Watch unavailable: \(overlay.systemSourceFailureForVerification ?? "missing")")
+                    }
+                    check(source.playback.phase == .visible && source.document.buttons.count == 22
+                          && source.currentFrameForVerification?.hits.isEmpty == false && source.visibleMainButtonForVerification != nil,
+                          "Overview uses the original 22-button scene and its shared resolved raycasts")
+                    check(source.hasDisplayTimerForVerification == !reduced
+                          && overlay.systemAmbientAnimationCount == 0 && overlay.systemParallaxAnimationCount == 0,
+                          "Overview has one source display clock and no legacy motion tracks")
+                    if stable && !capturedSourceOverview {
+                        do {
+                            let image = try source.renderedImageForVerification()
+                            check(image.width > 0 && image.height > 0, "Overview captures an actual source Metal drawable")
+                            capturedSourceOverview = true
+                        } catch { preconditionFailure("Original Watch drawable failed: \(error)") }
+                    }
+                    wasSourceOverview = true
+                } else {
+                    if wasSourceOverview { ambientStart = overlay.systemAmbientStartTime; wasSourceOverview = false }
+                    check(overlay.systemAmbientAnimationCount == expectedAmbient && overlay.systemAmbientStartTime == ambientStart,
+                          "Consecutive macOS sections neither restart nor duplicate ambient motion")
+                    check(overlay.systemSourceWatchForVerification?.hasDisplayTimerForVerification == false,
+                          "macOS sections suspend the hidden source display timer")
+                }
                 check((1...2).contains(overlay.systemCenterContentCount), "A swap may retain at most two center screens")
                 if stable {
                     check(overlay.systemCenterContentCount == 1 && !overlay.isSwitchingSystemModule,
