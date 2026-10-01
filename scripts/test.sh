@@ -14,6 +14,11 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDWatchArtwork.swift" \
     "$PROJECT_DIR/Sources/HUDSourceScene.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchAnimation.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceWatchDocument.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceImageGeometry.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceTextGeometry.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceWatchLayout.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceWatchButtonAnimation.swift" \
     "$PROJECT_DIR/Sources/HUDGitHubRelease.swift" \
     "$PROJECT_DIR/Sources/HUDUpdateState.swift" \
     "$PROJECT_DIR/Sources/HUDDisplayPolicy.swift" \
@@ -109,6 +114,10 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDWatchArtworkTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceSceneTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchAnimationTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceImageGeometryTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceTextGeometryTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceWatchLayoutTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceWatchButtonAnimationTests.swift" \
     "$PROJECT_DIR/Tests/HUDChargeBadgeTests.swift" \
     "$PROJECT_DIR/Tests/HUDModuleTests.swift" \
     "$PROJECT_DIR/Tests/HUDNavigationTests.swift" \
@@ -166,3 +175,4 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/CoreTests.swift" \
     -o "$BUILD_DIR/tests/CoreTests"
 "$BUILD_DIR/tests/CoreTests"
+bash "$PROJECT_DIR/scripts/probe-source-metal.sh"

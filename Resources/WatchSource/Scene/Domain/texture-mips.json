@@ -1,0 +1,1216 @@
+{
+  "textures": [
+    {
+      "texture_id": "CAB-033a310a4dc2034d606d02d7c0617c3b:-4578960290218705282",
+      "name": "map_spaceship",
+      "source": {
+        "name": "Data/Bundles/Windows/main/594e1559cadc7c16466a9ac2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "FCEDFAF95834E358E0685530069FD8C6",
+        "offset": 625925900,
+        "length": 151605,
+        "md5": "0844C6F4CAC1304612F527AB08506F55",
+        "sha256": "0d67b04e63df554e63aeb6eaf682a259236b5aa8802dcf406cdea0206721c6fa",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-033a310a4dc2034d606d02d7c0617c3b/CAB-033a310a4dc2034d606d02d7c0617c3b.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/map_spaceship---4578960290218705282.bin",
+        "bytes": 1398128,
+        "sha256": "35a72cb156295a4a6c414b8191b77401ba54f62cfd86d8204da19196841d7cbf"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "ff182bd9d1ee49f913df758983974590b1add64981e5aaf504f218f6b63c8cab"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "d8c5fda8534a5dc901552b30e536fa3e2c1f54a7ca10f2195f7cceb079287980"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "530ffea981b2b54c3ad8189dfcc03373d3b67c8077b2f7f3020642123bb3e7d1"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "47d079117e9b6815a189b169d01d1e433167f2a46d32876a39c7d154d0593c7b"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "13ed997f4ae3cabb5fdc3c27bd9918b8353a7b0527c856fcb19b3eefd4e6bb0b"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "a62a452a3018bd865929beb88da7d888f8e109c3a1cf37b41588ff1cdf756c45"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "f3ab9323a20c68c9528f0b2f654e14297c7b3676332e29d202606922cd000d9f"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "f16ece72dceba82830c46f7334d7b53e7a6a5b505699ea99346b0a1898afa724"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "294d7ffd30aeabd0130244554eb8295d302427ff238c656673596e9ca655c35e"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "0116af7e89bffc62e479125641ae546c12ba5eb3b6c125e7794029084961d06c"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "575197da9d7058481c3bcc09058941a2b8deb4c47cb02354337b9ecfe1070c9f"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:8007938032893606277",
+      "name": "map01_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1896518d30b914f9feb5bee1.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "0D25AFD638AB93A71F82ACE1E48F7059",
+        "offset": 952074323,
+        "length": 1414532,
+        "md5": "BB006D61DAB164AAC0810C9E093A3720",
+        "sha256": "c3b6332a88f50e21519e8005e6064226da09a5bbaca7893c47e5b6632d8a33af",
+        "md5_verified": true
+      },
+      "width": 404,
+      "height": 372,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 4099840,
+        "size": 150288,
+        "path": "archive:/CAB-18b095294e8c2cbc38223244e7112ab8/CAB-18b095294e8c2cbc38223244e7112ab8.resS"
+      },
+      "complete_image_size": 150288,
+      "raw": {
+        "file": "texture-mips/map01_bloom--8007938032893606277.bin",
+        "bytes": 150288,
+        "sha256": "680f9953057f701563d861bdbef4c37c4164a6061ad5ae0890d7ad90f526388c"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 404,
+          "height": 372,
+          "offset": 0,
+          "length": 150288,
+          "sha256": "680f9953057f701563d861bdbef4c37c4164a6061ad5ae0890d7ad90f526388c"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "name": "map_building_hover",
+      "source": {
+        "name": "Data/Bundles/Windows/main/bcf69176728c14c8d89dd034.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 116702356,
+        "length": 4072,
+        "md5": "BDBE0C7B0EF2B289CF8EEDC97334CA58",
+        "sha256": "071a710b732f82d9fb7b52d7ade2b839e01844825da6b47054ca377acb5be4b3",
+        "md5_verified": true
+      },
+      "width": 500,
+      "height": 500,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 250000,
+        "path": "archive:/CAB-3ab0882e410ea50fde97917dc4c9b0d2/CAB-3ab0882e410ea50fde97917dc4c9b0d2.resS"
+      },
+      "complete_image_size": 250000,
+      "raw": {
+        "file": "texture-mips/map_building_hover--5878083957641791626.bin",
+        "bytes": 250000,
+        "sha256": "df47b5a8526e2242c0c927167bf7316ac39077fd0e34373610f206ef6a9e8d3a"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 500,
+          "height": 500,
+          "offset": 0,
+          "length": 250000,
+          "sha256": "df47b5a8526e2242c0c927167bf7316ac39077fd0e34373610f206ef6a9e8d3a"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-665b872f0e8b37ab525ae5438d39689e:-8559442201712933853",
+      "name": "deco_readio_mask",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0748a52a8ddd072b14c0abf3.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 896219922,
+        "length": 26634,
+        "md5": "D1D09BEC9C058742049B002092EC30B6",
+        "sha256": "97e8bf8e8b1842afafe5d4c997eec8b857008e59d3224b7a486a53c158cc76a9",
+        "md5_verified": true
+      },
+      "width": 196,
+      "height": 212,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 41552,
+        "path": "archive:/CAB-665b872f0e8b37ab525ae5438d39689e/CAB-665b872f0e8b37ab525ae5438d39689e.resS"
+      },
+      "complete_image_size": 41552,
+      "raw": {
+        "file": "texture-mips/deco_readio_mask---8559442201712933853.bin",
+        "bytes": 41552,
+        "sha256": "2c17b76781d7dfb767846e7f32afcb0035c35f7bed375df578c3be146c4d8178"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 196,
+          "height": 212,
+          "offset": 0,
+          "length": 41552,
+          "sha256": "2c17b76781d7dfb767846e7f32afcb0035c35f7bed375df578c3be146c4d8178"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-665b872f0e8b37ab525ae5438d39689e:3554789046412338323",
+      "name": "icon_char",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0748a52a8ddd072b14c0abf3.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 896219922,
+        "length": 26634,
+        "md5": "D1D09BEC9C058742049B002092EC30B6",
+        "sha256": "97e8bf8e8b1842afafe5d4c997eec8b857008e59d3224b7a486a53c158cc76a9",
+        "md5_verified": true
+      },
+      "width": 104,
+      "height": 104,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 41552,
+        "size": 10816,
+        "path": "archive:/CAB-665b872f0e8b37ab525ae5438d39689e/CAB-665b872f0e8b37ab525ae5438d39689e.resS"
+      },
+      "complete_image_size": 10816,
+      "raw": {
+        "file": "texture-mips/icon_char--3554789046412338323.bin",
+        "bytes": 10816,
+        "sha256": "174fac860d02d3f0507fabb96010030cce7ab13dc47222128efde67987aec27c"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 104,
+          "height": 104,
+          "offset": 0,
+          "length": 10816,
+          "sha256": "174fac860d02d3f0507fabb96010030cce7ab13dc47222128efde67987aec27c"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-8ef9b04f489a760cbab95424d6de4ae4:-9198916553927714072",
+      "name": "T_region02_fog",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "40E7DB1645D20991CB0FE316B2128FC2",
+        "offset": 546770344,
+        "length": 2800202,
+        "md5": "F3D4B1F8EB589C92D3A335CFCBE1951F",
+        "sha256": "def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1048576,
+        "path": "archive:/CAB-8ef9b04f489a760cbab95424d6de4ae4/CAB-8ef9b04f489a760cbab95424d6de4ae4.resS"
+      },
+      "complete_image_size": 1048576,
+      "raw": {
+        "file": "texture-mips/T_region02_fog---9198916553927714072.bin",
+        "bytes": 1048576,
+        "sha256": "703924b4245043a9c8335f1e1b406a57141397641232e117d67ca6da6d229ae0"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "703924b4245043a9c8335f1e1b406a57141397641232e117d67ca6da6d229ae0"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-9be43e1316462700d364842c0ef4341b:-2382921133099723979",
+      "name": "icon_sapceship_room_icon_control_console",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1b46440d89497313fc5a8316.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "FCEDFAF95834E358E0685530069FD8C6",
+        "offset": 809409249,
+        "length": 191577,
+        "md5": "4329F27EF5012BDF8610B70E82963AE4",
+        "sha256": "5c8bd02275deb67ac566ad7d95c5681d46406ef2673d1c6b5db0960a0b487911",
+        "md5_verified": true
+      },
+      "width": 72,
+      "height": 72,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 301504,
+        "size": 5184,
+        "path": "archive:/CAB-9be43e1316462700d364842c0ef4341b/CAB-9be43e1316462700d364842c0ef4341b.resS"
+      },
+      "complete_image_size": 5184,
+      "raw": {
+        "file": "texture-mips/icon_sapceship_room_icon_control_console---2382921133099723979.bin",
+        "bytes": 5184,
+        "sha256": "299440443c02eb28acdf2be2544f4817f87046cae9edc8aad942de84e324c8ad"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 72,
+          "height": 72,
+          "offset": 0,
+          "length": 5184,
+          "sha256": "299440443c02eb28acdf2be2544f4817f87046cae9edc8aad942de84e324c8ad"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-a2b352154e43a41848e634e361e8e205:4275033587688225551",
+      "name": "T_fx_mask_02_M",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a6ed0a600e081e2cfa4f79bd.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 944575515,
+        "length": 29997,
+        "md5": "FD1ABA6E1992FF77645EA2B98F90D0A6",
+        "sha256": "789e096ed7fea292762aae9cdc8f3a592d3ba2ed8d881030508dfd2e0ebc6b40",
+        "md5_verified": true
+      },
+      "width": 256,
+      "height": 256,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 13
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 0,
+        "path": ""
+      },
+      "complete_image_size": 65536,
+      "raw": {
+        "file": "texture-mips/T_fx_mask_02_M--4275033587688225551.bin",
+        "bytes": 65536,
+        "sha256": "c593ae67cbae7e02424b7d2494bf9845b1ddbfec2c583d0d20ebed6452cde2a6"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 256,
+          "height": 256,
+          "offset": 0,
+          "length": 65536,
+          "sha256": "c593ae67cbae7e02424b7d2494bf9845b1ddbfec2c583d0d20ebed6452cde2a6"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-c9660f932fa68fee05fa99d3ad953d96:1561923509560101765",
+      "name": "T_contour_ramp",
+      "source": {
+        "name": "Data/Bundles/Windows/main/b5ad83269be7d1a5ed8bce87.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 62187626,
+        "length": 3377,
+        "md5": "90D66E0E02DBCC5833173B6B5A188F2A",
+        "sha256": "c97319d39e1189c764054b1b94ee8c15bc4b368c0448488ae6e8e15f0a8e384f",
+        "md5_verified": true
+      },
+      "width": 128,
+      "height": 4,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 8,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1040,
+        "path": "archive:/CAB-c9660f932fa68fee05fa99d3ad953d96/CAB-c9660f932fa68fee05fa99d3ad953d96.resS"
+      },
+      "complete_image_size": 1040,
+      "raw": {
+        "file": "texture-mips/T_contour_ramp--1561923509560101765.bin",
+        "bytes": 1040,
+        "sha256": "6482b36dd38e2f7fded860a717779614dc00cd0d70b3c22d6ffff6dbc0c31674"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 128,
+          "height": 4,
+          "offset": 0,
+          "length": 512,
+          "sha256": "aaad068a0825f119a1ef6a5b0cba8eaba0a1df65009c8ddfae5a2b522fa12fc1"
+        },
+        {
+          "level": 1,
+          "width": 64,
+          "height": 2,
+          "offset": 512,
+          "length": 256,
+          "sha256": "1612c2a9b063b3698273999b2cf2c608295250a9dfef9ac270835a69a67b6c7c"
+        },
+        {
+          "level": 2,
+          "width": 32,
+          "height": 1,
+          "offset": 768,
+          "length": 128,
+          "sha256": "dd74dd50426852d99944890f0263a411d390f79cb49d0c179d7a3197a6270af8"
+        },
+        {
+          "level": 3,
+          "width": 16,
+          "height": 1,
+          "offset": 896,
+          "length": 64,
+          "sha256": "cebe0a258181264085bb415532b110b25cc6b4b436d3a79f5ebc6b24c4190244"
+        },
+        {
+          "level": 4,
+          "width": 8,
+          "height": 1,
+          "offset": 960,
+          "length": 32,
+          "sha256": "280376cf4a19008f44436dbabd263c883075bf92cefbb19069a0668a934017d2"
+        },
+        {
+          "level": 5,
+          "width": 4,
+          "height": 1,
+          "offset": 992,
+          "length": 16,
+          "sha256": "4662eae36bfdb0a784df3f566fb527a82209d4f9491e606298f0962acf6a2b0d"
+        },
+        {
+          "level": 6,
+          "width": 2,
+          "height": 1,
+          "offset": 1008,
+          "length": 16,
+          "sha256": "f183e581b11b89b11a03838493d086562f1c7050948f5efdc61703281493a84f"
+        },
+        {
+          "level": 7,
+          "width": 1,
+          "height": 1,
+          "offset": 1024,
+          "length": 16,
+          "sha256": "9d641b7c66a9ab03aaf50090a7cb2464acc22ebde94fae504fbad0551aa603b1"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-cbb672f51f785acdd9419de287cf9757:-2911143777855343952",
+      "name": "T_region02_buildingGround_lv001",
+      "source": {
+        "name": "Data/Bundles/Windows/main/7bdb7767a5a08e266cd538c2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 929578533,
+        "length": 28964,
+        "md5": "FC6B48BC1BED7A0AE94D6D162168742E",
+        "sha256": "08f9a19f618000df4909b4a27ccbbbe238f62acaccc59b14845962781d3e4ac6",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-cbb672f51f785acdd9419de287cf9757/CAB-cbb672f51f785acdd9419de287cf9757.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/T_region02_buildingGround_lv001---2911143777855343952.bin",
+        "bytes": 1398128,
+        "sha256": "321e5d3efae1cd716e186eaf31a14282006cd4f7785f8707b12c1af6a9c468e1"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "85a7ea82bea98d40a760d123dad84e597376b53e5bd855d35c89a82df9bbb940"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "2993b76fea34ea54489e08a80c43b4aa5c6b3ad1f2e829d232831c7bcc1d04ec"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "61c0d8df413dccf67ecffa7bb2b9fe3ac5fc234c5aaf408d42036ec8c2d7eed8"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "5544a5d0ae3a9c58cc9b1e3a93c32e777b3d637a14a5f7517eb12fd09309c4b8"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "a2ddae9756aa44b48485c0a7a525b372b5a8030a86ca9ccb8c78261a89a1e04d"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "c19ccf3fc61875ec2ff6dde0e4d38cf574927197d9797e4ef4bec67e865c5ce2"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "cc107d8c1db437a38b340db46b3e868b1ef54c9ddbe88f4af4bd430acbdfd4b2"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "e087abaa34b3de4764e74cd8c0ad7850ac9128ce79de29d27ce1bcbc6d0fd3b9"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "28e7d2d7a55fad426aa1b206e0066dbce0550b49d7c2914304e66e5cde358927"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "e4cb72556ad78dbfdcd75ba8506ffd44451136a652a7a51a38e5429873f5bb83"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "f820cda09220519f750b17043f3bb225892e713f308ca995d6957b8f777bde62"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-dcbdfe810efe900ab6373e3e78b9cade:8202142729593834543",
+      "name": "map06_bloom",
+      "source": {
+        "name": "Data/Bundles/Windows/main/f42419a0a2ebe440687edc1a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 1097443058,
+        "length": 102040,
+        "md5": "DBE7DC9319D80D97E50C066067329AE5",
+        "sha256": "291e98b1c5ae131ada9a79d131a8721d53dfb44313ee393e732ae9fbc92b792f",
+        "md5_verified": true
+      },
+      "width": 500,
+      "height": 536,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 1,
+        "m_WrapV": 1,
+        "m_WrapW": 1,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 268000,
+        "path": "archive:/CAB-dcbdfe810efe900ab6373e3e78b9cade/CAB-dcbdfe810efe900ab6373e3e78b9cade.resS"
+      },
+      "complete_image_size": 268000,
+      "raw": {
+        "file": "texture-mips/map06_bloom--8202142729593834543.bin",
+        "bytes": 268000,
+        "sha256": "90d9ed7490ef92be7a821b807527cb8fb019bce0a1a982a0a918aa330d7562d1"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 500,
+          "height": 536,
+          "offset": 0,
+          "length": 268000,
+          "sha256": "90d9ed7490ef92be7a821b807527cb8fb019bce0a1a982a0a918aa330d7562d1"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-e25d47817ed3d885485eff4f81309da7:1137672293064584959",
+      "name": "ui_plus_fx_texture",
+      "source": {
+        "name": "Data/Bundles/Windows/main/b3c940fa5f6faf4dcce6f457.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 88766370,
+        "length": 3791,
+        "md5": "1B3B894720920567E728FBB51AC99FE1",
+        "sha256": "aed9e79cb688adec69681de11f231d05071b7a721ffc87386fc10970c94422d9",
+        "md5_verified": true
+      },
+      "width": 60,
+      "height": 60,
+      "texture_format": 4,
+      "format_name": "RGBA32",
+      "color_space": 0,
+      "mip_count": 6,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 19136,
+        "path": "archive:/CAB-e25d47817ed3d885485eff4f81309da7/CAB-e25d47817ed3d885485eff4f81309da7.resS"
+      },
+      "complete_image_size": 19136,
+      "raw": {
+        "file": "texture-mips/ui_plus_fx_texture--1137672293064584959.bin",
+        "bytes": 19136,
+        "sha256": "bed1c2baf8ff1d416cdd7162373aee174f4ee146b997fc0553cf5a741a1be0ed"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 60,
+          "height": 60,
+          "offset": 0,
+          "length": 14400,
+          "sha256": "402fc3d2900d3e3b6ff42f8db26e93dbdf027be97e70aad30cfa0c480157c9fa"
+        },
+        {
+          "level": 1,
+          "width": 30,
+          "height": 30,
+          "offset": 14400,
+          "length": 3600,
+          "sha256": "664830d499d85b365361109196141ba6568c46017a159b9243eb7a52100709d6"
+        },
+        {
+          "level": 2,
+          "width": 15,
+          "height": 15,
+          "offset": 18000,
+          "length": 900,
+          "sha256": "c239980de38f5f9c33ac0559c89e147a5844d5269718f1bf210e94bc101e4850"
+        },
+        {
+          "level": 3,
+          "width": 7,
+          "height": 7,
+          "offset": 18900,
+          "length": 196,
+          "sha256": "91c11249f644eb34624dd2f70f3e73b254986b11d4a669fd010ca34667ab27ca"
+        },
+        {
+          "level": 4,
+          "width": 3,
+          "height": 3,
+          "offset": 19096,
+          "length": 36,
+          "sha256": "09e5cdde69f80d4b8bd57b7d36e38f9b89929333d943bfb262b1472670d35708"
+        },
+        {
+          "level": 5,
+          "width": 1,
+          "height": 1,
+          "offset": 19132,
+          "length": 4,
+          "sha256": "6fc6f4524161c3ae0d316812d7088e3fcd372023edaea2d7821093be40ae1060"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:6321088089909992519",
+      "name": "t_region_map02_vfx_tree",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 763622404,
+        "length": 168656,
+        "md5": "81EB8C3D2188B2C12BF008B2B171E830",
+        "sha256": "04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea",
+        "md5_verified": true
+      },
+      "width": 512,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 175280,
+        "size": 699088,
+        "path": "archive:/CAB-e3868540e5b268d35b2ff5587ee8e77a/CAB-e3868540e5b268d35b2ff5587ee8e77a.resS"
+      },
+      "complete_image_size": 699088,
+      "raw": {
+        "file": "texture-mips/t_region_map02_vfx_tree--6321088089909992519.bin",
+        "bytes": 699088,
+        "sha256": "aad30bb051f291308881b3188d76c28a8735ee7e087a801c4b9691a59a15263c"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 512,
+          "height": 1024,
+          "offset": 0,
+          "length": 524288,
+          "sha256": "d89cd7a00c988d3be88a9f5df3914bda8815c2cd961ac1f4046b0336be32cf3e"
+        },
+        {
+          "level": 1,
+          "width": 256,
+          "height": 512,
+          "offset": 524288,
+          "length": 131072,
+          "sha256": "ce7aed39a9c369d27401df39fefbddf64e184c1b7a33a0447ea634cbd6b59efc"
+        },
+        {
+          "level": 2,
+          "width": 128,
+          "height": 256,
+          "offset": 655360,
+          "length": 32768,
+          "sha256": "8159c29ec33013aa96018bccf2dc89f0694455fa76642ad32c9b0d9ed20470ab"
+        },
+        {
+          "level": 3,
+          "width": 64,
+          "height": 128,
+          "offset": 688128,
+          "length": 8192,
+          "sha256": "f75af167b7f836ea8cff542b83a9c46d101cc7ad64dce8554d8233fad5dddc36"
+        },
+        {
+          "level": 4,
+          "width": 32,
+          "height": 64,
+          "offset": 696320,
+          "length": 2048,
+          "sha256": "0acbe71e560c1b514d9801fa01fc0af956daf907138b1c5914c0a0e0cf8de134"
+        },
+        {
+          "level": 5,
+          "width": 16,
+          "height": 32,
+          "offset": 698368,
+          "length": 512,
+          "sha256": "f94850abd876c3b272285baeb0c3eb42327ddddb37e45c66cad00a1458e1fc21"
+        },
+        {
+          "level": 6,
+          "width": 8,
+          "height": 16,
+          "offset": 698880,
+          "length": 128,
+          "sha256": "6e5ac3b7a7629f97e191187771cf5092c3ff122f527c1bf749995c8bf80ee176"
+        },
+        {
+          "level": 7,
+          "width": 4,
+          "height": 8,
+          "offset": 699008,
+          "length": 32,
+          "sha256": "6d6dbc6255413005246c0be9555e0cffe4d979f9376be09df48123fcc335d8c9"
+        },
+        {
+          "level": 8,
+          "width": 2,
+          "height": 4,
+          "offset": 699040,
+          "length": 16,
+          "sha256": "dad3f26870809f927fbe58eca99d34bb357c709473a41527c75796a07afda148"
+        },
+        {
+          "level": 9,
+          "width": 1,
+          "height": 2,
+          "offset": 699056,
+          "length": 16,
+          "sha256": "002c4b3215a5d576b507507cd8f777f2a38ba55564c43a254d11ba96c33c3e10"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 699072,
+          "length": 16,
+          "sha256": "a46cea7b9117043f649128ed04fa7f2613656734acddadf5078e5c0863714ebc"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-e5d7f562b661a06291893d4bb2b080ca:1187803294943371637",
+      "name": "T_building_lines",
+      "source": {
+        "name": "Data/Bundles/Windows/main/36c0238c97a6de7dfd2366a7.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 656030715,
+        "length": 13396,
+        "md5": "EC5161F22B6E515A62E82465A9D1B8E0",
+        "sha256": "39744fe3796ee37fb549f893e1e28e2c27203f5db8b948f0ef29d3399a086652",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 1,
+      "mip_count": 1,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1048576,
+        "path": "archive:/CAB-e5d7f562b661a06291893d4bb2b080ca/CAB-e5d7f562b661a06291893d4bb2b080ca.resS"
+      },
+      "complete_image_size": 1048576,
+      "raw": {
+        "file": "texture-mips/T_building_lines--1187803294943371637.bin",
+        "bytes": 1048576,
+        "sha256": "6dd6c8e1466a63a7acf5f055ecd178e6629cdd86705e2bc8e6fa3f1886475283"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "6dd6c8e1466a63a7acf5f055ecd178e6629cdd86705e2bc8e6fa3f1886475283"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    },
+    {
+      "texture_id": "CAB-ee8b13bfaffa3babf0ee4e43787ee2ab:6712698097951409592",
+      "name": "T_buildingGround_lv001",
+      "source": {
+        "name": "Data/Bundles/Windows/main/8cf2e77f17903feb845038e0.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 863529158,
+        "length": 24444,
+        "md5": "AB2B69451F4FEA69BB82FA897893573B",
+        "sha256": "33f01204a16c93d7bab3891d6c2991d3f9d3d84a890dacf87b06fa095bbb195a",
+        "md5_verified": true
+      },
+      "width": 1024,
+      "height": 1024,
+      "texture_format": 25,
+      "format_name": "BC7",
+      "color_space": 0,
+      "mip_count": 11,
+      "sampler": {
+        "m_FilterMode": 1,
+        "m_Aniso": 1,
+        "m_MipBias": 0.0,
+        "m_WrapU": 0,
+        "m_WrapV": 0,
+        "m_WrapW": 0,
+        "m_TextureGroup": 0
+      },
+      "stream_data": {
+        "offset": 0,
+        "size": 1398128,
+        "path": "archive:/CAB-ee8b13bfaffa3babf0ee4e43787ee2ab/CAB-ee8b13bfaffa3babf0ee4e43787ee2ab.resS"
+      },
+      "complete_image_size": 1398128,
+      "raw": {
+        "file": "texture-mips/T_buildingGround_lv001--6712698097951409592.bin",
+        "bytes": 1398128,
+        "sha256": "e5523a517bbf1e2deb65cb561baa558c3bfad6292ce2503eda20cfb61813fa97"
+      },
+      "mips": [
+        {
+          "level": 0,
+          "width": 1024,
+          "height": 1024,
+          "offset": 0,
+          "length": 1048576,
+          "sha256": "d280eff5e30b40451f727059a5b9fa0a3b5868250db4809407663d00b9c6a5df"
+        },
+        {
+          "level": 1,
+          "width": 512,
+          "height": 512,
+          "offset": 1048576,
+          "length": 262144,
+          "sha256": "0c29855008ed65cca57da853e91061ec32ad7c022a83c7bed1deea9d15fd4393"
+        },
+        {
+          "level": 2,
+          "width": 256,
+          "height": 256,
+          "offset": 1310720,
+          "length": 65536,
+          "sha256": "b21ff264cdb92b5d224c72701f1da396aa84e59e5abd4e3d0def3f62775cc24c"
+        },
+        {
+          "level": 3,
+          "width": 128,
+          "height": 128,
+          "offset": 1376256,
+          "length": 16384,
+          "sha256": "9aa42fcb799cec8a86556fe386d651151a590072650c7efb1563f57f0d0acfb6"
+        },
+        {
+          "level": 4,
+          "width": 64,
+          "height": 64,
+          "offset": 1392640,
+          "length": 4096,
+          "sha256": "670624365a6955890c96f40446411e2c340590a77bcc66b062d48a47e50111ca"
+        },
+        {
+          "level": 5,
+          "width": 32,
+          "height": 32,
+          "offset": 1396736,
+          "length": 1024,
+          "sha256": "96965b0adaa7b4b6040aabf65ad9d393583ba09c966073cfb571d0fcb82b0b7b"
+        },
+        {
+          "level": 6,
+          "width": 16,
+          "height": 16,
+          "offset": 1397760,
+          "length": 256,
+          "sha256": "4ad305b03b5f38c3da308b80f0ba44ce3563b42698d5da1cca36f2371feb71fc"
+        },
+        {
+          "level": 7,
+          "width": 8,
+          "height": 8,
+          "offset": 1398016,
+          "length": 64,
+          "sha256": "f6ba7787a9947501958f53d0097a22fc9c5c8102afc4be0b6a49809441ec7c6e"
+        },
+        {
+          "level": 8,
+          "width": 4,
+          "height": 4,
+          "offset": 1398080,
+          "length": 16,
+          "sha256": "e84e730c3878c76bfbbd12aaf8dcbe967944864487ca3bcc92962660722037b4"
+        },
+        {
+          "level": 9,
+          "width": 2,
+          "height": 2,
+          "offset": 1398096,
+          "length": 16,
+          "sha256": "6e91058a1e1a299fb383a6a8780d0c94bc61045d066185f76c2a6b8e23815df6"
+        },
+        {
+          "level": 10,
+          "width": 1,
+          "height": 1,
+          "offset": 1398112,
+          "length": 16,
+          "sha256": "a9d32c7f192d5a481bbe71ac6119b12fb3e359c980e5f0aaf3c5e65f52dc6dea"
+        }
+      ],
+      "all_mip_ranges_verified": true,
+      "policy": "Exact Texture2D.get_image_data bytes, source row order/mip dimensions/format. No vertical flip, decompression, resize, synthesized mip or shader-color transform."
+    }
+  ],
+  "policy": "Only original textures bound by the 50 exported domain scenes or their materials/Sprites. Raw compressed or original pixel payload retained with exact source mip ranges where byte format is explicitly supported."
+}

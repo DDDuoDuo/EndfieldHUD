@@ -1,0 +1,152 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "frag"
+    }
+  ],
+  "types": {
+    "_6": {
+      "name": "_6",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 16
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 32
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 48
+        },
+        {
+          "name": "_m4",
+          "type": "vec4",
+          "offset": 64
+        },
+        {
+          "name": "_m5",
+          "type": "vec4",
+          "offset": 80
+        },
+        {
+          "name": "_m6",
+          "type": "float",
+          "offset": 96
+        },
+        {
+          "name": "_m7",
+          "type": "float",
+          "offset": 100
+        },
+        {
+          "name": "_m8",
+          "type": "float",
+          "offset": 104
+        },
+        {
+          "name": "_m9",
+          "type": "mat4",
+          "offset": 112,
+          "matrix_stride": 16,
+          "row_major": true
+        }
+      ]
+    },
+    "_8": {
+      "name": "_8",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "float",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "float",
+          "offset": 4
+        },
+        {
+          "name": "_m2",
+          "type": "float",
+          "offset": 8
+        },
+        {
+          "name": "_m3",
+          "type": "float",
+          "offset": 12
+        },
+        {
+          "name": "_m4",
+          "type": "float",
+          "offset": 16
+        },
+        {
+          "name": "_m5",
+          "type": "float",
+          "offset": 20
+        },
+        {
+          "name": "_m6",
+          "type": "float",
+          "offset": 24
+        },
+        {
+          "name": "_m7",
+          "type": "float",
+          "offset": 28
+        },
+        {
+          "name": "_m8",
+          "type": "vec4",
+          "offset": 32
+        }
+      ]
+    }
+  },
+  "inputs": [
+    {
+      "type": "vec4",
+      "name": "_3",
+      "location": 0
+    },
+    {
+      "type": "vec4",
+      "name": "_4",
+      "location": 5
+    }
+  ],
+  "outputs": [
+    {
+      "type": "vec4",
+      "name": "_5",
+      "location": 0
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_6",
+      "name": "_6_7",
+      "block_size": 176,
+      "set": 3,
+      "binding": 0
+    },
+    {
+      "type": "_8",
+      "name": "_8_9",
+      "block_size": 48,
+      "set": 1,
+      "binding": 0
+    }
+  ]
+}
