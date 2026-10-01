@@ -82,7 +82,11 @@ enum RenderSourceWatchPreviews {
             ("hover-000", nil, 0, nil, 0), ("hover-033", nil, 0, nil, 1 / 30),
             ("hover-067", nil, 0, nil, 2 / 30), ("hover-100", nil, 0, nil, 0.1),
             ("hover-hold", nil, 0, nil, 1), ("closing-100", nil, 0, 0.1, nil),
-            ("closing-250", nil, 0, 0.25, nil)
+            ("closing-250", nil, 0, 0.25, nil),
+            ("domain-selected-000", nil, 0, nil, nil),
+            ("domain-selected-083", nil, 0, nil, nil),
+            ("domain-selected-167", nil, 0, nil, nil),
+            ("domain-hover-hold", nil, 0, nil, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
@@ -95,7 +99,14 @@ enum RenderSourceWatchPreviews {
                 canvasResolution: view.layout.canvasSize)
             document.applyMacButtonAvailability(to: &pose)
             buttons.apply(to: &pose, at: hover ?? 0, reduceMotion: false)
-            let frame = try builder.build(pose: pose, worldRoot: view.worldRoot)
+            var domainState = HUDSourceDomainAnimation.State(ambientTime: ambient ?? opening ?? closing ?? 0)
+            if name.hasPrefix("domain-") {
+                domainState.currentLevelID = "map01_lv001"
+                if name == "domain-selected-000" { domainState.selectionElapsed = 0 }
+                if name == "domain-selected-083" { domainState.selectionElapsed = 0.1666666716337204 / 2 }
+                if name == "domain-hover-hold" { domainState.hoverClipTimes = ["map01_lv001": 0.1666666716337204] }
+            }
+            let frame = try builder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState)
             if name == "stable" {
                 let batches: [[String: Any]] = frame.batches.map { batch in
                     let matrix = (0..<4).map { column in (0..<4).map { row in Double(batch.world[column][row]) } }
@@ -148,6 +159,8 @@ enum RenderSourceWatchPreviews {
                 "buttonGeometry": geometry, "diagnostics": diagnostics,
                 "unverifiedLayout": frame.layoutReport.unverifiedCustomComponents.sorted(),
                 "openingElapsed": timestamp(opening), "ambientClipTime": timestamp(ambient),
+                "domainCurrentLevel": domainState.currentLevelID.map { $0 as Any } ?? NSNull(),
+                "domainSelectionElapsed": timestamp(domainState.selectionElapsed), "domainHoverClipTimes": domainState.hoverClipTimes,
                 "closingElapsed": timestamp(closing), "hoverElapsed": timestamp(hover)])
             print(name + ": " + String(frame.batches.count) + " source batches; " + String(diagnostics.count) + " diagnostics")
         }

@@ -7,7 +7,7 @@ SDK="$("$TASK_ROOT/scripts/build.sh" --print-sdk)"
 mkdir -p "$OUTPUT" "$RUNTIME/module-cache"
 SOURCE_NAMES=(HUDResources HUDSourceScene HUDSourceWatchAnimation HUDSourceWatchDocument
     HUDSourceImageGeometry HUDSourceTextGeometry HUDSourceWatchLayout HUDSourceWatchButtonAnimation HUDSourceWatchDomain HUDSourceRectClipping HUDSourceCanvasSorting
-    HUDSourceWatchCamera HUDSourceDrawableReadback HUDSourceMetalRenderer HUDSourceWatchFrameBuilder)
+    HUDSourceWatchCamera HUDSourceDomainAnimation HUDSourceDrawableReadback HUDSourceMetalRenderer HUDSourceWatchFrameBuilder)
 SOURCE_FILES=()
 for name in "${SOURCE_NAMES[@]}"; do SOURCE_FILES+=("$TASK_ROOT/Sources/$name.swift"); done
 xcrun swiftc -g -swift-version 5 -parse-as-library -sdk "$SDK" -module-cache-path "$RUNTIME/module-cache" \

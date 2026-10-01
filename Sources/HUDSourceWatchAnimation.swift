@@ -123,6 +123,13 @@ struct HUDSourceWatchAnimation {
     /// prefab remain reported; no nearby node is substituted by name.
     func apply(_ clip: HUDSourceAnimationClip, time: Double, to pose: inout HUDSourceWatchPose,
                base: [HUDSourceID: HUDSourceResolvedNode]) {
+        Self.apply(clip, time: time, to: &pose, base: base, scene: scene)
+    }
+
+    /// Domain wrappers bind to their own original prefab root. Reuse the same
+    /// source channel rules with that scene rather than rebinding by basename.
+    static func apply(_ clip: HUDSourceAnimationClip, time: Double, to pose: inout HUDSourceWatchPose,
+                      base: [HUDSourceID: HUDSourceResolvedNode], scene: HUDSourceScene) {
         guard let time = clip.localTime(time) else { return }
         for curve in clip.curves {
             // The installed player's RectTransform scalar registry binds Z,
