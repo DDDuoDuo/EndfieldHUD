@@ -314,8 +314,9 @@ final class HUDSourceWatchView: NSView {
             let wrapperPose = pose
             buttonAnimation.apply(to: &pose, at: time, reduceMotion: reduce)
             document.applyMacButtonAvailability(to: &pose)
+            let domainState = HUDSourceDomainAnimation.State(ambientTime: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : time)
             var frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
-                                               verticalNormalizedPosition: verticalNormalizedPosition)
+                                               verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState)
             // Source EventSystem raycasts each frame, including stationary
             // pointers while the menu or gyro moves. Retarget at this same
             // clock instant, then rebuild once; do not recurse into the timer.
@@ -330,7 +331,7 @@ final class HUDSourceWatchView: NSView {
                 buttonAnimation.apply(to: &pose, at: time, reduceMotion: reduce)
                 document.applyMacButtonAvailability(to: &pose)
                 frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
-                                                verticalNormalizedPosition: verticalNormalizedPosition)
+                                                verticalNormalizedPosition: verticalNormalizedPosition, domainAnimationState: domainState)
             }
             lastPose = pose; renderedFrame = frame; renderedCamera = camera
             diagnostics = frame.diagnostics

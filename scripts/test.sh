@@ -22,6 +22,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDSourceCanvasSorting.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchButtonAnimation.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchDomain.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceDomainAnimation.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchCamera.swift" \
     "$PROJECT_DIR/Sources/HUDSourceDrawableReadback.swift" \
     "$PROJECT_DIR/Sources/HUDGitHubRelease.swift" \
@@ -126,6 +127,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDSourceCanvasSortingTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchButtonAnimationTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchDomainTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceDomainAnimationTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchCameraTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceDrawableReadbackTests.swift" \
     "$PROJECT_DIR/Tests/HUDChargeBadgeTests.swift" \

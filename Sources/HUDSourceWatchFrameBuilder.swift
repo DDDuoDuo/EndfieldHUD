@@ -123,7 +123,8 @@ final class HUDSourceWatchFrameBuilder {
     }
 
     func build(pose input: HUDSourceWatchPose, worldRoot: simd_double4x4,
-               verticalNormalizedPosition: Double = 1) throws -> Frame {
+               verticalNormalizedPosition: Double = 1,
+               domainAnimationState: HUDSourceDomainAnimation.State = .init()) throws -> Frame {
         var pose = input
         let layout = HUDSourceWatchLayout(document: document) { [weak self] id, _ in
             guard let self else { return nil }
@@ -323,7 +324,8 @@ final class HUDSourceWatchFrameBuilder {
             throw HUDSourceError.invalid("Unresolved original Domain placement")
         }
         if region.activeInHierarchy {
-            let source = try domain.frame(domainWorld: simd_mul(worldRoot, region.worldMatrix), parentRect: region.rect)
+            let source = try domain.frame(domainWorld: simd_mul(worldRoot, region.worldMatrix), parentRect: region.rect,
+                animationState: domainAnimationState)
             diagnostics.append("Domain selection: " + source.selectionPolicy)
             diagnostics.append(contentsOf: source.limitations)
             for instance in source.meshes {
@@ -357,6 +359,13 @@ final class HUDSourceWatchFrameBuilder {
                         textureOverrides: instance.sourceTextureOverrides, indexRange: first..<(first + count))
                     for (uniform, value) in instance.sourceUniformOverrides {
                         if let number = value.number { batch.uniformOverrides[uniform] = [Float(number)] }
+                    }
+                    // Source material.* tracks have no material-index prefix.
+                    // Keep their default slot separate from ground and other
+                    // slots; renderer-wide texture property blocks still apply.
+                    if slot == 0 {
+                        applyMaterialProperties(source.animationPose, on: instance.nodeID,
+                            materialID: materialID, to: &batch)
                     }
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
                     batches.append((instance.sourceRuntimeSortingOrder, sequence, batch)); sequence += 1

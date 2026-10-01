@@ -51,6 +51,7 @@ final class HUDSourceWatchDomain {
     }
     struct Frame {
         let meshes: [MeshBatch]
+        let animationPose: HUDSourceWatchPose
         /// Also exposes UIImage/UIText nodes so the common source UI renderer
         /// can use the same original layout and per-node material logic.
         let nodes: [HUDSourceID: HUDSourceResolvedNode]
@@ -89,6 +90,7 @@ final class HUDSourceWatchDomain {
     private let meshes: [HUDSourceID: Mesh]
     private let instances: [Instance]
     private let levelRootIDs: [HUDSourceID: String]
+    private let animation: HUDSourceDomainAnimation
 
     static func normalVectors(_ source: [[Double]], vertexCount: Int,
                               words: [[UInt32]]? = nil) throws -> [SIMD3<Float>] {
@@ -242,6 +244,8 @@ final class HUDSourceWatchDomain {
         // reorder duplicated mesh/material instances within the original graph.
         let order = Dictionary(uniqueKeysWithValues: joinedScene.traversalIDs.enumerated().map { ($1, $0) })
         instances = instanceList.sorted { order[$0.nodeID, default: 0] < order[$1.nodeID, default: 0] }
+        animation = try HUDSourceDomainAnimation(data: data("level-clips.json"), scene: joinedScene,
+            domainName: domainName, loadedLevelIDs: loadedLevelIDs)
     }
 
     /// Instantiate(origin, parent, false): reparent only the source root. All
@@ -267,7 +271,8 @@ final class HUDSourceWatchDomain {
 
     func frame(domainWorld: simd_double4x4, parentRect: HUDSourceRect? = nil,
                overrides: [HUDSourceID: HUDSourceTransformOverride] = [:],
-               unlockedLevelIDs: Set<String>? = nil, showType: Int = 1) throws -> Frame {
+               unlockedLevelIDs: Set<String>? = nil, showType: Int = 1,
+               animationState: HUDSourceDomainAnimation.State = .init()) throws -> Frame {
         guard HUDSourceGeometry.isFinite(domainWorld) else { throw HUDSourceError.invalid("Invalid external Domain transform") }
         var overrides = overrides
         // _InitUI applies the caller's unlock flags to all ui/building/ground
@@ -278,7 +283,8 @@ final class HUDSourceWatchDomain {
                 value.active = unlocked.contains(level); overrides[rootID] = value
             }
         }
-        let resolved = try scene.resolve(rootParentRect: parentRect, overrides: overrides)
+        let animationPose = try animation.pose(state: animationState, overrides: overrides)
+        let resolved = try scene.resolve(rootParentRect: parentRect, overrides: animationPose.transforms)
         var nodes: [HUDSourceID: HUDSourceResolvedNode] = [:]
         for (id, node) in resolved {
             nodes[id] = HUDSourceResolvedNode(node: node.node, localMatrix: node.localMatrix,
@@ -296,8 +302,9 @@ final class HUDSourceWatchDomain {
                 sourceRuntimeSortingOrder: Self.rendererSortingOrder(renderer: instance.renderer,
                     ownComponents: components[instance.nodeID] ?? [])))
         }
-        return Frame(meshes: batches, nodes: nodes, selectionPolicy: selectionPolicy,
+        return Frame(meshes: batches, animationPose: animationPose, nodes: nodes, selectionPolicy: selectionPolicy,
             limitations: ["Current level, player marker, unlock/selection and load completion require explicit caller state.",
+                animationState.currentLevelID == nil ? "Level-model wrappers use original deselected endpoints for a reference with no current level." : "Level-model wrappers use an explicitly supplied current level.",
                 "The source -90 degree world rotation tween targets loadedRegionTransform; its invocation in Watch is not established and is not applied here.",
                 "Renderer own UISortingOrder offsets are applied; conflicting ancestor writer lifecycle order remains unverified.",
                 "Unity scheduling and pixel-identical engine rendering remain unverified."])

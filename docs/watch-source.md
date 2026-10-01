@@ -123,6 +123,19 @@ inverse world matrix. Watch's original region placement is retained; a generic
 map rotation tween is not additionally applied. The reference view loads all
 declared Region01 levels. A matching live-game map additionally requires the
 actual current level, player position, loaded/unlocked levels and selection.
+The original level-model UIAnimationWrappers are sampled in the joined Domain
+scene, using instance-bound clips rather than the PC menu's node graph. Watch
+initialization plays the current model's selected clip at timeScale 1 and seeks
+other model wrappers to their deselected endpoints. A reference with no current
+level explicitly uses the original deselected endpoints for every model; it
+does not claim game account state. Selection curves retain each original
+wrapper's Linear or OutQuad ease, material colors and exact child targets. Ground materials are
+not overwritten. Original hover curves affect model Lightness and two separate
+glow-material alphas; explicit clip-time samples are available for verification,
+while Watch's live map hover dispatch remains unverified. The saved idle glow
+materials already have alpha zero. Region02's nested wheel wrapper has
+autoPlay=1, Linear ease and its original 14.966666-second quaternion loop; it
+does not rely on the Animation component's disabled PlayAutomatically flag.
 Renderer sorting uses native UISortingOrder's absolute renderer offset; it is
 not added to the parent panel's Canvas order. Source terrain and spaceship
 instances therefore retain their native negative sorting offsets.
