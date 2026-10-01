@@ -200,6 +200,13 @@ result informs the CPU oracle; it does not establish the Windows driver's behavi
 Each of the six original filter intermediates is also read back and checked using
 the actual preceding GPU input. Whole-image RGB tolerances remain four bytes, or
 one byte for the constant fixture; alpha remains exact.
+The ICC output is an explicit premultiplied RGBA8 sRGB raster uploaded without
+automatic texture-format selection. The fixture reads back every uploaded byte,
+then checks colors and row orientation for mixed-scale and reconstructed RGB ICC
+profiles. Missing or non-RGB profiles are rejected.
+The explicit native lifecycle fixture also supplies delayed preparation completion,
+closes while input is pending, and waits for the real three-second timeout. It
+checks the existing source view and host deadlines without invoking capture APIs.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original

@@ -98,6 +98,14 @@ final class OverlayController: NSObject {
     var systemAmbientStartTime: TimeInterval? { systemView?.ambientStartTime }
     var systemSelectedModule: HUDModule? { systemView?.selectedModule }
     var systemSourceWatchForVerification: HUDSourceWatchView? { systemView?.sourceWatchForVerification }
+    var systemBackdropPreparationForVerification: ((@escaping () -> Void) -> Void)? {
+        didSet {
+            if let _ = systemBackdropPreparationForVerification {
+                precondition(CommandLine.arguments.contains("--ui-test"))
+            }
+            systemView?.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
+        }
+    }
     var systemSourceFailureForVerification: String? { systemView?.sourceFailureForVerification }
     private(set) var lastClosedSourceTimerActive = false
     private(set) var lastClosedSourcePhase: HUDSourceWatchPlayback.Phase?
@@ -503,6 +511,7 @@ final class OverlayController: NSObject {
                                      initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
                                      initialModule: initialModuleRequest ?? lastSystemModule)
             systemView = view
+            view.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
             if let pointerLocationProvider = systemPointerLocationProviderForVerification {
                 view.pointerLocationProvider = pointerLocationProvider
             }

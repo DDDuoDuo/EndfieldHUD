@@ -63,6 +63,16 @@ final class HUDSourceWatchView: NSView {
         let completion: () -> Void
     }
     private var pendingOpening: PendingOpening?
+    /// Explicit native verification supplies completion timing, never desktop pixels.
+    var backdropPreparationForVerification: ((@escaping () -> Void) -> Void)? {
+        didSet {
+            if let _ = backdropPreparationForVerification {
+                precondition(CommandLine.arguments.contains("--ui-test"))
+            }
+        }
+    }
+    var backdropPreparingForVerification: Bool { pendingOpening != nil }
+    var backdropStartForVerification: Double { backdropTransitionStart }
     private var backdropPreparationDeadline: DispatchWorkItem?
     private var backdropTransitionStart: Double = 0
     private(set) var backdropDiagnostics: [String] = []
@@ -273,15 +283,24 @@ final class HUDSourceWatchView: NSView {
         cancelPendingOpening()
         backdropTransitionStart = now
         hovered = nil; pressed = nil
+        if let preparation = backdropPreparationForVerification {
+            precondition(CommandLine.arguments.contains("--ui-test") && !canCaptureDesktopBackdrop)
+            cancelBackdropCapture()
+            let generation = backdropGeneration
+            holdOpeningForBackdrop(ready: ready, completion: completion)
+            preparation { [weak self] in
+                precondition(Thread.isMainThread)
+                guard let self, self.backdropGeneration == generation else { return }
+                self.startPendingOpening()
+            }
+            return
+        }
         if #available(macOS 14.0, *), canCaptureDesktopBackdrop,
            HUDSourceDesktopBackdrop.preflightPermission() == .granted {
             // Hold the original initial pose while preparing its real input.
             // Menu and blur start together; capture latency cannot consume the
             // source's short 0.133-second background entrance.
-            pendingOpening = PendingOpening(heldTime: now, ready: ready, completion: completion)
-            armBackdropPreparationDeadline()
-            playback.open(at: now, reduceMotion: false)
-            refreshPlaybackScheduling()
+            holdOpeningForBackdrop(ready: ready, completion: completion)
             requestDesktopBackdrop()
             return
         }
@@ -386,6 +405,13 @@ final class HUDSourceWatchView: NSView {
     private func cancelPendingOpening() {
         backdropPreparationDeadline?.cancel(); backdropPreparationDeadline = nil
         pendingOpening = nil
+    }
+
+    private func holdOpeningForBackdrop(ready: @escaping () -> Void, completion: @escaping () -> Void) {
+        pendingOpening = PendingOpening(heldTime: now, ready: ready, completion: completion)
+        armBackdropPreparationDeadline()
+        playback.open(at: now, reduceMotion: false)
+        refreshPlaybackScheduling()
     }
 
     private func armBackdropPreparationDeadline() {
