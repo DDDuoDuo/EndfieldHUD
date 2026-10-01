@@ -8,6 +8,7 @@ import simd
 final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     struct Camera {
         var viewProjection: simd_float4x4
+        var viewNoTranslationProjection: simd_float4x4
         var worldSpacePosition: SIMD3<Float>
         var timeSeconds: Float
         var renderPathInjected: Float
@@ -41,6 +42,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         // Unity source bits: R=1, G=2, B=4, A=8.
         var colorWriteMask: UInt8? = nil
         var indexRange: Range<Int>? = nil
+        /// Original scene instance for diagnostic readback and renderer-wide
+        /// property-block checks; does not participate in GPU shading.
+        var sourceNodeID: String? = nil
     }
 
     private struct Vertex {
@@ -463,8 +467,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                         } else {
                             switch field.name {
                             case "unity_ObjectToWorld", "ObjectToWorld": Self.put(batch.world, into: &bytes, at: field.offset)
-                            case "unity_MatrixVP", "_NonJitteredViewNoTransProjMatrix":
+                            case "unity_MatrixVP":
                                 Self.put(camera.viewProjection, into: &bytes, at: field.offset)
+                            case "_NonJitteredViewNoTransProjMatrix":
+                                Self.put(camera.viewNoTranslationProjection, into: &bytes, at: field.offset)
                             case "glstate_matrix_projection", "_ProjMatrix", "_UIProjMatrix":
                                 if let projection = camera.projection { Self.put(projection, into: &bytes, at: field.offset) }
                             case "unity_MatrixInvV", "_InvViewMatrix":
@@ -474,7 +480,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                                     Self.put([value.x, value.y, value.z, value.w], into: &bytes, at: field.offset)
                                 }
                             case "_WorldSpaceCameraPos_Internal":
-                                Self.put([camera.worldSpacePosition.x, camera.worldSpacePosition.y, camera.worldSpacePosition.z, 1], into: &bytes, at: field.offset)
+                                Self.put([camera.worldSpacePosition.x, camera.worldSpacePosition.y, camera.worldSpacePosition.z, 0], into: &bytes, at: field.offset)
                             case "_UITime":
                                 // HG copies its render-time tuple to UI globals.
                                 // This adapter has no game's gameplay clock;

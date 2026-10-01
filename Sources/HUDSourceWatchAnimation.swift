@@ -69,7 +69,9 @@ struct HUDSourceWatchPose {
 /// evaluation path; seeking does not start timers or Core Animation tracks.
 struct HUDSourceWatchAnimation {
     private static let rectTransformScalarAttributes: Set<String> = [
-        "m_LocalPosition.z", "m_AnchoredPosition.x", "m_AnchoredPosition.y",
+        "m_LocalPosition.x", "m_LocalPosition.y", "m_LocalPosition.z",
+        "m_LocalScale.x", "m_LocalScale.y", "m_LocalScale.z",
+        "m_AnchoredPosition.x", "m_AnchoredPosition.y",
         "m_AnchorMin.x", "m_AnchorMin.y", "m_AnchorMax.x", "m_AnchorMax.y",
         "m_SizeDelta.x", "m_SizeDelta.y", "m_Pivot.x", "m_Pivot.y"
     ]
@@ -132,10 +134,11 @@ struct HUDSourceWatchAnimation {
                       base: [HUDSourceID: HUDSourceResolvedNode], scene: HUDSourceScene) {
         guard let time = clip.localTime(time) else { return }
         for curve in clip.curves {
-            // The installed player's RectTransform scalar registry binds Z,
-            // anchored X/Y, anchors, size and pivot. Its hash lookup rejects
-            // local X/Y; these legacy serialized leftovers never reach a
-            // setter. Transform (class 4) position tracks remain valid.
+            // The RectTransform-specific handler covers anchors/size/pivot
+            // and Z. Legacy inherited position/scale components also bind
+            // through the native Serialized TypeTree float fallback. Keep
+            // their original class ID; layout later rewrites driven axes.
+            // Other properties remain diagnosed outside this verified set.
             if curve.group == "m_FloatCurves", curve.classID == 224,
                !Self.rectTransformScalarAttributes.contains(curve.attribute) {
                 pose.unregisteredBindings.insert("224:" + curve.attribute)

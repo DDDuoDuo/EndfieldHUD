@@ -357,16 +357,16 @@ final class HUDSourceWatchFrameBuilder {
                     var batch = HUDSourceMetalRenderer.Batch(mesh: name, material: materialID.rawValue,
                         world: HUDSourceGeometry.floatMatrix(instance.worldMatrix), color: SIMD4(repeating: 1),
                         textureOverrides: instance.sourceTextureOverrides, indexRange: first..<(first + count))
+                    batch.sourceNodeID = instance.nodeID.rawValue
                     for (uniform, value) in instance.sourceUniformOverrides {
                         if let number = value.number { batch.uniformOverrides[uniform] = [Float(number)] }
                     }
-                    // Source material.* tracks have no material-index prefix.
-                    // Keep their default slot separate from ground and other
-                    // slots; renderer-wide texture property blocks still apply.
-                    if slot == 0 {
-                        applyMaterialProperties(source.animationPose, on: instance.nodeID,
-                            materialID: materialID, to: &batch)
-                    }
+                    // The installed Legacy Renderer handler writes plain
+                    // material.* channels into its renderer-wide property
+                    // block. Every submesh/material slot reads that override;
+                    // the original Material assets remain unchanged.
+                    applyMaterialProperties(source.animationPose, on: instance.nodeID,
+                        materialID: materialID, to: &batch)
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal
                     batches.append((instance.sourceRuntimeSortingOrder, sequence, batch)); sequence += 1
                 }

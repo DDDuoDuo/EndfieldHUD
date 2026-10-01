@@ -45,6 +45,79 @@ enum RenderSourceWatchPreviews {
         let renderer = try HUDSourceMetalRenderer(frame: viewport)
         trace("building original image, text and Domain geometry")
         let builder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer)
+        // A separate explicit fixture exercises the source's four-slot model.
+        // This does not assign an account's current level to the default view.
+        let region02 = try HUDSourceWatchDomain(resourceRoot: document.root.appendingPathComponent("Domain"),
+            domainName: "Region02", loadedLevelIDs: ["map02_lv008"])
+        let region02Builder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer, domain: region02)
+        let levelClips = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
+            from: Data(contentsOf: region02.root.appendingPathComponent("level-clips.json")))
+        guard let fourSlotInstance = levelClips["instances"].array.first(where: { instance in
+            instance["is_level_model_root"].flag() && instance["levels"].array.contains {
+                $0["domain"].string == "region02" && $0["level_id"].string == "map02_lv008"
+            }
+        }), let fourSlotRootString = fourSlotInstance["root_node_id"].string,
+              let fourSlotRenderer = region02.components[HUDSourceID(rawValue: fourSlotRootString)]?
+                .first(where: { $0.kind == "MeshRenderer" }) else {
+            throw HUDSourceError.invalid("Missing original Region02 lv008 model renderer")
+        }
+        let fourSlotRoot = HUDSourceID(rawValue: fourSlotRootString)
+        let fourSlotMaterialIDs = fourSlotRenderer["m_Materials"].array.compactMap { $0.targetID?.rawValue }
+        guard fourSlotMaterialIDs.count == 4,
+              let selectedClipID = fourSlotInstance["wrapper_clip_fields"]["_animationIn"].string,
+              let selectedClip = levelClips["clips"].array.first(where: { $0["id"].string == selectedClipID }),
+              let hoverClip = levelClips["clips"].array.first(where: { $0["name"].string == "regionmap3d_map_hover" }),
+              let hoverEndpointTime = hoverClip["last_key_time"].number else {
+            throw HUDSourceError.invalid("Missing original four-slot material/animation contract")
+        }
+        // Read the authored endpoint keys independently of the runtime sampler.
+        // The regression checks renderer-wide propagation, plus the material's
+        // real GPU color conversion, for every original slot's actual batch.
+        func endpointProperties(_ clip: HUDSourceJSONValue) throws -> [String: [Float]] {
+            var channels: [String: [Int: Float]] = [:]
+            for curve in clip["curves"].array where curve["path"].string == "" && curve["class_id"].number == 23 {
+                guard let attribute = curve["attribute"].string,
+                      let key = curve["raw"]["curve"]["m_Curve"].array.last,
+                      let value = key["value"].number, value.isFinite else {
+                    throw HUDSourceError.invalid("Invalid original four-slot endpoint key")
+                }
+                let parts = attribute.split(separator: ".").map(String.init)
+                guard parts.first == "material", parts.count == 2 || parts.count == 3 else { continue }
+                let property = parts[1]
+                guard ["_OuterColor", "_InnerColor", "_Lightness"].contains(property) else { continue }
+                let index: Int
+                if parts.count == 2 { index = 0 }
+                else {
+                    guard let component = ["r": 0, "g": 1, "b": 2, "a": 3][parts[2]] else {
+                        throw HUDSourceError.invalid("Unexpected original material color channel")
+                    }
+                    index = component
+                }
+                channels[property, default: [:]][index] = Float(value)
+            }
+            var result: [String: [Float]] = [:]
+            for (property, values) in channels {
+                let count = property == "_Lightness" ? 1 : 4
+                guard values.count == count, (0..<count).allSatisfy({ values[$0] != nil }) else {
+                    throw HUDSourceError.invalid("Incomplete original four-slot endpoint")
+                }
+                result[property] = (0..<count).map { values[$0]! }
+            }
+            return result
+        }
+        let selectedEndpoint = try endpointProperties(selectedClip)
+        let hoverEndpoint = try endpointProperties(hoverClip)
+        guard Set(selectedEndpoint.keys) == Set(["_OuterColor", "_InnerColor", "_Lightness"]),
+              hoverEndpoint["_Lightness"] != nil else {
+            throw HUDSourceError.invalid("Original four-slot endpoint properties differ")
+        }
+        func placement(_ domain: String) throws -> HUDSourceID {
+            guard let node = document.scene.nodes.first(where: {
+                $0.path.hasSuffix("/Map/RegionRoot/RegionMask/MoveRoot/" + domain)
+            }) else { throw HUDSourceError.invalid("Missing source fixture Domain placement") }
+            return node.id
+        }
+        let region01Placement = try placement("Region01"), region02Placement = try placement("Region02")
         let abiEncoder = JSONEncoder()
         abiEncoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try abiEncoder.encode(renderer.constantBufferABI)
@@ -62,8 +135,10 @@ enum RenderSourceWatchPreviews {
         let gpuY = HUDSourceGeometry.scale(SIMD3<Double>(1, -1, 1))
         let gpuProjection = HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.projection))
         let gpu = HUDSourceMetalRenderer.Camera(viewProjection: HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.viewProjection)),
+            viewNoTranslationProjection: try HUDSourceWatchCamera.viewNoTranslationProjection(
+                gpuProjection: gpuProjection, view: view.camera.view),
             worldSpacePosition: SIMD3(Float(camera.cameraWorld.columns.3.x), Float(camera.cameraWorld.columns.3.y), Float(camera.cameraWorld.columns.3.z)),
-            timeSeconds: 0, renderPathInjected: 0, flipX: 0, flipY: 0,
+            timeSeconds: 0, renderPathInjected: 1, flipX: 0, flipY: 0,
             projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(camera.shaderCameraToWorld),
             uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
                 near: Float(camera.near), far: Float(camera.far)))
@@ -86,7 +161,9 @@ enum RenderSourceWatchPreviews {
             ("domain-selected-000", nil, 0, nil, nil),
             ("domain-selected-083", nil, 0, nil, nil),
             ("domain-selected-167", nil, 0, nil, nil),
-            ("domain-hover-hold", nil, 0, nil, nil)
+            ("domain-hover-hold", nil, 0, nil, nil),
+            ("domain-region02-lv008-selected", nil, 0, nil, nil),
+            ("domain-region02-lv008-hover", nil, 0, nil, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
             trace("resolving " + name)
@@ -99,18 +176,61 @@ enum RenderSourceWatchPreviews {
                 canvasResolution: view.layout.canvasSize)
             document.applyMacButtonAvailability(to: &pose)
             buttons.apply(to: &pose, at: hover ?? 0, reduceMotion: false)
+            let isFourSlotFixture = name.hasPrefix("domain-region02-lv008-")
+            if isFourSlotFixture {
+                var disabled = pose.transforms[region01Placement] ?? HUDSourceTransformOverride()
+                disabled.active = false; pose.transforms[region01Placement] = disabled
+                var enabled = pose.transforms[region02Placement] ?? HUDSourceTransformOverride()
+                enabled.active = true; pose.transforms[region02Placement] = enabled
+            }
             var domainState = HUDSourceDomainAnimation.State(ambientTime: ambient ?? opening ?? closing ?? 0)
-            if name.hasPrefix("domain-") {
+            if isFourSlotFixture {
+                domainState.currentLevelID = "map02_lv008"
+                if name.hasSuffix("-hover") { domainState.hoverClipTimes = ["map02_lv008": hoverEndpointTime] }
+            } else if name.hasPrefix("domain-") {
                 domainState.currentLevelID = "map01_lv001"
                 if name == "domain-selected-000" { domainState.selectionElapsed = 0 }
                 if name == "domain-selected-083" { domainState.selectionElapsed = 0.1666666716337204 / 2 }
                 if name == "domain-hover-hold" { domainState.hoverClipTimes = ["map01_lv001": 0.1666666716337204] }
             }
-            let frame = try builder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState)
+            let activeBuilder = isFourSlotFixture ? region02Builder : builder
+            let frame = try activeBuilder.build(pose: pose, worldRoot: view.worldRoot, domainAnimationState: domainState)
+            var materialRegression: [[String: Any]] = []
+            if isFourSlotFixture {
+                guard frame.resolved[region02Placement]?.activeInHierarchy == true,
+                      frame.resolved[region01Placement]?.activeInHierarchy == false else {
+                    throw HUDSourceError.invalid("Explicit four-slot fixture placement was not applied")
+                }
+                let targetBatches = frame.batches.filter { $0.sourceNodeID == fourSlotRoot.rawValue }
+                guard targetBatches.count == 4, targetBatches.map(\.material) == fourSlotMaterialIDs else {
+                    throw HUDSourceError.invalid("Four-slot source renderer did not produce its four original batches")
+                }
+                var sourceExpected = selectedEndpoint
+                if name.hasSuffix("-hover") { sourceExpected.merge(hoverEndpoint) { _, hover in hover } }
+                for (slot, batch) in targetBatches.enumerated() {
+                    var expected: [String: [Float]] = [:]
+                    for (property, sourceValue) in sourceExpected {
+                        let gpuValue = renderer.gpuMaterialValue(sourceValue, property: property, materialKey: batch.material)
+                        guard let actual = batch.uniformOverrides[property], actual.count == gpuValue.count,
+                              zip(actual, gpuValue).allSatisfy({ $0.0.isFinite && abs($0.0 - $0.1) < 0.000001 }) else {
+                            throw HUDSourceError.invalid("Renderer-wide \(property) missing/different on source lv008 slot \(slot)")
+                        }
+                        expected[property] = gpuValue
+                    }
+                    materialRegression.append(["slot": slot, "nodeID": fourSlotRoot.rawValue,
+                        "materialID": batch.material, "expectedGPUValues": expected.mapValues { $0.map(Double.init) },
+                        "actualGPUValues": batch.uniformOverrides.filter { expected[$0.key] != nil }
+                            .mapValues { $0.map(Double.init) },
+                        "indexFirst": batch.indexRange?.lowerBound ?? -1, "indexCount": batch.indexRange?.count ?? -1])
+                }
+                try JSONSerialization.data(withJSONObject: materialRegression, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: output.appendingPathComponent(name + "-material-regression.json"))
+            }
             if name == "stable" {
                 let batches: [[String: Any]] = frame.batches.map { batch in
                     let matrix = (0..<4).map { column in (0..<4).map { row in Double(batch.world[column][row]) } }
                     return ["mesh": batch.mesh, "material": batch.material, "worldColumns": matrix,
+                        "sourceNodeID": batch.sourceNodeID.map { $0 as Any } ?? NSNull(),
                         "color": [batch.color.x, batch.color.y, batch.color.z, batch.color.w].map { Double($0) },
                         "uniformOverrides": batch.uniformOverrides.mapValues { $0.map { Double($0) } },
                         "textureOverrides": batch.textureOverrides,
@@ -160,6 +280,7 @@ enum RenderSourceWatchPreviews {
                 "unverifiedLayout": frame.layoutReport.unverifiedCustomComponents.sorted(),
                 "openingElapsed": timestamp(opening), "ambientClipTime": timestamp(ambient),
                 "domainCurrentLevel": domainState.currentLevelID.map { $0 as Any } ?? NSNull(),
+                "domainName": activeBuilder.domain.domainName, "rendererWideMaterialRegression": materialRegression,
                 "domainSelectionElapsed": timestamp(domainState.selectionElapsed), "domainHoverClipTimes": domainState.hoverClipTimes,
                 "closingElapsed": timestamp(closing), "hoverElapsed": timestamp(hover)])
             print(name + ": " + String(frame.batches.count) + " source batches; " + String(diagnostics.count) + " diagnostics")
@@ -169,6 +290,10 @@ enum RenderSourceWatchPreviews {
             "pngRepresentation": "Opaque black matte retaining raw encoded premultiplied RGB; original alpha preserved in raw-pixel reports",
             "stableRawPixels": "stable-raw.bgra; BGRA8_sRGB raw blit with rowBytes from stable-raw-pixel-report.json",
             "uiProjectionParameters": gpu.uiProjectionParameters.map { [Double($0.x), Double($0.y), Double($0.z), Double($0.w)] } ?? [],
+            "perPassTuple": [1, 0, 0, 0],
+            "viewNoTranslationProjectionColumns": (0..<4).map { column in
+                (0..<4).map { row in Double(gpu.viewNoTranslationProjection[column][row]) }
+            },
             "inverseViewBasis": "Default source Camera.cameraToWorldMatrix: Transform.localToWorld * Scale(1,1,-1)",
             "originalWrapperEase": "OutQuad finite; Linear loop", "recordingPixelComparisonPassed": false,
             "availability": "All 22 mapped macOS functions enabled; game account locks and notifications absent",
