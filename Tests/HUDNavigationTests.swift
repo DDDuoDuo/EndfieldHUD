@@ -14,8 +14,8 @@ enum HUDNavigationTests {
         func colorsEqual(_ first: Any?, _ second: Any?) -> Bool {
             guard let first, let second else { return false }
             let left = first as AnyObject, right = second as AnyObject
-            guard CFGetTypeID(left) == CGColorGetTypeID(),
-                  CFGetTypeID(right) == CGColorGetTypeID() else { return false }
+            guard CFGetTypeID(left) == CGColor.typeID,
+                  CFGetTypeID(right) == CGColor.typeID else { return false }
             return CFEqual(left, right)
         }
         func animationCount(_ layer: CALayer) -> Int {
