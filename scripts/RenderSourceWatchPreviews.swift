@@ -8,6 +8,9 @@ import simd
 /// account data or source recording is read on the CI host.
 @main
 enum RenderSourceWatchPreviews {
+    private static func trace(_ message: String) {
+        FileHandle.standardError.write(Data(("Source GPU fixture: " + message + "\n").utf8))
+    }
     static func main() throws {
         do { try capture() }
         catch {
@@ -33,12 +36,16 @@ enum RenderSourceWatchPreviews {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let size = SIMD2<Double>(1728, 1080), viewport = CGRect(x: 0, y: 0, width: size.x, height: size.y)
+        trace("loading original scene")
         let document = try HUDSourceWatchDocument()
         let runtime = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
             from: Data(contentsOf: document.root.appendingPathComponent("runtime-root-camera.json")))
         let camera = try HUDSourceWatchCamera(runtimeRoot: runtime)
+        trace("loading original Metal programs, materials and mip chains")
         let renderer = try HUDSourceMetalRenderer(frame: viewport)
+        trace("building original image, text and Domain geometry")
         let builder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer)
+        trace("source resources loaded")
         let buttons = try HUDSourceWatchButtonAnimation(document: document)
         let window = NSWindow(contentRect: viewport, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
@@ -71,6 +78,7 @@ enum RenderSourceWatchPreviews {
             ("closing-250", nil, 0, 0.25, nil)
         ]
         for (name, opening, ambient, closing, hover) in samples {
+            trace("resolving " + name)
             buttons.reset(at: 0)
             if hover != nil { buttons.setHovered(true, on: battlepass.nodeID, at: 0, reduceMotion: false) }
             var pose = try document.animation.pose(entranceTime: opening.map {
@@ -81,6 +89,7 @@ enum RenderSourceWatchPreviews {
             document.applyMacButtonAvailability(to: &pose)
             buttons.apply(to: &pose, at: hover ?? 0, reduceMotion: false)
             let frame = try builder.build(pose: pose, worldRoot: view.worldRoot)
+            trace("drawing " + name)
             var clock = gpu; clock.timeSeconds = Float(ambient ?? opening ?? closing ?? 0)
             renderer.submit(camera: clock, batches: frame.batches)
             renderer.draw()
@@ -101,6 +110,8 @@ enum RenderSourceWatchPreviews {
             let diagnostics = frame.diagnostics + renderer.diagnostics
             manifest.append(["file": file, "batches": frame.batches.count, "hits": frame.hits.count,
                 "canvasSize": [view.layout.canvasSize.x, view.layout.canvasSize.y], "worldScale": view.layout.scale,
+                "standardVerticalFOV": camera.verticalFieldOfViewDegrees,
+                "runtimeVerticalFOV": view.layout.runtimeVerticalFieldOfViewDegrees,
                 "buttonGeometry": geometry, "diagnostics": diagnostics,
                 "unverifiedLayout": frame.layoutReport.unverifiedCustomComponents.sorted(),
                 "openingElapsed": timestamp(opening), "ambientClipTime": timestamp(ambient),

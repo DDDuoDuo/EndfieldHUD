@@ -10,7 +10,10 @@ macOS functions. Those feature panels retain their existing desktop interfaces.
 
 - The source perspective camera and `UICanvasScaleHelper` determine projection
   and canvas dimensions. The PC reference is 2400×1350; a 1728×1080 viewport uses
-  a 2400×1500 canvas. The prefab's saved scale is not a runtime camera scale.
+  a 2400×1500 canvas. `UIManager.SetUICameraFOV` preserves the standard horizontal
+  FOV on narrower screens; the serialized 15.381800° vertical FOV therefore
+  becomes 17.066957° at 1728×1080. Projection and world-canvas scaling use this
+  same runtime FOV. The prefab's saved scale is not a runtime camera scale.
 - Pointer motion rotates the original world UI root. The original pitch/yaw
   curves, biased center, ±2/3 degree limits and 0.5-second OutQuad quaternion
   tween are retained. Rendering and raycasts resolve the same pose and masks.
@@ -82,6 +85,9 @@ BC7 textures use their original compressed data on capable devices, or the
 decoded pixels of every original mip. No replacement mip chain is generated.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
+Single-component packed normal channels retain their original float32 words,
+including NaN payloads, for decoding by the original map vertex shader. They
+are not treated as three-component normals or normalized on the CPU.
 `_WatchWorldToLocalMatrix` comes from the actual `UIWatchPanelCut` cylinder's
 inverse world matrix. Watch's original region placement is retained; a generic
 map rotation tween is not additionally applied. The reference view loads all

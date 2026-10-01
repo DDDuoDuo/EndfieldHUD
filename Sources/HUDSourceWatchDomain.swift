@@ -9,6 +9,8 @@ final class HUDSourceWatchDomain {
         let name: String
         let positions: [[Double]]
         let normals: [[Double]]
+        /// Raw float32 component words also preserve packed NaN payloads.
+        let normal_words: [[UInt32]]?
         let tangents: [[Double]]
         let colors: [[Double]]
         let uv0: [[Double]]
@@ -18,6 +20,14 @@ final class HUDSourceWatchDomain {
         let indices: [UInt32]
         let index_format: Int
         let submeshes: [HUDSourceJSONValue]
+
+        /// The source map shader decodes a packed normal from the bit pattern
+        /// of NORMAL.x. Most original terrain meshes store this as a single
+        /// float channel. Missing y/z vertex components are zero; the packed
+        /// x must not be normalized or decoded before the original shader.
+        func normalVectors() throws -> [SIMD3<Float>] {
+            try HUDSourceWatchDomain.normalVectors(normals, vertexCount: positions.count, words: normal_words)
+        }
     }
     struct MeshBatch {
         let nodeID: HUDSourceID
@@ -76,6 +86,33 @@ final class HUDSourceWatchDomain {
     private let meshes: [HUDSourceID: Mesh]
     private let instances: [Instance]
     private let levelRootIDs: [HUDSourceID: String]
+
+    static func normalVectors(_ source: [[Double]], vertexCount: Int,
+                              words: [[UInt32]]? = nil) throws -> [SIMD3<Float>] {
+        guard source.isEmpty || source.count == vertexCount else {
+            throw HUDSourceError.invalid("Original normal channel vertex count differs")
+        }
+        if let words {
+            guard words.count == source.count,
+                  zip(words, source).allSatisfy({ $0.0.count == $0.1.count && ($0.0.count == 1 || $0.0.count == 3) }) else {
+                throw HUDSourceError.invalid("Original normal component words differ from source channel")
+            }
+            return words.map { row in
+                SIMD3(Float(bitPattern: row[0]), row.count == 3 ? Float(bitPattern: row[1]) : 0,
+                      row.count == 3 ? Float(bitPattern: row[2]) : 0)
+            }
+        }
+        return try source.map { row in
+            guard row.count == 1 || row.count == 3 else {
+                throw HUDSourceError.invalid("Unsupported original normal channel dimension")
+            }
+            guard row.allSatisfy({ $0.isFinite }) else {
+                throw HUDSourceError.invalid("Packed non-finite normal requires original component words")
+            }
+            return SIMD3(Float(row[0]), row.count == 3 ? Float(row[1]) : 0,
+                         row.count == 3 ? Float(row[2]) : 0)
+        }
+    }
 
     /// nil loads all declared source levels for a source-asset reference view.
     /// It is intentionally reported as such. A game-state equivalent view must
@@ -178,6 +215,9 @@ final class HUDSourceWatchDomain {
                   mesh.indices.allSatisfy({ Int($0) < mesh.positions.count }) else {
                 throw HUDSourceError.invalid("Invalid source Domain mesh")
             }
+            // Validate packed channel shape and payload availability before a
+            // first frame attempts GPU registration.
+            _ = try mesh.normalVectors()
             meshMap[mesh.id] = mesh
         }
         meshes = meshMap

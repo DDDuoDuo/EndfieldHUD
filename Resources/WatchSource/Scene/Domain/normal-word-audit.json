@@ -1,0 +1,1233 @@
+{
+  "schema_version": 1,
+  "meshes": [
+    {
+      "id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-1145486470941371476",
+      "file": "meshes/Cube.002--075909a7---1145486470941371476.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80b1939e88adfa908aa585e9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 82985303,
+        "length": 32683,
+        "md5": "C6433F695D84ACC5CA8B8623C8C924B6",
+        "sha256": "b953e224b0c127fa6626677e346220e35fc1d1822d6375a29cca1893107a2e63",
+        "md5_verified": true
+      },
+      "bytes": 294189,
+      "sha256": "719ee08c21087ce5f35a219e3446f7427c0afd786c4376433c7f6c293c8a8add",
+      "finite_component_roundtrips_verified": 1912,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 1922,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-075909a72dcf319f2b994c9f286f4c3f/CAB-075909a72dcf319f2b994c9f286f4c3f.resS",
+        "offset": 0,
+        "size": 69192
+      },
+      "vertex_payload_bytes": 69192,
+      "vertex_payload_sha256": "82680d32d618eee09bbb72ebf0ef1cc7164513c7cab8abf03a19c5af2b0246a1",
+      "gathered_normal_bytes": 7688,
+      "gathered_normal_sha256": "dd56825f7b590e6a8d5c1b4bd44996bb4481ad7f202c771f98c2839441f69dbc",
+      "nonfinite_words": 10,
+      "nan_words": 10,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-12c8389249e792b93c2451969a2dca82:5065835267806678173",
+      "file": "meshes/Di_Xing1_Curve.003--12c83892--5065835267806678173.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a9ef56a908880d39d64f583a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 730038989,
+        "length": 17486,
+        "md5": "F84B0A4B2ECBE9EE8AB7BB92F2F19AB3",
+        "sha256": "6c95bca2fd22f45be0ff26ffb4e2d0ccfc16e4dba41b7028aeec927d649cbff2",
+        "md5_verified": true
+      },
+      "bytes": 78772,
+      "sha256": "34bee4025857ff4c6d6f918763af2511a3c7f6a01ea660575899f63a28bcbde0",
+      "finite_component_roundtrips_verified": 578,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 578,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-12c8389249e792b93c2451969a2dca82/CAB-12c8389249e792b93c2451969a2dca82.resS",
+        "offset": 0,
+        "size": 13872
+      },
+      "vertex_payload_bytes": 13872,
+      "vertex_payload_sha256": "31c99867f40c278d30b5de59da103bb73b8dc3c6d7253bdf25d234bfee689ef7",
+      "gathered_normal_bytes": 2312,
+      "gathered_normal_sha256": "eff2d9a8b26a2be16b5d3da550aab80113a24b72764d1f9c43736714869d6159",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-26b49902568ae4908fc4c335d305ed1d:7884596841840279997",
+      "file": "meshes/lv004--26b49902--7884596841840279997.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/363e987d64fe0f4343d0bdb2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 173654961,
+        "length": 24026,
+        "md5": "41332C8C95231D5D191CAB6278CF02A3",
+        "sha256": "d980607d869ab93ce1840101c04639cf199356d462edef096c56dbc6bc08ac38",
+        "md5_verified": true
+      },
+      "bytes": 164560,
+      "sha256": "ec794950bc5b5c036dbfb395ffe1877fd37112d3155b002a51d5be6eadb46dbf",
+      "finite_component_roundtrips_verified": 1258,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 1258,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-26b49902568ae4908fc4c335d305ed1d/CAB-26b49902568ae4908fc4c335d305ed1d.resS",
+        "offset": 0,
+        "size": 30192
+      },
+      "vertex_payload_bytes": 30192,
+      "vertex_payload_sha256": "c4d678bae1e1c38023b699fdb8bf16a43d0bbcf4309e80fb12145ed543f6215a",
+      "gathered_normal_bytes": 5032,
+      "gathered_normal_sha256": "0792a2ff35ec374a32589641219bf7d8d6cdbbf9f8a5cb179380fd331c3bb383",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:-2310146608990878147",
+      "file": "meshes/005--37ae64d5---2310146608990878147.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/fc8bae7071338a73ca13ceba.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 238268764,
+        "length": 45239,
+        "md5": "0D998A76509D9B4E37B7D50EE51E2FA5",
+        "sha256": "6eeb0d85e0900c077325d89d5f740f78511dec1b2d12bf4b976aa75e966d0061",
+        "md5_verified": true
+      },
+      "bytes": 339735,
+      "sha256": "c9550266fd32db785dfeecae9287473afce5400b53d9fb00bfbf7ff82f0b97f4",
+      "finite_component_roundtrips_verified": 2324,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 2330,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-37ae64d59d37c7de44d3cb20ada8085a/CAB-37ae64d59d37c7de44d3cb20ada8085a.resS",
+        "offset": 4224,
+        "size": 74560
+      },
+      "vertex_payload_bytes": 74560,
+      "vertex_payload_sha256": "7e07c9fc2286eb1bd337a6b8c498561c7d92f38f3cc45ab8f904837da5049e52",
+      "gathered_normal_bytes": 9320,
+      "gathered_normal_sha256": "d971a3db98b9e07636c360f2fe50eee5ac4b3076ce3b32bce96d3a1972d9dd93",
+      "nonfinite_words": 6,
+      "nan_words": 6,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:-5658342886915425834",
+      "file": "meshes/__.001--37ae64d5---5658342886915425834.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/fc8bae7071338a73ca13ceba.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 238268764,
+        "length": 45239,
+        "md5": "0D998A76509D9B4E37B7D50EE51E2FA5",
+        "sha256": "6eeb0d85e0900c077325d89d5f740f78511dec1b2d12bf4b976aa75e966d0061",
+        "md5_verified": true
+      },
+      "bytes": 21669,
+      "sha256": "e2fefbec0da2e2b87747cf3605666a13d0ef1cc2f54847ea8a8031e2cc6de792",
+      "finite_component_roundtrips_verified": 117,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 117,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-37ae64d59d37c7de44d3cb20ada8085a/CAB-37ae64d59d37c7de44d3cb20ada8085a.resS",
+        "offset": 0,
+        "size": 4212
+      },
+      "vertex_payload_bytes": 4212,
+      "vertex_payload_sha256": "7499c60dfe0aee8d4b3b7aedcd5c2d40ba75c34ae1d11fda59bed96413279ce8",
+      "gathered_normal_bytes": 468,
+      "gathered_normal_sha256": "5e6e7cac0bfc26bea2fa83c39548b47f979eb05954871a7645ba02b81f92b520",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:3876715377959508306",
+      "file": "meshes/Cube1--4de2c607--3876715377959508306.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/7cf09b6618b3c5149f58030a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 763460453,
+        "length": 18761,
+        "md5": "B2D2CCC0A6C3562017FCC295B6CFBC1B",
+        "sha256": "c4aece11a3b1e10c20a183463eadda040abaaf02e0c043b311d1dc2234b1e414",
+        "md5_verified": true
+      },
+      "bytes": 87298,
+      "sha256": "29a0d6256810eb4478abc017925e4ff40c1dc3e801dede90871c1970655d671e",
+      "finite_component_roundtrips_verified": 656,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 656,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-4de2c60705e3b0649cf3c00df6f1837d/CAB-4de2c60705e3b0649cf3c00df6f1837d.resS",
+        "offset": 0,
+        "size": 15744
+      },
+      "vertex_payload_bytes": 15744,
+      "vertex_payload_sha256": "21576c8e2887d62353e8b6b1d5d74a78e5e4cc3d53880b8e587e59e45f72641c",
+      "gathered_normal_bytes": 2624,
+      "gathered_normal_sha256": "0edadf93da5a8e10d0669bd5499f475a1ecfc605314c1790795d02788f7048c6",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:-5063772043784260802",
+      "file": "meshes/___.003--5b48e6dd---5063772043784260802.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/86d169cd3eb6ca22eb647c0c.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 348603398,
+        "length": 46557,
+        "md5": "06B1DCC30C0EC753C3D55AAF4082A075",
+        "sha256": "f91b54755d7cb6ab14771fc2b91c24a80a4b6684d9014b5999a2dfb71e0681f3",
+        "md5_verified": true
+      },
+      "bytes": 467592,
+      "sha256": "eebf15e9208ed1f701015231f15aa2439e4f65570425f54c48fb86de34c80f07",
+      "finite_component_roundtrips_verified": 3090,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 3093,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-5b48e6dd80305bdb3a51bc76d304daae/CAB-5b48e6dd80305bdb3a51bc76d304daae.resS",
+        "offset": 0,
+        "size": 111348
+      },
+      "vertex_payload_bytes": 111348,
+      "vertex_payload_sha256": "74051a05010bb0cfb4b02beff4e81e9e12962612f86371f9b41859d942c098f5",
+      "gathered_normal_bytes": 12372,
+      "gathered_normal_sha256": "7091cfa84f1d27679a241d0c5149898c7bd268cc06440926ec7df6447e3f9665",
+      "nonfinite_words": 3,
+      "nan_words": 3,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:7346658077388074029",
+      "file": "meshes/S_prop_map02_machine_1_016_01_lod0--73793c88--7346658077388074029.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80d566ec8dc926578a4accaf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 242812152,
+        "length": 113730,
+        "md5": "B2E2A62ED149771647A572F67253EE38",
+        "sha256": "ccce86cea718600e39321b584ff42585c6cd9724b3ee5b14b7f1d9cd3fcee44e",
+        "md5_verified": true
+      },
+      "bytes": 1225365,
+      "sha256": "6e62c598ef844e2cd10a627699442ad7636359eed86b50a44fedb165ff9f4635",
+      "finite_component_roundtrips_verified": 6439,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 6468,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-73793c887fa55bdc1d4e9d4f50ead735/CAB-73793c887fa55bdc1d4e9d4f50ead735.resS",
+        "offset": 0,
+        "size": 232848
+      },
+      "vertex_payload_bytes": 232848,
+      "vertex_payload_sha256": "4e0c71b39730029447736454574d069d52d787404ef3c217381f22f1aab3699b",
+      "gathered_normal_bytes": 25872,
+      "gathered_normal_sha256": "a6cdfd31cf24d535f3e8f80dfb7c65755174058518188b0176cb57f25b0e1022",
+      "nonfinite_words": 29,
+      "nan_words": 29,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-7d684744d93a01789fb4e387550ecd63:-4469912701094017562",
+      "file": "meshes/Di_Xing1_Curve.001--7d684744---4469912701094017562.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/947610b2f5a99ca2478e3587.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 95579369,
+        "length": 34515,
+        "md5": "1F3295A277FBE7A9CD151F3F13481F45",
+        "sha256": "158894071ab9b656a52f82ad6d2576bd1eb027772bdf191fe52da734c3d69b07",
+        "md5_verified": true
+      },
+      "bytes": 256007,
+      "sha256": "6c84600ef19d7b7d791ec46ff16ca5eb34676988faa9124568ca83fcbd9ac139",
+      "finite_component_roundtrips_verified": 1925,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 1925,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-7d684744d93a01789fb4e387550ecd63/CAB-7d684744d93a01789fb4e387550ecd63.resS",
+        "offset": 0,
+        "size": 46200
+      },
+      "vertex_payload_bytes": 46200,
+      "vertex_payload_sha256": "f190c7790883c7fbd3b9a4944fc7402f9f6e5ea6a72185ffb2eaf87b96158920",
+      "gathered_normal_bytes": 7700,
+      "gathered_normal_sha256": "231ce8ccebe94dcf24cec3aaea23b585291e7516936a23e1614db0107100403b",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-84e5d7452739bf2eb6261d39987d76d9:-6471147245684593258",
+      "file": "meshes/Di_Xing1_Curve.002--84e5d745---6471147245684593258.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0ef4c3a2f6fe59fda5d89f8e.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 953488129,
+        "length": 31150,
+        "md5": "420B645357461CAA7992621C1AB6C810",
+        "sha256": "40231833175f6306890e26f5643b325644bdf9cda58cfd6c24dd4bd45de6eb9f",
+        "md5_verified": true
+      },
+      "bytes": 198322,
+      "sha256": "6d498ddfc2fd471f688839905459586f9622c74322a5435d2e33ca8818d354bd",
+      "finite_component_roundtrips_verified": 1491,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 1491,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-84e5d7452739bf2eb6261d39987d76d9/CAB-84e5d7452739bf2eb6261d39987d76d9.resS",
+        "offset": 0,
+        "size": 35784
+      },
+      "vertex_payload_bytes": 35784,
+      "vertex_payload_sha256": "884206b22346296140e82d207f2d4a8679867d110c6615973959f551afd190c4",
+      "gathered_normal_bytes": 5964,
+      "gathered_normal_sha256": "35d00cd69c3b6c9d509ae39f1268c397836ef7bbf5e82bc6270d0bf53a1b751b",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-8ef9b04f489a760cbab95424d6de4ae4:-1892162848115127418",
+      "file": "meshes/polySurface2.001--8ef9b04f---1892162848115127418.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "40E7DB1645D20991CB0FE316B2128FC2",
+        "offset": 546770344,
+        "length": 2800202,
+        "md5": "F3D4B1F8EB589C92D3A335CFCBE1951F",
+        "sha256": "def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463",
+        "md5_verified": true
+      },
+      "bytes": 170467,
+      "sha256": "3496207cb2bac1f27ae3de54b9f18db65eff32a00f0c1be00501c96797c93dba",
+      "finite_component_roundtrips_verified": 906,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 906,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-8ef9b04f489a760cbab95424d6de4ae4/CAB-8ef9b04f489a760cbab95424d6de4ae4.resS",
+        "offset": 3991968,
+        "size": 28992
+      },
+      "vertex_payload_bytes": 28992,
+      "vertex_payload_sha256": "0f85678354dfe0c27b1d596a21bfbc3faef57c52b34aa35e6fefb3c956e24885",
+      "gathered_normal_bytes": 3624,
+      "gathered_normal_sha256": "8481d63229298bd63b014fa333572656de0b1f8b90af68bbee2be555adb8bc4f",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-8ef9b04f489a760cbab95424d6de4ae4:-5348026711711382152",
+      "file": "meshes/___new.001--8ef9b04f---5348026711711382152.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "40E7DB1645D20991CB0FE316B2128FC2",
+        "offset": 546770344,
+        "length": 2800202,
+        "md5": "F3D4B1F8EB589C92D3A335CFCBE1951F",
+        "sha256": "def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463",
+        "md5_verified": true
+      },
+      "bytes": 17111499,
+      "sha256": "aa54f86036c2118635210f91d0a131bc0a0d1a1b7adaa84e5f49e718a876fa9e",
+      "finite_component_roundtrips_verified": 90373,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 91018,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-8ef9b04f489a760cbab95424d6de4ae4/CAB-8ef9b04f489a760cbab95424d6de4ae4.resS",
+        "offset": 1079392,
+        "size": 2912576
+      },
+      "vertex_payload_bytes": 2912576,
+      "vertex_payload_sha256": "99ef10126d208f66d529256f74cc2dda0fa2eb7da80ec22cb678ddbf7b7268ed",
+      "gathered_normal_bytes": 364072,
+      "gathered_normal_sha256": "a1398ac45274e507b07324dbd0e5dca94140b63f9211f65cc0f9ba61c9614c42",
+      "nonfinite_words": 645,
+      "nan_words": 645,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-8ef9b04f489a760cbab95424d6de4ae4:-8444410398078327136",
+      "file": "meshes/___.001--8ef9b04f---8444410398078327136.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "40E7DB1645D20991CB0FE316B2128FC2",
+        "offset": 546770344,
+        "length": 2800202,
+        "md5": "F3D4B1F8EB589C92D3A335CFCBE1951F",
+        "sha256": "def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463",
+        "md5_verified": true
+      },
+      "bytes": 123525,
+      "sha256": "af562eadd47d21b595b562cb67cd49e8db99b221bf356eb07545602987fbf84d",
+      "finite_component_roundtrips_verified": 856,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 856,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-8ef9b04f489a760cbab95424d6de4ae4/CAB-8ef9b04f489a760cbab95424d6de4ae4.resS",
+        "offset": 1048576,
+        "size": 30816
+      },
+      "vertex_payload_bytes": 30816,
+      "vertex_payload_sha256": "ee9c983d4cad66aa9a7f99f6584881714d1bbad8289dc2314d2a4d9a8dbb58af",
+      "gathered_normal_bytes": 3424,
+      "gathered_normal_sha256": "bd285b4d3f991a10f0fe6fb467ca6fc3e5b0d6ca52f30199326f2af5fbfd8bf9",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-8ef9b04f489a760cbab95424d6de4ae4:4853624536799001896",
+      "file": "meshes/Cube.002--8ef9b04f--4853624536799001896.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e1a6086b5344ac61663814ca.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "40E7DB1645D20991CB0FE316B2128FC2",
+        "offset": 546770344,
+        "length": 2800202,
+        "md5": "F3D4B1F8EB589C92D3A335CFCBE1951F",
+        "sha256": "def584ba34b6998d74e2c78f1a7588e52bb746cd24121a9ab35bd190559c3463",
+        "md5_verified": true
+      },
+      "bytes": 95163,
+      "sha256": "fcc7142ba39e48491280f7504a4a389033af5a0a4d65184f78f73db1b72aab51",
+      "finite_component_roundtrips_verified": 800,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 800,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-8ef9b04f489a760cbab95424d6de4ae4/CAB-8ef9b04f489a760cbab95424d6de4ae4.resS",
+        "offset": 4020960,
+        "size": 19200
+      },
+      "vertex_payload_bytes": 19200,
+      "vertex_payload_sha256": "358da85fa1b5ef83433cf2944ca8b408658e5709bc0d6e0013755fb2cc9ef390",
+      "gathered_normal_bytes": 3200,
+      "gathered_normal_sha256": "fc95a6a580320ea9567478dd3fa4a47fe51ff448920f0f00e07697005570fda4",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-92f680b6a73364a74eabab8e5feab65f:726671117281923298",
+      "file": "meshes/Plane.002--92f680b6--726671117281923298.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ddac051390287156a0b073bf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 92413110,
+        "length": 22689,
+        "md5": "71B7C2972D356A541E2A729A8282A0FF",
+        "sha256": "12e1be0e9aad843b7902eea25baac9b0f3de4e0aeaa899f3757dfdc7e4a720d9",
+        "md5_verified": true
+      },
+      "bytes": 131849,
+      "sha256": "b3c9c93c80676af03ebe97b0af3a0a41ebefff9cbf26e3946f6e6572c350f1cf",
+      "finite_component_roundtrips_verified": 1022,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 1024,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-92f680b6a73364a74eabab8e5feab65f/CAB-92f680b6a73364a74eabab8e5feab65f.resS",
+        "offset": 0,
+        "size": 24576
+      },
+      "vertex_payload_bytes": 24576,
+      "vertex_payload_sha256": "50e06cadc3b8159ef79cc1969bec876f3b6e9af5dd1bbaaabf0373bc50fe2ea0",
+      "gathered_normal_bytes": 4096,
+      "gathered_normal_sha256": "0f83df52eb6cd4883978a7aa8dde0eb47671be94767cbf4439458b40cc5bf5b2",
+      "nonfinite_words": 2,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-95d6b32af28977443c6134452f5191ef:-5471054579621781279",
+      "file": "meshes/Di_Xing1_Curve.011--95d6b32a---5471054579621781279.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/276d66296d7b2f43651ecff6.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 703351251,
+        "length": 16087,
+        "md5": "C7F287A595EB1B9A9AB020263024F966",
+        "sha256": "206180cd61a46dbe325be21160002180449543af05b26b8432823c81b3e1d1c2",
+        "md5_verified": true
+      },
+      "bytes": 78225,
+      "sha256": "81cb9e97b520677b5f8ed7c8fbf971aa9bd052ce62ee487455e3c3d93e4d171f",
+      "finite_component_roundtrips_verified": 513,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 517,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-95d6b32af28977443c6134452f5191ef/CAB-95d6b32af28977443c6134452f5191ef.resS",
+        "offset": 0,
+        "size": 12408
+      },
+      "vertex_payload_bytes": 12408,
+      "vertex_payload_sha256": "7d06d020246ee0fa45eff6166bf229dcd760bf8f057ff9006018095de00f94cd",
+      "gathered_normal_bytes": 2068,
+      "gathered_normal_sha256": "437be4189cfca10ce34db2eb2665236580b5900cb54d5d765e0759c66e59fb7f",
+      "nonfinite_words": 4,
+      "nan_words": 4,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-9a27bdf044632997f1256c0afff465dd:4980476684578785253",
+      "file": "meshes/lv002--9a27bdf0--4980476684578785253.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4ffbe9bc32934fbe0b1971b0.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 199033734,
+        "length": 40630,
+        "md5": "9FF72BDC293C884C94E921F27B713BBC",
+        "sha256": "f9ce95c27cb96bae43ee01086c0ef32502764abadf4a57ed1f186aa34fd99cbe",
+        "md5_verified": true
+      },
+      "bytes": 315244,
+      "sha256": "253a984db759b83528d8e9c8d2976ffad8dbb2e0aee4178c1b8f1cd2f47dfc29",
+      "finite_component_roundtrips_verified": 2533,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 2538,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-9a27bdf044632997f1256c0afff465dd/CAB-9a27bdf044632997f1256c0afff465dd.resS",
+        "offset": 0,
+        "size": 60912
+      },
+      "vertex_payload_bytes": 60912,
+      "vertex_payload_sha256": "5cd7866ec653df663add5a1bc530c239c85b38204322e7a0f7af842e2a7c2953",
+      "gathered_normal_bytes": 10152,
+      "gathered_normal_sha256": "20c8a2d162b11d03552335acd4b8a67ed8e390e79addd352146d512b4020eb3c",
+      "nonfinite_words": 5,
+      "nan_words": 5,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-c128b386a6b007a23cf9dcb98acb6d4a:58539925144100443",
+      "file": "meshes/Quad--c128b386--58539925144100443.json",
+      "source": {
+        "name": "Data/Bundles/Windows/initial/e271ef531684451b15c3d5aa.ab",
+        "layer": "Persistent",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+        "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+        "offset": 128188,
+        "length": 4235,
+        "md5": "9E7107CAA224B2DC0C7F20B06CE1FB2E",
+        "sha256": "581b2584109254df8dde51b02de40c0510c6afeaacedb5207263404e75e40fb1",
+        "md5_verified": true
+      },
+      "bytes": 2716,
+      "sha256": "e09709304a887ded5ec9643afd2d01f59d2b0a85f4f47f76e9e101340b64ef14",
+      "finite_component_roundtrips_verified": 12,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 3
+      },
+      "effective_components": 3,
+      "vertex_count": 4,
+      "stream": {
+        "offset": 0,
+        "stride": 40,
+        "channel_mask": 7
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_VertexData.m_DataSize"
+      },
+      "vertex_payload_bytes": 192,
+      "vertex_payload_sha256": "995747ce9de0af768faf5cdf236c8d1932ed6968a456ea44b6b37cc9a0c05604",
+      "gathered_normal_bytes": 48,
+      "gathered_normal_sha256": "a0de3fc19353a669778626872d2a7cb8afbf2eec74d18ffb009d826fad2e14c3",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-cb6d1bf028fe8f23d1e03bdea4da9b99:-591262780871724007",
+      "file": "meshes/polySurface2.001--cb6d1bf0---591262780871724007.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0ce29b822a852976c3727183.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "5CDE4F9A1EA13BB001EE025C7B5F635A",
+        "offset": 536427745,
+        "length": 2020329,
+        "md5": "B0C7B7534F22908163E5A0D64A2ACFF7",
+        "sha256": "48b82d3d08d02c8e0f7175c802bda6bd55b84a2cc2b4f9716b22af9454e1a205",
+        "md5_verified": true
+      },
+      "bytes": 20033944,
+      "sha256": "809ff071c671ebde2c556cd4270df03251fd61f62f7bd5ba3f5ceb8c6c42998c",
+      "finite_component_roundtrips_verified": 109178,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 109329,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-cb6d1bf028fe8f23d1e03bdea4da9b99/CAB-cb6d1bf028fe8f23d1e03bdea4da9b99.resS",
+        "offset": 0,
+        "size": 3498528
+      },
+      "vertex_payload_bytes": 3498528,
+      "vertex_payload_sha256": "f195c4b4ae7ccfe5e564ca96c69c46c45f23ccd25871fcf6943f680f1b5a484d",
+      "gathered_normal_bytes": 437316,
+      "gathered_normal_sha256": "21248ef44824ff9f1ffe00ad184d01137af7283e31a811be6c44994ec7eb68f2",
+      "nonfinite_words": 151,
+      "nan_words": 151,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-cb6d1bf028fe8f23d1e03bdea4da9b99:8150230253969304934",
+      "file": "meshes/vertexwrangle1--cb6d1bf0--8150230253969304934.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0ce29b822a852976c3727183.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "5CDE4F9A1EA13BB001EE025C7B5F635A",
+        "offset": 536427745,
+        "length": 2020329,
+        "md5": "B0C7B7534F22908163E5A0D64A2ACFF7",
+        "sha256": "48b82d3d08d02c8e0f7175c802bda6bd55b84a2cc2b4f9716b22af9454e1a205",
+        "md5_verified": true
+      },
+      "bytes": 1434023,
+      "sha256": "8c6ad5e8eec449d058e26ccc2851b51188f9cd057d6810c69b8f9071a89d6e39",
+      "finite_component_roundtrips_verified": 22620,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 3
+      },
+      "effective_components": 3,
+      "vertex_count": 7540,
+      "stream": {
+        "offset": 0,
+        "stride": 40,
+        "channel_mask": 7
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_VertexData.m_DataSize"
+      },
+      "vertex_payload_bytes": 422240,
+      "vertex_payload_sha256": "010dd93c6a7c97fba9742d4a1382feb348525bd1a84499fa5175c156fd33842c",
+      "gathered_normal_bytes": 90480,
+      "gathered_normal_sha256": "c5fa79db36f51b97fd56b4c18e42aa651cd425e265d632c05202e2be121226e7",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-cdaba1b72fcb4651de1b2dc0b3f5b7bf:6261080596791287723",
+      "file": "meshes/Equipring--cdaba1b7--6261080596791287723.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/2a026a1b82ecc5afcc4f164e.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 915156607,
+        "length": 27914,
+        "md5": "4EBDD5E3779E4A4EF382E6703CA3E67B",
+        "sha256": "fdaeb36f1d58b5929eacf6cf53fd5bba79fd7900f5ac34da140099f7478a0f50",
+        "md5_verified": true
+      },
+      "bytes": 235328,
+      "sha256": "2bc0b83e433cc610dd31214298ac0913b41988f0e550ff7b4e167c79e3241b24",
+      "finite_component_roundtrips_verified": 2904,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 3
+      },
+      "effective_components": 3,
+      "vertex_count": 968,
+      "stream": {
+        "offset": 0,
+        "stride": 40,
+        "channel_mask": 7
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_VertexData.m_DataSize"
+      },
+      "vertex_payload_bytes": 46464,
+      "vertex_payload_sha256": "e5f7e78932d552deda7898a63cc6d89559e263571fcaa4878c169f3782bd295a",
+      "gathered_normal_bytes": 11616,
+      "gathered_normal_sha256": "21dcdc9542edb1655859d20ff60bd3b59e8d85f81d4eba7ca3b4c11fc8b2c820",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-dde8c2191c9030649631dc5ff66aa111:6533971003461188753",
+      "file": "meshes/Di_Xing1_Curve--dde8c219--6533971003461188753.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e90d4adf93a2c2561cdd63aa.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 779284511,
+        "length": 19719,
+        "md5": "37DA6CBD11258AE37A93491338BB6795",
+        "sha256": "43d454c56c7ea8b8324a59c5bbbe36cf3aded3055ef51ff9437fce26e75e00d3",
+        "md5_verified": true
+      },
+      "bytes": 96441,
+      "sha256": "4d36d8f64935a486dc028c43a7a6ffc7bbd2a35ecc99b0da220b9b5ede8c4d92",
+      "finite_component_roundtrips_verified": 723,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 723,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-dde8c2191c9030649631dc5ff66aa111/CAB-dde8c2191c9030649631dc5ff66aa111.resS",
+        "offset": 0,
+        "size": 17352
+      },
+      "vertex_payload_bytes": 17352,
+      "vertex_payload_sha256": "048887c724946d35ec00fcde535bbad7d9775b40691c2274a9c48db2da8bbddf",
+      "gathered_normal_bytes": 2892,
+      "gathered_normal_sha256": "bcd55844a82e06a35c3e4215514bccb7eeaf96d23415bc6d7d86d8f81f5e36b3",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:-3229476049412426166",
+      "file": "meshes/LV003--e1f0a0a9---3229476049412426166.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4acad3622103a4ab37ea3fc9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 853920276,
+        "length": 24271,
+        "md5": "0DDB695A306A5DBDD5FEE09512681219",
+        "sha256": "819129259c6948a992009e831691b77a286d6910b4a55f6e5c3a826215c4c320",
+        "md5_verified": true
+      },
+      "bytes": 97192,
+      "sha256": "ec172e08bf6e3f041c4c94414003576d0e34cc6dcde33e6a2e029a380df38654",
+      "finite_component_roundtrips_verified": 754,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 754,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-e1f0a0a98944d0847b3e16a1f8466a2f/CAB-e1f0a0a98944d0847b3e16a1f8466a2f.resS",
+        "offset": 8288,
+        "size": 18096
+      },
+      "vertex_payload_bytes": 18096,
+      "vertex_payload_sha256": "e10abe24a51fd3a1b07f34c370370203877ce7cc4e519fcf96571ab39827b4cf",
+      "gathered_normal_bytes": 3016,
+      "gathered_normal_sha256": "cdf7a037b16892f8d2efc1a088bcb7802e8ebc264d1b381f42d710413482e5e2",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:-6738339885507123279",
+      "file": "meshes/__--e1f0a0a9---6738339885507123279.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4acad3622103a4ab37ea3fc9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 853920276,
+        "length": 24271,
+        "md5": "0DDB695A306A5DBDD5FEE09512681219",
+        "sha256": "819129259c6948a992009e831691b77a286d6910b4a55f6e5c3a826215c4c320",
+        "md5_verified": true
+      },
+      "bytes": 50191,
+      "sha256": "21aa99644dbaaadb077c16d1a478b4dbfa6f4c817a788c879223ed7c041c6c2c",
+      "finite_component_roundtrips_verified": 345,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 345,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-e1f0a0a98944d0847b3e16a1f8466a2f/CAB-e1f0a0a98944d0847b3e16a1f8466a2f.resS",
+        "offset": 0,
+        "size": 8280
+      },
+      "vertex_payload_bytes": 8280,
+      "vertex_payload_sha256": "9b4a17393d828b91ea942459cbd0f50c7a3a31bdbe042a97ff5601c0db15c3e5",
+      "gathered_normal_bytes": 1380,
+      "gathered_normal_sha256": "74f73f1402719f389738e09d4810bc8cb4e9ef7e3bcde72cdb033a861e2b96f1",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-e37fe98578ef73edd69174553bb99190:9015187713184481577",
+      "file": "meshes/LV001.002--e37fe985--9015187713184481577.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/51818d11914a2cf975588301.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301399984,
+        "length": 43123,
+        "md5": "2A5A57B15CF74302713D75348A96DDC8",
+        "sha256": "a8ad76455d0bff445fe29afcfdfd34bffb512ee9110dfc067d7d7c1153c8b831",
+        "md5_verified": true
+      },
+      "bytes": 298250,
+      "sha256": "9fb3d6953cb74bab0ad3e96e0083bb413ed01453e2214cf8c40a2eddcc3bb197",
+      "finite_component_roundtrips_verified": 2328,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 2341,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-e37fe98578ef73edd69174553bb99190/CAB-e37fe98578ef73edd69174553bb99190.resS",
+        "offset": 0,
+        "size": 56184
+      },
+      "vertex_payload_bytes": 56184,
+      "vertex_payload_sha256": "8b6db9337dcfd14ee13ce5a24edda402eda6ac15d995e08c9b429d91a80a45bf",
+      "gathered_normal_bytes": 9364,
+      "gathered_normal_sha256": "609ba22c904d8651041a7b0b493adec08fd6cb216baf0237c5364b51d1ad456c",
+      "nonfinite_words": 13,
+      "nan_words": 13,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:4827611431601098380",
+      "file": "meshes/__01.004--e3868540--4827611431601098380.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 763622404,
+        "length": 168656,
+        "md5": "81EB8C3D2188B2C12BF008B2B171E830",
+        "sha256": "04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea",
+        "md5_verified": true
+      },
+      "bytes": 678518,
+      "sha256": "e93b6b902b8a98e396a45abeee920ab8a2a57073109a4fd03873530b27c424fd",
+      "finite_component_roundtrips_verified": 4374,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 49
+      },
+      "effective_components": 1,
+      "vertex_count": 4382,
+      "stream": {
+        "offset": 0,
+        "stride": 16,
+        "channel_mask": 3
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_StreamData",
+        "path": "archive:/CAB-e3868540e5b268d35b2ff5587ee8e77a/CAB-e3868540e5b268d35b2ff5587ee8e77a.resS",
+        "offset": 0,
+        "size": 175280
+      },
+      "vertex_payload_bytes": 175280,
+      "vertex_payload_sha256": "0ff10dba1dafbe062058f5f920652b5099fc51d487d4adc2a553a5a477f9ee6e",
+      "gathered_normal_bytes": 17528,
+      "gathered_normal_sha256": "83e0d5045f6f8977ba0df892812b6747d8bfcbb1e8913a47f23183043eb2005a",
+      "nonfinite_words": 8,
+      "nan_words": 8,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    },
+    {
+      "id": "unity default resources:10209",
+      "file": "meshes/Plane--y defaul--10209.json",
+      "source": null,
+      "bytes": 19245,
+      "sha256": "57d819cca5358e939828e4bc3cdca8f36bd8673f7a4d5717c1e8d9d614d920e6",
+      "finite_component_roundtrips_verified": 363,
+      "channel_index": 1,
+      "channel": {
+        "stream": 0,
+        "offset": 12,
+        "format": 0,
+        "dimension": 3
+      },
+      "effective_components": 3,
+      "vertex_count": 121,
+      "stream": {
+        "offset": 0,
+        "stride": 40,
+        "channel_mask": 7
+      },
+      "endian": "little",
+      "payload_source": {
+        "kind": "m_VertexData.m_DataSize"
+      },
+      "vertex_payload_bytes": 5816,
+      "vertex_payload_sha256": "db8d61143583092015abe5c18cfabae8058081487ef3f61801f5f8ffb8c54f91",
+      "gathered_normal_bytes": 1452,
+      "gathered_normal_sha256": "34c29a8cdd2647461bf969602d1e37aae5383330d6cded9236666991240d874d",
+      "nonfinite_words": 0,
+      "nan_words": 0,
+      "policy": "Direct original Float32 bit words from source vertex stream. No float conversion, normalization, NaN canonicalization, or shader decoding."
+    }
+  ],
+  "mesh_count": 27,
+  "one_component_meshes": 23,
+  "three_component_meshes": 4,
+  "vertices": 244004,
+  "nonfinite_words": 876,
+  "nan_payload_words_preserved": 874,
+  "finite_component_roundtrips_verified": 260394,
+  "policy": "Exact [[UInt32]] per-source-vertex normal words. Original float normal JSON retained unchanged; gathered little-endian bytes reconstructed and compared exactly for all27 meshes."
+}
