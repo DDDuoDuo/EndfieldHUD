@@ -32,6 +32,7 @@ enum CoreTests {
         assertionCount += HUDSourceWatchButtonAnimationTests.run()
         assertionCount += HUDSourceWatchDomainTests.run()
         assertionCount += HUDSourceWatchCameraTests.run()
+        assertionCount += HUDSourceDrawableReadbackTests.run()
         assertionCount += HUDChargeBadgeTests.run()
         assertionCount += HUDModuleTests.run()
         assertionCount += HUDNavigationTests.run()

@@ -17,6 +17,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         // projection alone, under the same explicit GPU Y policy as VP.
         var projection: simd_float4x4? = nil
         var inverseView: simd_float4x4? = nil
+        var uiProjectionParameters: SIMD4<Float>? = nil
     }
 
     struct StencilState: Hashable {
@@ -135,6 +136,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private var lastRenderCommand: MTLCommandBuffer?
     private(set) var submittedFrameGeneration: UInt64 = 0
     private(set) var renderedFrameGeneration: UInt64?
+    private(set) var drawableReadbackReport: HUDSourceDrawableReadback.Report?
+    private(set) var drawableReadbackBGRA: Data?
     private var tintedVertices: [String: (color: SIMD4<Float>, buffer: MTLBuffer)] = [:]
     private struct StencilKey: Hashable { var pass: String; var state: StencilState }
     private var stencilStates: [StencilKey: MTLDepthStencilState] = [:]
@@ -233,6 +236,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         self.camera = camera
         self.batches = batches
         submittedFrameGeneration &+= 1
+        drawableReadbackReport = nil
+        drawableReadbackBGRA = nil
         needsDisplay = true
     }
 
@@ -304,8 +309,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
-    /// Read pixels produced by Metal itself. AppKit's layer-tree render does
-    /// not capture CAMetalLayer drawable content reliably.
+    /// Read pixels produced by Metal itself, represented over opaque black.
+    /// Encoded linear-premultiplied sRGB RGB cannot be declared as CGImage's
+    /// encoded-space premultiplied RGB. The matte retains every raw RGB byte,
+    /// including additive color, while diagnostics preserve the original alpha.
     func copyDrawableImage() throws -> CGImage {
         guard renderedFrameGeneration == submittedFrameGeneration else {
             throw Failure.message("Current source frame has no newly rendered Metal drawable")
@@ -327,7 +334,12 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         command.commit()
         command.waitUntilCompleted()
         if let error = command.error { throw error }
-        let data = Data(bytes: buffer.contents(), count: rowBytes * texture.height)
+        let rawData = Data(bytes: buffer.contents(), count: rowBytes * texture.height)
+        drawableReadbackReport = try HUDSourceDrawableReadback.analyze(rawBGRA: rawData,
+            width: texture.width, height: texture.height, rowBytes: rowBytes)
+        drawableReadbackBGRA = rawData
+        let data = try HUDSourceDrawableReadback.blackMatteEncodedBGRA(rawBGRA: rawData,
+            width: texture.width, height: texture.height, rowBytes: rowBytes)
         guard let provider = CGDataProvider(data: data as CFData),
               let image = CGImage(width: texture.width, height: texture.height, bitsPerComponent: 8, bitsPerPixel: 32,
                                   bytesPerRow: rowBytes, space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -382,6 +394,16 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             if needsInverseView, camera.inverseView == nil,
                batch.uniformOverrides["unity_MatrixInvV"] == nil || batch.uniformOverrides["_InvViewMatrix"] == nil {
                 diagnostics.append("Source shader requires inverse camera view: \(batch.mesh)")
+                continue
+            }
+            let needsUIProjection = material.passes.contains { pass in
+                pass.shader.stages.values.contains { stage in
+                    stage.uniforms.contains { uniform in uniform.fields.contains { $0.name == "_UIProjectionParams" } }
+                }
+            }
+            if needsUIProjection, camera.uiProjectionParameters == nil,
+               batch.uniformOverrides["_UIProjectionParams"] == nil {
+                diagnostics.append("Source shader requires HG UI projection parameters: \(batch.mesh)")
                 continue
             }
             // Source vertices use their original UVs. Missing Unity mesh color
@@ -447,6 +469,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                                 if let projection = camera.projection { Self.put(projection, into: &bytes, at: field.offset) }
                             case "unity_MatrixInvV", "_InvViewMatrix":
                                 if let inverseView = camera.inverseView { Self.put(inverseView, into: &bytes, at: field.offset) }
+                            case "_UIProjectionParams":
+                                if let value = camera.uiProjectionParameters {
+                                    Self.put([value.x, value.y, value.z, value.w], into: &bytes, at: field.offset)
+                                }
                             case "_WorldSpaceCameraPos_Internal":
                                 Self.put([camera.worldSpacePosition.x, camera.worldSpacePosition.y, camera.worldSpacePosition.z, 1], into: &bytes, at: field.offset)
                             case "_UITime":

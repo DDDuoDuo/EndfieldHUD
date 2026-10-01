@@ -317,6 +317,8 @@
   ],
   "primary_references": [
     "https://docs.unity3d.com/2021.3/Documentation/Manual/SL-PropertiesInPrograms.html",
-    "https://docs.unity3d.com/ScriptReference/Canvas-vertexColorAlwaysGammaSpace.html"
-  ]
+    "https://docs.unity3d.com/ScriptReference/Canvas-vertexColorAlwaysGammaSpace.html",
+    "https://developer.apple.com/metal/MetalCIKLReference6.pdf"
+  ],
+  "preview_representation": "Opaque black matte retaining every raw encoded premultiplied RGB byte; original alpha retained in raw-pixel reports and stable-raw.bgra"
 }

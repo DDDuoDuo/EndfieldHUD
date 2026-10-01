@@ -60,10 +60,13 @@ enum RenderSourceWatchPreviews {
         let gyro = try HUDSourceWatchCamera.quaternion(eulerDegrees: gyroEuler)
         let view = try camera.frame(screenSize: size, localRotation: gyro)
         let gpuY = HUDSourceGeometry.scale(SIMD3<Double>(1, -1, 1))
+        let gpuProjection = HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.projection))
         let gpu = HUDSourceMetalRenderer.Camera(viewProjection: HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.viewProjection)),
             worldSpacePosition: SIMD3(Float(camera.cameraWorld.columns.3.x), Float(camera.cameraWorld.columns.3.y), Float(camera.cameraWorld.columns.3.z)),
             timeSeconds: 0, renderPathInjected: 0, flipX: 0, flipY: 0,
-            projection: HUDSourceGeometry.floatMatrix(simd_mul(gpuY, view.camera.projection)), inverseView: HUDSourceGeometry.floatMatrix(camera.cameraWorld))
+            projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(camera.shaderCameraToWorld),
+            uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
+                near: Float(camera.near), far: Float(camera.far)))
         var manifest: [[String: Any]] = []
         func timestamp(_ value: Double?) -> Any {
             if let value { return value }
@@ -110,6 +113,17 @@ enum RenderSourceWatchPreviews {
             renderer.submit(camera: clock, batches: frame.batches)
             renderer.draw()
             let image = try renderer.copyDrawableImage()
+            guard let pixelReport = renderer.drawableReadbackReport else {
+                throw HUDSourceError.invalid("Source GPU fixture has no raw pixel report for \(name)")
+            }
+            let pixelReportFile = name + "-raw-pixel-report.json"
+            try abiEncoder.encode(pixelReport).write(to: output.appendingPathComponent(pixelReportFile))
+            if name == "stable" {
+                guard let rawPixels = renderer.drawableReadbackBGRA else {
+                    throw HUDSourceError.invalid("Source GPU fixture has no stable raw pixel buffer")
+                }
+                try rawPixels.write(to: output.appendingPathComponent("stable-raw.bgra"))
+            }
             guard renderer.diagnostics.isEmpty else {
                 throw HUDSourceError.invalid("Source GPU fixture skipped content in \(name): \(renderer.diagnostics.joined(separator: "; "))")
             }
@@ -127,7 +141,7 @@ enum RenderSourceWatchPreviews {
                     "corners": corners.map { [Double($0.x), Double($0.y)] }]
             }
             let diagnostics = frame.diagnostics + renderer.diagnostics
-            manifest.append(["file": file, "batches": frame.batches.count, "hits": frame.hits.count,
+            manifest.append(["file": file, "rawPixelReport": pixelReportFile, "batches": frame.batches.count, "hits": frame.hits.count,
                 "canvasSize": [view.layout.canvasSize.x, view.layout.canvasSize.y], "worldScale": view.layout.scale,
                 "standardVerticalFOV": camera.verticalFieldOfViewDegrees,
                 "runtimeVerticalFOV": view.layout.runtimeVerticalFieldOfViewDegrees,
@@ -139,6 +153,10 @@ enum RenderSourceWatchPreviews {
         }
         let report: [String: Any] = ["schemaVersion": 1, "width": 1728, "height": 1080,
             "capture": "Actual Metal drawable GPU readback", "fixtureMouse": [864, 540],
+            "pngRepresentation": "Opaque black matte retaining raw encoded premultiplied RGB; original alpha preserved in raw-pixel reports",
+            "stableRawPixels": "stable-raw.bgra; BGRA8_sRGB raw blit with rowBytes from stable-raw-pixel-report.json",
+            "uiProjectionParameters": gpu.uiProjectionParameters.map { [Double($0.x), Double($0.y), Double($0.z), Double($0.w)] } ?? [],
+            "inverseViewBasis": "Default source Camera.cameraToWorldMatrix: Transform.localToWorld * Scale(1,1,-1)",
             "originalWrapperEase": "OutQuad finite; Linear loop", "recordingPixelComparisonPassed": false,
             "availability": "All 22 mapped macOS functions enabled; game account locks and notifications absent",
             "commit": ProcessInfo.processInfo.environment["GITHUB_SHA"] ?? "local", "frames": manifest]

@@ -98,6 +98,16 @@ remain without an invented runtime banner.
 HG's UI screen tuple copies `_ScreenSize`: width, height and their reciprocals.
 The UI render clock uses the proved 0.05t/t/2t source components; the gameplay
 clock and the recording's absolute render-clock phase remain unobserved.
+HG's `_UIProjectionParams` uses the inverse GPU projection's homogeneous
+`(0,1,0,1)` probe to select its Y sign, followed by near/far/reciprocal-far.
+The native HG writer obtains projections with `renderIntoTexture = true`.
+The port evaluates that rule on its actual adapter projection rather than
+using a platform constant. `_InvViewMatrix` uses the original Camera getter's
+negative-Z camera space: `Transform.localToWorld * Scale(1,1,-1)`. The original
+engine getter and default view-cache writer establish that reflection. The
+CPU projection/raycast adapter keeps its positive-Z convention separately.
+Custom view overrides and the game's live render-target pipeline still need
+runtime correspondence; these shader values do not establish pixel parity.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
@@ -157,6 +167,15 @@ explicit source times. It includes geometry and diagnostics and refuses a stale
 drawable from an earlier submission. The fixture has no access to a desktop
 framebuffer or game account. Its manifest deliberately leaves
 `recordingPixelComparisonPassed` false until a recording comparison is completed.
+PNG previews use an explicit opaque black matte: each drawable RGB byte is
+retained and only image alpha becomes opaque. This avoids incorrectly declaring
+encoded linear-premultiplied RGB as encoded-space premultiplied CGImage data.
+It also retains additive colors that bounded straight-alpha PNG cannot express.
+Per-frame raw-pixel reports keep alpha counts, nominal linear RGB excess,
+quantization ambiguity and deterministic raw samples. `stable-raw.bgra` retains
+the full stable GPU blit with its report's row pitch. This output representation
+does not alter the live CAMetalLayer, source blend state or tone mapping and
+does not capture the desktop blur or reproduce HG's opaque game background.
 
 Compilation, source correspondence and an inspected preview each establish
 different evidence. They must be reported for the exact tested commit.

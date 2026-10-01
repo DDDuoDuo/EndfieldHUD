@@ -345,7 +345,9 @@ final class HUDSourceWatchView: NSView {
                 worldSpacePosition: SIMD3(Float(position.x), Float(position.y), Float(position.z)),
                 timeSeconds: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : Float(time),
                 renderPathInjected: 0, flipX: 0, flipY: 0,
-                projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(cameraModel.cameraWorld)),
+                projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(cameraModel.shaderCameraToWorld),
+                uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
+                    near: Float(cameraModel.near), far: Float(cameraModel.far))),
                 batches: frame.batches)
             renderedFrameCount += 1
             updateAccessibility(frame: frame, camera: camera.camera)
