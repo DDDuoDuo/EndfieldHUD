@@ -34,9 +34,11 @@ macOS functions. Those feature panels retain their existing desktop interfaces.
   This Legacy proof does not establish every packed Animator binding entry.
 - Background opacity follows WatchBlur's separate Linear wrapper and original
   0.13333334-second alpha keys: an unweighted Hermite entrance and near-linear
-  exit. These keys are not stretched to the main menu's duration. The desktop
-  still supplies system blur; the game's captured scene input and capture-pass
-  schedule have not been reproduced.
+  exit. These keys are not stretched to the main menu's duration. On macOS 14+
+  with screen-capture access, desktop pixels below the HUD feed the original
+  FrostedGlass filters and WatchBlur material. The system blur remains the
+  fallback when capture is unavailable. This desktop input adapter does not
+  establish the game's main-scene grading or capture-pass schedule.
 - Each button uses its own bound Animator clips. Highlighted is a finite flash
   with source local-Z channels, followed by its held endpoint. Normal and
   Pressed use the original transition duration. Rapid changes preserve the
@@ -78,7 +80,7 @@ depth/stencil and texture state.
 
 Soft masks use the original UIImage's full atlas, Sprite rectangle, sliced
 border geometry and native Canvas-to-mask matrix. The UIImage's own color alpha
-does not disable its mask: the original map mask has alpha zero. The 132 bundled
+does not disable its mask: the original map mask has alpha zero. The bundled
 Metal stages include the original default/TMP/VFX/world/stencil soft-mask
 combinations, preserving their texture slots and existing material keywords.
 Missing mask inputs are diagnosed rather than replaced with a white texture.
@@ -129,7 +131,9 @@ menu's own Volume. The installed pipeline requests format74,
 Volume profile is empty. The original UI postprocess constructor invokes copy,
 distortion, bloom and UI-uber stages, whose active effects depend on actual
 camera Volume state. Authored values in the disabled menu Volume are not an
-active-effect preset. The live desktop view still uses its direct LDR mode.
+active-effect preset. The live desktop view uses the packed-HDR mode after its
+original WatchBlur draw has a successfully prepared desktop input; fallback
+keeps the existing direct LDR mode over the system backdrop.
 An explicit `sourceRGBHDR` renderer mode now draws into Metal's `rg11b10Float`
 mapping of format74, clears the UI scene black, then uses the unmodified
 original UberPost_CompositeUI pass1 base program726 to load and composite the
@@ -142,8 +146,42 @@ provenance are preserved under `WatchSource/HDR`. The final Metal RT adapter's
 flip tuple is separate from the offscreen UI camera tuple. Native asymmetric
 texture fixtures check both row orientations, source-alpha blending and the
 sRGB output transfer; separate Watch samples retain the original packed HDR
-scene blit. The original WatchBlur RawImage, material and clips are bundled,
-but bundling them does not supply dynamic scene pixels or execute its filter.
+scene blit.
+
+The desktop backdrop uses six unmodified source FrostedGlass PS draws: horizontal
+program3 and vertical program8 at ceil(input size/4), /8 and /16. The native
+writer supplies each output level's `(width,height,1/width,1/height)` for both
+passes; this is not the sampled input texture size. Each sample retains the
+original 2.5 color threshold, and each intermediate is packed RGB format74.
+The original extraction Blit pass1 then writes a single-mip RGBA8 sRGB capture.
+The Metal top-left adapter supplies its explicit vertical ScaleBias. Desktop
+pixels already have display grading; the no-LUT input mode is deliberate.
+The game scene mode rejects missing exposure/LUT/volume inputs instead of
+applying a fabricated LUT. Original PS/CS variants and native evidence are
+preserved under `HDR/FrostedGlass` and `HDR/Evidence`.
+
+WatchBlur's original full-stretch RawImage uses its real `M_ui_blur_bg` material
+and both original pass states. Its Color32 is RGB 76/255, alpha1, on a Canvas
+with `vertexColorAlwaysGammaSpace=false`; the source linear vertex conversion
+precedes the CanvasGroup alpha animation. The two passes retain stencil Equal0
+and Equal32/Keep. No extra stencil write is invented. The dynamic capture uses
+the source Point/Repeat, no-mip texture binding. UI3D background sorting precedes
+the Watch Window category, with its own screen-space projection.
+
+ScreenCaptureKit excludes the HUD and every known window above it. Display
+tiles retain their actual profiles and native pixel scale, then receive one
+explicit ICC conversion/resample into the drawable's sRGB raster. Unsupported
+or incomplete window/display mapping fails to fallback. Capture never requests
+permission: only a user's menu/shortcut opening can invoke the system prompt.
+The framework is weak-linked for older deployment targets. CI and preview
+arguments bypass capture and permission APIs entirely; GPU checks use synthetic
+profiled tiles. A successful input is currently a snapshot per opening and is
+invalidated/rebuilt after a window, screen, size or backing-scale change.
+Continuous desktop updates remain outside this adapter. Original shaders are
+precompiled before the visible opening animation starts. When capture is
+available, the view holds the source initial pose until its input is ready,
+then starts the menu and blur clocks together. Capture delay cannot consume
+the short blur entrance; cancellation prevents a late result reopening the menu.
 
 Map geometry uses the source instance matrices, submeshes and material slots.
 The enabled `UIRegionBuildingTexManager` components bind their own original
@@ -206,6 +244,7 @@ On macOS:
 build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test
 build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
 bash ./scripts/render-source-watch-previews.sh
+bash ./scripts/verify-source-backdrop-gpu.sh
 ```
 
 The core suite covers source projection/inverse hits, curve sampling, layout,
@@ -245,9 +284,9 @@ Pixel-identical output has not yet been established against the supplied game
 recording. The original HG render globals, engine scheduling, possible IFix
 patches, native vertex-buffer quantization and game postprocessing still need
 runtime comparison. The live direct LDR port does not claim HG HDR/bloom/tonemapping;
-the explicit packed-HDR reference path requires native validation and does not
-yet include the complete main-scene FrostedGlass/capture/RawImage sequence.
-The desktop backdrop currently uses the system blur. Runtime account fields and
+the packed-HDR and original desktop-input FrostedGlass/capture/RawImage path
+requires native validation. The game main-scene input and continuous capture
+schedule remain unobserved. Runtime account fields and
 two serialized multiline counter placeholders cannot stand in for live values.
 Unsupported text/layout/material features are diagnosed instead of rendered
 with substitute artwork. The disabled original UnlitCylinder mesh is not drawn.

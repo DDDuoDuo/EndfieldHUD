@@ -1,0 +1,26 @@
+{
+  "source": {
+    "layer": "Persistent",
+    "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+    "name": "Data/Bundles/Windows/initial/29a8f2b624d7f55078d7a15f.ab",
+    "name_hash": "960DFCD990DC7A3C",
+    "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+    "md5": "E1033308735300992C9970F13BEBE8ED",
+    "offset": 7862067,
+    "length": 31953,
+    "block_type": 2,
+    "encrypted": false,
+    "flags": 0,
+    "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\bundles\\29a8f2b624d7f55078d7a15f.ab",
+    "sha256": "8666e56d3a07c90a83d900757be37a5bebda2a11ef3e12d56f7d1f91fbf59a11",
+    "md5_verified": true,
+    "signature": "4b637959f927e1f1"
+  },
+  "nodes": [
+    {
+      "bytes": 180356,
+      "path": "CAB-efcc216cc7fc3300dfd22cef00cb39c7",
+      "sha256": "9d76e8278c7569f4c02ac4e92c3fb30b0415937250b52ff58ac8ea432b0739c0"
+    }
+  ]
+}

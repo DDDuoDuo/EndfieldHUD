@@ -116,6 +116,21 @@ enum RenderSourceWatchPreviews {
             withBytes: $0.baseAddress!, bytesPerRow: 16) }
         var reports: [[String: Any]] = []
         for outputFormat in [MTLPixelFormat.rgba16Float, .bgra8Unorm_srgb] {
+            let isSRGB = outputFormat == .bgra8Unorm_srgb
+            let isNormalized = outputFormat == .bgra8Unorm || isSRGB
+            func normalizedByte(_ value: Double) -> Double {
+                (max(0, min(1, value)) * 255).rounded()
+            }
+            // Apple MTLPixelFormat documents sRGB read/write conversion and linear alpha:
+            // https://developer.apple.com/documentation/metal/mtlpixelformat
+            // Decode the initialized attachment's stored values before the blend. A
+            // plain UNORM attachment has the same bounded range without sRGB transfer.
+            let destinationLinear = base.enumerated().map { channel, value -> Double in
+                guard isNormalized else { return value }
+                guard isSRGB && channel < 3 else { return normalizedByte(value) / 255 }
+                let stored = encodedByte(value) / 255
+                return stored <= 0.04045 ? stored / 12.92 : pow((stored + 0.055) / 1.055, 2.4)
+            }
             let composite = try HUDSourceUIComposite(device: device, resourceRoot: resourceRoot, outputPixelFormat: outputFormat)
             for (inputName, input, texels) in [("rg11b10Float", rgbInput, rgbTexels), ("rgba16Float", rgbaInput, rgbaTexels)] {
                 for flipY in [Float(0), 1] {
@@ -150,8 +165,15 @@ enum RenderSourceWatchPreviews {
                             for x in 0..<2 {
                                 let sourceX = flipX == 0 ? x : 1 - x, sourceY = flipY == 0 ? 1 - y : y
                                 let source = texels[sourceY * 2 + sourceX], alpha = max(0, min(1, source[3]))
-                                var predicted = (0..<3).map { source[$0] * alpha + base[$0] * (1 - alpha) }
-                                predicted.append(alpha * alpha + base[3] * (1 - alpha))
+                                // The actual native fixed-function UNORM regression proves
+                                // source RGB is bounded before blending, not just at storage:
+                                // G=2,a=.5,D=.25 gives linear .625 / sRGB byte207, not255.
+                                // The independent floating-point attachment retains G=1.125.
+                                var predicted = (0..<3).map { channel -> Double in
+                                    let sourceColor = isNormalized ? max(0, min(1, source[channel])) : source[channel]
+                                    return sourceColor * alpha + destinationLinear[channel] * (1 - alpha)
+                                }
+                                predicted.append(alpha * alpha + destinationLinear[3] * (1 - alpha))
                                 let offset = y * 256 + x * (outputFormat == .rgba16Float ? 8 : 4)
                                 let measured: [Double]
                                 if outputFormat == .rgba16Float {
@@ -161,7 +183,7 @@ enum RenderSourceWatchPreviews {
                                     }
                                 } else {
                                     measured = [Double(data[offset + 2]), Double(data[offset + 1]), Double(data[offset]), Double(data[offset + 3])]
-                                    predicted = (0..<3).map { encodedByte(predicted[$0]) } + [(max(0, min(1, predicted[3])) * 255).rounded()]
+                                    predicted = (0..<3).map { isSRGB ? encodedByte(predicted[$0]) : normalizedByte(predicted[$0]) } + [normalizedByte(predicted[3])]
                                 }
                                 let error = zip(measured, predicted).map { abs($0.0 - $0.1) }.max() ?? .infinity
                                 guard measured.allSatisfy(\.isFinite), error <= (outputFormat == .rgba16Float ? 0.004 : 2) else {
@@ -171,11 +193,14 @@ enum RenderSourceWatchPreviews {
                             }
                         }
                         reports.append(["inputPixelFormat": inputName,
-                            "outputPixelFormat": outputFormat == .rgba16Float ? "rgba16Float" : "bgra8Unorm_srgb",
+                            "outputPixelFormat": outputFormat == .rgba16Float ? "rgba16Float" : (isSRGB ? "bgra8Unorm_srgb" : "bgra8Unorm"),
                             "flipX": Int(flipX), "flipY": Int(flipY),
                             "rowMapping": flipY == 0 ? "Vertically reversed input memory rows" : "Preserves input memory rows",
                             "pixelOrder": "Row-major top-left, top-right, bottom-left, bottom-right; RGBA channels",
-                            "units": outputFormat == .rgba16Float ? "Linear floating-point" : "sRGB RGB bytes / linear alpha byte",
+                            "units": outputFormat == .rgba16Float ? "Linear floating-point" : (isSRGB ? "sRGB RGB bytes / linear alpha byte" : "Linear UNORM RGB / alpha bytes"),
+                            "sourceRGBBeforeBlend": isNormalized ? "Clamp in linear space to [0,1]" : "Unbounded floating-point RGB",
+                            "destinationBeforeBlend": destinationLinear,
+                            "outputTransfer": isSRGB ? "Linear blend, then sRGB RGB encode; alpha remains linear" : "No sRGB conversion",
                             "actual": actual, "independentExpected": expected, "maxAbsoluteError": maxError, "passed": true])
                     }
                 }
@@ -506,7 +531,10 @@ enum RenderSourceWatchPreviews {
         let compositeReport: [String: Any] = ["schemaVersion": 1, "sourceProgram": 726,
             "shader": "Unmodified original base UberPost_CompositeUI; no volume keywords",
             "fixture": "Independent 2x2 exact-power texels; initialized destination RGBA=(.125,.25,.375,.5)",
-            "independentBlendEquation": "a=clamp(source.a,0,1); RGB=source.rgb*a+destination.rgb*(1-a); A=a*a+destination.a*(1-a)",
+            "independentBlendEquation": "a=clamp(source.a,0,1); S=clamp(source.rgb,0,1) for UNORM attachments, otherwise source.rgb; RGB=S*a+decodedDestination.rgb*(1-a); A=a*a+storedDestination.a*(1-a)",
+            "attachmentPolicy": "Floating-point RGB remains unbounded; UNORM source RGB is clamped before blending; sRGB UNORM destination is decoded before the linear blend and encoded afterward; plain UNORM has no sRGB transfer",
+            "formatDocumentation": "https://developer.apple.com/documentation/metal/mtlpixelformat",
+            "preblendClampEvidence": "Native GPU regression: sourceG=2,a=.5,destinationG=.25 yields sRGB G=207; postblend-only clamp predicts255. Floating-point G=1.125 remains independently tested. Apple public format documentation does not specify this fixed-function ordering explicitly.",
             "orientation": "Metal clip +Y is the top row: flipY=0 reverses input rows, flipY=1 preserves them",
             "passed": true, "tests": compositeTests]
         let compositeFile = "source-composite-gpu-regression.json"

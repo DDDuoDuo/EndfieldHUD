@@ -6,7 +6,7 @@ import simd
 /// values are supplied by the scene; this view does not fit source art to the
 /// earlier desktop composition or synthesize a postprocess.
 final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
-    enum SceneColorMode: Equatable {
+    enum SceneColorMode: Hashable {
         case directLDR
         /// Original packed RGB target followed by UberPost_CompositeUI. This
         /// has no alpha channel and requires a real backdrop for desktop use.
@@ -143,7 +143,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     private let queue: MTLCommandQueue
     private let root: URL
-    private let sceneColorMode: SceneColorMode
+    private var sceneColorMode: SceneColorMode
     private var sceneColorTexture: MTLTexture?
     private var uiComposite: HUDSourceUIComposite?
     private var sceneColorPixelFormat: MTLPixelFormat {
@@ -167,6 +167,13 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private struct StencilKey: Hashable { var pass: String; var state: StencilState }
     private var stencilStates: [StencilKey: MTLDepthStencilState] = [:]
     private var colorPipelines: [String: MTLRenderPipelineState] = [:]
+    private struct MaterialSet {
+        var materials: [String: Material]
+        var propertyTypes: [String: [String: (type: Int, flags: Int)]]
+        var clipKeys: [String: [String: String]]
+        var abi: [String: ConstantBufferABIRecord]
+    }
+    private var materialSets: [SceneColorMode: MaterialSet] = [:]
     private(set) var diagnostics: [String] = []
 
     struct ConstantBufferABIRecord: Encodable {
@@ -315,6 +322,71 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
 
     func containsTexture(named name: String) -> Bool { textureAssets[name] != nil }
+
+    /// A dynamic original RT binding (for example WatchBlur's captured scene).
+    /// Its caller supplies the source filter/wrap contract explicitly.
+    func registerTexture(named name: String, texture: MTLTexture, filterMode: Int,
+                         wrapU: Int, wrapV: Int) throws {
+        guard let device, texture.device.registryID == device.registryID,
+              texture.width > 0, texture.height > 0 else {
+            throw Failure.message("Invalid dynamic source texture: " + name)
+        }
+        let descriptor = MTLSamplerDescriptor()
+        descriptor.minFilter = filterMode == 0 ? .nearest : .linear
+        descriptor.magFilter = descriptor.minFilter
+        descriptor.mipFilter = .notMipmapped
+        descriptor.sAddressMode = Self.addressMode(wrapU)
+        descriptor.tAddressMode = Self.addressMode(wrapV)
+        guard let sampler = device.makeSamplerState(descriptor: descriptor) else {
+            throw Failure.message("Cannot allocate dynamic source texture sampler")
+        }
+        textureAssets[name] = TextureAsset(texture: texture, sampler: sampler)
+    }
+
+    /// Enable the original target only after the caller has prepared a real
+    /// backdrop. Preserve the working pipeline set if compilation fails.
+    func enableSourceRGBHDR() throws {
+        try setSceneColorMode(.sourceRGBHDR)
+    }
+
+    func disableSourceRGBHDR() throws {
+        try setSceneColorMode(.directLDR)
+    }
+
+    private func setSceneColorMode(_ mode: SceneColorMode) throws {
+        guard sceneColorMode != mode else { return }
+        guard let device else { throw Failure.message("Metal device unavailable") }
+        if mode == .sourceRGBHDR && uiComposite == nil {
+            uiComposite = try HUDSourceUIComposite(device: device, resourceRoot: root, outputPixelFormat: colorPixelFormat)
+        }
+        let previousMode = sceneColorMode
+        let previous = MaterialSet(materials: materials, propertyTypes: materialPropertyTypes,
+            clipKeys: clipMaterialKeys, abi: constantBufferABIRecords)
+        materialSets[previousMode] = previous
+        let previousColors = colorPipelines, previousStencil = stencilStates
+        sceneColorMode = mode
+        colorPipelines.removeAll(); stencilStates.removeAll()
+        if let cached = materialSets[mode] {
+            materials = cached.materials; materialPropertyTypes = cached.propertyTypes
+            clipMaterialKeys = cached.clipKeys; constantBufferABIRecords = cached.abi
+            if mode == .directLDR { sceneColorTexture = nil }
+            return
+        }
+        do {
+            materials.removeAll(); materialPropertyTypes.removeAll(); clipMaterialKeys.removeAll()
+            constantBufferABIRecords.removeAll()
+            try loadMaterials(device: device)
+            materialSets[mode] = MaterialSet(materials: materials, propertyTypes: materialPropertyTypes,
+                clipKeys: clipMaterialKeys, abi: constantBufferABIRecords)
+            if mode == .directLDR { sceneColorTexture = nil }
+        } catch {
+            sceneColorMode = previousMode
+            materials = previous.materials; materialPropertyTypes = previous.propertyTypes
+            clipMaterialKeys = previous.clipKeys; constantBufferABIRecords = previous.abi
+            colorPipelines = previousColors; stencilStates = previousStencil
+            throw error
+        }
+    }
 
     /// Select the original UIImage/TMP material with explicit Canvas masking
     /// keywords. Derived records preserve its saved properties and pass state.
@@ -822,7 +894,16 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
 
     private func loadMaterials(device: MTLDevice) throws {
-        guard let records = try object("materials.json") as? [[String: Any]] else { throw Failure.message("Invalid source shader/material metadata") }
+        guard var records = try object("materials.json") as? [[String: Any]] else { throw Failure.message("Invalid source shader/material metadata") }
+        if sceneColorMode == .sourceRGBHDR {
+            let url = root.appendingPathComponent("HDR/WatchBlur/material-runtime.json")
+            if FileManager.default.fileExists(atPath: url.path) {
+                guard let record = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+                    throw Failure.message("Original WatchBlur material unavailable")
+                }
+                records.append(record)
+            }
+        }
         var functions: [String: (MTLFunction, MTLFunction)] = [:]
         for (key, shader) in shaders {
             guard let vertex = shader.stages["vertex"], let fragment = shader.stages["fragment"] else { throw Failure.message("Incomplete source shader interface") }

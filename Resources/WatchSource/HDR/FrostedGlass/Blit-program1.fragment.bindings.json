@@ -1,0 +1,29 @@
+[
+  {
+    "id": 9,
+    "name": "_8_9",
+    "resource_type": 1,
+    "base_type_id": 8,
+    "type_id": 19,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 6,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 5,
+    "type_id": 18,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 7,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 4,
+    "type_id": 17,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  }
+]

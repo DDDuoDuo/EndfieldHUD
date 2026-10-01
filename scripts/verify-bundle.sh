@@ -21,6 +21,21 @@ plutil -lint "$APP/Contents/Info.plist"
 xcrun lipo "$BINARY" -verify_arch "$@"
 codesign --verify --deep --strict --all-architectures --verbose=2 "$APP"
 
+# A macOS 14-only background provider must not prevent a 10.15/11 app from
+# launching. Inspect each Mach-O slice; no capture/permission API is invoked.
+for ARCH in "$@"; do
+    if ! otool -arch "$ARCH" -l "$BINARY" | awk '
+        $1 == "cmd" { load_command = $2 }
+        $1 == "name" && $2 ~ /ScreenCaptureKit.framework/ {
+            if (load_command != "LC_LOAD_WEAK_DYLIB") bad = 1
+        }
+        END { exit bad ? 1 : 0 }
+    '; then
+        printf 'ScreenCaptureKit must be weak-linked for %s.\n' "$ARCH" >&2
+        exit 1
+    fi
+done
+
 
 source "$PROJECT_DIR/scripts/sparkle-config.sh"
 FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
