@@ -357,7 +357,7 @@ enum VerifySourcePlateProjection {
         let maxY = min(height - 1, Int(ceil(vertices.map { $0.point.y }.max()!)) + 1)
         guard minX <= maxX, minY <= maxY else { throw HUDSourceError.invalid("Plate is offscreen") }
         for y in minY...maxY { for x in minX...maxX {
-            let pixel = SIMD2(Double(x) + .5, Double(y) + .5)
+            let pixel = SIMD2(Double(x) + 0.5, Double(y) + 0.5)
             for offset in stride(from: 0, to: indices.count, by: 3) {
                 let a = vertices[Int(indices[offset])], b = vertices[Int(indices[offset + 1])], c = vertices[Int(indices[offset + 2])]
                 let denominator = cross(b.point - a.point, c.point - a.point)
@@ -380,7 +380,7 @@ enum VerifySourcePlateProjection {
         // Fixed before first native execution: 4 alpha-byte allowance for
         // original BC7 decode/filter/UNORM rounding. Exclude only the 1.5px
         // outer raster boundary; all interior Sprite alpha edges stay tested.
-        let tolerance = 4, threshold = max(1, Int((maximumAlpha * 255 * .5).rounded()))
+        let tolerance = 4, threshold = max(1, Int((maximumAlpha * 255 * 0.5).rounded()))
         var coreCount = 0, coreBad = 0, maximumCoreError = 0, maximumError = 0
         var contourBad = 0, actualNonzero = 0, expectedNonzero = 0, squaredError = 0.0
         func nearby(_ mask: [UInt8], x: Int, y: Int) -> Bool {
@@ -394,7 +394,7 @@ enum VerifySourcePlateProjection {
             let index = y * width + x, difference = abs(Int(actual[index]) - Int(expected[index]))
             maximumError = max(maximumError, difference); squaredError += Double(difference * difference)
             if actual[index] > 0 { actualNonzero += 1 }; if expected[index] > 0 { expectedNonzero += 1 }
-            let point = SIMD2(Double(x) + .5, Double(y) + .5)
+            let point = SIMD2(Double(x) + 0.5, Double(y) + 0.5)
             let distance = (0..<4).map { edge -> Double in
                 let a = projected[edge].point, b = projected[(edge + 1) % 4].point
                 let delta = b - a
