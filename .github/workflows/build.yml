@@ -60,6 +60,9 @@ jobs:
       - name: Verify original backdrop filters with synthetic pixels
         if: always()
         run: bash ./scripts/verify-source-backdrop-gpu.sh
+      - name: Verify original plate projection with isolated source pixels
+        if: always()
+        run: bash ./scripts/verify-source-plate-projection.sh
       - name: Record fixture crash diagnostics
         if: always()
         run: |
@@ -71,7 +74,7 @@ jobs:
           output = pathlib.Path('build/watch-source-crash-diagnostics')
           output.mkdir(parents=True, exist_ok=True)
           reports = []
-          for prefix in ('EndfieldHUD', 'RenderSourceWatchPreviews', 'VerifySourceBackdropGPU'):
+          for prefix in ('EndfieldHUD', 'RenderSourceWatchPreviews', 'VerifySourceBackdropGPU', 'VerifySourcePlateProjection'):
               reports.extend(source.glob(prefix + '*.ips'))
           for path in sorted(reports):
               shutil.copyfile(path, output / path.name)
@@ -101,5 +104,6 @@ jobs:
             build/watch-source-layout-reference/
             build/watch-source-crash-diagnostics/
             build/watch-source-backdrop/
+            build/watch-source-plate-projection/
           retention-days: 7
           if-no-files-found: warn

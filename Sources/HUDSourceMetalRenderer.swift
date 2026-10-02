@@ -62,6 +62,99 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         var sourceNodeID: String? = nil
     }
 
+    #if HUD_SOURCE_RENDER_PREVIEW
+    /// Read-only fixture access to the buffers chosen by the current draw.
+    /// The caller waits with copyDrawableImage() before exporting. This is
+    /// absent from the shipped app build.
+    struct PreviewGeometry {
+        var positions: [SIMD4<Float>]
+        var uv: [SIMD2<Float>]
+        var originalColors: [SIMD4<Float>]
+        var uploadedColors: [SIMD4<Float>]
+        var indices: [UInt32]
+        var vertexBytes: Data
+        var indexBytes: Data
+        var vertexStride: Int
+        var vertexOffsets: [String: Int]
+    }
+
+    struct PreviewPass {
+        var id: String
+        var shader: String
+        var vertexFile: String
+        var fragmentFile: String
+        var materialValues: [String: [Float]]
+        var textures: [String: String]
+        var alphaBlend: [String: Int]
+        var vertexAttributes: [[String: Int]]
+    }
+
+    func previewGeometry(for batch: Batch) throws -> PreviewGeometry {
+        guard renderedFrameGeneration == submittedFrameGeneration,
+              let geometry = geometries[batch.mesh] else {
+            throw Failure.message("Preview geometry has no completed current draw: " + batch.mesh)
+        }
+        let buffer: MTLBuffer
+        if batch.color == SIMD4<Float>(repeating: 1) { buffer = geometry.vertices }
+        else if let cached = tintedVertices[batch.mesh], cached.color == batch.color { buffer = cached.buffer }
+        else { throw Failure.message("Current preview tint buffer unavailable: " + batch.mesh) }
+        guard buffer.storageMode == .shared, geometry.indices.storageMode == .shared,
+              buffer.length >= geometry.originalVertices.count * MemoryLayout<Vertex>.stride,
+              geometry.indices.length >= geometry.indexCount * MemoryLayout<UInt32>.stride else {
+            throw Failure.message("Preview requires original CPU-visible shared buffers: " + batch.mesh)
+        }
+        let vertices = Array(UnsafeBufferPointer(start: buffer.contents().assumingMemoryBound(to: Vertex.self),
+            count: geometry.originalVertices.count))
+        guard vertices.map(\.position) == geometry.originalVertices.map(\.position),
+              vertices.map(\.uv) == geometry.originalVertices.map(\.uv) else {
+            throw Failure.message("Preview uploaded positions/UV differ from registered geometry: " + batch.mesh)
+        }
+        let indices = Array(UnsafeBufferPointer(start: geometry.indices.contents().assumingMemoryBound(to: UInt32.self),
+            count: geometry.indexCount))
+        return PreviewGeometry(positions: vertices.map(\.position), uv: vertices.map(\.uv),
+            originalColors: geometry.originalVertices.map(\.color), uploadedColors: vertices.map(\.color), indices: indices,
+            vertexBytes: Data(bytes: buffer.contents(), count: vertices.count * MemoryLayout<Vertex>.stride),
+            indexBytes: Data(bytes: geometry.indices.contents(), count: indices.count * MemoryLayout<UInt32>.stride),
+            vertexStride: MemoryLayout<Vertex>.stride,
+            vertexOffsets: ["position": MemoryLayout<Vertex>.offset(of: \Vertex.position) ?? -1,
+                            "uv": MemoryLayout<Vertex>.offset(of: \Vertex.uv) ?? -1,
+                            "color": MemoryLayout<Vertex>.offset(of: \Vertex.color) ?? -1])
+    }
+
+    func previewPasses(for batch: Batch) throws -> [PreviewPass] {
+        guard let material = materials[batch.material] else {
+            throw Failure.message("Preview material unavailable: " + batch.material)
+        }
+        let values = material.values.merging(batch.uniformOverrides) { _, override in override }
+        return material.passes.map { pass in
+            let attachment = pass.pipelineDescriptor.colorAttachments[0]!
+            let vertex = pass.pipelineDescriptor.vertexDescriptor
+            var attributes: [[String: Int]] = []
+            for index in 0..<31 {
+                guard let attribute = vertex?.attributes[index], attribute.format != .invalid else { continue }
+                attributes.append(["attribute": index, "offset": attribute.offset,
+                    "format": Int(attribute.format.rawValue), "bufferIndex": attribute.bufferIndex,
+                    "stride": vertex?.layouts[attribute.bufferIndex].stride ?? -1])
+            }
+            var textures: [String: String] = [:]
+            for binding in pass.shader.textures {
+                textures[binding.name] = batch.textureOverrides[binding.name] ?? material.textures[binding.name] ?? "__white"
+            }
+            return PreviewPass(id: pass.id, shader: pass.shader.shader,
+                vertexFile: pass.shader.stages["vertex"]?.file ?? "",
+                fragmentFile: pass.shader.stages["fragment"]?.file ?? "",
+                materialValues: values,
+                textures: textures,
+                alphaBlend: ["enabled": attachment.isBlendingEnabled ? 1 : 0,
+                    "source": Int(attachment.sourceAlphaBlendFactor.rawValue),
+                    "destination": Int(attachment.destinationAlphaBlendFactor.rawValue),
+                    "operation": Int(attachment.alphaBlendOperation.rawValue),
+                    "writeMask": Int(batch.colorWriteMask ?? UInt8(attachment.writeMask.rawValue))],
+                vertexAttributes: attributes)
+        }
+    }
+    #endif
+
     private struct Vertex {
         var position: SIMD4<Float>
         var uv: SIMD2<Float>
