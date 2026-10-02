@@ -1203,11 +1203,17 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         super.updateTrackingAreas()
         if let tracking = tracking { removeTrackingArea(tracking) }
         let area = NSTrackingArea(rect: bounds,
-                                  options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                                  options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect],
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         tracking = area
     }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if let cursor = sourceWatch?.presentedSourceCursor { addCursorRect(visibleRect, cursor: cursor) }
+    }
+    override func cursorUpdate(with event: NSEvent) { sourceWatch?.refreshSourceCursor() }
 
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
@@ -1247,6 +1253,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func updateHover(_ event: NSEvent) {
+        sourceWatch?.refreshSourceCursor()
         followCurrentPointer()
         guard allowsModuleInput, window?.ignoresMouseEvents != true else { return }
         let location = convert(event.locationInWindow, from: nil)

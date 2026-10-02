@@ -56,6 +56,7 @@ jobs:
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test --backdrop-preparation-smoke-test --source-fallback-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test --reduce-motion-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --charge-badge-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --notes-shelf-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --telemetry-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --app-shortcut-smoke-test

@@ -131,6 +131,8 @@ enum LocalizationCatalog {
         Entry("Active audio app information is unavailable.", "活跃音频应用信息不可用。", "活躍音訊應用程式資訊不可用。", "音声を再生中のアプリの情報を取得できません。"),
         Entry("Some audio changes could not be observed. Reopen Volume to refresh.", "无法监听部分音频更改，请重新打开音量模块刷新。", "無法監聽部分音訊更改，請重新開啟音量模組重新整理。", "一部のオーディオ設定の変更を検出できませんでした。音量を開き直して更新してください。"),
         // ChargeIndicatorView.swift
+        Entry("CHARGE MODE", "充电模式", "充電模式", "充電モード"),
+        Entry("BATTERY MODE", "电池模式", "電池模式", "バッテリーモード"),
         Entry("Battery unavailable", "电量不可用", "電量不可用", "バッテリー残量を取得できません"),
         Entry(", Preview", "，预览", "，預覽", "、プレビュー"),
         // ClipboardCanvas.swift

@@ -132,7 +132,9 @@ struct HUDSourceDesktopScrollMotion {
         guard delta.isFinite, hiddenLength.isFinite, hiddenLength > 0, time.isFinite else { return }
         _ = advance(at: time)
         isGestureActive = false; ownsMomentum = false; suppressesMomentum = false
-        edgeLimit = min(0.15, 64 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        // Give both edges more visible travel while keeping short lists and
+        // very large collections bounded in normalized and source units.
+        edgeLimit = min(0.24, 96 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
         let requested = target + delta
         target = min(1, max(0, requested))
         if reduceMotion { position = target; velocity = 0; return }
@@ -158,7 +160,7 @@ struct HUDSourceDesktopScrollMotion {
             if ended { ownsMomentum = false; suppressesMomentum = false }
             return
         }
-        edgeLimit = min(0.15, 96 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        edgeLimit = min(0.24, 144 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
         if !isGestureActive {
             _ = advance(at: time)
             let bound = min(1, max(0, position)), excess = position - bound
@@ -279,6 +281,8 @@ struct HUDSourceDesktopNavigationLayout {
         let localRow = rows.lastIndex(where: { (rows[0].anchored.y - $0.anchored.y) * rowScale <= withinCycle }) ?? 0
         let firstRow = min(max(0, count - rows.count), max(0, cycle * rows.count + localRow - 1))
         var assignments: [HUDSourceID: Int] = [:], logicalRows: [HUDSourceID: Int] = [:]
+        assignments.reserveCapacity(min(entryCount, rows.count * columns))
+        logicalRows.reserveCapacity(min(count, rows.count))
         for logicalRow in firstRow..<min(count, firstRow + rows.count) {
             let row = rows[logicalRow % rows.count]
             logicalRows[row.id] = logicalRow

@@ -40,6 +40,16 @@ animation tracks. Full teardown stops presentation clocks and removes tracks. Ge
 completion callbacks. Module deactivation removes visible-only observers,
 editors, accessibility controls and display timers.
 
+The source and native host register the same AppKit cursor while the HUD is
+visible, including opening/closing. Pointer/lifecycle events update ownership;
+the renderer never polls or uploads cursor state each frame. Native text editors
+retain their text cursor, and teardown cannot overwrite a cursor chosen by
+another window. Unchanged hover and wordmark styles are compared before making
+mutable copies, so settled ambient frames do not rewrite that dictionary.
+Gyro updates share the finite transition clock's visibility gate: delayed
+WindowServer occlusion notifications cannot freeze entrance/exit tilt, while
+concealed and occluded steady-state views remain stopped.
+
 A one-time utility-queue launch preparation decodes immutable source metadata
 and prepares the desktop shader functions, including required clipped variants
 within the fixed eight-pair limit. It creates no hidden renderer or

@@ -442,23 +442,25 @@ CPU values are percentages of **one CPU core** for the application process.
 
 | Scenario | Stable CPU | Integration CPU | Stable footprint | Integration footprint |
 | --- | ---: | ---: | ---: | ---: |
-| Closed after use | 0.04% | 0.06% | 52 MiB | 121 MiB |
-| Map idle | 0.24% | 12.44% | 78 MiB | 190 MiB |
-| Clipboard idle | 0.15% | 6.64% | 79 MiB | 190 MiB |
-| Notes idle | 0.17% | 12.28% | 79 MiB | 191 MiB |
-| Activity Monitor idle | 0.15% | 12.89% | 74 MiB | 191 MiB |
-| Pointer motion | 4.47% | 42.24% | 74 MiB | 189 MiB |
+| Closed after use | 0.04% | 0.04% | 52 MiB | 125 MiB |
+| Map idle | 0.24% | 10.44% | 78 MiB | 196 MiB |
+| Clipboard idle | 0.15% | 6.36% | 79 MiB | 198 MiB |
+| Notes idle | 0.17% | 11.53% | 79 MiB | 198 MiB |
+| Activity Monitor idle | 0.15% | 9.43% | 74 MiB | 197 MiB |
+| Pointer motion | 4.47% | 45.34% | 74 MiB | 196 MiB |
 
 The integration submitted about 30 source frames/second idle and
-59.4 during pointer motion. Once closed, its source timer stopped and
+59.6 during pointer motion. Once closed, its source timer stopped and
 submitted zero frames. The current build opened in
-178 ms synchronously (stable 93 ms), presented its first source frame at
-382 ms, and reopened in 131 ms (stable 54 ms).
+170 ms synchronously (stable 93 ms), presented its first source frame at
+352 ms, and reopened in 136 ms (stable 54 ms). The previous branch sample was
+178/382/131 ms; idle CPU is lower in this sample, while pointer CPU and footprint
+are somewhat higher. These single runs do not establish a general speedup.
 
-A same-binary comparison with shader preparation disabled measured
+The preceding pass's same-binary comparison with shader preparation disabled measured
 191 ms synchronous opening and 404 ms first presentation. With it enabled,
 twelve shader libraries/six function pairs, including required clipped variants,
-were prepared in 20 ms on the utility queue within the existing eight-pair cap.
+were prepared in 20 ms in that pass (12 ms in the final build) on the utility queue within the existing eight-pair cap.
 No pipelines, textures, renderer or window were created by preparation. The
 first visible fixture compiled zero additional shader libraries; pipelines
 remained lazy. This moves bounded compilation off first presentation, but does
@@ -466,7 +468,7 @@ not eliminate the remaining opening delay. The prior branch's single sample
 was 169/391/138 ms for synchronous opening/first presentation/reopening; this
 pass does not establish an across-the-board speedup over that sample.
 
-Total CPU/document/shader preparation took 1.25 s off the main thread.
+Total CPU/document/shader preparation took 1.29 s off the main thread.
 These opening figures start after launch preparation has completed; they do
 not measure the whole application's cold launch. An immediate first opening
 can still wait for CPU document preparation, and GPU programs remain lazy if
@@ -485,9 +487,10 @@ GPU utilization from these process counters. Instruments was unavailable here.
 The raw samples and input fingerprints are in
 [integration-benchmark.json](integration-benchmark.json).
 
-The core suite passed 50,090 assertions during this pass. Final native checks
-passed 623 navigation assertions across all 16 sections, 40 Notes/Shelf arrival
-and queued-navigation assertions, 86 lifecycle assertions, and 85 shortcut
+The core suite passed 50,190 assertions during the final pass. Final native checks
+passed 623 navigation assertions across all 16 sections, 96 lifecycle/cursor
+assertions and 16 battery lifecycle assertions. The preceding pass also verified
+40 Notes/Shelf arrival and queued-navigation assertions and 85 shortcut
 assertions. The latter include visible-versus-transparent map/button hit routing,
 close-first launch, preset artwork, captions and live language changes. The compatibility guard retains 47 unchanged
 files plus four exact reviewed changes, all 575 baseline translated entries
@@ -590,3 +593,33 @@ on the source clock and finish after 460 ms; Reduce Motion leaves it steady.
 RAM replaces user-facing memory labels, including unavailable-data status,
 without renaming stored identifiers or altering sampling. These explicit
 interaction/copy updates are recorded narrowly in the compatibility guard.
+
+
+## Final battery, cursor and scroll pass
+
+The shared battery renderer localizes CHARGE MODE and BATTERY MODE in English,
+Simplified Chinese, Traditional Chinese and Japanese, with titles fitted to the
+existing banner. The actual charging flag controls both lines, including when
+power remains connected but charging has ended. The standalone notification and
+HUD badge use the same renderer and receive the same state changes.
+
+Cursor regions span the source shell and native module host. Ownership follows
+the visible key HUD panel through entrance and exit, independently of enabled
+controls or application activation. Native text fields keep their text cursor.
+Cursor updates run from pointer/lifecycle events; no cursor polling remains in
+ambient rendering. Restoration only changes a cursor still owned by the HUD.
+During finite entrance/exit, gyro uses the same window-visibility gate as the
+render clock. This fixes an observed first-opening stall before WindowServer
+publishes the visible occlusion bit, without keeping hidden idle motion alive.
+
+Right-list elastic limits are 144 source pixels for trackpad input and 96 for
+wheel input, with a 24% normalized cap. Direct tracking, finite rebound, momentum
+tail suppression, arrow limits and Reduce Motion remain. Layout dictionaries
+reserve capacity for the existing fixed pool; unchanged hover and logo styles
+no longer make mutable copies on each settled frame. No new clock was added.
+
+Local cleanup removed 1.72 GiB of obsolete generated compiler caches and the
+temporary comparison bundle. Required authoring fixtures, dependencies, final
+bundles, user data and verification evidence were retained. The universal build
+and final lifecycle, charge, navigation and runtime geometry checks passed;
+the command-line offline Metal compiler remains unavailable on this host.
