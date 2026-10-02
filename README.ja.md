@@ -4,6 +4,8 @@
 
 『アークナイツ：エンドフィールド』をモチーフにした macOS のメニューバーアプリです。ショートカットで立体的に動く HUD を開き、メモ、ファイルの一時置き、タイマー、音量調整、Mac の状態確認などを使えます。
 
+**統合テスト用ブランチ：**新しい Watch の外観に、安定版 1.0.1 の機能と保存データ形式を組み合わせています。このブランチを試すには、[このブランチの成功した Build and test 実行](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration)から **EndfieldHUD-macOS-…** アーティファクトをダウンロードしてください。以下のリリースへのリンクとプレビューは安定版のもので、このブランチのものではありません。
+
 **[v1.0.1 をダウンロード — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [すべてのリリース](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![サンプルの数値を表示した EndfieldHUD の電源画面](docs/media/overview.png)

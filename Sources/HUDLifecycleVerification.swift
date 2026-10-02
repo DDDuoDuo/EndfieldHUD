@@ -5,7 +5,12 @@ import AppKit
 enum HUDLifecycleVerification {
     static func run(overlay: OverlayController, configuration: AppConfiguration,
                     completion: @escaping () -> Void) {
-        let lifecycle = { Session(overlay: overlay, configuration: configuration, completion: completion).start() }
+        let lifecycle = {
+            let start = { Session(overlay: overlay, configuration: configuration, completion: completion).start() }
+            if CommandLine.arguments.contains("--source-fallback-smoke-test") {
+                verifySourceFallback(overlay: overlay, configuration: configuration, completion: start)
+            } else { start() }
+        }
         let interactions = {
             if CommandLine.arguments.contains("--banner-drag-smoke-test") {
                 HUDSourceBannerDragVerification.run(overlay: overlay, configuration: configuration, completion: lifecycle)
@@ -17,6 +22,43 @@ enum HUDLifecycleVerification {
             }
         } else {
             interactions()
+        }
+    }
+
+    private static func verifySourceFallback(overlay: OverlayController, configuration: AppConfiguration,
+                                             completion: @escaping () -> Void) {
+        precondition(CommandLine.arguments.contains("--ui-test"))
+        var configuration = configuration
+        configuration.closeOnFocusLost = false
+        overlay.initialModuleRequest = .map
+        let snapshot = BatterySnapshot(percentage: 75, isPluggedIn: true, isCharging: true,
+            isFullyCharged: false, hasBattery: true)
+        precondition(overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration))
+        DispatchQueue.main.asyncAfter(deadline: .now() + SystemHUDView.entranceDuration + 0.2) {
+            guard let source = overlay.systemSourceWatchForVerification else {
+                preconditionFailure("Source fallback fixture requires a working initial source shell")
+            }
+            precondition(overlay.systemPhase == .open && overlay.systemReportGeometryMatchesSelectionForVerification)
+            // Invoke the renderer's actual failure handoff, without changing
+            // bundled assets or the real user's stores and preferences.
+            source.onFailure?("Injected source failure for isolated lifecycle verification")
+            precondition(overlay.systemPhase == .open && source.isHidden && !source.hasDisplayTimerForVerification,
+                         "Runtime source failure restores the native shell without closing or a hidden clock")
+            precondition(overlay.systemReportGeometryMatchesSelectionForVerification,
+                         "Fallback Map drawing and projected input must move back to the native origin together")
+            overlay.selectSystemModule(.workMode, animated: false)
+            precondition(overlay.systemReportGeometryMatchesSelectionForVerification
+                         && overlay.systemWorkModeDialDiameterForVerification == 430,
+                         "Fallback Work Mode retains its full ring and matching input geometry")
+            overlay.selectSystemModule(.map, animated: false)
+            overlay.closeSystemOverlay()
+            DispatchQueue.main.asyncAfter(deadline: .now() + SystemHUDView.exitDuration + 0.3) {
+                precondition(overlay.systemPhase == .closed && overlay.lastClosedAnimationCount == 0
+                             && !overlay.lastClosedSourceTimerActive,
+                             "Fallback closes through the native animation and releases its presentation")
+                print("PASS: Runtime source failure retains Map/Work geometry and clean native teardown")
+                completion()
+            }
         }
     }
 
@@ -34,6 +76,7 @@ enum HUDLifecycleVerification {
         private var screenPointer = CGPoint.zero
         private var openingPointer = CGPoint.zero
         private var openingSourceFrames = 0
+        private weak var closingSource: HUDSourceWatchView?
         private var windowIDs = Set<ObjectIdentifier>()
         private let priorPointerProvider: (() -> CGPoint)?
         private let priorClosed: (() -> Void)?
@@ -79,8 +122,16 @@ enum HUDLifecycleVerification {
                            "Quit callback follows removal of every hidden HUD animation")
             }
             overlay.afterSystemClose = nil
-            overlay.initialModuleRequest = .power
+            // A fresh controller must choose Map without an explicit request.
+            // Optional earlier scene fixtures reuse this controller and may
+            // legitimately have changed its remembered section already.
+            let hadPreflight = CommandLine.arguments.contains("--banner-drag-smoke-test")
+                || CommandLine.arguments.contains("--backdrop-preparation-smoke-test")
+            overlay.initialModuleRequest = hadPreflight ? .map : nil
             check(overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration), "The fixture HUD opens")
+            check(overlay.systemSelectedModule == .map && overlay.systemCenterContentCount == 1
+                  && overlay.systemReportGeometryMatchesSelectionForVerification,
+                  "The integrated shell opens the stable Map canvas in its native module host")
             reduced = HUDRuntimeAppearance.reduceMotion
             windowIDs = currentWindowIDs()
             check(overlay.systemWindowVisibleForVerification, "Opening orders the existing HUD panel on screen")
@@ -110,19 +161,37 @@ enum HUDLifecycleVerification {
             check(source.visibleMainButtonForVerification != nil,
                   "A projected original button can be hit through the same source camera and masks")
             check(source.hasDisplayTimerForVerification == !reduced && overlay.systemAmbientAnimationCount == 0
-                  && overlay.systemParallaxAnimationCount == 0,
-                  "Source overview owns one display timer without hidden legacy motion tracks")
+                  && overlay.systemParallaxAnimationCount <= 13,
+                  "The persistent scene owns its display timer while native content has only bounded pointer tracks")
             if !reduced { check(source.renderedFrameCount > openingSourceFrames, "The real source frame advances after the injected pointer changes") }
             do {
                 let image = try source.renderedImageForVerification()
                 check(image.width > 0 && image.height > 0, "The displayed original menu produces an actual Metal drawable")
             } catch { fail("Source drawable verification failed: \(error)") }
+            guard let point = source.desktopPointForVerification(target: .module(.power)),
+                  let host = source.superview as? SystemHUDView else {
+                fail("A visible projected Power button is required for input verification")
+            }
+            clickHUD(at: host.convert(point, from: source))
+            check(overlay.systemPhase == .open && overlay.systemSelectedModule == .power
+                  && !overlay.systemQuitConfirmationVisibleForVerification,
+                  "An active source card routes to its module without being treated as an outside click")
+            guard let profilePoint = source.desktopProfilePointForVerification else {
+                fail("The actual bottom profile card must have a visible projected hit")
+            }
+            clickHUD(at: host.convert(profilePoint, from: source))
+            check(overlay.systemSelectedModule == .profile && overlay.systemPhase == .open,
+                  "The authored bottom profile card opens the retained editable Personal Profile canvas")
             overlay.selectSystemModule(.eventLog, animated: false)
-            check(!source.hasDisplayTimerForVerification && source.playback.phase == .concealed,
-                  "Entering a macOS module suspends the hidden original menu")
+            check(overlay.systemSourceWatchForVerification === source && !source.isHiddenOrHasHiddenAncestor
+                  && source.hasDisplayTimerForVerification == !reduced && source.playback.phase == .visible,
+                  "Switching desktop sections retains the same visible source shell and its display clock")
+            check(overlay.systemSelectedModule == .eventLog && overlay.systemCenterContentCount == 1
+                  && overlay.systemReportGeometryMatchesSelectionForVerification,
+                  "Event Log remains a real native canvas inside the persistent shell")
             let shell = overlay.systemShellIdentity
             let section = overlay.systemSelectedModule
-            overlay.presentQuitConfirmationForVerification()
+            clickProjectedQuit()
             check(overlay.systemQuitConfirmationVisibleForVerification && currentWindowIDs() == windowIDs,
                   "Power confirmation stays inside the existing HUD window")
             overlay.answerQuitConfirmationForVerification(false)
@@ -139,7 +208,14 @@ enum HUDLifecycleVerification {
         }
 
         private func closeWithPointerMotion() {
-            overlay.closeSystemOverlay()
+            closingSource = overlay.systemSourceWatchForVerification
+            guard let source = closingSource, let host = source.superview as? SystemHUDView else {
+                fail("Outside-click verification requires the live source and native host")
+            }
+            let corner = CGPoint(x: host.bounds.minX + 8, y: host.bounds.minY + 8)
+            check(host.hitTest(host.convert(corner, to: host.superview)) === source,
+                  "Blank background input exercises the source view rather than bypassing it")
+            clickHUD(at: corner)
             check(overlay.systemPhase == .closing, "Ordinary close starts retraction synchronously")
             if !reduced {
                 later(min(0.08, SystemHUDView.exitDuration * 0.20)) { [self] in
@@ -160,8 +236,9 @@ enum HUDLifecycleVerification {
         private func checkUnansweredFocusClose() {
             check(overlay.systemPhase == .open && overlay.systemSelectedModule == .eventLog,
                   "Reopening retains the section from before a cancelled quit")
-            overlay.presentQuitConfirmationForVerification()
+            clickProjectedQuit()
             check(overlay.systemQuitConfirmationVisibleForVerification, "A later unanswered quit prompt is visible")
+            closingSource = overlay.systemSourceWatchForVerification
             overlay.closeSystemOverlayForFocusLoss()
             check(overlay.systemPhase == .closing && !overlay.systemQuitConfirmationVisibleForVerification,
                   "Focus dismissal cancels an unanswered prompt before retraction")
@@ -182,9 +259,12 @@ enum HUDLifecycleVerification {
             check(!overlay.isIdleForUpdate, "An open HUD prevents an automatic update restart")
             var completions = 0
             overlay.afterSystemClose = { [weak self] in self?.genericHandoffs += 1 }
+            closingSource = overlay.systemSourceWatchForVerification
             overlay.closeForApplicationUpdate { [self] in
                 completions += 1
-                checkCleanClose("Updater handoff")
+                // The view's completion is still on the stack here. Check
+                // logical teardown now and its weak lifetime after it returns.
+                checkCleanClose("Updater handoff", requireReleasedView: false)
             }
             overlay.closeForApplicationUpdate { completions += 100 }
             check(overlay.systemPhase == .closing && completions == 0,
@@ -192,6 +272,7 @@ enum HUDLifecycleVerification {
             check(!overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration),
                   "Summon cannot reopen while an accepted update is retracting")
             later(SystemHUDView.exitDuration + 0.30) { [self] in
+                checkReleasedSource("Updater handoff after its completion returned")
                 check(completions == 1 && normalCloses == 2 && genericHandoffs == 0 && completedQuits == 0,
                       "Update continuation runs once, without unrelated handoffs, charging restore or quit callback")
                 overlay.cancelApplicationUpdate()
@@ -208,8 +289,9 @@ enum HUDLifecycleVerification {
             check(overlay.systemSourceWatchForVerification?.playback.phase == .visible,
                   "The final quit cycle returns to the original Watch overview")
             overlay.afterSystemClose = { [weak self] in self?.genericHandoffs += 1 }
-            overlay.presentQuitConfirmationForVerification()
+            clickProjectedQuit()
             check(overlay.systemQuitConfirmationVisibleForVerification, "Final quit requires its own confirmation")
+            closingSource = overlay.systemSourceWatchForVerification
             overlay.answerQuitConfirmationForVerification(true)
             check(acceptedQuits == 1 && overlay.systemPhase == .closing && completedQuits == 0,
                   "Confirm accepts once and starts closing without prematurely invoking quit")
@@ -219,7 +301,13 @@ enum HUDLifecycleVerification {
             check(acceptedQuits == 1 && completedQuits == 0,
                   "Repeated confirmation cannot duplicate acceptance or bypass retraction")
             if !reduced {
-                later(0.08) { [self] in checkTransitionMotion(.zero, phase: .closing) }
+                later(0.08) { [self] in
+                    // The pointer is deliberately nonzero after earlier cycles.
+                    // Move it again so this checks real quit-time retargeting,
+                    // not a stale centered pose or an already completed track.
+                    let point = movePointer(x: -145, y: 105)
+                    checkTransitionMotion(point, phase: .closing)
+                }
             }
             let sourceExit = overlay.systemSourceWatchForVerification?.document.animation.exit.lastKeyTime ?? 0.3333333432674408
             later(sourceExit + 0.15) { [self] in
@@ -244,7 +332,6 @@ enum HUDLifecycleVerification {
 
         private func movePointer(x: CGFloat, y: CGFloat) -> CGPoint {
             screenPointer.x += x; screenPointer.y += y
-            if overlay.systemSelectedModule == .power { return screenPointer }
             guard let point = overlay.systemCurrentPointerTargetForVerification else {
                 fail("The live HUD must provide its normalized pointer target")
             }
@@ -252,20 +339,42 @@ enum HUDLifecycleVerification {
             return point
         }
 
-        private func checkTransitionMotion(_ point: CGPoint, phase: SystemOverlayPhase) {
-            if overlay.systemSelectedModule == .power {
-                guard let source = overlay.systemSourceWatchForVerification else {
-                    fail("Source Watch transition must retain its renderer")
+        private func clickProjectedQuit() {
+            guard let source = overlay.systemSourceWatchForVerification,
+                  let host = source.superview as? SystemHUDView,
+                  let point = source.desktopQuitPointForVerification else {
+                fail("The authored red quit control must have a visible projected hit")
+            }
+            clickHUD(at: host.convert(point, from: source))
+        }
+
+        private func clickHUD(at point: CGPoint) {
+            guard let source = overlay.systemSourceWatchForVerification,
+                  let host = source.superview as? SystemHUDView, let window = host.window,
+                  let receiver = host.hitTest(host.convert(point, to: host.superview)) else {
+                fail("HUD input verification requires an actual hit-tested view")
+            }
+            for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+                guard let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
+                    fail("Cannot create an isolated local HUD mouse event")
                 }
+                if type == .leftMouseDown { receiver.mouseDown(with: event) }
+                else { receiver.mouseUp(with: event) }
+            }
+        }
+
+        private func checkTransitionMotion(_ point: CGPoint, phase: SystemOverlayPhase) {
+            if let source = overlay.systemSourceWatchForVerification {
                 let expected: HUDSourceWatchPlayback.Phase = phase == .opening ? .opening : .closing
                 check(overlay.systemPhase == phase && source.playback.phase == expected && source.hasDisplayTimerForVerification,
                       "Original Watch finite transition owns its active display clock")
                 check(source.currentFrameForVerification != nil && source.renderedFrameCount > 0,
                       "Original Watch transition resolves actual source geometry")
-                check(overlay.systemParallaxAnimationCount == 0 && overlay.systemAmbientAnimationCount == 0,
-                      "Original Watch transitions do not animate hidden legacy planes")
+                check(overlay.systemAmbientAnimationCount == 0,
+                      "Source transitions do not start duplicate legacy ambient loops")
                 openingSourceFrames = source.renderedFrameCount
-                return
             }
             check(overlay.systemPhase == phase && overlay.systemPointerTargetForVerification == point
                   && overlay.systemSpatialPoseMatchesPointerForVerification(point),
@@ -276,11 +385,17 @@ enum HUDLifecycleVerification {
                   "Transition pointer response does not start or retain ambient loops")
         }
 
-        private func checkCleanClose(_ label: String) {
+        private func checkCleanClose(_ label: String, requireReleasedView: Bool = true) {
             check(overlay.systemPhase == .closed && !overlay.systemWindowVisibleForVerification
                   && overlay.systemShellIdentity == nil && overlay.lastClosedAnimationCount == 0
                   && !overlay.lastClosedSourceTimerActive && overlay.lastClosedSourcePhase == .concealed,
                   "\(label) releases the hidden presentation and all animation tracks")
+            if requireReleasedView { checkReleasedSource(label) }
+        }
+
+        private func checkReleasedSource(_ label: String) {
+            check(closingSource == nil,
+                  "\(label) releases the actual source view; immutable resource caches must not retain its lifetime")
         }
 
         private func currentWindowIDs() -> Set<ObjectIdentifier> { Set(NSApp.windows.map { ObjectIdentifier($0) }) }

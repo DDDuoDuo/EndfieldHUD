@@ -29,6 +29,7 @@ enum CoreTests {
         assertionCount += HUDSourceSelectableColorTests.run()
         assertionCount += HUDSourceImageGeometryTests.run()
         assertionCount += HUDSourceTextGeometryTests.run()
+        assertionCount += HUDSourceDesktopNavigationLayoutTests.run()
         assertionCount += HUDSourceWatchLayoutTests.run()
         assertionCount += HUDSourceRectClippingTests.run()
         assertionCount += HUDSourceCanvasSortingTests.run()

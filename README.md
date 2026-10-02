@@ -4,6 +4,8 @@
 
 An Endfield-inspired menu bar app for macOS. Bring up a moving, layered HUD for notes, files, timers, audio controls, and a quick look at your Mac.
 
+**Integration branch:** This branch combines the new Watch presentation with the stable 1.0.1 features and saved-data formats. To test this branch, open a successful [Build and test run for this branch](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration) and download its **EndfieldHUD-macOS-…** artifact. The release download and previews below are for the stable version, not this branch.
+
 **[Download v1.0.1 — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD Power overview with sample readings](docs/media/overview.png)

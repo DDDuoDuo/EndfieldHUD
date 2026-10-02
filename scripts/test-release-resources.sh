@@ -21,3 +21,4 @@ if /usr/bin/strings "$PROBE_STAGE/release" | /usr/bin/grep -F "$PROJECT_DIR" > /
     exit 1
 fi
 printf 'PASS: release resource probe contains no checkout path\n'
+python3 "$PROJECT_DIR/scripts/test-watch-resources.py"

@@ -700,6 +700,9 @@ enum RenderSourceWatchPreviews {
                     "corners": corners.map { [Double($0.x), Double($0.y)] }]
             }
             let diagnostics = frame.diagnostics + activeRenderer.diagnostics
+            guard let renderedDomain = activeBuilder.domain else {
+                throw HUDSourceError.invalid("Original source fixture requires its Domain")
+            }
             manifest.append(["file": file, "rawPixelReport": pixelReportFile, "batches": frame.batches.count, "hits": frame.hits.count,
                 "sceneColorMode": isHDR ? "sourceRGBHDR" : "directLDR", "hdr": hdrFiles,
                 "widgetFixture": isWidgetFixture ? "Explicit original artwork and generic profile; no personal name or UID" : "No inferred game account fields",
@@ -713,7 +716,7 @@ enum RenderSourceWatchPreviews {
                 "unverifiedLayout": frame.layoutReport.unverifiedCustomComponents.sorted(),
                 "openingElapsed": timestamp(opening), "ambientClipTime": timestamp(ambient),
                 "domainCurrentLevel": domainState.currentLevelID.map { $0 as Any } ?? NSNull(),
-                "domainName": activeBuilder.domain.domainName, "rendererWideMaterialRegression": materialRegression,
+                "domainName": renderedDomain.domainName, "rendererWideMaterialRegression": materialRegression,
                 "recordingMapReference": recordingMapRegression,
                 "domainSelectionElapsed": timestamp(domainState.selectionElapsed), "domainHoverClipTimes": domainState.hoverClipTimes,
                 "closingElapsed": timestamp(closing), "hoverElapsed": timestamp(hover)])

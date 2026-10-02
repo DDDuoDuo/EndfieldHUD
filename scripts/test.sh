@@ -20,6 +20,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDSourceSelectableColor.swift" \
     "$PROJECT_DIR/Sources/HUDSourceImageGeometry.swift" \
     "$PROJECT_DIR/Sources/HUDSourceTextGeometry.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceDesktopNavigationLayout.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchLayout.swift" \
     "$PROJECT_DIR/Sources/HUDSourceRectClipping.swift" \
     "$PROJECT_DIR/Sources/HUDSourceCanvasSorting.swift" \
@@ -128,6 +129,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDSourceSelectableColorTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceImageGeometryTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceTextGeometryTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceDesktopNavigationLayoutTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchLayoutTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceRectClippingTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceCanvasSortingTests.swift" \

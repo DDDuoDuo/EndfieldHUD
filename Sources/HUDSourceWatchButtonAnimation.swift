@@ -25,9 +25,12 @@ final class HUDSourceWatchButtonAnimation {
     private let order: [HUDSourceID]
     private var instances: [HUDSourceID: Instance]
     private var clock: Double?
+    private(set) var stateGeneration: UInt64 = 0
+    private struct CachedSample { let localTime: Double; let samples: Samples }
+    private var sampleCache: [HUDSourceID: [State: CachedSample]] = [:]
 
     convenience init(document: HUDSourceWatchDocument) throws {
-        let data = try Data(contentsOf: document.root.appendingPathComponent("controller-transitions.json"))
+        let data = try HUDSourceResourceData.read(document.root.appendingPathComponent("controller-transitions.json"))
         let transitions = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self, from: data)
         try self.init(scene: document.scene, library: document.library, animators: document.animators, transitionData: transitions)
     }
@@ -129,6 +132,7 @@ final class HUDSourceWatchButtonAnimation {
         if state == .highlighted { instance.hovered = true }
         if state == .normal || state == .disabled { instance.hovered = false }
         instances[id] = instance
+        stateGeneration &+= 1
     }
 
     /// Hover visibility is separate from Pressed. A press while inside retains
@@ -139,6 +143,7 @@ final class HUDSourceWatchButtonAnimation {
             setState(hovered ? .highlighted : .normal, on: id, at: time, reduceMotion: reduceMotion)
         }
         let enabled = instances[id]?.playback.state != .disabled
+        if instances[id]?.hovered != (hovered && enabled) { stateGeneration &+= 1 }
         instances[id]?.hovered = hovered && enabled
     }
 
@@ -165,6 +170,7 @@ final class HUDSourceWatchButtonAnimation {
     /// No timers/completion callbacks survive a concealed or replaced menu.
     func reset(at time: Double, reduceMotion: Bool = false) {
         guard time.isFinite else { return }; clock = time
+        stateGeneration &+= 1
         for id in order {
             instances[id] = Instance(playback: Playback(state: .normal, started: time, endpoint: reduceMotion))
         }
@@ -178,6 +184,7 @@ final class HUDSourceWatchButtonAnimation {
         let template = config.templates[playback.state]!, clip = template.clip
         let local = playback.endpoint ? clip.lastKeyTime : min(clip.lastKeyTime, max(0,
             max(0, time - playback.started) * template.speed + template.cycleOffset * clip.lastKeyTime))
+        if let cached = sampleCache[config.root]?[playback.state], cached.localTime == local { return cached.samples }
         var samples = Samples()
         for curve in clip.curves {
             if curve.nodeIDs.isEmpty { samples.unbound.insert(curve.path); continue }
@@ -186,6 +193,9 @@ final class HUDSourceWatchButtonAnimation {
                 samples.channels[Channel(node: node, group: curve.group, attribute: curve.attribute)] = value
             }
         }
+        // Four state slots per authored button, independent of elapsed time.
+        // Settled states retain their exact channels without resampling curves.
+        sampleCache[config.root, default: [:]][playback.state] = CachedSample(localTime: local, samples: samples)
         return samples
     }
     private func sample(_ instance: Instance, config: Configuration, at time: Double) -> Samples {

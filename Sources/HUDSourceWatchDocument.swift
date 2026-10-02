@@ -59,14 +59,46 @@ struct HUDSourceWatchButton: Decodable {
 }
 
 final class HUDSourceWatchDocument {
+    private static let desktopCache = HUDSourceDesktopDocumentCache()
+
+    /// Only this profile is shared: its remaining members are immutable value
+    /// trees, and the mutable game-widget owner is never constructed.
+    static func desktop(resourceRoot: URL? = nil) throws -> HUDSourceWatchDocument {
+        try desktopCache.document(resourceRoot: resourceRoot)
+    }
+
+    static func prewarmDesktop() { desktopCache.prewarm() }
+
+    static func clearDesktopCacheForVerification() { desktopCache.clear() }
+
     struct NodeComponents: Decodable {
         let id: HUDSourceID
         let components: [HUDSourceWatchComponent]
     }
-    private struct Details: Decodable {
+    private struct ScenePayload: Decodable {
+        private struct NodePayload: Decodable {
+            let node: HUDSourceNode
+            let components: [HUDSourceWatchComponent]
+            private enum CodingKeys: String, CodingKey { case components }
+            init(from decoder: Decoder) throws {
+                node = try HUDSourceNode(from: decoder)
+                components = try decoder.container(keyedBy: CodingKeys.self)
+                    .decode([HUDSourceWatchComponent].self, forKey: .components)
+            }
+        }
+        let scene: HUDSourceScene
         let nodes: [NodeComponents]
         let buttons: [HUDSourceWatchButton]
-        enum CodingKeys: String, CodingKey { case nodes, buttons = "main_buttons" }
+        private enum CodingKeys: String, CodingKey { case rootID = "root_node_id", nodes, buttons = "main_buttons" }
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let decoded = try container.decode([NodePayload].self, forKey: .nodes)
+            // Keep the common graph initializer's identity, edge and cycle
+            // validation; only the second parse of the same JSON is removed.
+            scene = try HUDSourceScene(rootID: container.decode(HUDSourceID.self, forKey: .rootID), nodes: decoded.map(\.node))
+            nodes = decoded.map { NodeComponents(id: $0.node.id, components: $0.components) }
+            buttons = try container.decode([HUDSourceWatchButton].self, forKey: .buttons)
+        }
     }
     struct Animator: Decodable {
         struct State: Decodable {
@@ -79,9 +111,15 @@ final class HUDSourceWatchDocument {
         let states: [State]
         enum CodingKeys: String, CodingKey { case rootID = "root_node_id", controllerName = "controller_name", states }
     }
-    private struct ExtraAnimations: Decodable {
+    private struct AnimationPayload: Decodable {
+        let library: HUDSourceAnimationLibrary
         let animators: [Animator]
-        enum CodingKeys: String, CodingKey { case animators = "controller_instances" }
+        private enum CodingKeys: String, CodingKey { case animators = "controller_instances" }
+        init(from decoder: Decoder) throws {
+            // Reuse the strict clip/curve decoders and the same decoded tree.
+            library = try HUDSourceAnimationLibrary(from: decoder)
+            animators = try decoder.container(keyedBy: CodingKeys.self).decode([Animator].self, forKey: .animators)
+        }
     }
     let root: URL
     let scene: HUDSourceScene
@@ -97,40 +135,63 @@ final class HUDSourceWatchDocument {
     let materials: HUDSourceJSONValue
     let spriteByComponent: [HUDSourceID: HUDSourceJSONValue]
     let widgets: HUDSourceWatchWidgets?
+    let desktopProfileCard: HUDSourceDesktopProfileCard?
+    private let desktopButtonIDs: [HUDSourceID]
+    private let desktopHiddenDecorationIDs: [HUDSourceID]
 
-    init(resourceRoot: URL? = nil, includeWidgets: Bool = true) throws {
+    init(resourceRoot: URL? = nil, includeWidgets: Bool = true, includeSourceText: Bool = true, includeDesktopProfile: Bool = false) throws {
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource/Scene") else {
             throw HUDSourceError.invalid("Watch source scene resources are missing")
         }
         self.root = root
         let decoder = HUDSourceJSON.decoder()
-        func data(_ name: String) throws -> Data { try Data(contentsOf: root.appendingPathComponent(name + ".json")) }
+        func data(_ name: String) throws -> Data { try HUDSourceResourceData.read(root.appendingPathComponent(name + ".json")) }
         let sceneData = try data("scene"), clipData = try data("clips")
-        let originalScene = try decoder.decode(HUDSourceScene.self, from: sceneData)
+        let details = try decoder.decode(ScenePayload.self, from: sceneData)
+        let originalScene = details.scene
         let widgetURL = root.appendingPathComponent("Widgets/widget.json")
         let widgets: HUDSourceWatchWidgets?
         if includeWidgets && FileManager.default.fileExists(atPath: widgetURL.path) {
-            widgets = try HUDSourceWatchWidgets(data: Data(contentsOf: widgetURL), originalSceneData: sceneData,
-                bannerData: Data(contentsOf: root.appendingPathComponent("Widgets/banner-runtime.json")))
+            widgets = try HUDSourceWatchWidgets(data: HUDSourceResourceData.read(widgetURL), originalSceneData: sceneData,
+                bannerData: HUDSourceResourceData.read(root.appendingPathComponent("Widgets/banner-runtime.json")))
         } else { widgets = nil }
         self.widgets = widgets
-        scene = try widgets?.mounted(in: originalScene) ?? originalScene
-        let details = try decoder.decode(Details.self, from: sceneData)
+        guard !includeDesktopProfile || widgets == nil else { throw HUDSourceError.invalid("Conflicting profile card runtimes") }
+        let profileCard = includeDesktopProfile ? try HUDSourceDesktopProfileCard(data: data("desktop-profile-card")) : nil
+        desktopProfileCard = profileCard
+        scene = try profileCard?.mounted(in: originalScene) ?? widgets?.mounted(in: originalScene) ?? originalScene
         components = Dictionary(uniqueKeysWithValues: details.nodes.map { ($0.id, $0.components) })
-            .merging(widgets?.components ?? [:]) { original, _ in original }
+            .merging(widgets?.components ?? profileCard?.components ?? [:]) { original, _ in original }
         buttons = details.buttons
-        library = try decoder.decode(HUDSourceAnimationLibrary.self, from: clipData)
+        desktopButtonIDs = details.buttons.map(\.nodeID)
+        let mainButtons = Set(desktopButtonIDs)
+        let navigationScene = scene
+        desktopHiddenDecorationIDs = navigationScene.nodes.compactMap { node in
+            let name = node.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if name.lowercased().hasSuffix("reddot") { return node.id }
+            guard ["LockIcon", "SafeZoneIcon"].contains(name) else { return nil }
+            var ancestor = node.parentID
+            while let id = ancestor, !mainButtons.contains(id) { ancestor = navigationScene.node(id)?.parentID }
+            return ancestor == nil ? nil : node.id
+        }
+        let clips = try decoder.decode(AnimationPayload.self, from: clipData)
+        library = clips.library
         animation = try HUDSourceWatchAnimation(scene: scene, library: library)
         blurAnimation = try HUDSourceWatchBlurAnimation(data: data("watch-blur"))
-        animators = try decoder.decode(ExtraAnimations.self, from: clipData).animators
+        animators = clips.animators
         let originalSprites = try decoder.decode(HUDSourceJSONValue.self, from: data("sprites"))
-        sprites = widgets.map { HUDSourceWatchWidgets.merging(originalSprites, additions: $0.sprites,
+        let spriteAdditions = widgets?.sprites ?? profileCard?.sprites
+        sprites = spriteAdditions.map { HUDSourceWatchWidgets.merging(originalSprites, additions: $0,
             arrays: ["sprites", "source_textures"]) } ?? originalSprites
-        fonts = try decoder.decode(HUDSourceJSONValue.self, from: data("fonts"))
-        let originalLabels = try decoder.decode(HUDSourceJSONValue.self, from: data("labels"))
+        // Desktop captions use native text on authored source planes. Keep
+        // the complete TMP payload only for the original reference renderer.
+        fonts = includeSourceText ? try decoder.decode(HUDSourceJSONValue.self, from: data("fonts")) : .null
+        let originalLabels: HUDSourceJSONValue = includeSourceText
+            ? try decoder.decode(HUDSourceJSONValue.self, from: data("labels")) : .null
         labels = widgets.map { HUDSourceWatchWidgets.merging(originalLabels, additions: $0.labels, arrays: ["nodes"]) } ?? originalLabels
         let originalMaterials = try decoder.decode(HUDSourceJSONValue.self, from: data("materials"))
-        materials = widgets.map { HUDSourceWatchWidgets.merging(originalMaterials, additions: $0.materials,
+        let materialAdditions = widgets?.materials ?? profileCard?.materials
+        materials = materialAdditions.map { HUDSourceWatchWidgets.merging(originalMaterials, additions: $0,
             arrays: ["materials"]) } ?? originalMaterials
         var joined: [HUDSourceID: HUDSourceJSONValue] = [:]
         for sprite in sprites["sprites"].array {
@@ -144,6 +205,22 @@ final class HUDSourceWatchDocument {
         spriteByComponent = joined
     }
 
+    /// Game-only sections and the side-button glow suppressed by the desktop adapter.
+    /// Layout verification shares this closure with the live view.
+    var desktopHiddenNodeIDs: Set<HUDSourceID> {
+        let hiddenNames: Set<String> = ["Map", "MoneyCellRoot", "ExploreRoot", "EndfieldLogo",
+            "GlowLeftBtn", "GlowRightBtn",
+            "Top_RightNode", "TopLeftBtnNode", "HomePageBtn", "CloseButtonNode", "ControllerHintPlaceholder", "BannerNode"]
+        var result = Set(scene.nodes.filter { hiddenNames.contains($0.name) }.map(\.id))
+        if desktopProfileCard == nil, let parent = scene.nodes.first(where: { $0.name == "PlayInfoPosNode" }) { result.insert(parent.id) }
+        if let bottom = scene.nodes.first(where: { $0.name == "HudBgShdow" }) {
+            for child in scene.nodes where child.parentID == bottom.id && !["TechtreeNode", "ReportNode"].contains(child.name) {
+                result.insert(child.id)
+            }
+        }
+        return result
+    }
+
     func component(_ kind: String, on id: HUDSourceID) -> HUDSourceWatchComponent? {
         components[id]?.first { $0.kind == kind && $0.enabled }
     }
@@ -153,20 +230,13 @@ final class HUDSourceWatchDocument {
     /// lock, safe-zone restriction or unread-notification state. This is an
     /// explicit desktop availability policy, not an inferred game save.
     func applyMacButtonAvailability(to pose: inout HUDSourceWatchPose) {
-        let main = Set(buttons.map(\.nodeID))
-        for id in main {
+        for id in desktopButtonIDs {
             var value = pose.transforms[id] ?? HUDSourceTransformOverride()
             value.active = true; pose.transforms[id] = value
         }
-        for node in scene.nodes {
-            let name = node.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let notification = name.lowercased().hasSuffix("reddot")
-            guard notification || ["LockIcon", "SafeZoneIcon"].contains(name) else { continue }
-            var ancestor = node.parentID
-            while let id = ancestor, !main.contains(id) { ancestor = scene.node(id)?.parentID }
-            guard notification || ancestor != nil else { continue }
-            var value = pose.transforms[node.id] ?? HUDSourceTransformOverride()
-            value.active = false; pose.transforms[node.id] = value
+        for id in desktopHiddenDecorationIDs {
+            var value = pose.transforms[id] ?? HUDSourceTransformOverride()
+            value.active = false; pose.transforms[id] = value
         }
     }
 
@@ -181,5 +251,175 @@ final class HUDSourceWatchDocument {
             result[id] = alpha
         }
         return result
+    }
+}
+
+/// The authored BP13 identity card without the unrelated banner/account runtime.
+/// Only immutable source records are shared by the desktop document cache.
+struct HUDSourceDesktopProfileCard: Decodable {
+    let parentID: HUDSourceID
+    let scene: HUDSourceScene
+    let components: [HUDSourceID: [HUDSourceWatchComponent]]
+    let bindings: HUDSourceJSONValue
+    let sprites: HUDSourceJSONValue
+    let materials: HUDSourceJSONValue
+    private enum CodingKeys: String, CodingKey { case parentID = "parent_id", scene, bindings, sprites, materials }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        parentID = try c.decode(HUDSourceID.self, forKey: .parentID)
+        scene = try c.decode(HUDSourceScene.self, forKey: .scene)
+        struct Records: Decodable { let nodes: [HUDSourceWatchDocument.NodeComponents] }
+        let records = try c.decode(Records.self, forKey: .scene)
+        components = Dictionary(uniqueKeysWithValues: records.nodes.map { ($0.id, $0.components) })
+        bindings = try c.decode(HUDSourceJSONValue.self, forKey: .bindings)
+        sprites = try c.decode(HUDSourceJSONValue.self, forKey: .sprites)
+        materials = try c.decode(HUDSourceJSONValue.self, forKey: .materials)
+        guard scene.node(scene.rootID)?.transform.rect?.sizeDelta == HUDSourceVector2(364, 128),
+              ["button", "playerHead", "managerName", "managerNumber", "managerLevel", "levelSlider"].allSatisfy({
+                  bindings[$0]["target_node_id"].string.flatMap { scene.node(HUDSourceID(rawValue: $0)) } != nil
+              }) else { throw HUDSourceError.invalid("Invalid selected source profile card") }
+    }
+    init(data: Data) throws { self = try HUDSourceJSON.decoder().decode(Self.self, from: data) }
+    func node(_ binding: String) -> HUDSourceID? { bindings[binding]["target_node_id"].string.map(HUDSourceID.init(rawValue:)) }
+    var buttonIDs: Set<HUDSourceID> { Set(["button", "playerInfoBtn", "playerHeadBtn", "rightBtn"].compactMap(node)) }
+    func mounted(in original: HUDSourceScene) throws -> HUDSourceScene {
+        guard let parent = original.node(parentID), parent.childIDs.isEmpty,
+              Set(original.nodes.map(\.id)).isDisjoint(with: scene.nodes.map(\.id)) else {
+            throw HUDSourceError.invalid("Source profile parent or IDs conflict")
+        }
+        var nodes = original.nodes.map { node in
+            node.id == parentID ? HUDSourceNode(id: node.id, path: node.path, name: node.name,
+                parentID: node.parentID, childIDs: [scene.rootID], active: node.active, transform: node.transform) : node
+        }
+        nodes += scene.nodes.map { node in
+            HUDSourceNode(id: node.id, path: parent.path + "/" + node.path, name: node.name,
+                parentID: node.id == scene.rootID ? parentID : node.parentID,
+                childIDs: node.childIDs, active: node.active, transform: node.transform)
+        }
+        return try HUDSourceScene(rootID: original.rootID, nodes: nodes)
+    }
+}
+
+/// One validated desktop document and at most one decode in flight. Reference
+/// fixtures continue to use the uncached initializer with their original data.
+final class HUDSourceDesktopDocumentCache {
+    private struct Identity: Equatable {
+        struct File: Equatable {
+            let path: String
+            let size: UInt64
+            let modified: Date
+            let inode: UInt64
+            let device: UInt64
+        }
+        let root: URL
+        let files: [File]
+
+        init(root: URL) throws {
+            let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+            self.root = canonicalRoot
+            // Every immutable desktop input, including the selected profile prefab.
+            files = try ["scene", "clips", "watch-blur", "sprites", "materials", "desktop-profile-card"].map { name in
+                let file = canonicalRoot.appendingPathComponent(name + ".json").resolvingSymlinksInPath()
+                let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+                guard let size = attributes[.size] as? NSNumber,
+                      let modified = attributes[.modificationDate] as? Date,
+                      let inode = attributes[.systemFileNumber] as? NSNumber,
+                      let device = attributes[.systemNumber] as? NSNumber else {
+                    throw HUDSourceError.invalid("Cannot identify Watch source resource \(name)")
+                }
+                return File(path: file.path, size: size.uint64Value, modified: modified,
+                    inode: inode.uint64Value, device: device.uint64Value)
+            }
+        }
+    }
+    private final class Flight {
+        let identity: Identity
+        let generation: UInt64
+        var result: Result<HUDSourceWatchDocument, Error>?
+        init(identity: Identity, generation: UInt64) {
+            self.identity = identity; self.generation = generation
+        }
+    }
+    private let condition = NSCondition()
+    private let loader: (URL) throws -> HUDSourceWatchDocument
+    private var cached: (identity: Identity, document: HUDSourceWatchDocument)?
+    private var flight: Flight?
+    private var generation: UInt64 = 0
+    private var prewarmScheduled = false
+
+    init(loader: @escaping (URL) throws -> HUDSourceWatchDocument = {
+        try HUDSourceWatchDocument(resourceRoot: $0, includeWidgets: false, includeSourceText: false, includeDesktopProfile: true)
+    }) { self.loader = loader }
+
+    func document(resourceRoot: URL? = nil, generation expectedGeneration: UInt64? = nil) throws -> HUDSourceWatchDocument {
+        guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource/Scene") else {
+            throw HUDSourceError.invalid("Watch source scene resources are missing")
+        }
+        while true {
+            // File-system access and decoding never hold the metadata lock.
+            let identity = try Identity(root: root)
+            condition.lock()
+            if let expectedGeneration, expectedGeneration != generation {
+                condition.unlock()
+                throw HUDSourceError.invalid("Watch source prewarm was cleared")
+            }
+            if let cached, cached.identity == identity {
+                condition.unlock(); return cached.document
+            }
+            if let pending = flight {
+                while pending.result == nil { condition.wait() }
+                let result = pending.result!
+                let matches = pending.identity == identity && pending.generation == generation
+                condition.unlock()
+                if matches { return try result.get() }
+                continue
+            }
+            let pending = Flight(identity: identity, generation: generation)
+            flight = pending
+            // Do not retain a stale document while a replacement is decoded.
+            cached = nil
+            condition.unlock()
+            let result = Result<HUDSourceWatchDocument, Error> {
+                let document = try loader(identity.root)
+                guard document.widgets == nil, case .null = document.fonts, case .null = document.labels else {
+                    throw HUDSourceError.invalid("Only the immutable desktop Watch profile can be cached")
+                }
+                guard try Identity(root: root) == identity else {
+                    throw HUDSourceError.invalid("Watch source resources changed during loading")
+                }
+                return document
+            }
+            condition.lock()
+            pending.result = result
+            if generation == pending.generation, case .success(let document) = result {
+                cached = (identity, document)
+            }
+            flight = nil
+            condition.broadcast()
+            condition.unlock()
+            return try result.get()
+        }
+    }
+
+    func prewarm() {
+        condition.lock()
+        guard !prewarmScheduled else { condition.unlock(); return }
+        prewarmScheduled = true
+        let scheduledGeneration = generation
+        condition.unlock()
+        DispatchQueue.global(qos: .utility).async { [self] in
+            condition.lock()
+            let current = scheduledGeneration == generation
+            condition.unlock()
+            if current { _ = try? document(generation: scheduledGeneration) }
+            condition.lock(); prewarmScheduled = false; condition.unlock()
+        }
+    }
+
+    func clear() {
+        condition.lock()
+        generation &+= 1
+        cached = nil
+        condition.unlock()
     }
 }

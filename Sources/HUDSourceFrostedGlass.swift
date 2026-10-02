@@ -37,7 +37,7 @@ final class HUDSourceFrostedGlass {
         }
         let root = resourceRoot.appendingPathComponent("HDR")
         let manifest = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
-            from: Data(contentsOf: root.appendingPathComponent("FrostedGlass/manifest.json")))
+            from: HUDSourceResourceData.read(root.appendingPathComponent("FrostedGlass/manifest.json")))
         let contract = manifest["source_contract"]
         guard contract["scale_factors"].array.compactMap(\.number) == [0.25, 0.125, 0.0625],
               contract["graphics_format"].number == 74,
@@ -205,7 +205,7 @@ final class HUDSourceFrostedGlass {
                   let expected = file["sha256"].string, let name = stage["function"].string else {
                 throw HUDSourceError.invalid("Original FrostedGlass module unavailable")
             }
-            let bytes = try Data(contentsOf: root.appendingPathComponent(path))
+            let bytes = try HUDSourceResourceData.read(root.appendingPathComponent(path))
             let digest = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
             guard digest == expected, let source = String(data: bytes, encoding: .utf8) else {
                 throw HUDSourceError.invalid("Original FrostedGlass module hash differs")

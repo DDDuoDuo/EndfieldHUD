@@ -33,7 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var suspended: Bool { !suspensionReasons.isEmpty }
     private var terminating = false
     private var completedNormalStartup = false
-    private var backdropPermissionRequested = false
 
     override init() {
         // Diagnostics use an empty preferences domain and never touch the user's configuration.
@@ -99,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         completedNormalStartup = true
+        if diagnosticDomain == nil && !args.contains("--ui-test") { HUDSourceWatchDocument.prewarmDesktop() }
         overlay.onPositionEditFinished = { [weak self] position in
             guard let self = self else { return }
             if let position = position {
@@ -579,7 +579,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         shortcut.onToggle = { [weak self] in
             guard let self else { return false }
-            self.authorizeBackdropForUserOpening()
             return self.toggleSystemOverlay()
         }
         shortcut.onStatusChange = { [weak self] _ in self?.hudSettings.refreshExternalStatus() }
@@ -587,21 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSystemOverlay(_ sender: Any?) {
         guard !overlay.isSystemOverlayActive else { return }
-        authorizeBackdropForUserOpening()
         _ = toggleSystemOverlay()
-    }
-
-    /// The OS prompt belongs to a user's menu/shortcut action. Automatic
-    /// presentation, diagnostics, previews and capture never request access.
-    private func authorizeBackdropForUserOpening() {
-        guard #available(macOS 14.0, *), !backdropPermissionRequested,
-              !suspended, !terminating, !overlay.isEditingPosition, overlay.systemPhase == .closed,
-              ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] != "true",
-              ProcessInfo.processInfo.environment["CI"] != "true",
-              !CommandLine.arguments.contains(where: { $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-") }) else { return }
-        guard HUDSourceDesktopBackdrop.preflightPermission() != .granted else { return }
-        backdropPermissionRequested = true
-        _ = HUDSourceDesktopBackdrop.requestPermissionFromUserAction()
     }
 
     @objc private func about(_ sender: Any?) { openSettingsModule(.about) }
@@ -724,14 +709,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func runSystemSmokeTest() {
         let demo = Self.demoSnapshot
+        let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1280, height: 800)
+        var screenPointer = CGPoint(x: screen.midX, y: screen.midY)
+        overlay.systemPointerLocationProviderForVerification = { screenPointer }
+        func setPointer(_ point: CGPoint) {
+            screenPointer = CGPoint(x: screen.midX + point.x * screen.width / 2,
+                                    y: screen.midY - point.y * screen.height / 2)
+            overlay.setSystemPointerForVerification(point)
+        }
         configureSystemOverlay()
         observeWorkspace()
         store.onChange = { [weak self] in self?.configurationChanged($0) }
         func later(_ seconds: Double, _ body: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: body)
         }
+        var assertions = 0
+        func check(_ condition: Bool, _ message: String) {
+            assertions += 1
+            if !condition {
+                fputs("FAIL: System assertion \(assertions): \(message); phase=\(overlay.systemPhase.rawValue) source=\(String(describing: overlay.systemSourceWatchForVerification?.playback.phase)) timer=\(overlay.systemSourceWatchForVerification?.hasDisplayTimerForVerification ?? false) ambient=\(overlay.systemAmbientAnimationCount) pointer=\(overlay.systemParallaxAnimationCount)\n", stderr)
+                fflush(stderr)
+                preconditionFailure(message)
+            }
+        }
         func cycle(_ index: Int) {
-            precondition(overlay.systemPhase == .closed)
+            check(overlay.systemPhase == .closed, "Each repeated cycle starts closed")
             overlay.initialModuleRequest = .eventLog
             precondition(overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults))
             precondition(overlay.systemPhase == .opening)
@@ -741,10 +743,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             overlay.show(persistent: true, duration: 0)
             overlay.hide()
             precondition(overlay.systemPhase == .opening && !overlay.isVisible)
+            guard let source = overlay.systemSourceWatchForVerification else {
+                check(false, "The real source shell must be available for every cycle")
+                return
+            }
+            let openingFrames = source.renderedFrameCount
             if index == 0 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 later(0.18) { [self] in
-                    let scale = overlay.systemPresentedRingScale ?? 0
-                    precondition(scale > 0.16 && scale < 0.995, "Ring must interpolate while deploying")
+                    check(overlay.systemPhase == .opening && source.playback.phase == .opening
+                          && source.hasDisplayTimerForVerification && source.renderedFrameCount > openingFrames
+                          && source.currentFrameForVerification?.batches.isEmpty == false,
+                          "The displayed source scene must advance through its finite deployment")
                 }
             }
             later(SystemHUDView.entranceDuration + 0.3) { [self] in
@@ -759,11 +768,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 precondition(overlay.systemDeploymentAnimationCount == 0, "Deployment must leave no finite tracks")
                 let ambientCount = overlay.systemAmbientAnimationCount
                 let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                precondition(reduced ? ambientCount == 0 : ambientCount == 13, "Only the thirteen registered module ambient tracks may persist")
-                overlay.setSystemPointerForVerification(.zero)
-                overlay.setSystemPointerForVerification(CGPoint(x: 1, y: -1))
-                precondition(reduced ? overlay.systemParallaxAnimationCount == 0 : overlay.systemParallaxAnimationCount == 13,
-                             "Pointer motion must retarget each depth plane exactly once")
+                check(ambientCount == 0 && overlay.systemSourceWatchForVerification === source
+                      && source.playback.phase == .visible && !source.isHiddenOrHasHiddenAncestor
+                      && source.hasDisplayTimerForVerification == !reduced,
+                      "One persistent source clock owns ambient motion without legacy ambient tracks")
+                setPointer(.zero)
+                setPointer(CGPoint(x: 1, y: -1))
+                precondition(overlay.systemParallaxAnimationCount == (source.pointerIsAnimatingForVerification ? 1 : 0),
+                             "Pointer motion uses one shared source camera without duplicate native plane tracks")
                 precondition(NSApp.windows.filter { $0 is NSPanel }.count == 1, "Both HUDs must share one panel")
                 overlay.reposition()
                 receive(demo)
@@ -774,18 +786,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 precondition(overlay.systemAmbientAnimationCount == 0 && overlay.systemParallaxAnimationCount <= 13,
                              "Closing stops ambient motion while retaining bounded pointer tracks")
                 if index == 0 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                    later(0.50) { [self] in
-                        precondition(overlay.systemPhase == .closing,
-                                     "The panel must stay alive for the badge's final shrink")
-                    }
+                    let closingFrames = source.renderedFrameCount
                     later(0.16) { [self] in
-                        let scale = overlay.systemPresentedRingScale ?? 1
-                        precondition(scale > 0.08 && scale < 0.995, "Ring must interpolate while retracting")
+                        check(overlay.systemPhase == .closing && source.playback.phase == .closing
+                              && source.hasDisplayTimerForVerification && source.renderedFrameCount > closingFrames,
+                              "Retraction keeps the panel and source display clock alive until the source exit ends")
+                        check(overlay.systemChargeFollowsDialRetractionForVerification,
+                              "The battery badge folds with the central native depth plane during source retraction")
+                    }
+                    later(source.document.animation.exit.lastKeyTime + 0.15) { [self] in
+                        check(overlay.systemPhase == .closed && !overlay.lastClosedSourceTimerActive
+                              && overlay.lastClosedSourcePhase == .concealed,
+                              "The source exit endpoint must close the panel and stop its display clock")
                     }
                 }
                 for _ in 0..<20 { _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults) }
                 later(SystemHUDView.exitDuration + 0.3) { [self] in
-                    precondition(overlay.systemPhase == .closed && overlay.systemAnimationCount == 0 && overlay.lastClosedAnimationCount == 0)
+                    check(overlay.systemPhase == .closed && overlay.systemAnimationCount == 0
+                          && overlay.lastClosedAnimationCount == 0 && !overlay.lastClosedSourceTimerActive
+                          && overlay.lastClosedSourcePhase == .concealed,
+                          "Every completed cycle releases all native tracks and the source display clock")
                     if index < 7 { cycle(index + 1); return }
                     // Focus loss during opening must finish deployment, then retract.
                     _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults)
@@ -813,7 +833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     precondition(overlay.systemPhase == .closed && overlay.isVisible && overlay.isPersistent,
                                                  "Normal close callback must restore the persistent charging HUD")
                                     overlay.hide(animated: false)
-                                    print("PASS: 8 full macOS module cycles; rapid repeats; focus-close queued while opening; cancellation generations; data updates; one shared panel; thirteen bounded ambient tracks; thirteen pointer planes; zero hidden animations; position-edit exclusion; persistent charging HUD restored through AppDelegate")
+                                    print("PASS: 8 full macOS module cycles; rapid repeats; focus-close queued while opening; cancellation generations; data updates; one shared panel; one persistent source clock; one shared pointer camera; zero hidden animations; position-edit exclusion; persistent charging HUD restored through AppDelegate")
                                     NSApp.terminate(nil)
                                 }
                             }
@@ -829,17 +849,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// No live monitor, global shortcut or user preferences are changed here.
     private func runNavigationSmokeTest() {
         let demo = Self.demoSnapshot
+        // Navigation is driven entirely by this fixture. Real desktop focus
+        // and pointer clicks must not interrupt a scripted swap/reopen; the
+        // lifecycle and System fixtures separately verify focus-loss behavior.
+        var fixtureConfiguration = AppConfiguration.defaults
+        fixtureConfiguration.closeOnFocusLost = false
+        func blockPhysicalInput() {
+            NSApp.windows.filter { $0 is NSPanel }.forEach { $0.ignoresMouseEvents = true }
+        }
         let clipboardBoard = overlay.clipboard.pasteboard
         clipboardBoard.clearContents()
         clipboardBoard.setString("Navigation keeps clipboard history", forType: .string)
         _ = overlay.clipboard.store.capture(from: clipboardBoard)
         let clipboardID = overlay.clipboard.store.items.first?.id
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let expectedAmbient = reduced ? 0 : 13
+        let expectedAmbient = 0 // The persistent source scene owns ambient motion.
         var assertionCount = 0
         func check(_ condition: Bool, _ message: String) {
             assertionCount += 1
-            precondition(condition, message)
+            if !condition {
+                fputs("FAIL: Navigation assertion \(assertionCount): \(message); module=\(overlay.systemSelectedModule?.rawValue ?? "nil") phase=\(overlay.systemPhase.rawValue) source=\(String(describing: overlay.systemSourceWatchForVerification?.playback.phase)) ambient=\(overlay.systemAmbientAnimationCount) pointer=\(overlay.systemParallaxAnimationCount)\n", stderr)
+                fflush(stderr)
+                preconditionFailure(message)
+            }
         }
         check(clipboardID != nil, "The isolated navigation fixture must populate Clipboard Cache")
         func later(_ seconds: Double, _ body: @escaping () -> Void) {
@@ -864,8 +896,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   "The opening fixture must point away from the center")
             check(overlay.systemSpatialPoseMatchesPointerForVerification(expected),
                   "Every opening plane must face the stationary pointer before the first mouse event, or remain flat with Reduce Motion")
-            check(overlay.systemParallaxAnimationCount == 0,
-                  "Opening must seed its pointer pose without a delayed pointer animation")
+            let sourceTracks = overlay.systemSourceWatchForVerification?.pointerIsAnimatingForVerification == true ? 1 : 0
+            check(overlay.systemParallaxAnimationCount == sourceTracks,
+                  "Opening uses only the source gyro and adds no delayed native pointer animation")
             if let previous {
                 check(expected != previous, "Reopening must refresh the pointer rather than reuse the old target")
             }
@@ -874,12 +907,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureSystemOverlay()
         receive(demo)
         overlay.initialModuleRequest = .eventLog
-        check(overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults), "System overlay must open")
+        check(overlay.toggleSystemOverlay(snapshot: demo, configuration: fixtureConfiguration), "System overlay must open")
         check(overlay.systemSelectedModule == .eventLog, "The macOS navigation fixture starts in Event Log")
         // Visits below are programmatic and parallax uses the injected pointer.
         // Physical mouse movement must not start a fresh hover cue just before
         // a settled-animation assertion. Hover tracks have their own fixtures.
-        NSApp.windows.filter { $0 is NSPanel }.forEach { $0.ignoresMouseEvents = true }
+        blockPhysicalInput()
         let firstPointerTarget = checkOpeningPointer()
         later(SystemHUDView.entranceDuration + 0.3) { [self] in
             check(overlay.systemPhase == .open, "Initial deployment must finish")
@@ -890,11 +923,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let panels = Set(NSApp.windows.filter { $0 is NSPanel }.map { ObjectIdentifier($0) })
             let shell = overlay.systemShellIdentity
             let host = overlay.systemCenterHostIdentity
-            var ambientStart = overlay.systemAmbientStartTime
-            var wasSourceOverview = false
+            guard let source = overlay.systemSourceWatchForVerification else {
+                preconditionFailure("Persistent source shell unavailable: \(overlay.systemSourceFailureForVerification ?? "missing")")
+            }
+            let sourceGeneration = source.playback.generation
             var capturedSourceOverview = false
+            var capturedPreviewModules = Set<HUDModule>()
+            let previewDirectory: URL? = {
+                let args = CommandLine.arguments
+                guard let index = args.firstIndex(of: "--preview-directory"), args.indices.contains(index + 1) else { return nil }
+                return URL(fileURLWithPath: args[index + 1], isDirectory: true)
+            }()
             check(panels.count == 1 && shell != nil && host != nil, "One panel owns a shell and center host")
-            check(reduced || ambientStart != nil, "Visible ambient motion must have a start time")
+            check(overlay.systemAmbientStartTime == nil,
+                  "The new shell does not also start the hidden legacy ambient clock")
 
             func checkSharedPresentation(stable: Bool) {
                 check(overlay.systemPhase == .open, "Navigation must keep the overlay open")
@@ -903,39 +945,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                       "Every section must use the original panel")
                 check(overlay.systemShellIdentity == shell && overlay.systemCenterHostIdentity == host,
                       "Navigation must retain the shell and center host")
-                if overlay.systemSelectedModule == .power {
-                    guard let source = overlay.systemSourceWatchForVerification else {
-                        preconditionFailure("Original Watch unavailable: \(overlay.systemSourceFailureForVerification ?? "missing")")
-                    }
-                    check(source.playback.phase == .visible && source.document.buttons.count == 22
-                          && source.currentFrameForVerification?.hits.isEmpty == false && source.visibleMainButtonForVerification != nil,
-                          "Overview uses the original 22-button scene and its shared resolved raycasts")
-                    check(source.hasDisplayTimerForVerification == !reduced
-                          && overlay.systemAmbientAnimationCount == 0 && overlay.systemParallaxAnimationCount == 0,
-                          "Overview has one source display clock and no legacy motion tracks")
-                    if stable && !capturedSourceOverview {
-                        do {
-                            let image = try source.renderedImageForVerification()
-                            check(image.width > 0 && image.height > 0, "Overview captures an actual source Metal drawable")
-                            capturedSourceOverview = true
-                        } catch { preconditionFailure("Original Watch drawable failed: \(error)") }
-                    }
-                    wasSourceOverview = true
-                } else {
-                    if wasSourceOverview { ambientStart = overlay.systemAmbientStartTime; wasSourceOverview = false }
-                    check(overlay.systemAmbientAnimationCount == expectedAmbient && overlay.systemAmbientStartTime == ambientStart,
-                          "Consecutive macOS sections neither restart nor duplicate ambient motion")
-                    check(overlay.systemSourceWatchForVerification?.hasDisplayTimerForVerification == false,
-                          "macOS sections suspend the hidden source display timer")
+                check(overlay.systemSourceWatchForVerification === source
+                      && source.playback.phase == .visible && source.playback.generation == sourceGeneration
+                      && !source.isHiddenOrHasHiddenAncestor,
+                      "Every desktop section retains the same visible source scene without restarting its playback")
+                check(source.document.buttons.count == 22 && source.currentFrameForVerification?.hits.isEmpty == false
+                      && source.visibleMainButtonForVerification != nil,
+                      "Desktop navigation retains the authored button plates and their resolved input geometry")
+                check(source.hasDisplayTimerForVerification == !reduced
+                      && overlay.systemAmbientAnimationCount == expectedAmbient && overlay.systemAmbientStartTime == nil
+                      && overlay.systemParallaxAnimationCount <= 13,
+                      "Each section has one source display clock and only bounded native pointer motion")
+                if stable && !capturedSourceOverview {
+                    do {
+                        let image = try source.renderedImageForVerification()
+                        check(image.width > 0 && image.height > 0, "The persistent scene produces an actual Metal drawable")
+                        capturedSourceOverview = true
+                    } catch { preconditionFailure("Source drawable failed: \(error)") }
                 }
                 check((1...2).contains(overlay.systemCenterContentCount), "A swap may retain at most two center screens")
                 if stable {
+                    let accessible = (source.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityElement }
+                    check(!accessible.isEmpty && accessible.count <= 28,
+                          "Desktop accessibility stays bounded by the authored cards and two scroll actions")
+                    check(accessible.allSatisfy { !$0.isAccessibilityHidden() || !$0.isAccessibilityEnabled() },
+                          "Unassigned or clipped source cards cannot remain enabled for accessibility")
+                    if let window = source.window {
+                        let screen = window.convertToScreen(source.convert(source.bounds, to: nil)).insetBy(dx: -1, dy: -1)
+                        let enabled = accessible.filter { $0.isAccessibilityEnabled() }
+                        check(!enabled.isEmpty && enabled.allSatisfy {
+                            let rect = $0.accessibilityFrame()
+                            return rect.minX.isFinite && rect.minY.isFinite && rect.width.isFinite && rect.height.isFinite
+                                && !rect.isEmpty && screen.contains(rect)
+                        }, "Enabled accessibility controls expose visible, finite clipped frames in the HUD window")
+                    }
+                    if let selected = overlay.systemSelectedModule {
+                        let visibleSelection = accessible.filter { !$0.isAccessibilityHidden() && $0.accessibilityLabel() == selected.title }
+                        check(visibleSelection.allSatisfy { ($0.accessibilityValue() as? String) == L10n.text("Selected", "已选择") },
+                              "A visible selected module uses the existing localized accessibility state")
+                    }
                     check(overlay.systemCenterContentCount == 1 && !overlay.isSwitchingSystemModule,
                           "A settled section must own exactly one center screen")
                     check(overlay.systemReportGeometryMatchesSelectionForVerification,
                           "A settled section must share the committed host scale and center-input mapping")
                     check(overlay.systemDeploymentAnimationCount == 0,
                           "Settled navigation must remove finite animations (\(overlay.systemSelectedModule?.rawValue ?? "none")): \(overlay.systemFiniteAnimationKeys)")
+                    if let directory = previewDirectory, let module = overlay.systemSelectedModule,
+                       !capturedPreviewModules.contains(module), let view = source.superview as? SystemHUDView {
+                        do {
+                            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                            try view.writePNG(to: directory.appendingPathComponent(module.rawValue + ".png"), scale: 1,
+                                presentation: true, background: NSColor(white: 0.04, alpha: 1).cgColor)
+                            capturedPreviewModules.insert(module)
+                        } catch { check(false, "Isolated module preview failed: \(error)") }
+                    }
                 }
             }
 
@@ -954,12 +1017,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                           "Retraction stops ambient motion while retaining bounded pointer tracks")
                     later(SystemHUDView.exitDuration + 0.3) { [self] in
                         check(overlay.systemPhase == .closed && overlay.systemAnimationCount == 0
-                              && overlay.lastClosedAnimationCount == 0,
-                              "A closed overlay must retain no animations")
+                              && overlay.lastClosedAnimationCount == 0 && !overlay.lastClosedSourceTimerActive
+                              && overlay.lastClosedSourcePhase == .concealed,
+                              "A closed overlay must retain no animations or source display timer")
                         check(windowIdentities() == windows, "Closing must preserve the shared panel")
                         stationaryPointer = CGPoint(x: screenFrame.minX + screenFrame.width * 0.22,
                                                     y: screenFrame.minY + screenFrame.height * 0.28)
-                        _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults)
+                        _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: fixtureConfiguration)
+                        blockPhysicalInput()
                         let reopenedPointerTarget = checkOpeningPointer(differentFrom: firstPointerTarget)
                         later(SystemHUDView.entranceDuration + 0.3) { [self] in
                             check(overlay.systemPointerTargetForVerification == (reduced ? .zero : reopenedPointerTarget)
@@ -977,7 +1042,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   "Forced close must clear an in-flight navigation swap")
                             stationaryPointer = CGPoint(x: screenFrame.minX + screenFrame.width * 0.74,
                                                         y: screenFrame.minY + screenFrame.height * 0.32)
-                            _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: .defaults)
+                            _ = overlay.toggleSystemOverlay(snapshot: demo, configuration: fixtureConfiguration)
+                            blockPhysicalInput()
                             let forcedPointerTarget = checkOpeningPointer(differentFrom: reopenedPointerTarget)
                             later(SystemHUDView.entranceDuration + HUDModuleContent.transitionDuration + 0.3) { [self] in
                                 check(overlay.systemPointerTargetForVerification == (reduced ? .zero : forcedPointerTarget)
@@ -988,8 +1054,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                       && !overlay.isSwitchingSystemModule && overlay.systemCenterContentCount == 1,
                                       "Reopening restores the committed section; old navigation completions cannot replace it")
                                 check(overlay.systemAmbientAnimationCount == expectedAmbient
-                                      && overlay.systemDeploymentAnimationCount == 0 && windowIdentities() == windows,
-                                      "Reopening must use the same panel with only current ambient tracks")
+                                      && overlay.systemDeploymentAnimationCount == 0 && windowIdentities() == windows
+                                      && overlay.systemSourceWatchForVerification?.playback.phase == .visible
+                                      && overlay.systemSourceWatchForVerification?.hasDisplayTimerForVerification == !reduced,
+                                      "Reopening uses the same panel with a visible source scene and no duplicate ambient tracks")
                                 check(overlay.clipboard.store.items.map(\.id) == [clipboardID!],
                                       "Closing and recreating center views must preserve session clipboard history")
                                 overlay.forceCloseSystemOverlay()
@@ -998,7 +1066,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     check(overlay.systemPhase == .closed && overlay.systemAnimationCount == 0
                                           && overlay.lastClosedAnimationCount == 0,
                                           "Stale callbacks must not revive hidden content or animations")
-                                    print("PASS: \(assertionCount) navigation assertions; all 15 sections; unchanged windows, panel, shell and center host; \(expectedAmbient) uninterrupted ambient tracks; one settled center and at most two during swaps; latest request wins; stationary-pointer opening and refreshed reopening poses; close-during-swap cleanup; safe immediate reopen; zero hidden animations")
+                                    print("PASS: \(assertionCount) navigation assertions; all \(HUDModule.allCases.count) sections; retained panel, shell, source scene and center host; one source display clock; one settled center and at most two during swaps; latest request wins; stationary-pointer opening and refreshed reopening poses; close-during-swap cleanup; safe immediate reopen; zero hidden animations")
                                     NSApp.terminate(nil)
                                 }
                             }

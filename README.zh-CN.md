@@ -4,6 +4,8 @@
 
 一款《明日方舟：终末地》风格的 macOS 菜单栏应用。按下快捷键，就能打开带有层次与动态效果的 HUD，使用便笺、文件暂存、计时、音量控制和系统状态等功能。
 
+**整合测试分支：**本分支将新的 Watch 界面与稳定版 1.0.1 的功能及存档格式整合。测试本分支时，请打开[本分支通过的 Build and test 构建](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration)，下载其中的 **EndfieldHUD-macOS-…** 产物。下方的正式版下载链接和预览属于稳定版，不是本分支。
+
 **[下载 v1.0.1 — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [所有版本](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD 电源页面，使用示例读数](docs/media/overview.png)

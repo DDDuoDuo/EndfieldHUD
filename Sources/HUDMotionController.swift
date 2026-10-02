@@ -115,6 +115,17 @@ enum HUDMotionMath {
         return defaultProjectionBounds.union(bounds)
     }
 
+    /// Cancel the native layout scale/offset around a source camera projection.
+    /// The source already contains the user's scale and position, so applying
+    /// either a second time would separate content from its surrounding ring.
+    static func sourcePlaneTransform(_ projection: CATransform3D, origin: CGPoint, scale: CGFloat) -> CATransform3D {
+        guard scale.isFinite, scale > 0 else { return CATransform3DIdentity }
+        var local = CATransform3DConcat(CATransform3DMakeTranslation(500, 320, 0), projection)
+        local = CATransform3DConcat(local, CATransform3DMakeTranslation(-origin.x, -origin.y, 0))
+        local = CATransform3DConcat(local, CATransform3DMakeScale(1 / scale, 1 / scale, 1))
+        return CATransform3DConcat(local, CATransform3DMakeTranslation(-500, -320, 0))
+    }
+
     /// Homogeneous projection for checking the bounded perspective geometry.
     static func project(_ point: CGPoint, through transform: CATransform3D) -> CGPoint {
         guard point.x.isFinite, point.y.isFinite else { return .zero }
@@ -178,6 +189,14 @@ final class HUDMotionController {
     private var ambientTracks: [AmbientTrack] = []
     private var baselinePoses: [ObjectIdentifier: BaselinePose] = [:]
     private let pointerTiming = CAMediaTimingFunction(controlPoints: 0.16, 0.75, 0.30, 1)
+    private(set) var externalProjection: CATransform3D?
+
+    /// The source display clock owns the complete camera pose in integrated
+    /// mode. Native layers use that exact pose without another easing/timer.
+    func setExternalProjection(_ transform: CATransform3D?) {
+        externalProjection = transform
+        retargetPlanes(to: targetNormalizedPoint, animated: false)
+    }
 
     var ambientAnimationCount: Int { countAnimations(prefix: "ambient.") }
     var parallaxAnimationCount: Int { countAnimations(prefix: "parallax.") }
@@ -367,12 +386,12 @@ final class HUDMotionController {
         withoutActions {
             for plane in targets ?? planes {
                 let previous = plane.spatial.presentation()?.transform ?? plane.spatial.transform
-                let next = HUDMotionMath.transform(normalizedPoint: point, depth: plane.depth,
+                let next = externalProjection ?? HUDMotionMath.transform(normalizedPoint: point, depth: plane.depth,
                                                    travel: plane.travel, reducedMotion: reducedMotion,
                                                    parallaxIntensity: parallaxIntensity, perspectiveIntensity: perspectiveIntensity,
                                                    projectionBounds: plane.projectionBounds)
                 plane.spatial.transform = next
-                guard animated else {
+                guard animated, self.externalProjection == nil else {
                     plane.spatial.removeAnimation(forKey: "parallax.transform")
                     continue
                 }

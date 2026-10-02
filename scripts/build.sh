@@ -117,7 +117,8 @@ ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/Ap
 if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
 ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
   ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
-  ditto "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
+  python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
+        "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
 "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
 # Imported images can carry owner-only permissions. A release must remain
 # readable when Installer makes the bundle root-owned or another user opens it.

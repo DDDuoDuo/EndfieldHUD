@@ -62,7 +62,7 @@ final class HUDSourceWatchBackdrop {
         }
         let root = resourceRoot.appendingPathComponent("HDR/WatchBlur")
         func object(_ file: String) throws -> [String: Any] {
-            try Self.originalSidecarObject(from: Data(contentsOf: root.appendingPathComponent(file)))
+            try Self.originalSidecarObject(from: HUDSourceResourceData.read(root.appendingPathComponent(file)))
         }
         let contract = try object("material-contract.json")
         let runtime = try object("material-runtime.json")

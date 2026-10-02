@@ -4,7 +4,24 @@ import AppKit
 enum NotesShelfHUDVerification {
     static func run(overlay: OverlayController) {
         var assertions = 0
-        func check(_ result: Bool, _ message: String) { assertions += 1; precondition(result, message) }
+        func check(_ result: Bool, _ message: String) {
+            assertions += 1
+            if !result {
+                fputs("FAIL: Notes/Shelf assertion \(assertions): \(message)\n", stderr)
+                fflush(stderr)
+                preconditionFailure(message)
+            }
+        }
+        // Drive the same screen-coordinate provider as the live source camera.
+        // Updating only a native target no longer moves the shared HUD plane.
+        let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1280, height: 800)
+        var screenPointer = CGPoint(x: screen.midX, y: screen.midY)
+        overlay.systemPointerLocationProviderForVerification = { screenPointer }
+        func setPointer(_ point: CGPoint) {
+            screenPointer = CGPoint(x: screen.midX + point.x * screen.width / 2,
+                                    y: screen.midY - point.y * screen.height / 2)
+            overlay.setSystemPointerForVerification(point)
+        }
         func later(_ delay: Double, _ body: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: body)
         }
@@ -23,7 +40,7 @@ enum NotesShelfHUDVerification {
                 if !HUDRuntimeAppearance.reduceMotion {
                     check(overlay.notesFollowRetractionForVerification,
                           "Notes fold with panel timing while retaining layout scale \(scale) and a safe full-screen projection")
-                    overlay.setSystemPointerForVerification(CGPoint(x: 0.7, y: -0.6))
+                    setPointer(CGPoint(x: 0.7, y: -0.6))
                     check(overlay.notesSpatialPoseMatchesPanelsForVerification,
                           "Notes keep following the pointer during retraction")
                 }
@@ -46,7 +63,7 @@ enum NotesShelfHUDVerification {
             let points = [CGPoint(x: note.x + 12, y: note.y + 12),
                           CGPoint(x: note.x + 92, y: note.y + 12),
                           CGPoint(x: 24, y: 48)]
-            overlay.setSystemPointerForVerification(CGPoint(x: 0.8, y: -0.7))
+            setPointer(CGPoint(x: 0.8, y: -0.7))
             later(0.2) {
                 check(overlay.notesSpatialPoseMatchesPanelsForVerification,
                       "Pinned notes share the side buttons' pointer pose and response after switching sections")
@@ -58,7 +75,7 @@ enum NotesShelfHUDVerification {
                 check(roundTrips, "Projected note input recovers full-screen coordinates inside and outside the circle")
                 check(reduced || abs(projected[1].y - projected[0].y) > 0.1,
                       "Note headers tilt with the HUD instead of merely sliding on screen")
-                overlay.setSystemPointerForVerification(CGPoint(x: -0.8, y: 0.7))
+                setPointer(CGPoint(x: -0.8, y: 0.7))
                 later(0.2) {
                     let reversed = overlay.projectNotesPointForVerification(points[0])
                     check(overlay.notesSpatialPoseMatchesPanelsForVerification

@@ -26,6 +26,52 @@ enum HUDNavigationTests {
         let previousLanguage = L10n.language
         defer { L10n.language = previousLanguage }
         L10n.language = .english
+        // The new shell may recycle a finite number of authored plates, but
+        // its logical desktop actions must not truncate or change saved data.
+        do {
+            let shortcuts = (0..<100).map { index in
+                HUDAppShortcutPresentation(id: UUID(), name: "Saved app \(index) · 应用",
+                                           iconPreset: .original, icon: nil)
+            }
+            for amount in [0, 1, 6, 7, 24, 100] {
+                let saved = Array(shortcuts.prefix(amount))
+                let entries = HUDDesktopWatchNavigation.entries(shortcuts: saved)
+                let modules = entries.compactMap { $0.target.module }
+                check(entries.count == HUDModule.allCases.count + amount
+                      && modules.count == HUDModule.allCases.count
+                      && Set(modules) == Set(HUDModule.allCases),
+                      "The source shell retains each of the sixteen stable modules and every saved app")
+                check(entries.prefix(4).compactMap { $0.target.module } == [.system, .display, .hotkeys, .about],
+                      "The four left-side source slots retain the stable settings categories")
+                check(entries.last?.target == .module(.addApp)
+                      && entries.last?.title == HUDModule.addApp.title,
+                      "Add App remains the final logical navigation action after any number of shortcuts")
+                let apps = entries.filter { $0.target.module == nil }
+                check(apps.map(\.target) == saved.map { .appShortcut($0.id) }
+                      && apps.map(\.title) == saved.map(\.name),
+                      "Application IDs, order and user-edited names survive source-slot recycling")
+                check(Set(entries.map(\.target)).count == entries.count,
+                      "Source navigation never aliases a saved app to a module or another shortcut")
+                check(entries.allSatisfy { entry in
+                    entry.target.module.map { entry.title == $0.title } ?? true
+                }, "Desktop module names replace game labels without changing stable translations")
+            }
+            let first = shortcuts[0]
+            let duplicate = HUDAppShortcutPresentation(id: first.id, name: "Duplicate should not replace first",
+                                                       iconPreset: .star, icon: nil)
+            let deduplicated = HUDDesktopWatchNavigation.entries(shortcuts: [first, duplicate, shortcuts[1]])
+            check(deduplicated.filter { $0.target == .appShortcut(first.id) }.count == 1
+                  && deduplicated.first { $0.target == .appShortcut(first.id) }?.title == first.name,
+                  "Repeated presentation IDs keep the first saved action and do not duplicate hit targets")
+            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese] {
+                L10n.language = language
+                let entries = HUDDesktopWatchNavigation.entries(shortcuts: [first])
+                check(entries.allSatisfy { entry in
+                    entry.target.module.map { entry.title == $0.title } ?? (entry.title == first.name)
+                }, "Changing HUD language translates module names without translating user app names")
+            }
+            L10n.language = .english
+        }
         for size in [CGSize(width: 2400, height: 800), CGSize(width: 800, height: 2400)] {
             let target = CGSize(width: 240, height: 82)
             for x: CGFloat in [-1, 0, 1] {
