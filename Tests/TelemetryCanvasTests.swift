@@ -198,7 +198,7 @@ enum TelemetryCanvasTests {
         check(text("activity.apps.header.2", appCanvas.layer) == "RAM ↓"
               && appCanvas.accessibleActions.first { $0.id == "activity:sort:memory" }?.label == "排序：RAM，降序",
               "RAM column titles stay consistent while selected arrows and accessible sorting directions localize")
-        for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese] {
+        for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese, .korean] {
             L10n.language = language
             _ = appCanvas.makeContent(for: .activityMonitor, style: light)
             check(text("activity.apps.header.2", appCanvas.layer) == "RAM ↓" && appCanvas.accessibilityStatus.contains("RAM "),

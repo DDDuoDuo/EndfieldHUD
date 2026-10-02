@@ -18,10 +18,10 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(gesture.position == 0.4, "A held gesture must not drift toward a spring target")
             gesture.gesture(by: 2, hiddenLength: 1000, at: 0.6, phase: .changed, momentum: .none, reduceMotion: false)
             let rubber = gesture.position
-            check(rubber > 1 && (rubber - 1) * 1000 > 96 && (rubber - 1) * 1000 < 144 && !gesture.canScroll(-1),
+            check(rubber > 1 && (rubber - 1) * 1000 > 200 && (rubber - 1) * 1000 < 240 && !gesture.canScroll(-1),
                   "Precise edge movement uses bounded native-style rubber and disables its limit arrow")
             gesture.gesture(by: 2, hiddenLength: 1000, at: 0.7, phase: .changed, momentum: .none, reduceMotion: false)
-            check(gesture.position > rubber && gesture.position - rubber < 0.01, "Rubber resistance increases near its finite limit")
+            check(gesture.position > rubber && gesture.position - rubber < 0.025, "Rubber resistance increases near its finite limit")
             gesture.gesture(by: 0, hiddenLength: 1000, at: 0.8, phase: .ended, momentum: .none, reduceMotion: false)
             check(!gesture.isGestureActive && gesture.isAnimating, "Finger release starts one finite rebound")
             _ = gesture.advance(at: 2)
@@ -51,7 +51,7 @@ enum HUDSourceDesktopNavigationLayoutTests {
             scroll.reset(to: 1, at: 3)
             scroll.scroll(by: 5, hiddenLength: 20_000, at: 3, reduceMotion: false)
             scroll.scroll(by: 5, hiddenLength: 20_000, at: 3, reduceMotion: false)
-            check((scroll.position - 1) * 20_000 > 64 && (scroll.position - 1) * 20_000 <= 96.0001,
+            check((scroll.position - 1) * 20_000 > 144 && (scroll.position - 1) * 20_000 <= 180.0001,
                   "Repeated wheel input reaches the enlarged pixel bound even with many shortcuts")
             _ = scroll.advance(at: 5)
             check(scroll.position == 1 && !scroll.isAnimating, "Elastic edge returns to the exact valid endpoint")
@@ -67,7 +67,7 @@ enum HUDSourceDesktopNavigationLayoutTests {
             for frame in 1...10 { _ = a.advance(at: Double(frame) / 60) }
             _ = b.advance(at: 1.0 / 6)
             check(abs(a.position - b.position) < 1e-12, "Spring sampling is independent of dropped display ticks")
-            for hiddenLength in [200.0, 1000.0, 20_000.0] {
+            for hiddenLength in [1.5, 200.0, 1000.0, 20_000.0] {
                 for endpoint in [0.0, 1.0] {
                     let direction = endpoint == 0 ? -1.0 : 1.0
                     var edge = HUDSourceDesktopScrollMotion()
@@ -75,8 +75,8 @@ enum HUDSourceDesktopNavigationLayoutTests {
                     edge.gesture(by: direction * 10_000 / hiddenLength, hiddenLength: hiddenLength,
                         at: 0, phase: .began, momentum: .none, reduceMotion: false)
                     let travel = abs(edge.position - endpoint)
-                    check(travel > min(0.15, 96 / hiddenLength) && travel < min(0.24, 144 / hiddenLength),
-                          "Both precise edges exceed the old travel bound on short and long lists without escaping the new limit")
+                    check(travel * hiddenLength > 230 && travel * hiddenLength < 240,
+                          "Both precise edges have consistent source-unit travel even when a short list barely overflows")
                     edge.gesture(by: 0, hiddenLength: hiddenLength, at: 0.1,
                         phase: .ended, momentum: .none, reduceMotion: false)
                     _ = edge.advance(at: 2)
@@ -98,8 +98,8 @@ enum HUDSourceDesktopNavigationLayoutTests {
                     edge.scroll(by: direction * 10_000 / hiddenLength, hiddenLength: hiddenLength, at: 4, reduceMotion: false)
                     edge.scroll(by: direction * 10_000 / hiddenLength, hiddenLength: hiddenLength, at: 4, reduceMotion: false)
                     let wheelTravel = abs(edge.position - endpoint)
-                    check(wheelTravel > min(0.15, 64 / hiddenLength) && wheelTravel <= min(0.24, 96 / hiddenLength) + 1e-12,
-                          "Both wheel edges extend farther while respecting the pixel and normalized caps")
+                    check(wheelTravel * hiddenLength > 179 && wheelTravel * hiddenLength <= 180 + 1e-8,
+                          "Both wheel edges remain visible on short and long lists within the source-unit cap")
                     _ = edge.advance(at: 6)
                     check(edge.position == endpoint && !edge.requiresFrames,
                           "The enlarged wheel response settles exactly on both boundaries")
@@ -110,6 +110,49 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(abs(max(fitted.width, fitted.height) - 26) < 1e-10 && abs(fitted.midX - 16) < 1e-10 && abs(fitted.midY - 16) < 1e-10,
                   "Vector icons share centered visible bounds without stretching")
             let document = try HUDSourceWatchDocument(includeWidgets: false)
+            let sourceLayout = HUDSourceWatchLayout(document: document)
+            let stablePose = try document.animation.pose(entranceTime: document.animation.entrance.lastKeyTime,
+                ambientTime: nil, exitTime: nil, canvasResolution: SIMD2(2400, 1350))
+            for count in [8, 18, 1000] {
+                let navigation = try HUDSourceDesktopNavigationLayout(document: document, entryCount: count)
+                for endpoint in [0.0, 1.0] {
+                    var restingPose = stablePose
+                    let resting = try sourceLayout.apply(to: &restingPose, verticalNormalizedPosition: endpoint,
+                        desktopNavigation: navigation)
+                    guard let info = resting.scroll, info.contentID == navigation.contentID else {
+                        preconditionFailure("The desktop row pool must own the measured source scroll viewport")
+                    }
+                    check(info.hiddenLength > 1, "Even the shortest desktop list measures its actual viewport inset")
+                    let restingNodes = try document.scene.resolve(overrides: restingPose.transforms)
+                    let restingY = restingNodes[navigation.contentID]!.localMatrix.columns.3.y
+                    for precise in [false, true] {
+                        var motion = HUDSourceDesktopScrollMotion()
+                        motion.reset(to: endpoint, at: 0)
+                        let delta = (endpoint == 0 ? -1.0 : 1.0) * 10_000 / info.hiddenLength
+                        if precise {
+                            motion.gesture(by: delta, hiddenLength: info.hiddenLength, at: 0,
+                                phase: .began, momentum: .none, reduceMotion: false)
+                        } else {
+                            for _ in 0..<2 {
+                                motion.scroll(by: delta, hiddenLength: info.hiddenLength, at: 0, reduceMotion: false)
+                            }
+                        }
+                        var stretchedPose = stablePose
+                        let stretched = try sourceLayout.apply(to: &stretchedPose, verticalNormalizedPosition: motion.position,
+                            desktopNavigation: navigation)
+                        let stretchedNodes = try document.scene.resolve(overrides: stretchedPose.transforms)
+                        let visibleTravel = abs(stretchedNodes[navigation.contentID]!.localMatrix.columns.3.y - restingY)
+                        let expectedTravel = abs(motion.position - endpoint) * info.hiddenLength
+                        check(abs((stretched.scroll?.normalizedPosition ?? .nan) - motion.position) < 1e-9,
+                              "Source layout preserves the model's complete edge response instead of silently clamping it")
+                        check(abs(visibleTravel - expectedTravel) < 0.01 && visibleTravel > (precise ? 230 : 179),
+                              "Both real source edges visibly move by the full bounded travel on short and long lists")
+                        check(navigation.sample(normalizedPosition: motion.position).assignments
+                            == navigation.sample(normalizedPosition: endpoint).assignments,
+                              "Pronounced elastic motion keeps the fixed row pool assigned to the same valid edge entries")
+                    }
+                }
+            }
             let desktop = try HUDSourceWatchDocument(includeWidgets: false, includeSourceText: false, includeDesktopProfile: true)
             let selectable = try HUDSourceSelectableColor(document: desktop)
             let feedback = HUDSourceDesktopHoverFeedback(document: desktop, selectable: selectable)

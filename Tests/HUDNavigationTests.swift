@@ -63,7 +63,7 @@ enum HUDNavigationTests {
             check(deduplicated.filter { $0.target == .appShortcut(first.id) }.count == 1
                   && deduplicated.first { $0.target == .appShortcut(first.id) }?.title == first.name,
                   "Repeated presentation IDs keep the first saved action and do not duplicate hit targets")
-            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese] {
+            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese, .korean] {
                 L10n.language = language
                 let entries = HUDDesktopWatchNavigation.entries(shortcuts: [first])
                 check(entries.allSatisfy { entry in

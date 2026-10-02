@@ -1116,7 +1116,7 @@ final class HUDSourceWatchView: NSView {
         super.resetCursorRects()
         if let cursor = presentedSourceCursor { addCursorRect(visibleRect, cursor: cursor) }
     }
-    func refreshSourceCursor() {
+    func refreshSourceCursor(force: Bool = false) {
         let cursor = presentedSourceCursor
         if let cursor, previousCursor == nil {
             // A registered cursor rect may have installed it before this event.
@@ -1142,7 +1142,11 @@ final class HUDSourceWatchView: NSView {
             }
             hit = view.superview
         }
-        if NSCursor.current !== cursor { cursor.set() }
+        // AppKit's cursor-region dispatch can replace the displayed cursor
+        // after a view handler, even while NSCursor.current still refers to it.
+        // Only the window's post-event/reset path forces reapplication; idle
+        // rendering never polls or reuploads cursor images.
+        if force || NSCursor.current !== cursor { cursor.set() }
     }
     private func restoreSourceCursor() {
         guard let previousCursor else { return }
@@ -1194,7 +1198,7 @@ final class HUDSourceWatchView: NSView {
               let frame = renderedFrame, let camera = renderedCamera, let scroll = frame.layoutReport.scroll,
               scroll.hiddenLength > 0, let node = frame.node(scroll.viewportID), let rect = node.rect,
               desktopScrollMotion.canScroll(direction) else { return false }
-        let delta = -Double(direction) * 32 * sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera) / scroll.hiddenLength
+        let delta = -Double(direction) * 32 * sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera) / max(1, scroll.hiddenLength)
         desktopScrollMotion.scroll(by: delta, hiddenLength: scroll.hiddenLength, at: now,
             reduceMotion: !animated || HUDRuntimeAppearance.reduceMotion)
         verticalNormalizedPosition = desktopScrollMotion.position
@@ -1218,7 +1222,8 @@ final class HUDSourceWatchView: NSView {
         desktopProfileLabelIDs.compactMap { desktopLabels[$0]?.text.string as? String }
     }
     func desktopPresentationForVerification(target: HUDNavigationTarget)
-        -> (caption: String, captionVisible: Bool, wrapped: Bool, image: CGImage?, vectorVisible: Bool)? {
+        -> (caption: String, captionVisible: Bool, wrapped: Bool, fontSize: CGFloat, captionSize: CGSize,
+            image: CGImage?, vectorVisible: Bool)? {
         guard let button = desktopButtons.first(where: { actionsByID[$0.nodeID]?.target == target }),
               let label = button.label, let text = desktopLabels[label.nodeID],
               let iconID = desktopIconIDs[button.nodeID], let icon = desktopIcons[iconID] else { return nil }
@@ -1228,7 +1233,7 @@ final class HUDSourceWatchView: NSView {
         }
         return (text.text.string as? String ?? "",
                 renderedFrame?.node(label.nodeID)?.activeInHierarchy == true && !text.container.isHidden && text.container.opacity > 0,
-                text.text.isWrapped, image, !icon.vector.isHidden)
+                text.text.isWrapped, text.text.fontSize, text.text.bounds.size, image, !icon.vector.isHidden)
     }
     var desktopProfilePointForVerification: CGPoint? {
         guard let card = document.desktopProfileCard else { return nil }
@@ -1397,7 +1402,7 @@ final class HUDSourceWatchView: NSView {
                 verticalNormalizedPosition = desktopScrollMotion.position
                 refreshPlaybackScheduling(); super.scrollWheel(with: event); return
             }
-            desktopScrollMotion.gesture(by: delta * sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera) / scroll.hiddenLength,
+            desktopScrollMotion.gesture(by: delta * sourceScrollUnitsPerPoint(node: node, rect: rect, camera: camera) / max(1, scroll.hiddenLength),
                 hiddenLength: scroll.hiddenLength, at: now, phase: phase(event.phase), momentum: phase(event.momentumPhase),
                 reduceMotion: HUDRuntimeAppearance.reduceMotion)
             verticalNormalizedPosition = desktopScrollMotion.position
@@ -1602,9 +1607,11 @@ final class HUDSourceWatchView: NSView {
                 case .profile: caption = "Personal\nProfile"
                 default: break
                 }
+            } else if L10n.resolvedLanguage == .japanese && entry.target.module == .fileShelf {
+                caption = "一時ファイル\nシェルフ"
             }
             layers.text.string = caption
-            layers.text.isWrapped = entry.target.module != nil && !(L10n.isCJK && entry.target.module == .fileShelf)
+            layers.text.isWrapped = entry.target.module != nil && !(L10n.isChinese && entry.target.module == .fileShelf)
             layers.text.truncationMode = entry.target.module == nil ? .end : .none
             desktopLabelButtons[label.nodeID] = button.nodeID
         }
@@ -1734,6 +1741,13 @@ final class HUDSourceWatchView: NSView {
         return artwork
     }
 
+    private func desktopCaptionSize(_ original: CGSize, target: HUDNavigationTarget?) -> CGSize {
+        guard target?.module == .fileShelf, L10n.isCJK, !L10n.isChinese else { return original }
+        // Match the widest authored caption instead of shrinking the longer
+        // Japanese/Korean shelf name into a single narrow source line.
+        return CGSize(width: max(original.width, 124), height: max(original.height, 56))
+    }
+
     private func updateDesktopSelection() {
         refreshDesktopGlowStyles()
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -1751,10 +1765,11 @@ final class HUDSourceWatchView: NSView {
             let right = desktopLabelButtons[labelID].flatMap { actionsByID[$0]?.source.path.contains("/RightBottomNode/") } ?? false
             var size: CGFloat = bottom ? 20 : right ? 22 : 26
             let weight: NSFont.Weight = selected ? .bold : .medium
-            if target?.module == .fileShelf && L10n.isCJK { size = min(size, 20) }
+            if target?.module == .fileShelf && L10n.isChinese { size = min(size, 20) }
             if let rect = document.scene.node(labelID)?.transform.rect,
                let caption = layers.text.string as? String {
-                let width = max(1, CGFloat(rect.sizeDelta.x) - 2), height = max(1, CGFloat(rect.sizeDelta.y) - 2)
+                let area = desktopCaptionSize(CGSize(width: rect.sizeDelta.x, height: rect.sizeDelta.y), target: target)
+                let width = max(1, area.width - 2), height = max(1, area.height - 2)
                 while size > 10 {
                     let font = NSFont.systemFont(ofSize: size, weight: weight)
                     let measured: CGSize
@@ -1923,7 +1938,9 @@ final class HUDSourceWatchView: NSView {
                 layers.container.isHidden = true; continue
             }
             let world = simd_mul(camera.worldRoot, node.worldMatrix)
-            let x = rect.origin.x, y = rect.origin.y, width = rect.size.x, height = rect.size.y
+            let area = desktopCaptionSize(CGSize(width: rect.size.x, height: rect.size.y), target: actionsByID[button]?.target)
+            let width = Double(area.width), height = Double(area.height)
+            let x = rect.origin.x + (rect.size.x - width) / 2, y = rect.origin.y + (rect.size.y - height) / 2
             let corners = [SIMD3(x, y + height, 0), SIMD3(x + width, y + height, 0),
                            SIMD3(x + width, y, 0), SIMD3(x, y, 0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point

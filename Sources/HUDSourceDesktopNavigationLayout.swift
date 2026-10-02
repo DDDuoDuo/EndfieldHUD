@@ -107,11 +107,27 @@ struct HUDSourceDesktopHoverFeedback {
 /// Finite scroll response on the Watch's existing clock. The closed-form
 /// spring is independent of frame cadence and returns an exact settled value.
 struct HUDSourceDesktopScrollMotion {
+    static let gestureEdgeTravel = 240.0
+    static let wheelEdgeTravel = 180.0
+
+    private static func edgeLimit(travel: Double, hiddenLength: Double) -> Double {
+        // Source units stay perceptible even when a short list overflows by
+        // only the viewport's 1.5-unit inset. The floor keeps division bounded.
+        travel / max(1, hiddenLength)
+    }
+
+    /// The layout writer shares the motion model's bounds. A smaller second
+    /// clamp would discard the visible rebound after row recycling.
+    static func presentationPosition(_ position: Double, hiddenLength: Double) -> Double {
+        let limit = hiddenLength > 0 ? edgeLimit(travel: gestureEdgeTravel, hiddenLength: hiddenLength) : 0
+        return min(1 + limit, max(-limit, position))
+    }
+
     private(set) var position: Double = 1
     private(set) var target: Double = 1
     private var velocity: Double = 0
     private var lastTime: Double?
-    private var edgeLimit: Double = 0.08
+    private var edgeLimit: Double = 0
     private var epsilon: Double = 0.0001
     enum Phase { case none, began, changed, ended, cancelled }
     private(set) var isGestureActive = false
@@ -134,13 +150,14 @@ struct HUDSourceDesktopScrollMotion {
         isGestureActive = false; ownsMomentum = false; suppressesMomentum = false
         // Give both edges more visible travel while keeping short lists and
         // very large collections bounded in normalized and source units.
-        edgeLimit = min(0.24, 96 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        edgeLimit = Self.edgeLimit(travel: Self.wheelEdgeTravel, hiddenLength: hiddenLength)
+        epsilon = min(0.0001, 0.25 / hiddenLength)
         let requested = target + delta
         target = min(1, max(0, requested))
         if reduceMotion { position = target; velocity = 0; return }
         let overflow = requested - target
         if overflow != 0 {
-            position += min(edgeLimit * 0.5, max(-edgeLimit * 0.5, overflow * 0.32))
+            position += min(edgeLimit * 0.5, max(-edgeLimit * 0.5, overflow * 0.55))
             position = min(1 + edgeLimit, max(-edgeLimit, position))
         }
     }
@@ -160,7 +177,8 @@ struct HUDSourceDesktopScrollMotion {
             if ended { ownsMomentum = false; suppressesMomentum = false }
             return
         }
-        edgeLimit = min(0.24, 144 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        edgeLimit = Self.edgeLimit(travel: Self.gestureEdgeTravel, hiddenLength: hiddenLength)
+        epsilon = min(0.0001, 0.25 / hiddenLength)
         if !isGestureActive {
             _ = advance(at: time)
             let bound = min(1, max(0, position)), excess = position - bound
@@ -168,7 +186,8 @@ struct HUDSourceDesktopScrollMotion {
             isGestureActive = true; velocity = 0
         }
         ownsMomentum = true; lastTime = time
-        rawPosition = min(1 + 10_000 / hiddenLength, max(-10_000 / hiddenLength, rawPosition + delta))
+        let rawLimit = 10_000 / max(1, hiddenLength)
+        rawPosition = min(1 + rawLimit, max(-rawLimit, rawPosition + delta))
         target = min(1, max(0, rawPosition))
         let excess = rawPosition - target
         position = reduceMotion ? target : target + excess / (1 + abs(excess) / edgeLimit)
