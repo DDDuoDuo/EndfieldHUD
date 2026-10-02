@@ -1,5 +1,83 @@
 import Foundation
+import CoreGraphics
 import simd
+
+enum HUDSourceDesktopIconLayout {
+    static func path(_ source: CGPath) -> CGPath {
+        let bounds = source.boundingBoxOfPath
+        guard !bounds.isEmpty, bounds.width.isFinite, bounds.height.isFinite else { return source }
+        let scale = 26 / max(bounds.width, bounds.height)
+        var transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
+            tx: 16 - bounds.midX * scale, ty: 16 - bounds.midY * scale)
+        return source.copy(using: &transform) ?? source
+    }
+    /// Remove transparent padding once when artwork is bound. All icon images
+    /// then fit the same visible box, irrespective of source canvas dimensions.
+    static func image(_ source: CGImage) -> CGImage {
+        let side = 96
+        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        return bytes.withUnsafeMutableBytes { raw in
+            guard let context = CGContext(data: raw.baseAddress, width: side, height: side, bitsPerComponent: 8,
+                bytesPerRow: side * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return source }
+            let scale = CGFloat(side) / CGFloat(max(source.width, source.height))
+            let size = CGSize(width: CGFloat(source.width) * scale, height: CGFloat(source.height) * scale)
+            context.interpolationQuality = .high
+            context.draw(source, in: CGRect(x: (CGFloat(side) - size.width) / 2,
+                y: (CGFloat(side) - size.height) / 2, width: size.width, height: size.height))
+            let pixels = raw.bindMemory(to: UInt8.self)
+            var minX = side, minY = side, maxX = -1, maxY = -1
+            for y in 0..<side { for x in 0..<side where pixels[(y * side + x) * 4 + 3] > 8 {
+                minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
+            } }
+            guard minX <= maxX, minY <= maxY, let image = context.makeImage() else { return source }
+            return image.cropping(to: CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)) ?? image
+        }
+    }
+}
+
+/// Finite scroll response on the Watch's existing clock. The closed-form
+/// spring is independent of frame cadence and returns an exact settled value.
+struct HUDSourceDesktopScrollMotion {
+    private(set) var position: Double = 1
+    private(set) var target: Double = 1
+    private var velocity: Double = 0
+    private var lastTime: Double?
+    private var edgeLimit: Double = 0.08
+    private var epsilon: Double = 0.0001
+    var isAnimating: Bool { abs(position - target) > epsilon || abs(velocity) > epsilon * 18 }
+
+    mutating func reset(to value: Double, at time: Double) {
+        position = min(1, max(0, value.isFinite ? value : 1)); target = position
+        velocity = 0; lastTime = time.isFinite ? time : nil
+    }
+    mutating func scroll(by delta: Double, hiddenLength: Double, at time: Double, reduceMotion: Bool) {
+        guard delta.isFinite, hiddenLength.isFinite, hiddenLength > 0, time.isFinite else { return }
+        _ = advance(at: time)
+        edgeLimit = min(0.08, 36 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        let requested = target + delta
+        target = min(1, max(0, requested))
+        if reduceMotion { position = target; velocity = 0; return }
+        let overflow = requested - target
+        if overflow != 0 {
+            position += min(edgeLimit * 0.5, max(-edgeLimit * 0.5, overflow * 0.32))
+            position = min(1 + edgeLimit, max(-edgeLimit, position))
+        }
+    }
+    @discardableResult mutating func advance(at time: Double) -> Double {
+        guard time.isFinite else { return position }
+        defer { lastTime = time }
+        guard let lastTime, time > lastTime, isAnimating else { return position }
+        let dt = min(2, time - lastTime), decay = 16.0, frequency = 12.0
+        let offset = position - target, b = (velocity + decay * offset) / frequency
+        let e = exp(-decay * dt), c = cos(frequency * dt), s = sin(frequency * dt)
+        position = target + e * (offset * c + b * s)
+        velocity = e * ((b * frequency - decay * offset) * c - (offset * frequency + decay * b) * s)
+        position = min(1 + edgeLimit, max(-edgeLimit, position))
+        if !isAnimating || dt >= 1 { position = target; velocity = 0 }
+        return position
+    }
+}
 
 /// Recycles the authored right-hand button rows rather than cloning the source
 /// scene for every saved application. Logical entries remain unlimited; draw,

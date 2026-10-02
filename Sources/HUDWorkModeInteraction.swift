@@ -171,7 +171,8 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
             }
             button.isHidden = false
             button.setAccessibilityLabel(action.label)
-            button.setAccessibilityHelp(canvas.accessibilityStatus + L10n.text(". Space starts, pauses or resumes.", "。空格键开始、暂停或继续。"))
+            button.setAccessibilityHelp(action.id == "work:focusAccess" ? action.label
+                : canvas.accessibilityStatus + L10n.text(". Space starts, pauses or resumes.", "。空格键开始、暂停或继续。"))
             button.frame = project?(action.rect) ?? action.rect
             button.projectedFrame = { [weak self, weak host] in
                 guard let self, let host, let window = host.window else { return .zero }

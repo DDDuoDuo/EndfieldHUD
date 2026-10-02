@@ -576,9 +576,9 @@ enum HUDNavigationTests {
               && near(sectors[0].rect.minX + sectors[1].rect.maxX, 1000),
               "The mirrored sectors retain a narrow twelve-point central gap")
         let centerButtonSpan = sectors[1].rect.maxX - sectors[0].rect.minX
-        check((0.55...0.58).contains(HUDChargeBadge.compactHitRect.width / centerButtonSpan)
+        check((0.70...0.75).contains(HUDChargeBadge.compactHitRect.width / centerButtonSpan)
               && HUDChargeBadge.compactHitRect.maxY < sectors[0].rect.minY,
-              "The smaller battery bar spans slightly over half the unchanged center-button pair and clears their top edge")
+              "The enlarged battery bar stays narrower than the center-button pair and clears their top edge")
         var sectorPaths: [CGPath] = []
         for entry in sectors {
             guard let plate = entry.faceLayer.sublayers?.first(where: { $0.name == "navigation.plate" }) as? CAShapeLayer,

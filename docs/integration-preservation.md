@@ -78,8 +78,16 @@ Japanese. All stable translations remain available.
 
 The user's Focus shortcuts are still named **EndfieldCharge Focus Start** and
 **EndfieldCharge Focus End**. Cosmetic renaming would break configured automation.
-Focus uses public Shortcuts execution and ownership-aware cleanup; pause does not
-end an active work session. Keep updater feed URL/public key, signed-feed policy,
+The requested Focus follow-up now prefers public Control Center Accessibility
+controls after the user grants Accessibility access. It reads the existing Focus
+state before enabling Do Not Disturb, preserves an already-active Focus, verifies
+readback, and never falls back after an uncertain mutation. Unrecognized macOS
+UI or missing permission may use those existing configured shortcuts. No private
+Focus API, settings database, idle polling, or automatic permission grant is used.
+The setup reminder is removed. Pause still does not end an active work session.
+The native UI was inspected read-only on macOS 15.7.4; actual toggling is covered
+by synthetic executor tests, and Tahoe is not independently verified.
+Keep updater feed URL/public key, signed-feed policy,
 bundle identity and monotonic internal build number intact.
 
 This branch keeps the stable GitHub/Sparkle update feed. An integration build is
@@ -297,8 +305,10 @@ python3 scripts/test-integration-compatibility.py --self-test
 python3 scripts/test-integration-compatibility.py --behavioral
 ```
 
-The static guard compares 51 functional/localization files against stable hashes,
-preserves all 575 baseline catalog entries and checks bundle/update identity.
+The static guard preserves 50 functional/localization files byte-for-byte and
+records one explicitly requested, reviewed Focus-controller change alongside its
+original and current hashes. All 51 files remain guarded. It also preserves all
+575 baseline catalog entries and checks bundle/update identity.
 New translations are allowed; removal or rewriting of existing copy is not.
 Intentional future functional changes need a separate compatibility review;
 do not regenerate the manifest merely to make a failure disappear.
@@ -428,18 +438,24 @@ CPU values are percentages of **one CPU core** for the application process.
 
 | Scenario | Stable CPU | Integration CPU | Stable footprint | Integration footprint |
 | --- | ---: | ---: | ---: | ---: |
-| Closed after use | 0.04% | 0.09% | 52 MiB | 103 MiB |
-| Map idle | 0.24% | 7.44% | 78 MiB | 186 MiB |
-| Clipboard idle | 0.15% | 8.99% | 79 MiB | 187 MiB |
-| Notes idle | 0.17% | 9.70% | 79 MiB | 187 MiB |
-| Activity Monitor idle | 0.15% | 9.07% | 74 MiB | 185 MiB |
-| Pointer motion | 4.47% | 44.61% | 74 MiB | 180 MiB |
+| Closed after use | 0.04% | 0.04% | 52 MiB | 122 MiB |
+| Map idle | 0.24% | 10.95% | 78 MiB | 191 MiB |
+| Clipboard idle | 0.15% | 9.85% | 79 MiB | 192 MiB |
+| Notes idle | 0.17% | 9.12% | 79 MiB | 191 MiB |
+| Activity Monitor idle | 0.15% | 10.53% | 74 MiB | 191 MiB |
+| Pointer motion | 4.47% | 45.22% | 74 MiB | 192 MiB |
 
-The integration submitted about 30 source frames/second idle and 59.8 during
+The integration submitted about 30 source frames/second idle and 59.4 during
 pointer motion. Once closed, its source timer stopped and submitted zero frames.
-First opening took 346 ms synchronously (stable 93 ms); the first source frame
-was presented at 563 ms. Warm opening took 363 ms (stable 54 ms). These are
-single-run measurements, not percentile latency or a guarantee on other Macs.
+The current follow-up opened in 210 ms synchronously (stable 93 ms), with its
+first source frame presented at 421 ms. Reopening took 162 ms (stable 54 ms).
+Before this follow-up, the integration measured 346/563/363 ms respectively.
+A bounded, resource-fingerprinted CPU metadata cache moves shader/material JSON
+parsing into one-time background preparation. It retains no view or texture and
+runs no timer. First launch preparation took 1.21 s off the main thread; opening
+before preparation finishes can still wait for it. Retained metadata trades some
+closed memory for faster subsequent openings. These are single-run measurements,
+not percentile latency or guarantees on other Macs.
 
 **Performance parity with stable has not been achieved.** Resource size and
 closed rendering are bounded, and the new renderer has been substantially
@@ -451,10 +467,40 @@ GPU utilization from these process counters. Instruments was unavailable here.
 The raw samples and input fingerprints are in
 [integration-benchmark.json](integration-benchmark.json).
 
-The final local core suite passed 49,690 assertions. The compatibility guard
-preserved all 51 stable functional/localization files, 575 translated entries
-and bundle/update identity. The renderer's 66 paired GPU comparisons, including
+The current local core suite passed 49,815 assertions. The compatibility guard
+checks 50 unchanged files plus the explicitly reviewed Focus-controller hash,
+575 stable translated entries, and bundle/update identity. Nine CPU cache
+regression checks verify all 132 material inputs, reuse, invalidation, corrupt
+input recovery, and reference fallback. Native navigation passed 623 checks with
+normal motion and 889 with forced Reduce Motion. Lifecycle checks include blank
+center clicks, the clock's source plane, shared modal geometry, quit cancellation
+and teardown. The prior renderer evidence remains separate: The renderer's 66 paired GPU comparisons, including
 independent profile-color checks, passed before switching its already-tested
 batching path on by default; only that default and its test selectors changed
 after the comparison. The separate offline Metal compiler probe cannot run on
 this host because its Metal compiler is unavailable; runtime Metal checks work.
+
+
+## Current presentation follow-up
+
+The original right-side banner plane now hosts the desktop clock, date and Work
+Mode status. It follows its own source projection and entrance, while the central
+modules, notes and battery badge keep their established plane. The original
+full-screen source close target is disabled in desktop mode; the native host
+accepts outside-circle dismissal through inverse projected geometry.
+
+Quit and layout-preview recovery share a safely sized centered card. Its real
+presentation-layer conversion drives pointer hits and accessibility bounds.
+Re-previewing during dismissal cancels the old completion. The larger battery
+capsule still clears the unchanged central buttons.
+
+Desktop ambient rings receive a signed random rate once per opening; the six
+triangles also spin independently. Right-list scrolling uses bounded edge
+travel and a finite settling motion on the existing display clock. Source
+reference fixtures retain their authored movement. Right captions are smaller,
+icon bounds are normalized, glow is reduced, and outer frames follow theme color.
+
+The card uses an existing dark industrial default, right-aligned authority/MAX
+labels, and no additive avatar/card Light overlay. Uploaded card backgrounds are
+cropped first and multiplied by the source alpha silhouette so they cannot
+escape its rounded shape. No profile value or saved image is rewritten.

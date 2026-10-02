@@ -19,6 +19,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDSourceBannerScroll.swift" \
     "$PROJECT_DIR/Sources/HUDSourceSelectableColor.swift" \
     "$PROJECT_DIR/Sources/HUDSourceImageGeometry.swift" \
+    "$PROJECT_DIR/Sources/HUDSourceProfileArtwork.swift" \
     "$PROJECT_DIR/Sources/HUDSourceTextGeometry.swift" \
     "$PROJECT_DIR/Sources/HUDSourceDesktopNavigationLayout.swift" \
     "$PROJECT_DIR/Sources/HUDSourceWatchLayout.swift" \
@@ -38,6 +39,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDSettingsController.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDQuitConfirmationView.swift" \
+    "$PROJECT_DIR/Sources/HUDScaleSafetyView.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRuntimeAppearance.swift" \
     "$PROJECT_DIR/Sources/HUDControlHighlightLayer.swift" \
@@ -98,6 +100,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDTelemetryInteraction.swift" \
     "$PROJECT_DIR/Sources/WorkModeController.swift" \
     "$PROJECT_DIR/Sources/WorkModeFocusController.swift" \
+    "$PROJECT_DIR/Sources/ControlCenterWorkModeFocusExecutor.swift" \
     "$PROJECT_DIR/Sources/WorkModeCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDWorkModeInteraction.swift" \
     "$PROJECT_DIR/Sources/SystemEventLog.swift" \
@@ -128,6 +131,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDSourceBannerScrollTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceSelectableColorTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceImageGeometryTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceProfileArtworkTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceTextGeometryTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceDesktopNavigationLayoutTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchLayoutTests.swift" \
@@ -189,6 +193,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDClockTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \
     "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
+    "$PROJECT_DIR/Tests/HUDScaleSafetyTests.swift" \
     "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
     "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
     "$PROJECT_DIR/Tests/LocalizationTests.swift" \

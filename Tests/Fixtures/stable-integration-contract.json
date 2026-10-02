@@ -657,5 +657,12 @@
     "Entry(\"MAP\", \"地图\", \"地圖\", \"マップ\")",
     "Entry(\"LOADING TERRAIN\", \"载入地形\", \"載入地形\", \"地形を読み込み中\")",
     "Entry(\"PINS\", \"标记\", \"標記\", \"ピン\")"
-  ]
+  ],
+  "reviewedBehaviorUpdates": {
+    "Sources/WorkModeFocusController.swift": {
+      "baselineSha256": "eb4f1f61f21f1dff9c3dced7aa34510dc6c1bc4d9b2152c2f8f4c233c3faff3e",
+      "sha256": "630b0bcbde5cbc29115ce8ec4aef0a130f5234adb733ae72e139cf0312d354d0",
+      "reason": "User requested removing the Shortcuts setup reminder and an alternative automatic macOS Focus route. Uses public Accessibility controls with ownership/readback checks and retains the configured Shortcuts fallback; persistence and timer behavior are unchanged."
+    }
+  }
 }

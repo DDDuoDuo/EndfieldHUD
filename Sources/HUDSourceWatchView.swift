@@ -59,6 +59,7 @@ final class HUDSourceWatchView: NSView {
     }
     private var desktopProfileKey: ProfileKey?
     private var desktopProfileImageKeys: [String: ProfileKey] = [:]
+    private var desktopProfileBackgroundMask: CGImage?
     private var desktopProfileInput: (UserProfile, NSImage?, NSImage?, Int32)?
     var onQuit: (() -> Void)?
     private var lastAcceptedClick: [HUDSourceID: TimeInterval] = [:]
@@ -94,17 +95,24 @@ final class HUDSourceWatchView: NSView {
     private var lastHitQuery: (point: CGPoint?, presentation: UInt64, interactive: Bool)?
     private lazy var ambientRotationIDs = Set(document.animation.ambient.curves
         .filter { $0.group == "m_RotationCurves" }.flatMap(\.nodeIDs))
+        .union(desktopMode ? HUDSourceDesktopAmbientMotion.triangleIDs(in: document.scene) : [])
+    private var desktopOpeningSequence: UInt64 = 0
+    private var desktopScrollMotion = HUDSourceDesktopScrollMotion()
     private(set) var cumulativeFrameBuildSeconds: TimeInterval = 0
     private(set) var maximumFrameBuildSeconds: TimeInterval = 0
     var onUnhandledKey: ((NSEvent) -> Void)?
     var onPointerMove: (() -> Void)?
     /// Maps the shared native design plane to the same rendered center camera.
     var onDesktopCenterPlane: ((CATransform3D) -> Void)?
+    /// Original banner plane, expressed in a fixed 528.28 × 122 native canvas.
+    var onDesktopStatusPlane: ((CATransform3D) -> Void)?
     var isDesktopPointerLocked: (() -> Bool)?
     private lazy var desktopCenterID = document.scene.nodes.first { $0.name == "MiddleDecoNode" }?.id
     private var desktopPlaneCalibration: (bounds: CGRect, unitsPerPoint: Double)?
     private var lastDesktopCenterWorld: simd_double4x4?
     private var lastDesktopCenterBounds: CGRect?
+    private lazy var desktopStatusID = document.scene.nodes.first { $0.name == "BannerNode" && $0.path.contains("/RightBottomNode/") }?.id
+    private var lastDesktopStatusProjection: (world: simd_double4x4, rect: HUDSourceRect, bounds: CGRect)?
     var pointerIsAnimatingForVerification: Bool { gyro.isAnimating }
     private var lastReportedPointerPoint: CGPoint?
     var selectedDesktopModule: HUDModule = .power {
@@ -224,11 +232,20 @@ final class HUDSourceWatchView: NSView {
     }
 
     init(frame: CGRect, document: HUDSourceWatchDocument? = nil, desktopMode: Bool = false) throws {
+        var startup = HUDStartupTrace.begin()
         self.desktopMode = desktopMode
         let document = try document ?? (desktopMode ? HUDSourceWatchDocument.desktop() : HUDSourceWatchDocument())
         self.document = document
+        HUDStartupTrace.end("source.document", since: &startup)
         renderer = try HUDSourceMetalRenderer(frame: CGRect(origin: .zero, size: frame.size),
-                                             resourceRoot: document.root.deletingLastPathComponent())
+            resourceRoot: document.root.deletingLastPathComponent(), recordStartupTimings: HUDStartupTrace.enabled)
+        HUDStartupTrace.end("source.renderer", since: &startup)
+        if HUDStartupTrace.enabled {
+            for phase in renderer.initializationPhaseMilliseconds.keys.sorted() {
+                fputs(String(format: "HUD startup renderer.%@ %.2f ms\n", phase,
+                    renderer.initializationPhaseMilliseconds[phase]!), stderr)
+            }
+        }
         if desktopMode, CommandLine.arguments.contains("--ui-test"), CommandLine.arguments.contains("--legacy-source-uniforms") {
             renderer.setPreparedUniformsEnabledForVerification(false)
         }
@@ -261,11 +278,13 @@ final class HUDSourceWatchView: NSView {
         cursorBitmap = bitmap
         cursorHotspotPixels = CGPoint(x: hotspotX, y: hotspotY)
         frameBuilder = try HUDSourceWatchFrameBuilder(document: document, renderer: renderer, includeDomain: !desktopMode,
-                                                      includeSourceText: !desktopMode)
+            includeSourceText: !desktopMode,
+            additionalAmbientRotationIDs: desktopMode ? HUDSourceDesktopAmbientMotion.triangleIDs(in: document.scene) : [])
         renderer.configureDesktopAccent(desktopMode ? HUDRuntimeAppearance.accent : nil)
         playback = HUDSourceWatchPlayback(animation: document.animation)
         buttonAnimation = try HUDSourceWatchButtonAnimation(document: document)
         selectableColor = try HUDSourceSelectableColor(document: document)
+        HUDStartupTrace.end("source.controllers", since: &startup)
         if desktopMode {
             frameBuilder.desktopHiddenNodes = document.desktopHiddenNodeIDs
             frameBuilder.desktopTextOverrides = Dictionary(uniqueKeysWithValues: document.scene.nodes.compactMap { node in
@@ -385,6 +404,7 @@ final class HUDSourceWatchView: NSView {
                 backdropDiagnostics = [String(describing: error)]
             }
         }
+        HUDStartupTrace.end("source.controls", since: &startup)
     }
     required init?(coder: NSCoder) { fatalError("Use the source-resource initializer") }
     deinit {
@@ -445,8 +465,36 @@ final class HUDSourceWatchView: NSView {
         tracking = area; addTrackingArea(area); super.updateTrackingAreas()
     }
 
+    private func randomizeDesktopAmbient() {
+        guard desktopMode else { return }
+        desktopOpeningSequence &+= 1
+        let seed = CommandLine.arguments.contains("--ui-test")
+            ? 0x454e444649454c44 ^ desktopOpeningSequence : UInt64.random(in: UInt64.min...UInt64.max)
+        playback.desktopAmbientMotion = HUDSourceDesktopAmbientMotion(animation: document.animation, seed: seed)
+        playback.ambientMotionEnabled = HUDRuntimeAppearance.ambientEnabled
+        settledButtonPose = nil; settledRenderPacket = nil
+    }
+
+    private func refreshDesktopGlowStyles() {
+        guard desktopMode else { return }
+        let linearSpace = NSColorSpace(cgColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!)!
+        let color = HUDRuntimeAppearance.accent.usingColorSpace(linearSpace) ?? .white
+        let tint = SIMD3<Float>(Float(color.redComponent), Float(color.greenComponent), Float(color.blueComponent))
+        var styles: [HUDSourceID: HUDSourceWatchFrameBuilder.DesktopGraphicStyle] = [:]
+        // Tint only the outer shadow/frame graphic. Its inner face, captions,
+        // authored texture alpha and source hover opacity remain separate.
+        for button in document.buttons { styles[button.nodeID] = .init(tint: tint, opacity: 0.84) }
+        for node in document.scene.nodes where node.path.contains("/MiddleDecoNode/") {
+            if node.name == "triangle_fx1" || node.name == "RingFoMesh" {
+                styles[node.id] = .init(opacity: 0.88)
+            } else if node.name == "EndfieldTextGlow" { styles[node.id] = .init(opacity: 0.78) }
+        }
+        frameBuilder.desktopGraphicStyles = styles
+    }
+
     func open(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
         isHidden = false
+        randomizeDesktopAmbient()
         selectableColor.reset(at: now)
         cancelPendingOpening()
         // A complete Watch close/reopen reconstructs the Banner widget in the
@@ -484,6 +532,7 @@ final class HUDSourceWatchView: NSView {
     }
     func showStable() {
         isHidden = false
+        if playback.phase == .concealed { randomizeDesktopAmbient() }
         if playback.phase == .concealed { selectableColor.reset(at: now) }
         cancelPendingOpening()
         frameBuilder.resetWidgetBannerClock()
@@ -498,6 +547,8 @@ final class HUDSourceWatchView: NSView {
         refreshPlaybackScheduling()
     }
     func close(completion: @escaping () -> Void = {}) {
+        desktopScrollMotion.reset(to: verticalNormalizedPosition, at: now)
+        verticalNormalizedPosition = desktopScrollMotion.position
         cancelPendingOpening()
         cancelBackdropCapture()
         backdropTransitionStart = now
@@ -509,6 +560,7 @@ final class HUDSourceWatchView: NSView {
         refreshPlaybackScheduling()
     }
     func conceal() {
+        desktopScrollMotion.reset(to: verticalNormalizedPosition, at: now)
         cancelPendingOpening()
         cancelBackdropCapture()
         try? frameBuilder.deactivateWidgetBanner()
@@ -545,12 +597,18 @@ final class HUDSourceWatchView: NSView {
     }
     func refreshMotionPreferences() {
         settledRenderPacket = nil
+        let reduce = HUDRuntimeAppearance.reduceMotion
         if desktopMode {
             updateDesktopSelection()
             if let input = desktopProfileInput { setDesktopProfile(input.0, avatar: input.1, background: input.2, avatarOrientation: input.3) }
         }
         renderer.configureDesktopAccent(desktopMode ? HUDRuntimeAppearance.accent : nil)
-        let reduce = HUDRuntimeAppearance.reduceMotion
+        refreshDesktopGlowStyles()
+        playback.ambientMotionEnabled = !desktopMode || HUDRuntimeAppearance.ambientEnabled
+        if reduce && desktopMode {
+            desktopScrollMotion.reset(to: desktopScrollMotion.target, at: now)
+            verticalNormalizedPosition = desktopScrollMotion.position
+        }
         if desktopMode && (HUDRuntimeAppearance.configuration.lowPowerVisualMode || HUDRuntimeAppearance.configuration.blurAmount == 0) {
             cancelBackdropCapture(); sourceBackdrop = nil; try? renderer.disableSourceRGBHDR()
         }
@@ -569,7 +627,7 @@ final class HUDSourceWatchView: NSView {
         guard pendingOpening == nil else { return }
         guard isOnScreen || canAdvanceTransition else { return }
         let finite = playback.phase == .opening || playback.phase == .closing || gyro.isAnimating || buttonAnimation.requiresFrames(at: now)
-            || frameBuilder.requiresWidgetFrames || selectableColor.requiresFrames(at: now)
+            || frameBuilder.requiresWidgetFrames || selectableColor.requiresFrames(at: now) || desktopScrollMotion.isAnimating
         guard !HUDRuntimeAppearance.reduceMotion && (finite || HUDRuntimeAppearance.ambientEnabled) else { return }
         let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -577,12 +635,12 @@ final class HUDSourceWatchView: NSView {
             let time = self.now
             let finite = self.playback.phase != .visible || self.gyro.isAnimating
                 || self.buttonAnimation.requiresFrames(at: time) || self.selectableColor.requiresFrames(at: time)
-                || self.frameBuilder.requiresWidgetFrames
+                || self.frameBuilder.requiresWidgetFrames || self.desktopScrollMotion.isAnimating
             self.idleTick.toggle()
             if finite || self.idleTick { self.render(at: time) }
             if !HUDRuntimeAppearance.ambientEnabled && self.playback.phase == .visible && !self.gyro.isAnimating
                 && !self.buttonAnimation.requiresFrames(at: self.now) && !self.frameBuilder.requiresWidgetFrames
-                && !self.selectableColor.requiresFrames(at: self.now) {
+                && !self.selectableColor.requiresFrames(at: self.now) && !self.desktopScrollMotion.isAnimating {
                 self.stopTimer()
             }
         }
@@ -732,6 +790,7 @@ final class HUDSourceWatchView: NSView {
         }
         guard bounds.width > 0, bounds.height > 0, !isHidden, playback.phase != .concealed else { return }
         let time = pendingOpening?.heldTime ?? requestedTime
+        if desktopMode && playback.phase == .visible { verticalNormalizedPosition = desktopScrollMotion.advance(at: time) }
         do {
             let screen = SIMD2<Double>(Double(bounds.width), Double(bounds.height))
             let reduce = pendingOpening == nil && HUDRuntimeAppearance.reduceMotion
@@ -852,6 +911,7 @@ final class HUDSourceWatchView: NSView {
             if desktopMode {
                 updateDesktopLabels(frame: frame, camera: camera)
                 try updateDesktopCenterPlane(frame: frame, camera: camera)
+                updateDesktopStatusPlane(frame: frame, camera: camera)
             }
             updateAccessibility(frame: frame, camera: camera.camera)
             refreshSourceCursor()
@@ -972,6 +1032,7 @@ final class HUDSourceWatchView: NSView {
         let next = max(0, min(1, verticalNormalizedPosition - Double(direction) * viewport.size.y * 0.25 / scroll.hiddenLength))
         guard next != verticalNormalizedPosition else { return false }
         verticalNormalizedPosition = next
+        desktopScrollMotion.reset(to: next, at: now)
         refreshPlaybackScheduling()
         return true
     }
@@ -1123,9 +1184,17 @@ final class HUDSourceWatchView: NSView {
               camera.camera.hit(point(event), world: simd_mul(camera.worldRoot, node.worldMatrix),
                                 rect: rect, viewport: bounds) != nil else { super.scrollWheel(with: event); return }
         let delta = event.hasPreciseScrollingDeltas ? Double(event.scrollingDeltaY) : Double(event.scrollingDeltaY) * 10
-        verticalNormalizedPosition = HUDSourceWatchLayout(document: document).scrolledPosition(
-            verticalNormalizedPosition, delta: delta, info: scroll)
-        render(at: now)
+        if desktopMode {
+            desktopScrollMotion.scroll(by: delta * scroll.sensitivity / scroll.hiddenLength,
+                hiddenLength: scroll.hiddenLength, at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion)
+            verticalNormalizedPosition = desktopScrollMotion.position
+            if timer == nil { refreshPlaybackScheduling() }
+            else if HUDRuntimeAppearance.reduceMotion { render(at: now) }
+        } else {
+            verticalNormalizedPosition = HUDSourceWatchLayout(document: document).scrolledPosition(
+                verticalNormalizedPosition, delta: delta, info: scroll)
+            render(at: now)
+        }
     }
 
     private func sourceControlContains(_ point: CGPoint) -> Bool {
@@ -1150,6 +1219,7 @@ final class HUDSourceWatchView: NSView {
         if rightIndices.count != desktopRightEntryIndices.count {
             desktopNavigation = try? HUDSourceDesktopNavigationLayout(document: document, entryCount: rightIndices.count)
             verticalNormalizedPosition = 1
+            desktopScrollMotion.reset(to: 1, at: now)
         }
         desktopRightEntryIndices = rightIndices
         desktopEntries = entries
@@ -1218,23 +1288,30 @@ final class HUDSourceWatchView: NSView {
                     vector.frame = content.bounds; image.frame = content.bounds
                     content.addSublayer(vector); content.addSublayer(image)
                     vector.fillRule = .evenOdd; vector.lineCap = .round; vector.lineJoin = .round
+                    // AppKit can replace contents when scale/appearance changes
+                    // outside this binding transaction. These artwork layers
+                    // never own an implicit contents transition.
+                    image.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
                     image.contentsGravity = .resizeAspect
                     layer?.addSublayer(container)
                     iconLayers = (container, content, vector, image, clip); desktopIcons[iconID] = iconLayers
                 }
                 let ink = entry.target.module?.group == .bottom ? NSColor.white : NSColor(white: 0.12, alpha: 1)
                 iconLayers.vector.fillColor = ink.cgColor; iconLayers.vector.strokeColor = ink.cgColor
+                let sourceImage: CGImage?
                 if let shortcut = entry.shortcut {
-                    iconLayers.vector.path = AppShortcutArtwork.path(for: shortcut.iconPreset, in: iconLayers.content.bounds)
+                    iconLayers.vector.path = HUDSourceDesktopIconLayout.path(AppShortcutArtwork.path(for: shortcut.iconPreset, in: iconLayers.content.bounds))
                     iconLayers.vector.lineWidth = 32 / 17
                     var proposed = CGRect(x: 0, y: 0, width: 96, height: 96)
-                    iconLayers.image.contents = shortcut.iconPreset == .original
+                    sourceImage = shortcut.iconPreset == .original
                         ? shortcut.icon?.cgImage(forProposedRect: &proposed, context: nil, hints: nil) : nil
                 } else {
-                    iconLayers.vector.path = HUDNavigationEntry.iconPath(for: entry.target.module ?? .addApp)
+                    iconLayers.vector.path = HUDSourceDesktopIconLayout.path(HUDNavigationEntry.iconPath(for: entry.target.module ?? .addApp))
                     iconLayers.vector.lineWidth = 0
-                    iconLayers.image.contents = HUDNavigationEntry.gameIcon(for: entry.target.module)?.cgImage(size: 96, tint: ink)
+                    sourceImage = HUDNavigationEntry.gameIcon(for: entry.target.module)?.cgImage(size: 96, tint: ink)
                 }
+                iconLayers.image.contents = sourceImage.map(HUDSourceDesktopIconLayout.image)
+                iconLayers.image.frame = iconLayers.content.bounds.insetBy(dx: 3, dy: 3)
                 iconLayers.image.isHidden = iconLayers.image.contents == nil
                 iconLayers.vector.isHidden = !iconLayers.image.isHidden
             }
@@ -1247,7 +1324,8 @@ final class HUDSourceWatchView: NSView {
                 container.zPosition = 10; container.masksToBounds = false
                 container.addSublayer(text); container.mask = clip
                 text.anchorPoint = .zero; text.position = .zero
-                text.font = NSFont.systemFont(ofSize: 26, weight: .medium); text.fontSize = 26
+                text.font = NSFont.systemFont(ofSize: 22, weight: .medium); text.fontSize = 22
+                text.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
                 text.alignmentMode = .center; text.truncationMode = .end
                 text.foregroundColor = NSColor(white: 0.12, alpha: 1).cgColor
                 layer?.addSublayer(container)
@@ -1298,18 +1376,23 @@ final class HUDSourceWatchView: NSView {
                 let container = CALayer(), text = CATextLayer(), clip = CAShapeLayer()
                 container.name = "desktop.profile." + binding; container.zPosition = 10
                 container.addSublayer(text); container.mask = clip; layer?.addSublayer(container)
-                text.anchorPoint = .zero; text.position = .zero; text.alignmentMode = .left
+                text.anchorPoint = .zero; text.position = .zero
                 text.truncationMode = .end
                 layers = (container, text, clip); desktopLabels[id] = layers
             }
             var size = CGFloat(component["m_fontSize"].float(16))
             while size > 10 && (caption as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: .medium)]).width > CGFloat(rect.sizeDelta.x) { size -= 0.5 }
             layers.text.string = caption; layers.text.font = NSFont.systemFont(ofSize: size, weight: .medium); layers.text.fontSize = size
+            layers.text.alignmentMode = ["managerLevelLabel", "progressTxt"].contains(binding) ? .right : .left
             layers.text.foregroundColor = (binding == "progressTxt" ? accent : .white).cgColor
             desktopProfileLabelIDs.insert(id); desktopLabelButtons[id] = card.scene.rootID
         }
         CATransaction.commit()
         var properties: [HUDSourceID: [String: Double]] = [:]
+        for id in card.artworkGlowNodeIDs { properties[id] = ["m_Color.a": 0] }
+        if let id = card.backgroundNodeID, let sprite = card.defaultBackgroundSprite?["id"].string {
+            frameBuilder.desktopSprites[id] = sprite
+        }
         if let slider = card.node("levelSlider") { properties[slider] = ["m_FillAmount": Double(level) / 60] }
         let colored = Set([card.node("levelSlider"), card.node("headFrameImg")].compactMap { $0 })
             .union(card.scene.nodes.filter { ["IconRight", "ArrowImage"].contains($0.name) }.map(\.id))
@@ -1321,13 +1404,13 @@ final class HUDSourceWatchView: NSView {
             for (kind, image, size, offset, zoom, orientation) in [
                 ("avatar", avatar, CGSize(width: 136, height: 136), CGPoint(x: profile.avatarOffsetX, y: profile.avatarOffsetY), profile.avatarZoom, avatarOrientation),
                 ("background", background, CGSize(width: 412, height: 158), CGPoint(x: profile.thumbnailOffsetX, y: profile.thumbnailOffsetY), 1.0, Int32(1))] {
-                let id = kind == "avatar" ? card.node("playerHead") : card.scene.nodes.first(where: { $0.name == "BgImage" })?.id
+                let id = kind == "avatar" ? card.node("playerHead") : card.backgroundNodeID
                 guard let id else { continue }
                 let imageKey = ProfileKey(strings: [], values: [Double(size.width), Double(size.height), Double(offset.x), Double(offset.y), zoom, Double(orientation)],
                     avatar: kind == "avatar" ? image.map(ObjectIdentifier.init) : nil,
                     background: kind == "background" ? image.map(ObjectIdentifier.init) : nil)
                 if desktopProfileImageKeys[kind] != imageKey {
-                    let bitmap: CGImage?
+                    var bitmap: CGImage?
                     if let original = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
                         bitmap = HUDPortraitArtwork.renderedImage(original, targetSize: size, zoom: zoom, offset: offset, contentsScale: 2, orientation: orientation)
                     } else if kind == "avatar" {
@@ -1338,6 +1421,9 @@ final class HUDSourceWatchView: NSView {
                         if let raster { portrait.sublayers?.first?.render(in: raster) }
                         bitmap = raster?.makeImage()
                     } else { bitmap = nil }
+                    if kind == "background", let original = bitmap {
+                        bitmap = try HUDSourceProfileArtwork.applyingBackgroundMask(profileBackgroundMask(card), to: original)
+                    }
                     if let bitmap, let device = renderer.device {
                         let texture = try MTKTextureLoader(device: device).newTexture(cgImage: bitmap, options: [
                             .SRGB: true, .origin: MTKTextureLoader.Origin.bottomLeft.rawValue, .generateMipmaps: false])
@@ -1355,7 +1441,29 @@ final class HUDSourceWatchView: NSView {
         refreshPlaybackScheduling()
     }
 
+    private func profileBackgroundMask(_ card: HUDSourceDesktopProfileCard) throws -> CGImage {
+        if let mask = desktopProfileBackgroundMask { return mask }
+        guard let sprite = card.defaultBackgroundSprite, let textureID = sprite["texture"]["id"].string,
+              let texture = card.sprites["source_textures"].array.first(where: { $0["id"].string == textureID }),
+              let rawFile = texture["raw"]["file"].string, texture["texture_format"].float() == 25 else {
+            throw HUDSourceError.invalid("Selected profile alpha mask is unavailable")
+        }
+        // Every selected BC7 source already ships its exact decoded mip chain
+        // for Intel compatibility; reuse that alpha instead of packaging a PNG.
+        let filename = URL(fileURLWithPath: rawFile).deletingPathExtension().lastPathComponent + ".bgra-mips.bin"
+        let data = try HUDSourceResourceData.read(document.root.deletingLastPathComponent().appendingPathComponent("Textures/" + filename))
+        let raw = sprite["raw_sprite"]["m_Rect"], rendered = sprite["effective_render_data"]
+        let textureRect = rendered["textureRect"], offset = rendered["textureRectOffset"]
+        let mask = try HUDSourceProfileArtwork.backgroundMask(bgra: data,
+            textureWidth: Int(texture["width"].float()), textureHeight: Int(texture["height"].float()),
+            spriteRect: CGRect(x: textureRect["x"].float() - offset["x"].float(),
+                y: textureRect["y"].float() - offset["y"].float(), width: raw["width"].float(), height: raw["height"].float()))
+        desktopProfileBackgroundMask = mask
+        return mask
+    }
+
     private func updateDesktopSelection() {
+        refreshDesktopGlowStyles()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         for (id, element) in accessibilityButtons {
@@ -1368,7 +1476,8 @@ final class HUDSourceWatchView: NSView {
             let target = desktopLabelButtons[labelID].flatMap { actionsByID[$0]?.target }
             let selected = target == .module(selectedDesktopModule)
             let bottom = target?.module?.group == .bottom
-            var size: CGFloat = bottom ? 20 : 26
+            let right = desktopLabelButtons[labelID].flatMap { actionsByID[$0]?.source.path.contains("/RightBottomNode/") } ?? false
+            var size: CGFloat = bottom ? 20 : right ? 22 : 26
             let weight: NSFont.Weight = selected ? .bold : .medium
             if target?.module != nil, let rect = document.scene.node(labelID)?.transform.rect,
                let caption = layers.text.string as? String {
@@ -1421,6 +1530,24 @@ final class HUDSourceWatchView: NSView {
         onDesktopCenterPlane?(projection)
     }
 
+    private func updateDesktopStatusPlane(frame: HUDSourceWatchFrameBuilder.Frame, camera: HUDSourceWatchCamera.Frame) {
+        guard onDesktopStatusPlane != nil, let id = desktopStatusID, let node = frame.node(id), let rect = node.rect else { return }
+        // The source banner remains hidden; only its authored transform anchors
+        // desktop status. Its game artwork/controllers are never activated.
+        let world = camera.worldRoot * node.worldMatrix
+        if let previous = lastDesktopStatusProjection,
+           previous.world == world && previous.rect == rect && previous.bounds == bounds { return }
+        let x = rect.origin.x, y = rect.origin.y, w = rect.size.x, h = rect.size.y
+        let corners = [SIMD3(x,y+h,0), SIMD3(x+w,y+h,0), SIMD3(x+w,y,0), SIMD3(x,y,0)].compactMap {
+            camera.camera.project($0, world: world, viewport: bounds)?.point
+        }
+        guard corners.count == 4, w > 0, h > 0,
+              abs((corners[1].x-corners[0].x)*(corners[3].y-corners[0].y)
+                  - (corners[1].y-corners[0].y)*(corners[3].x-corners[0].x)) > 0.001 else { return }
+        lastDesktopStatusProjection = (world, rect, bounds)
+        onDesktopStatusPlane?(Self.projectiveTextTransform(corners, size: CGSize(width: 528.28, height: 122)))
+    }
+
     private func updateDesktopLabels(frame: HUDSourceWatchFrameBuilder.Frame, camera: HUDSourceWatchCamera.Frame) {
         let animated = playback.phase != .visible || buttonAnimation.requiresFrames(at: now) || selectableColor.requiresFrames(at: now)
         if !animated, !desktopProjectionWasAnimating, let prior = lastDesktopProjection,
@@ -1458,7 +1585,9 @@ final class HUDSourceWatchView: NSView {
             guard frame.node(buttonID)?.activeInHierarchy == true, actionsByID[buttonID] != nil,
                   let node = frame.node(iconID), let rect = node.rect else { layers.container.isHidden = true; continue }
             let world = simd_mul(camera.worldRoot, node.worldMatrix)
-            let x = rect.origin.x, y = rect.origin.y, w = rect.size.x, h = rect.size.y
+            let right = actionsByID[buttonID]?.source.path.contains("/RightBottomNode/") == true
+            let w = right ? 80.0 : rect.size.x, h = right ? 80.0 : rect.size.y
+            let x = rect.origin.x + (rect.size.x - w) / 2, y = rect.origin.y + (rect.size.y - h) / 2
             let corners = [SIMD3(x,y+h,0), SIMD3(x+w,y+h,0), SIMD3(x+w,y,0), SIMD3(x,y,0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point
             }

@@ -76,6 +76,55 @@ enum HUDQuitConfirmationTests {
               "A newer presentation invalidates old dismissal completion")
         view.dismiss(animated: false) { completions += 1 }
         check(!view.isPresented && completions == 1, "Current dismissal completes exactly once")
+        L10n.language = .english
+        view.setContent(title: "Keep this position?", message: "Reverts in 15s", cancel: "Revert", confirm: "Keep", focusConfirm: true)
+        view.show()
+        check(actions.map(\.title) == ["Revert", "Keep"] && window.firstResponder === actions[1],
+              "Layout recovery shares the card while retaining Keep as its keyboard default")
+        _ = view.handleKey(key(36))
+        check(confirmed == 2, "Recovery Return confirms its preview")
+        view.dismiss(animated: false); view.show()
+        view.setPointer(CGPoint(x: 1, y: -1), parallax: 2, perspective: 2)
+        let firstPose = view.cardTransformForVerification
+        check(!CATransform3DIsIdentity(firstPose), "Confirmation follows the pointer")
+        view.setPointer(CGPoint(x: -1, y: 1), parallax: 2, perspective: 2)
+        check(!CATransform3DEqualToTransform(firstPose, view.cardTransformForVerification), "Opposite pointer positions produce opposite poses")
+        let card = actions[0].superview!
+        check(card.layer?.anchorPoint == CGPoint(x: 0.5, y: 0.5)
+              && card.layer?.position == CGPoint(x: card.frame.midX, y: card.frame.midY),
+              "AppKit's default corner anchor is replaced by a centered, compensated pivot")
+        for button in actions {
+            let plate = card.layer?.presentation() ?? card.layer!
+            let actual = plate.convert(CGPoint(x: button.frame.midX, y: button.frame.midY), to: plate.superlayer)
+            let expected = view.actionPointForVerification(confirm: button === actions[1])
+            check(abs(actual.x - expected.x) < 0.0001 && abs(actual.y - expected.y) < 0.0001,
+                  "The action location matches actual flipped Core Animation geometry")
+            let screen = window.convertPoint(toScreen: view.convert(actual, to: nil))
+            check(button.accessibilityFrame().contains(screen), "The accessible action frame contains its rendered center")
+        }
+        func click(confirm: Bool) {
+            let button = confirm ? actions[1] : actions[0]
+            let plate = card.layer?.presentation() ?? card.layer!
+            let visible = plate.convert(CGPoint(x: button.frame.midX, y: button.frame.midY), to: plate.superlayer)
+            let point = view.convert(visible, to: nil)
+            let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+            let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: 0.01,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+            view.mouseDown(with: down); view.mouseUp(with: up)
+        }
+        click(confirm: true)
+        check(confirmed == 3, "Projected confirmation routes the visible button hit exactly once")
+        view.dismiss(animated: false); view.show()
+        view.setPointer(CGPoint(x: 1, y: 1), parallax: 2, perspective: 2)
+        click(confirm: false)
+        check(cancelled == 3, "Opposite projected action still routes to Cancel")
+        view.dismiss(animated: false); view.show()
+        reduceMotion = true
+        view.setPointer(CGPoint(x: 1, y: -1), parallax: 2, perspective: 2)
+        check(CATransform3DIsIdentity(view.cardTransformForVerification), "Reduce Motion removes modal pointer tilt")
+        view.dismiss(animated: false)
+        check(CATransform3DIsIdentity(view.cardTransformForVerification), "A dismissed card cannot retain a stale pointer pose")
         return count
     }
 }

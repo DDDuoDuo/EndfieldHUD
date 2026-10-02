@@ -98,7 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         completedNormalStartup = true
-        if diagnosticDomain == nil && !args.contains("--ui-test") { HUDSourceWatchDocument.prewarmDesktop() }
+        if diagnosticDomain == nil && !args.contains("--ui-test") {
+            HUDSourceWatchDocument.prewarmDesktop()
+            HUDSourceMetalRenderer.prewarmDesktopMetadata()
+        }
         overlay.onPositionEditFinished = { [weak self] position in
             guard let self = self else { return }
             if let position = position {
@@ -117,8 +120,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if diagnosticDomain == nil {
             let focus = WorkModeFocusController()
             workFocus = focus
+            overlay.isPresentingFocusSystemControls = { [weak focus] in focus?.isPresentingSystemControls ?? false }
+            overlay.onRequestFocusAccess = {
+                guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+                NSWorkspace.shared.open(url)
+            }
             focusObserver = focus.observe { [weak self, weak focus] in
                 guard let self, let focus else { return }
+                self.overlay.workFocusNeedsAccessibilityPermission = focus.needsAccessibilityPermission
                 switch focus.state {
                 case .failed, .unavailable: self.overlay.workFocusStatusMessage = focus.statusMessage
                 default: self.overlay.workFocusStatusMessage = nil
@@ -599,11 +608,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                            object: nil, queue: .main) { [weak self] notification in
             guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-            self?.overlay.closeSystemOverlayForFocusLoss()
+            self?.overlay.closeSystemOverlayForFocusLoss(activatedApplication: app)
         }
         observers.append((center, activation))
         let ownActivation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                                    object: nil, queue: .main) { [weak self] _ in
+            self?.workFocus?.refreshAuthorization()
             self?.shortcut.refreshRegistration()
             self?.hudSettings.refreshExternalStatus()
         }
@@ -757,7 +767,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             later(SystemHUDView.entranceDuration + 0.3) { [self] in
-                let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                let reduced = HUDRuntimeAppearance.reduceMotion
                 precondition(overlay.systemChargeStageForVerification == (reduced ? .compact : .supercharge),
                              "Interactive shell must preserve the badge's full Supercharge entrance")
             }
@@ -767,7 +777,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 precondition(overlay.systemPhase == .open, "Deployment must complete")
                 precondition(overlay.systemDeploymentAnimationCount == 0, "Deployment must leave no finite tracks")
                 let ambientCount = overlay.systemAmbientAnimationCount
-                let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                let reduced = HUDRuntimeAppearance.reduceMotion
                 check(ambientCount == 0 && overlay.systemSourceWatchForVerification === source
                       && source.playback.phase == .visible && !source.isHiddenOrHasHiddenAncestor
                       && source.hasDisplayTimerForVerification == !reduced,
@@ -862,7 +872,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         clipboardBoard.setString("Navigation keeps clipboard history", forType: .string)
         _ = overlay.clipboard.store.capture(from: clipboardBoard)
         let clipboardID = overlay.clipboard.store.items.first?.id
-        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduced = HUDRuntimeAppearance.reduceMotion
         let expectedAmbient = 0 // The persistent source scene owns ambient motion.
         var assertionCount = 0
         func check(_ condition: Bool, _ message: String) {

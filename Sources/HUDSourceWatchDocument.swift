@@ -210,7 +210,7 @@ final class HUDSourceWatchDocument {
     var desktopHiddenNodeIDs: Set<HUDSourceID> {
         let hiddenNames: Set<String> = ["Map", "MoneyCellRoot", "ExploreRoot", "EndfieldLogo",
             "GlowLeftBtn", "GlowRightBtn",
-            "Top_RightNode", "TopLeftBtnNode", "HomePageBtn", "CloseButtonNode", "ControllerHintPlaceholder", "BannerNode"]
+            "Top_RightNode", "TopLeftBtnNode", "HomePageBtn", "CloseButtonNode", "FullScreenCloseBtn", "ControllerHintPlaceholder", "BannerNode"]
         var result = Set(scene.nodes.filter { hiddenNames.contains($0.name) }.map(\.id))
         if desktopProfileCard == nil, let parent = scene.nodes.first(where: { $0.name == "PlayInfoPosNode" }) { result.insert(parent.id) }
         if let bottom = scene.nodes.first(where: { $0.name == "HudBgShdow" }) {
@@ -282,6 +282,16 @@ struct HUDSourceDesktopProfileCard: Decodable {
     init(data: Data) throws { self = try HUDSourceJSON.decoder().decode(Self.self, from: data) }
     func node(_ binding: String) -> HUDSourceID? { bindings[binding]["target_node_id"].string.map(HUDSourceID.init(rawValue:)) }
     var buttonIDs: Set<HUDSourceID> { Set(["button", "playerInfoBtn", "playerHeadBtn", "rightBtn"].compactMap(node)) }
+    var backgroundNodeID: HUDSourceID? { scene.nodes.first { $0.name == "BgImage" }?.id }
+    var defaultBackgroundSprite: HUDSourceJSONValue? {
+        sprites["sprites"].array.first { $0["name"].string == "business_card_topic_normal_1" }
+    }
+    // The source Light graphics use additive blending over the entire card and
+    // portrait. Desktop photographs remain unchanged when the card is hovered.
+    var artworkGlowNodeIDs: Set<HUDSourceID> {
+        Set(scene.nodes.filter { $0.name == "Light" && ($0.parentID == scene.rootID
+            || $0.path.hasSuffix("/PlayerHeadBtn/Light")) }.map(\.id))
+    }
     func mounted(in original: HUDSourceScene) throws -> HUDSourceScene {
         guard let parent = original.node(parentID), parent.childIDs.isEmpty,
               Set(original.nodes.map(\.id)).isDisjoint(with: scene.nodes.map(\.id)) else {

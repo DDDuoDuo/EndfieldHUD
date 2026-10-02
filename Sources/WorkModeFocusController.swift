@@ -6,31 +6,44 @@ enum WorkModeFocusCommand: Equatable {
     var shortcutName: String { self == .start ? "EndfieldCharge Focus Start" : "EndfieldCharge Focus End" }
 }
 enum WorkModeFocusRunError: Error, Equatable {
-    case unavailable, notConfigured, launchFailed, commandFailed(Int32), invalidResponse, stillRunning
+    case unavailable, notConfigured, accessibilityRequired, controlCenterUnavailable, interrupted
+    case launchFailed, commandFailed(Int32), invalidResponse, stillRunning
     var mayHaveChangedFocus: Bool {
         switch self { case .commandFailed, .invalidResponse, .stillRunning: return true; default: return false }
     }
     var message: String {
         switch self {
         case .unavailable:
-            return L10n.text("Automatic Focus requires macOS 13 or later and Shortcuts.", "自动专注模式需要 macOS 13 或更新版本及快捷指令。")
+            return L10n.text("Automatic Focus requires macOS 11 or later.", "自动专注模式需要 macOS 11 或更新版本。")
         case .notConfigured:
             return L10n.text("Add EndfieldCharge Focus Start and End shortcuts to enable automatic Focus.", "请添加 EndfieldCharge Focus Start 和 End 快捷指令以启用自动专注模式。")
+        case .accessibilityRequired:
+            return L10n.text("Allow Accessibility to control Focus.", "允许辅助功能访问以控制专注模式。")
+        case .controlCenterUnavailable:
+            return L10n.text("macOS Focus controls are unavailable.", "无法访问 macOS 专注模式控制。")
+        case .interrupted:
+            return L10n.text("Automatic Focus was interrupted.", "自动专注模式操作已中断。")
         case .stillRunning:
             return L10n.text("Waiting for Shortcuts; the Focus change is not confirmed yet.", "正在等待快捷指令，尚未确认专注模式更改。")
         case .launchFailed:
             return L10n.text("Shortcuts could not open. Automatic Focus was not started.", "无法启动快捷指令，自动专注模式未启动。")
         case .commandFailed, .invalidResponse:
-            return L10n.text("Automatic Focus could not be confirmed. Check the Focus shortcuts and current Focus.", "无法确认自动专注模式，请检查专注模式快捷指令及当前状态。")
+            return L10n.text("Automatic Focus could not be confirmed. Check the current Focus.", "无法确认自动专注模式，请检查当前专注状态。")
         }
     }
 }
 
 protocol WorkModeFocusExecuting: AnyObject {
     var isAvailable: Bool { get }
+    var isPresentingSystemControls: Bool { get }
+    var canRetryAfterAccessibilityGrant: Bool { get }
     /// Completion must run on main. A command is never considered cancelled
     /// merely because its CLI is slow: Shortcuts may already own the operation.
     func run(_ command: WorkModeFocusCommand, completion: @escaping (Result<String, WorkModeFocusRunError>) -> Void)
+}
+extension WorkModeFocusExecuting {
+    var isPresentingSystemControls: Bool { false }
+    var canRetryAfterAccessibilityGrant: Bool { false }
 }
 
 /// Executes only the two user-owned shortcuts through Apple's public CLI.
@@ -103,13 +116,20 @@ final class ShortcutsWorkModeFocusExecutor: WorkModeFocusExecuting {
     }
 }
 
-/// Focus follows Work Mode's active session, including pause. A shortcut's
-/// exact acknowledgement is the only ownership evidence. Existing Focus is
-/// left untouched, and no claim is made to restore schedules or user edits.
+/// Focus follows Work Mode's active session, including pause. Only a backend's
+/// verified acknowledgement establishes ownership. Existing Focus is left
+/// untouched; previous schedules and same-mode user edits cannot be restored.
 final class WorkModeFocusController {
     private(set) var state: WorkModeFocusState = .idle
-    var statusMessage: String? { failure?.message }
+    var statusMessage: String? {
+        // Missing optional automation must not turn the timer into a setup
+        // reminder. Keep the unavailable state without implying Focus is on.
+        guard failure != .notConfigured else { return nil }
+        return failure?.message
+    }
     var isPending: Bool { pending != nil }
+    var isPresentingSystemControls: Bool { executor.isPresentingSystemControls }
+    var needsAccessibilityPermission: Bool { failure == .accessibilityRequired }
     private let executor: WorkModeFocusExecuting
     private let warningDelay: TimeInterval
     private var desired = false
@@ -123,7 +143,7 @@ final class WorkModeFocusController {
     private var observers: [UUID: () -> Void] = [:]
     private var shutdownCallbacks: [(Bool) -> Void] = []
 
-    init(executor: WorkModeFocusExecuting = ShortcutsWorkModeFocusExecutor(), warningDelay: TimeInterval = 20) {
+    init(executor: WorkModeFocusExecuting = AutomaticWorkModeFocusExecutor(), warningDelay: TimeInterval = 20) {
         self.executor = executor; self.warningDelay = max(0, warningDelay)
     }
     @discardableResult func observe(_ callback: @escaping () -> Void) -> UUID {
@@ -134,6 +154,16 @@ final class WorkModeFocusController {
         requireMain(); guard !shuttingDown, desired != snapshot.isActive else { return }
         desired = snapshot.isActive
         if !desired { preserved = false }
+        reconcile()
+    }
+    /// Called on our app's activation after a user visits Accessibility settings.
+    /// No polling or automatic permission prompts; only a previously blocked,
+    /// still-active session may retry once after permission actually changes.
+    func refreshAuthorization() {
+        requireMain()
+        guard !shuttingDown, desired, pending == nil, !owned, !uncertain, !preserved,
+              failure == .accessibilityRequired, executor.canRetryAfterAccessibilityGrant else { return }
+        failure = nil
         reconcile()
     }
     func shutdown(completion: @escaping (Bool) -> Void) {
@@ -194,7 +224,8 @@ final class WorkModeFocusController {
             reconcile()
         case .failure(let error):
             uncertain = uncertain || error.mayHaveChangedFocus
-            publish(error == .unavailable || error == .notConfigured ? .unavailable : .failed, failure: error)
+            publish([.unavailable, .notConfigured, .accessibilityRequired, .controlCenterUnavailable].contains(error)
+                    ? .unavailable : .failed, failure: error)
             // Never retry automatically from an error callback: keep ownership
             // honest and avoid a command loop or disabling a preserved Focus.
             finishShutdownIfPossible()

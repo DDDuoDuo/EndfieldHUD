@@ -61,7 +61,10 @@ enum HUDIntegrationPerformance {
             if !CommandLine.arguments.contains("--cold-source") {
                 let began = CACurrentMediaTime()
                 DispatchQueue.global(qos: .utility).async {
-                    do { _ = try HUDSourceWatchDocument.desktop() }
+                    do {
+                        _ = try HUDSourceWatchDocument.desktop()
+                        try HUDSourceMetalRenderer.prepareDesktopMetadataIfNeeded()
+                    }
                     catch { fatalError("Source preparation failed: \(error)") }
                     let elapsed = (CACurrentMediaTime() - began) * 1000
                     DispatchQueue.main.async {
@@ -124,8 +127,9 @@ enum HUDIntegrationPerformance {
                     let angle = index <= 12 ? SIMD3<Double>.zero : SIMD3<Double>(sin(Double(index)) * 8, cos(Double(index)) * 6, 0)
                     let camera = try source.cameraModel.frame(screenSize: size,
                         localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: angle))
-                    let pose = try source.document.animation.pose(entranceTime: source.document.animation.entrance.lastKeyTime,
+                    var pose = try source.document.animation.pose(entranceTime: source.document.animation.entrance.lastKeyTime,
                         ambientTime: Double(index) * 0.3, exitTime: nil, canvasResolution: camera.layout.canvasSize)
+                    source.playback.desktopAmbientMotion?.apply(at: Double(index) * 0.3, to: &pose)
                     var buttonsWarm = pose, buttonsCold = pose
                     source.applyDesktopButtons(to: &buttonsWarm, at: 0, reduceMotion: false)
                     source.applyDesktopButtons(to: &buttonsCold, at: 0, reduceMotion: false, forceRebuild: true)
@@ -159,6 +163,7 @@ enum HUDIntegrationPerformance {
                     let nextTime = Double(index) * 0.3 + 0.137
                     var ambient = HUDSourceWatchPose(transforms: [:])
                     source.document.animation.apply(source.document.animation.ambient, time: nextTime, to: &ambient, base: nil)
+                    source.playback.desktopAmbientMotion?.apply(at: nextTime, to: &ambient)
                     let revision = builder.presentationRevision
                     guard let direct = try builder.buildSettledAmbient(ambient, expectedRevision: revision,
                         worldRoot: camera.worldRoot, canvasResolution: camera.layout.canvasSize) else {
@@ -167,6 +172,7 @@ enum HUDIntegrationPerformance {
                     let directGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(direct.batches.map(\.mesh)))
                     var nextPose = try source.document.animation.pose(entranceTime: source.document.animation.entrance.lastKeyTime,
                         ambientTime: nextTime, exitTime: nil, canvasResolution: camera.layout.canvasSize)
+                    source.playback.desktopAmbientMotion?.apply(at: nextTime, to: &nextPose)
                     source.applyDesktopButtons(to: &nextPose, at: 0, reduceMotion: false, forceRebuild: true)
                     let nextCold = try builder.build(pose: nextPose, worldRoot: camera.worldRoot, forceRebuild: true)
                     let nextGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(nextCold.batches.map(\.mesh)))

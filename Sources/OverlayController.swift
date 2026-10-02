@@ -57,6 +57,12 @@ final class OverlayController: NSObject {
     var workFocusStatusMessage: String? {
         didSet { systemView?.workFocusStatusMessage = workFocusStatusMessage }
     }
+    var workFocusNeedsAccessibilityPermission = false {
+        didSet { systemView?.workFocusNeedsAccessibilityPermission = workFocusNeedsAccessibilityPermission }
+    }
+    var isPresentingFocusSystemControls: (() -> Bool)?
+    var onRequestFocusAccess: (() -> Void)?
+
     let eventLog: SystemEventLog
     let eventRecorder: SystemEventRecorder
     private var workEventObserver: UUID?
@@ -449,8 +455,15 @@ final class OverlayController: NSObject {
         if !quitAfterSystemClose { quitRequested = false }
     }
 
-    func closeSystemOverlayForFocusLoss() {
+    func closeSystemOverlayForFocusLoss(activatedApplication: NSRunningApplication? = nil) {
         guard configuration.closeOnFocusLost else { return }
+        // The public Focus adapter briefly opens Control Center. Other app
+        // activations keep their normal dismissal policy even during that task.
+        if isPresentingFocusSystemControls?() == true {
+            let front = activatedApplication ?? NSWorkspace.shared.frontmostApplication
+            if front?.bundleIdentifier == "com.apple.controlcenter"
+                || front?.processIdentifier == ProcessInfo.processInfo.processIdentifier { return }
+        }
         guard systemView?.isPresentingModulePanel != true else { return }
         // A file can be picked up in Finder, then the HUD summoned while it is
         // held. Drag tracking may change key focus before delivering the drop.
@@ -520,6 +533,12 @@ final class OverlayController: NSObject {
                 view.pointerLocationProvider = pointerLocationProvider
             }
             view.workFocusStatusMessage = workFocusStatusMessage
+            view.workFocusNeedsAccessibilityPermission = workFocusNeedsAccessibilityPermission
+            view.onRequestFocusAccess = { [weak self] in
+                guard let self else { return }
+                self.afterSystemClose = self.onRequestFocusAccess
+                self.closeSystemOverlay()
+            }
             let dragBoard = NSPasteboard(name: .drag)
             view.summonedDuringFileDrag = NSEvent.pressedMouseButtons & 1 != 0 && (
                 HUDFileShelfInteraction.acceptsFiles(dragBoard) ||
@@ -744,7 +763,7 @@ final class OverlayController: NSObject {
         let shelfReveal = pendingShelfReveal
         pendingShelfReveal = nil
         defer { shelfReveal?.close() }
-        let shouldRestore = !shouldExit && restoreFocus && appLaunch == nil && shelfReveal == nil && !openStorageAfterClose && NSApp.isActive && panel.isKeyWindow
+        let shouldRestore = !shouldExit && restoreFocus && appLaunch == nil && shelfReveal == nil && !openStorageAfterClose && afterSystemClose == nil && NSApp.isActive && panel.isKeyWindow
         lastSystemModule = systemView?.selectedModule ?? lastSystemModule
         systemView?.cancelAnimations()
         lastClosedAnimationCount = systemView?.activeAnimationCount ?? 0

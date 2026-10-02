@@ -266,6 +266,14 @@ enum HUDSourceTextGeometryTests {
         check(!card.scene.nodes.contains { node in forbidden.contains { node.path.contains($0) } },
               "Game account, reward, notification and banner content stays excluded")
         let textures = Set(card.sprites["source_textures"].array.compactMap { $0["id"].string })
+        check(card.defaultBackgroundSprite?["name"].string == "business_card_topic_normal_1"
+              && card.defaultBackgroundSprite?["texture"]["id"].string.map(textures.contains) == true,
+              "The new desktop default is an authored dark card already in the selected texture closure")
+        check(card.artworkGlowNodeIDs.count == 2 && card.artworkGlowNodeIDs.allSatisfy {
+            desktop.component("UIImage", on: $0)?["m_Material"].targetID?.rawValue == "CAB-7468e80d83d3c28d17b61694968217a0:2719383334871231163"
+        }, "Only the additive full-card and avatar overlays are removed from desktop photographs")
+        check(card.node("playerHead").map { !card.artworkGlowNodeIDs.contains($0) } == true,
+              "Suppressing source glow does not tint or hide the user avatar image")
         check(card.sprites["sprites"].array.allSatisfy { $0["texture"]["id"].string.map(textures.contains) == true },
               "Every selected card sprite has an exact source texture")
         let quit = desktop.scene.nodes.first { $0.name == "QuitBtn" }!
