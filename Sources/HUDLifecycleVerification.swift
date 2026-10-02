@@ -212,6 +212,13 @@ enum HUDLifecycleVerification {
             guard let source = closingSource, let host = source.superview as? SystemHUDView else {
                 fail("Outside-click verification requires the live source and native host")
             }
+            check(host.clockIsInStatusPanelForVerification, "Clock/date and Work Mode badge share the source upper-right plane")
+            // This point lies within the displayed center near its blank upper
+            // rim, away from module controls. It must not hit FullScreenCloseBtn.
+            if let center = host.centerPointForVerification(CGPoint(x: 500, y: 70)) {
+                clickHUD(at: center)
+                check(overlay.systemPhase == .open, "A blank click within the tilted central circle cannot dismiss the HUD")
+            } else { fail("Missing source center projection for dismissal verification") }
             let corner = CGPoint(x: host.bounds.minX + 8, y: host.bounds.minY + 8)
             check(host.hitTest(host.convert(corner, to: host.superview)) === source,
                   "Blank background input exercises the source view rather than bypassing it")

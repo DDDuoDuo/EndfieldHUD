@@ -297,6 +297,8 @@ enum LocalizationCatalog {
         Entry("Cancel quitting EndfieldHUD", "取消退出 EndfieldHUD", "取消結束 EndfieldHUD", "EndfieldHUDの終了をキャンセル"),
         Entry("Quit EndfieldHUD application", "退出 EndfieldHUD 应用", "結束 EndfieldHUD 應用程式", "EndfieldHUDアプリを終了"),
         // HUDScaleSafetyView.swift
+        Entry("Keep this position?", "保留此位置？", "保留此位置？", "この位置を保持しますか？"),
+        Entry("Keep this UI scale?", "保留此缩放？", "保留此縮放？", "この表示倍率を保持しますか？"),
         Entry("Keep this position? Reverts in {0}s", "保留此位置？{0} 秒后自动恢复", "保留此位置？{0} 秒後自動恢復", "この位置を保持しますか？{0}秒後に元に戻ります"),
         Entry("Keep this UI scale? Reverts in {0}s", "保留此缩放？{0} 秒后自动恢复", "保留此縮放？{0} 秒後自動恢復", "この表示倍率を保持しますか？{0}秒後に元に戻ります"),
         Entry("Keep ↵", "保留 ↵", "保留 ↵", "保持 ↵"),
@@ -631,6 +633,12 @@ enum LocalizationCatalog {
         Entry("Stopped", "已结束", "已結束", "終了済み"),
         Entry("Completed", "已完成", "已完成", "完了"),
         // WorkModeFocusController.swift
+        Entry("Automatic Focus was interrupted.", "自动专注模式操作已中断。", "自動專注模式操作已中斷。", "集中モードの自動操作が中断されました。"),
+        Entry("Open Accessibility Settings", "打开辅助功能设置", "開啟輔助使用設定", "アクセシビリティ設定を開く"),
+        Entry("Automatic Focus requires macOS 11 or later.", "自动专注模式需要 macOS 11 或更新版本。", "自動專注模式需要 macOS 11 或更新版本。", "集中モードの自動切り替えにはmacOS 11以降が必要です。"),
+        Entry("Allow Accessibility to control Focus.", "允许辅助功能访问以控制专注模式。", "允許輔助使用存取以控制專注模式。", "集中モードを操作するにはアクセシビリティを許可してください。"),
+        Entry("macOS Focus controls are unavailable.", "无法访问 macOS 专注模式控制。", "無法存取 macOS 專注模式控制。", "macOSの集中モードを操作できません。"),
+        Entry("Automatic Focus could not be confirmed. Check the current Focus.", "无法确认自动专注模式，请检查当前专注状态。", "無法確認自動專注模式，請檢查目前專注狀態。", "自動切り替えを確認できませんでした。現在の集中モードを確認してください。"),
         Entry("Automatic Focus requires macOS 13 or later and Shortcuts.", "自动专注模式需要 macOS 13 或更新版本及快捷指令。", "自動專注模式需要 macOS 13 或更新版本及捷徑。", "集中モードの自動切り替えにはmacOS 13以降とショートカットが必要です。"),
         Entry("Add EndfieldCharge Focus Start and End shortcuts to enable automatic Focus.", "请添加 EndfieldCharge Focus Start 和 End 快捷指令以启用自动专注模式。", "請新增 EndfieldCharge Focus Start 和 EndfieldCharge Focus End 捷徑以啟用自動專注模式。", "集中モードの自動切り替えにはEndfieldCharge Focus StartとEndfieldCharge Focus Endのショートカットを追加してください。"),
         Entry("Waiting for Shortcuts; the Focus change is not confirmed yet.", "正在等待快捷指令，尚未确认专注模式更改。", "正在等待捷徑，尚未確認專注模式更改。", "ショートカットを待機中です。集中モードの変更はまだ確認されていません。"),

@@ -26,7 +26,15 @@ def entries(source):
 
 def check(root, baseline):
     failures = []
+    updates = baseline.get("reviewedBehaviorUpdates", {})
+    # Persistence files cannot be exempted by a visual/Focus follow-up.
+    allowed_updates = {"Sources/WorkModeFocusController.swift"}
+    for name, update in updates.items():
+        if name not in allowed_updates or update.get("baselineSha256") != baseline["files"].get(name) or not update.get("reason"):
+            failures.append(f"Invalid reviewed behavior update: {name}")
     for name, expected in baseline["files"].items():
+        if name in updates and name in allowed_updates:
+            expected = updates[name]["sha256"]
         source = root / name
         if not source.is_file():
             failures.append(f"Missing stable functional file: {name}")
@@ -77,7 +85,10 @@ def self_test(baseline):
         assert any("translated text" in failure for failure in check(root, baseline)), "Removed stable copy must fail"
         catalog.write_text(original + '\nEntry("Additional text", "新增", "新增", "追加"),\n')
         assert not check(root, baseline), "Additional integration strings may coexist with all stable translations"
-    print("Passed 4 isolated compatibility-guard mutation checks.")
+        focus = root / "Sources/WorkModeFocusController.swift"
+        focus.write_bytes(focus.read_bytes() + b"\n// unreviewed mutation\n")
+        assert any("WorkModeFocusController" in failure for failure in check(root, baseline)), "Reviewed Focus changes remain hash guarded"
+    print("Passed 5 isolated compatibility-guard mutation checks.")
 
 
 def main():
@@ -93,7 +104,8 @@ def main():
         print("Review against the stable baseline; do not regenerate hashes to bypass a regression.")
         return 1
     print(f"Stable {baseline['baselineCommit'][:7]} contract preserved: "
-          f"{len(baseline['files'])} functional/localization files, "
+          f"{len(baseline['files'])} guarded functional/localization files "
+          f"({len(baseline.get('reviewedBehaviorUpdates', {}))} explicitly reviewed Focus update), "
           f"{len(baseline['translations'])} translated entries, and bundle/update identity.")
     if args.self_test:
         self_test(baseline)

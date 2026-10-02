@@ -214,6 +214,69 @@ struct HUDSourceWatchAnimation {
     }
 }
 
+/// Desktop decoration keeps its authored curves but chooses one stable speed
+/// and direction per opening. Extra triangle rotations remain inside the same
+/// small decorative subtree and share the existing display clock.
+struct HUDSourceDesktopAmbientMotion {
+    struct Channel {
+        let node: HUDSourceID
+        let curve: HUDSourceAnimationCurve?
+        let base: HUDSourceQuaternion
+        let rate: Double
+    }
+    let channels: [Channel]
+    let duration: Double
+    static func triangleIDs(in scene: HUDSourceScene) -> Set<HUDSourceID> {
+        Set(scene.nodes.filter { $0.name == "triangle_fx1" && $0.path.contains("/MiddleDecoNode/TriagleNode/") }.map(\.id))
+    }
+    init(animation: HUDSourceWatchAnimation, seed: UInt64) {
+        var state = seed
+        func random() -> Double {
+            state &+= 0x9e3779b97f4a7c15
+            var value = state
+            value = (value ^ (value >> 30)) &* 0xbf58476d1ce4e5b9
+            value = (value ^ (value >> 27)) &* 0x94d049bb133111eb
+            return Double((value ^ (value >> 31)) >> 11) / 9_007_199_254_740_992
+        }
+        func rate(_ lower: Double, _ upper: Double) -> Double {
+            (lower + (upper - lower) * random()) * (random() < 0.5 ? -1 : 1)
+        }
+        var channels: [Channel] = []
+        for curve in animation.ambient.curves where curve.group == "m_RotationCurves" {
+            for id in curve.nodeIDs {
+                guard let node = animation.scene.node(id) else { continue }
+                channels.append(Channel(node: id, curve: curve, base: node.transform.localRotation,
+                    rate: curve.path.contains("/MiddleDecoNode/") ? rate(0.6, 1.25) : 1))
+            }
+        }
+        let triangles = Self.triangleIDs(in: animation.scene)
+        for node in animation.scene.nodes where triangles.contains(node.id) {
+            channels.append(Channel(node: node.id, curve: nil, base: node.transform.localRotation,
+                rate: rate(10, 24) * .pi / 180))
+        }
+        self.channels = channels; duration = animation.ambient.lastKeyTime
+    }
+    func apply(at elapsed: Double, to pose: inout HUDSourceWatchPose) {
+        guard elapsed.isFinite, duration > 0 else { return }
+        for channel in channels {
+            let rotation: HUDSourceQuaternion
+            if let curve = channel.curve {
+                let raw = max(0, elapsed) * channel.rate
+                let wrapped = raw.truncatingRemainder(dividingBy: duration)
+                guard case .quaternion(let value)? = curve.sample(at: wrapped < 0 ? wrapped + duration : wrapped) else { continue }
+                rotation = value
+            } else {
+                let angle = (max(0, elapsed) * channel.rate).truncatingRemainder(dividingBy: 2 * .pi)
+                let base = simd_quatd(ix: channel.base.x, iy: channel.base.y, iz: channel.base.z, r: channel.base.w)
+                let q = base * simd_quatd(angle: angle, axis: SIMD3(0, 0, 1))
+                rotation = HUDSourceQuaternion(q.imag.x, q.imag.y, q.imag.z, q.real)
+            }
+            var transform = pose.transforms[channel.node] ?? HUDSourceTransformOverride()
+            transform.localRotation = rotation; pose.transforms[channel.node] = transform
+        }
+    }
+}
+
 /// Visibility lifecycle owns one clock. Interrupted completion handlers cannot
 /// revive a concealed menu. Reduce Motion seeks the exact source final pose.
 final class HUDSourceWatchPlayback {
@@ -226,6 +289,8 @@ final class HUDSourceWatchPlayback {
     private var stablePose: HUDSourceWatchPose?
     private var stableResolution: SIMD2<Double>?
     let animation: HUDSourceWatchAnimation
+    var desktopAmbientMotion: HUDSourceDesktopAmbientMotion?
+    var ambientMotionEnabled = true
 
     init(animation: HUDSourceWatchAnimation) { self.animation = animation }
 
@@ -253,7 +318,7 @@ final class HUDSourceWatchPlayback {
     func sampleAmbient(at time: Double) -> HUDSourceWatchPose? {
         guard time.isFinite, phase == .visible else { return nil }
         var pose = HUDSourceWatchPose(transforms: [:])
-        animation.apply(animation.ambient, time: max(0, time - loopStart), to: &pose, base: nil)
+        applyAmbient(at: time, to: &pose)
         return pose
     }
 
@@ -279,18 +344,30 @@ final class HUDSourceWatchPlayback {
                 stableResolution = canvasResolution
             }
             var pose = stablePose!
-            if !reduceMotion { animation.apply(animation.ambient, time: max(0, time - loopStart), to: &pose, base: nil) }
+            if !reduceMotion { applyAmbient(at: time, to: &pose) }
             if phase == .closing {
                 animation.apply(animation.exit, time: Self.clipTime(elapsed: time - phaseStart,
                     length: animation.exit.lastKeyTime), to: &pose, base: nil)
             }
             return pose
         }
-        return try animation.pose(
+        var pose = try animation.pose(
             entranceTime: phase == .opening ? Self.clipTime(elapsed: time - phaseStart, length: animation.entrance.lastKeyTime) : animation.entrance.lastKeyTime,
-            ambientTime: phase == .opening || reduceMotion ? nil : max(0, time - loopStart),
-            exitTime: phase == .closing ? Self.clipTime(elapsed: time - phaseStart, length: animation.exit.lastKeyTime) : nil,
+            ambientTime: nil,
+            exitTime: nil,
             canvasResolution: canvasResolution, runtimeOverrides: runtimeOverrides)
+        if phase != .opening && !reduceMotion { applyAmbient(at: time, to: &pose) }
+        if phase == .closing {
+            animation.apply(animation.exit, time: Self.clipTime(elapsed: time - phaseStart,
+                length: animation.exit.lastKeyTime), to: &pose, base: nil)
+        }
+        return pose
+    }
+
+    private func applyAmbient(at time: Double, to pose: inout HUDSourceWatchPose) {
+        guard ambientMotionEnabled else { return }
+        if let desktopAmbientMotion { desktopAmbientMotion.apply(at: max(0, time - loopStart), to: &pose) }
+        else { animation.apply(animation.ambient, time: max(0, time - loopStart), to: &pose, base: nil) }
     }
 
     /// UIAnimationWrapper.PlayWithTween uses the serialized animEase=6

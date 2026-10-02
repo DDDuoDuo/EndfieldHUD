@@ -70,7 +70,11 @@ struct HUDSourceWatchLayout {
                 }
             }
         }
-        try applyScroll(to: &pose, position: min(1, max(0, verticalNormalizedPosition)), report: &report)
+        // Desktop momentum uses a bounded elastic offset, while the recycled
+        // row assignments still clamp to valid logical content in its sampler.
+        let scrollPosition = desktopNavigation == nil ? min(1, max(0, verticalNormalizedPosition))
+            : min(1.08, max(-0.08, verticalNormalizedPosition))
+        try applyScroll(to: &pose, position: scrollPosition, report: &report)
         beforeSlant?(pose)
         let resolved = try scene.resolve(overrides: pose.transforms)
         for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {

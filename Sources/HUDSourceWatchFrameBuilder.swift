@@ -65,8 +65,18 @@ final class HUDSourceWatchFrameBuilder {
     var desktopImages: [HUDSourceID: DesktopImage] = [:] {
         didSet { if oldValue != desktopImages { cacheGeneration &+= 1 } }
     }
+    var desktopSprites: [HUDSourceID: String] = [:] {
+        didSet { if oldValue != desktopSprites { cacheGeneration &+= 1 } }
+    }
     var desktopProperties: [HUDSourceID: [String: Double]] = [:] {
         didSet { if oldValue != desktopProperties { cacheGeneration &+= 1 } }
+    }
+    struct DesktopGraphicStyle: Equatable {
+        var tint: SIMD3<Float>? = nil
+        var opacity: Float = 1
+    }
+    var desktopGraphicStyles: [HUDSourceID: DesktopGraphicStyle] = [:] {
+        didSet { if oldValue != desktopGraphicStyles { cacheGeneration &+= 1 } }
     }
     var widgetState: HUDSourceWatchWidgets.State = .desktopReference { didSet { cacheGeneration &+= 1 } }
     private let includeSourceText: Bool
@@ -270,10 +280,12 @@ final class HUDSourceWatchFrameBuilder {
     }
 
     init(document: HUDSourceWatchDocument, renderer: HUDSourceMetalRenderer,
-         domain: HUDSourceWatchDomain? = nil, includeDomain: Bool = true, includeSourceText: Bool = true) throws {
+         domain: HUDSourceWatchDomain? = nil, includeDomain: Bool = true, includeSourceText: Bool = true,
+         additionalAmbientRotationIDs: Set<HUDSourceID> = []) throws {
         self.document = document; self.renderer = renderer; self.includeSourceText = includeSourceText
         desktopProfileNodeIDs = Set(document.desktopProfileCard?.scene.nodes.map(\.id) ?? [])
         ambientRoots = Set(document.animation.ambient.curves.filter { $0.group == "m_RotationCurves" }.flatMap(\.nodeIDs))
+            .union(additionalAmbientRotationIDs)
         var dynamicNodes = ambientRoots
         for id in document.scene.traversalIDs {
             if let parent = document.scene.node(id)?.parentID, dynamicNodes.contains(parent) { dynamicNodes.insert(id) }
@@ -531,9 +543,9 @@ final class HUDSourceWatchFrameBuilder {
                     }
                 } else {
                     let selectedSprite: HUDSourceImageGeometry.Sprite?
-                    if let id = widget.sprites[component.id] {
-                        guard let original = sourceSprites[id] else { throw HUDSourceError.invalid("Explicit widget Sprite missing: " + id) }
-                        selectedSprite = original; contentKey = id
+                    if let spriteID = desktopSprites[id] ?? widget.sprites[component.id] {
+                        guard let original = sourceSprites[spriteID] else { throw HUDSourceError.invalid("Explicit widget Sprite missing: " + spriteID) }
+                        selectedSprite = original; contentKey = spriteID
                     } else { selectedSprite = sprites[component.id] }
                     if selectedSprite == nil {
                         let dynamicPath = component["imgRefPath"].string ?? ""
@@ -551,7 +563,7 @@ final class HUDSourceWatchFrameBuilder {
                         // map this user image across its existing local rect.
                         uv = mesh.positions.map { p in SIMD2((p.x - Float(rect.origin.x)) / Float(rect.size.x),
                                                            (p.y - Float(rect.origin.y)) / Float(rect.size.y)) }
-                        textureID = replacement.texture; contentKey = "desktop:" + replacement.texture
+                        textureID = replacement.texture; contentKey += "desktop:" + replacement.texture
                         textureSizes[textureID] = replacement.size
                     } else { uv = mesh.uv; textureID = selectedSprite?.textureID ?? "__white" }
                     key.append(fill)
@@ -613,6 +625,10 @@ final class HUDSourceWatchFrameBuilder {
                 if let key = renderer.materialKey(named: baseMaterial, clipRect: clip != nil, alphaClip: false,
                     softMask: sourceSoftMask != nil) { material = key }
                 else { diagnostics.append("Unresolved original material clipping variant: \(n.node.path)"); continue }
+                if let style = desktopGraphicStyles[id] {
+                    if let tint = style.tint { color.x = tint.x; color.y = tint.y; color.z = tint.z }
+                    color.w *= style.opacity
+                }
                 var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: material,
                     world: HUDSourceGeometry.floatMatrix(canvasWorld), color: color, textureOverrides: ["_MainTex": textureID])
                 batch.sourceNodeID = id.rawValue
@@ -654,6 +670,10 @@ final class HUDSourceWatchFrameBuilder {
                 for material in render["m_Materials"].array {
                     guard let materialID = material.targetID, materials[materialID]?["name"].string != nil else { continue }
                     var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: materialID.rawValue, world: HUDSourceGeometry.floatMatrix(world), color: SIMD4(repeating: 1))
+                    if let style = desktopGraphicStyles[id] {
+                        if let tint = style.tint { batch.color.x = tint.x; batch.color.y = tint.y; batch.color.z = tint.z }
+                        batch.color.w *= style.opacity
+                    }
                     batch.sourceNodeID = id.rawValue
                     batch.appliesDesktopAccent = !desktopProfileNodeIDs.contains(id)
                     batch.uniformOverrides["_WatchWorldToLocalMatrix"] = watchWorldToLocal

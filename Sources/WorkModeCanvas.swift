@@ -36,6 +36,7 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
     let controller: WorkModeController
     var onChange: (() -> Void)?
     var onEditDuration: ((CGRect) -> Void)?
+    var onRequestFocusAccess: (() -> Void)?
     private let heading = CATextLayer()
     private let digits = CATextLayer()
     private let clockClip = CALayer()
@@ -45,6 +46,8 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
     private let controls = CALayer()
     private let configurationControls = CALayer()
     private let focusStatus = CATextLayer()
+    private let focusAccessPlate = CAShapeLayer()
+    private var focusAccessAvailable = false
     private var actionLayers: [String: CALayer] = [:]
     private let shouldReduceMotion: () -> Bool
     private var layoutExpanded: Bool?
@@ -90,6 +93,9 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
         for (index, verb) in verbs.enumerated() {
             actions.append(WorkModeCanvasAction(id: "work:" + verb.0, label: verb.1,
                 rect: CGRect(x: 100 + CGFloat(index) * (width + 8), y: 296, width: width, height: 30)))
+        }
+        if focusAccessAvailable && !focusStatus.isHidden {
+            actions.append(WorkModeCanvasAction(id: "work:focusAccess", label: L10n.text("Open Accessibility Settings", "打开辅助功能设置"), rect: focusStatus.frame))
         }
         return actions
     }
@@ -158,6 +164,12 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
         focusStatus.alignmentMode = .center
         focusStatus.isWrapped = true
         focusStatus.isHidden = true
+        focusAccessPlate.frame = focusStatus.frame
+        focusAccessPlate.path = cutCorner(focusAccessPlate.bounds)
+        focusAccessPlate.lineWidth = 0.8
+        focusAccessPlate.isHidden = true
+        layer.addSublayer(focusAccessPlate)
+        HUDControlHighlightLayer.add(to: focusAccessPlate, rect: focusAccessPlate.bounds, shape: .cutCorner, framed: true)
         layer.addSublayer(focusStatus)
         observer = controller.observe { [weak self] in
             guard let self, self.active else { return }
@@ -205,14 +217,22 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
 
     /// Real Focus errors are supplied by the app owner. Normal operation has no
     /// Focus badge, button, or implied system state, and never retimes the clock.
-    func setFocusStatusMessage(_ value: String?) {
+    func setFocusStatusMessage(_ value: String?, needsAccessibilityPermission: Bool = false) {
         let message = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         withoutActions {
+            focusAccessAvailable = needsAccessibilityPermission && message?.isEmpty == false
             focusStatus.string = message
             focusStatus.isHidden = message?.isEmpty != false
-            focusStatus.foregroundColor = muted.cgColor
+            updateFocusStatusAppearance()
         }
         onChange?()
+    }
+
+    private func updateFocusStatusAppearance() {
+        focusStatus.foregroundColor = (focusAccessAvailable ? yellow : muted).cgColor
+        focusAccessPlate.isHidden = !focusAccessAvailable
+        focusAccessPlate.fillColor = muted.withAlphaComponent(0.08).cgColor
+        focusAccessPlate.strokeColor = yellow.withAlphaComponent(0.5).cgColor
     }
 
     func refreshMotionPreference() {
@@ -229,6 +249,15 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
 
     func perform(actionID: String) {
         guard accessibleActions.contains(where: { $0.id == actionID }) else { return }
+        if actionID == "work:focusAccess" {
+            if active && !shouldReduceMotion() {
+                let highlight = CABasicAnimation(keyPath: "opacity")
+                highlight.fromValue = 0.55; highlight.toValue = 1; highlight.duration = 0.16
+                focusAccessPlate.add(highlight, forKey: "workFeedback.focusAccess")
+            }
+            onRequestFocusAccess?()
+            return
+        }
         let previous = controller.snapshot
         let revision = controller.revision
         error = nil
@@ -297,7 +326,7 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
                 self.stateLabel.foregroundColor = self.muted.cgColor
                 self.ringBase.strokeColor = self.muted.withAlphaComponent(0.25).cgColor
                 self.ring.strokeColor = self.yellow.cgColor
-                self.focusStatus.foregroundColor = self.muted.cgColor
+                self.updateFocusStatusAppearance()
                 for text in [self.heading, self.digits, self.stateLabel, self.focusStatus] {
                     text.contentsScale = HUDRenderScale.contentScale(for: text, baseScale: self.scale)
                 }
@@ -407,7 +436,7 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
         actionLayers.removeAll(keepingCapacity: true)
         let topActions = configurationActions(value)
         let topIDs = Set(topActions.map(\.id))
-        for action in topActions + accessibleActions.filter({ !topIDs.contains($0.id) }) {
+        for action in topActions + accessibleActions.filter({ !topIDs.contains($0.id) && $0.id != "work:focusAccess" }) {
             let selected = (action.id == "work:countdown" && value.kind == .countdown)
                 || (action.id == "work:stopwatch" && value.kind == .stopwatch)
                 || (action.id.hasPrefix("work:preset:") && Double(action.id.dropFirst("work:preset:".count)).map { $0 * 60 == value.duration } == true)

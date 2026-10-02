@@ -28,6 +28,7 @@ enum CoreTests {
         assertionCount += HUDSourceBannerScrollTests.run()
         assertionCount += HUDSourceSelectableColorTests.run()
         assertionCount += HUDSourceImageGeometryTests.run()
+        assertionCount += HUDSourceProfileArtworkTests.run()
         assertionCount += HUDSourceTextGeometryTests.run()
         assertionCount += HUDSourceDesktopNavigationLayoutTests.run()
         assertionCount += HUDSourceWatchLayoutTests.run()
@@ -80,6 +81,7 @@ enum CoreTests {
         assertionCount += PersonalProfileCanvasTests.run()
         assertionCount += HUDApplicationIconTests.run()
         assertionCount += HUDQuitConfirmationTests.run()
+        assertionCount += HUDScaleSafetyTests.run()
         print("Passed \(assertionCount) EndfieldCharge core assertions.")
     }
 

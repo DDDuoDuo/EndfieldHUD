@@ -218,6 +218,19 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         var textures: [TextureBinding]
     }
 
+    /// Parsed source values are immutable CPU data; no Metal state enters the
+    /// process-wide metadata catalog.
+    private struct MaterialInputs {
+        let name: String
+        let id: String?
+        let values: [String: [Float]]
+        let propertyTypes: [String: (type: Int, flags: Int)]
+        let textureIDs: [String: String]
+        let shaderID: String?
+        let keywords: Set<String>
+        let clipVariants: [String: String]?
+    }
+
     private struct Material {
         var values: [String: [Float]]
         var textures: [String: String]
@@ -447,6 +460,159 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         var materials_sha256: String?
     }
     private let runtimeSelection: RuntimeSelection?
+    /// CPU metadata only. Never retains a device, program, texture, geometry
+    /// buffer, view or drawable. A replacement inventory replaces this slot.
+    private final class MetadataCatalog {
+        let key: String
+        let shaders: [String: Shader]
+        let objects: [String: Any]
+        let sourceBytes: Int
+        let materialInputs: [MaterialInputs]
+        init(key: String, shaders: [String: Shader], objects: [String: Any], sourceBytes: Int, materialInputs: [MaterialInputs]) {
+            self.key = key; self.shaders = shaders; self.objects = objects; self.sourceBytes = sourceBytes
+            self.materialInputs = materialInputs
+        }
+    }
+    private static let metadataCondition = NSCondition()
+    private static var retainedMetadata: MetadataCatalog?
+    private static var metadataLoading = false
+    private static var metadataPrewarmScheduled = false
+    private let metadata: MetadataCatalog?
+    private(set) var initializationPhaseMilliseconds: [String: Double] = [:]
+
+    private static let shaderSpecifications: [(String, String)] = {
+        var result = [("fx", "fx-shader.json"), ("image", "image-shader.json"), ("imageStencil", "image-stencil-shader.json"),
+            ("imageMainFX", "image-mainfx-shader.json"), ("imageDissolveFX", "image-dissolvefx-shader.json"),
+            ("imageAlphaClip", "image-alphaclip-shader.json"), ("imageClipRect", "image-cliprect-shader.json"),
+            ("imageClipRectAlpha", "image-cliprect-alphaclip-shader.json"), ("font", "font-shader.json"),
+            ("fontUnderlay", "font-underlay-shader.json"), ("imageWorld", "image-world-shader.json")]
+        for program in 12...17 { result.append(("map\(program)", "map-\(program)-shader.json")) }
+        for program in [12, 13] { result.append(("fx\(program)", "fx-\(program)-shader.json")) }
+        for (key, stem) in [("imageMainFX", "image-mainfx"), ("imageDissolveFX", "image-dissolvefx"),
+                            ("imageWorld", "image-world"), ("imageStencil", "image-stencil"),
+                            ("font", "font"), ("fontUnderlay", "font-underlay")] {
+            for (suffix, file) in [("AlphaClip", "alphaclip"), ("ClipRect", "cliprect"), ("ClipRectAlpha", "cliprect-alphaclip")] {
+                result.append((key + suffix, stem + "-" + file + "-shader.json"))
+            }
+        }
+        for (key, stem) in [("imageSoftMask", "image-softmask"), ("imageMainFXSoftMask", "image-mainfx-softmask"),
+                            ("imageDissolveFXSoftMask", "image-dissolvefx-softmask"), ("imageWorldSoftMask", "image-world-softmask"),
+                            ("imageStencilSoftMask", "image-stencil-softmask"), ("fontSoftMask", "font-softmask"),
+                            ("fontUnderlaySoftMask", "font-underlay-softmask")] {
+            for (suffix, file) in [("", ""), ("AlphaClip", "-alphaclip"), ("ClipRect", "-cliprect"), ("ClipRectAlpha", "-cliprect-alphaclip")] {
+                result.append((key + suffix, stem + file + "-shader.json"))
+            }
+        }
+        return result
+    }()
+
+    private static func metadataKey(root: URL, files: [String]) throws -> String {
+        let inventory = try Data(contentsOf: root.appendingPathComponent("runtime-inventory.json"))
+        var identity = root.resolvingSymlinksInPath().standardizedFileURL.path
+            + "/" + SHA256.hash(data: inventory).map { String(format: "%02x", $0) }.joined()
+        // Inventory identity binds the packaged catalog; file identity also
+        // rejects an in-place edit/replacement during local preview or loading.
+        for name in files.sorted() {
+            let attrs = try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent(name).path)
+            identity += "/\(name):\(attrs[.size] ?? 0):\(attrs[.systemFileNumber] ?? 0):\((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
+        }
+        return identity
+    }
+
+    private static func desktopMetadata(root: URL) throws -> MetadataCatalog {
+        let material = FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-materials.json").path)
+            ? "runtime-materials.json" : "materials.json"
+        let objectFiles = ["render-color-policy.json", "textures.json", material]
+            + ["Equipring", "watchline", "Plane", "Cylinder"].map { "Meshes/" + $0 + ".json" }
+        let files = objectFiles + shaderSpecifications.map(\.1) + ["runtime-selection.json"]
+        let key = try metadataKey(root: root, files: files)
+        metadataCondition.lock()
+        if metadataLoading {
+            while metadataLoading { metadataCondition.wait() }
+            metadataCondition.unlock()
+            // The resource identity could have changed while another load ran.
+            return try desktopMetadata(root: root)
+        }
+        if let cached = retainedMetadata, cached.key == key { metadataCondition.unlock(); return cached }
+        metadataLoading = true; metadataCondition.unlock()
+        do {
+            var sourceBytes = 0
+            func read(_ name: String) throws -> Data {
+                let data = try HUDSourceResourceData.read(root.appendingPathComponent(name))
+                sourceBytes += data.count
+                guard sourceBytes <= 16 * 1024 * 1024 else { throw Failure.message("Watch metadata exceeds bounded catalog") }
+                return data
+            }
+            var shaders: [String: Shader] = [:]
+            for (name, file) in shaderSpecifications { shaders[name] = try JSONDecoder().decode(Shader.self, from: read(file)) }
+            var objects: [String: Any] = [:]
+            for file in objectFiles { objects[file] = try JSONSerialization.jsonObject(with: read(file)) }
+            let selection = try JSONDecoder().decode(RuntimeSelection.self, from: read("runtime-selection.json"))
+            let records = try materialRecords(object: objects[material]!, compact: material == "runtime-materials.json", selection: selection)
+            let inputs = try records.map { try parseMaterialInputs(record: $0) }
+            guard try metadataKey(root: root, files: files) == key else { throw Failure.message("Watch metadata changed while loading") }
+            let catalog = MetadataCatalog(key: key, shaders: shaders, objects: objects, sourceBytes: sourceBytes, materialInputs: inputs)
+            metadataCondition.lock(); retainedMetadata = catalog; metadataLoading = false
+            metadataCondition.broadcast(); metadataCondition.unlock()
+            return catalog
+        } catch {
+            metadataCondition.lock(); metadataLoading = false; metadataCondition.broadcast(); metadataCondition.unlock()
+            throw error
+        }
+    }
+
+    /// Synchronous CPU-only readiness seam for launch preparation and timed
+    /// verification. Original/reference resources intentionally have no cache.
+    static func prepareDesktopMetadataIfNeeded(resourceRoot: URL? = nil) throws {
+        guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource"),
+              FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-selection.json").path) else { return }
+        _ = try desktopMetadata(root: root)
+    }
+
+    static func prewarmDesktopMetadata() {
+        guard let root = HUDResources.url(for: "WatchSource"),
+              FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-selection.json").path) else { return }
+        metadataCondition.lock()
+        guard !metadataPrewarmScheduled else { metadataCondition.unlock(); return }
+        metadataPrewarmScheduled = true; metadataCondition.unlock()
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? desktopMetadata(root: root)
+            metadataCondition.lock(); metadataPrewarmScheduled = false; metadataCondition.unlock()
+        }
+    }
+
+    #if HUD_SOURCE_RENDER_PREVIEW
+    static func metadataIdentityForVerification(root: URL) throws -> ObjectIdentifier {
+        ObjectIdentifier(try desktopMetadata(root: root))
+    }
+    static func verifyMetadataValuesForVerification(root: URL) throws -> [String: Int] {
+        let catalog = try desktopMetadata(root: root)
+        for (name, cached) in catalog.objects {
+            let original = try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent(name)))
+            guard let object = cached as? NSObject, object.isEqual(original) else {
+                throw Failure.message("Cached source metadata differs: " + name)
+            }
+        }
+        guard catalog.shaders.count == shaderSpecifications.count else { throw Failure.message("Duplicate/missing shader metadata") }
+        let compact = catalog.objects["runtime-materials.json"] != nil
+        let fresh = try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent(compact ? "runtime-materials.json" : "materials.json")))
+        let selection = try JSONDecoder().decode(RuntimeSelection.self, from: HUDSourceResourceData.read(root.appendingPathComponent("runtime-selection.json")))
+        let inputs = try materialRecords(object: fresh, compact: compact, selection: selection).map { try parseMaterialInputs(record: $0) }
+        guard inputs.count == catalog.materialInputs.count else { throw Failure.message("Cached material count differs") }
+        for (fresh, cached) in zip(inputs, catalog.materialInputs) {
+            guard fresh.name == cached.name, fresh.id == cached.id, fresh.values == cached.values,
+                  fresh.textureIDs == cached.textureIDs, fresh.shaderID == cached.shaderID,
+                  fresh.keywords == cached.keywords, fresh.clipVariants == cached.clipVariants,
+                  fresh.propertyTypes.count == cached.propertyTypes.count,
+                  fresh.propertyTypes.allSatisfy({ key, value in
+                      guard let other = cached.propertyTypes[key] else { return false }
+                      return value.type == other.type && value.flags == other.flags
+                  }) else { throw Failure.message("Cached material values differ: " + fresh.name) }
+        }
+        return ["catalogs": 1, "objects": catalog.objects.count, "shaders": catalog.shaders.count,
+                "materials": inputs.count, "sourceBytes": catalog.sourceBytes]
+    }
+    #endif
     // A color-attachment change needs new pipelines, not new compilation of
     // the same source functions. Only used variants compile, once per view.
     private var shaderFunctions: [String: (MTLFunction, MTLFunction)] = [:]
@@ -619,13 +785,21 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     override var isOpaque: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    init(frame: CGRect, resourceRoot: URL? = nil, sceneColorMode: SceneColorMode = .directLDR) throws {
+    init(frame: CGRect, resourceRoot: URL? = nil, sceneColorMode: SceneColorMode = .directLDR,
+         recordStartupTimings: Bool = false) throws {
+        let started = recordStartupTimings ? CACurrentMediaTime() : 0
+        var previous = started, timings: [String: Double] = [:]
+        func mark(_ name: String) {
+            guard recordStartupTimings else { return }
+            let current = CACurrentMediaTime(); timings[name] = (current - previous) * 1000; previous = current
+        }
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else {
             throw Failure.message("Metal device or command queue unavailable")
         }
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource") else {
             throw Failure.message("WatchSource resource directory unavailable")
         }
+        mark("deviceAndQueue")
         self.queue = queue
         self.root = root
         self.sceneColorMode = sceneColorMode
@@ -638,41 +812,22 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             runtimeSelection = selection
         } else { runtimeSelection = nil }
         programCache = runtimeSelection == nil ? nil : try Self.programs(root: root, device: device)
-        let colorPolicy = try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent("render-color-policy.json"))) as? [String: Any]
+        metadata = runtimeSelection == nil ? nil : try Self.desktopMetadata(root: root)
+        let colorPolicy = try (metadata?.objects["render-color-policy.json"]
+            ?? JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent("render-color-policy.json")))) as? [String: Any]
         guard (colorPolicy?["serialized_color_space"] as? Int) == 1 else {
             throw Failure.message("Original linear project color-space evidence unavailable")
         }
-        var catalog: [String: Shader] = [:]
-        for (key, file) in [("fx", "fx-shader.json"), ("image", "image-shader.json"), ("imageStencil", "image-stencil-shader.json"),
-                            ("imageMainFX", "image-mainfx-shader.json"), ("imageDissolveFX", "image-dissolvefx-shader.json"),
-                            ("imageAlphaClip", "image-alphaclip-shader.json"), ("imageClipRect", "image-cliprect-shader.json"),
-                            ("imageClipRectAlpha", "image-cliprect-alphaclip-shader.json"),
-                            ("font", "font-shader.json"), ("fontUnderlay", "font-underlay-shader.json")] {
-            catalog[key] = try JSONDecoder().decode(Shader.self, from: HUDSourceResourceData.read(root.appendingPathComponent(file)))
-        }
-        for program in 12...17 {
-            catalog["map\(program)"] = try JSONDecoder().decode(Shader.self, from: HUDSourceResourceData.read(root.appendingPathComponent("map-\(program)-shader.json")))
-        }
-        for program in [12, 13] {
-            catalog["fx\(program)"] = try JSONDecoder().decode(Shader.self, from: HUDSourceResourceData.read(root.appendingPathComponent("fx-\(program)-shader.json")))
-        }
-        catalog["imageWorld"] = try JSONDecoder().decode(Shader.self, from: HUDSourceResourceData.read(root.appendingPathComponent("image-world-shader.json")))
-        for (key, stem) in [("imageMainFX", "image-mainfx"), ("imageDissolveFX", "image-dissolvefx"),
-                            ("imageWorld", "image-world"), ("imageStencil", "image-stencil"),
-                            ("font", "font"), ("fontUnderlay", "font-underlay")] {
-            for (suffix, file) in [("AlphaClip", "alphaclip"), ("ClipRect", "cliprect"), ("ClipRectAlpha", "cliprect-alphaclip")] {
-                catalog[key + suffix] = try JSONDecoder().decode(Shader.self, from: HUDSourceResourceData.read(root.appendingPathComponent(stem + "-" + file + "-shader.json")))
+        if let metadata { shaders = metadata.shaders }
+        else {
+            var catalog: [String: Shader] = [:]
+            for (key, file) in Self.shaderSpecifications {
+                catalog[key] = try JSONDecoder().decode(Shader.self,
+                    from: HUDSourceResourceData.read(root.appendingPathComponent(file)))
             }
+            shaders = catalog
         }
-        for (key, stem) in [("imageSoftMask", "image-softmask"), ("imageMainFXSoftMask", "image-mainfx-softmask"),
-                            ("imageDissolveFXSoftMask", "image-dissolvefx-softmask"), ("imageWorldSoftMask", "image-world-softmask"),
-                            ("imageStencilSoftMask", "image-stencil-softmask"), ("fontSoftMask", "font-softmask"),
-                            ("fontUnderlaySoftMask", "font-underlay-softmask")] {
-            for (suffix, file) in [("", ""), ("AlphaClip", "-alphaclip"), ("ClipRect", "-cliprect"), ("ClipRectAlpha", "-cliprect-alphaclip")] {
-                catalog[key + suffix] = try JSONDecoder().decode(Shader.self, from: HUDSourceResourceData.read(root.appendingPathComponent(stem + file + "-shader.json")))
-            }
-        }
-        shaders = catalog
+        mark("catalog")
         super.init(frame: frame, device: device)
         // Source PlayerSettings is Linear. The display attachment performs its
         // sRGB transfer. HDR mode renders into the original RGB format first.
@@ -694,10 +849,19 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         if sceneColorMode == .sourceRGBHDR {
             uiComposite = try HUDSourceUIComposite(device: device, resourceRoot: root, outputPixelFormat: colorPixelFormat)
         }
+        mark("view")
         try loadGeometries(device: device)
+        mark("geometry")
         try loadTextures(device: device)
         if runtimeSelection?.source_text != false { try loadFontTextures() }
-        try loadMaterials(device: device)
+        mark("textureDescriptors")
+        let materialTimings = try loadMaterials(device: device, recordStartupTimings: recordStartupTimings)
+        mark("materials")
+        timings.merge(materialTimings) { _, latest in latest }
+        if recordStartupTimings {
+            timings["total"] = (CACurrentMediaTime() - started) * 1000
+            initializationPhaseMilliseconds = timings
+        }
     }
 
     required init(coder: NSCoder) { fatalError("Use init(frame:resourceRoot:)") }
@@ -1631,7 +1795,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
 
     private func object(_ name: String) throws -> Any {
-        try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent(name)))
+        if let cached = metadata?.objects[name] { return cached }
+        return try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent(name)))
     }
 
     private func loadGeometries(device: MTLDevice) throws {
@@ -1792,27 +1957,73 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
     }
 
-    private func loadMaterials(device: MTLDevice) throws {
-        var records: [[String: Any]]
-        let compactURL = root.appendingPathComponent("runtime-materials.json")
-        if let selection = runtimeSelection, FileManager.default.fileExists(atPath: compactURL.path) {
-            guard let compact = try object("runtime-materials.json") as? [String: Any],
-                  compact["schema"] as? Int == 1, let expectedSource = selection.materials_sha256,
-                  compact["source_sha256"] as? String == expectedSource,
-                  let indices = compact["source_indices"] as? [Int], indices == selection.material_indices,
+    private static func materialRecords(object: Any, compact: Bool, selection: RuntimeSelection?) throws -> [[String: Any]] {
+        if compact {
+            guard let selection, let catalog = object as? [String: Any],
+                  catalog["schema"] as? Int == 1, let expectedSource = selection.materials_sha256,
+                  catalog["source_sha256"] as? String == expectedSource,
+                  let indices = catalog["source_indices"] as? [Int], indices == selection.material_indices,
                   !indices.isEmpty, Set(indices).count == indices.count, indices.allSatisfy({ $0 >= 0 }),
-                  let selected = compact["materials"] as? [[String: Any]], selected.count == indices.count else {
+                  let selected = catalog["materials"] as? [[String: Any]], selected.count == indices.count else {
                 throw Failure.message("Invalid compact Watch material metadata")
             }
-            records = selected
-        } else {
-            // Original reference trees and earlier desktop packages retain
-            // their authoritative complete catalog and original index order.
-            guard let original = try object("materials.json") as? [[String: Any]] else {
-                throw Failure.message("Invalid source shader/material metadata")
-            }
-            records = try selectedIndices(runtimeSelection?.material_indices, count: original.count).map { original[$0] }
+            return selected
         }
+        guard let records = object as? [[String: Any]] else { throw Failure.message("Invalid source shader/material metadata") }
+        guard let indices = selection?.material_indices else { return records }
+        guard !indices.isEmpty, Set(indices).count == indices.count,
+              indices.allSatisfy({ $0 >= 0 && $0 < records.count }) else {
+            throw Failure.message("Invalid Watch runtime catalog selection")
+        }
+        return indices.map { records[$0] }
+    }
+
+    private static func parseMaterialInputs(record: [String: Any]) throws -> MaterialInputs {
+        guard let name = record["name"] as? String, let serialized = record["serialized"] as? [String: Any],
+              let properties = serialized["m_SavedProperties"] as? [String: Any] else { throw Failure.message("Incomplete source material") }
+        var values: [String: [Float]] = [:]
+        for pair in properties["m_Floats"] as? [[Any]] ?? [] {
+            if let key = pair.first as? String, let value = pair.last as? NSNumber { values[key] = [value.floatValue] }
+        }
+        for pair in properties["m_Colors"] as? [[Any]] ?? [] {
+            if let key = pair.first as? String, let value = pair.last as? [String: NSNumber] {
+                values[key] = ["r", "g", "b", "a"].map { value[$0]?.floatValue ?? 0 }
+            }
+        }
+        guard let shaderProperties = record["shader_properties"] as? [[String: Any]] else {
+            throw Failure.message("Source material property color-space metadata unavailable: \(name)")
+        }
+        var propertyTypes: [String: (type: Int, flags: Int)] = [:]
+        for property in shaderProperties {
+            guard let key = property["name"] as? String, let type = property["type"] as? Int,
+                  let flags = property["flags"] as? Int else { continue }
+            propertyTypes[key] = (type, flags)
+            if let value = values[key] { values[key] = linearMaterialValue(value, type: type, flags: flags) }
+        }
+        var textureIDs: [String: String] = [:]
+        for binding in record["texture_bindings"] as? [[String: Any]] ?? [] {
+            guard let slot = binding["slot"] as? String,
+                  let scale = binding["scale"] as? [String: NSNumber], let offset = binding["offset"] as? [String: NSNumber] else { continue }
+            values[slot + "_ST"] = [scale["x"]?.floatValue ?? 1, scale["y"]?.floatValue ?? 1, offset["x"]?.floatValue ?? 0, offset["y"]?.floatValue ?? 0]
+            if let texture = binding["texture"] as? [String: Any], let id = texture["path_id"] as? String { textureIDs[slot] = id }
+        }
+        let sourceShader = record["shader"] as? [String: Any]
+        let keywords = Set(serialized["m_ValidKeywords"] as? [String] ?? [])
+        return MaterialInputs(name: name, id: record["id"] as? String, values: values, propertyTypes: propertyTypes,
+            textureIDs: textureIDs, shaderID: sourceShader?["path_id"] as? String, keywords: keywords,
+            clipVariants: record["clip_variants"] as? [String: String])
+    }
+
+    @discardableResult private func loadMaterials(device: MTLDevice, recordStartupTimings: Bool = false) throws -> [String: Double] {
+        let started = recordStartupTimings ? CACurrentMediaTime() : 0
+        var previous = started, timings: [String: Double] = [:]
+        func mark(_ name: String) {
+            guard recordStartupTimings else { return }
+            let now = CACurrentMediaTime(); timings["materials." + name] = (now - previous) * 1000; previous = now
+        }
+        let compact = runtimeSelection != nil && FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-materials.json").path)
+        var records = try Self.materialRecords(object: object(compact ? "runtime-materials.json" : "materials.json"),
+            compact: compact, selection: runtimeSelection)
         if sceneColorMode == .sourceRGBHDR {
             let url = root.appendingPathComponent("HDR/WatchBlur/material-runtime.json")
             if FileManager.default.fileExists(atPath: url.path) {
@@ -1822,41 +2033,17 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 records.append(record)
             }
         }
+        mark("records")
         depthStencilPixelFormat = try desktopDepthIsRedundant(records: records) ? .stencil8 : .depth32Float_stencil8
-        for record in records {
-            guard let name = record["name"] as? String, let serialized = record["serialized"] as? [String: Any],
-                  let properties = serialized["m_SavedProperties"] as? [String: Any] else { throw Failure.message("Incomplete source material") }
-            var values: [String: [Float]] = [:]
-            for pair in properties["m_Floats"] as? [[Any]] ?? [] {
-                if let key = pair.first as? String, let value = pair.last as? NSNumber { values[key] = [value.floatValue] }
-            }
-            for pair in properties["m_Colors"] as? [[Any]] ?? [] {
-                if let key = pair.first as? String, let value = pair.last as? [String: NSNumber] {
-                    values[key] = ["r", "g", "b", "a"].map { value[$0]?.floatValue ?? 0 }
-                }
-            }
-            guard let shaderProperties = record["shader_properties"] as? [[String: Any]] else {
-                throw Failure.message("Source material property color-space metadata unavailable: \(name)")
-            }
-            var propertyTypes: [String: (type: Int, flags: Int)] = [:]
-            for property in shaderProperties {
-                guard let key = property["name"] as? String, let type = property["type"] as? Int,
-                      let flags = property["flags"] as? Int else { continue }
-                propertyTypes[key] = (type, flags)
-                if let value = values[key] { values[key] = Self.linearMaterialValue(value, type: type, flags: flags) }
-            }
-            var textureIDs: [String: String] = [:]
-            for binding in record["texture_bindings"] as? [[String: Any]] ?? [] {
-                guard let slot = binding["slot"] as? String,
-                      let scale = binding["scale"] as? [String: NSNumber], let offset = binding["offset"] as? [String: NSNumber] else { continue }
-                values[slot + "_ST"] = [scale["x"]?.floatValue ?? 1, scale["y"]?.floatValue ?? 1, offset["x"]?.floatValue ?? 0, offset["y"]?.floatValue ?? 0]
-                if let texture = binding["texture"] as? [String: Any], let id = texture["path_id"] as? String { textureIDs[slot] = id }
-            }
-            let sourceShader = record["shader"] as? [String: Any]
-            let isFX = (sourceShader?["path_id"] as? String) == "-7864008769510089003"
-            let isFont = (sourceShader?["path_id"] as? String) == "2786552470741801451"
-            let isMap = (sourceShader?["path_id"] as? String) == "505394952752169778"
-            let keywords = Set(serialized["m_ValidKeywords"] as? [String] ?? [])
+        mark("depthEligibility")
+        for (index, record) in records.enumerated() {
+            let inputs = index < (metadata?.materialInputs.count ?? 0)
+                ? metadata!.materialInputs[index] : try Self.parseMaterialInputs(record: record)
+            let name = inputs.name, values = inputs.values, propertyTypes = inputs.propertyTypes, textureIDs = inputs.textureIDs
+            let isFX = inputs.shaderID == "-7864008769510089003"
+            let isFont = inputs.shaderID == "2786552470741801451"
+            let isMap = inputs.shaderID == "505394952752169778"
+            let keywords = inputs.keywords
             var passes: [Pass] = []
             for sourcePass in record["static_pass_states"] as? [[String: Any]] ?? [] {
             if (sourcePass["disabled_in_serialized_material"] as? Bool) == true { continue }
@@ -1968,17 +2155,20 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             if runtimeSelection == nil { try prepare(pass: pass, values: values, propertyTypes: propertyTypes, device: device) }
             passes.append(pass)
             }
-            materials[name] = Material(values: values, textures: textureIDs, passes: passes)
+            let material = Material(values: values, textures: textureIDs, passes: passes)
+            materials[name] = material
             materialPropertyTypes[name] = propertyTypes
-            if let id = record["id"] as? String {
-                materials[id] = Material(values: values, textures: textureIDs, passes: passes)
+            if let id = inputs.id {
+                materials[id] = material
                 materialPropertyTypes[id] = propertyTypes
             }
-            if let variants = record["clip_variants"] as? [String: String] {
+            if let variants = inputs.clipVariants {
                 clipMaterialKeys[name] = variants
-                if let id = record["id"] as? String { clipMaterialKeys[id] = variants }
+                if let id = inputs.id { clipMaterialKeys[id] = variants }
             }
         }
+        mark("instances")
+        return timings
     }
 
     /// With clipping enabled, surviving fragment depth is in [0, 1]. When

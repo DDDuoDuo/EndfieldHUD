@@ -46,6 +46,8 @@ jobs:
         run: ./scripts/test-update-tools.sh
       - name: Build universal app
         run: ./scripts/build.sh
+      - name: Verify CPU source metadata cache
+        run: ./scripts/test-source-metadata-cache.sh build/EndfieldHUD.app
       - name: Verify bundle
         run: |
           ./scripts/verify-bundle.sh build/EndfieldHUD.app arm64 x86_64
@@ -53,6 +55,7 @@ jobs:
         run: |
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test --backdrop-preparation-smoke-test --source-fallback-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test --reduce-motion-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --notes-shelf-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --telemetry-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --app-shortcut-smoke-test

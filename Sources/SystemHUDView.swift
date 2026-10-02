@@ -37,8 +37,19 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var sourceWatchForVerification: HUDSourceWatchView? { sourceWatch }
     var isPreparingSourceBackdrop: Bool { sourceWatch?.isPreparingBackdrop == true }
     var sourceFailureForVerification: String? { sourceWatchFailureReason }
-    var workFocusStatusMessage: String? {
-        didSet { workCanvas.setFocusStatusMessage(workFocusStatusMessage) }
+    var clockIsInStatusPanelForVerification: Bool {
+        usesSourceShell && !statusPanel.isHidden && clockTime.superlayer === statusPanel
+            && clockDate.superlayer === statusPanel && workBadge.superlayer === statusPanel
+            && sourceStatusProjection != nil && !(clockTime.string as? String ?? "").isEmpty
+    }
+    func centerPointForVerification(_ point: CGPoint) -> CGPoint? {
+        sourceCenterProjection.map { HUDMotionMath.project(point, through: $0) }
+    }
+    var workFocusStatusMessage: String? { didSet { updateFocusStatus() } }
+    var workFocusNeedsAccessibilityPermission = false { didSet { updateFocusStatus() } }
+    var onRequestFocusAccess: (() -> Void)?
+    private func updateFocusStatus() {
+        workCanvas.setFocusStatusMessage(workFocusStatusMessage, needsAccessibilityPermission: workFocusNeedsAccessibilityPermission)
     }
     var interactionEnabled = false {
         didSet {
@@ -211,6 +222,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var centerSource = CATextLayer()
     private let laptop = CAShapeLayer()
     private let header = CALayer()
+    private let statusPanel = CALayer()
+    private let statusPlate = CAShapeLayer()
+    private let statusFrame = CAShapeLayer()
+    private let statusUnderline = CAShapeLayer()
+    private var sourceStatusProjection: CATransform3D?
     private let headerClock = HUDClock()
     private var clockTime = CATextLayer()
     private var clockDate = CATextLayer()
@@ -261,6 +277,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
          mapStore: Result<WorldMapStore, Error> = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) },
          initialConfiguration: AppConfiguration = .defaults,
          initialSnapshot: BatterySnapshot = .unavailable, initialModule: HUDModule = .power) {
+        var startupPhase = HUDStartupTrace.begin()
         configuration = initialConfiguration.normalized
         snapshot = initialSnapshot
         HUDRuntimeAppearance.configuration = configuration
@@ -306,6 +323,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         volumeCanvas = VolumeCanvas(controller: audio, perAppAudio: perAppAudio)
         workModeController = workMode
         workCanvas = WorkModeCanvas(controller: workMode)
+        HUDStartupTrace.end("native.canvases", since: &startupPhase)
         super.init(frame: frameRect)
         wantsLayer = true
         backgroundBlur.material = .hudWindow
@@ -344,6 +362,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // including native inline text editors and freely positioned notes.
         actionFeedback.zPosition = 2_000_000
         layer?.addSublayer(actionFeedback)
+        HUDStartupTrace.end("native.shell", since: &startupPhase)
         configureNotesInteraction()
         configureShelfInteraction(store: try? shelfStore.get())
         configureClipboardInteraction()
@@ -351,6 +370,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         configureMapInteraction()
         configureVolumeInteraction()
         configureWorkInteraction()
+        workCanvas.onRequestFocusAccess = { [weak self] in self?.onRequestFocusAccess?() }
         configureTelemetryInteractions()
         configureAppShortcutInteraction()
         configureProfileInteraction()
@@ -390,6 +410,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 }
                 self.scheduleVisibleMotion()
             }
+        HUDStartupTrace.end("native.interactions", since: &startupPhase)
         headerClock.setFormat(configuration.clockFormat)
         motion.configure(parallax: CGFloat(configuration.parallaxIntensity),
                          perspective: CGFloat(configuration.perspectiveIntensity),
@@ -399,8 +420,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // immediately before the first frame can be presented.
         notesCanvas.setPresentation(notesSelected: initialModule == .notes, animated: false)
         updateContent()
+        HUDStartupTrace.end("native.appearance", since: &startupPhase)
         configureSourceWatch()
+        HUDStartupTrace.end("source.view", since: &startupPhase)
         prepareInitialModule(initialModule)
+        HUDStartupTrace.end("native.initialModule", since: &startupPhase)
         withoutActions { self.backdrop.opacity = 0; self.canvas.opacity = 0 }
     }
 
@@ -464,6 +488,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.updateNavigationGeometry()
             self.updateContentsScale()
             if let projection = self.sourceCenterProjection { self.applySourceCenterProjection(projection) }
+            if let projection = self.sourceStatusProjection { self.applySourceStatusProjection(projection) }
         }
         notesInteraction?.layoutAccessibility()
         shelfInteraction?.layoutAccessibility()
@@ -477,8 +502,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         appShortcutInteraction?.layoutAccessibility()
         profileInteraction?.layoutAccessibility()
         settingsInteractions.values.forEach { $0.layoutAccessibility() }
-        scaleSafety?.frame = CGRect(x: max(12, (bounds.width - 430) / 2), y: max(12, (bounds.height - 72) / 2),
-                                    width: min(430, bounds.width - 24), height: 72)
+        scaleSafety?.frame = bounds
         updateTrackingAreas()
     }
 
@@ -1178,9 +1202,22 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func followCurrentPointer() {
+        updateConfirmationTilt()
         guard let window, window.isVisible, !window.ignoresMouseEvents || transitioning,
               interactionEnabled || transitioning, !isModuleInputLocked else { return }
         motion.setParallax(normalizedPoint: currentPointerTarget())
+    }
+
+    private func updateConfirmationTilt() {
+        guard let window else { return }
+        let point = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
+        let normalized = HUDMotionMath.normalizedPointer(location: point,
+            center: CGPoint(x: bounds.midX, y: bounds.midY),
+            radius: CGSize(width: bounds.width / 2, height: bounds.height / 2))
+        quitConfirmation?.setPointer(normalized, parallax: configuration.parallaxIntensity,
+                                     perspective: configuration.perspectiveIntensity)
+        scaleSafety?.setPointer(normalized, parallax: configuration.parallaxIntensity,
+                                perspective: configuration.perspectiveIntensity)
     }
 
     private func updateHover(_ event: NSEvent) {
@@ -1351,8 +1388,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         notesInteraction?.finishEditing()
         if let target = navigationTargetAtDesignPoint(p) { activateNavigationTarget(target); return }
         if !usesSourceShell, let local = navigationPoint(p), navigation.containsNavigationPoint(local, includingBottom: false) { return }
-        let dx = p.x - 500, dy = p.y - 320
-        let insideRing = dx * dx + dy * dy < 290 * 290
+        // Empty space inside the displayed circle belongs to the HUD. Invert
+        // the same live projection used to draw it before deciding dismissal.
+        let center = coreDesignPoint(p) ?? p
+        let dx = center.x - 500, dy = center.y - 320
+        let insideRing = dx * dx + dy * dy < 310 * 310
         if !insideRing { onClose?() }
     }
 
@@ -1420,11 +1460,19 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             let transforms = planes.map { $0.spatial.transform }
             CATransaction.begin(); CATransaction.setDisableActions(true)
             planes.forEach { $0.spatial.transform = CATransform3DIdentity }
+            let statusHidden = statusPanel.isHidden
+            statusPanel.isHidden = true
             // The footer deliberately lives below the 640-point design box.
             // Include its real unprojected frame without moving any live layer.
             let nativeRasterBounds = canvas.bounds.union(hintLabel.convert(hintLabel.bounds, to: canvas)).insetBy(dx: -2, dy: -2)
             HUDSourceWatchView.renderProjectedContent(canvas, opacity: canvas.opacity, clip: nil,
                 flippedRaster: true, projection: projection, rasterBounds: nativeRasterBounds, subdivisions: 16, in: context)
+            statusPanel.isHidden = statusHidden
+            if let statusProjection = sourceStatusProjection {
+                HUDSourceWatchView.renderProjectedContent(statusPanel, opacity: canvas.opacity, clip: nil,
+                    flippedRaster: true, projection: statusProjection,
+                    rasterBounds: statusPanel.bounds.insetBy(dx: 0, dy: -12), subdivisions: 12, in: context)
+            }
             var notesProjection = CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0)
             notesProjection = CATransform3DConcat(notesProjection, CATransform3DMakeScale(1 / designScale, 1 / designScale, 1))
             notesProjection = CATransform3DConcat(notesProjection, projection)
@@ -1473,6 +1521,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             view.onBackgroundMouseUp = { [weak self] event in self?.mouseUp(with: event) }
             view.onPointerMove = { [weak self] in self?.followCurrentPointer() }
             view.onDesktopCenterPlane = { [weak self] projection in self?.applySourceCenterProjection(projection) }
+            view.onDesktopStatusPlane = { [weak self] projection in self?.applySourceStatusProjection(projection) }
             view.isDesktopPointerLocked = { [weak self] in self?.isModuleInputLocked ?? false }
             view.layer?.zPosition = -1000
             blurBackdrop.layer?.zPosition = -2000
@@ -1501,6 +1550,45 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             appShortcutInteraction?.layoutAccessibility()
             profileInteraction?.layoutAccessibility()
             settingsInteraction?.layoutAccessibility()
+        }
+    }
+
+    private func applySourceStatusProjection(_ projection: CATransform3D) {
+        guard usesSourceShell, designScale > 0 else { return }
+        sourceStatusProjection = projection
+        var local = CATransform3DConcat(projection, CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0))
+        local = CATransform3DConcat(local, CATransform3DMakeScale(1 / designScale, 1 / designScale, 1))
+        withoutActions { self.statusPanel.transform = local }
+    }
+
+    private func updateStatusPanel() {
+        withoutActions {
+            self.statusPanel.isHidden = !self.usesSourceShell
+            if self.usesSourceShell {
+                if self.clockTime.superlayer !== self.statusPanel {
+                    for item in [self.clockTime, self.clockDate, self.workBadge] { self.statusPanel.addSublayer(item) }
+                }
+                self.clockTime.frame = CGRect(x: 26, y: 20, width: 474, height: 39)
+                self.clockTime.fontSize = 32
+                self.clockDate.frame = CGRect(x: 26, y: 61, width: 474, height: 20)
+                self.clockDate.fontSize = 13
+                self.workBadge.frame = CGRect(x: 26, y: 89, width: 474, height: 20)
+                self.workBadge.fontSize = 14
+                self.clockTime.foregroundColor = NSColor(white: 0.96, alpha: 1).cgColor
+                self.clockDate.foregroundColor = NSColor(white: 0.64, alpha: 1).cgColor
+                self.statusFrame.strokeColor = self.currentAccent.withAlphaComponent(0.70).cgColor
+                self.statusUnderline.strokeColor = self.currentAccent.withAlphaComponent(0.75).cgColor
+                if let projection = self.sourceStatusProjection { self.applySourceStatusProjection(projection) }
+            } else {
+                if self.clockTime.superlayer !== self.header {
+                    for item in [self.clockTime, self.clockDate, self.workBadge] { self.header.addSublayer(item) }
+                }
+                self.clockTime.foregroundColor = NSColor(white: self.currentDark ? 0.95 : 0.13, alpha: 1).cgColor
+                self.clockDate.foregroundColor = NSColor(white: self.currentDark ? 0.55 : 0.40, alpha: 1).cgColor
+                self.clockTime.frame = CGRect(x: 340, y: 0, width: 220, height: 27); self.clockTime.fontSize = 20
+                self.clockDate.frame = CGRect(x: 340, y: 31, width: 220, height: 18); self.clockDate.fontSize = 9
+                self.workBadge.frame = CGRect(x: 320, y: 55, width: 240, height: 18); self.workBadge.fontSize = 10
+            }
         }
     }
 
@@ -1561,6 +1649,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.industryWordmark.isHidden = overview
             self.progress.isHidden = overview || self.selectedModule == .workMode
         }
+        updateStatusPanel()
         headerClock.setActive(window != nil && interactionEnabled)
         sourceWatchFailure?.isHidden = !overview || !sourceOverviewPresented || sourceWatchFailureReason == nil
         guard let sourceWatch else { return }
@@ -1802,6 +1891,22 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                          parent: header, role: .accent, alignment: .right, weight: .semibold)
         workBadge.name = "hud.workMode.badge"
         workBadge.actions = ["contents": NSNull()]
+        statusPanel.name = "hud.clock.panel"
+        statusPanel.anchorPoint = .zero; statusPanel.position = .zero
+        statusPanel.bounds = CGRect(x: 0, y: 0, width: 528.28, height: 122)
+        statusPanel.isHidden = true
+        let outer = CGPath(roundedRect: statusPanel.bounds.insetBy(dx: 0.8, dy: 0.8), cornerWidth: 6, cornerHeight: 6, transform: nil)
+        statusPlate.path = CGPath(roundedRect: statusPanel.bounds.insetBy(dx: 7, dy: 7), cornerWidth: 3, cornerHeight: 3, transform: nil)
+        statusPlate.fillColor = NSColor(white: 0.055, alpha: 0.78).cgColor
+        statusPlate.strokeColor = NSColor(white: 0.70, alpha: 0.35).cgColor; statusPlate.lineWidth = 1
+        statusFrame.path = outer; statusFrame.fillColor = nil; statusFrame.lineWidth = 1.5
+        let marks = CGMutablePath()
+        for x in stride(from: CGFloat(14), through: 490, by: 56) {
+            marks.move(to: CGPoint(x: x, y: 131)); marks.addLine(to: CGPoint(x: x + 42, y: 131))
+        }
+        statusUnderline.path = marks; statusUnderline.lineWidth = 3; statusUnderline.fillColor = nil
+        for item in [statusPlate, statusFrame, statusUnderline] { statusPanel.addSublayer(item) }
+        canvas.addSublayer(statusPanel)
         footer.frame = CGRect(x: 0, y: 0, width: 1000, height: 640)
         canvas.addSublayer(footer)
         hintLabel = text("", rect: CGRect(x: 275, y: 622, width: 450, height: 18), size: 9,
@@ -1930,6 +2035,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         prompt.onConfirm = { [weak self] in self?.confirmQuit() }
         if prompt.superview == nil { addSubview(prompt, positioned: .above, relativeTo: nil) }
         prompt.show()
+        updateConfirmationTilt()
     }
 
     private func cancelQuitConfirmation() {
@@ -2124,6 +2230,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             }
             self.currentDark = dark
             self.currentAccent = yellow
+            self.updateStatusPanel()
             self.currentBatteryTone = tone
             self.artwork.update(dark: dark, chargeColor: self.selectedModule == .power ? tone : yellow, accentColor: yellow)
             let contentScale = (self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * self.designScale
@@ -2329,6 +2436,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             settingsInteractions[module] = input
         }
         let safety = HUDScaleSafetyView(controller: settingsController)
+        safety.onPointerMove = { [weak self] in self?.updateConfirmationTilt() }
         addSubview(safety)
         scaleSafety = safety
         if window != nil { installSettingsCaptureMonitor() }
