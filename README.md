@@ -75,7 +75,7 @@ Click a preview to see that section. The linked guides have more detail.
 | Files and images | Access to items you choose, paste, or drop into the app. The shelf keeps file references; image notes and profile pictures keep local copies. |
 | Update alerts | Optional notification permission. Update information is still available in the menu and About if notifications are denied. |
 | Launch at login | Install in Applications first; macOS may ask you to approve it in Login Items. |
-| Automatic Focus | **macOS 13+** and two shortcuts you create in Apple’s Shortcuts app. They are not installed for you. Follow the [Focus setup guide](docs/audio-and-work-mode.md#automatic-focus-setup). The timer works without them. |
+| Automatic Focus | This integration branch prefers Control Center with your **Accessibility** permission on **macOS 11+**, where its controls are recognized; configured Shortcuts on **macOS 13+** are a fallback. The stable v1.0.1 download requires those two user-created shortcuts. See [Focus setup](docs/audio-and-work-mode.md#automatic-focus-setup). The timer works without Focus automation. |
 
 Notes, shelf references, profile, map pins, and event history stay on this Mac. Clipboard history stays in memory and clears on quit. Update checks and downloads contact GitHub; the app does not need an account. [Settings guide](docs/settings.md) · [Update guide](docs/updates.md)
 

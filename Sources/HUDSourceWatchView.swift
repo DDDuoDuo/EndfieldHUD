@@ -216,6 +216,8 @@ final class HUDSourceWatchView: NSView {
     private var sourceCursor: NSCursor?
     private var cursorBackingScale: CGFloat = 0
     private var previousCursor: NSCursor?
+    private var cursorRectsActive = false
+    var sourceCursorOwnedForVerification: Bool { sourceCursor.map { NSCursor.current === $0 } ?? false }
     private var hovered: HUDSourceID?
     private var pressed: HUDSourceID?
     private var bannerPointerPixels: SIMD2<Float>?
@@ -464,7 +466,7 @@ final class HUDSourceWatchView: NSView {
     deinit {
         backdropTask?.cancel()
         backdropPreparationDeadline?.cancel()
-        previousCursor?.set()
+        if let sourceCursor, NSCursor.current === sourceCursor { previousCursor?.set() }
         timer?.invalidate(); observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
@@ -511,7 +513,8 @@ final class HUDSourceWatchView: NSView {
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties(); needsLayout = true
         refreshBackdropGeometry()
-        sourceCursor = nil; refreshSourceCursor()
+        restoreSourceCursor(); sourceCursor = nil; cursorRectsActive = false
+        refreshSourceCursor()
     }
     override func updateTrackingAreas() {
         if let tracking { removeTrackingArea(tracking) }
@@ -549,10 +552,10 @@ final class HUDSourceWatchView: NSView {
 
     private func refreshDesktopHoverStyles(selectableTints: [HUDSourceID: SIMD4<Float>]) {
         guard desktopMode else { return }
+        let opacities = desktopHoverFeedback.opacities(selectableTints: selectableTints)
+        guard opacities.contains(where: { frameBuilder.desktopGraphicStyles[$0.key] != .init(opacity: $0.value) }) else { return }
         var styles = frameBuilder.desktopGraphicStyles
-        for (id, opacity) in desktopHoverFeedback.opacities(selectableTints: selectableTints) {
-            styles[id] = .init(opacity: opacity)
-        }
+        for (id, opacity) in opacities { styles[id] = .init(opacity: opacity) }
         frameBuilder.desktopGraphicStyles = styles
     }
 
@@ -620,7 +623,7 @@ final class HUDSourceWatchView: NSView {
         inputEnabled = false
         playback.close(at: now, reduceMotion: HUDRuntimeAppearance.reduceMotion) { [weak self] in
             self?.stopTimer(); try? self?.frameBuilder.deactivateWidgetBanner()
-            self?.isHidden = true; completion()
+            self?.isHidden = true; self?.refreshSourceCursor(); completion()
         }
         refreshPlaybackScheduling()
     }
@@ -632,7 +635,7 @@ final class HUDSourceWatchView: NSView {
         cancelBackdropCapture()
         try? frameBuilder.deactivateWidgetBanner()
         playback.conceal(); inputEnabled = false; hovered = nil; pressed = nil
-        stopTimer(); isHidden = true
+        stopTimer(); isHidden = true; refreshSourceCursor()
         try? gyro.stop(at: now)
         renderedFrame = nil; renderedCamera = nil; lastPose = nil
     }
@@ -645,6 +648,7 @@ final class HUDSourceWatchView: NSView {
         // schedule a render. Preserve the last drawable until the owner hides
         // the view or chooses a new stable/opening pose.
         playback.conceal(); inputEnabled = false; stopTimer(); try? gyro.stop(at: now)
+        refreshSourceCursor()
     }
     func refreshPointerForVerification() { render(at: now) }
 
@@ -892,7 +896,9 @@ final class HUDSourceWatchView: NSView {
                 onPointerMove?()
             }
             if desktopMode, isDesktopPointerLocked?() == true { try gyro.stop(at: time) }
-            if !reduce, isOnScreen, window != nil, isDesktopPointerLocked?() != true {
+            // Match the finite-transition clock while WindowServer's first
+            // occlusion update is pending, so entrance/exit tilt follows input.
+            if !reduce, (isOnScreen || canAdvanceTransition), window != nil, isDesktopPointerLocked?() != true {
                 guard let p = pointerPoint else { throw HUDSourceError.invalid("Source Watch pointer conversion failed") }
                 var euler = try cameraModel.gyro.targetEuler(mouseUnity: SIMD2(Double(p.x), Double(bounds.height - p.y)), screenSize: screen)
                 if desktopMode {
@@ -1010,7 +1016,6 @@ final class HUDSourceWatchView: NSView {
                 updateDesktopStatusPlane(frame: frame, camera: camera)
             }
             updateAccessibility(frame: frame, camera: camera.camera)
-            refreshSourceCursor()
         } catch {
             diagnostics = [String(describing: error)]
             stopTimer(); playback.conceal(); inputEnabled = false
@@ -1090,15 +1095,14 @@ final class HUDSourceWatchView: NSView {
     private func cancelBannerPointer() {
         bannerPointerPixels = nil; frameBuilder.cancelWidgetBannerPointer()
     }
-    private func refreshSourceCursor() {
-        guard inputEnabled, playback.phase == .visible, isOnScreen, let window,
-              window.isKeyWindow, NSApp.isActive else { restoreSourceCursor(); return }
-        let p = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
-        guard visibleRect.contains(p) else { restoreSourceCursor(); return }
+    /// Cursor ownership follows the visible HUD, not whether its controls have
+    /// enabled yet. A nonactivating panel can be key while NSApp is inactive.
+    var presentedSourceCursor: NSCursor? {
+        guard playback.phase != .concealed, !isHiddenOrHasHiddenAncestor,
+              let window, window.isVisible, !window.isMiniaturized,
+              window.isKeyWindow, !window.ignoresMouseEvents else { return nil }
         let scale = max(window.backingScaleFactor, 1)
         if sourceCursor == nil || cursorBackingScale != scale {
-            // AppKit image sizes are points. This adapter preserves the original
-            // bitmap's backing-pixel extent; game runtime/DPI overrides are unknown.
             let image = NSImage(cgImage: cursorBitmap,
                 size: NSSize(width: CGFloat(cursorBitmap.width) / scale,
                              height: CGFloat(cursorBitmap.height) / scale))
@@ -1106,14 +1110,46 @@ final class HUDSourceWatchView: NSView {
                 hotSpot: NSPoint(x: cursorHotspotPixels.x / scale, y: cursorHotspotPixels.y / scale))
             cursorBackingScale = scale
         }
-        if previousCursor == nil { previousCursor = NSCursor.current }
-        // Register the original cursor only when ownership changes. Repeating
-        // set() on the ambient clock uploads its images to WindowServer again.
-        if let sourceCursor, NSCursor.current !== sourceCursor { sourceCursor.set() }
+        return sourceCursor
+    }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if let cursor = presentedSourceCursor { addCursorRect(visibleRect, cursor: cursor) }
+    }
+    func refreshSourceCursor() {
+        let cursor = presentedSourceCursor
+        if let cursor, previousCursor == nil {
+            // A registered cursor rect may have installed it before this event.
+            // Never record our own cursor as the value to restore on exit.
+            previousCursor = NSCursor.current === cursor ? .arrow : NSCursor.current
+        }
+        let active = cursor != nil
+        if cursorRectsActive != active {
+            cursorRectsActive = active
+            window?.invalidateCursorRects(for: self)
+            if desktopMode, let host = superview { window?.invalidateCursorRects(for: host) }
+        }
+        guard let cursor, let window else { restoreSourceCursor(); return }
+        let p = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
+        guard visibleRect.contains(p) else { restoreSourceCursor(); return }
+        // Native editors retain their text-selection cursor. This event-driven
+        // check is not polled by the source render clock.
+        let host = desktopMode ? (superview ?? self) : self
+        var hit = host.hitTest(convert(p, to: host.superview))
+        while let view = hit, view !== host {
+            if view is NSTextView || (view as? NSTextField)?.isEditable == true {
+                restoreSourceCursor(); return
+            }
+            hit = view.superview
+        }
+        if NSCursor.current !== cursor { cursor.set() }
     }
     private func restoreSourceCursor() {
         guard let previousCursor else { return }
-        previousCursor.set(); self.previousCursor = nil
+        // Never overwrite a cursor already chosen by an editor, drag or another
+        // application after this panel loses ownership.
+        if let sourceCursor, NSCursor.current === sourceCursor { previousCursor.set() }
+        self.previousCursor = nil
     }
     private func button(at point: CGPoint) -> HUDSourceID? {
         guard inputEnabled, playback.phase == .visible, let frame = renderedFrame, let camera = renderedCamera else { return nil }
@@ -1406,6 +1442,11 @@ final class HUDSourceWatchView: NSView {
             default: opacity = 1
             }
         } else { logoFlickerStarted = nil; opacity = 1 }
+        // Avoid copying the style dictionary on every idle frame, while still
+        // restoring a logo whose finite flicker was interrupted by concealment.
+        guard logoNodeIDs.contains(where: {
+            frameBuilder.desktopGraphicStyles[$0] != .init(opacity: opacity * (document.scene.node($0)?.name == "EndfieldTextGlow" ? 0.78 : 1))
+        }) else { return }
         var styles = frameBuilder.desktopGraphicStyles
         for id in logoNodeIDs {
             styles[id] = .init(opacity: opacity * (document.scene.node(id)?.name == "EndfieldTextGlow" ? 0.78 : 1))

@@ -71,6 +71,36 @@ enum HUDChargeBadgeTests {
         check(ObjectIdentifier(badge.layer.sublayers!.first!) == retainedCanvas,
               "Data and appearance changes retain the same rendering layer")
 
+        let previousLanguage = L10n.language
+        let notification = ChargeIndicatorView(frame: CGRect(origin: .zero, size: ChargeIndicatorView.canvasSize))
+        notification.setStage(.supercharge)
+        let notificationTexts = notification.embeddedContentLayer.sublayers?.compactMap { $0 as? CATextLayer } ?? []
+        let languages: [(AppLanguage, String, String)] = [
+            (.english, "CHARGE MODE", "BATTERY MODE"),
+            (.simplifiedChinese, "充电模式", "电池模式"),
+            (.traditionalChinese, "充電模式", "電池模式"),
+            (.japanese, "充電モード", "バッテリーモード")
+        ]
+        for (language, chargingTitle, batteryTitle) in languages {
+            L10n.language = language
+            for (plugged, charging, full) in [(true, true, false), (false, false, false), (true, false, true)] {
+                let value = BatterySnapshot(percentage: full ? 100 : 50, isPluggedIn: plugged,
+                                            isCharging: charging, isFullyCharged: full, hasBattery: true, capacity: capacity)
+                notification.set(snapshot: value, configuration: config)
+                badge.update(snapshot: value, configuration: config, dark: true, contentsScale: 2)
+                for layers in [notificationTexts, textLayers] {
+                    let subtitle = layers[0].string as! NSAttributedString
+                    let title = layers[1].string as! NSAttributedString
+                    check(subtitle.string == "// " + (charging ? "CHARGE MODE" : "BATTERY MODE")
+                          && title.string == (charging ? chargingTitle : batteryTitle),
+                          "Notification and HUD use the current charging state and selected language: \(language)")
+                    check(title.size().width <= layers[1].bounds.width && title.size().height <= layers[1].bounds.height,
+                          "Localized mode title fits the existing banner in \(language)")
+                }
+            }
+        }
+        L10n.language = previousLanguage
+
         var reduced = config; reduced.reduceMotion = true
         HUDRuntimeAppearance.configuration = reduced
         var completions = 0

@@ -18,7 +18,7 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(gesture.position == 0.4, "A held gesture must not drift toward a spring target")
             gesture.gesture(by: 2, hiddenLength: 1000, at: 0.6, phase: .changed, momentum: .none, reduceMotion: false)
             let rubber = gesture.position
-            check(rubber > 1 && (rubber - 1) * 1000 > 58 && (rubber - 1) * 1000 < 96 && !gesture.canScroll(-1),
+            check(rubber > 1 && (rubber - 1) * 1000 > 96 && (rubber - 1) * 1000 < 144 && !gesture.canScroll(-1),
                   "Precise edge movement uses bounded native-style rubber and disables its limit arrow")
             gesture.gesture(by: 2, hiddenLength: 1000, at: 0.7, phase: .changed, momentum: .none, reduceMotion: false)
             check(gesture.position > rubber && gesture.position - rubber < 0.01, "Rubber resistance increases near its finite limit")
@@ -50,7 +50,9 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(scroll.position == 0.7 && !scroll.isAnimating, "Scroll settles exactly and releases its animation clock")
             scroll.reset(to: 1, at: 3)
             scroll.scroll(by: 5, hiddenLength: 20_000, at: 3, reduceMotion: false)
-            check(scroll.position > 1 && (scroll.position - 1) * 20_000 <= 64.0001, "Edge bounce is bounded in content pixels even with many shortcuts")
+            scroll.scroll(by: 5, hiddenLength: 20_000, at: 3, reduceMotion: false)
+            check((scroll.position - 1) * 20_000 > 64 && (scroll.position - 1) * 20_000 <= 96.0001,
+                  "Repeated wheel input reaches the enlarged pixel bound even with many shortcuts")
             _ = scroll.advance(at: 5)
             check(scroll.position == 1 && !scroll.isAnimating, "Elastic edge returns to the exact valid endpoint")
             scroll.scroll(by: -0.4, hiddenLength: 1200, at: 6, reduceMotion: true)
@@ -65,6 +67,44 @@ enum HUDSourceDesktopNavigationLayoutTests {
             for frame in 1...10 { _ = a.advance(at: Double(frame) / 60) }
             _ = b.advance(at: 1.0 / 6)
             check(abs(a.position - b.position) < 1e-12, "Spring sampling is independent of dropped display ticks")
+            for hiddenLength in [200.0, 1000.0, 20_000.0] {
+                for endpoint in [0.0, 1.0] {
+                    let direction = endpoint == 0 ? -1.0 : 1.0
+                    var edge = HUDSourceDesktopScrollMotion()
+                    edge.reset(to: endpoint, at: 0)
+                    edge.gesture(by: direction * 10_000 / hiddenLength, hiddenLength: hiddenLength,
+                        at: 0, phase: .began, momentum: .none, reduceMotion: false)
+                    let travel = abs(edge.position - endpoint)
+                    check(travel > min(0.15, 96 / hiddenLength) && travel < min(0.24, 144 / hiddenLength),
+                          "Both precise edges exceed the old travel bound on short and long lists without escaping the new limit")
+                    edge.gesture(by: 0, hiddenLength: hiddenLength, at: 0.1,
+                        phase: .ended, momentum: .none, reduceMotion: false)
+                    _ = edge.advance(at: 2)
+                    check(edge.position == endpoint && !edge.requiresFrames,
+                          "The enlarged edge response settles exactly and stops requesting frames")
+                    edge.gesture(by: direction, hiddenLength: hiddenLength, at: 2.1,
+                        phase: .none, momentum: .began, reduceMotion: false)
+                    check(edge.position == endpoint && !edge.requiresFrames,
+                          "Neither edge restarts its enlarged rebound for a late momentum tail")
+                    edge.gesture(by: 0, hiddenLength: hiddenLength, at: 2.2,
+                        phase: .none, momentum: .ended, reduceMotion: false)
+                    check(!edge.acceptsGestureContinuation, "Momentum end releases either edge after the enlarged rebound")
+                    edge.gesture(by: direction, hiddenLength: hiddenLength, at: 3,
+                        phase: .began, momentum: .none, reduceMotion: true)
+                    edge.gesture(by: 0, hiddenLength: hiddenLength, at: 3.1,
+                        phase: .ended, momentum: .none, reduceMotion: true)
+                    check(edge.position == endpoint && !edge.requiresFrames,
+                          "Reduce Motion clamps either enlarged edge and has no remaining frame demand")
+                    edge.scroll(by: direction * 10_000 / hiddenLength, hiddenLength: hiddenLength, at: 4, reduceMotion: false)
+                    edge.scroll(by: direction * 10_000 / hiddenLength, hiddenLength: hiddenLength, at: 4, reduceMotion: false)
+                    let wheelTravel = abs(edge.position - endpoint)
+                    check(wheelTravel > min(0.15, 64 / hiddenLength) && wheelTravel <= min(0.24, 96 / hiddenLength) + 1e-12,
+                          "Both wheel edges extend farther while respecting the pixel and normalized caps")
+                    _ = edge.advance(at: 6)
+                    check(edge.position == endpoint && !edge.requiresFrames,
+                          "The enlarged wheel response settles exactly on both boundaries")
+                }
+            }
             let path = CGMutablePath(); path.addRect(CGRect(x: 25, y: 10, width: 8, height: 20))
             let fitted = HUDSourceDesktopIconLayout.path(path).boundingBoxOfPath
             check(abs(max(fitted.width, fitted.height) - 26) < 1e-10 && abs(fitted.midX - 16) < 1e-10 && abs(fitted.midY - 16) < 1e-10,

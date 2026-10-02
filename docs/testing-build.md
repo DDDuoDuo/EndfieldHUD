@@ -16,10 +16,12 @@ commit, architecture checks and artifact hashes; branch CI artifacts have their
 own provenance file. Install only one running copy, following the steps below.
 
 In this integration branch, Work Mode first tries public Control Center controls
-when Accessibility access is available. Existing configured Focus shortcuts are
-a fallback where supported. It preserves an already-active Focus and verifies
-changes; UI differences between macOS versions can still prevent automation.
-The shortcut-only setup described below applies to the original Watch branch.
+on macOS 11+ when you grant Accessibility access and the controls are recognized.
+Existing configured Focus shortcuts are a fallback on macOS 13+. It preserves
+an already-active Focus and verifies changes; an uncertain toggle never triggers
+a second attempt through Shortcuts. UI differences between macOS versions can
+prevent automation. The stable v1.0.1 release and original Watch branch use only
+the two shortcuts described in the [Focus setup guide](audio-and-work-mode.md#automatic-focus-setup).
 
 ## Current Watch branch build
 
@@ -72,17 +74,20 @@ obtained from the trusted distributor; it does not replace publisher identity.
   permission, and a compatible output device. Grant it only when using that
   feature. Audio is processed in memory and is not saved or uploaded. Some
   applications and devices cannot be independently adjusted.
-- Automatic Focus integration requires **macOS 13+**, Apple's Shortcuts command,
-  and the current user's uniquely named `EndfieldCharge Focus Start` and
-  `EndfieldCharge Focus End` shortcuts. **Installing this build does not install
-  those shortcuts**; the package includes no import files or automatic setup.
-  Follow the [manual setup and validation](https://github.com/DDDuoDuo/EndfieldHUD/blob/codex/endfield-watch-motion/docs/audio-and-work-mode.md#automatic-focus-setup),
-  including any first-run Shortcuts access requests. The path is the same on
-  eligible Intel and Apple silicon Macs, but only the M2/macOS 15.7.4 setup has
-  recorded live validation. Older supported systems can still use Work Mode's
-  timer. Existing Focus is preserved; previous schedules and same-mode user
-  changes cannot be fully restored. Normal quit allows up to eight seconds for
-  cleanup, so forced exit or a stalled shortcut can leave Focus active.
+- Automatic Focus in the integration branch uses **Accessibility** access and
+  recognizable Control Center controls on **macOS 11+**. If that path is
+  unavailable before a toggle, it can use the current user's uniquely named
+  `EndfieldCharge Focus Start` and `EndfieldCharge Focus End` shortcuts on
+  **macOS 13+**. The stable release and original Watch branch require this
+  shortcut setup. The app installs no shortcuts and grants no permissions;
+  follow the [Focus setup guide](audio-and-work-mode.md#automatic-focus-setup).
+  Native controls were inspected read-only on macOS 15.7.4; actual Control Center
+  toggling is covered by synthetic tests, not live end-to-end validation. Intel,
+  older macOS versions and Tahoe remain unverified. Work Mode's timer works
+  without automation. Existing Focus is preserved; previous schedules and
+  same-mode user changes cannot be fully restored. Normal quit allows up to
+  eight seconds for cleanup, so forced exit or a stalled operation can leave
+  Focus active.
 - Launch at login works after installation in Applications and may require
   approval in macOS Login Items. Opening the DMG alone does not install the app.
 - File and image access follows the user's chosen items. The app keeps its

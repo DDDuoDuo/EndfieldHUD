@@ -77,6 +77,7 @@ enum HUDLifecycleVerification {
         private var openingPointer = CGPoint.zero
         private var openingSourceFrames = 0
         private weak var closingSource: HUDSourceWatchView?
+        private weak var presentedCursor: NSCursor?
         private var windowIDs = Set<ObjectIdentifier>()
         private let priorPointerProvider: (() -> CGPoint)?
         private let priorClosed: (() -> Void)?
@@ -189,6 +190,7 @@ enum HUDLifecycleVerification {
             check(overlay.systemSelectedModule == .eventLog && overlay.systemCenterContentCount == 1
                   && overlay.systemReportGeometryMatchesSelectionForVerification,
                   "Event Log remains a real native canvas inside the persistent shell")
+            checkCursorOwnership("native module")
             let shell = overlay.systemShellIdentity
             let section = overlay.systemSelectedModule
             clickProjectedQuit()
@@ -405,6 +407,37 @@ enum HUDLifecycleVerification {
                   "Transition pointer response retains at most thirteen finite plane tracks")
             check(overlay.systemAmbientAnimationCount == 0,
                   "Transition pointer response does not start or retain ambient loops")
+            // Resetting AppKit cursor regions can flush layout. Inspect the
+            // immediate motion tracks first so the cursor probe cannot settle
+            // the very tracks this timing assertion is measuring.
+            checkCursorOwnership(phase.rawValue)
+        }
+
+        private func checkCursorOwnership(_ phase: String) {
+            guard let source = overlay.systemSourceWatchForVerification,
+                  let cursor = source.presentedSourceCursor, let window = source.window,
+                  let host = source.superview as? SystemHUDView else {
+                fail("Visible HUD must own its source cursor during \(phase)")
+            }
+            presentedCursor = cursor
+            // AppKit can reset the cursor while crossing native module views.
+            // The host's cursor-update route must restore it without a draw tick.
+            NSCursor.arrow.set()
+            window.resetCursorRects()
+            guard let event = NSEvent.mouseEvent(with: .mouseMoved,
+                location: window.convertPoint(fromScreen: screenPointer), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else {
+                fail("Cannot create a local cursor-update event")
+            }
+            let frames = source.renderedFrameCount
+            host.cursorUpdate(with: event)
+            check(source.sourceCursorOwnedForVerification && source.renderedFrameCount == frames,
+                  "Native center restores the Endfield cursor without render polling during \(phase)")
+            NSCursor.arrow.set()
+            source.cursorUpdate(with: event)
+            check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
+                  "Source and native panels reuse one cursor during \(phase)")
         }
 
         private func checkCleanClose(_ label: String, requireReleasedView: Bool = true) {
@@ -412,6 +445,9 @@ enum HUDLifecycleVerification {
                   && overlay.systemShellIdentity == nil && overlay.lastClosedAnimationCount == 0
                   && !overlay.lastClosedSourceTimerActive && overlay.lastClosedSourcePhase == .concealed,
                   "\(label) releases the hidden presentation and all animation tracks")
+            if let presentedCursor {
+                check(NSCursor.current !== presentedCursor, "Closing releases the Endfield cursor")
+            }
             if requireReleasedView { checkReleasedSource(label) }
         }
 
