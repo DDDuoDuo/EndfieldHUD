@@ -70,6 +70,9 @@ enum FileShelfCanvasTests {
         let preparedLabel = descendants(firstPreparedCard).compactMap { $0 as? CATextLayer }.first!
         check(deferredCards().count == 6 && preparedLabel.contentsScale == HUDRenderScale.contentScale(for: preparedLabel, baseScale: 3),
               "First shelf presentation prepares only the visible page at the selected backing scale")
+        deferred.activate()
+        check(deferredCards().first === firstPreparedCard,
+              "Enabling shelf input after its reveal keeps the prepared card artwork intact")
         deferred.deactivate(); deferred.updateRenderScale(2); deferred.refreshFromStore()
         check(deferredCards().first === firstPreparedCard,
               "Hiding and updating the shelf does not rebuild its retained cards")

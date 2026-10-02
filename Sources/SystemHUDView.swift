@@ -33,6 +33,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var sourceEntranceReady: (() -> Void)?
     private var sourceCenterProjection: CATransform3D?
     private let moduleContrast = CAGradientLayer()
+    private let mapForegroundMask = CAShapeLayer()
+    private let mapContrastMask = CAShapeLayer()
+    private var sourceBottomSilhouettes: [[CGPoint]] = []
     private var usesSourceShell: Bool { sourceWatch != nil && sourceWatchFailureReason == nil }
     var sourceWatchForVerification: HUDSourceWatchView? { sourceWatch }
     var isPreparingSourceBackdrop: Bool { sourceWatch?.isPreparingBackdrop == true }
@@ -1119,13 +1122,16 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     func selectModule(_ module: HUDModule, animated: Bool = true) {
         guard allowsModuleInput else { return }
         guard module != selectedModule else { return }
-        deactivateModuleInput()
+        // A queued click must not cancel the workspace artwork already moving
+        // with the current swap. Its input bridges are already inactive.
+        if !moduleContent.isTransitioning { deactivateModuleInput() }
         selectedModule = module
         let shouldAnimate = animated && !HUDRuntimeAppearance.reduceMotion
         navigation.select(module, animated: shouldAnimate)
         moduleContent.select(module: module, animated: shouldAnimate) { [weak self] in
             guard let self = self, self.interactionEnabled, !self.transitioning else { return }
             self.eventLog.record(kind: .moduleOpened, metadata: ["module": module.rawValue])
+            self.updateMapOcclusionPresentation()
             self.updateButtonStates()
         }
         if shouldAnimate && !usesSourceShell {
@@ -1142,7 +1148,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             artwork.frame.add(nudge, forKey: "section.index")
         }
         updateModulePresentation()
-        notesCanvas.setPresentation(notesSelected: module == .notes, animated: shouldAnimate)
         updateButtonStates()
         updateNavigationGeometry()
         scheduleVisibleMotion()
@@ -1168,6 +1173,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
             self.setAccessibilityLabel(L10n.text("System interface", "系统界面") + ", " + self.selectedModule.title)
         }
+        updateMapOcclusionPresentation()
     }
 
     private func updateProfileBackgroundPresentation() {
@@ -1332,8 +1338,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         if let native, native !== self, native !== sourceWatch,
            !native.isDescendant(of: blurBackdrop), native !== blurBackdrop { return native }
         let design = designPoint(local)
-        if let center = centerPoint(design), CGRect(origin: .zero, size: selectedModule.contentFrame.size).contains(center) { return self }
+        // Pinned cards are painted above the map and source controls.
         if notesWorkspaceIsInteractive, let note = notesWorkspacePoint(local), notesCanvas.containsWorkspacePoint(note) { return self }
+        if sourceWatch?.bottomButtonContains(local) == true { return sourceWatch }
+        if let center = centerPoint(design), CGRect(origin: .zero, size: selectedModule.contentFrame.size).contains(center) { return self }
         if !usesSourceShell, let identity = navigationPoint(design), identityCard.target(at: identity) != nil { return self }
         if let charge = chargeDesignPoint(design), chargeBadge.contains(charge) { return self }
         return sourceWatch
@@ -1490,7 +1498,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             statusPanel.isHidden = statusHidden
             if let statusProjection = sourceStatusProjection {
                 HUDSourceWatchView.renderProjectedContent(statusPanel, opacity: canvas.opacity, clip: nil,
-                    flippedRaster: true, projection: CATransform3DConcat(CATransform3DMakeTranslation(144.28, 0, 0), statusProjection),
+                    flippedRaster: true, projection: CATransform3DConcat(CATransform3DMakeTranslation(126.28, 8, 0), statusProjection),
                     rasterBounds: statusPanel.bounds.insetBy(dx: 0, dy: -12), subdivisions: 12, in: context)
             }
             var notesProjection = CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0)
@@ -1542,6 +1550,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             view.onPointerMove = { [weak self] in self?.followCurrentPointer() }
             view.onDesktopCenterPlane = { [weak self] projection in self?.applySourceCenterProjection(projection) }
             view.onDesktopStatusPlane = { [weak self] projection in self?.applySourceStatusProjection(projection) }
+            view.onDesktopBottomSilhouettes = { [weak self] polygons in self?.applySourceMapOcclusion(polygons) }
+            view.desktopMapOcclusionEnabled = selectedModule == .map
             view.isDesktopPointerLocked = { [weak self] in self?.isModuleInputLocked ?? false }
             view.layer?.zPosition = -1000
             blurBackdrop.layer?.zPosition = -2000
@@ -1574,11 +1584,58 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
     }
 
+    private func updateMapOcclusionPresentation() {
+        let enabled = usesSourceShell && moduleContent.isPresenting(.map)
+        sourceWatch?.desktopMapOcclusionEnabled = enabled
+        if enabled { applySourceMapOcclusion(sourceBottomSilhouettes) }
+        else {
+            withoutActions {
+                self.moduleContent.layer.mask = nil
+                self.moduleContrast.mask = nil
+            }
+        }
+    }
+
+    private func applySourceMapOcclusion(_ polygons: [[CGPoint]]) {
+        sourceBottomSilhouettes = polygons
+        guard moduleContent.isPresenting(.map), usesSourceShell else { return }
+        let host = moduleContent.layer
+        let scale = host.transform.m11
+        guard scale > 0 else { return }
+        let path = CGMutablePath()
+        path.addRect(host.bounds)
+        for polygon in polygons {
+            let local = polygon.compactMap { point -> CGPoint? in
+                let design = designPoint(point)
+                // These contours come from the frame just submitted by the
+                // source renderer, so invert its matching model projection.
+                guard let plane = Self.unproject(CGPoint(x: design.x - 500, y: design.y - 320),
+                    transform: corePlane.spatial.transform) else { return nil }
+                let core = CGPoint(x: plane.x + 500, y: plane.y + 320)
+                return CGPoint(x: (core.x - host.position.x) / scale + host.bounds.midX,
+                               y: (core.y - host.position.y) / scale + host.bounds.midY)
+            }
+            guard local.count == polygon.count, let first = local.first else { continue }
+            path.move(to: first)
+            for point in local.dropFirst() { path.addLine(to: point) }
+            path.closeSubpath()
+        }
+        withoutActions {
+            for mask in [self.mapForegroundMask, self.mapContrastMask] {
+                mask.frame = self.moduleContent.layer.bounds
+                mask.fillRule = .evenOdd; mask.fillColor = NSColor.white.cgColor
+                mask.path = path
+            }
+            self.moduleContent.layer.mask = self.mapForegroundMask
+            self.moduleContrast.mask = self.mapContrastMask
+        }
+    }
+
     private func applySourceStatusProjection(_ projection: CATransform3D) {
         guard usesSourceShell, designScale > 0 else { return }
         sourceStatusProjection = projection
-        // Shortened banner, inset 24 source points from its original right edge.
-        var local = CATransform3DConcat(CATransform3DMakeTranslation(144.28, 0, 0), projection)
+        // Keep the compact clock slightly inset and below its authored banner anchor.
+        var local = CATransform3DConcat(CATransform3DMakeTranslation(126.28, 8, 0), projection)
         local = CATransform3DConcat(local, CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0))
         local = CATransform3DConcat(local, CATransform3DMakeScale(1 / designScale, 1 / designScale, 1))
         withoutActions { self.statusPanel.transform = local }
@@ -1591,11 +1648,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 if self.clockTime.superlayer !== self.statusPanel {
                     for item in [self.clockTime, self.clockDate, self.workBadge] { self.statusPanel.addSublayer(item) }
                 }
-                self.clockTime.frame = CGRect(x: 22, y: 20, width: 316, height: 39)
+                self.clockTime.frame = CGRect(x: 22, y: 20, width: 296, height: 39)
                 self.clockTime.fontSize = 32
-                self.clockDate.frame = CGRect(x: 22, y: 61, width: 316, height: 20)
+                self.clockDate.frame = CGRect(x: 22, y: 61, width: 296, height: 20)
                 self.clockDate.fontSize = 13
-                self.workBadge.frame = CGRect(x: 22, y: 89, width: 316, height: 20)
+                self.workBadge.frame = CGRect(x: 22, y: 89, width: 296, height: 20)
                 self.workBadge.fontSize = 14
                 self.clockTime.foregroundColor = NSColor(white: 0.96, alpha: 1).cgColor
                 self.clockDate.foregroundColor = NSColor(white: 0.64, alpha: 1).cgColor
@@ -1839,6 +1896,16 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         healthLabel = text("", rect: CGRect(x: 0, y: 291, width: 400, height: 20), size: 10,
                            parent: core, role: .muted, alignment: .center)
         moduleContent = HUDModuleContent(powerLayer: core)
+        moduleContent.onPresentationChange = { [weak self] from, to, animated in
+            guard let self else { return }
+            // Revealing a navigation row can refresh input after the earlier
+            // cleanup. Once the host is transitioning, finish that cleanup
+            // before adding the workspace animation, so it cannot cancel it.
+            if animated { self.notesInteraction?.setActive(false) }
+            self.notesCanvas.setPresentation(notesSelected: to == .notes, animated: animated,
+                direction: HUDModuleContent.direction(from: from, to: to))
+            self.updateMapOcclusionPresentation()
+        }
         moduleContent.register(notesCanvas, for: .notes)
         moduleContent.register(shelfCanvas, for: .fileShelf)
         moduleContent.register(clipboardCanvas, for: .clipboard)
@@ -1916,7 +1983,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         workBadge.actions = ["contents": NSNull()]
         statusPanel.name = "hud.clock.panel"
         statusPanel.anchorPoint = .zero; statusPanel.position = .zero
-        statusPanel.bounds = CGRect(x: 0, y: 0, width: 360, height: 122)
+        statusPanel.bounds = CGRect(x: 0, y: 0, width: 340, height: 122)
         statusPanel.isHidden = true
         let outer = CGPath(roundedRect: statusPanel.bounds.insetBy(dx: 0.8, dy: 0.8), cornerWidth: 6, cornerHeight: 6, transform: nil)
         statusPlate.path = CGPath(roundedRect: statusPanel.bounds.insetBy(dx: 7, dy: 7), cornerWidth: 3, cornerHeight: 3, transform: nil)
@@ -1924,8 +1991,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         statusPlate.strokeColor = NSColor(white: 0.70, alpha: 0.35).cgColor; statusPlate.lineWidth = 1
         statusFrame.path = outer; statusFrame.fillColor = nil; statusFrame.lineWidth = 1.5
         let marks = CGMutablePath()
-        for x in stride(from: CGFloat(14), through: 322, by: 56) {
-            marks.move(to: CGPoint(x: x, y: 131)); marks.addLine(to: CGPoint(x: x + 42, y: 131))
+        for x in stride(from: CGFloat(14), through: 306, by: 56) {
+            marks.move(to: CGPoint(x: x, y: 131)); marks.addLine(to: CGPoint(x: min(x + 42, 326), y: 131))
         }
         statusUnderline.path = marks; statusUnderline.lineWidth = 3; statusUnderline.fillColor = nil
         for item in [statusPlate, statusFrame, statusUnderline] { statusPanel.addSublayer(item) }
@@ -2519,12 +2586,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return CGPoint(x: local.x + 500, y: local.y + 320)
     }
 
-    private var reportScale: CGFloat { selectedModule == .workMode || selectedModule == .map ? 1 : 0.86 }
+    private var reportScale: CGFloat {
+        if selectedModule == .map { return usesSourceShell ? 1.14 : 1 }
+        return selectedModule == .workMode ? 1 : 0.86
+    }
     private var reportCenterY: CGFloat {
         guard selectedModule == .workMode || selectedModule == .map else { return usesSourceShell ? 285 : 294 }
         // Leave room for the source shell's lower buttons without shrinking the
         // map or countdown. Drawing, editors and hit-testing share this origin.
-        return usesSourceShell ? 285 : 320
+        return usesSourceShell ? (selectedModule == .map ? 297 : 285) : 320
     }
     private func reportRect(_ rect: CGRect) -> CGRect {
         CGRect(x: 500 + (rect.minX - 500) * reportScale, y: reportCenterY + (rect.minY - 320) * reportScale,

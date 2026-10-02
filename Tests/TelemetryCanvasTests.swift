@@ -54,8 +54,9 @@ enum TelemetryCanvasTests {
         L10n.language = .simplifiedChinese
         check(preview!.makeContent(for: .activityMonitor, style: light) === activityRoot && ids(activityRoot) == activityIDs,
               "Theme and language changes retain the complete Activity layer tree")
-        check(text("activity.title.1", activityRoot) == "内存" && preview!.accessibilityStatus.contains("磁盘读取"),
-              "Activity labels and accessible readouts localize together")
+        check(text("activity.title.1", activityRoot) == "RAM" && preview!.accessibilityStatus.contains("RAM ")
+              && preview!.accessibilityStatus.contains("磁盘读取"),
+              "Activity keeps RAM consistent while its other labels and accessible readouts localize together")
         check((named("activity.value.0", activityRoot) as! CATextLayer).contentsScale >= 3,
               "Text adopts the supplied render scale without rasterizing its parent")
         let savedAppearance = HUDRuntimeAppearance.configuration
@@ -180,7 +181,7 @@ enum TelemetryCanvasTests {
         check(appModel.sortKey == .cpu && !appModel.sortDescending && text("activity.apps.header.1", appCanvas.layer) == "CPU ↑",
               "Clicking the active table heading reverses CPU sorting")
         appCanvas.mouseDown(at: CGPoint(x: columnActions[2].rect.midX, y: columnActions[2].rect.midY))
-        check(appModel.sortKey == .memory && appModel.sortDescending && text("activity.apps.header.2", appCanvas.layer) == "Memory ↓"
+        check(appModel.sortKey == .memory && appModel.sortDescending && text("activity.apps.header.2", appCanvas.layer) == "RAM ↓"
               && text("activity.apps.header.1", appCanvas.layer) == "CPU", "A different metric starts descending and moves the one sort indicator")
         appCanvas.perform(actionID: "activity:sort:network")
         check(appModel.sortKey == .network && appModel.sortDescending && text("activity.apps.header.3", appCanvas.layer) == "Network ↓",
@@ -194,9 +195,15 @@ enum TelemetryCanvasTests {
         L10n.language = .simplifiedChinese
         _ = appCanvas.makeContent(for: .activityMonitor, style: light)
         appCanvas.perform(actionID: "activity:sort:memory")
-        check(text("activity.apps.header.2", appCanvas.layer) == "内存 ↓"
-              && appCanvas.accessibleActions.first { $0.id == "activity:sort:memory" }?.label == "排序：内存，降序",
-              "Column titles, selected arrows and accessible sorting directions localize together")
+        check(text("activity.apps.header.2", appCanvas.layer) == "RAM ↓"
+              && appCanvas.accessibleActions.first { $0.id == "activity:sort:memory" }?.label == "排序：RAM，降序",
+              "RAM column titles stay consistent while selected arrows and accessible sorting directions localize")
+        for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese] {
+            L10n.language = language
+            _ = appCanvas.makeContent(for: .activityMonitor, style: light)
+            check(text("activity.apps.header.2", appCanvas.layer) == "RAM ↓" && appCanvas.accessibilityStatus.contains("RAM "),
+                  "Every supported language uses RAM in app headings and accessible metric descriptions")
+        }
         L10n.language = .english
         _ = appCanvas.makeContent(for: .activityMonitor, style: dark)
         check(ids(appCanvas.layer) == appIDs, "Sorting reuses retained app row layers")

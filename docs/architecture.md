@@ -41,7 +41,8 @@ completion callbacks. Module deactivation removes visible-only observers,
 editors, accessibility controls and display timers.
 
 A one-time utility-queue launch preparation decodes immutable source metadata
-and prepares the desktop shader functions. It creates no hidden renderer or
+and prepares the desktop shader functions, including required clipped variants
+within the fixed eight-pair limit. It creates no hidden renderer or
 textures and runs no recurring timer. Immutable programs remain in the existing
 bounded cache after closing.
 

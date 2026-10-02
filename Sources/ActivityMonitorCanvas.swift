@@ -32,15 +32,17 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
     var accessibilityStatus: String {
         if isShowingApps {
             return apps.snapshot.items.map { item in
-                [item.name, "CPU " + appCPU(item.cpuPercent), TelemetryArtwork.bytes(item.memoryBytes.map { Double($0) }),
+                let ram = "RAM " + TelemetryArtwork.bytes(item.memoryBytes.map(Double.init))
+                let fields: [String] = [item.name, "CPU " + appCPU(item.cpuPercent), ram,
                  "↑ " + TelemetryArtwork.rate(item.uploadBytesPerSecond), "↓ " + TelemetryArtwork.rate(item.downloadBytesPerSecond),
                  L10n.text("Read ", "读取 ") + TelemetryArtwork.rate(item.diskReadBytesPerSecond),
-                 L10n.text("Write ", "写入 ") + TelemetryArtwork.rate(item.diskWriteBytesPerSecond)].joined(separator: ", ")
+                 L10n.text("Write ", "写入 ") + TelemetryArtwork.rate(item.diskWriteBytesPerSecond)]
+                return fields.joined(separator: ", ")
             }.joined(separator: "; ")
         }
         let value = controller.snapshot
         let values = ["CPU " + TelemetryArtwork.percent(value.cpuPercent),
-            L10n.text("Memory ", "内存 ") + TelemetryArtwork.bytes(value.memoryUsedBytes.map { Double($0) }) + " / " + TelemetryArtwork.bytes(value.memoryTotalBytes.map { Double($0) }),
+            L10n.text("RAM ", "RAM ") + TelemetryArtwork.bytes(value.memoryUsedBytes.map { Double($0) }) + " / " + TelemetryArtwork.bytes(value.memoryTotalBytes.map { Double($0) }),
             L10n.text("Upload ", "上传 ") + TelemetryArtwork.rate(value.uploadBytesPerSecond),
             L10n.text("Download ", "下载 ") + TelemetryArtwork.rate(value.downloadBytesPerSecond),
             L10n.text("Disk read ", "磁盘读取 ") + TelemetryArtwork.rate(value.diskReadBytesPerSecond),
@@ -92,7 +94,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
     private var appColumns: [AppColumn] {
         let values: [(AppActivitySortKey, String, CGFloat, CGFloat)] = [
             (.name, L10n.text("App", "应用"), 12, 128), (.cpu, "CPU", 146, 45),
-            (.memory, L10n.text("Memory", "内存"), 195, 52),
+            (.memory, L10n.text("RAM", "RAM"), 195, 52),
             (.network, L10n.text("Network", "网络"), 251, 65), (.disk, L10n.text("Disk", "磁盘"), 317, 65)
         ]
         return values.map { AppColumn(key: $0.0, title: $0.1, frame: CGRect(x: $0.2, y: 61, width: $0.3, height: 15)) }
@@ -326,7 +328,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
             subtitle.string = ""; subtitle.isHidden = true; footer.string = ""; footer.isHidden = true
             renderTabs()
             subtitle.foregroundColor = TelemetryArtwork.muted(dark).cgColor
-            let labels = ["CPU", L10n.text("Memory", "内存"), L10n.text("Network", "网络"), L10n.text("Disk I/O", "磁盘 I/O")]
+            let labels = ["CPU", L10n.text("RAM", "RAM"), L10n.text("Network", "网络"), L10n.text("Disk I/O", "磁盘 I/O")]
             let captions = [L10n.text("TOTAL LOAD", "总负载"), L10n.text("USED / TOTAL", "已用 / 总计"), L10n.text("UP / DOWN", "上传 / 下载"), L10n.text("READ / WRITE", "读取 / 写入")]
             for (index, row) in rows.enumerated() {
                 let colors = index == 1 ? [ActivityGraphPalette.blue] : index >= 2

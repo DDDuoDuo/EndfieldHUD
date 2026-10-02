@@ -44,6 +44,9 @@ struct HUDSourceDesktopHoverFeedback {
     let sideEdgeIDs: Set<HUDSourceID>
     let profileButtonIDs: Set<HUDSourceID>
     let profileRootID: HUDSourceID?
+    /// Its additive source image is replaced by a normal-alpha themed plate.
+    /// The original root ColorTint still supplies the single finite fade.
+    let profileHighlightNodeID: HUDSourceID?
     private let profileBinding: HUDSourceSelectableColor.Binding?
     private let profileDecorationAlpha: [HUDSourceID: Float]
     private let quitBindings: [(background: HUDSourceID, binding: HUDSourceSelectableColor.Binding)]
@@ -57,6 +60,7 @@ struct HUDSourceDesktopHoverFeedback {
         profileButtonIDs = card?.buttonIDs ?? []
         profileRootID = card?.scene.rootID
         profileBinding = selectable.bindings.first { $0.buttonNodeID == card?.scene.rootID }
+        profileHighlightNodeID = profileBinding?.targetNodeID
         profileDecorationAlpha = Dictionary(uniqueKeysWithValues: (card?.scene.nodes ?? []).compactMap { node in
             guard node.path.contains("/PlayerInfo/DecoNode/"),
                   ["LeftLineImage", "RightLineImage", "LineImage", "LeftBottomImage"].contains(node.name),
@@ -128,7 +132,7 @@ struct HUDSourceDesktopScrollMotion {
         guard delta.isFinite, hiddenLength.isFinite, hiddenLength > 0, time.isFinite else { return }
         _ = advance(at: time)
         isGestureActive = false; ownsMomentum = false; suppressesMomentum = false
-        edgeLimit = min(0.08, 36 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        edgeLimit = min(0.15, 64 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
         let requested = target + delta
         target = min(1, max(0, requested))
         if reduceMotion { position = target; velocity = 0; return }
@@ -154,7 +158,7 @@ struct HUDSourceDesktopScrollMotion {
             if ended { ownsMomentum = false; suppressesMomentum = false }
             return
         }
-        edgeLimit = min(0.08, 58 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        edgeLimit = min(0.15, 96 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
         if !isGestureActive {
             _ = advance(at: time)
             let bound = min(1, max(0, position)), excess = position - bound
@@ -177,7 +181,7 @@ struct HUDSourceDesktopScrollMotion {
         guard time.isFinite else { return position }
         defer { lastTime = time }
         guard let lastTime, time > lastTime, isAnimating else { return position }
-        let dt = min(2, time - lastTime), decay = 16.0, frequency = 12.0
+        let dt = min(2, time - lastTime), decay = 11.0, frequency = 15.0
         let offset = position - target, b = (velocity + decay * offset) / frequency
         let e = exp(-decay * dt), c = cos(frequency * dt), s = sin(frequency * dt)
         position = target + e * (offset * c + b * s)

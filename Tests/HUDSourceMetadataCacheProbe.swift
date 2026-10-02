@@ -92,6 +92,12 @@ struct HUDSourceMetadataCacheProbe {
         try HUDSourceMetalRenderer.prepareDesktopMetadataIfNeeded(resourceRoot: root.appendingPathComponent("missing"))
         let afterNoOp = try HUDSourceMetalRenderer.metadataIdentityForVerification(root: root)
         try check(afterNoOp == ready, "Reference and missing resource roots must leave the desktop cache intact")
+        let warmupKeys = try HUDSourceMetalRenderer.desktopPrewarmShaderKeysForVerification(resourceRoot: source)
+        try check(warmupKeys.contains("imageClipRect"), "Clipped side buttons must prepare their actual shader variant")
+        try check(!warmupKeys.isEmpty && warmupKeys.count <= 8 && Set(warmupKeys).count == warmupKeys.count,
+                  "Shader selection is unique and bounded before any GPU allocation")
+        try check(HUDSourceMetalRenderer.programCacheStatisticsForVerification()["libraries"] == 0,
+                  "Selecting warmup keys must not construct programs or a Metal device")
         print("PASS: \(assertions) CPU metadata cache checks; 132 material inputs equal fresh parsing; no GPU or window")
     }
 }

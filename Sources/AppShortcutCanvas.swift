@@ -37,6 +37,7 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
     private var rows = CALayer()
     private var outgoing: CALayer?
     private var active = false
+    private var presentationPrepared = false
     private let shouldReduceMotion: () -> Bool
     private var transitionGeneration = 0
     private var transitionCompletion: (() -> Void)?
@@ -67,14 +68,24 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
         dark = style.dark; scale = style.contentsScale
         if isTransitioning && shouldReduceMotion() { finishTransition(generation: transitionGeneration) }
-        repaint(); return layer
+        if presentationPrepared { repaint() }
+        else { presentationPrepared = true; refreshFromStore() }
+        return layer
     }
     func updateRenderScale(_ value: CGFloat) {
         let next = value.isFinite ? min(8, max(1, value)) : 2
         guard scale != next else { return }; scale = next; repaint()
     }
-    func activate() { active = true; refreshFromStore() }
-    func deactivate() { active = false; cancelTransitions(); dropTarget = false; repaint() }
+    func activate() {
+        active = true
+        if !presentationPrepared || items != (store?.items ?? []) {
+            presentationPrepared = true; refreshFromStore()
+        }
+    }
+    func deactivate() {
+        active = false; presentationPrepared = false; cancelTransitions()
+        if dropTarget { dropTarget = false; repaint() }
+    }
     func refreshFromStore() {
         items = store?.items ?? []
         let retained = Set(items.map(\.id)); icons = icons.filter { retained.contains($0.key) }

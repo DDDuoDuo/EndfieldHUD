@@ -48,6 +48,8 @@ enum LocalizationTests {
             L10n.language = selection
             check(HUDModule.notes.englishTitle == "Notes" && HUDModule.eventLog.englishTitle == "Event Log",
                   "Intentionally English HUD headings remain English in \(selection)")
+            check(L10n.text("RAM", "RAM") == "RAM" && L10n.text("RAM ", "RAM ") == "RAM ",
+                  "The RAM metric keeps its requested label in \(selection)")
         }
 
         L10n.language = .japanese

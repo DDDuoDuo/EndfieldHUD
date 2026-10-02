@@ -153,8 +153,8 @@ enum HUDModuleTests {
             let outgoing = wrappers[0], incoming = wrappers[1]
             guard let mask = incoming.mask as? CAShapeLayer,
                   let reveal = mask.animation(forKey: "module.shutter") as? CAKeyframeAnimation,
-                  let paths = reveal.values as? [CGPath], paths.count == 7,
-                  let lock = incoming.animation(forKey: "module.transform") as? CAKeyframeAnimation,
+                  let paths = reveal.values as? [CGPath], paths.count == 5,
+                  let lock = incoming.animation(forKey: "module.transform") as? CABasicAnimation,
                   let seam = incoming.sublayers?.first(where: { $0.name == "module.registration" }) as? CAShapeLayer,
                   let registration = seam.animation(forKey: "module.registration") as? CAAnimationGroup else {
                 fatalError("Incoming modules require a segmented mask, content registration and a fine frontier")
@@ -168,16 +168,20 @@ enum HUDModuleTests {
             let samples = stride(from: 11, through: 429, by: 22).flatMap { x in
                 stride(from: 11, through: 429, by: 22).map { y in CGPoint(x: x, y: y) }
             }
-            check(samples.allSatisfy { !paths[0].contains($0) && paths[6].contains($0) },
+            check(samples.allSatisfy { !paths[0].contains($0) && paths.last!.contains($0) },
                   "The mask begins completely closed and ends with complete content coverage")
-            let openingBounds = paths[1].boundingBoxOfPath, correctionBounds = paths[2].boundingBoxOfPath
-            check(correctionBounds.width < openingBounds.width,
-                  "A short shutter correction acts on actual content coverage instead of painted bars")
-            check(lock.values?.count == 7 && lock.keyTimes == reveal.keyTimes && lock.duration == HUDModuleContent.transitionDuration,
-                  "Content registration and shutter corrections share the same finite timing grid")
-            let transforms = (lock.values as? [NSValue])!.map(\.caTransform3DValue)
-            check(CATransform3DIsIdentity(transforms.last!) && transforms.dropFirst().dropLast().contains { abs($0.m21) > 0.001 },
-                  "The content gets bounded shear corrections and locks exactly to identity")
+            check(zip(paths, paths.dropFirst()).allSatisfy { earlier, later in
+                samples.allSatisfy { !earlier.contains($0) || later.contains($0) }
+            }, "The mechanical reveal never hides content that has already arrived")
+            let departure = outgoing.animation(forKey: "module.transform")!
+            let retract = outgoing.mask!.animation(forKey: "module.shutter")!
+            check(lock.duration == HUDModuleContent.transitionDuration && departure.duration == lock.duration
+                  && retract.duration == lock.duration && reveal.duration == lock.duration,
+                  "Incoming and outgoing content share one finite handoff duration")
+            let transforms = [lock.fromValue, lock.toValue].compactMap { ($0 as? NSValue)?.caTransform3DValue }
+            check(transforms.count == 2 && CATransform3DIsIdentity(transforms.last!)
+                  && transforms.allSatisfy { $0.m21 == 0 },
+                  "Content approaches once and settles at identity without shear corrections")
             check(transforms.allSatisfy { abs($0.m41) <= 33 && abs($0.m42) <= 3 && $0.m43 >= -55 && $0.m43 <= 0 },
                   "Signal registration keeps content displacement and depth within deliberate limits")
             check(seam.fillColor == nil && seam.lineWidth <= 0.7 && seam.opacity == 0
@@ -236,18 +240,39 @@ enum HUDModuleTests {
               && reduced.layer.sublayers?.first?.sublayers?.contains { $0.name == "module.registration" } == false,
               "Reduced-motion content contains neither a mask nor an invisible decorative frontier")
         content.select(module: .power, animated: false)
+        content.select(module: .map, animated: true)
+        content.select(module: .notes, animated: true)
+        check(content.isPresenting(.power) && content.isPresenting(.map) && !content.isPresenting(.notes),
+              "Presentation membership retains visible map artwork while a different destination is only queued")
+        content.settle()
+        check(content.isPresenting(.notes) && !content.isPresenting(.map),
+              "Settling releases outgoing map membership so foreground masks can be removed")
+        content.select(module: .power, animated: false)
         var discardedNaturalCompletion = 0, finalNaturalCompletion = 0
+        var presented: [(HUDModule, HUDModule, Bool)] = []
+        content.onPresentationChange = { presented.append(($0, $1, $2)) }
         content.select(module: .notes, animated: true) { discardedNaturalCompletion += 1 }
         content.select(module: .display, animated: true) { finalNaturalCompletion += 1 }
+        check(presented.count == 1 && presented[0].0 == .power && presented[0].1 == .notes && presented[0].2,
+              "Workspace artwork starts with the actual incoming module, not a later queued click")
         let finishDeadline = Date().addingTimeInterval(1.5)
         while content.isTransitioning && Date() < finishDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         check(!content.isTransitioning && content.selectedModule == .display && discardedNaturalCompletion == 0 && finalNaturalCompletion == 1,
               "Natural animation completion drains the latest queued destination exactly once")
+        check(presented.count == 2 && presented[1].0 == .notes && presented[1].1 == .display && presented[1].2,
+              "Queued module artwork begins only when that module's own handoff starts")
         check(content.contentLayerCount == 1 && content.activeTransitionAnimationCount == 0
               && content.layer.sublayers?.first?.mask == nil
               && CATransform3DIsIdentity(content.layer.sublayers!.first!.transform)
               && content.layer.sublayers?.first?.sublayers?.contains { $0.name == "module.registration" } == false,
               "The natural final frame leaves one clean, opaque, unmasked screen with no registration layers")
+        content.select(module: .notes, animated: true)
+        content.cancel()
+        check(presented.last!.1 == .display && !presented.last!.2,
+              "Cancelling a swap restores external artwork to the last committed module")
+        content.select(module: .notes, animated: false)
+        check(presented.last!.1 == .notes && !presented.last!.2,
+              "Immediate selection settles external artwork without starting an animation")
         return count
     }
 

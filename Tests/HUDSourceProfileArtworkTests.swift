@@ -38,11 +38,26 @@ enum HUDSourceProfileArtworkTests {
             check(zip(pixel(260, 100), [52, 78, 104, 255]).allSatisfy { abs(Int($0.0) - $0.1) <= 1 },
                 "Only the custom background interior is darkened; its hue and crop stay intact")
             check(Array(bytes(photo)[0..<4]) == [100, 150, 200, 255], "Compositing does not mutate the uploaded photo")
+            let yellowAndGray = image([220, 220, 20, 255, 80, 80, 80, 255, 110, 110, 10, 128], width: 3, height: 1)
+            let theme = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.8, alpha: 1)
+            let themed = try HUDSourceProfileArtwork.themedBackgroundArtwork(yellowAndGray, accent: theme)
+            let themedBytes = bytes(themed)
+            check(Array(themedBytes[0..<4]) == [60, 100, 180, 255] && Array(themedBytes[4..<8]) == [80, 80, 80, 255],
+                  "Card theme replaces baked yellow decoration without recoloring its neutral panel")
+            check(themedBytes[11] == 128 && bytes(yellowAndGray) == [220, 220, 20, 255, 80, 80, 80, 255, 110, 110, 10, 128],
+                  "Theme changes preserve source alpha and never mutate the source artwork")
+            let hover = try HUDSourceProfileArtwork.hoverArtwork(sourceArt, accent: theme)
+            let hoverBytes = bytes(hover)
+            check(abs(Int(hoverBytes[(100 * 530 + 260) * 4 + 3]) - 13) <= 1
+                && abs(Int(hoverBytes[(100 * 530 + 5) * 4 + 3]) - 97) <= 1,
+                  "Whole-card hover uses only five-percent interior alpha with a separate visible outer edge")
             let clearArtwork = image([0, 0, 0, 0], width: 1, height: 1)
             let clipped = try HUDSourceProfileArtwork.compositedBackground(photo, artwork: clearArtwork)
             let clippedBytes = bytes(clipped)
             check(stride(from: 3, to: clippedBytes.count, by: 4).allSatisfy { clippedBytes[$0] == 0 },
                 "Custom artwork cannot fill pixels outside the source alpha silhouette")
+            let clearHover = try HUDSourceProfileArtwork.hoverArtwork(clearArtwork, accent: theme)
+            check(bytes(clearHover)[3] == 0, "The hover plate preserves the original transparent card silhouette")
 
             let avatar = image([64, 128, 192, 255, 32, 96, 160, 128], width: 1, height: 2)
             let upload = try HUDSourceProfileArtwork.texturePixels(avatar)

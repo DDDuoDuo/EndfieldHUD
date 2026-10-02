@@ -17,11 +17,17 @@ final class HUDModuleContent {
     static let transitionDuration: TimeInterval = 0.30
     static let viewportFrame = CGRect(x: 280, y: 100, width: 440, height: 440)
     let layer = CALayer()
+    /// External workspace artwork follows actual swaps, including queued
+    /// destinations and cancellation, rather than the latest navigation click.
+    var onPresentationChange: ((HUDModule, HUDModule, Bool) -> Void)?
     var selectedModule: HUDModule { state.selectedModule }
     var isTransitioning: Bool { state.isTransitioning }
     var registeredModuleCount: Int { factories.count + 1 } // Existing live Power screen.
     var contentLayerCount: Int { layer.sublayers?.count ?? 0 }
     var activeContentLayer: CALayer? { current.wrapper.sublayers?.first }
+    func isPresenting(_ module: HUDModule) -> Bool {
+        current.module == module || incoming?.module == module
+    }
     var activeTransitionAnimationCount: Int {
         func count(_ item: CALayer) -> Int {
             let own = (item.animationKeys() ?? []).filter { $0.hasPrefix("module.") }.count
@@ -101,6 +107,7 @@ final class HUDModuleContent {
             incoming = nil
             normalize(current)
         }
+        onPresentationChange?(current.module, current.module, false)
     }
 
     func update(dark: Bool, accent: NSColor, contentsScale: CGFloat) {
@@ -119,6 +126,7 @@ final class HUDModuleContent {
     private func begin(_ transition: HUDModuleSelectionState.Transition) {
         let next = makeScreen(transition.to)
         incoming = next
+        onPresentationChange?(transition.from, transition.to, true)
         let direction = Self.direction(from: transition.from, to: transition.to)
         let reveal = makeMask()
         let retract = makeMask()
@@ -137,7 +145,7 @@ final class HUDModuleContent {
             DispatchQueue.main.async { [weak self] in self?.finish(transition) }
         }
         addContentLock(to: next.wrapper, direction: direction)
-        addTransform(to: current.wrapper, from: CATransform3DIdentity, to: current.wrapper.transform, duration: 0.20)
+        addTransform(to: current.wrapper, from: CATransform3DIdentity, to: current.wrapper.transform, duration: Self.transitionDuration)
         addShutter(to: reveal, direction: direction, revealing: true)
         addShutter(to: retract, direction: CGPoint(x: -direction.x, y: -direction.y), revealing: false)
         addRegistration(to: next.wrapper, direction: direction)
@@ -161,6 +169,7 @@ final class HUDModuleContent {
     }
 
     private func settle(on module: HUDModule, notify: Bool) {
+        let previous = current.module
         state.settle(on: module)
         removeAnimations(in: layer)
         let chosen: Screen
@@ -174,6 +183,7 @@ final class HUDModuleContent {
             normalize(chosen)
             layer.addSublayer(chosen.wrapper)
         }
+        onPresentationChange?(previous, module, false)
         if notify { finishCallback() }
     }
 
@@ -231,46 +241,30 @@ final class HUDModuleContent {
         layer.add(animation, forKey: "module.transform")
     }
 
-    private static let registrationTimes: [NSNumber] = [0, 0.16, 0.23, 0.43, 0.50, 0.79, 1]
-    private static let revealProgress: [CGFloat] = [0, 0.18, 0.165, 0.53, 0.515, 0.88, 1]
+    private static let registrationTimes: [NSNumber] = [0, 0.25, 0.5, 0.75, 1]
+    private static let revealProgress: [CGFloat] = [0, 0.25, 0.5, 0.75, 1]
     private static let shutterLags: [CGFloat] = [0.025, 0.13, 0, 0.08, 0.035, 0.105]
     private var registrationColor: NSColor { NSColor(white: style.dark ? 0.77 : 0.22, alpha: 0.38) }
 
-    /// The content itself registers in two small corrections. It remains fully
-    /// opaque; staggered shutter geometry, rather than bright overlaid bars,
-    /// determines which parts can be seen during the mechanical handoff.
+    /// One uninterrupted approach keeps the content attached to the reveal.
+    /// It remains opaque and settles without corrective jumps or shear.
     private func addContentLock(to wrapper: CALayer, direction: CGPoint) {
-        let values: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
-            (32, -54, 0, 0), (7, -13, 1.8, 0.004), (10, -15, -1.2, -0.003),
-            (2.2, -4, 0.7, 0.002), (3.4, -5, -0.4, -0.001), (0.4, -0.6, 0, 0)
-        ]
-        var transforms = values.map { distance, depth, lateral, shear -> NSValue in
-            var transform = Self.offset(direction: direction, distance: distance, depth: depth, tilt: distance / 32)
-            transform = CATransform3DTranslate(transform, -direction.y * lateral, direction.x * lateral, 0)
-            if direction.x != 0 { transform.m21 += shear } else { transform.m12 += shear }
-            return NSValue(caTransform3D: transform)
-        }
-        transforms.append(NSValue(caTransform3D: CATransform3DIdentity))
-        let animation = CAKeyframeAnimation(keyPath: "transform")
-        animation.values = transforms
-        animation.keyTimes = Self.registrationTimes
-        animation.timingFunctions = Self.registrationTimingFunctions()
-        animation.duration = Self.transitionDuration
-        wrapper.add(animation, forKey: "module.transform")
+        addTransform(to: wrapper, from: Self.offset(direction: direction, distance: 32, depth: -54),
+                     to: CATransform3DIdentity, duration: Self.transitionDuration)
     }
 
     private func addShutter(to mask: CAShapeLayer, direction: CGPoint, revealing: Bool) {
-        let progress: [CGFloat] = revealing ? Self.revealProgress : [1, 0.84, 0.85, 0.40, 0.415, 0.10, 0]
+        let progress = revealing ? Self.revealProgress : Self.revealProgress.map { 1 - $0 }
         let animation = CAKeyframeAnimation(keyPath: "path")
         animation.values = progress.map { Self.shutterPath(progress: $0, direction: direction) }
         animation.keyTimes = Self.registrationTimes
-        animation.timingFunctions = Self.registrationTimingFunctions()
-        animation.duration = revealing ? Self.transitionDuration : 0.22
+        animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.72, 0.26, 1)
+        animation.duration = Self.transitionDuration
         mask.add(animation, forKey: "module.shutter")
     }
 
     /// Fine neutral seams sit just inside the real reveal frontier. They follow
-    /// the same stagger and corrections as the mask, then disappear completely.
+    /// the same continuous motion as the mask, then disappear completely.
     private func addRegistration(to wrapper: CALayer, direction: CGPoint) {
         let seam = CAShapeLayer()
         seam.name = "module.registration"; seam.frame = wrapper.bounds
@@ -283,19 +277,15 @@ final class HUDModuleContent {
         let path = CAKeyframeAnimation(keyPath: "path")
         path.values = Self.revealProgress.map { Self.registrationPath(progress: $0, direction: direction) }
         path.keyTimes = Self.registrationTimes
-        path.timingFunctions = Self.registrationTimingFunctions()
+        path.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.72, 0.26, 1)
         path.duration = Self.transitionDuration
         let opacity = CAKeyframeAnimation(keyPath: "opacity")
-        opacity.values = [0, 0.48, 0.24, 0.42, 0.25, 0.10, 0]
-        opacity.keyTimes = Self.registrationTimes
+        opacity.values = [0, 0.36, 0.18, 0]
+        opacity.keyTimes = [0, 0.18, 0.7, 1]
         opacity.duration = Self.transitionDuration
         let group = CAAnimationGroup(); group.animations = [path, opacity]
         group.duration = Self.transitionDuration
         seam.add(group, forKey: "module.registration")
-    }
-
-    private static func registrationTimingFunctions() -> [CAMediaTimingFunction] {
-        [.easeOut, .linear, .easeOut, .linear, .easeOut, .easeInEaseOut].map { CAMediaTimingFunction(name: $0) }
     }
 
     private static func shutterExtent(_ progress: CGFloat, index: Int) -> CGFloat {
@@ -354,7 +344,7 @@ final class HUDModuleContent {
         if let mask = item.mask { applyScale(to: mask) }
     }
 
-    private static func direction(from: HUDModule, to: HUDModule) -> CGPoint {
+    static func direction(from: HUDModule, to: HUDModule) -> CGPoint {
         if from.group == to.group {
             let a = HUDModule.allCases.firstIndex(of: from) ?? 0
             let b = HUDModule.allCases.firstIndex(of: to) ?? 0
