@@ -129,7 +129,7 @@ final class HUDSourceWatchDomain {
         }
         self.root = root; self.domainName = domainName
         let decoder = HUDSourceJSON.decoder()
-        func data(_ file: String) throws -> Data { try Data(contentsOf: root.appendingPathComponent(file)) }
+        func data(_ file: String) throws -> Data { try HUDSourceResourceData.read(root.appendingPathComponent(file)) }
         func json(_ file: String) throws -> HUDSourceJSONValue {
             try decoder.decode(HUDSourceJSONValue.self, from: data(file))
         }

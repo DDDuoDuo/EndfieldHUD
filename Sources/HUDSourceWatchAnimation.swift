@@ -114,7 +114,11 @@ struct HUDSourceWatchAnimation {
         root.sizeDelta = HUDSourceVector2(canvasResolution.x, canvasResolution.y)
         initial[scene.rootID] = root
         var pose = HUDSourceWatchPose(transforms: initial)
-        let base = try scene.resolve(overrides: initial)
+        // Clip application uses base only as a node-membership check. The
+        // immutable scene already validates that graph, so the normal frame
+        // path need not allocate and multiply every world matrix here. Keep
+        // full validation for caller-supplied transform overrides.
+        let base = runtimeOverrides.isEmpty ? nil : try scene.resolve(overrides: initial)
         apply(entrance, time: entranceTime, to: &pose, base: base)
         if let time = ambientTime { apply(ambient, time: time, to: &pose, base: base) }
         if let time = exitTime { apply(exit, time: time, to: &pose, base: base) }
@@ -124,14 +128,14 @@ struct HUDSourceWatchAnimation {
     /// Animator states use instance-bound clips. Bindings absent from the PC
     /// prefab remain reported; no nearby node is substituted by name.
     func apply(_ clip: HUDSourceAnimationClip, time: Double, to pose: inout HUDSourceWatchPose,
-               base: [HUDSourceID: HUDSourceResolvedNode]) {
+               base: [HUDSourceID: HUDSourceResolvedNode]?) {
         Self.apply(clip, time: time, to: &pose, base: base, scene: scene)
     }
 
     /// Domain wrappers bind to their own original prefab root. Reuse the same
     /// source channel rules with that scene rather than rebinding by basename.
     static func apply(_ clip: HUDSourceAnimationClip, time: Double, to pose: inout HUDSourceWatchPose,
-                      base: [HUDSourceID: HUDSourceResolvedNode], scene: HUDSourceScene) {
+                      base: [HUDSourceID: HUDSourceResolvedNode]?, scene: HUDSourceScene) {
         guard let time = clip.localTime(time) else { return }
         for curve in clip.curves {
             // The RectTransform-specific handler covers anchors/size/pivot
@@ -148,7 +152,7 @@ struct HUDSourceWatchAnimation {
             if curve.nodeIDs.isEmpty { pose.unboundPaths.insert(curve.path); continue }
             guard let value = curve.sample(at: time) else { continue }
             for id in curve.nodeIDs {
-                guard let node = scene.node(id), base[id] != nil else {
+                guard let node = scene.node(id), base == nil || base?[id] != nil else {
                     pose.unboundPaths.insert(curve.path); continue
                 }
                 var transform = pose.transforms[id] ?? HUDSourceTransformOverride()
@@ -219,6 +223,8 @@ final class HUDSourceWatchPlayback {
     private var phaseStart: Double = 0
     private var loopStart: Double = 0
     private var completion: (() -> Void)?
+    private var stablePose: HUDSourceWatchPose?
+    private var stableResolution: SIMD2<Double>?
     let animation: HUDSourceWatchAnimation
 
     init(animation: HUDSourceWatchAnimation) { self.animation = animation }
@@ -242,6 +248,15 @@ final class HUDSourceWatchPlayback {
         generation &+= 1; phase = .visible; phaseStart = time; loopStart = time; completion = nil
     }
 
+    /// A settled desktop frame needs only the authored decorative channels.
+    /// Keep the same loop clock and sampler as the complete pose path.
+    func sampleAmbient(at time: Double) -> HUDSourceWatchPose? {
+        guard time.isFinite, phase == .visible else { return nil }
+        var pose = HUDSourceWatchPose(transforms: [:])
+        animation.apply(animation.ambient, time: max(0, time - loopStart), to: &pose, base: nil)
+        return pose
+    }
+
     func sample(at time: Double, canvasResolution: SIMD2<Double>, reduceMotion: Bool,
                 runtimeOverrides: [HUDSourceID: HUDSourceTransformOverride] = [:]) throws -> HUDSourceWatchPose? {
         guard time.isFinite, phase != .concealed else { return nil }
@@ -254,6 +269,23 @@ final class HUDSourceWatchPlayback {
             return nil
         }
         guard phase != .concealed else { return nil }
+        if phase != .opening && runtimeOverrides.isEmpty {
+            // The entrance endpoint is immutable for a given canvas. The
+            // ambient and exit clips still sample their original clocks; only
+            // the already-finished entrance work is reused.
+            if stablePose == nil || stableResolution != canvasResolution {
+                stablePose = try animation.pose(entranceTime: animation.entrance.lastKeyTime,
+                    ambientTime: nil, exitTime: nil, canvasResolution: canvasResolution)
+                stableResolution = canvasResolution
+            }
+            var pose = stablePose!
+            if !reduceMotion { animation.apply(animation.ambient, time: max(0, time - loopStart), to: &pose, base: nil) }
+            if phase == .closing {
+                animation.apply(animation.exit, time: Self.clipTime(elapsed: time - phaseStart,
+                    length: animation.exit.lastKeyTime), to: &pose, base: nil)
+            }
+            return pose
+        }
         return try animation.pose(
             entranceTime: phase == .opening ? Self.clipTime(elapsed: time - phaseStart, length: animation.entrance.lastKeyTime) : animation.entrance.lastKeyTime,
             ambientTime: phase == .opening || reduceMotion ? nil : max(0, time - loopStart),

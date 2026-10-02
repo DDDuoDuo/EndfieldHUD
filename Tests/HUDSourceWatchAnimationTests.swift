@@ -47,6 +47,24 @@ enum HUDSourceWatchAnimationTests {
                   "Material alpha samples the loop independently")
             check(pose.unboundPaths == ["Child"], "Source residual bindings are reported rather than mapped to another node")
 
+            // The fast sampler must match the fully resolved path at every
+            // entrance/loop/exit phase; custom overrides still get validation.
+            for time in stride(from: 0.0, through: 2.5, by: 0.05) {
+                let fast = try animation.pose(entranceTime: min(1, time), ambientTime: time,
+                    exitTime: time > 2 ? time - 2 : nil, canvasResolution: SIMD2(2400, 1350))
+                let checked = try animation.pose(entranceTime: min(1, time), ambientTime: time,
+                    exitTime: time > 2 ? time - 2 : nil, canvasResolution: SIMD2(2400, 1350),
+                    runtimeOverrides: [childID: HUDSourceTransformOverride()])
+                let fastNodes = try scene.resolve(overrides: fast.transforms)
+                let checkedNodes = try scene.resolve(overrides: checked.transforms)
+                check(fast.properties == checked.properties && fast.unboundPaths == checked.unboundPaths,
+                      "Fast clip sampling preserves every property and unresolved binding")
+                for id in scene.traversalIDs {
+                    check(fastNodes[id]!.worldMatrix == checkedNodes[id]!.worldMatrix,
+                          "Fast clip sampling preserves resolved geometry through all phases")
+                }
+            }
+
             let groupOne = HUDSourceID(rawValue: "CAB-fixture:101")
             let groupTwo = HUDSourceID(rawValue: "CAB-fixture:102")
             func group(_ id: HUDSourceID, _ name: String, _ anchored: SIMD2<Double>) -> HUDSourceNode {
@@ -179,8 +197,37 @@ enum HUDSourceWatchAnimationTests {
             check(HUDSourceWatchPlayback.clipTime(elapsed: -1, length: 0.75) == 0 && HUDSourceWatchPlayback.clipTime(elapsed: 10, length: 0.75) == 0.75,
                   "Finite clip easing clamps before and after its source endpoints")
             let resolution = SIMD2<Double>(2400, 1350)
+            let cachedPlayback = HUDSourceWatchPlayback(animation: animation)
+            cachedPlayback.showStable(at: 0)
+            for index in 0...80 {
+                let time = Double(index) / 20
+                let canvas = index < 40 ? resolution : SIMD2<Double>(1920, 1200)
+                let cached = try cachedPlayback.sample(at: time, canvasResolution: canvas, reduceMotion: false)!
+                let reference = try animation.pose(entranceTime: animation.entrance.lastKeyTime,
+                    ambientTime: time, exitTime: nil, canvasResolution: canvas)
+                check(cached.transforms == reference.transforms && cached.properties == reference.properties
+                    && cached.unboundPaths == reference.unboundPaths, "Cached entrance preserves ambient poses and resize behavior")
+                var onlyAmbient = HUDSourceWatchPose(transforms: [:])
+                animation.apply(animation.ambient, time: time, to: &onlyAmbient, base: nil)
+                let sparse = cachedPlayback.sampleAmbient(at: time)!
+                check(sparse.transforms == onlyAmbient.transforms && sparse.properties == onlyAmbient.properties
+                    && sparse.unboundPaths == onlyAmbient.unboundPaths && sparse.unregisteredBindings == onlyAmbient.unregisteredBindings,
+                    "Sparse sampling preserves the original ambient clock and channel semantics")
+            }
+            cachedPlayback.close(at: 4, reduceMotion: false)
+            check(cachedPlayback.sampleAmbient(at: 4.01) == nil, "Closing cannot bypass its finite clip through sparse sampling")
+            for index in 0..<25 {
+                let elapsed = Double(index) / 100, time = 4 + elapsed
+                let cached = try cachedPlayback.sample(at: time, canvasResolution: resolution, reduceMotion: false)!
+                let reference = try animation.pose(entranceTime: animation.entrance.lastKeyTime,
+                    ambientTime: time, exitTime: HUDSourceWatchPlayback.clipTime(elapsed: time - 4, length: animation.exit.lastKeyTime),
+                    canvasResolution: resolution)
+                check(cached.transforms == reference.transforms && cached.properties == reference.properties,
+                      "Cached entrance preserves the exact closing clip over the loop")
+            }
             var firstOpen = 0, close = 0, secondOpen = 0
             playback.open(at: 10, reduceMotion: false) { firstOpen += 1 }
+            check(playback.sampleAmbient(at: 10.1) == nil, "Opening cannot bypass its finite clip through sparse sampling")
             check(playback.phase == .opening, "Opening has its own source phase")
             _ = try playback.sample(at: 10.5, canvasResolution: resolution, reduceMotion: false)
             check(firstOpen == 0, "Source opening completion does not fire early")

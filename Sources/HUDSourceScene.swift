@@ -1,6 +1,64 @@
 import Foundation
 import CoreGraphics
+import Compression
 import simd
+
+/// Runtime packages may store byte-exact source payloads in a bounded raw
+/// DEFLATE container. Source checkouts remain plain and use the same reader.
+/// No mip generation, JSON rewriting or numeric conversion occurs here.
+enum HUDSourceResourceData {
+    private static let magic = Data([69, 72, 85, 68, 90, 48, 49, 0]) // EHUDZ01\0
+    static let maximumBytes = 128 * 1024 * 1024
+
+    static func read(_ url: URL) throws -> Data {
+        try decode(Data(contentsOf: url, options: .mappedIfSafe))
+    }
+
+    static func decode(_ data: Data) throws -> Data {
+        guard data.starts(with: magic) else { return data }
+        guard data.count >= 16 else { throw HUDSourceError.invalid("Truncated packed Watch resource") }
+        let expected = data[8..<16].enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << ($1.offset * 8) }
+        guard expected > 0, expected <= UInt64(maximumBytes) else {
+            throw HUDSourceError.invalid("Invalid packed Watch resource length")
+        }
+        // One extra byte detects a stream larger than its declared payload.
+        var output = Data(count: Int(expected) + 1)
+        let count = output.withUnsafeMutableBytes { destination in
+            data.withUnsafeBytes { source in
+                compression_decode_buffer(destination.bindMemory(to: UInt8.self).baseAddress!, destination.count,
+                    source.bindMemory(to: UInt8.self).baseAddress!.advanced(by: 16), data.count - 16,
+                    nil, COMPRESSION_ZLIB)
+            }
+        }
+        guard count == Int(expected) else { throw HUDSourceError.invalid("Corrupt packed Watch resource") }
+        output.count = count
+        return output
+    }
+}
+
+/// Desktop accent substitution in the source renderer's linear RGB space.
+/// Neutral artwork, opacity and authored HDR intensity remain independent.
+enum HUDSourceDesktopAccent {
+    static func replacingYellow(_ original: SIMD4<Float>, accent: SIMD3<Float>?) -> SIMD4<Float> {
+        guard let accent, original.x.isFinite, original.y.isFinite, original.z.isFinite,
+              accent.x.isFinite, accent.y.isFinite, accent.z.isFinite,
+              original.x > 0, original.y >= original.x * 0.25,
+              original.y <= original.x * 1.1,
+              original.z >= 0, original.z < min(original.x, original.y) * 0.5 else { return original }
+        let intensity = max(original.x, original.y)
+        return SIMD4(accent.x * intensity, accent.y * intensity, accent.z * intensity, original.w)
+    }
+
+    static func materialValue(_ original: [Float], isColor: Bool, accent: SIMD3<Float>?) -> [Float] {
+        // Vector properties such as _PolarTilingOffset may also contain
+        // (1,1,0,0). Only a declared shader Color can be an accent channel.
+        guard isColor, original.count == 4, accent != nil else { return original }
+        let source = SIMD4(original[0], original[1], original[2], original[3])
+        let mapped = replacingYellow(source, accent: accent)
+        guard mapped != source else { return original }
+        return [mapped.x, mapped.y, mapped.z, mapped.w]
+    }
+}
 
 /// The source uses signed 64-bit path IDs. Keep the complete CAB:path string;
 /// converting an ID through a JSON Double would lose precision above 2^53.
@@ -209,7 +267,7 @@ struct HUDSourceNode: Codable {
 
 /// Explicit runtime/animation values. The serialized prefab root is scale zero;
 /// callers must supply the runtime initialization, never an implicit loader fix.
-struct HUDSourceTransformOverride {
+struct HUDSourceTransformOverride: Equatable {
     var localPosition: HUDSourceVector3? = nil
     var localRotation: HUDSourceQuaternion? = nil
     var localScale: HUDSourceVector3? = nil

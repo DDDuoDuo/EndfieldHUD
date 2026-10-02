@@ -44,8 +44,11 @@ struct HUDSourceWatchLayout {
     }
 
     func apply(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double = 1,
-               slantMapping: SlantMapping? = nil, worldRoot: simd_double4x4 = matrix_identity_double4x4) throws -> Report {
+               slantMapping: SlantMapping? = nil, worldRoot: simd_double4x4 = matrix_identity_double4x4,
+               desktopNavigation: HUDSourceDesktopNavigationLayout? = nil,
+               beforeSlant: ((HUDSourceWatchPose) -> Void)? = nil) throws -> Report {
         guard verticalNormalizedPosition.isFinite else { throw HUDSourceError.invalid("Nonfinite Watch scroll position") }
+        desktopNavigation?.apply(to: &pose, normalizedPosition: verticalNormalizedPosition)
         let initial = try scene.resolve(overrides: pose.transforms)
         var report = Report()
         for axis in 0...1 {
@@ -68,6 +71,7 @@ struct HUDSourceWatchLayout {
             }
         }
         try applyScroll(to: &pose, position: min(1, max(0, verticalNormalizedPosition)), report: &report)
+        beforeSlant?(pose)
         let resolved = try scene.resolve(overrides: pose.transforms)
         for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
             if let effect = component("UIScrollCellSlantEffect", on: id) {
@@ -89,6 +93,18 @@ struct HUDSourceWatchLayout {
             }
         }
         return report
+    }
+
+    /// A gyro-only change does not rerun intrinsic sizing, layout groups, or
+    /// scrolling. The authored slant writer still uses its new world axes.
+    func applySlant(to pose: inout HUDSourceWatchPose, worldRoot: simd_double4x4,
+                    resolvedBeforeSlant: [HUDSourceID: HUDSourceResolvedNode]? = nil) throws {
+        let resolved = try resolvedBeforeSlant ?? scene.resolve(overrides: pose.transforms)
+        for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
+            if let effect = component("UIScrollCellSlantEffect", on: id) {
+                try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose)
+            }
+        }
     }
 
     /// Native wheel input supplies a signed delta. Positive delta moves toward

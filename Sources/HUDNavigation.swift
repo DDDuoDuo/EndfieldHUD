@@ -1106,7 +1106,7 @@ final class HUDNavigationEntry {
                        alpha: isSelected ? 0.95 : 0.8627451062202454)
     }
 
-    private static func gameIcon(for module: HUDModule?) -> EndfieldGameIcon? {
+    static func gameIcon(for module: HUDModule?) -> EndfieldGameIcon? {
         switch module {
         case .notes: return .mission
         case .fileShelf: return .depot
@@ -1274,7 +1274,7 @@ final class HUDNavigationEntry {
         return path
     }
 
-    private static func iconPath(for module: HUDModule) -> CGPath {
+    static func iconPath(for module: HUDModule) -> CGPath {
         let path = CGMutablePath()
         func polygon(_ points: CGPoint...) {
             guard let first = points.first else { return }

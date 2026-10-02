@@ -106,7 +106,8 @@ if [ ! -d "$DEV_APP" ]; then
     if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
     ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
-    ditto "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
+    python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
+        "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
     cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$STAGED_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
@@ -128,7 +129,8 @@ else
     if [ -d "$DEV_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$DEV_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$DEV_APP/Contents/Resources/WorldMap"
     ditto "$PROJECT_DIR/Resources/Watch" "$DEV_APP/Contents/Resources/Watch"
-    ditto "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
+    python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
+        "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
     cp "$PROJECT_DIR/CREDITS.md" "$DEV_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$DEV_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$DEV_APP" "$SPARKLE_DIR"
@@ -153,18 +155,8 @@ if ! otool -arch "$HOST_ARCH" -l "$DEV_BINARY" | awk '
     printf 'ScreenCaptureKit must be weak-linked for %s.\n' "$HOST_ARCH" >&2
     exit 1
 fi
-SOURCE_WATCH="$PROJECT_DIR/Resources/WatchSource"
-[ -s "$SOURCE_WATCH/render-color-policy.json" ] || {
-    printf 'Missing original Watch rendering policy.\n' >&2; exit 1
-}
-while IFS= read -r -d '' SOURCE; do
-    RELATIVE="${SOURCE#"$SOURCE_WATCH/"}"
-    DESTINATION="$DEV_APP/Contents/Resources/WatchSource/$RELATIVE"
-    if [ ! -f "$DESTINATION" ] || ! cmp -s "$SOURCE" "$DESTINATION"; then
-        printf 'Missing or stale development Watch resource: %s\n' "$DESTINATION" >&2
-        exit 1
-    fi
-done < <(find "$SOURCE_WATCH" -type f -print0)
+python3 "$PROJECT_DIR/scripts/package-watch-resources.py" verify \
+    "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
 
 printf '\nBuilt: %s\n' "$DEV_APP"
 printf 'Launch after quitting any running copy:\n  open %q\n' "$DEV_APP"

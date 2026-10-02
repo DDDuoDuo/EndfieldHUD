@@ -6,7 +6,7 @@ RUNTIME="$TASK_ROOT/build/watch-source-layout-runtime"
 SDK="$("$TASK_ROOT/scripts/build.sh" --print-sdk)"
 mkdir -p "$OUTPUT" "$RUNTIME/module-cache"
 SOURCE_NAMES=(HUDResources HUDSourceScene HUDSourceWatchAnimation HUDSourceWatchDocument HUDSourceWatchWidgets HUDSourceBannerScroll HUDSourceSelectableColor
-    HUDSourceImageGeometry HUDSourceTextGeometry HUDSourceWatchLayout HUDSourceWatchButtonAnimation
+    HUDSourceImageGeometry HUDSourceTextGeometry HUDSourceDesktopNavigationLayout HUDSourceWatchLayout HUDSourceWatchButtonAnimation
     HUDSourceWatchDomain HUDSourceDomainAnimation HUDSourceWatchCamera)
 SOURCE_FILES=()
 for name in "${SOURCE_NAMES[@]}"; do SOURCE_FILES+=("$TASK_ROOT/Sources/$name.swift"); done

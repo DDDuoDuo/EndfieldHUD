@@ -64,7 +64,7 @@ final class OverlayController: NSObject {
     private var forceCloseAfterShelfDrag = false
     private var shelfDragPresentation = ShelfDragPresentationState()
     private var shelfDragDeadline: DispatchWorkItem?
-    private var lastSystemModule: HUDModule = .power
+    private var lastSystemModule: HUDModule = .map
     private var systemState = SystemOverlayState()
     private var transitionDeadline: DispatchWorkItem?
     private var previousApplication: NSRunningApplication?

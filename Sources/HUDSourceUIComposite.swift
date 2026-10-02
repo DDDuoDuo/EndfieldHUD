@@ -14,7 +14,7 @@ final class HUDSourceUIComposite {
     init(device: MTLDevice, resourceRoot: URL, outputPixelFormat: MTLPixelFormat) throws {
         let root = resourceRoot.appendingPathComponent("HDR")
         let manifest = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self,
-            from: Data(contentsOf: root.appendingPathComponent("Composite/manifest.json")))
+            from: HUDSourceResourceData.read(root.appendingPathComponent("Composite/manifest.json")))
         guard manifest["pass_index"].number == 1,
               manifest["pass_name"].string == "UberPost_CompositeUI",
               let variant = manifest["variants"].array.first(where: { $0["program"].number == 726 }),
