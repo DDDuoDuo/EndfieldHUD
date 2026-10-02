@@ -6,6 +6,34 @@ button order, three-dimensional transforms, camera, animation clips and material
 programs drive the macOS menu. Clicking the 22 main buttons opens the existing
 macOS functions. Those feature panels retain their existing desktop interfaces.
 
+## Download the branch DMG
+
+The `codex/endfield-watch-motion` branch publishes a testing build after its
+macOS build, interaction, Metal and packaging checks pass. Open the branch's
+latest successful **Build and test** run in
+[GitHub Actions](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-watch-motion),
+then download **EndfieldHUD-macOS-<source commit>** from **Artifacts**. GitHub
+may require sign-in. The artifact is retained for 30 days; a new successful
+branch build creates a new download.
+
+Unzip the download, open `EndfieldHUD-<version>-macOS.dmg`, and drag **EndfieldHUD.app**
+to **Applications**. The same download includes the application ZIP, source ZIP,
+SHA-256 checksums for all three packages, and `branch-build.json` recording the
+source commit, tested commit/tree, run and architectures. CI mounts the DMG
+read-only and checks that its app matches the verified build and its Applications
+shortcut points to `/Applications`.
+
+The app supports Apple silicon and Intel and is ad hoc signed, without Apple
+notarization. See [installation and compatibility](testing-build.md) for opening
+the app and permission requirements. Both architectures are compiled and checked;
+the current CI executes the app and Metal fixtures on its macOS 15 runner. Earlier
+M2 hardware checks in the installation guide are historical coverage, not live
+hardware testing of this branch build. The original desktop background filters
+require macOS 14+ and Screen Recording access, with system blur as a fallback.
+The source ZIP contains the complete linked setup and testing documentation.
+This branch still has known differences
+from the game's recording; a downloadable build does not establish pixel parity.
+
 ## Runtime behavior
 
 - The source perspective camera and `UICanvasScaleHelper` determine projection

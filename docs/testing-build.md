@@ -5,6 +5,22 @@ The download is a universal macOS application. It is
 is not an Apple Developer ID identity or Apple approval. No Developer ID
 certificate is included in this repository.
 
+## Current Watch branch build
+
+For `codex/endfield-watch-motion`, download **EndfieldHUD-macOS-<source commit>**
+from the successful branch run's **Artifacts** section in
+[GitHub Actions](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-watch-motion).
+Unzip that download first to obtain the DMG and the accompanying packages.
+`branch-build.json` identifies the source commit, tested commit/tree, workflow run,
+architectures and SHA-256 hashes. Pull-request runs test a merge commit; branch
+push runs test the branch commit directly. Downloads are retained for 30 days.
+
+The current branch compiles and verifies Apple silicon and Intel binaries and
+runs its interaction and Metal fixtures on the macOS 15 CI runner. It also mounts
+the DMG read-only and verifies that its app matches the built bundle. These checks
+do not establish live coverage on both architectures or exact reproduction of
+the game's recording. The source ZIP includes the complete setup and testing docs.
+
 ## Install the DMG
 
 1. Quit any running EndfieldHUD copy from its menu bar menu.
@@ -28,10 +44,14 @@ obtained from the trusted distributor; it does not replace publisher identity.
 
 - The universal binary targets **Apple silicon/macOS 11+** and
   **Intel/macOS 10.15.4+**. Those are build targets, not completed hardware coverage.
-- Development and interactive checks were performed on an **Apple M2 MacBook
+- Earlier development and interactive checks were performed on an **Apple M2 MacBook
   Air with macOS 15.7.4**. Intel, older OS releases, physical multi-monitor
-  handoff and other audio devices still need testing. The repository's
+  handoff and other audio devices still need testing. This is historical coverage,
+  not live hardware validation of the current Watch branch. The repository's
   `TESTING.md` records the scope of each check.
+- The Watch branch's original background filters use desktop pixels on macOS 14+
+  when Screen Recording access is granted. System blur is the fallback without
+  that access. The background capture is not saved or uploaded.
 - Per-app audio adjustment requires **macOS 14.2+**, System Audio Recording
   permission, and a compatible output device. Grant it only when using that
   feature. Audio is processed in memory and is not saved or uploaded. Some
@@ -40,7 +60,7 @@ obtained from the trusted distributor; it does not replace publisher identity.
   and the current user's uniquely named `EndfieldCharge Focus Start` and
   `EndfieldCharge Focus End` shortcuts. **Installing this build does not install
   those shortcuts**; the package includes no import files or automatic setup.
-  Follow the [manual setup and validation](audio-and-work-mode.md#automatic-focus-setup),
+  Follow the [manual setup and validation](https://github.com/DDDuoDuo/EndfieldHUD/blob/codex/endfield-watch-motion/docs/audio-and-work-mode.md#automatic-focus-setup),
   including any first-run Shortcuts access requests. The path is the same on
   eligible Intel and Apple silicon Macs, but only the M2/macOS 15.7.4 setup has
   recorded live validation. Older supported systems can still use Work Mode's
