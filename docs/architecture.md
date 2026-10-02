@@ -1,8 +1,12 @@
 # Architecture
 
-EndfieldHUD is a native AppKit application with a Core Animation HUD. It uses
-the macOS SDK directly, with Sparkle for signed application updates. The build
-scripts compile the flat `Sources` directory; folders are not Swift modules.
+EndfieldHUD is a native AppKit application. This integration branch renders the
+source Watch shell with Metal and keeps desktop modules in Core Animation. It
+uses the macOS SDK directly, with Sparkle for signed application updates. The
+build scripts compile the flat `Sources` directory; folders are not Swift modules.
+
+The integration branch's visual and interaction contract and dated design
+decisions are maintained in [Desktop HUD design](design.md).
 
 ## Ownership
 
@@ -11,7 +15,8 @@ scripts compile the flat `Sources` directory; folders are not Swift modules.
 | Application | `AppDelegate`, `GlobalShortcutController`, `LoginItemManager` | Menu bar, registered shortcut, configuration changes, system notifications, startup and shutdown |
 | Presentation | `OverlayController`, `SystemOverlayState`, `ShelfDragPresentationState` | Shared panel, display choice, focus, opening/closing, drag concealment and app-launch handoffs |
 | HUD shell | `SystemHUDView`, `HUDNavigation`, `HUDModuleContent` | Retained navigation and center content, module composition, projection and event routing |
-| Motion and artwork | `HUDMotionController`, `HUDDepthPlane`, `HUDDeploymentFlicker`, `HUDSubsectionTransition` | Separate deployment, pointer and ambient transforms; scoped animation cleanup |
+| Source shell | `HUDSourceWatchView`, `HUDSourceWatchFrameBuilder`, `HUDSourceMetalRenderer` | Source scene, shared playback and projection, bounded geometry/program caches, Metal rendering |
+| Native motion and artwork | `HUDMotionController`, `HUDDepthPlane`, `HUDDeploymentFlicker`, `HUDSubsectionTransition` | Separate deployment, pointer and ambient transforms; scoped animation cleanup |
 | Feature UI | `*Canvas`, `HUD*Interaction` | Layer artwork and local state; native editing, accessibility, drag/drop and projected hit targets |
 | Feature models | `*Store`, `*Controller`, `*Monitor` | Persistence, timers, platform I/O and work that can outlive one visible HUD |
 
@@ -28,11 +33,17 @@ section and feature data. Settings live in `ConfigurationStore`, outside the
 view. Quit, app launch, Finder reveal and Storage Settings handoffs finish the
 closing animation before activating their destination.
 
-Pointer following is event-driven and can run during opening/closing. Ambient
-tracks start only after the finite opening transaction finishes. Full teardown
-removes both. Generation tokens reject stale animation and asynchronous
+Pointer following continues during opening and closing. The source playback
+clock drives source entrance/exit and ambient motion; native features share its
+projection. The native fallback retains its separate finite deployment and idle
+animation tracks. Full teardown stops presentation clocks and removes tracks. Generation tokens reject stale animation and asynchronous
 completion callbacks. Module deactivation removes visible-only observers,
 editors, accessibility controls and display timers.
+
+A one-time utility-queue launch preparation decodes immutable source metadata
+and prepares the desktop shader functions. It creates no hidden renderer or
+textures and runs no recurring timer. Immutable programs remain in the existing
+bounded cache after closing.
 
 Some work intentionally continues with the HUD closed:
 

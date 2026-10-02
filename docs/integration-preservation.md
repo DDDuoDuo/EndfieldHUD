@@ -5,6 +5,9 @@ The integration baseline is `a8770680044c4f7b664c6c8adecc0c02bed02a2c`
 the existing desktop stores, controllers, text, and module identities remain
 the source of truth. No data migration is needed for this visual integration.
 
+The current visual and interaction contract, including dated design decisions,
+is maintained in [Desktop HUD design](design.md).
+
 The visual baseline is `90e3a09bdd3103caebe6acb060398d394555ea07` from
 `codex/endfield-watch-motion`. Work is isolated on
 `codex/endfield-hud-integration`; neither `main` nor the published stable release
@@ -438,26 +441,34 @@ CPU values are percentages of **one CPU core** for the application process.
 
 | Scenario | Stable CPU | Integration CPU | Stable footprint | Integration footprint |
 | --- | ---: | ---: | ---: | ---: |
-| Closed after use | 0.04% | 0.04% | 52 MiB | 127 MiB |
-| Map idle | 0.24% | 8.94% | 78 MiB | 197 MiB |
-| Clipboard idle | 0.15% | 7.77% | 79 MiB | 190 MiB |
-| Notes idle | 0.17% | 10.00% | 79 MiB | 190 MiB |
-| Activity Monitor idle | 0.15% | 9.29% | 74 MiB | 191 MiB |
-| Pointer motion | 4.47% | 42.09% | 74 MiB | 191 MiB |
+| Closed after use | 0.04% | 0.05% | 52 MiB | 126 MiB |
+| Map idle | 0.24% | 11.29% | 78 MiB | 199 MiB |
+| Clipboard idle | 0.15% | 10.44% | 79 MiB | 198 MiB |
+| Notes idle | 0.17% | 10.23% | 79 MiB | 198 MiB |
+| Activity Monitor idle | 0.15% | 12.87% | 74 MiB | 201 MiB |
+| Pointer motion | 4.47% | 41.02% | 74 MiB | 192 MiB |
 
-The integration submitted about 30 source frames/second idle and 58.9 during
-pointer motion. Once closed, its source timer stopped and submitted zero frames.
-The current follow-up opened in 206 ms synchronously (stable 93 ms), with its
-first source frame presented at 414 ms. Reopening took 133 ms (stable 54 ms).
-The previous branch build measured 210/421/162 ms respectively; the earlier
-integration measured 346/563/363 ms. Cold startup has not materially improved
-over the previous build. Warm synchronous work is reduced by avoiding repeated
-JSON decoding, bundled-file validation, and a discarded fully deployed frame.
-A bounded, resource-fingerprinted CPU metadata cache moves shader/material JSON
-parsing into one-time background preparation. It retains no view or texture and
-runs no timer. First launch preparation took 1.28 s off the main thread; opening
-before preparation finishes can still wait for it. Retained metadata trades some
-closed memory for faster subsequent openings. These are single-run measurements,
+The integration submitted about 30 source frames/second idle and
+59.4 during pointer motion. Once closed, its source timer stopped and
+submitted zero frames. The current build opened in
+169 ms synchronously (stable 93 ms), presented its first source frame at
+391 ms, and reopened in 138 ms (stable 54 ms).
+
+A same-binary comparison with shader preparation disabled measured
+170 ms synchronous opening and 413 ms first presentation. With it enabled,
+eight shader libraries/four function pairs were prepared in
+12 ms on the utility queue. No pipelines, textures, renderer or window were
+created by preparation. Two additional libraries and the required pipelines
+remained lazy. This is a modest first-frame improvement, not elimination of
+the remaining opening delay.
+
+Total CPU/document/shader preparation took 1.24 s off the main thread.
+These opening figures start after launch preparation has completed; they do
+not measure the whole application's cold launch. An immediate first opening
+can still wait for CPU document preparation, and GPU programs remain lazy if
+their preparation has not finished. A bounded immutable cache retains no view
+or texture and runs no timer. The previous branch measured 206/414/133 ms for
+synchronous opening/first presentation/reopening. These are single-run samples,
 not percentile latency or guarantees on other Macs.
 
 **Performance parity with stable has not been achieved.** Resource size and
@@ -470,10 +481,11 @@ GPU utilization from these process counters. Instruments was unavailable here.
 The raw samples and input fingerprints are in
 [integration-benchmark.json](integration-benchmark.json).
 
-The local core suite passed 50,046 assertions. The final focused scene suite
-passed 69, including three added Double-precision geometry-key regression cases;
-the exact cached/full GPU packet comparison then passed on the final sources.
-The compatibility guard checks 50 unchanged files plus the explicitly reviewed Focus-controller hash,
+The local core suite passed 50,056 assertions, including finite profile/quit
+hover feedback, scope exclusion for personal artwork, and Double-precision
+geometry-key regression cases. Exact cached/full GPU geometry and hit
+comparison passed; program preparation also passed its idempotence and bound
+checks before any renderer was constructed. The compatibility guard checks 50 unchanged files plus the explicitly reviewed Focus-controller hash,
 575 stable translated entries, and bundle/update identity. Eleven CPU cache
 regression checks verify all 132 material inputs, reuse, invalidation, corrupt
 input recovery, and reference fallback. Native navigation passed 623 checks with
@@ -510,11 +522,15 @@ directly, then uses bounded edge travel and a finite settling motion on the
 existing display clock. Momentum tails cannot restart an edge rebound. Limit
 arrows grey out and reject further scrolling in that direction. Source
 reference fixtures retain their authored movement. Right captions are smaller,
-icon bounds are normalized, hover glow is reduced and themed, and side shadows
-retain their neutral source colors. Custom shortcuts use the same artwork resolver
+icon bounds are normalized, and hover faces retain their original neutral
+colors. The side-button luminous edge is reduced independently of the source
+shadows, which keep their original color and opacity. Custom shortcuts use the same artwork resolver
 as their picker, and recycled slots explicitly activate their primary caption.
 A language change refreshes source captions, profile labels and accessibility
-actions in place while preserving custom names and scroll position.
+actions in place while preserving custom names and scroll position. Side hover
+sprites use 18% of their authored alpha. Profile edge/corner decoration and the
+red quit background use the existing 100 ms ColorTint fade for subtle feedback;
+no new clock or additive photo overlay is introduced.
 
 The card uses an existing dark industrial default, right-aligned authority/MAX
 labels, and no additive avatar/card Light overlay. Uploaded card backgrounds are
@@ -525,13 +541,25 @@ gray-128-to-188 washout and verifies gray 128 now stays 128. No profile value or
 saved image is rewritten. The proof in `scripts/VerifyProfileArtwork.swift` also
 checks transparent edges and 4,251 visible source decoration pixels.
 
-The shorter clock plate retains the right edge of its source banner plane. The
+The shorter clock plate is inset 24 source points to the left of its previous
+right-edge alignment on the banner plane. The
 retired native battery arc remains hidden on every appearance/settings update.
 Opening prepares the native layer hierarchy without first constructing a fully
 deployed source frame that would immediately be discarded. Camera/controller
 JSON and fragment-depth eligibility are prepared once; bundled metadata bypasses
 repeat filesystem validation during the same app process. External preview and
 probe directories retain file-identity validation and corruption rejection.
+
+Launch preparation also derives the desktop drawable materials and prepares
+their original Metal shader functions on a utility queue. It currently selects
+four base shader pairs; a hard limit of eight pairs bounds future resource
+changes. No renderer, textures, geometry, command queue, drawable, pipeline or
+view is constructed. The existing one-device/inventory program cache retains
+the result, and the foreground lazy path remains usable without waiting on a
+compilation lock. Unsupported/failed preparation leaves ordinary lazy rendering
+in place. This shifts finite work to application launch; it does not eliminate
+launch work or guarantee a benefit when the HUD is opened before preparation
+finishes.
 
 Geometry cache keys preserve the Double precision used when baking vertices.
 Rounding the input matrix to Float could incorrectly reuse a buffer even when

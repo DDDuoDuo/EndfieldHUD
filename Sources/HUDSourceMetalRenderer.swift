@@ -589,7 +589,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         _ = try desktopMetadata(root: root)
     }
 
-    static func prewarmDesktopMetadata() {
+    static func prewarmDesktopResources() {
         guard let root = HUDResources.url(for: "WatchSource"),
               FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-selection.json").path) else { return }
         metadataCondition.lock()
@@ -597,6 +597,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         metadataPrewarmScheduled = true; metadataCondition.unlock()
         DispatchQueue.global(qos: .utility).async {
             _ = try? desktopMetadata(root: root)
+            _ = try? prepareDesktopProgramsIfNeeded(resourceRoot: root)
             metadataCondition.lock(); metadataPrewarmScheduled = false; metadataCondition.unlock()
         }
     }
@@ -652,6 +653,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         var libraries: [String: MTLLibrary] = [:]
         var functions: [String: (MTLFunction, MTLFunction)] = [:]
         var pipelines: [SourcePipelineKey: (MTLRenderPipelineState, MTLRenderPipelineReflection)] = [:]
+        var prewarmStarted = false
+        var prewarmCompleted = false
+        var prewarmShaderCount = 0
+        var prewarmLibraryCompilations = 0
         init(key: String) { self.key = key }
         func access<T>(_ body: (ProgramCache) -> T) -> T {
             lock.lock(); defer { lock.unlock() }
@@ -670,6 +675,130 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         let cache = ProgramCache(key: key)
         retainedPrograms = cache
         return cache
+    }
+
+    /// Prepare only immutable programs referenced by the desktop's drawable
+    /// components. No view, command queue, pipeline, texture or geometry is
+    /// constructed. Clip/mask variants and any omitted programs stay lazy.
+    @discardableResult
+    static func prepareDesktopProgramsIfNeeded(resourceRoot: URL? = nil) throws -> [String: Int] {
+        guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource"),
+              FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-selection.json").path) else {
+            return programCacheStatisticsForVerification()
+        }
+        let catalog = try desktopMetadata(root: root)
+        let document = try HUDSourceWatchDocument.desktop(resourceRoot: root.appendingPathComponent("Scene"))
+        let keys = try desktopProgramShaderKeys(catalog: catalog, document: document, root: root)
+        guard let device = MTLCreateSystemDefaultDevice() else { throw Failure.message("Metal device unavailable") }
+        let cache = try programs(root: root, device: device)
+        let shouldPrepare = cache.access { cache -> Bool in
+            guard !cache.prewarmStarted else { return false }
+            cache.prewarmStarted = true
+            // A changed catalog cannot turn launch preparation into an
+            // unbounded compilation job; the normal renderer handles the rest.
+            cache.prewarmShaderCount = min(keys.count, 8)
+            return true
+        }
+        if shouldPrepare {
+            for key in keys.prefix(8) {
+                guard let shader = catalog.shaders[key] else { throw Failure.message("Unmapped desktop shader: " + key) }
+                _ = try programFunctions(for: key, shader: shader, root: root, device: device, cache: cache) {
+                    cache.access { $0.prewarmLibraryCompilations += 1 }
+                }
+            }
+            cache.access { $0.prewarmCompleted = true }
+        }
+        return programCacheStatisticsForVerification()
+    }
+
+    static func programCacheStatisticsForVerification() -> [String: Int] {
+        programCacheLock.lock(); let cache = retainedPrograms; programCacheLock.unlock()
+        guard let cache else { return ["libraries": 0, "functions": 0, "pipelines": 0,
+            "prewarmStarted": 0, "prewarmCompleted": 0, "prewarmShaders": 0, "prewarmLibraryCompilations": 0] }
+        return cache.access { ["libraries": $0.libraries.count, "functions": $0.functions.count,
+            "pipelines": $0.pipelines.count, "prewarmStarted": $0.prewarmStarted ? 1 : 0,
+            "prewarmCompleted": $0.prewarmCompleted ? 1 : 0, "prewarmShaders": $0.prewarmShaderCount,
+            "prewarmLibraryCompilations": $0.prewarmLibraryCompilations] }
+    }
+
+    private static func desktopProgramShaderKeys(catalog: MetadataCatalog,
+                                                 document: HUDSourceWatchDocument, root: URL) throws -> [String] {
+        let hidden = document.desktopHiddenNodeIDs
+        var materialIDs = Set<String>()
+        for node in document.scene.nodes {
+            var ancestor: HUDSourceID? = node.id
+            var excluded = false
+            while let id = ancestor {
+                if hidden.contains(id) { excluded = true; break }
+                ancestor = document.scene.node(id)?.parentID
+            }
+            guard !excluded else { continue }
+            for component in document.components[node.id] ?? [] where component.enabled {
+                if ["UIImage", "Image", "UIRawImage", "RawImage"].contains(component.kind) {
+                    materialIDs.insert(component["m_Material"].targetID?.rawValue ?? "__ui_default")
+                    if ["UIRawImage", "RawImage"].contains(component.kind),
+                       let animation = document.component("UIGraphicAnimation", on: node.id),
+                       let material = animation["_material"].targetID {
+                        materialIDs.insert(material.rawValue)
+                    }
+                } else if component.kind == "MeshRenderer" {
+                    for material in component["m_Materials"].array {
+                        if let id = material.targetID { materialIDs.insert(id.rawValue) }
+                    }
+                }
+            }
+        }
+        let selection = try JSONDecoder().decode(RuntimeSelection.self,
+            from: HUDSourceResourceData.read(root.appendingPathComponent("runtime-selection.json")))
+        let compact = catalog.objects["runtime-materials.json"] != nil
+        let records = try materialRecords(object: catalog.objects[compact ? "runtime-materials.json" : "materials.json"]!,
+            compact: compact, selection: selection)
+        var keys = Set<String>()
+        for (record, inputs) in zip(records, catalog.materialInputs)
+            where materialIDs.contains(inputs.name) || inputs.id.map(materialIDs.contains) == true {
+            let isMap = inputs.shaderID == "505394952752169778"
+            for pass in record["static_pass_states"] as? [[String: Any]] ?? [] {
+                if pass["disabled_in_serialized_material"] as? Bool == true { continue }
+                guard let name = pass["name"] as? String else { throw Failure.message("Incomplete source pass") }
+                guard name == "Default" || name == "Default-Stencil-Alpha-Blend" || isMap && name == "ForwardOnly" else { continue }
+                keys.insert(shaderKey(inputs: inputs, passName: name))
+            }
+        }
+        return keys.sorted()
+    }
+
+    private static func programFunctions(for key: String, shader: Shader, root: URL,
+                                         device: MTLDevice, cache: ProgramCache,
+                                         didCompile: () -> Void) throws -> (MTLFunction, MTLFunction) {
+        if let pair = cache.access({ $0.functions[key] }) { return pair }
+        func function(_ stage: Stage?) throws -> MTLFunction {
+            guard let stage else { throw Failure.message("Incomplete source shader interface") }
+            let source = try String(contentsOf: root.appendingPathComponent(stage.file), encoding: .utf8)
+            let library: MTLLibrary
+            if let existing = cache.access({ $0.libraries[source] }) { library = existing }
+            else {
+                // Never hold the cache lock across Metal compilation. An early
+                // hotkey can compile its needed program immediately; a rare
+                // race may compile twice but retains just one bounded entry.
+                let compiled = try device.makeLibrary(source: source, options: nil)
+                didCompile()
+                library = cache.access {
+                    if let existing = $0.libraries[source] { return existing }
+                    if $0.libraries.count < 32 { $0.libraries[source] = compiled }
+                    return compiled
+                }
+            }
+            guard let function = library.makeFunction(name: stage.function) else {
+                throw Failure.message("Translated source entry point unavailable: " + key)
+            }
+            return function
+        }
+        let pair = try (function(shader.stages["vertex"]), function(shader.stages["fragment"]))
+        return cache.access {
+            if let existing = $0.functions[key] { return existing }
+            if $0.functions.count < 32 { $0.functions[key] = pair }
+            return pair
+        }
     }
     private var sourcePipelines: [SourcePipelineKey: (MTLRenderPipelineState, MTLRenderPipelineReflection)] = [:]
     private var desktopAccentLinear: SIMD3<Float>?
@@ -2035,6 +2164,36 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             clipVariants: record["clip_variants"] as? [String: String])
     }
 
+    private static func shaderKey(inputs: MaterialInputs, passName: String) -> String {
+        let isFX = inputs.shaderID == "-7864008769510089003"
+        let isFont = inputs.shaderID == "2786552470741801451"
+        let isMap = inputs.shaderID == "505394952752169778"
+        let keywords = inputs.keywords
+        if isMap {
+            if keywords.contains("_USE_CONTOUR") { return "map13" }
+            else if keywords.contains("_USE_BUILDING") { return "map14" }
+            else if keywords.contains("_USE_POINTCLOUD") { return "map16" }
+            else if keywords.contains("_USE_OUTLINE") { return keywords.contains("_ALPHATEST_ON") ? "map17" : "map15" }
+            else { return "map12" }
+        }
+        else if isFX { return keywords.contains("HG_UI_VFX_DISSOLVE") ? "fx" : keywords.contains("HG_UI_VFX_MASKTEX") ? "fx13" : "fx12" }
+        else if isFont {
+            let base = (keywords.contains("UNDERLAY_ON") ? "fontUnderlay" : "font") + (keywords.contains("HG_SOFT_MASKABLE") ? "SoftMask" : "")
+            let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
+            return base + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
+        }
+        else {
+            let base: String
+            if passName == "Default-Stencil-Alpha-Blend" { base = "imageStencil" }
+            else if keywords.contains("HG_UI_VFX_DISSOLVE") { base = "imageDissolveFX" }
+            else if keywords.contains("HG_UI_VFX_MAINTEX") { base = "imageMainFX" }
+            else if keywords.contains("HG_WORLD_UI") { base = "imageWorld" }
+            else { base = "image" }
+            let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
+            return base + (keywords.contains("HG_SOFT_MASKABLE") ? "SoftMask" : "") + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
+        }
+    }
+
     @discardableResult private func loadMaterials(device: MTLDevice, recordStartupTimings: Bool = false) throws -> [String: Double] {
         let started = recordStartupTimings ? CACurrentMediaTime() : 0
         var previous = started, timings: [String: Double] = [:]
@@ -2064,36 +2223,12 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             let isFX = inputs.shaderID == "-7864008769510089003"
             let isFont = inputs.shaderID == "2786552470741801451"
             let isMap = inputs.shaderID == "505394952752169778"
-            let keywords = inputs.keywords
             var passes: [Pass] = []
             for sourcePass in record["static_pass_states"] as? [[String: Any]] ?? [] {
             if (sourcePass["disabled_in_serialized_material"] as? Bool) == true { continue }
             guard let passName = sourcePass["name"] as? String, let state = sourcePass["state"] as? [String: Any] else { throw Failure.message("Incomplete source pass") }
             if passName != "Default" && passName != "Default-Stencil-Alpha-Blend" && !(isMap && passName == "ForwardOnly") { continue }
-            let key: String
-            if isMap {
-                if keywords.contains("_USE_CONTOUR") { key = "map13" }
-                else if keywords.contains("_USE_BUILDING") { key = "map14" }
-                else if keywords.contains("_USE_POINTCLOUD") { key = "map16" }
-                else if keywords.contains("_USE_OUTLINE") { key = keywords.contains("_ALPHATEST_ON") ? "map17" : "map15" }
-                else { key = "map12" }
-            }
-            else if isFX { key = keywords.contains("HG_UI_VFX_DISSOLVE") ? "fx" : keywords.contains("HG_UI_VFX_MASKTEX") ? "fx13" : "fx12" }
-            else if isFont {
-                let base = (keywords.contains("UNDERLAY_ON") ? "fontUnderlay" : "font") + (keywords.contains("HG_SOFT_MASKABLE") ? "SoftMask" : "")
-                let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
-                key = base + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
-            }
-            else {
-                let base: String
-                if passName == "Default-Stencil-Alpha-Blend" { base = "imageStencil" }
-                else if keywords.contains("HG_UI_VFX_DISSOLVE") { base = "imageDissolveFX" }
-                else if keywords.contains("HG_UI_VFX_MAINTEX") { base = "imageMainFX" }
-                else if keywords.contains("HG_WORLD_UI") { base = "imageWorld" }
-                else { base = "image" }
-                let clip = keywords.contains("UNITY_UI_CLIP_RECT"), alpha = keywords.contains("UNITY_UI_ALPHACLIP")
-                key = base + (keywords.contains("HG_SOFT_MASKABLE") ? "SoftMask" : "") + (clip ? (alpha ? "ClipRectAlpha" : "ClipRect") : (alpha ? "AlphaClip" : ""))
-            }
+            let key = Self.shaderKey(inputs: inputs, passName: passName)
             guard let shader = shaders[key],
                   let blend = state["rtBlend0"] as? [String: Any], let stencilOp = state["stencilOp"] as? [String: Any] else {
                 throw Failure.message("Unmapped source pass interface: \(name) / \(passName)")
@@ -2250,9 +2385,11 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     private func functions(for key: String, shader: Shader, device: MTLDevice) throws -> (MTLFunction, MTLFunction) {
         if let cached = shaderFunctions[key] { return cached }
-        if let cached = programCache?.access({ $0.functions[key] }) {
-            shaderFunctions[key] = cached
-            return cached
+        if let programCache {
+            let pair = try Self.programFunctions(for: key, shader: shader, root: root,
+                device: device, cache: programCache) { compiledSourceLibraryCount += 1 }
+            shaderFunctions[key] = pair
+            return pair
         }
         func function(_ stage: Stage?) throws -> MTLFunction {
             guard let stage else { throw Failure.message("Incomplete source shader interface") }

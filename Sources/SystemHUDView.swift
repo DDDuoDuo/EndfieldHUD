@@ -1490,7 +1490,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             statusPanel.isHidden = statusHidden
             if let statusProjection = sourceStatusProjection {
                 HUDSourceWatchView.renderProjectedContent(statusPanel, opacity: canvas.opacity, clip: nil,
-                    flippedRaster: true, projection: CATransform3DConcat(CATransform3DMakeTranslation(168.28, 0, 0), statusProjection),
+                    flippedRaster: true, projection: CATransform3DConcat(CATransform3DMakeTranslation(144.28, 0, 0), statusProjection),
                     rasterBounds: statusPanel.bounds.insetBy(dx: 0, dy: -12), subdivisions: 12, in: context)
             }
             var notesProjection = CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0)
@@ -1577,8 +1577,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func applySourceStatusProjection(_ projection: CATransform3D) {
         guard usesSourceShell, designScale > 0 else { return }
         sourceStatusProjection = projection
-        // Keep the right edge on the authored banner while shortening its plate.
-        var local = CATransform3DConcat(CATransform3DMakeTranslation(168.28, 0, 0), projection)
+        // Shortened banner, inset 24 source points from its original right edge.
+        var local = CATransform3DConcat(CATransform3DMakeTranslation(144.28, 0, 0), projection)
         local = CATransform3DConcat(local, CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0))
         local = CATransform3DConcat(local, CATransform3DMakeScale(1 / designScale, 1 / designScale, 1))
         withoutActions { self.statusPanel.transform = local }
