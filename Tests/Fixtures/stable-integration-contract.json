@@ -678,6 +678,11 @@
       "baselineSha256": "7462e31c918f24c7e2f686883e19474be8c7c4a2ec459beee6f0dcf95888f2d3",
       "sha256": "173f75faf8be8c1a73062e8300b07ee7fd03078ab8f7b0244751d4fefc6edc8f",
       "reason": "User requested RAM wording throughout telemetry. Changes only the visible fallback note from Memory unavailable to RAM unavailable; sampling, metrics, aggregation, availability conditions and persistence are unchanged."
+    },
+    "Sources/Localization.swift": {
+      "baselineSha256": "ca4266f41e69557bbe8d959c192795a8354805f847114a1e6fd7c84e999e87e6",
+      "sha256": "69215e36d18ad58314ddc9d4ffee6bd94ac95409700bfaae9574d9dffcc291fe",
+      "reason": "User-requested Korean locale detection and catalog rendering; existing source keys, language raw values, prior translations and interpolation semantics are preserved. Korean coverage and persistence are tested."
     }
   },
   "reviewedTranslationUpdates": {

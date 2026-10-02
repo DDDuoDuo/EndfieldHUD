@@ -99,7 +99,7 @@ fi
 cp "$PROJECT_DIR/Resources/Info.plist" "$STAGED_APP/Contents/Info.plist"
 cp "$PROJECT_DIR/LICENSE" "$STAGED_APP/Contents/Resources/LICENSE.txt"
 cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
-for LOCALIZATION in en zh-Hans zh-Hant ja; do
+for LOCALIZATION in en zh-Hans zh-Hant ja ko; do
     ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$STAGED_APP/Contents/Resources/$LOCALIZATION.lproj"
 done
 

@@ -79,7 +79,8 @@ enum HUDChargeBadgeTests {
             (.english, "CHARGE MODE", "BATTERY MODE"),
             (.simplifiedChinese, "充电模式", "电池模式"),
             (.traditionalChinese, "充電模式", "電池模式"),
-            (.japanese, "充電モード", "バッテリーモード")
+            (.japanese, "充電モード", "バッテリーモード"),
+            (.korean, "충전 모드", "배터리 모드")
         ]
         for (language, chargingTitle, batteryTitle) in languages {
             L10n.language = language

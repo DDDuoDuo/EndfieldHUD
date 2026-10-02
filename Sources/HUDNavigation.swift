@@ -1019,9 +1019,10 @@ final class HUDNavigationEntry {
         var size: CGFloat = module == .power ? 14 : labelSize
         let japanese = L10n.resolvedLanguage == .japanese
         let hasTwoLines = (!L10n.isCJK && (module == .fileShelf || module == .clipboard))
-            || (japanese && module == .fileShelf)
+            || (L10n.isCJK && !L10n.isChinese && module == .fileShelf)
         if hasTwoLines {
-            if !japanese { text = module == .fileShelf ? "Temporary\nFile Shelf" : "Clipboard\nCache" }
+            if japanese { text = "一時ファイル\nシェルフ" }
+            else if !L10n.isCJK { text = module == .fileShelf ? "Temporary\nFile Shelf" : "Clipboard\nCache" }
             size = 9.5
             title.frame = CGRect(x: 7, y: 39, width: rect.width - 14, height: 29)
         } else if group == .right {

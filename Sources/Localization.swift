@@ -25,6 +25,7 @@ enum L10n {
             switch components.first {
             case "en": return .english
             case "ja": return .japanese
+            case "ko": return .korean
             case "zh":
                 // An explicit script wins over region (for example zh-Hans-TW).
                 if components.contains("hant") { return .traditionalChinese }
@@ -46,7 +47,7 @@ enum L10n {
         switch selected {
         case .system, .english: return english.value
         case .simplifiedChinese: return simplifiedChinese.value
-        case .traditionalChinese, .japanese:
+        case .traditionalChinese, .japanese, .korean:
             guard let entry = LocalizationCatalog.entry(english: english.template, simplifiedChinese: simplifiedChinese.template) else {
                 // New uncatalogued strings stay readable while their translations
                 // are added; tests check every shipped literal against the catalog.
@@ -56,7 +57,13 @@ enum L10n {
                 }
                 return english.value
             }
-            let template = selected == .traditionalChinese ? entry.traditionalChinese : entry.japanese
+            let template: String
+            switch selected {
+            case .traditionalChinese: template = entry.traditionalChinese
+            case .japanese: template = entry.japanese
+            case .korean: template = entry.korean
+            default: template = english.template
+            }
             return render(template, arguments: english.arguments) ?? english.value
         }
     }

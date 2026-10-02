@@ -100,7 +100,7 @@ enum AppShortcutHUDVerification {
                 }
             }
             let selected = source.selectedDesktopModule
-            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese] {
+            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese, .korean] {
                 L10n.language = language
                 source.refreshDesktopLanguage()
                 check(source.desktopPresentationForVerification(target: .module(.system))?.caption == HUDModule.system.title
@@ -111,8 +111,17 @@ enum AppShortcutHUDVerification {
                     && source.desktopProfileCaptionsForVerification.contains(L10n.text("Authority", "权限等级")),
                       "Profile text and accessibility action labels follow the new language immediately")
                 reveal(.module(.fileShelf))
-                check(source.desktopPresentationForVerification(target: .module(.fileShelf))?.wrapped == !L10n.isCJK,
-                      "CJK shelf titles remain on one line after a live language switch")
+                let shelf = source.desktopPresentationForVerification(target: .module(.fileShelf))
+                check(shelf?.wrapped == !L10n.isChinese,
+                      "Japanese and Korean shelf titles wrap while Chinese keeps its compact single line")
+                if language == .japanese || language == .korean, let shelf {
+                    check(shelf.fontSize >= 20 && shelf.captionSize.width >= 124 && shelf.captionSize.height >= 56,
+                          "The live source shelf caption keeps a readable font and a two-line area after language changes")
+                    if language == .japanese {
+                        check(shelf.caption == "一時ファイル\nシェルフ",
+                              "Japanese uses two natural caption lines instead of shrinking the complete name")
+                    }
+                }
                 reveal(.appShortcut(shortcuts[1].id))
                 check(source.desktopPresentationForVerification(target: .appShortcut(shortcuts[1].id))?.caption == shortcuts[1].name
                     && source.selectedDesktopModule == selected,

@@ -896,6 +896,22 @@ private final class PositionPanel: NSPanel {
     override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
     override func resignKey() { super.resignKey(); onResignKey?() }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        (contentView as? SystemHUDView)?.reconcileCursorAfterNativeDispatch()
+    }
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        // Native child views and AppKit cursor regions run after the HUD's
+        // tracking callbacks. Reconcile once after dispatch, including the
+        // return from nested click handling. Drag sessions keep their cursors.
+        switch event.type {
+        case .mouseMoved, .mouseEntered, .mouseExited, .cursorUpdate,
+             .leftMouseUp, .rightMouseUp, .otherMouseUp, .scrollWheel:
+            (contentView as? SystemHUDView)?.reconcileCursorAfterNativeDispatch()
+        default: break
+        }
+    }
 }
 
 private final class PositionCanvas: NSView {

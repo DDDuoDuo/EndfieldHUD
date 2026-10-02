@@ -213,7 +213,7 @@ enum HUDLifecycleVerification {
                       "Cancel retains the same HUD, section and native windows")
                 check(acceptedQuits == 0 && completedQuits == 0 && normalCloses == 0,
                       "Cancel neither accepts quit nor closes the HUD")
-                closeWithPointerMotion()
+                checkCursorDispatchAndIdle { [self] in closeWithPointerMotion() }
             }
             }
         }
@@ -440,6 +440,77 @@ enum HUDLifecycleVerification {
                   "Source and native panels reuse one cursor during \(phase)")
         }
 
+        private func checkCursorDispatchAndIdle(completion: @escaping () -> Void) {
+            guard let source = overlay.systemSourceWatchForVerification,
+                  let host = source.superview as? SystemHUDView, let window = host.window,
+                  let cursor = source.presentedSourceCursor else {
+                fail("Cursor dispatch verification requires the visible source and native host")
+            }
+            let previousPointer = screenPointer
+            var quietConfiguration = configuration
+            quietConfiguration.reduceMotion = true
+            quietConfiguration.ambientAnimation = false
+            host.set(snapshot: snapshot, configuration: quietConfiguration)
+            let probe = NativeCursorProbe(frame: CGRect(x: host.bounds.midX - 40,
+                y: host.bounds.midY - 40, width: 80, height: 80))
+            host.addSubview(probe, positioned: .above, relativeTo: nil)
+            host.layoutSubtreeIfNeeded()
+            probe.updateTrackingAreas()
+            let point = CGPoint(x: probe.frame.midX, y: probe.frame.midY)
+            screenPointer = window.convertPoint(toScreen: host.convert(point, to: nil))
+            check(host.hitTest(host.convert(point, to: host.superview)) === probe,
+                  "Cursor dispatch reaches a native child above the source shell")
+            sendCursorProbeClick(at: point, host: host, window: window)
+            check(probe.mouseUpCount == 1 && source.sourceCursorOwnedForVerification,
+                  "Window dispatch restores Endfield after the native mouse-up handler sets the arrow")
+            let resets = probe.cursorResetCount
+            window.invalidateCursorRects(for: probe)
+            window.resetCursorRects()
+            check(probe.cursorResetCount > resets && source.sourceCursorOwnedForVerification,
+                  "A native cursor-region rebuild restores Endfield after AppKit finishes resetting views")
+            // Let pending layout and tracking updates settle before measuring
+            // idle ownership. No source cursor handler is called by this probe.
+            later(0.25) { [self] in
+                check(source.playback.phase == .visible && !source.hasDisplayTimerForVerification,
+                      "Cursor idle verification runs after animations settle with the display clock stopped")
+                let frames = source.renderedFrameCount
+                later(2.5) { [self] in
+                    check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
+                          "Endfield retains ownership through several seconds of native-view idle time")
+                    check(!source.hasDisplayTimerForVerification && source.renderedFrameCount == frames,
+                          "Keeping the cursor visible does not restart rendering or poll from a display timer")
+                    probe.removeFromSuperview()
+                    let editor = NativeEditorCursorProbe(frame: probe.frame)
+                    editor.isEditable = true
+                    host.addSubview(editor, positioned: .above, relativeTo: nil)
+                    sendCursorProbeClick(at: point, host: host, window: window)
+                    check(editor.mouseUpCount == 1 && NSCursor.current === NSCursor.iBeam
+                          && !source.sourceCursorOwnedForVerification,
+                          "Window cursor reconciliation preserves a native text editor's I-beam")
+                    editor.removeFromSuperview()
+                    host.addSubview(probe, positioned: .above, relativeTo: nil)
+                    sendCursorProbeClick(at: point, host: host, window: window)
+                    check(probe.mouseUpCount == 2 && source.sourceCursorOwnedForVerification,
+                          "Leaving native text entry restores Endfield through normal window dispatch")
+                    probe.removeFromSuperview()
+                    screenPointer = previousPointer
+                    host.set(snapshot: snapshot, configuration: configuration)
+                    completion()
+                }
+            }
+        }
+
+        private func sendCursorProbeClick(at point: CGPoint, host: SystemHUDView, window: NSWindow) {
+            for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
+                guard let event = NSEvent.mouseEvent(with: type, location: host.convert(point, to: nil),
+                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
+                    fail("Cannot create an isolated native cursor-dispatch event")
+                }
+                window.sendEvent(event)
+            }
+        }
+
         private func checkCleanClose(_ label: String, requireReleasedView: Bool = true) {
             check(overlay.systemPhase == .closed && !overlay.systemWindowVisibleForVerification
                   && overlay.systemShellIdentity == nil && overlay.lastClosedAnimationCount == 0
@@ -507,9 +578,41 @@ enum HUDLifecycleVerification {
             overlay.onQuitAccepted = priorQuitAccepted
             overlay.onQuitAfterSystemClose = priorQuitClosed
             overlay.afterSystemClose = priorAfterClose
-            print("PASS: \(assertions) HUD lifecycle assertions; pointer follow-through, bounded transitions, quit cancellation, updater close/recovery, close-before-quit and one-shot cleanup\(reduced ? "; transition midpoint checks skipped for system Reduce Motion" : "")")
+            print("PASS: \(assertions) HUD lifecycle assertions; pointer follow-through, native cursor dispatch and idle ownership, bounded transitions, quit cancellation, updater close/recovery, close-before-quit and one-shot cleanup\(reduced ? "; transition midpoint checks skipped for system Reduce Motion" : "")")
             fflush(stdout)
             completion()
         }
+    }
+
+    /// A native child deliberately chooses its own cursor during AppKit
+    /// callbacks, so the test exercises dispatch ordering instead of manually
+    /// invoking the source's cursor-update handler.
+    private final class NativeCursorProbe: NSView {
+        private var tracking: NSTrackingArea?
+        private(set) var mouseUpCount = 0
+        private(set) var cursorResetCount = 0
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let tracking { removeTrackingArea(tracking) }
+            let area = NSTrackingArea(rect: .zero,
+                options: [.inVisibleRect, .activeInKeyWindow, .mouseMoved, .cursorUpdate], owner: self)
+            addTrackingArea(area); tracking = area
+        }
+        override func resetCursorRects() {
+            super.resetCursorRects()
+            cursorResetCount += 1
+            addCursorRect(visibleRect, cursor: .arrow)
+            NSCursor.arrow.set()
+        }
+        override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
+        override func mouseMoved(with event: NSEvent) { NSCursor.arrow.set() }
+        override func mouseDown(with event: NSEvent) {}
+        override func mouseUp(with event: NSEvent) { mouseUpCount += 1; NSCursor.arrow.set() }
+    }
+
+    private final class NativeEditorCursorProbe: NSTextView {
+        private(set) var mouseUpCount = 0
+        override func mouseDown(with event: NSEvent) {}
+        override func mouseUp(with event: NSEvent) { mouseUpCount += 1; NSCursor.iBeam.set() }
     }
 }

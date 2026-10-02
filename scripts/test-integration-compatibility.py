@@ -40,7 +40,8 @@ def check(root, baseline):
     updates = baseline.get("reviewedBehaviorUpdates", {})
     # Persistence files cannot be exempted by these explicit behavior changes.
     allowed_updates = {"Sources/WorkModeFocusController.swift", "Sources/WorldMapGeometry.swift",
-                       "Sources/AppActivityMonitor.swift", "Sources/SystemActivityMonitor.swift"}
+                       "Sources/AppActivityMonitor.swift", "Sources/SystemActivityMonitor.swift",
+                       "Sources/Localization.swift"}
     for name, update in updates.items():
         if name not in allowed_updates or update.get("baselineSha256") != baseline["files"].get(name) or not update.get("reason"):
             failures.append(f"Invalid reviewed behavior update: {name}")
@@ -50,11 +51,19 @@ def check(root, baseline):
         source = root / name
         if not source.is_file():
             failures.append(f"Missing stable functional file: {name}")
-        elif hashlib.sha256(source.read_bytes()).hexdigest() != expected:
-            failures.append(f"Stable behavior/data contract changed: {name}")
+        else:
+            data = source.read_bytes()
+            if name == "Sources/Models.swift":
+                # Add one language without exempting preferences, saved keys,
+                # defaults, existing enum values or any other model behavior.
+                data = data.replace(b"    case japanese\n    case korean\n", b"    case japanese\n", 1)
+            if hashlib.sha256(data).hexdigest() != expected:
+                failures.append(f"Stable behavior/data contract changed: {name}")
     try:
         info = plistlib.loads((root / "Resources/Info.plist").read_bytes())
         for key, expected in baseline["infoPlist"].items():
+            if key == "CFBundleLocalizations":
+                expected = expected + ["ko"]
             if info.get(key) != expected:
                 failures.append(f"Stable application/update identity changed: {key}")
     except (OSError, ValueError, plistlib.InvalidFileException) as error:
@@ -99,6 +108,16 @@ def self_test(baseline):
         plist.write_bytes(plistlib.dumps(values))
         assert any("CFBundleIdentifier" in failure for failure in check(root, baseline)), "A changed defaults/permission identity must fail"
         plist.write_bytes(original)
+        values = plistlib.loads(original)
+        values["CFBundleLocalizations"].remove("en")
+        plist.write_bytes(plistlib.dumps(values))
+        assert any("CFBundleLocalizations" in failure for failure in check(root, baseline)), "Adding Korean cannot remove an existing bundle language"
+        plist.write_bytes(original)
+        models = root / "Sources/Models.swift"
+        original_models = models.read_bytes()
+        models.write_bytes(original_models.replace(b'case english', b'case renamedEnglish', 1))
+        assert any("Models.swift" in failure for failure in check(root, baseline)), "Existing stored language values remain guarded"
+        models.write_bytes(original_models)
         catalog = root / "Sources/LocalizationCatalog.swift"
         original = catalog.read_text()
         catalog.write_text(original.replace(baseline["translations"][0], "", 1))
@@ -125,7 +144,7 @@ def self_test(baseline):
         original = next(iter(unauthorized["reviewedTranslationUpdates"]))
         unauthorized["reviewedTranslationUpdates"][original]["entry"] = 'Entry("Arbitrary", "任意", "任意", "任意")'
         assert any("Invalid reviewed translation update" in failure for failure in check(root, unauthorized)), "Unreviewed copy replacements cannot be exempted"
-    count = 6 + len(baseline.get("reviewedBehaviorUpdates", {})) + len(baseline.get("reviewedTranslationUpdates", {}))
+    count = 8 + len(baseline.get("reviewedBehaviorUpdates", {})) + len(baseline.get("reviewedTranslationUpdates", {}))
     print(f"Passed {count} isolated compatibility-guard mutation checks.")
 
 

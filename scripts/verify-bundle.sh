@@ -68,7 +68,7 @@ verify_copy "$SPARKLE_DIR/LICENSE" "$RESOURCES/Sparkle-LICENSE.txt"
 verify_copy "$PROJECT_DIR/LICENSE" "$RESOURCES/LICENSE.txt"
 verify_copy "$PROJECT_DIR/CREDITS.md" "$RESOURCES/CREDITS.md"
 verify_copy "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$RESOURCES/EndfieldIndustriesSource.png"
-for LOCALIZATION in en zh-Hans zh-Hant ja; do
+for LOCALIZATION in en zh-Hans zh-Hant ja ko; do
     PURPOSE_STRINGS="$RESOURCES/$LOCALIZATION.lproj/InfoPlist.strings"
     verify_copy "$PROJECT_DIR/Resources/$LOCALIZATION.lproj/InfoPlist.strings" "$PURPOSE_STRINGS"
     plutil -lint "$PURPOSE_STRINGS"

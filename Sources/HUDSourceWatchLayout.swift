@@ -72,9 +72,8 @@ struct HUDSourceWatchLayout {
         }
         // Desktop momentum uses a bounded elastic offset, while the recycled
         // row assignments still clamp to valid logical content in its sampler.
-        let scrollPosition = desktopNavigation == nil ? min(1, max(0, verticalNormalizedPosition))
-            : min(1.08, max(-0.08, verticalNormalizedPosition))
-        try applyScroll(to: &pose, position: scrollPosition, report: &report)
+        try applyScroll(to: &pose, position: verticalNormalizedPosition,
+                        desktopContentID: desktopNavigation?.contentID, report: &report)
         beforeSlant?(pose)
         let resolved = try scene.resolve(overrides: pose.transforms)
         for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
@@ -289,7 +288,8 @@ struct HUDSourceWatchLayout {
         if resetAnchors { o.anchorMin = HUDSourceVector2(0, 1); o.anchorMax = HUDSourceVector2(0, 1) }
         pose.transforms[id] = o
     }
-    private func applyScroll(to pose: inout HUDSourceWatchPose, position: Double, report: inout Report) throws {
+    private func applyScroll(to pose: inout HUDSourceWatchPose, position: Double,
+                             desktopContentID: HUDSourceID?, report: inout Report) throws {
         for id in scene.traversalIDs {
             guard let scroll = component("UIScrollRect", on: id) ?? component("ScrollRect", on: id),
                   scroll["m_Vertical"].flag(), !scroll["disableScroll"].flag(),
@@ -306,7 +306,11 @@ struct HUDSourceWatchLayout {
                 let pivot = (pose.transforms[contentID]?.pivot ?? content.node.transform.rect?.pivot ?? HUDSourceVector2(0.5, 0.5)).y
                 boundsMin -= excess * pivot; extent = viewRect.size.y
             }
-            let hidden = max(0, extent - viewRect.size.y), delta = viewRect.origin.y - position * hidden - boundsMin
+            let hidden = max(0, extent - viewRect.size.y)
+            let position = contentID == desktopContentID
+                ? HUDSourceDesktopScrollMotion.presentationPosition(position, hiddenLength: hidden)
+                : min(1, max(0, position))
+            let delta = viewRect.origin.y - position * hidden - boundsMin
             if abs(delta) > 0.01 {
                 let target = content.localMatrix.columns.3 + SIMD4<Double>(0, delta, 0, 0)
                 setLocalPosition(contentID, target: target, parentRect: content.node.parentID.flatMap { resolved[$0]?.rect }, pose: &pose)

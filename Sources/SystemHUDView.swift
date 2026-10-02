@@ -1215,6 +1215,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
     override func cursorUpdate(with event: NSEvent) { sourceWatch?.refreshSourceCursor() }
 
+    func reconcileCursorAfterNativeDispatch() {
+        // AppKit owns copy/link cursors throughout an incoming drag. Do not
+        // force a pointer image while any physical mouse button is held.
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        sourceWatch?.refreshSourceCursor(force: true)
+    }
+
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
     override func mouseExited(with event: NSEvent) {
