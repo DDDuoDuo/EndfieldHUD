@@ -30,6 +30,9 @@ jobs:
           xcrun swiftc --version
           ./scripts/build.sh --print-sdk
           bash -n ./scripts/dev.sh
+      - name: Verify original plate projection with isolated source pixels
+        if: always()
+        run: bash ./scripts/verify-source-plate-projection.sh
       - name: Test core behavior
         run: ./scripts/test.sh
       - name: Record original source layout without GPU
@@ -60,9 +63,6 @@ jobs:
       - name: Verify original backdrop filters with synthetic pixels
         if: always()
         run: bash ./scripts/verify-source-backdrop-gpu.sh
-      - name: Verify original plate projection with isolated source pixels
-        if: always()
-        run: bash ./scripts/verify-source-plate-projection.sh
       - name: Record fixture crash diagnostics
         if: always()
         run: |
