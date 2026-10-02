@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "serialized_color_space": 1,
+  "serialized_color_space_name": "Linear",
+  "player_settings": {
+    "file": "D:\\Arknights Endfield\\Endfield_Data\\globalgamemanagers",
+    "type": "PlayerSettings",
+    "path_id": "1",
+    "full_object_schema_error": "EOFError: read_int_array out of bounds",
+    "color_space_established": true,
+    "status": "Sequential typed standard prefix decoded through m_ActiveColorSpace; later HG fields remain undecoded",
+    "serialized_color_space": 1,
+    "serialized_color_space_name": "Linear",
+    "prefix_fields": [
+      {
+        "name": "productGUID",
+        "type": "GUID",
+        "offset": 0,
+        "end": 16,
+        "value": {
+          "data[0]": 893763309,
+          "data[1]": 1321958873,
+          "data[2]": 3564736424,
+          "data[3]": 1812332921
+        }
+      },
+      {
+        "name": "AndroidProfiler",
+        "type": "bool",
+        "offset": 16,
+        "end": 17,
+        "value": false
+      },
+      {
+        "name": "AndroidFilterTouchesWhenObscured",
+        "type": "bool",
+        "offset": 17,
+        "end": 18,
+        "value": false
+      },
+      {
+        "name": "AndroidEnableSustainedPerformanceMode",
+        "type": "bool",
+        "offset": 18,
+        "end": 20,
+        "value": false
+      },
+      {
+        "name": "defaultScreenOrientation",
+        "type": "int",
+        "offset": 20,
+        "end": 24,
+        "value": 4
+      },
+      {
+        "name": "targetDevice",
+        "type": "int",
+        "offset": 24,
+        "end": 28,
+        "value": 2
+      },
+      {
+        "name": "useOnDemandResources",
+        "type": "bool",
+        "offset": 28,
+        "end": 32,
+        "value": false
+      },
+      {
+        "name": "accelerometerFrequency",
+        "type": "int",
+        "offset": 32,
+        "end": 36,
+        "value": 60
+      },
+      {
+        "name": "companyName",
+        "type": "string",
+        "offset": 36,
+        "end": 52,
+        "value": "Hypergryph"
+      },
+      {
+        "name": "productName",
+        "type": "string",
+        "offset": 52,
+        "end": 64,
+        "value": "Endfield"
+      },
+      {
+        "name": "defaultCursor",
+        "type": "PPtr<Texture2D>",
+        "offset": 64,
+        "end": 76,
+        "value": {
+          "m_FileID": 1,
+          "m_PathID": 3
+        }
+      },
+      {
+        "name": "cursorHotspot",
+        "type": "Vector2f",
+        "offset": 76,
+        "end": 84,
+        "value": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      },
+      {
+        "name": "m_SplashScreenBackgroundColor",
+        "type": "ColorRGBA",
+        "offset": 84,
+        "end": 100,
+        "value": {
+          "r": 0.13725490868091583,
+          "g": 0.12156862765550613,
+          "b": 0.125490203499794,
+          "a": 1.0
+        }
+      },
+      {
+        "name": "m_ShowUnitySplashScreen",
+        "type": "bool",
+        "offset": 100,
+        "end": 101,
+        "value": false
+      },
+      {
+        "name": "m_ShowUnitySplashLogo",
+        "type": "bool",
+        "offset": 101,
+        "end": 104,
+        "value": false
+      },
+      {
+        "name": "m_SplashScreenOverlayOpacity",
+        "type": "float",
+        "offset": 104,
+        "end": 108,
+        "value": 1.0
+      },
+      {
+        "name": "m_SplashScreenAnimation",
+        "type": "int",
+        "offset": 108,
+        "end": 112,
+        "value": 1
+      },
+      {
+        "name": "m_SplashScreenLogoStyle",
+        "type": "int",
+        "offset": 112,
+        "end": 116,
+        "value": 1
+      },
+      {
+        "name": "m_SplashScreenDrawMode",
+        "type": "int",
+        "offset": 116,
+        "end": 120,
+        "value": 0
+      },
+      {
+        "name": "m_SplashScreenBackgroundAnimationZoom",
+        "type": "float",
+        "offset": 120,
+        "end": 124,
+        "value": 1.0
+      },
+      {
+        "name": "m_SplashScreenLogoAnimationZoom",
+        "type": "float",
+        "offset": 124,
+        "end": 128,
+        "value": 1.0
+      },
+      {
+        "name": "m_SplashScreenBackgroundLandscapeAspect",
+        "type": "float",
+        "offset": 128,
+        "end": 132,
+        "value": 1.0
+      },
+      {
+        "name": "m_SplashScreenBackgroundPortraitAspect",
+        "type": "float",
+        "offset": 132,
+        "end": 136,
+        "value": 1.0
+      },
+      {
+        "name": "m_SplashScreenBackgroundLandscapeUvs",
+        "type": "Rectf",
+        "offset": 136,
+        "end": 152,
+        "value": {
+          "x": 0.0,
+          "y": 0.0,
+          "width": 1.0,
+          "height": 1.0
+        }
+      },
+      {
+        "name": "m_SplashScreenBackgroundPortraitUvs",
+        "type": "Rectf",
+        "offset": 152,
+        "end": 168,
+        "value": {
+          "x": 0.0,
+          "y": 0.0,
+          "width": 1.0,
+          "height": 1.0
+        }
+      },
+      {
+        "name": "m_SplashScreenLogos",
+        "type": "vector",
+        "offset": 168,
+        "end": 172,
+        "value": []
+      },
+      {
+        "name": "m_SplashScreenBackgroundLandscape",
+        "type": "PPtr<Texture2D>",
+        "offset": 172,
+        "end": 184,
+        "value": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        }
+      },
+      {
+        "name": "m_SplashScreenBackgroundPortrait",
+        "type": "PPtr<Texture2D>",
+        "offset": 184,
+        "end": 196,
+        "value": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        }
+      },
+      {
+        "name": "m_VirtualRealitySplashScreen",
+        "type": "PPtr<Texture2D>",
+        "offset": 196,
+        "end": 208,
+        "value": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        }
+      },
+      {
+        "name": "m_HolographicTrackingLossScreen",
+        "type": "PPtr<Texture2D>",
+        "offset": 208,
+        "end": 220,
+        "value": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        }
+      },
+      {
+        "name": "defaultScreenWidth",
+        "type": "int",
+        "offset": 220,
+        "end": 224,
+        "value": 1024
+      },
+      {
+        "name": "defaultScreenHeight",
+        "type": "int",
+        "offset": 224,
+        "end": 228,
+        "value": 768
+      },
+      {
+        "name": "defaultScreenWidthWeb",
+        "type": "int",
+        "offset": 228,
+        "end": 232,
+        "value": 960
+      },
+      {
+        "name": "defaultScreenHeightWeb",
+        "type": "int",
+        "offset": 232,
+        "end": 236,
+        "value": 600
+      },
+      {
+        "name": "m_StereoRenderingPath",
+        "type": "int",
+        "offset": 236,
+        "end": 240,
+        "value": 0
+      },
+      {
+        "name": "m_ActiveColorSpace",
+        "type": "int",
+        "offset": 240,
+        "end": 244,
+        "value": 1
+      }
+    ],
+    "object_raw_sha256": "3c4b218ce20454e5544266f5ed27f44fac4cfc0dac4fd6ae7ea213f000b62bb9",
+    "policy": "Original serialized project color-space setting; runtime override/global policy has not been observed"
+  },
+  "texture_policy": "Original source m_ColorSpace=Gamma0 uses sRGB Metal format; Linear1 preserves linear bytes; authored mips and sampler unchanged",
+  "material_policy": "Source shader Color property RGB and Gamma-flag property values are converted at GPU constant upload; alpha and ordinary Float/Vector/ST remain unmodified",
+  "display_pixel_format": "bgra8Unorm_srgb",
+  "readback_color_space": "sRGB",
+  "ui_vertex_precision": "Original Color32 then Canvas-controlled linear float; native post-conversion vertex-buffer quantization has not been observed",
+  "limitations": [
+    "HG HDR render targets, camera postprocess, tone mapping and dynamic color-space override have not been observed",
+    "Native Metal compilation and visual equivalence need macOS verification"
+  ],
+  "primary_references": [
+    "https://docs.unity3d.com/2021.3/Documentation/Manual/SL-PropertiesInPrograms.html",
+    "https://docs.unity3d.com/ScriptReference/Canvas-vertexColorAlwaysGammaSpace.html",
+    "https://developer.apple.com/metal/MetalCIKLReference6.pdf"
+  ],
+  "preview_representation": "Opaque black matte retaining every raw encoded premultiplied RGB byte; original alpha retained in raw-pixel reports and stable-raw.bgra"
+}

@@ -1,0 +1,38 @@
+[
+  {
+    "id": 10,
+    "name": "_9_10",
+    "resource_type": 1,
+    "base_type_id": 9,
+    "type_id": 34,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 12,
+    "name": "_11_12",
+    "resource_type": 1,
+    "base_type_id": 11,
+    "type_id": 35,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 14,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 7,
+    "type_id": 47,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 15,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 8,
+    "type_id": 48,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  }
+]

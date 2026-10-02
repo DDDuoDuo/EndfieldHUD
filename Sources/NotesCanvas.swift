@@ -186,8 +186,12 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         onChange?()
     }
 
-    func setPresentation(notesSelected selected: Bool, animated: Bool = true) {
-        guard notesSelected != selected else { return }
+    func setPresentation(notesSelected selected: Bool, animated: Bool = true,
+                         direction: CGPoint = CGPoint(x: 0, y: 1)) {
+        guard notesSelected != selected else {
+            if !animated || reduceMotion() { settlePresentation() }
+            return
+        }
         mouseUp()
         pendingDeletionID = nil
         notesSelected = selected
@@ -203,20 +207,32 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             node.layer.removeAllAnimations()
             if visible {
                 withoutActions { node.layer.isHidden = false; node.layer.opacity = 1 }
-                if animated { animateCard(node.layer, appearing: true) }
+                if animated { animatePresentation(node.layer, appearing: true, direction: direction) }
             } else if animated && !reduceMotion() {
                 CATransaction.begin()
                 CATransaction.setCompletionBlock { [weak self, weak node] in
-                    guard self?.presentationGeneration == generation else { return }
-                    node?.layer.isHidden = true
+                    guard let self, self.presentationGeneration == generation else { return }
+                    self.withoutActions { node?.layer.isHidden = true }
                 }
-                animateCard(node.layer, appearing: false)
+                animatePresentation(node.layer, appearing: false, direction: direction)
                 withoutActions { node.layer.opacity = 0 }
                 CATransaction.commit()
             } else { withoutActions { node.layer.isHidden = true; node.layer.opacity = 0 } }
         }
         withoutActions { renderDeletionControls() }
         onChange?()
+    }
+
+    private func settlePresentation() {
+        presentationGeneration += 1
+        withoutActions {
+            for item in notes {
+                guard let card = nodes[item.id]?.layer else { continue }
+                card.removeAnimation(forKey: "notes.section")
+                card.isHidden = !notesSelected && !item.isPinned
+                card.opacity = card.isHidden ? 0 : 1
+            }
+        }
     }
 
     /// Center module input is deliberately limited to add controls; no placing mode.
@@ -844,6 +860,25 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         group.animations = [scale, travel, opacity]; group.duration = 0.2
         group.timingFunction = CAMediaTimingFunction(name: appearing ? .easeOut : .easeIn)
         card.add(group, forKey: "notes.visibility")
+    }
+
+    /// Workspace cards are outside the center's clipping host. Give only the
+    /// changing cards the same duration and direction as that module handoff;
+    /// pinned cards remain attached to their existing workspace positions.
+    private func animatePresentation(_ card: CALayer, appearing: Bool, direction: CGPoint) {
+        guard !reduceMotion() else { return }
+        let distance: CGFloat = appearing ? 18 : -14
+        let offset = CATransform3DMakeTranslation(direction.x * distance, direction.y * distance, 0)
+        let travel = CABasicAnimation(keyPath: "transform")
+        travel.fromValue = NSValue(caTransform3D: appearing ? offset : CATransform3DIdentity)
+        travel.toValue = NSValue(caTransform3D: appearing ? CATransform3DIdentity : offset)
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = appearing ? 0 : 1; opacity.toValue = appearing ? 1 : 0
+        let group = CAAnimationGroup()
+        group.animations = [travel, opacity]
+        group.duration = HUDModuleContent.transitionDuration
+        group.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.72, 0.26, 1)
+        card.add(group, forKey: "notes.section")
     }
 
     var activeAnimationCount: Int {

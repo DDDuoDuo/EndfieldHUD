@@ -397,9 +397,21 @@ enum WorkModeTests {
         check(focusStatus.frame.maxY < headingFrame.minY
               && layoutCanvas.accessibleActions.allSatisfy { !$0.rect.intersects(focusStatus.frame) },
               "Focus errors stay above the heading and cannot obscure session actions")
+        var permissionRequests = 0
+        layoutCanvas.onRequestFocusAccess = { permissionRequests += 1 }
+        layoutCanvas.setFocusStatusMessage("Allow Accessibility to control Focus.", needsAccessibilityPermission: true)
+        check(layoutCanvas.accessibleActions.contains { $0.id == "work:focusAccess" && $0.rect == focusStatus.frame },
+              "Only a permission-required status exposes a projected Accessibility settings action")
+        layoutCanvas.perform(actionID: "work:focusAccess")
+        check(permissionRequests == 1 && layoutController.revision == layoutRevision
+              && layoutRing.animation(forKey: "workMode.countdown")?.duration == existingDuration,
+              "The explicit permission action never toggles Focus or retimes the active countdown")
         layoutCanvas.setFocusStatusMessage(nil)
         check(focusStatus.isHidden && !layoutCanvas.accessibleActions.contains { $0.id == "work:focus" },
               "Normal operation keeps the Focus status empty and adds no manual control")
+        layoutCanvas.perform(actionID: "work:focusAccess")
+        check(permissionRequests == 1 && !layoutCanvas.accessibleActions.contains { $0.id == "work:focusAccess" },
+              "A stale or hidden permission action cannot reopen System Settings")
         layoutCanvas.perform(actionID: "work:reset")
         RunLoop.main.run(until: Date().addingTimeInterval(WorkModeCanvas.layoutTransitionDuration + 0.08))
         check(layoutCanvas.accessibleActions.contains { $0.id == "work:custom" } && layoutConfiguration.opacity == 1,

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "source_game": "Arknights: Endfield / 明日方舟：终末地",
+  "source_ui": "WatchPanel_PC",
+  "extracted_on": "2026-09-30",
+  "extraction": "UnityPy Sprite image export from the user-supplied local game installation. Exported PNGs are packaged byte-for-byte, with their Sprite crop and orientation retained.",
+  "rights": "Game artwork remains third-party material owned by Hypergryph and the respective rights holders; excluded from the EndfieldHUD MIT grant.",
+  "assets": [
+    {
+      "file": "ui_mid_ring.png",
+      "source_sprite": "ui_mid_ring",
+      "source_export": "ui_mid_ring-Sprite.png",
+      "unity_type": "Sprite",
+      "cab": "CAB-394f8ef39d1f034435f3c82b6384ef80",
+      "path_id": "-4004870437195766162",
+      "width": 1004,
+      "height": 1004,
+      "sha256": "0e00cd2096764f5c02aa58700e1cf1756f8aa96bda00043fa6d9b2d9b37adb66"
+    },
+    {
+      "file": "ui_triangle_fx.png",
+      "source_sprite": "ui_triangle_fx",
+      "source_export": "ui_triangle_fx-Sprite.png",
+      "unity_type": "Sprite",
+      "cab": "CAB-7b0d4d8e705dfe47e3e64339d6f674a0",
+      "path_id": "7168968361479419957",
+      "width": 143,
+      "height": 123,
+      "sha256": "8b9c6742b0a86441437462c8d4d1d87eba23d774cc7c88f527e43f8029ad6920"
+    }
+  ]
+}

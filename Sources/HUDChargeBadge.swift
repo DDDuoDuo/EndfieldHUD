@@ -7,8 +7,8 @@ import QuartzCore
 final class HUDChargeBadge {
     typealias Scheduler = (TimeInterval, @escaping () -> Void) -> (() -> Void)
 
-    static let center = CGPoint(x: 500, y: 448)
-    static let rendererScale: CGFloat = 0.64
+    static let center = CGPoint(x: 500, y: 446)
+    static let rendererScale: CGFloat = 0.82
     static let entranceDelay: TimeInterval = 0.58
     static let compactHoldDuration: TimeInterval = 3
     static let entranceDuration = entranceDelay + ChargeIndicatorView.entranceDuration

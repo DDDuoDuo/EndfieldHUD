@@ -1,0 +1,480 @@
+{
+  "files": [
+    {
+      "file": "banner-runtime.json",
+      "bytes": 2754,
+      "sha256": "ce328f387b488cce88f56fefbe28e24f6d56346593a0f6c8424de6bc66e526f2"
+    },
+    {
+      "file": "provenance.json",
+      "bytes": 10107,
+      "sha256": "0c7c4a91b5d37ce00fee45ed40f3fd81d298fd8b04d9acd7633584c7dc2a96ec"
+    },
+    {
+      "file": "source-textures/aim_button_bg01--6229f6df--697738812654829304.png",
+      "bytes": 5790,
+      "sha256": "c0559cb64ade1449e5818e9379c522fdf13c47079e8179f261fdf953b5edfd13"
+    },
+    {
+      "file": "source-textures/bg_activitylevel_line--469bb0f1--8325197967690250039.png",
+      "bytes": 189,
+      "sha256": "26f4a4af174d50641e238f9244537234e6cb9924ff5aa38c50c108339da106e9"
+    },
+    {
+      "file": "source-textures/bg_assembly_01--bafe084b---5358264342952264872.png",
+      "bytes": 901,
+      "sha256": "a4bdeeba4e2532cb89910216af36fcc2289480baa921d05d704875dd09027bff"
+    },
+    {
+      "file": "source-textures/bg_common_r18_p2--4b5ec469--1938194382649467457.png",
+      "bytes": 642,
+      "sha256": "7f780efeab898447d24b5d5fbf3f0764c278a78db382102d68399f858a643110"
+    },
+    {
+      "file": "source-textures/bg_common_r26--a725c482--5938234194269448460.png",
+      "bytes": 966,
+      "sha256": "d10bc6afc2eec4935e542aefc63385bbc427f6258ee44f86bf31b4974c16e3dd"
+    },
+    {
+      "file": "source-textures/bg_contract_tag_high--efb43652--2528983727120053097.png",
+      "bytes": 3885,
+      "sha256": "3123c35606c57eb8b5e32d6edc9fe3b8e71a660ff6f3307b7ddde9a65b3675e0"
+    },
+    {
+      "file": "source-textures/bg_play_slider_new--5e16a5ac---4854298880539517495.png",
+      "bytes": 542,
+      "sha256": "894c0935597498f2e5b5290c1e61c617fc267feefd68daf1a7d712c08cb569b0"
+    },
+    {
+      "file": "source-textures/bg_seasontower_13--35a7cca9--316596898254617328.png",
+      "bytes": 696,
+      "sha256": "63a15589d15448d62f8d2dee3de28c4b0be9a304745102eddbf4ebd3ef292339"
+    },
+    {
+      "file": "source-textures/bg_seasontower_14--fbff487e---4254894133338498107.png",
+      "bytes": 1564,
+      "sha256": "a8f9b607e0cc0d6d84231d0302e925f9983ae3d0795ee157a38bc0262fe125bc"
+    },
+    {
+      "file": "source-textures/bg_sns_tweet_decorate_35--c532c528--6591727633268659541.png",
+      "bytes": 98,
+      "sha256": "7070a427895c7d7fa5a0c9792e327225106f44bafffea67b1b49e72627d459cf"
+    },
+    {
+      "file": "source-textures/business_card_topic_bp_1_3--1e911070--6604503700508031526.png",
+      "bytes": 122393,
+      "sha256": "bd485d012c3defb58c7f12274f563c7f95b39587c51e772cb4142ddb60354209"
+    },
+    {
+      "file": "source-textures/business_card_topic_normal_1--4a226705---4827637915678035611.png",
+      "bytes": 77142,
+      "sha256": "168019747cbe7e719b625ceb433bd7931d6498650e7ae7b5bfda6acf710fb38b"
+    },
+    {
+      "file": "source-textures/common_head_border_line--21fa3e4d---7837820514655709531.png",
+      "bytes": 168,
+      "sha256": "223fc09e9bdbd638587f8fd632820eafef792593b9bfc1e24b329885c6122fde"
+    },
+    {
+      "file": "source-textures/common_head_left_border--68732eb3---473964426479086428.png",
+      "bytes": 4708,
+      "sha256": "40e1cfa5b19da68fa5b31e538c111fbdffd1ba5a2b965d274e80368030efb2ab"
+    },
+    {
+      "file": "source-textures/common_head_shadow_bg--7ef70e0d--2316211278412445563.png",
+      "bytes": 3028,
+      "sha256": "0c3b65c6784f6ff8e23a20140e310138a9bc3ddeb913b1a985c340316f9d7ecb"
+    },
+    {
+      "file": "source-textures/common_whiteline_img--cd30ea22---6002316461495314111.png",
+      "bytes": 157,
+      "sha256": "caf4bfa327a0eac8e8050ba5c3737ca859a296d0d9c61b8c568fe16d05318543"
+    },
+    {
+      "file": "source-textures/deco_adventure_halo_arrow--83641ec8---2594488112794597847.png",
+      "bytes": 399,
+      "sha256": "bf82fa2943da9c04133d5c93b997105b16fd028e086fc0b0cc1cea618a986526"
+    },
+    {
+      "file": "source-textures/deco_bg_sss--2e174e70---7307584321334895209.png",
+      "bytes": 14884,
+      "sha256": "bd1c1476fbc3fa76fb1f070c44ba96b17a7f03f241f4d4cd58ed77c552422ab6"
+    },
+    {
+      "file": "source-textures/deco_friend_card_head_01--6f271997--4724295821681277709.png",
+      "bytes": 1087,
+      "sha256": "fe8736ecd8b35291e2835288d3da723c43dbfa0f50d263a44deab66cc2cfd7ec"
+    },
+    {
+      "file": "source-textures/deco_friend_card_head_02--5afab0f1--3512998325388039613.png",
+      "bytes": 4288,
+      "sha256": "dce6851b7ebbe48d127e9bf499c27d800cf6ccb641997a7e3652e6c27b9bdd9a"
+    },
+    {
+      "file": "source-textures/deco_friend_cell_head_level_shadow--ad8b705c---8453182628307212728.png",
+      "bytes": 1874,
+      "sha256": "7bde9fb7557c9b41a71870146335fe83a3103183a22287417ef6de5796575b92"
+    },
+    {
+      "file": "source-textures/deco_icon_sss--319a8368--4912919567347065062.png",
+      "bytes": 15600,
+      "sha256": "f723fc683f3c3593994852dd1cd1c347bbc106a46361f717e27920dbee654693"
+    },
+    {
+      "file": "source-textures/deco_play_head--dccbc05d---8070658409433931058.png",
+      "bytes": 386,
+      "sha256": "a4169ccda63c408de0160ac24b571d3eee157911e1618fa92d5780aceb1ef450"
+    },
+    {
+      "file": "source-textures/deco_play_name_01--998b7a85--996604966726403669.png",
+      "bytes": 525,
+      "sha256": "dbe0ebecb16fa5dc4959cc6e9250b3bdcda4eda1d35ff522eda614217be38628"
+    },
+    {
+      "file": "source-textures/deco_play_right--fe12ae67---1764866413146737665.png",
+      "bytes": 3589,
+      "sha256": "abc531cb2358d61d8ad782672fb0f5f272567dab45b09591fe9894f7418f0b1b"
+    },
+    {
+      "file": "source-textures/deco_play_right_shadow--8999d03f--5148809778073028939.png",
+      "bytes": 5451,
+      "sha256": "5c253ec3168d1f5989799df3bd3b712ba762db6f5cdc9a147b661341a75f8c2c"
+    },
+    {
+      "file": "source-textures/deco_play_tipsbg--fe38ae0f--1050045739101015854.png",
+      "bytes": 4453,
+      "sha256": "d90116e88ef5a91e0eff672e89c0b878b2eda6b2b25b71c8912315225772ddda"
+    },
+    {
+      "file": "source-textures/icon_chr_0004_pelica--1d0a4c08---3936017606796499761.png",
+      "bytes": 87634,
+      "sha256": "746ee63ea47e87b04335764ddaa7ab1a9b70456d665918f6161e63a7519ff58d"
+    },
+    {
+      "file": "source-textures/icon_chr_0011_seraph--1d0a4c08---6666574239406991612.png",
+      "bytes": 91915,
+      "sha256": "adf767081aa41e8dfd9d1bb83ceb203cec7df050e1c6966bc24f4d4f1563923e"
+    },
+    {
+      "file": "source-textures/icon_contract_tag_high--cb07a3ef---5034372977490163095.png",
+      "bytes": 3503,
+      "sha256": "7b8f4382d0506532cd0e09ed912a8c330d6aaa2316ec02e6ec8bbacca5534109"
+    },
+    {
+      "file": "source-textures/icon_friend_cell_char_block--2321ab8d---5617890141016146480.png",
+      "bytes": 1156,
+      "sha256": "95ebd7a477c8d484122a8d9d9a79691b420b76c04dc6e5bc2e554999c9510667"
+    },
+    {
+      "file": "source-textures/icon_friend_pc--9b24f1b9---1959326597459816875.png",
+      "bytes": 646,
+      "sha256": "a6208626b5cd346b748413c52a06df7ddaa31ee3969d9a26792db761f688ef48"
+    },
+    {
+      "file": "source-textures/icon_friend_sony--5f6a225d--7576613479449390581.png",
+      "bytes": 2130,
+      "sha256": "19dda71f1281cd7273dd5c767f1ae7eca743e69be144509c3a6a7fc8dc4869aa"
+    },
+    {
+      "file": "source-textures/icon_play_tipsbg--842bfdb0---3522140888998863637.png",
+      "bytes": 413,
+      "sha256": "3aeb9d6787e7ee1c99b619b3c968b4d225bbc3c86d1746718be80f147c56eeae"
+    },
+    {
+      "file": "source-textures/icon_rename--85bbbaad--1279771994715387770.png",
+      "bytes": 570,
+      "sha256": "bc2bdfb6e40d3fadc3c5a4fe44cc53066d2109f0498009dd3999deab4c8c7aa8"
+    },
+    {
+      "file": "source-textures/icon_right--db754200--6349671078421088745.png",
+      "bytes": 830,
+      "sha256": "d3bacbc6f7ed74cdf4afbc528e9e248b4c12e6e6e8db9133faa464861b73a2dc"
+    },
+    {
+      "file": "source-textures/icon_user_avatar_frame_bp_1--63c7ff92---972626935785960784.png",
+      "bytes": 39480,
+      "sha256": "629cff23c8f42b78defedfe5e5ab82362faeb56a742f6fb0999d4a4039a0a1ae"
+    },
+    {
+      "file": "source-textures/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.png",
+      "bytes": 19163,
+      "sha256": "302aaaa16ebdddcfccbced60a5b1487d45ba5c9246982a028ff1457c99b4c7b4"
+    },
+    {
+      "file": "source-textures/new_bg--14ad054d---6166617647220596202.png",
+      "bytes": 824,
+      "sha256": "b68d828077d77a124f1341f70f119226fa75792e2c31560756e5b7f52d70cd5b"
+    },
+    {
+      "file": "source-textures/red_dot--f217e169---18558717752715470.png",
+      "bytes": 1748,
+      "sha256": "597e9d12866282bfc8fd5782c2f16fb75cbdd5098cfa337c4f65f0a34fce97ed"
+    },
+    {
+      "file": "source-textures/tag_seasontower_splus_gray--087a11ec---8255304472001022337.png",
+      "bytes": 19177,
+      "sha256": "991c47f2e3670988e7f96562fdb6a63506e6cd1eb6eb5f375543c34ea15d11b3"
+    },
+    {
+      "file": "source-textures/tag_seasontower_splus_small--087a11ec---6283680980313229020.png",
+      "bytes": 16017,
+      "sha256": "301b3ef929f12d26ef13322189d0d9bfb3b6ec40de26223c50148aba9c40a4a1"
+    },
+    {
+      "file": "source-textures/ui_main_menu_factory_icon--0312882f---7432388592649361033.png",
+      "bytes": 768,
+      "sha256": "e82772c2965b8c57e0c78560e02564ad208a06baa2ee432dc266b7b158b34646"
+    },
+    {
+      "file": "source-textures/weapon_typhoeus_banner--52085437---2921224509596559758.png",
+      "bytes": 275594,
+      "sha256": "6acebd488f18ca2ea20908f891a59138c638cf7e144ce72a8f4fe8662e80fe35"
+    },
+    {
+      "file": "source-textures/wiki_guide_icon--31312492--536018404453109699.png",
+      "bytes": 1407,
+      "sha256": "2f5e6e728a87c99bacf4f76786841e5ea6711dcb389bbcc0b9c7a4264ac7f10e"
+    },
+    {
+      "file": "source-textures/yvonne_banner--453a2bda--569085612372656602.png",
+      "bytes": 363383,
+      "sha256": "fd9d04cefba12497ed544e576c0a759e24cdde2c5bafbe294379a62a2864fe46"
+    },
+    {
+      "file": "sprites/aim_button_bg01--6229f6df---7674256598449963272.png",
+      "bytes": 5812,
+      "sha256": "c766cc49126ccc787555af3a20031c9b26db28ff8b651d76c03d3a1298ddfea1"
+    },
+    {
+      "file": "sprites/bg_activitylevel_line--469bb0f1--7234320468460320567.png",
+      "bytes": 181,
+      "sha256": "1f6ac5ca7b91eb93c5b6767451dc70cb94f7130100264ae465ec6841d4ad8e00"
+    },
+    {
+      "file": "sprites/bg_assembly_01--bafe084b--7995678329009945432.png",
+      "bytes": 878,
+      "sha256": "e3d18ed012edf1fa2e580b1887f3270f2472275c68be7024e0ed60219e20256e"
+    },
+    {
+      "file": "sprites/bg_common_r18_p2--4b5ec469---1249245821565754815.png",
+      "bytes": 644,
+      "sha256": "e354d8fdf673bc59d94c6a3ef0001f02cb233419ed9173a5e6938115a3dc706e"
+    },
+    {
+      "file": "sprites/bg_common_r26--a725c482--9020980361225382156.png",
+      "bytes": 961,
+      "sha256": "96ba8622b76fcc56ca3eb112898dafa7c5d45585d7978a68e2ccd4ae1a56b844"
+    },
+    {
+      "file": "sprites/bg_contract_tag_high--efb43652--2105611955861451625.png",
+      "bytes": 3821,
+      "sha256": "59e14ddc70b30825bc096d3e676538fc9029fce57010f0cb523047077fa0f10a"
+    },
+    {
+      "file": "sprites/bg_play_slider_new--5e16a5ac--4771169847166803401.png",
+      "bytes": 519,
+      "sha256": "c107af3cbd943dfc9cd7b87457b736349ca7b805538b8563ae39bce2de142844"
+    },
+    {
+      "file": "sprites/bg_seasontower_13--35a7cca9--5445659638922345200.png",
+      "bytes": 685,
+      "sha256": "a5f2b03ddd05acb70867ef52ba35e3ab463b41d79fc70af83e58b252a6519c0f"
+    },
+    {
+      "file": "sprites/bg_seasontower_14--fbff487e---3092571445798888507.png",
+      "bytes": 1621,
+      "sha256": "33ef6c209050484164614757a6e9561f12daa641267a4ba4abf4f7fbc3685037"
+    },
+    {
+      "file": "sprites/bg_sns_tweet_decorate_35--c532c528--4096565182867494229.png",
+      "bytes": 96,
+      "sha256": "e6a37a104bf3a91478356634763229ad7cfeeac84718cc0f8e3eb7113ba0622c"
+    },
+    {
+      "file": "sprites/business_card_topic_bp_1_3--1e911070--8105932504240142886.png",
+      "bytes": 120835,
+      "sha256": "3e09a752e0a0c0e9f06f327344536d44d988bc1954cd1e5018a223c181b5bc88"
+    },
+    {
+      "file": "sprites/business_card_topic_normal_1--4a226705--3356352830542033253.png",
+      "bytes": 75448,
+      "sha256": "5cad710b847b1d0679d2b208a836c7191ee31ded5f8cf5f7e246730fbaf79d6a"
+    },
+    {
+      "file": "sprites/common_head_border_line--21fa3e4d--8241187580391282341.png",
+      "bytes": 168,
+      "sha256": "9fb0ff3902af22909f08b2500d718e11c60a4aeb7c5ca37c371be73a8074e2da"
+    },
+    {
+      "file": "sprites/common_head_left_border--68732eb3---6681661085321669468.png",
+      "bytes": 4573,
+      "sha256": "9a6bf9f258b6d5088e26675b0d8c874b103699e40f977e876f5dcbb7c8adc3bb"
+    },
+    {
+      "file": "sprites/common_head_shadow_bg--7ef70e0d--7429729160334276475.png",
+      "bytes": 3012,
+      "sha256": "af397049f972fdedc380d36e2e974a5e527ead3400df7a77a5b6ea2502eb8018"
+    },
+    {
+      "file": "sprites/common_whiteline_img--cd30ea22--3676465291549382977.png",
+      "bytes": 143,
+      "sha256": "f9f54f5e16d3622db91d97f44762be89626cee9c4a655fd7356ae36056e63b3b"
+    },
+    {
+      "file": "sprites/deco_adventure_halo_arrow--83641ec8--159112072492910121.png",
+      "bytes": 402,
+      "sha256": "1c9f7020e8093e47af11dad8d33d9aabab7ea4aea952457cdc1950272f32a207"
+    },
+    {
+      "file": "sprites/deco_bg_sss--2e174e70---20226531842679401.png",
+      "bytes": 14839,
+      "sha256": "5ee4e473ae4ae83341ecf636d2570a0c91578eca144bb30131171d616b10d6e5"
+    },
+    {
+      "file": "sprites/deco_friend_card_head_01--6f271997---7671664264097187059.png",
+      "bytes": 907,
+      "sha256": "5079a5fa59e7ed6daedfe141d376a871abcf3ee9c5e35c80809c5395a97f133f"
+    },
+    {
+      "file": "sprites/deco_friend_card_head_02--5afab0f1---1232667882197887555.png",
+      "bytes": 4408,
+      "sha256": "eee39a34998410956f140b46e71fad160ee50b826f79a4d2fc1479691c834b71"
+    },
+    {
+      "file": "sprites/deco_friend_cell_head_level_shadow--ad8b705c--288760494837196360.png",
+      "bytes": 1859,
+      "sha256": "f8006b98156748f9af4319ab926870141facb53f4198e625ff3c127ca7ecfe63"
+    },
+    {
+      "file": "sprites/deco_icon_sss--319a8368---2561260868484226842.png",
+      "bytes": 15572,
+      "sha256": "ad607df2a1a6104498d9627a0971d39435abc28ef904719a07f7c1855bb9d69c"
+    },
+    {
+      "file": "sprites/deco_play_head--dccbc05d--4297873239491207886.png",
+      "bytes": 376,
+      "sha256": "a9b42efdf2fef8e748e392037a670696e251ade82e8abaf2bf17959a4b2d9540"
+    },
+    {
+      "file": "sprites/deco_play_name_01--998b7a85--7832850993736189525.png",
+      "bytes": 515,
+      "sha256": "3a46457324dd4f196e5fd09d4d372a6c658bbd58bc1651daeba089569cc2544f"
+    },
+    {
+      "file": "sprites/deco_play_right--fe12ae67--3864644775842477055.png",
+      "bytes": 3532,
+      "sha256": "319529016c37ac78a63ce7312da26735a1f7f48e15ab5b0d14531c02c7c5dcc0"
+    },
+    {
+      "file": "sprites/deco_play_right_shadow--8999d03f---5097384161980855989.png",
+      "bytes": 5412,
+      "sha256": "732def1c16bea730a3f3313249340e401e129344eb94df75ab1233430104849e"
+    },
+    {
+      "file": "sprites/deco_play_tipsbg--fe38ae0f---2151703885605220562.png",
+      "bytes": 4447,
+      "sha256": "4b833258dc195ac866370e823694dd9febd4cf66a21e1d70ad3d56772efe3cc7"
+    },
+    {
+      "file": "sprites/icon_chr_0004_pelica--1d0a4c08---2158241429177752369.png",
+      "bytes": 87516,
+      "sha256": "88559fbc33f254684fae5c9b7ab31c002bb9ee077406bfa2ca46436f3a4b32b6"
+    },
+    {
+      "file": "sprites/icon_chr_0011_seraph--1d0a4c08---2124394832337873148.png",
+      "bytes": 91775,
+      "sha256": "43c23ffc6319ba0e2044195c955459bcddf7a98a4041044419de364e81b6387f"
+    },
+    {
+      "file": "sprites/icon_contract_tag_high--cb07a3ef--8282067196716550761.png",
+      "bytes": 3502,
+      "sha256": "57dad9d7492071a8ad9d94e360a006f57624dbbfd0142db164915fe8138607e5"
+    },
+    {
+      "file": "sprites/icon_friend_cell_char_block--2321ab8d--7350241829301599696.png",
+      "bytes": 1163,
+      "sha256": "1357694877bf3eeb2cfba117c51f589557c64fe0de4730b57487d292d5dad723"
+    },
+    {
+      "file": "sprites/icon_friend_pc--9b24f1b9---8554518151323005355.png",
+      "bytes": 660,
+      "sha256": "3eaa507679faeceaa9864849d8427a92bfb642eb91e875070ad031dc772f030f"
+    },
+    {
+      "file": "sprites/icon_friend_sony--5f6a225d--3003957307604233717.png",
+      "bytes": 1961,
+      "sha256": "e780d0584005798bddfb7226452d5442bb13fee9dd900e5e1914a3c530c64c67"
+    },
+    {
+      "file": "sprites/icon_play_tipsbg--842bfdb0--4122646810964729067.png",
+      "bytes": 399,
+      "sha256": "aa2dedd54b8201d1bc3d1e94e9b25663649d58e9bfbde4d52e7933367278629e"
+    },
+    {
+      "file": "sprites/icon_rename--85bbbaad---1260206827487037574.png",
+      "bytes": 514,
+      "sha256": "3d66b3331452713b05f84f8f63b14e2f3537add8025abf790c0334e772647bb8"
+    },
+    {
+      "file": "sprites/icon_right--db754200--7744316612511156713.png",
+      "bytes": 830,
+      "sha256": "1607c50321e059a47bcbd581d9e40467b6d3588d92a10bb856a6273cabcca704"
+    },
+    {
+      "file": "sprites/icon_user_avatar_frame_bp_1--63c7ff92--8364725078580218544.png",
+      "bytes": 39350,
+      "sha256": "f7f17830d42ddbd6af621f384ea0c2d857c51184451860624849e56356b197e6"
+    },
+    {
+      "file": "sprites/icon_user_avatar_frame_endfield_1--63c7ff92---6423826975760610176.png",
+      "bytes": 18734,
+      "sha256": "046cea37cd2594d3f871759884cdc1a2d08f4ed626690900b2e45f45cbb6942f"
+    },
+    {
+      "file": "sprites/new_bg--14ad054d---315661501574421994.png",
+      "bytes": 797,
+      "sha256": "92c54020ae4cb82ae4f3ba7ca1abf80f4f4dcffa6ff809d4385999437475f756"
+    },
+    {
+      "file": "sprites/red_dot--f217e169--1206393168504411954.png",
+      "bytes": 1715,
+      "sha256": "c83f1a7f17e044b80723d4eaff0e6eb0445c91abf9f3d7b3a036380752c1f5f9"
+    },
+    {
+      "file": "sprites/tag_seasontower_splus_gray--087a11ec---2442143644773157249.png",
+      "bytes": 19131,
+      "sha256": "7baa8f4f6645e40ea3a84230668f0c2c032271c862811b1834af21a6083d61e6"
+    },
+    {
+      "file": "sprites/tag_seasontower_splus_small--087a11ec--3161304071358331172.png",
+      "bytes": 15845,
+      "sha256": "8227b63ee5fc093b0796d31b224d6a917391a9dc629d6fecd9250c6a52b06e8f"
+    },
+    {
+      "file": "sprites/ui_main_menu_factory_icon--0312882f--7788996726254414199.png",
+      "bytes": 723,
+      "sha256": "1de55e00261aa89ceece6452cd65012364be894297b5702f3952de293c4d8664"
+    },
+    {
+      "file": "sprites/weapon_typhoeus_banner--52085437--5980436975975208562.png",
+      "bytes": 275513,
+      "sha256": "bb17db5963ee9d1c69227a9024569ecf6201604baa766ea4ec25f8a1907bb594"
+    },
+    {
+      "file": "sprites/wiki_guide_icon--31312492---6611692762614083645.png",
+      "bytes": 1316,
+      "sha256": "9ab991d1d42ca331727fdb07775617d8179a38683a515674104e61a3bd3d21bf"
+    },
+    {
+      "file": "sprites/yvonne_banner--453a2bda--4250958573640483290.png",
+      "bytes": 363309,
+      "sha256": "a6edc7b64f92bb7fc0dc87fed55e435d14390bce40334e4a1149d9ed20815014"
+    },
+    {
+      "file": "widget.json",
+      "bytes": 3304374,
+      "sha256": "068a0798ff1a2f242d84b520e48d9f52e5cf1e9a6fda6193903cd131230648c0"
+    }
+  ],
+  "source_manifest_sha256": "c0f004727e456ada94e78f968ea9ae8030251c51cbc462d9583087cd4911a3c7"
+}

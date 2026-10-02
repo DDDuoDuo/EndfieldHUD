@@ -1,0 +1,311 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "vert"
+    }
+  ],
+  "types": {
+    "_16": {
+      "name": "_16",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "mat4",
+          "offset": 0,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 64
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 80
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 96
+        }
+      ]
+    },
+    "_18": {
+      "name": "_18",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 16
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 32
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 48
+        },
+        {
+          "name": "_m4",
+          "type": "vec4",
+          "offset": 64
+        },
+        {
+          "name": "_m5",
+          "type": "mat4",
+          "offset": 80,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m6",
+          "type": "mat4",
+          "offset": 144,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m7",
+          "type": "mat4",
+          "offset": 208,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m8",
+          "type": "mat4",
+          "offset": 272,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m9",
+          "type": "int",
+          "offset": 336
+        },
+        {
+          "name": "_m10",
+          "type": "vec4",
+          "offset": 352
+        }
+      ]
+    },
+    "_20": {
+      "name": "_20",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "float",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "float",
+          "offset": 4
+        },
+        {
+          "name": "_m2",
+          "type": "float",
+          "offset": 8
+        },
+        {
+          "name": "_m3",
+          "type": "float",
+          "offset": 12
+        }
+      ]
+    },
+    "_22": {
+      "name": "_22",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "mat4",
+          "offset": 0,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m1",
+          "type": "mat4",
+          "offset": 64,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m2",
+          "type": "mat4",
+          "offset": 128,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m3",
+          "type": "mat4",
+          "offset": 192,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m4",
+          "type": "mat4",
+          "offset": 256,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m5",
+          "type": "mat4",
+          "offset": 320,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m6",
+          "type": "mat4",
+          "offset": 384,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m7",
+          "type": "mat4",
+          "offset": 448,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m8",
+          "type": "mat4",
+          "offset": 512,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m9",
+          "type": "mat4",
+          "offset": 576,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m10",
+          "type": "mat4",
+          "offset": 640,
+          "matrix_stride": 16,
+          "row_major": true
+        },
+        {
+          "name": "_m11",
+          "type": "vec4",
+          "offset": 704
+        },
+        {
+          "name": "_m12",
+          "type": "vec4",
+          "offset": 720
+        },
+        {
+          "name": "_m13",
+          "type": "vec4",
+          "offset": 736
+        },
+        {
+          "name": "_m14",
+          "type": "vec4",
+          "offset": 752
+        },
+        {
+          "name": "_m15",
+          "type": "vec4",
+          "offset": 768
+        }
+      ]
+    }
+  },
+  "inputs": [
+    {
+      "type": "vec4",
+      "name": "_3",
+      "location": 0
+    },
+    {
+      "type": "vec2",
+      "name": "_4",
+      "location": 1
+    },
+    {
+      "type": "vec2",
+      "name": "_5",
+      "location": 2
+    },
+    {
+      "type": "vec3",
+      "name": "_6",
+      "location": 3
+    },
+    {
+      "type": "vec4",
+      "name": "_7",
+      "location": 5
+    }
+  ],
+  "outputs": [
+    {
+      "type": "vec4",
+      "name": "_9",
+      "location": 0
+    },
+    {
+      "type": "vec2",
+      "name": "_10",
+      "location": 1
+    },
+    {
+      "type": "vec4",
+      "name": "_14",
+      "location": 5
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_16",
+      "name": "_16_17",
+      "block_size": 112,
+      "set": 2,
+      "binding": 0
+    },
+    {
+      "type": "_18",
+      "name": "_18_19",
+      "block_size": 368,
+      "set": 0,
+      "binding": 2
+    },
+    {
+      "type": "_20",
+      "name": "_20_21",
+      "block_size": 16,
+      "set": 0,
+      "binding": 1
+    },
+    {
+      "type": "_22",
+      "name": "_22_23",
+      "block_size": 784,
+      "set": 0,
+      "binding": 0
+    }
+  ]
+}

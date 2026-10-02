@@ -4,6 +4,18 @@ import QuartzCore
 /// Shared game artwork for matching presets, with functional vector glyphs
 /// retained for actions which have no corresponding asset in the wiki.
 enum AppShortcutArtwork {
+    /// The picker and every navigation presentation resolve the same preset.
+    /// Original application icons retain their colors; game presets use the
+    /// button's foreground tint. A nil result deliberately selects the vector.
+    static func image(for icon: AppShortcutIcon, original: NSImage? = nil,
+                      size: CGFloat, color: NSColor) -> CGImage? {
+        if icon == .original {
+            var proposed = CGRect(x: 0, y: 0, width: size, height: size)
+            return original?.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
+        }
+        return gameIcon(for: icon)?.cgImage(size: size, tint: color)
+    }
+
     static func gameIcon(for icon: AppShortcutIcon) -> EndfieldGameIcon? {
         switch icon {
         case .bolt: return .power
@@ -60,7 +72,7 @@ enum AppShortcutArtwork {
 
     static func makeGlyph(_ icon: AppShortcutIcon, rect: CGRect, color: NSColor, contentsScale: CGFloat) -> CAShapeLayer {
         let shape = CAShapeLayer(); shape.frame = rect
-        if let image = gameIcon(for: icon)?.cgImage(size: max(64, rect.width * contentsScale), tint: color) {
+        if let image = image(for: icon, size: max(64, rect.width * contentsScale), color: color) {
             shape.contents = image; shape.contentsGravity = .resizeAspect
             shape.contentsScale = contentsScale
             return shape

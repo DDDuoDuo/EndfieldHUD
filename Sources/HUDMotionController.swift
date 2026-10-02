@@ -115,7 +115,29 @@ enum HUDMotionMath {
         return defaultProjectionBounds.union(bounds)
     }
 
+    /// Cancel the native layout scale/offset around a source camera projection.
+    /// The source already contains the user's scale and position, so applying
+    /// either a second time would separate content from its surrounding ring.
+    static func sourcePlaneTransform(_ projection: CATransform3D, origin: CGPoint, scale: CGFloat) -> CATransform3D {
+        guard scale.isFinite, scale > 0 else { return CATransform3DIdentity }
+        var local = CATransform3DConcat(CATransform3DMakeTranslation(500, 320, 0), projection)
+        local = CATransform3DConcat(local, CATransform3DMakeTranslation(-origin.x, -origin.y, 0))
+        local = CATransform3DConcat(local, CATransform3DMakeScale(1 / scale, 1 / scale, 1))
+        return CATransform3DConcat(local, CATransform3DMakeTranslation(-500, -320, 0))
+    }
+
     /// Homogeneous projection for checking the bounded perspective geometry.
+    /// Share the source plane's live perspective without inheriting a user's
+    /// potentially unsafe scale/position. Confirmation cards stay screen-centered.
+    static func centeredSourceTransform(_ projection: CATransform3D, scale: CGFloat) -> CATransform3D {
+        guard scale.isFinite, scale > 0 else { return CATransform3DIdentity }
+        let center = project(CGPoint(x: 500, y: 320), through: projection)
+        var result = CATransform3DMakeScale(1 / scale, 1 / scale, 1)
+        result = CATransform3DConcat(result, CATransform3DMakeTranslation(500, 320, 0))
+        result = CATransform3DConcat(result, projection)
+        return CATransform3DConcat(result, CATransform3DMakeTranslation(-center.x, -center.y, 0))
+    }
+
     static func project(_ point: CGPoint, through transform: CATransform3D) -> CGPoint {
         guard point.x.isFinite, point.y.isFinite else { return .zero }
         let divisor = transform.m14 * point.x + transform.m24 * point.y + transform.m44
@@ -174,9 +196,18 @@ final class HUDMotionController {
     private var parallaxIntensity: CGFloat = 1
     private var perspectiveIntensity: CGFloat = 1
     private var ambientEnabled = true
+    private var ambientEpoch: TimeInterval?
     private var ambientTracks: [AmbientTrack] = []
     private var baselinePoses: [ObjectIdentifier: BaselinePose] = [:]
     private let pointerTiming = CAMediaTimingFunction(controlPoints: 0.16, 0.75, 0.30, 1)
+    private(set) var externalProjection: CATransform3D?
+
+    /// The source display clock owns the complete camera pose in integrated
+    /// mode. Native layers use that exact pose without another easing/timer.
+    func setExternalProjection(_ transform: CATransform3D?) {
+        externalProjection = transform
+        retargetPlanes(to: targetNormalizedPoint, animated: false)
+    }
 
     var ambientAnimationCount: Int { countAnimations(prefix: "ambient.") }
     var parallaxAnimationCount: Int { countAnimations(prefix: "parallax.") }
@@ -202,7 +233,10 @@ final class HUDMotionController {
         if changed { retargetPlanes(to: targetNormalizedPoint, animated: isPointerFollowing && !reducedMotion) }
         guard ambientEnabled != ambient else { return }
         ambientEnabled = ambient
-        if ambient && isRunning && !reducedMotion { for track in ambientTracks { install(track) } }
+        if ambient && isRunning && !reducedMotion {
+            ambientEpoch = CACurrentMediaTime()
+            for track in ambientTracks { install(track) }
+        }
         else {
             for track in ambientTracks { track.layer?.removeAnimation(forKey: track.key) }
             restoreBaselinePoses()
@@ -223,7 +257,8 @@ final class HUDMotionController {
     @discardableResult
     func registerAmbient(layer: CALayer, key: String, keyPath: String,
                          fromValue: CGFloat, toValue: CGFloat, duration: TimeInterval,
-                         autoreverses: Bool = true, beginOffset: TimeInterval = 0) -> Bool {
+                         autoreverses: Bool = true, beginOffset: TimeInterval = 0,
+                         timingFunction: CAMediaTimingFunctionName? = nil) -> Bool {
         precondition(Thread.isMainThread)
         let supported = ["transform.rotation.z", "transform.translation.x", "transform.translation.y",
                          "transform.translation.z", "opacity"]
@@ -234,7 +269,9 @@ final class HUDMotionController {
         let track = AmbientTrack(layer: layer, key: animationKey, keyPath: keyPath,
                                  from: min(limit, max(-limit, fromValue)), to: min(limit, max(-limit, toValue)),
                                  duration: min(3600, max(0.05, duration)), autoreverses: autoreverses,
-                                 beginOffset: min(3600, max(-3600, beginOffset)))
+                                 beginOffset: min(3600, max(-3600, beginOffset)),
+                                 timingFunction: timingFunction ?? (keyPath == "transform.rotation.z" && !autoreverses
+                                     ? .linear : .easeInEaseOut))
         let identity = ObjectIdentifier(layer)
         if baselinePoses[identity] == nil {
             baselinePoses[identity] = BaselinePose(layer: layer, transform: layer.transform, opacity: layer.opacity)
@@ -243,7 +280,7 @@ final class HUDMotionController {
             let previous = ambientTracks[index]
             if previous.keyPath == track.keyPath && previous.from == track.from && previous.to == track.to
                 && previous.duration == track.duration && previous.autoreverses == track.autoreverses
-                && previous.beginOffset == track.beginOffset { return true }
+                && previous.beginOffset == track.beginOffset && previous.timingFunction == track.timingFunction { return true }
             ambientTracks[index] = track
         } else {
             ambientTracks.append(track)
@@ -287,6 +324,7 @@ final class HUDMotionController {
         }
         restoreBaselinePoses()
         isRunning = true
+        ambientEpoch = CACurrentMediaTime()
         guard !reducedMotion, ambientEnabled else { return }
         for track in ambientTracks { install(track) }
     }
@@ -325,6 +363,7 @@ final class HUDMotionController {
         precondition(Thread.isMainThread)
         isRunning = false
         isPointerFollowing = false
+        ambientEpoch = nil
         removeOwnedAnimations(includeParallax: true, freezePresentation: freezePresentation)
         if !freezePresentation {
             restoreBaselinePoses()
@@ -358,12 +397,12 @@ final class HUDMotionController {
         withoutActions {
             for plane in targets ?? planes {
                 let previous = plane.spatial.presentation()?.transform ?? plane.spatial.transform
-                let next = HUDMotionMath.transform(normalizedPoint: point, depth: plane.depth,
+                let next = externalProjection ?? HUDMotionMath.transform(normalizedPoint: point, depth: plane.depth,
                                                    travel: plane.travel, reducedMotion: reducedMotion,
                                                    parallaxIntensity: parallaxIntensity, perspectiveIntensity: perspectiveIntensity,
                                                    projectionBounds: plane.projectionBounds)
                 plane.spatial.transform = next
-                guard animated else {
+                guard animated, self.externalProjection == nil else {
                     plane.spatial.removeAnimation(forKey: "parallax.transform")
                     continue
                 }
@@ -388,10 +427,9 @@ final class HUDMotionController {
         animation.duration = track.duration
         animation.autoreverses = track.autoreverses
         animation.repeatCount = .infinity
-        animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) + track.beginOffset
+        animation.beginTime = layer.convertTime(ambientEpoch ?? CACurrentMediaTime(), from: nil) + track.beginOffset
         animation.fillMode = .backwards
-        animation.timingFunction = CAMediaTimingFunction(name:
-            track.keyPath == "transform.rotation.z" && !track.autoreverses ? .linear : .easeInEaseOut)
+        animation.timingFunction = CAMediaTimingFunction(name: track.timingFunction)
         layer.add(animation, forKey: track.key)
     }
 
@@ -440,6 +478,7 @@ final class HUDMotionController {
         let duration: TimeInterval
         let autoreverses: Bool
         let beginOffset: TimeInterval
+        let timingFunction: CAMediaTimingFunctionName
     }
 
     private struct BaselinePose {

@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "original_scene_sha256": "70f5fa1987c701d6dd904020675689a1d816618c80b9223cfb284e1775855396",
+  "runtime_capacity": 2,
+  "derived_identity_prefix": "runtime-watch-banner",
+  "cell_template_id": "CAB-194e41a66c2317b9df19269f505210be:6644296005435813079",
+  "source_list_id": "CAB-194e41a66c2317b9df19269f505210be:1652038887647571159",
+  "cell_container_id": "CAB-194e41a66c2317b9df19269f505210be:7252297320149642455",
+  "image_node_id": "CAB-194e41a66c2317b9df19269f505210be:-2839740590567297833",
+  "image_component_id": "CAB-194e41a66c2317b9df19269f505210be:2906158681068891351",
+  "light_node_id": "CAB-194e41a66c2317b9df19269f505210be:-2394189767403475753",
+  "page_template_id": "CAB-194e41a66c2317b9df19269f505210be:-6144658150000792361",
+  "page_container_id": "CAB-194e41a66c2317b9df19269f505210be:4847215703952878807",
+  "page_on_id": "CAB-194e41a66c2317b9df19269f505210be:8189748720877399255",
+  "page_off_id": "CAB-194e41a66c2317b9df19269f505210be:4102023747454201047",
+  "view_size": {
+    "x": 365.0,
+    "y": 128.5
+  },
+  "cell_size": {
+    "x": 360.0,
+    "y": 122.0
+  },
+  "cell_spacing_x": 6.5,
+  "auto_scroll_time": 4.0,
+  "tween_duration": 0.20000000298023224,
+  "tween_ease": 3,
+  "tween_ease_name": "OutSine",
+  "source_lua_sha256": "2b046ebe5601b15a87b722a81993d17047420e413cb9769ef9eea224e66300bf",
+  "source_cache_lua_sha256": "13a490021a2b76381db7dcd8b09b69d250338bc3c7a3808cbc99041eb27ab505",
+  "source_native_scroll_contract_sha256": "a562f1dbc63cb0c55e9b778a2ab701c3e184d4706623565efab4065a0a87105d",
+  "source_contract": {
+    "clone_method": "Beyond.Misc.BeyondInstantiate<GameObject>(template,container,false)",
+    "get_cell_va": "0x18331f160",
+    "update_cell_set_active_va": "0x1833209c0",
+    "init_container_va": "0x1841f684c",
+    "move_cell_va": "0x1833210c0",
+    "step_init_config_va": "0x1841bf390",
+    "source_template_retained_inactive": true,
+    "source_parent_world_position_stays": false,
+    "runtime_id_policy": "Derived adapter IDs identify copied source nodes/components, never original CAB/pathIDs; runtime/source alias tables are retained by helper.",
+    "tick_policy": "Hold >=4 discards overshoot. Automatic center-changed callbacks also reset hold; BeginDrag kills tween(false).",
+    "frame_order_boundary": "Original Unity/DOTween/Lua cross-frame ordering is unclosed. Adapter explicitly advances tween, emits sampled center callback, then advances the Lua hold tick."
+  },
+  "policy": "Runtime projection of installed source cloning/scroll contract. Default static single artwork. An explicit two-artwork desktop reference is not a recovered game account eligible list. Source templates and scene bytes are unchanged."
+}

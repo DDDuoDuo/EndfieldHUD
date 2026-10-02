@@ -116,7 +116,7 @@ enum AppActivityDerivation {
             }
             if !complete { notes.append("Some app processes are unavailable or protected") }
             else if cpu == nil { notes.append("Collecting app baseline") }
-            if memory == nil { notes.append("Memory unavailable") }
+            if memory == nil { notes.append("RAM unavailable") }
             if download == nil { notes.append("Network unavailable or collecting baseline") }
             return AppActivityItem(id: app.id, name: app.name, bundleIdentifier: app.bundleIdentifier,
                 bundleURL: app.bundleURL, processIDs: pids, cpuPercent: cpu, memoryBytes: memory,

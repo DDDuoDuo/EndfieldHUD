@@ -7,9 +7,9 @@ EndfieldHUD is an independently implemented, Endfield-inspired macOS HUD and uno
 - **Arknights: Endfield / 明日方舟：终末地** and its branding belong to their respective owners. This is an unofficial fan project, not affiliated with or endorsed by the game creators or the referenced authors.
 - **Ronit Singh's [FineTune](https://github.com/ronitsingh10/FineTune)** was consulted as an architectural reference for public Core Audio process taps and per-app playback routing. FineTune is GPL-3.0 licensed; its source is not incorporated into this repository. EndfieldHUD's audio engine is independently implemented.
 
-The system overlay’s motion and visual structure are inspired by the **Arknights: Endfield** menu shown in a user-supplied reference recording dated **2026-09-26**. Its Power interface is independently drawn with vector shapes; the footer now displays the user-supplied ENDFIELD INDUSTRIES wordmark, clipped to exclude its triangle. No copied game code is bundled.
+The system overlay’s motion and visual structure use the **Arknights: Endfield** menu shown in a user-supplied reference recording dated **2026-09-26** and the extracted Watch UI resources described below. This integration branch renders the source Watch scene, materials and animation with Metal around native desktop features. The footer displays the user-supplied ENDFIELD INDUSTRIES wordmark, clipped to exclude its triangle.
 
-The Swift source, original battery icon, vector interface, animations, and settings in this repository were newly written. No source code or assets from either referenced app were copied. The supplied branding image is included separately as third-party material; no game audio or downloaded application binary is bundled. The bilingual supercharge wording and staged presentation acknowledge the visual inspiration; their presence does not describe actual charging speed.
+The Swift application and renderer implementation, original battery icon, native vector interface and settings were newly written. No source code or assets from the referenced llynxxx or QinAnze applications were copied. Extracted game resources, including translated shader programs, are included as third-party material; no game audio or downloaded application binary is bundled. The localized charge/battery wording and staged presentation acknowledge the visual inspiration; their presence does not describe actual charging speed.
 
 The [MIT license](LICENSE) covers the original code and assets in this repository. References, names, and third-party material retain their respective ownership; credit does not relicense another creator’s work under MIT.
 
@@ -17,11 +17,11 @@ The [MIT license](LICENSE) covers the original code and assets in this repositor
 
 本项目是独立编写的 macOS 充电浮窗，主要视觉参考来自 **llynxxx** 的 [Mac 演示视频](https://www.bilibili.com/video/BV1DBaP6yEHs/)，三阶段动效概念参考 **氰氨锗 / QinAnze** 的 [Windows 项目](https://github.com/QinAnze/zmd-charge)。
 
-系统浮层的动效与视觉结构参考用户提供的 **2026-09-26** 录屏中《明日方舟：终末地》的菜单。电源界面使用独立绘制的矢量图形，页脚使用用户提供的 ENDFIELD INDUSTRIES 标识，通过原生裁剪隐藏三角背景；没有复制游戏代码。
+系统浮层的动效与视觉结构使用用户提供的 **2026-09-26** 录屏中《明日方舟：终末地》的菜单及下述提取的 Watch 界面资源。本整合分支通过 Metal 渲染原始 Watch 场景、材质与动画，并结合原生桌面功能；页脚使用用户提供的 ENDFIELD INDUSTRIES 标识，通过原生裁剪隐藏三角背景。
 
 应用独立音量的 Core Audio 架构参考了 **Ronit Singh** 的 [FineTune](https://github.com/ronitsingh10/FineTune)。FineTune 使用 GPL-3.0 许可证，本仓库没有引入其源码；音频引擎为独立实现。
 
-本仓库为独立实现，没有引入参考应用的源码；包含的游戏品牌标识、角色和界面素材另列于下方，未包含游戏音频或其他应用的二进制文件。MIT 许可证仅适用于本仓库原创的代码与素材，不改变参考作品及相关名称的权利归属。本项目为非官方同人项目。
+本仓库的 Swift 应用与渲染器为独立编写，没有引入 llynxxx 或 QinAnze 参考应用的源码与素材。包含的游戏资源（包括翻译后的着色器程序）另列于下方，未包含游戏音频或其他应用的二进制文件。MIT 许可证仅适用于本仓库原创的代码与素材，不改变参考作品及相关名称的权利归属。本项目为非官方同人项目。
 
 ## Supplied wordmark
 
@@ -35,6 +35,16 @@ The [MIT license](LICENSE) covers the original code and assets in this repositor
 ## Endfield UI artwork
 
 The matching HUD navigation, app shortcut presets, and icon chooser use original UI artwork obtained from the [Arknights: Endfield Wiki Icons category](https://endfield.wiki.gg/wiki/Category:Icons) and its Menu icons and Template icons subcategories on 2026-09-27. Exact original-file URLs and SHA-256 hashes are recorded in [SOURCES.json](Resources/AppIconSources/EndfieldWiki/SOURCES.json). Files are bundled unchanged; the application sizes and tints their alpha silhouettes in memory. The game graphics are copyright **Hypergryph Network Technology Co., Ltd.** and their respective rights holders; these third-party images are **not included in this project's MIT license**. This is an unofficial fan project. The wiki's page-content license does not relicense the underlying game artwork. Controls with no matching asset in the source category retain their independently drawn action glyphs.
+
+## Extracted Watch resources and motion
+
+`Resources/Watch/ui_mid_ring.png` and `Resources/Watch/ui_triangle_fx.png` are the game's `ui_mid_ring` and `ui_triangle_fx` Unity Sprite images, exported from the user-supplied local **Arknights: Endfield** installation on **2026-09-30**. The exported Sprite PNGs are bundled unchanged at 1004×1004 and 143×123 pixels. [SOURCES.json](Resources/Watch/SOURCES.json) records their exact CAB files, Sprite path IDs, dimensions, and SHA-256 hashes. The app replaces their RGB colors with the selected theme color in memory while retaining source transparency.
+
+The original native motion implementation adapts timing, easing, scale, opacity and rotation values from the game's serialized Watch UI animation data into Core Animation. The integrated Metal shell additionally loads the source scene hierarchy, component and camera data, animation clips, sprites, materials, textures and translated shader programs from `Resources/WatchSource`. The repository also retains font/glyph data, Domain and widget resources, HDR/blur programs and reference evidence. The desktop package selects its required resources rather than copying the complete reference tree. Resource identities, manifests and the rendering contract are documented in [Watch source](docs/watch-source.md) and [integration preservation](docs/integration-preservation.md).
+
+These game resources and translated shader programs remain third-party material owned by **Hypergryph** and their respective rights holders, and are excluded from the project's MIT grant. Image geometry also uses the pinned MIT-licensed Unity uGUI reference credited in [WatchSource/NOTICE.txt](Resources/WatchSource/NOTICE.txt), which includes its license.
+
+`Resources/Watch` 中的中环与三角形是从用户提供的《明日方舟：终末地》本地安装文件导出的原始 Unity Sprite，PNG 保持导出后的像素、方向和透明度。来源记录包含 CAB、Sprite path ID、尺寸与 SHA-256。原生动效将检查到的时间、缓动、缩放、透明度和旋转数值适配为 Core Animation；整合后的 Metal 外层还从 `Resources/WatchSource` 读取原始场景、组件、相机、动画、Sprite、材质、纹理及翻译后的着色器程序。仓库保留字体／字形、Domain、组件、HDR／模糊程序和参考证据，桌面安装包只选取需要的资源。这些游戏资源和着色器程序仍归 **Hypergryph** 及相应权利人所有，不适用本仓库的 MIT 授权。图像几何所参考的 Unity uGUI 版本及其 MIT 许可见 [WatchSource/NOTICE.txt](Resources/WatchSource/NOTICE.txt)。
 
 ## Earth terrain
 

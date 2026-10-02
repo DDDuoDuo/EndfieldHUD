@@ -44,6 +44,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     private var message: String?
     private(set) var viewport: WorldMapViewport
     private(set) var selectedPinID: UUID?
+    private(set) var showsPinCoordinates = false
     private var dragStart: CGPoint?
     private var dragViewport: WorldMapViewport?
     var isDragging: Bool { dragStart != nil }
@@ -63,8 +64,15 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         layer.name = "map.canvas"; layer.bounds = CGRect(origin: .zero, size: WorldMapGeometry.size)
         pinsHost.name = "map.pins"; pinsHost.frame = layer.bounds
         chrome.name = "map.controls"; chrome.frame = layer.bounds
-        let mask = CAShapeLayer(); mask.frame = layer.bounds
-        mask.path = CGPath(ellipseIn: layer.bounds.insetBy(dx: 4, dy: 4), transform: nil)
+        // One retained compositor gradient softens the circumference without
+        // a live blur filter or an additional geography-sized bitmap.
+        let mask = CAGradientLayer(); mask.name = "map.edge.feather"; mask.frame = layer.bounds
+        mask.type = .radial
+        mask.startPoint = CGPoint(x: 0.5, y: 0.5)
+        mask.endPoint = CGPoint(x: 0.5 + WorldMapGeometry.radius / WorldMapGeometry.size.width,
+                                y: 0.5 + WorldMapGeometry.radius / WorldMapGeometry.size.height)
+        mask.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+        mask.locations = [0, NSNumber(value: Double(1 - WorldMapGeometry.edgeFeatherWidth / WorldMapGeometry.radius)), 1]
         layer.mask = mask
         raster.setData(terrain: terrain, countries: countries)
         layer.addSublayer(raster.layer)
@@ -136,7 +144,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
             rect: CGRect(x: 26, y: $0.2, width: 22, height: 22), enabled: $0.3) }
         actions.append(WorldMapAction(id: "map:addPin", label: L10n.text("Place pin at map center", "在地图中心放置标记"),
             rect: CGRect(x: 392, y: 207, width: 22, height: 22), enabled: store != nil && pins.count < WorldMapStore.maximumPinCount))
-        if selectedPinID != nil {
+        if selectedPinID != nil && showsPinCoordinates {
             actions.append(WorldMapAction(id: "map:deletePin", label: L10n.text("Remove selected pin", "移除选中标记"), rect: Self.deleteRect, enabled: true))
         }
         return actions
@@ -161,13 +169,15 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         return actions
     }
     func containsMapPoint(_ point: CGPoint) -> Bool {
-        WorldMapGeometry.contains(point) && point.y < 345
+        WorldMapGeometry.contains(point)
     }
     @discardableResult func mouseDown(at point: CGPoint) -> Bool {
         guard containsMapPoint(point) else { return false }
         if let action = accessibleActions.first(where: { $0.rect.contains(point) }) {
-            if action.enabled { perform(actionID: action.id) }; return true
+            if action.enabled { perform(actionID: action.id) }
+            hidePinCoordinates(); return true
         }
+        hidePinCoordinates()
         dragStart = point; dragViewport = viewport; return true
     }
     func mouseDragged(to point: CGPoint) {
@@ -187,9 +197,17 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     }
     @discardableResult func rightMouseDown(at point: CGPoint) -> Bool {
         guard containsMapPoint(point) else { return false }
-        if let action = accessibleActions.first(where: { $0.rect.contains(point) }) {
-            if action.id.hasPrefix("map:pin:") { perform(actionID: action.id) }
+        if let action = toolbarActions.first(where: { $0.rect.contains(point) }) {
+            if action.id == "map:deletePin" { perform(actionID: action.id) }
             return true
+        }
+        // A newly placed pin may be close to another marker or the coordinate
+        // card. Deletion targets the marker itself, independent of AX spacing.
+        for pin in pins.reversed() {
+            let location = WorldMapGeometry.screen(x: pin.x, y: pin.y, viewport: viewport)
+            if CGRect(x: location.x - 9, y: location.y - 9, width: 18, height: 18).contains(point) {
+                removePin(id: pin.id); return true
+            }
         }
         addPin(at: point); return true
     }
@@ -201,7 +219,8 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     }
     func perform(actionID: String) {
         if actionID.hasPrefix("map:pin:"), let id = UUID(uuidString: String(actionID.dropFirst(8))), pins.contains(where: { $0.id == id }) {
-            selectedPinID = id; withoutActions { renderPins(); renderChrome() }; onChange?(); return
+            selectedPinID = id; showsPinCoordinates = true
+            withoutActions { renderPins(); renderChrome() }; onChange?(); return
         }
         switch actionID {
         case "map:zoomIn", "map:zoomOut":
@@ -213,9 +232,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
             updateCamera(animated: true); endGesture()
         case "map:addPin": addPin(at: WorldMapGeometry.center)
         case "map:deletePin":
-            guard let id = selectedPinID, let store else { return }
-            do { try store.removePin(id: id); selectedPinID = nil; message = nil; withoutActions { renderPins(); renderChrome() }; onChange?() }
-            catch { showError(error.localizedDescription) }
+            guard let id = selectedPinID else { return }; removePin(id: id)
         default: break
         }
     }
@@ -228,7 +245,10 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         case 24, 69: perform(actionID: "map:zoomIn"); return true
         case 27, 78: perform(actionID: "map:zoomOut"); return true
         case 51, 117: guard selectedPinID != nil else { return false }; perform(actionID: "map:deletePin"); return true
-        case 53: guard selectedPinID != nil else { return false }; selectedPinID = nil; withoutActions { renderPins(); renderChrome() }; onChange?(); return true
+        case 53:
+            guard selectedPinID != nil else { return false }
+            selectedPinID = nil; showsPinCoordinates = false
+            withoutActions { renderPins(); renderChrome() }; onChange?(); return true
         default: return false
         }
         updateCamera(); endGesture(); return true
@@ -239,7 +259,21 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         guard (0...1).contains(location.y) else { return }
         do {
             let pin = try store.addPin(x: location.x, y: location.y)
-            selectedPinID = pin.id; message = nil
+            selectedPinID = pin.id; showsPinCoordinates = true; message = nil
+            withoutActions { renderPins(); renderChrome() }; onChange?()
+        } catch { showError(error.localizedDescription) }
+    }
+    private func hidePinCoordinates() {
+        guard showsPinCoordinates else { return }
+        showsPinCoordinates = false
+        withoutActions { renderChrome() }; onChange?()
+    }
+    private func removePin(id: UUID) {
+        guard let store else { return }
+        do {
+            try store.removePin(id: id)
+            if selectedPinID == id { selectedPinID = nil; showsPinCoordinates = false }
+            message = nil
             withoutActions { renderPins(); renderChrome() }; onChange?()
         } catch { showError(error.localizedDescription) }
     }
@@ -327,7 +361,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         }
     }
     private func renderChrome() {
-        let key = "\(dark)|\(accent)|\(scale)|\(L10n.resolvedLanguage)|\(viewport.zoom < WorldMapViewport.maxZoom)|\(viewport.zoom > WorldMapViewport.minZoom)|\(pins.count)|\(selectedPinID?.uuidString ?? "")|\(message ?? "")|\(terrain != nil)"
+        let key = "\(dark)|\(accent)|\(scale)|\(L10n.resolvedLanguage)|\(viewport.zoom < WorldMapViewport.maxZoom)|\(viewport.zoom > WorldMapViewport.minZoom)|\(pins.count)|\(selectedPinID?.uuidString ?? "")|\(showsPinCoordinates)|\(message ?? "")|\(terrain != nil)"
         guard key != chromeKey else { updateZoomStatus(); return }; chromeKey = key
         chrome.sublayers?.forEach { $0.removeFromSuperlayer() }
         let ink = NSColor(white: dark ? 0.95 : 0.13, alpha: 1)
@@ -348,8 +382,8 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
             }
             text(symbol, rect: action.rect.insetBy(dx: 1, dy: 2), size: 15, color: ink.withAlphaComponent(action.enabled ? 0.90 : 0.3), alignment: .center)
         }
-        if let pin = pins.first(where: { $0.id == selectedPinID }) {
-            let caption = CALayer(); caption.frame = CGRect(x: 100, y: 301, width: 211, height: 26)
+        if showsPinCoordinates, let pin = pins.first(where: { $0.id == selectedPinID }) {
+            let caption = CALayer(); caption.name = "map.pin.coordinates"; caption.frame = CGRect(x: 100, y: 301, width: 211, height: 26)
             caption.backgroundColor = NSColor(white: dark ? 0.06 : 0.94, alpha: 0.88).cgColor; chrome.addSublayer(caption)
             text(WorldMapGeometry.coordinateDescription(x: pin.x, y: pin.y), rect: CGRect(x: 106, y: 309, width: 202, height: 15), size: 9, color: accent, alignment: .center)
         }

@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "source_wrapper": {
+    "cab": "CAB-da575b36066e0fe7c79a11cb7fa32b07",
+    "path_id": "1670513283918293653",
+    "type": "MonoBehaviour",
+    "name": "",
+    "raw_sha256": "b8aa58529c255fe82b88589be262f2753a89f4fe03a844c60f47165d1ccc0389",
+    "file": "precision-reference/blur-cursor/objects/CAB-da575b36066e0fe7c79a11cb7fa32b07--1670513283918293653.json",
+    "script_id": "CAB-5f527d7b7706baccdad9f794cf46420c:8803230974266453151"
+  },
+  "wrapper": {
+    "m_GameObject": {
+      "m_FileID": 0,
+      "m_PathID": "-5059779944537429355"
+    },
+    "m_Enabled": 1,
+    "m_Script": {
+      "m_FileID": 1,
+      "m_PathID": "8803230974266453151"
+    },
+    "m_Name": "",
+    "_animationIn": {
+      "m_FileID": 0,
+      "m_PathID": "-4766204379165600086"
+    },
+    "_animationInEasing": {
+      "m_FileID": 0,
+      "m_PathID": 0
+    },
+    "_animationLoop": {
+      "m_FileID": 0,
+      "m_PathID": 0
+    },
+    "_animationOut": {
+      "m_FileID": 0,
+      "m_PathID": "-1133048434166449674"
+    },
+    "autoPlay": 1,
+    "_onlyOnce": 1,
+    "_needSyncLoopAnim": 0,
+    "_syncLoopAnimKey": "",
+    "_options": {
+      "animEase": 1
+    },
+    "onAnimationInEasingFinished": {
+      "m_PersistentCalls": {
+        "m_Calls": []
+      }
+    },
+    "_audioOnOpen": "",
+    "_audioOnClose": ""
+  },
+  "default_speed": 1.0,
+  "entrance": {
+    "source": {
+      "cab": "CAB-da575b36066e0fe7c79a11cb7fa32b07",
+      "path_id": "-4766204379165600086",
+      "type": "AnimationClip",
+      "name": "watch_blur_in",
+      "raw_sha256": "7cba074dc28bada777bb2dad9b8f410d700e30f1d9b6887d8dd68bb1dfd57ca4",
+      "file": "precision-reference/blur-cursor/objects/CAB-da575b36066e0fe7c79a11cb7fa32b07---4766204379165600086.json"
+    },
+    "curve": {
+      "group": "m_FloatCurves",
+      "path": "BlurBG",
+      "attribute": "m_Alpha",
+      "node_matches": [],
+      "raw": {
+        "curve": {
+          "m_Curve": [
+            {
+              "time": 0.0,
+              "value": 0.0,
+              "inSlope": 0.0,
+              "outSlope": 0.0,
+              "weightedMode": 0,
+              "inWeight": 0.3333333432674408,
+              "outWeight": 0.3333333432674408
+            },
+            {
+              "time": 0.13333334028720856,
+              "value": 1.0,
+              "inSlope": 0.0,
+              "outSlope": 0.0,
+              "weightedMode": 0,
+              "inWeight": 0.3333333432674408,
+              "outWeight": 0.3333333432674408
+            }
+          ],
+          "m_PreInfinity": 2,
+          "m_PostInfinity": 2,
+          "m_RotationOrder": 4
+        },
+        "attribute": "m_Alpha",
+        "path": "BlurBG",
+        "classID": 225,
+        "script": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        }
+      }
+    }
+  },
+  "exit": {
+    "source": {
+      "cab": "CAB-da575b36066e0fe7c79a11cb7fa32b07",
+      "path_id": "-1133048434166449674",
+      "type": "AnimationClip",
+      "name": "watch_blur_out",
+      "raw_sha256": "4f9cabb91fcfed1548e525872e7ee401a14258c4b62b4cc2331ff8d710c61a36",
+      "file": "precision-reference/blur-cursor/objects/CAB-da575b36066e0fe7c79a11cb7fa32b07---1133048434166449674.json"
+    },
+    "curve": {
+      "group": "m_FloatCurves",
+      "path": "BlurBG",
+      "attribute": "m_Alpha",
+      "node_matches": [],
+      "raw": {
+        "curve": {
+          "m_Curve": [
+            {
+              "time": 0.0,
+              "value": 1.0,
+              "inSlope": 0.0,
+              "outSlope": -7.499999523162842,
+              "weightedMode": 0,
+              "inWeight": 0.3333333432674408,
+              "outWeight": 0.06775762140750885
+            },
+            {
+              "time": 0.13333334028720856,
+              "value": 0.0,
+              "inSlope": -7.499999523162842,
+              "outSlope": 0.0,
+              "weightedMode": 0,
+              "inWeight": 0.05455685779452324,
+              "outWeight": 0.3333333432674408
+            }
+          ],
+          "m_PreInfinity": 2,
+          "m_PostInfinity": 2,
+          "m_RotationOrder": 4
+        },
+        "attribute": "m_Alpha",
+        "path": "BlurBG",
+        "classID": 225,
+        "script": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        }
+      }
+    }
+  },
+  "policy": {
+    "visual_clock": "Default speed 1 and Linear wrapper: clipTime equals elapsed seconds. Preserve source alpha keys independently of main Watch timings.",
+    "runtime_animation_state_length_verified": false,
+    "source_capture_pipeline_ported": false,
+    "full_screen_scene_marker": "Original in active step at0.06666667014360428, out inactive at0. Not used to invent desktop capture passes."
+  }
+}

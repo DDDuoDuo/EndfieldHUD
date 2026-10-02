@@ -60,6 +60,12 @@ STAGED_APP="$STAGE/$APP_NAME.app"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 
 SOURCES=("$PROJECT_DIR"/Sources/*.swift)
+BACKDROP_LINK_FLAGS=()
+if [ -d "$SELECTED_SDK/System/Library/Frameworks/ScreenCaptureKit.framework" ]; then
+    # Screen pixels use a guarded macOS 14 path; older deployment targets
+    # must still launch when that system framework is absent.
+    BACKDROP_LINK_FLAGS=(-Xlinker -weak_framework -Xlinker ScreenCaptureKit)
+fi
 if [ ! -f "${SOURCES[0]}" ]; then
     printf 'No Swift source files found in %s/Sources.\n' "$PROJECT_DIR" >&2
     exit 1
@@ -78,7 +84,8 @@ for ARCH in "${ARCHITECTURES[@]}"; do
         -file-prefix-map "$PROJECT_DIR=/EndfieldHUD" \
         -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
         -module-cache-path "$BUILD_DIR/module-cache" \
-        -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -lsqlite3 \
+        -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit \
+        "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 \
         "${SOURCES[@]}" -o "$BINARY"
     BINARIES+=("$BINARY")
 done
@@ -92,7 +99,7 @@ fi
 cp "$PROJECT_DIR/Resources/Info.plist" "$STAGED_APP/Contents/Info.plist"
 cp "$PROJECT_DIR/LICENSE" "$STAGED_APP/Contents/Resources/LICENSE.txt"
 cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
-for LOCALIZATION in en zh-Hans zh-Hant ja; do
+for LOCALIZATION in en zh-Hans zh-Hant ja ko; do
     ditto "$PROJECT_DIR/Resources/$LOCALIZATION.lproj" "$STAGED_APP/Contents/Resources/$LOCALIZATION.lproj"
 done
 
@@ -109,6 +116,9 @@ ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/Ap
 # Prepared cells replace the full atlas in the running app. Keep the original in source.
 if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
 ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
+  ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
+  python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
+        "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
 "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
 # Imported images can carry owner-only permissions. A release must remain
 # readable when Installer makes the bundle root-owned or another user opens it.

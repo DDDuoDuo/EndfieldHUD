@@ -4,6 +4,8 @@
 
 一款《明日方舟：終末地》風格的 macOS 選單列 App。按下快捷鍵，就能開啟具有層次與動態效果的 HUD，使用便箋、檔案暫存、計時、音量控制和系統狀態等功能。
 
+**整合測試分支：**本分支將新的 Watch 介面與穩定版 1.0.1 的功能及存檔格式整合。測試本分支時，請開啟[本分支通過的 Build and test 建置](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration)，下載其中的 **EndfieldHUD-macOS-…** 產物。下方的正式版下載連結和預覽屬於穩定版，並非本分支。
+
 **[下載 v1.0.1 — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [所有版本](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD 電源頁面，使用範例讀數](docs/media/overview.png)
@@ -73,7 +75,7 @@ App 以 **Apple 晶片 macOS 11 以上**、**Intel macOS 10.15.4 以上**為建�
 | 檔案與圖片 | 存取你選擇、貼上或拖入的項目。檔案架儲存參照；圖片便箋與個人名片圖片儲存本機副本。 |
 | 更新提醒 | 通知權限可選。即使拒絕通知，選單列和「關於」仍會顯示更新資訊。 |
 | 登入啟動 | 先安裝至「應用程式」；macOS 可能要求在登入項目中批准。 |
-| 自動專注模式 | **macOS 13+**，並在 Apple「捷徑」中自行建立兩個捷徑，App 不會代為安裝。依[專注模式設定說明](docs/audio-and-work-mode.md#automatic-focus-setup)設定；未設定也能使用計時器。 |
+| 自動專注模式 | 本整合分支在 **macOS 11+** 上優先使用控制中心，需要你授予**輔助使用**權限且系統控制項可辨識；**macOS 13+** 上已設定的捷徑作為備援。穩定版 v1.0.1 下載仍需自行建立這兩個捷徑。請參閱[專注模式設定](docs/audio-and-work-mode.md#automatic-focus-setup)；沒有自動專注也能使用計時器。 |
 
 便箋、檔案參照、個人名片、地圖標記與事件記錄儲存在本機。剪貼簿記錄只保存在記憶體中，結束後清空。檢查和下載更新會連線至 GitHub，使用 App 無須帳號。[設定說明](docs/settings.md) · [更新說明](docs/updates.md)
 

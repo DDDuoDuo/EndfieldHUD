@@ -46,6 +46,20 @@ enum PersonalProfileCanvasTests {
             let canvas = PersonalProfileCanvas(store: store, workSeconds: { seconds }, reduceMotion: { true })
             let retained = canvas.makeContent(for: .profile, style: HUDModuleContentStyle(dark: true, accent: .cyan, contentsScale: 2))
             canvas.activate()
+            let portrait = descendants(retained).first { $0.name == "profile.portrait" }!
+            let photoLayer = portrait.sublayers!.first { $0.name == "portrait.image" }!
+            let portraitFrame = portrait.sublayers!.first { $0.name == "portrait.frame" }!
+            let frameBitmap = portraitFrame.contents as! CGImage
+            check(photoLayer.bounds.width == photoLayer.bounds.height
+                && abs(portraitFrame.bounds.width / photoLayer.bounds.width - 195.0 / 136) < 1e-10,
+                  "Profile editing uses the source card's square portrait and exact avatar-frame scale")
+            check(frameBitmap.width == 254 && frameBitmap.height == 254
+                && portraitFrame.sublayers == nil && !descendants(portrait).contains { $0.name == "portrait.vignette" },
+                  "The actual untrimmed source avatar frame replaces the old drawn rails and photo vignette")
+            let outerFrame = portraitFrame.frame.offsetBy(dx: portrait.frame.minX, dy: portrait.frame.minY)
+            check(outerFrame.minY > 25 && outerFrame.maxY < PersonalProfileCanvas.menuRect.minY
+                && outerFrame.maxX < 97 && outerFrame.minX >= 0,
+                  "The source frame fits between the heading, name and edit button")
             var requestedFields: [PersonalProfileField] = []; var imageRequests: [UserProfileImageKind] = []
             canvas.onEditField = { field, _, _ in requestedFields.append(field) }; canvas.onChooseImage = { imageRequests.append($0) }
             func labels(_ node: CALayer) -> [String] {
@@ -70,7 +84,7 @@ enum PersonalProfileCanvasTests {
                   && canvas.accessibleSliders.allSatisfy { canvas.popoverBounds!.contains($0.rect) }
                   && !canvas.accessibleActions.contains { action in action.id.contains("adjust:") || PersonalProfileField.portraitFields.contains { action.id == "profile:" + $0.rawValue } },
                   "Portrait submenu exposes three sliders without duplicate numeric or stepper buttons")
-            check(!canvas.popoverBounds!.intersects(PersonalProfileCanvas.portraitRect), "Portrait remains visible while its crop controls are open")
+            check(!canvas.popoverBounds!.intersects(outerFrame), "Portrait and the complete source frame remain visible while crop controls are open")
             check(canvas.setSlider(field: .avatarZoom, value: 21) && store.profile.avatarZoom == 20
                   && canvas.setSlider(field: .avatarZoom, value: 0) && store.profile.avatarZoom == 1, "Zoom slider clamps to1...20")
             check(canvas.setSlider(field: .avatarOffsetX, value: 125) && store.profile.avatarOffsetX == 1

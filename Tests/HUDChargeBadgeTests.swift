@@ -45,16 +45,16 @@ enum HUDChargeBadgeTests {
         badge.update(snapshot: snapshot, configuration: config, dark: true, contentsScale: 4)
         badge.setStable()
         check(badge.stage == .compact && badge.contains(HUDChargeBadge.center), "Stable HUD charge control is immediately clickable")
-        check(badge.hitRect.minY >= 435 && badge.hitRect.maxY <= 461
-              && (168...170).contains(badge.hitRect.width) && (24...25).contains(badge.hitRect.height),
-              "The battery capsule is slightly larger while remaining above the unchanged center buttons")
+        check(badge.hitRect.minY >= 428 && badge.hitRect.maxY <= 466
+              && (210...220).contains(badge.hitRect.width) && (30...32).contains(badge.hitRect.height),
+              "The enlarged battery capsule remains above the unchanged center buttons")
         check(!badge.contains(CGPoint(x: badge.hitRect.minX, y: badge.hitRect.minY))
               && !badge.contains(CGPoint(x: badge.hitRect.minX - 5, y: badge.hitRect.midY)),
               "Transparent canvas padding and rounded capsule corners do not steal input")
         check(canvas.superlayer === badge.layer && canvas.name == "hud.chargeBadge.notificationCanvas"
               && badge.layer.sublayers?.count == 1,
               "The badge adopts only the reusable notification canvas instead of nesting an AppKit backing layer")
-        check(abs(canvas.contentsScale - 2.56) < 0.001 && abs(canvas.transform.m11 - 0.64) < 0.001,
+        check(abs(canvas.contentsScale - 3.28) < 0.001 && abs(canvas.transform.m11 - 0.82) < 0.001,
               "The HUD supplies crisp rendering density without applying notification-size preferences")
         let textLayers = canvas.sublayers?.compactMap { $0 as? CATextLayer } ?? []
         let texts = textLayers.compactMap { ($0.string as? NSAttributedString)?.string }
@@ -70,6 +70,37 @@ enum HUDChargeBadgeTests {
               "The detached renderer uses the HUD's resolved light appearance")
         check(ObjectIdentifier(badge.layer.sublayers!.first!) == retainedCanvas,
               "Data and appearance changes retain the same rendering layer")
+
+        let previousLanguage = L10n.language
+        let notification = ChargeIndicatorView(frame: CGRect(origin: .zero, size: ChargeIndicatorView.canvasSize))
+        notification.setStage(.supercharge)
+        let notificationTexts = notification.embeddedContentLayer.sublayers?.compactMap { $0 as? CATextLayer } ?? []
+        let languages: [(AppLanguage, String, String)] = [
+            (.english, "CHARGE MODE", "BATTERY MODE"),
+            (.simplifiedChinese, "充电模式", "电池模式"),
+            (.traditionalChinese, "充電模式", "電池模式"),
+            (.japanese, "充電モード", "バッテリーモード"),
+            (.korean, "충전 모드", "배터리 모드")
+        ]
+        for (language, chargingTitle, batteryTitle) in languages {
+            L10n.language = language
+            for (plugged, charging, full) in [(true, true, false), (false, false, false), (true, false, true)] {
+                let value = BatterySnapshot(percentage: full ? 100 : 50, isPluggedIn: plugged,
+                                            isCharging: charging, isFullyCharged: full, hasBattery: true, capacity: capacity)
+                notification.set(snapshot: value, configuration: config)
+                badge.update(snapshot: value, configuration: config, dark: true, contentsScale: 2)
+                for layers in [notificationTexts, textLayers] {
+                    let subtitle = layers[0].string as! NSAttributedString
+                    let title = layers[1].string as! NSAttributedString
+                    check(subtitle.string == "// " + (charging ? "CHARGE MODE" : "BATTERY MODE")
+                          && title.string == (charging ? chargingTitle : batteryTitle),
+                          "Notification and HUD use the current charging state and selected language: \(language)")
+                    check(title.size().width <= layers[1].bounds.width && title.size().height <= layers[1].bounds.height,
+                          "Localized mode title fits the existing banner in \(language)")
+                }
+            }
+        }
+        L10n.language = previousLanguage
 
         var reduced = config; reduced.reduceMotion = true
         HUDRuntimeAppearance.configuration = reduced

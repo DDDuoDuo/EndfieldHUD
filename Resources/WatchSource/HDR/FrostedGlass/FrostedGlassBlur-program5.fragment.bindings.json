@@ -1,0 +1,56 @@
+[
+  {
+    "id": 6,
+    "name": "_5_6",
+    "resource_type": 1,
+    "base_type_id": 5,
+    "type_id": 64,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 14,
+    "name": "_13_14",
+    "resource_type": 1,
+    "base_type_id": 13,
+    "type_id": 67,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 10,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 9,
+    "type_id": 66,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 11,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 9,
+    "type_id": 66,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 8,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 7,
+    "type_id": 65,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 12,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 7,
+    "type_id": 65,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  }
+]

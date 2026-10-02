@@ -1,0 +1,89 @@
+{
+  "policy": "Exact serialized hierarchy and original Level3D resources. Runtime account state and loading selection are explicit inputs, never inferred from node names or screenshots.",
+  "static_native_evidence": [
+    {
+      "method": "RegionMap3DCfg.Load",
+      "address": "0x1833bb790",
+      "file": "RegionMap3DCfg--Load--386885.asm.txt",
+      "facts": [
+        "_ui resource under RegionMapSetting.uiRoot (+0x70), _model under buildingRoot (+0x78), _ground under groundRoot (+0x80).",
+        "Instantiate receives r8d=0 (worldPositionStays=false); original local transforms are preserved.",
+        "cfg.uiRect is not used to assign Level3D mesh-root transforms in Load."
+      ]
+    },
+    {
+      "method": "RegionMapSetting.InitData",
+      "address": "0x1833bd0f0",
+      "file": "RegionMapSetting--InitData--386897.asm.txt",
+      "facts": [
+        "showType=0 loads unlocked source levels. showType=1 loads current level then neighboring cfg intersecting player-centered radius.",
+        "_InitUI checks level unlocked state before changing loaded ui/building/ground active flags.",
+        "No player current level or unlock flags are embedded in the prefab."
+      ]
+    },
+    {
+      "method": "RegionMapSetting._SetMapPos",
+      "address": "0x1833c1830",
+      "file": "RegionMapSetting--_SetMapPos--386894.asm.txt",
+      "facts": [
+        "For a RectTransform icon, set anchorMin=anchorMax=(posXZ - uiRect.center)/uiRect.size + (0.5,0.5), and anchoredPosition=(0,0).",
+        "This is icon mapping, not a new transform for source model meshes."
+      ]
+    },
+    {
+      "method": "RegionMapSetting._RefreshMaterials",
+      "address": "0x18359a990",
+      "file": "RegionMapSetting--_RefreshMaterials--386895.asm.txt",
+      "facts": [
+        "Called by InitData at0x1833bd546 after source loading.",
+        "Enumerates Renderer instances and all instantiated material slots, then SetInt(_RegionMapEditor, showType != 1).",
+        "Watch showType1 sets _RegionMapEditor=0. This does not set _OuterColor."
+      ]
+    },
+    {
+      "method": "RegionMapSetting.SetControllerLevelSelectedState",
+      "address": "0x18a0bcde8",
+      "file": "RegionMapSetting--SetControllerLevelSelectedState--386906.asm.txt",
+      "facts": [
+        "Looks up cfg[level]._model root and its MeshRenderer, not every descendant mesh.",
+        "Reads existing MaterialPropertyBlock; selected flag chooses _selectedModelOuterColor (+0xb0) or _normalModelOuterColor (+0xa0); SetColor(_OuterColor) then applies the block.",
+        "No invocation from Watch InitData or extracted WatchCtrl is established. Do not default all loaded meshes to either selection color."
+      ]
+    },
+    {
+      "method": "RegionMapSetting.StartRegionRectTransformMoveRotationTween",
+      "address": "0x183a07cc0",
+      "file": "RegionMapSetting--StartRegionRectTransformMoveRotationTween--386904.asm.txt",
+      "facts": [
+        "Rotation target _moveFinalRotation belongs to loadedRegionTransform (+0xd8), written only by SetLoadedRegionTransform in the inspected methods.",
+        "DORotateQuaternion applies a world quaternion, not a local Euler override on each ModelNode.",
+        "WatchCtrl Lua does not call SetLoadedRegionTransform or this rotation tween. InitData does not store its domainRoot argument into +0xd8. Applying this rotation to Watch is not established."
+      ]
+    },
+    {
+      "method": "RegionMapSetting.MoveToPlayer",
+      "address": "0x184473f20",
+      "file": "RegionMapSetting--MoveToPlayer--386898.asm.txt",
+      "facts": [
+        "Player marker world point is transformed by the supplied center transform inverse; supplied domainRoot local position receives (-localX,-localY,0)."
+      ]
+    }
+  ],
+  "source_normal_rotation_degrees": {
+    "x": -90,
+    "y": 0,
+    "z": 0
+  },
+  "runtime_inputs": [
+    "current_level_id",
+    "loaded_level_ids",
+    "unlocked_level_ids",
+    "player_map_position",
+    "selected_level_id",
+    "loaded_region_transform_world_rotation",
+    "domain_root_local_position"
+  ],
+  "renderer_limits": [
+    "Unity scheduling, resource-load completion, account state, postprocessing and pixel-identical engine rendering are not established by these static exports."
+  ]
+}

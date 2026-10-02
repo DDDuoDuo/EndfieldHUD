@@ -1,0 +1,15 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "vert"
+    }
+  ],
+  "outputs": [
+    {
+      "type": "vec2",
+      "name": "_4",
+      "location": 0
+    }
+  ]
+}

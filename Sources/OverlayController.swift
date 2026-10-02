@@ -57,6 +57,12 @@ final class OverlayController: NSObject {
     var workFocusStatusMessage: String? {
         didSet { systemView?.workFocusStatusMessage = workFocusStatusMessage }
     }
+    var workFocusNeedsAccessibilityPermission = false {
+        didSet { systemView?.workFocusNeedsAccessibilityPermission = workFocusNeedsAccessibilityPermission }
+    }
+    var isPresentingFocusSystemControls: (() -> Bool)?
+    var onRequestFocusAccess: (() -> Void)?
+
     let eventLog: SystemEventLog
     let eventRecorder: SystemEventRecorder
     private var workEventObserver: UUID?
@@ -97,6 +103,18 @@ final class OverlayController: NSObject {
     var systemCenterHostIdentity: ObjectIdentifier? { systemView?.centerHostIdentity }
     var systemAmbientStartTime: TimeInterval? { systemView?.ambientStartTime }
     var systemSelectedModule: HUDModule? { systemView?.selectedModule }
+    var systemSourceWatchForVerification: HUDSourceWatchView? { systemView?.sourceWatchForVerification }
+    var systemBackdropPreparationForVerification: ((@escaping () -> Void) -> Void)? {
+        didSet {
+            if let _ = systemBackdropPreparationForVerification {
+                precondition(CommandLine.arguments.contains("--ui-test"))
+            }
+            systemView?.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
+        }
+    }
+    var systemSourceFailureForVerification: String? { systemView?.sourceFailureForVerification }
+    private(set) var lastClosedSourceTimerActive = false
+    private(set) var lastClosedSourcePhase: HUDSourceWatchPlayback.Phase?
     var systemReportGeometryMatchesSelectionForVerification: Bool { systemView?.reportGeometryMatchesSelectionForVerification ?? false }
     var systemPresentationGeneration: Int { systemState.generation }
     var systemFiniteAnimationKeys: [String] {
@@ -407,7 +425,11 @@ final class OverlayController: NSObject {
         // AppKit owns the native drag loop. Its source view and window must
         // survive until endedAt, including a dismissal requested mid-drag.
         if systemView?.isDraggingShelfItem == true || shelfDragPresentation.isActive { closeAfterShelfDrag = true; return }
-        performSystemAction(systemState.requestClose())
+        // No entrance is running while the source holds its initial pose for
+        // background input. Cancel that wait immediately rather than queueing
+        // dismissal behind an input that may never arrive.
+        let heldOpening = systemView?.isPreparingSourceBackdrop == true
+        performSystemAction(systemState.requestClose(interruptOpening: heldOpening))
     }
 
     /// Accepted updater relaunch only. Keep the current panel alive through its
@@ -433,8 +455,15 @@ final class OverlayController: NSObject {
         if !quitAfterSystemClose { quitRequested = false }
     }
 
-    func closeSystemOverlayForFocusLoss() {
+    func closeSystemOverlayForFocusLoss(activatedApplication: NSRunningApplication? = nil) {
         guard configuration.closeOnFocusLost else { return }
+        // The public Focus adapter briefly opens Control Center. Other app
+        // activations keep their normal dismissal policy even during that task.
+        if isPresentingFocusSystemControls?() == true {
+            let front = activatedApplication ?? NSWorkspace.shared.frontmostApplication
+            if front?.bundleIdentifier == "com.apple.controlcenter"
+                || front?.processIdentifier == ProcessInfo.processInfo.processIdentifier { return }
+        }
         guard systemView?.isPresentingModulePanel != true else { return }
         // A file can be picked up in Finder, then the HUD summoned while it is
         // held. Drag tracking may change key focus before delivering the drop.
@@ -499,10 +528,17 @@ final class OverlayController: NSObject {
                                      initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
                                      initialModule: initialModuleRequest ?? lastSystemModule)
             systemView = view
+            view.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
             if let pointerLocationProvider = systemPointerLocationProviderForVerification {
                 view.pointerLocationProvider = pointerLocationProvider
             }
             view.workFocusStatusMessage = workFocusStatusMessage
+            view.workFocusNeedsAccessibilityPermission = workFocusNeedsAccessibilityPermission
+            view.onRequestFocusAccess = { [weak self] in
+                guard let self else { return }
+                self.afterSystemClose = self.onRequestFocusAccess
+                self.closeSystemOverlay()
+            }
             let dragBoard = NSPasteboard(name: .drag)
             view.summonedDuringFileDrag = NSEvent.pressedMouseButtons & 1 != 0 && (
                 HUDFileShelfInteraction.acceptsFiles(dragBoard) ||
@@ -551,10 +587,18 @@ final class OverlayController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(view)
-            armTransitionDeadline(after: SystemHUDView.entranceDuration + 0.2) { [weak self] in
+            // Preparation has its own bounded fallback. The finite source
+            // entrance deadline starts only when the real/fallback input is ready.
+            armTransitionDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2) { [weak self] in
                 self?.finishSystemOpening(token)
             }
-            view.animateEntrance { [weak self] in self?.finishSystemOpening(token) }
+            view.animateEntrance(ready: { [weak self, weak view] in
+                guard let self, let view, self.systemView === view,
+                      self.systemState.phase == .opening, self.systemState.generation == token else { return }
+                self.armTransitionDeadline(after: SystemHUDView.entranceDuration + 0.2) { [weak self] in
+                    self?.finishSystemOpening(token)
+                }
+            }) { [weak self] in self?.finishSystemOpening(token) }
         case .close(let token):
             logSystemPhase()
             systemView?.interactionEnabled = false
@@ -637,8 +681,12 @@ final class OverlayController: NSObject {
                 self.closeAfterShelfDrag = false
                 if close { self.closeSystemOverlay() }
             }
-            armShelfDragDeadline(after: SystemHUDView.entranceDuration + 0.2, completion: completion)
-            view.animateEntrance(completion: completion)
+            armShelfDragDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2, completion: completion)
+            view.animateEntrance(ready: { [weak self, weak view] in
+                guard let self, let view, self.systemView === view,
+                      self.shelfDragPresentation.generation == token else { return }
+                self.armShelfDragDeadline(after: SystemHUDView.entranceDuration + 0.2, completion: completion)
+            }, completion: completion)
         case .close: finishConcealedShelfClose()
         }
     }
@@ -715,10 +763,12 @@ final class OverlayController: NSObject {
         let shelfReveal = pendingShelfReveal
         pendingShelfReveal = nil
         defer { shelfReveal?.close() }
-        let shouldRestore = !shouldExit && restoreFocus && appLaunch == nil && shelfReveal == nil && !openStorageAfterClose && NSApp.isActive && panel.isKeyWindow
+        let shouldRestore = !shouldExit && restoreFocus && appLaunch == nil && shelfReveal == nil && !openStorageAfterClose && afterSystemClose == nil && NSApp.isActive && panel.isKeyWindow
         lastSystemModule = systemView?.selectedModule ?? lastSystemModule
         systemView?.cancelAnimations()
         lastClosedAnimationCount = systemView?.activeAnimationCount ?? 0
+        lastClosedSourceTimerActive = systemView?.sourceWatchForVerification?.hasDisplayTimerForVerification ?? false
+        lastClosedSourcePhase = systemView?.sourceWatchForVerification?.playback.phase
         panel.orderOut(nil)
         panel.alphaValue = 1
         closeAfterShelfDrag = false
@@ -846,6 +896,22 @@ private final class PositionPanel: NSPanel {
     override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
     override func resignKey() { super.resignKey(); onResignKey?() }
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        (contentView as? SystemHUDView)?.reconcileCursorAfterNativeDispatch()
+    }
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        // Native child views and AppKit cursor regions run after the HUD's
+        // tracking callbacks. Reconcile once after dispatch, including the
+        // return from nested click handling. Drag sessions keep their cursors.
+        switch event.type {
+        case .mouseMoved, .mouseEntered, .mouseExited, .cursorUpdate,
+             .leftMouseUp, .rightMouseUp, .otherMouseUp, .scrollWheel:
+            (contentView as? SystemHUDView)?.reconcileCursorAfterNativeDispatch()
+        default: break
+        }
+    }
 }
 
 private final class PositionCanvas: NSView {

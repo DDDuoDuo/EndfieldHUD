@@ -1,0 +1,71 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "vert"
+    }
+  ],
+  "types": {
+    "_6": {
+      "name": "_6",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "float",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "float",
+          "offset": 4
+        },
+        {
+          "name": "_m2",
+          "type": "float",
+          "offset": 8
+        },
+        {
+          "name": "_m3",
+          "type": "float",
+          "offset": 12
+        },
+        {
+          "name": "_m4",
+          "type": "float",
+          "offset": 16
+        },
+        {
+          "name": "_m5",
+          "type": "float",
+          "offset": 20
+        },
+        {
+          "name": "_m6",
+          "type": "float",
+          "offset": 24
+        },
+        {
+          "name": "_m7",
+          "type": "float",
+          "offset": 28
+        }
+      ]
+    }
+  },
+  "outputs": [
+    {
+      "type": "vec2",
+      "name": "_5",
+      "location": 0
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_6",
+      "name": "_6_7",
+      "block_size": 32,
+      "set": 3,
+      "binding": 0
+    }
+  ]
+}

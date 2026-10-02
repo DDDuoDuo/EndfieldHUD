@@ -1,0 +1,3173 @@
+{
+  "schema_version": 1,
+  "source_property": {
+    "property_name": "_BuildingTex",
+    "encoded_usage": "0xa000dae3",
+    "usage_address": "0x18d0d66d8",
+    "literal_index": 28017,
+    "utf8_bytes": 12,
+    "metadata_sha256": "0076743397acadf03d3b0064343a963c7c88863b8160526d397e4b3efb96f02e",
+    "native_cctor_address": "0x184a140f0",
+    "property_to_id_call": "0x184a14125",
+    "numeric_property_id": "Runtime Shader.PropertyToID result; no fabricated process-specific integer."
+  },
+  "registration": {
+    "trigger": "UIRegionBuildingTexManager.OnEnable",
+    "native_address": "0x183553c30",
+    "component_lookup": "GetComponent<MeshRenderer> on own GameObject",
+    "static_usage_cache": "../postprocess/region-texture-static-usages.json",
+    "property_update_native_address": "0x183553930",
+    "shader_condition": "Any non-null Renderer.GetSharedMaterialArray element whose material.shader equals the original _regionMapShader.",
+    "texture_condition": "Own cached MeshRenderer, _regionMapShader and minimapOutlineTex must be non-null.",
+    "update": "GetPropertyBlock(existing renderer-wide block) -> SetTexture(_BuildingTex, source minimapOutlineTex) -> SetPropertyBlock(block) without materialIndex.",
+    "scope": "All material slots/passes on this Renderer. The shader equality check controls whether the renderer-wide update occurs, not which slots receive a block."
+  },
+  "disable": {
+    "trigger": "UIRegionBuildingTexManager.OnDisable",
+    "native_address": "0x183553850",
+    "operations": [
+      "Clear(static scratch MaterialPropertyBlock, true)",
+      "If cached renderer is valid: SetPropertyBlock(null) without materialIndex"
+    ],
+    "effect": "Clear the renderer-wide property block, not only its _BuildingTex entry."
+  },
+  "counts": {
+    "selected_scenes": 50,
+    "source_managers": 77,
+    "unique_texture_ids": 32,
+    "shader_matches": 77,
+    "source_eligible": 77,
+    "enabled": 77
+  },
+  "scene_inputs": [
+    {
+      "file": "scenes/map01_lv001_building.json",
+      "sha256": "77a8b71f51259296e4ac8f1dc2349f38f68dd78acd48ca1134e0a469ef20ca4c"
+    },
+    {
+      "file": "scenes/map01_lv001_ground.json",
+      "sha256": "ebedff8277011f152fa401142896539f4d11c0934cae3c64a13350e4c766f9d2"
+    },
+    {
+      "file": "scenes/map01_lv001_ui.json",
+      "sha256": "f90cf09b7c42ac6cde5c93ccfcaf4c856977f1046db86102da3aded3511d88f9"
+    },
+    {
+      "file": "scenes/map01_lv002_building.json",
+      "sha256": "0624385f5a1ec65d07aad2efacb50d13b4d0548cbada5ff3a2151849df24502e"
+    },
+    {
+      "file": "scenes/map01_lv002_ground.json",
+      "sha256": "3d508e1b182f033d3786f85ddee0904ef110f58c7c5dfbd730850b012d63459a"
+    },
+    {
+      "file": "scenes/map01_lv002_ui.json",
+      "sha256": "a38b0589f756c359fc584f773db5c51c91c27d59f8ac7e83b9a0dcb2753d71ff"
+    },
+    {
+      "file": "scenes/map01_lv003_building.json",
+      "sha256": "fe58a92a47dfddf953d81d6d0d607779b71998eea970548f6eff0f2f493d0095"
+    },
+    {
+      "file": "scenes/map01_lv003_ground.json",
+      "sha256": "13e28db7eabd855dbcbebbdc5ee7e52d651a12a1333bb9c0aa89059b8d4cbdc0"
+    },
+    {
+      "file": "scenes/map01_lv003_ui.json",
+      "sha256": "9423a612da34344cb1bba0adb9d43be85a0b94b1174c7cbca0ef5232f8cb2f9a"
+    },
+    {
+      "file": "scenes/map01_lv005_building.json",
+      "sha256": "ac5923cad2175b8f31c0d5b1ef10ff6f82b26fec676ed9d7fc11d9e527a11760"
+    },
+    {
+      "file": "scenes/map01_lv005_ground.json",
+      "sha256": "4395fc64e539fde56b674be70335dbf6212f9b92850a84aa871434053f4083e1"
+    },
+    {
+      "file": "scenes/map01_lv005_ui.json",
+      "sha256": "534ee2d5a2bc943b7c7d1b0d269d78cdc5af22ba59568c163ba7aa1e1f4a6143"
+    },
+    {
+      "file": "scenes/map01_lv006_building.json",
+      "sha256": "90c5c508424865750f18f7c102dba6d2563c5729abb856c50348e3c5c2dd7856"
+    },
+    {
+      "file": "scenes/map01_lv006_ground.json",
+      "sha256": "cccc90486dfa17365b4d79dde0c5bcad8637e5005f7bdb4982f2b051d6117902"
+    },
+    {
+      "file": "scenes/map01_lv006_ui.json",
+      "sha256": "d48fd9af0b32bee91efb2186dbd9922a3c9aa714d2f0d266c88fce0ee3ae7307"
+    },
+    {
+      "file": "scenes/map01_lv007_building.json",
+      "sha256": "1ffe97108ab58ffd1c6f9e894dfd1dcd9462d172e9cbb205f3dd0522d05b9d2f"
+    },
+    {
+      "file": "scenes/map01_lv007_ground.json",
+      "sha256": "b3727fe15acee189445a9bed1a6dc9b19881c9b5cbd83456675ac5a608ea6c7d"
+    },
+    {
+      "file": "scenes/map01_lv007_ui.json",
+      "sha256": "be36d96657a3ecad68450bc7f815566fa87a940f67016e4fb7b320fdf54f4cd2"
+    },
+    {
+      "file": "scenes/map02_indie_dg016_building.json",
+      "sha256": "c0c7ae27c07c07404f25ec55d4528612a1d5ad634687be111b1dc9595248ec1a"
+    },
+    {
+      "file": "scenes/map02_indie_dg016_ui.json",
+      "sha256": "d7c3037275c5491efda50f4ede21e63d5bc17a542eb10c28f28aff8d7c4ed8b4"
+    },
+    {
+      "file": "scenes/map02_lv001_building.json",
+      "sha256": "c8f4ce69dc281539fccc75d92bc534bef1a84fa598c1b820978c6801162488a0"
+    },
+    {
+      "file": "scenes/map02_lv001_ground.json",
+      "sha256": "4b2deeb3aca50f39e31db981a04d26d1afaff0786069244634f3c6de68cd1c37"
+    },
+    {
+      "file": "scenes/map02_lv001_ui.json",
+      "sha256": "8debe75de66c3bf2500a0d603a9c24615cbc0398d4a382d79441fc84fed2e41a"
+    },
+    {
+      "file": "scenes/map02_lv002_building.json",
+      "sha256": "11621488473dfdb72283643a705666cfa55c889e7b74fad25e5361d74231e198"
+    },
+    {
+      "file": "scenes/map02_lv002_ground.json",
+      "sha256": "b9e1f21327f3fc8486b5722aba778457ee9fa14830012048f49e10885178024e"
+    },
+    {
+      "file": "scenes/map02_lv002_ui.json",
+      "sha256": "7771195c90c3fa5343abecdada8a9e222d540c7fee74875fda9848b4e72f2273"
+    },
+    {
+      "file": "scenes/map02_lv003_building.json",
+      "sha256": "f70a0d460d5d71143dff064184a1728313bb7224f1393b6f209c242699f0caa7"
+    },
+    {
+      "file": "scenes/map02_lv003_ground.json",
+      "sha256": "fca7bc9c3388a80096b233cc43c14c72b7df3f6fcdda541ca692597b47cc7d88"
+    },
+    {
+      "file": "scenes/map02_lv003_ui.json",
+      "sha256": "267618b4b5ad3a0af5a89e1d21d577fc4b7babc8fdb9efb29494a88c24a4158f"
+    },
+    {
+      "file": "scenes/map02_lv004_building.json",
+      "sha256": "ac60d564334e906a04b728e7ff8f5be0cfe3d15a05f351f36cdb5aad918ad3de"
+    },
+    {
+      "file": "scenes/map02_lv004_ground.json",
+      "sha256": "ee5882340673da66169f88f30a3c0b33dc1b0616652831d196bde39dca4002a2"
+    },
+    {
+      "file": "scenes/map02_lv004_ui.json",
+      "sha256": "895e708dbda4f4d9d50d1061c1b216366095adf2273b527a596981fa1e8c4944"
+    },
+    {
+      "file": "scenes/map02_lv005_building.json",
+      "sha256": "da110d6d637313c043b6f49e7e5f6fdaf3deccc8d6a400314bb60a65ece864dc"
+    },
+    {
+      "file": "scenes/map02_lv005_ground.json",
+      "sha256": "92fd24d21bd4c0cf0ca428ce4f42aa9b73572531d9506945dae8ee878f2e5897"
+    },
+    {
+      "file": "scenes/map02_lv005_ui.json",
+      "sha256": "0594915336df4bd45fb7634580121b6beaec31752698d0a7f37f46b6fa6434ae"
+    },
+    {
+      "file": "scenes/map02_lv006_building.json",
+      "sha256": "6a1cbe98bb7f45d90582f078dc8b71b4d39971c2062d8180bb63381bc07dd323"
+    },
+    {
+      "file": "scenes/map02_lv006_ground.json",
+      "sha256": "bfef12ddf49fb6c50b4d0449e2f775b62e57f0ed3d1c8c6b3d3aef424a4bcee2"
+    },
+    {
+      "file": "scenes/map02_lv006_ui.json",
+      "sha256": "3b2db48faa38f1fdbc78b5adbdb25dde1358bdb9cded33fa88dac538cff94759"
+    },
+    {
+      "file": "scenes/map02_lv007_building.json",
+      "sha256": "ae7c5ba4623c4328e8d8c5e3b0c3334159526730d3e9604161482de324c28b00"
+    },
+    {
+      "file": "scenes/map02_lv007_ground.json",
+      "sha256": "c0249e8341135d023687cd39bceb92b90717463baa7459b3726529454b6924b5"
+    },
+    {
+      "file": "scenes/map02_lv007_ui.json",
+      "sha256": "debbae771eeb3e70d18b47757b8f6269f01325a6ab65efdb1b7f7ecff49ed3f1"
+    },
+    {
+      "file": "scenes/map02_lv008_building.json",
+      "sha256": "9196815152d56ad2c426744304d172c617fdbce8d0f8fdd3af9467647ae99fd8"
+    },
+    {
+      "file": "scenes/map02_lv008_ground.json",
+      "sha256": "f3d3bc18b5fec645634691602c29a5e7f918969972058bea0b169ecd1bf642a0"
+    },
+    {
+      "file": "scenes/map02_lv008_ui.json",
+      "sha256": "06b5596272fcfa6e741c88b0ac0a3009726d621711b93308e531e5e74a769d4b"
+    },
+    {
+      "file": "scenes/map02_lv009_building.json",
+      "sha256": "61617251b3f753d166d62b639822fe74262e6a1328c1c9cc944efed894d4aa6e"
+    },
+    {
+      "file": "scenes/map02_lv009_ground.json",
+      "sha256": "7bcd055ce61cc0c2382b33bbc224519493bf9d1fded9320b6186d6586f57bd99"
+    },
+    {
+      "file": "scenes/map02_lv009_ui.json",
+      "sha256": "ebfc80fcec1ad309595f0a9610eafa0730eb8f66d694ad20fe27d4753b8c845e"
+    },
+    {
+      "file": "scenes/region01.json",
+      "sha256": "0f33cbc1b9f2949a0972578fe4a90f8467847b960a02782cf955bbf4f184b1b9"
+    },
+    {
+      "file": "scenes/region02.json",
+      "sha256": "8055d83c9752e0983c88b1b15e01894ce7af7f41f76fc52fc3957b3c6a40cf19"
+    },
+    {
+      "file": "scenes/spaceship.json",
+      "sha256": "39805b9633010f7daa954d71434536a55e48d1287dc25e775d2ca17899a9e9b1"
+    }
+  ],
+  "overrides": [
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_building.prefab",
+      "source_scene": "scenes/map01_lv001_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/947610b2f5a99ca2478e3587.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 95579369,
+        "length": 34515,
+        "md5": "1F3295A277FBE7A9CD151F3F13481F45",
+        "sha256": "158894071ab9b656a52f82ad6d2576bd1eb027772bdf191fe52da734c3d69b07",
+        "md5_verified": true
+      },
+      "node_id": "CAB-7d684744d93a01789fb4e387550ecd63:-7297935819840375498",
+      "path": "map01_lv001_building/Glow01",
+      "manager_component_id": "CAB-7d684744d93a01789fb4e387550ecd63:5146111791278437686",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-7d684744d93a01789fb4e387550ecd63:-1779845407462804170",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:8007938032893606277",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_building.prefab",
+      "source_scene": "scenes/map01_lv001_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/947610b2f5a99ca2478e3587.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 95579369,
+        "length": 34515,
+        "md5": "1F3295A277FBE7A9CD151F3F13481F45",
+        "sha256": "158894071ab9b656a52f82ad6d2576bd1eb027772bdf191fe52da734c3d69b07",
+        "md5_verified": true
+      },
+      "node_id": "CAB-7d684744d93a01789fb4e387550ecd63:-3252362542535690954",
+      "path": "map01_lv001_building/Glow01_hover",
+      "manager_component_id": "CAB-7d684744d93a01789fb4e387550ecd63:-745484104130382538",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-7d684744d93a01789fb4e387550ecd63:-6907855973132225226",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_building.prefab",
+      "source_scene": "scenes/map01_lv001_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/947610b2f5a99ca2478e3587.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 95579369,
+        "length": 34515,
+        "md5": "1F3295A277FBE7A9CD151F3F13481F45",
+        "sha256": "158894071ab9b656a52f82ad6d2576bd1eb027772bdf191fe52da734c3d69b07",
+        "md5_verified": true
+      },
+      "node_id": "CAB-7d684744d93a01789fb4e387550ecd63:4797519154492978486",
+      "path": "map01_lv001_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-7d684744d93a01789fb4e387550ecd63:-1032602712256826058",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-7d684744d93a01789fb4e387550ecd63:-3672644175940298",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_ground.prefab",
+      "source_scene": "scenes/map01_lv001_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/dcfab56b12191b6e3822bcd8.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 123442649,
+        "length": 4226,
+        "md5": "F3568ECF1DB38731A0B94DB7B7E31A71",
+        "sha256": "1c4637b1c7bd1215f90b541e7b43ef6f760a6f081474a883f26f6529e215ffc7",
+        "md5_verified": true
+      },
+      "node_id": "CAB-feeccc1e652dd7e5f54beae4c510e634:4891427509102922339",
+      "path": "map01_lv001_ground",
+      "manager_component_id": "CAB-feeccc1e652dd7e5f54beae4c510e634:-5319823259183920541",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-feeccc1e652dd7e5f54beae4c510e634:-8074240427396609437",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-ee8b13bfaffa3babf0ee4e43787ee2ab:6712698097951409592",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv001_ground.prefab",
+      "source_scene": "scenes/map01_lv001_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/dcfab56b12191b6e3822bcd8.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 123442649,
+        "length": 4226,
+        "md5": "F3568ECF1DB38731A0B94DB7B7E31A71",
+        "sha256": "1c4637b1c7bd1215f90b541e7b43ef6f760a6f081474a883f26f6529e215ffc7",
+        "md5_verified": true
+      },
+      "node_id": "CAB-feeccc1e652dd7e5f54beae4c510e634:5955429651381111395",
+      "path": "map01_lv001_ground/lv001",
+      "manager_component_id": "CAB-feeccc1e652dd7e5f54beae4c510e634:-2969990106591049117",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-feeccc1e652dd7e5f54beae4c510e634:-5437522482429605277",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-ee8b13bfaffa3babf0ee4e43787ee2ab:6712698097951409592",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_building.prefab",
+      "source_scene": "scenes/map01_lv002_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/7cf09b6618b3c5149f58030a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 763460453,
+        "length": 18761,
+        "md5": "B2D2CCC0A6C3562017FCC295B6CFBC1B",
+        "sha256": "c4aece11a3b1e10c20a183463eadda040abaaf02e0c043b311d1dc2234b1e414",
+        "md5_verified": true
+      },
+      "node_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:-78578883643365325",
+      "path": "map01_lv002_building/Glow02",
+      "manager_component_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:-6578818575623378893",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:4132921711581145139",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-9108460901867554818",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_building.prefab",
+      "source_scene": "scenes/map01_lv002_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/7cf09b6618b3c5149f58030a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 763460453,
+        "length": 18761,
+        "md5": "B2D2CCC0A6C3562017FCC295B6CFBC1B",
+        "sha256": "c4aece11a3b1e10c20a183463eadda040abaaf02e0c043b311d1dc2234b1e414",
+        "md5_verified": true
+      },
+      "node_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:1407370987571324979",
+      "path": "map01_lv002_building/Glow01_hover",
+      "manager_component_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:1105333042154121267",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:6803636210731853875",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_building.prefab",
+      "source_scene": "scenes/map01_lv002_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/7cf09b6618b3c5149f58030a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 763460453,
+        "length": 18761,
+        "md5": "B2D2CCC0A6C3562017FCC295B6CFBC1B",
+        "sha256": "c4aece11a3b1e10c20a183463eadda040abaaf02e0c043b311d1dc2234b1e414",
+        "md5_verified": true
+      },
+      "node_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:-4489060902703192013",
+      "path": "map01_lv002_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:3750757842588411955",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-4de2c60705e3b0649cf3c00df6f1837d:8482388821522589747",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_ground.prefab",
+      "source_scene": "scenes/map01_lv002_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1125bb8c3bf5ef64dc2a0208.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 151281652,
+        "length": 36020,
+        "md5": "D16C74B5D035551A3FA567FCE7DACC9B",
+        "sha256": "cd2e816b425edac1dc6c84b9f4f9ff6fa7999ebc781c184b7402516a721cd528",
+        "md5_verified": true
+      },
+      "node_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:3644525068528206880",
+      "path": "map01_lv002_ground",
+      "manager_component_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:-6892459859041106912",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:8816079984729211936",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:6236855769001714808",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv002_ground.prefab",
+      "source_scene": "scenes/map01_lv002_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/1125bb8c3bf5ef64dc2a0208.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 151281652,
+        "length": 36020,
+        "md5": "D16C74B5D035551A3FA567FCE7DACC9B",
+        "sha256": "cd2e816b425edac1dc6c84b9f4f9ff6fa7999ebc781c184b7402516a721cd528",
+        "md5_verified": true
+      },
+      "node_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:-3605053832081226720",
+      "path": "map01_lv002_ground/lv002",
+      "manager_component_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:3676709141796701216",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:48528580425237536",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-fd86c149664ae3e4f87d49c123e5f042:6236855769001714808",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_building.prefab",
+      "source_scene": "scenes/map01_lv003_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/276d66296d7b2f43651ecff6.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 703351251,
+        "length": 16087,
+        "md5": "C7F287A595EB1B9A9AB020263024F966",
+        "sha256": "206180cd61a46dbe325be21160002180449543af05b26b8432823c81b3e1d1c2",
+        "md5_verified": true
+      },
+      "node_id": "CAB-95d6b32af28977443c6134452f5191ef:1910619581710781978",
+      "path": "map01_lv003_building/Glow03",
+      "manager_component_id": "CAB-95d6b32af28977443c6134452f5191ef:5177117563343916570",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-95d6b32af28977443c6134452f5191ef:-2879473614015181286",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:3701357888794842",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_building.prefab",
+      "source_scene": "scenes/map01_lv003_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/276d66296d7b2f43651ecff6.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 703351251,
+        "length": 16087,
+        "md5": "C7F287A595EB1B9A9AB020263024F966",
+        "sha256": "206180cd61a46dbe325be21160002180449543af05b26b8432823c81b3e1d1c2",
+        "md5_verified": true
+      },
+      "node_id": "CAB-95d6b32af28977443c6134452f5191ef:1605833347651325466",
+      "path": "map01_lv003_building/Glow01_hover",
+      "manager_component_id": "CAB-95d6b32af28977443c6134452f5191ef:-681781819194946022",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-95d6b32af28977443c6134452f5191ef:4740933502810836506",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_building.prefab",
+      "source_scene": "scenes/map01_lv003_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/276d66296d7b2f43651ecff6.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 703351251,
+        "length": 16087,
+        "md5": "C7F287A595EB1B9A9AB020263024F966",
+        "sha256": "206180cd61a46dbe325be21160002180449543af05b26b8432823c81b3e1d1c2",
+        "md5_verified": true
+      },
+      "node_id": "CAB-95d6b32af28977443c6134452f5191ef:2429028173146738202",
+      "path": "map01_lv003_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-95d6b32af28977443c6134452f5191ef:5531653980521811482",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-95d6b32af28977443c6134452f5191ef:8992422678050885146",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_ground.prefab",
+      "source_scene": "scenes/map01_lv003_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4b097382d024c7bdefa6f28f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 653409258,
+        "length": 13282,
+        "md5": "713A38D8F1B15CE47A62CBAAA5A0912E",
+        "sha256": "3dab8e7b8a11ffd2d374270bdc3d2564a96e9a32ffe8c8b66c6c1c40664349f4",
+        "md5_verified": true
+      },
+      "node_id": "CAB-601e461c0e295400c99553d04ec554d4:-1679332781517653683",
+      "path": "map01_lv003_ground",
+      "manager_component_id": "CAB-601e461c0e295400c99553d04ec554d4:-1286730490411108019",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-601e461c0e295400c99553d04ec554d4:-5675100793332909747",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-601e461c0e295400c99553d04ec554d4:-7803391685981912894",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv003_ground.prefab",
+      "source_scene": "scenes/map01_lv003_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4b097382d024c7bdefa6f28f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 653409258,
+        "length": 13282,
+        "md5": "713A38D8F1B15CE47A62CBAAA5A0912E",
+        "sha256": "3dab8e7b8a11ffd2d374270bdc3d2564a96e9a32ffe8c8b66c6c1c40664349f4",
+        "md5_verified": true
+      },
+      "node_id": "CAB-601e461c0e295400c99553d04ec554d4:-5651906963605112499",
+      "path": "map01_lv003_ground/lv003",
+      "manager_component_id": "CAB-601e461c0e295400c99553d04ec554d4:-4593700163779380915",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-601e461c0e295400c99553d04ec554d4:1727097762774628685",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-601e461c0e295400c99553d04ec554d4:-7803391685981912894",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_building.prefab",
+      "source_scene": "scenes/map01_lv005_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a9ef56a908880d39d64f583a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 730038989,
+        "length": 17486,
+        "md5": "F84B0A4B2ECBE9EE8AB7BB92F2F19AB3",
+        "sha256": "6c95bca2fd22f45be0ff26ffb4e2d0ccfc16e4dba41b7028aeec927d649cbff2",
+        "md5_verified": true
+      },
+      "node_id": "CAB-12c8389249e792b93c2451969a2dca82:-735410983295984010",
+      "path": "map01_lv005_building/Glow05",
+      "manager_component_id": "CAB-12c8389249e792b93c2451969a2dca82:8515528676289142390",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-12c8389249e792b93c2451969a2dca82:8656572689941519990",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-5503443179822565141",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_building.prefab",
+      "source_scene": "scenes/map01_lv005_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a9ef56a908880d39d64f583a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 730038989,
+        "length": 17486,
+        "md5": "F84B0A4B2ECBE9EE8AB7BB92F2F19AB3",
+        "sha256": "6c95bca2fd22f45be0ff26ffb4e2d0ccfc16e4dba41b7028aeec927d649cbff2",
+        "md5_verified": true
+      },
+      "node_id": "CAB-12c8389249e792b93c2451969a2dca82:6988322386122825334",
+      "path": "map01_lv005_building/Glow01_hover",
+      "manager_component_id": "CAB-12c8389249e792b93c2451969a2dca82:-1726597860506083722",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-12c8389249e792b93c2451969a2dca82:-2162359820949922186",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_building.prefab",
+      "source_scene": "scenes/map01_lv005_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a9ef56a908880d39d64f583a.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 730038989,
+        "length": 17486,
+        "md5": "F84B0A4B2ECBE9EE8AB7BB92F2F19AB3",
+        "sha256": "6c95bca2fd22f45be0ff26ffb4e2d0ccfc16e4dba41b7028aeec927d649cbff2",
+        "md5_verified": true
+      },
+      "node_id": "CAB-12c8389249e792b93c2451969a2dca82:-5452218620641091978",
+      "path": "map01_lv005_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-12c8389249e792b93c2451969a2dca82:-165306877877297546",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-12c8389249e792b93c2451969a2dca82:6270163432453496438",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_ground.prefab",
+      "source_scene": "scenes/map01_lv005_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ebc4c23215ca141c0a000755.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301007056,
+        "length": 42601,
+        "md5": "29DC929031D515411744C18FE6A0B69C",
+        "sha256": "e1a1872e91122de32f447f84c285e12865c4d1bc93b90d878649c2b508ebf94b",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e559542e2f9408e27009e95062ec0834:1250446195607513659",
+      "path": "map01_lv005_ground",
+      "manager_component_id": "CAB-e559542e2f9408e27009e95062ec0834:204536727308053051",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e559542e2f9408e27009e95062ec0834:8121752193268296251",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-e559542e2f9408e27009e95062ec0834:4179065066434640104",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv005_ground.prefab",
+      "source_scene": "scenes/map01_lv005_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ebc4c23215ca141c0a000755.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301007056,
+        "length": 42601,
+        "md5": "29DC929031D515411744C18FE6A0B69C",
+        "sha256": "e1a1872e91122de32f447f84c285e12865c4d1bc93b90d878649c2b508ebf94b",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e559542e2f9408e27009e95062ec0834:-5603853003877733829",
+      "path": "map01_lv005_ground/lv005",
+      "manager_component_id": "CAB-e559542e2f9408e27009e95062ec0834:5390433164541864507",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e559542e2f9408e27009e95062ec0834:6084807360724970043",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-e559542e2f9408e27009e95062ec0834:4179065066434640104",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_building.prefab",
+      "source_scene": "scenes/map01_lv006_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0ef4c3a2f6fe59fda5d89f8e.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 953488129,
+        "length": 31150,
+        "md5": "420B645357461CAA7992621C1AB6C810",
+        "sha256": "40231833175f6306890e26f5643b325644bdf9cda58cfd6c24dd4bd45de6eb9f",
+        "md5_verified": true
+      },
+      "node_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:5007458555522302760",
+      "path": "map01_lv006_building/Glow06",
+      "manager_component_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:5844050566537986856",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:736835914412180264",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-dcbdfe810efe900ab6373e3e78b9cade:8202142729593834543",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_building.prefab",
+      "source_scene": "scenes/map01_lv006_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0ef4c3a2f6fe59fda5d89f8e.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 953488129,
+        "length": 31150,
+        "md5": "420B645357461CAA7992621C1AB6C810",
+        "sha256": "40231833175f6306890e26f5643b325644bdf9cda58cfd6c24dd4bd45de6eb9f",
+        "md5_verified": true
+      },
+      "node_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:1248512456410776360",
+      "path": "map01_lv006_building/Glow01_hover",
+      "manager_component_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:7098709437866754856",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:-2378964610191146200",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_building.prefab",
+      "source_scene": "scenes/map01_lv006_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/0ef4c3a2f6fe59fda5d89f8e.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 953488129,
+        "length": 31150,
+        "md5": "420B645357461CAA7992621C1AB6C810",
+        "sha256": "40231833175f6306890e26f5643b325644bdf9cda58cfd6c24dd4bd45de6eb9f",
+        "md5_verified": true
+      },
+      "node_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:3808184373625340712",
+      "path": "map01_lv006_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:3364907418915095336",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-84e5d7452739bf2eb6261d39987d76d9:-6449664681094823128",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_ground.prefab",
+      "source_scene": "scenes/map01_lv006_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/77a7cc91f5f7a3f195b0be7f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 280762773,
+        "length": 41569,
+        "md5": "151CADB73E279767E489BA5CE80CBEB2",
+        "sha256": "9038ca782c524a1876450001354ea3222f9ceaf07cf88982adacc4cf7a598622",
+        "md5_verified": true
+      },
+      "node_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:1663769269992951591",
+      "path": "map01_lv006_ground",
+      "manager_component_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-3868177501283479769",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-2867188130635641049",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-3860286434201570480",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv006_ground.prefab",
+      "source_scene": "scenes/map01_lv006_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/77a7cc91f5f7a3f195b0be7f.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 280762773,
+        "length": 41569,
+        "md5": "151CADB73E279767E489BA5CE80CBEB2",
+        "sha256": "9038ca782c524a1876450001354ea3222f9ceaf07cf88982adacc4cf7a598622",
+        "md5_verified": true
+      },
+      "node_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:5652107875832106791",
+      "path": "map01_lv006_ground/lv006",
+      "manager_component_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-9013584738850697433",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:8183182252175658791",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-df6912390a6e5a575716bfcb8a8023b0:-3860286434201570480",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_building.prefab",
+      "source_scene": "scenes/map01_lv007_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e90d4adf93a2c2561cdd63aa.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 779284511,
+        "length": 19719,
+        "md5": "37DA6CBD11258AE37A93491338BB6795",
+        "sha256": "43d454c56c7ea8b8324a59c5bbbe36cf3aded3055ef51ff9437fce26e75e00d3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-dde8c2191c9030649631dc5ff66aa111:1204039885087052718",
+      "path": "map01_lv007_building/Glow07",
+      "manager_component_id": "CAB-dde8c2191c9030649631dc5ff66aa111:2384107141704717230",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-dde8c2191c9030649631dc5ff66aa111:3104881465345774510",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-6644324337239083920",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_building.prefab",
+      "source_scene": "scenes/map01_lv007_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e90d4adf93a2c2561cdd63aa.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 779284511,
+        "length": 19719,
+        "md5": "37DA6CBD11258AE37A93491338BB6795",
+        "sha256": "43d454c56c7ea8b8324a59c5bbbe36cf3aded3055ef51ff9437fce26e75e00d3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-dde8c2191c9030649631dc5ff66aa111:-7307723672448592978",
+      "path": "map01_lv007_building/Glow01_hover",
+      "manager_component_id": "CAB-dde8c2191c9030649631dc5ff66aa111:3751064117138297774",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-dde8c2191c9030649631dc5ff66aa111:-2186588976762186834",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_building.prefab",
+      "source_scene": "scenes/map01_lv007_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/e90d4adf93a2c2561cdd63aa.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 779284511,
+        "length": 19719,
+        "md5": "37DA6CBD11258AE37A93491338BB6795",
+        "sha256": "43d454c56c7ea8b8324a59c5bbbe36cf3aded3055ef51ff9437fce26e75e00d3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-dde8c2191c9030649631dc5ff66aa111:-5032672640770567250",
+      "path": "map01_lv007_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-dde8c2191c9030649631dc5ff66aa111:-8226769235489516626",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-dde8c2191c9030649631dc5ff66aa111:212374866385114030",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_ground.prefab",
+      "source_scene": "scenes/map01_lv007_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/18578fb4cb3bca2e6cbdb82d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 247168797,
+        "length": 40008,
+        "md5": "5298F52D78E279C1155A3CCD40CB8E56",
+        "sha256": "62c331aec384e34647e1b5f627526f5dcdc4009e92b962aef5f898a1a5235749",
+        "md5_verified": true
+      },
+      "node_id": "CAB-a84c829789b5bc77409f56ede752d4e8:7160940490561132384",
+      "path": "map01_lv007_ground",
+      "manager_component_id": "CAB-a84c829789b5bc77409f56ede752d4e8:-6339345098119014560",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-a84c829789b5bc77409f56ede752d4e8:1777783272445876064",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-a84c829789b5bc77409f56ede752d4e8:5057986545702316246",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map01_lv007_ground.prefab",
+      "source_scene": "scenes/map01_lv007_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/18578fb4cb3bca2e6cbdb82d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 247168797,
+        "length": 40008,
+        "md5": "5298F52D78E279C1155A3CCD40CB8E56",
+        "sha256": "62c331aec384e34647e1b5f627526f5dcdc4009e92b962aef5f898a1a5235749",
+        "md5_verified": true
+      },
+      "node_id": "CAB-a84c829789b5bc77409f56ede752d4e8:-386489025201989792",
+      "path": "map01_lv007_ground/lv007",
+      "manager_component_id": "CAB-a84c829789b5bc77409f56ede752d4e8:-1898975953183074464",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-a84c829789b5bc77409f56ede752d4e8:894178858988115808",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-a84c829789b5bc77409f56ede752d4e8:5057986545702316246",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_indie_dg016_building.prefab",
+      "source_scene": "scenes/map02_indie_dg016_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80d566ec8dc926578a4accaf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 242812152,
+        "length": 113730,
+        "md5": "B2E2A62ED149771647A572F67253EE38",
+        "sha256": "ccce86cea718600e39321b584ff42585c6cd9724b3ee5b14b7f1d9cd3fcee44e",
+        "md5_verified": true
+      },
+      "node_id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:-5550035945252122083",
+      "path": "map02_indie_dg016_building/Glow01_hover",
+      "manager_component_id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:-3845858874021899747",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:694111664646001181",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_indie_dg016_building.prefab",
+      "source_scene": "scenes/map02_indie_dg016_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80d566ec8dc926578a4accaf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 242812152,
+        "length": 113730,
+        "md5": "B2E2A62ED149771647A572F67253EE38",
+        "sha256": "ccce86cea718600e39321b584ff42585c6cd9724b3ee5b14b7f1d9cd3fcee44e",
+        "md5_verified": true
+      },
+      "node_id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:3383913674312651293",
+      "path": "map02_indie_dg016_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:-4712721134558768611",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-73793c887fa55bdc1d4e9d4f50ead735:3289829917370290717",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_building.prefab",
+      "source_scene": "scenes/map02_lv001_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/51818d11914a2cf975588301.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301399984,
+        "length": 43123,
+        "md5": "2A5A57B15CF74302713D75348A96DDC8",
+        "sha256": "a8ad76455d0bff445fe29afcfdfd34bffb512ee9110dfc067d7d7c1153c8b831",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e37fe98578ef73edd69174553bb99190:-3647605133945247012",
+      "path": "map02_lv001_building/Glow01",
+      "manager_component_id": "CAB-e37fe98578ef73edd69174553bb99190:-1662302306575029540",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e37fe98578ef73edd69174553bb99190:-7173653887299654948",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:3412472835358659884",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_building.prefab",
+      "source_scene": "scenes/map02_lv001_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/51818d11914a2cf975588301.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301399984,
+        "length": 43123,
+        "md5": "2A5A57B15CF74302713D75348A96DDC8",
+        "sha256": "a8ad76455d0bff445fe29afcfdfd34bffb512ee9110dfc067d7d7c1153c8b831",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e37fe98578ef73edd69174553bb99190:-5589419852628661540",
+      "path": "map02_lv001_building/Glow01_hover",
+      "manager_component_id": "CAB-e37fe98578ef73edd69174553bb99190:-1373199034404934948",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e37fe98578ef73edd69174553bb99190:7960565295081679580",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_building.prefab",
+      "source_scene": "scenes/map02_lv001_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/51818d11914a2cf975588301.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 301399984,
+        "length": 43123,
+        "md5": "2A5A57B15CF74302713D75348A96DDC8",
+        "sha256": "a8ad76455d0bff445fe29afcfdfd34bffb512ee9110dfc067d7d7c1153c8b831",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e37fe98578ef73edd69174553bb99190:-3595221671108449572",
+      "path": "map02_lv001_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-e37fe98578ef73edd69174553bb99190:-5863640401429501220",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e37fe98578ef73edd69174553bb99190:7020817725316819676",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_ground.prefab",
+      "source_scene": "scenes/map02_lv001_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/011a1cd7cc26902814a09364.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 820405432,
+        "length": 21671,
+        "md5": "BFE06FF46A00399278FE3BA00FF90DCA",
+        "sha256": "05d85e64cf9a90fb873f7127a6ba2221d719eca9a041385bd6e82da726e71966",
+        "md5_verified": true
+      },
+      "node_id": "CAB-d295e16a449220f859cf80696790f762:-7929265201680002026",
+      "path": "map02_lv001_ground",
+      "manager_component_id": "CAB-d295e16a449220f859cf80696790f762:-4999988266731482090",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-d295e16a449220f859cf80696790f762:6164905429956776982",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-d295e16a449220f859cf80696790f762:-8107350467945170983",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv001_ground.prefab",
+      "source_scene": "scenes/map02_lv001_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/011a1cd7cc26902814a09364.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 820405432,
+        "length": 21671,
+        "md5": "BFE06FF46A00399278FE3BA00FF90DCA",
+        "sha256": "05d85e64cf9a90fb873f7127a6ba2221d719eca9a041385bd6e82da726e71966",
+        "md5_verified": true
+      },
+      "node_id": "CAB-d295e16a449220f859cf80696790f762:152666145804538902",
+      "path": "map02_lv001_ground/lv001",
+      "manager_component_id": "CAB-d295e16a449220f859cf80696790f762:6350419580261127190",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-d295e16a449220f859cf80696790f762:-8685533417990106090",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-d295e16a449220f859cf80696790f762:-8107350467945170983",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_building.prefab",
+      "source_scene": "scenes/map02_lv002_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4ffbe9bc32934fbe0b1971b0.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 199033734,
+        "length": 40630,
+        "md5": "9FF72BDC293C884C94E921F27B713BBC",
+        "sha256": "f9ce95c27cb96bae43ee01086c0ef32502764abadf4a57ed1f186aa34fd99cbe",
+        "md5_verified": true
+      },
+      "node_id": "CAB-9a27bdf044632997f1256c0afff465dd:629239384214511210",
+      "path": "map02_lv002_building/Glow02",
+      "manager_component_id": "CAB-9a27bdf044632997f1256c0afff465dd:7256850834237202026",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-9a27bdf044632997f1256c0afff465dd:-4496790581512855958",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:6927862065446760556",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_building.prefab",
+      "source_scene": "scenes/map02_lv002_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4ffbe9bc32934fbe0b1971b0.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 199033734,
+        "length": 40630,
+        "md5": "9FF72BDC293C884C94E921F27B713BBC",
+        "sha256": "f9ce95c27cb96bae43ee01086c0ef32502764abadf4a57ed1f186aa34fd99cbe",
+        "md5_verified": true
+      },
+      "node_id": "CAB-9a27bdf044632997f1256c0afff465dd:-4810513664593781142",
+      "path": "map02_lv002_building/Glow01_hover",
+      "manager_component_id": "CAB-9a27bdf044632997f1256c0afff465dd:-1284298832521093526",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-9a27bdf044632997f1256c0afff465dd:-3614249062865527190",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_building.prefab",
+      "source_scene": "scenes/map02_lv002_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4ffbe9bc32934fbe0b1971b0.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 199033734,
+        "length": 40630,
+        "md5": "9FF72BDC293C884C94E921F27B713BBC",
+        "sha256": "f9ce95c27cb96bae43ee01086c0ef32502764abadf4a57ed1f186aa34fd99cbe",
+        "md5_verified": true
+      },
+      "node_id": "CAB-9a27bdf044632997f1256c0afff465dd:4619986295782350442",
+      "path": "map02_lv002_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-9a27bdf044632997f1256c0afff465dd:-5002900462003642774",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-9a27bdf044632997f1256c0afff465dd:1403905025820761706",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_ground.prefab",
+      "source_scene": "scenes/map02_lv002_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ec0b9693b61687a4c57d0e2d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 297615414,
+        "length": 42435,
+        "md5": "53F86D76D123F460CD2C693FDADCEC04",
+        "sha256": "bc5772215d14898c7389996d457af1b3abe5117abf71c3d4ce4b4813e5c54295",
+        "md5_verified": true
+      },
+      "node_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-51877258383240076",
+      "path": "map02_lv002_ground",
+      "manager_component_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-5081022089739873164",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-2753450926738156428",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-6126544025852434530",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:-2761611783102793328",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv002_ground.prefab",
+      "source_scene": "scenes/map02_lv002_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ec0b9693b61687a4c57d0e2d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 297615414,
+        "length": 42435,
+        "md5": "53F86D76D123F460CD2C693FDADCEC04",
+        "sha256": "bc5772215d14898c7389996d457af1b3abe5117abf71c3d4ce4b4813e5c54295",
+        "md5_verified": true
+      },
+      "node_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:6760862104017065076",
+      "path": "map02_lv002_ground/lv002",
+      "manager_component_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:3681506433601459316",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:443224854114620532",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-5b44dfce1a8f3fc82812acc52e209230:-6126544025852434530",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-27d1f21aa84a792faf1ac91b77fba89f:7482176677521521037",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_building.prefab",
+      "source_scene": "scenes/map02_lv003_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4acad3622103a4ab37ea3fc9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 853920276,
+        "length": 24271,
+        "md5": "0DDB695A306A5DBDD5FEE09512681219",
+        "sha256": "819129259c6948a992009e831691b77a286d6910b4a55f6e5c3a826215c4c320",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:7123571848864438489",
+      "path": "map02_lv003_building/Glow02",
+      "manager_component_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:-7109884493617260327",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:-5613568951843907367",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-948137933548833056",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_building.prefab",
+      "source_scene": "scenes/map02_lv003_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4acad3622103a4ab37ea3fc9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 853920276,
+        "length": 24271,
+        "md5": "0DDB695A306A5DBDD5FEE09512681219",
+        "sha256": "819129259c6948a992009e831691b77a286d6910b4a55f6e5c3a826215c4c320",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:1335438771337926873",
+      "path": "map02_lv003_building/Glow01_hover",
+      "manager_component_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:1747648183090059481",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:7024063804535314649",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_building.prefab",
+      "source_scene": "scenes/map02_lv003_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/4acad3622103a4ab37ea3fc9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "77595C8EE1F66B033DF909EF3C0F9EDD",
+        "offset": 853920276,
+        "length": 24271,
+        "md5": "0DDB695A306A5DBDD5FEE09512681219",
+        "sha256": "819129259c6948a992009e831691b77a286d6910b4a55f6e5c3a826215c4c320",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:7982912500561320153",
+      "path": "map02_lv003_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:-2280900565289166631",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e1f0a0a98944d0847b3e16a1f8466a2f:6865820465931917529",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_ground.prefab",
+      "source_scene": "scenes/map02_lv003_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/bfae12f10866b2ff53a0dc51.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 274059351,
+        "length": 41210,
+        "md5": "AA1402622CB56EFC76A3818C3C59A4FD",
+        "sha256": "6195c1b709f7c1aab06c7f97e993f8c12d985e44dfe1b367efe5884c54ac7b56",
+        "md5_verified": true
+      },
+      "node_id": "CAB-51e6d708dcbda646319206f0794d2f7e:9078839027206474625",
+      "path": "map02_lv003_ground",
+      "manager_component_id": "CAB-51e6d708dcbda646319206f0794d2f7e:-3227370939464529023",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-51e6d708dcbda646319206f0794d2f7e:2493056344961141633",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-51e6d708dcbda646319206f0794d2f7e:7174919328536147988",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv003_ground.prefab",
+      "source_scene": "scenes/map02_lv003_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/bfae12f10866b2ff53a0dc51.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "E3C14F98B619EA61383EDEFE2D33A629",
+        "offset": 274059351,
+        "length": 41210,
+        "md5": "AA1402622CB56EFC76A3818C3C59A4FD",
+        "sha256": "6195c1b709f7c1aab06c7f97e993f8c12d985e44dfe1b367efe5884c54ac7b56",
+        "md5_verified": true
+      },
+      "node_id": "CAB-51e6d708dcbda646319206f0794d2f7e:1279082839307733889",
+      "path": "map02_lv003_ground/lv001",
+      "manager_component_id": "CAB-51e6d708dcbda646319206f0794d2f7e:-8845956718343861375",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-51e6d708dcbda646319206f0794d2f7e:3204452090186582913",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-51e6d708dcbda646319206f0794d2f7e:7174919328536147988",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_building.prefab",
+      "source_scene": "scenes/map02_lv004_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/363e987d64fe0f4343d0bdb2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 173654961,
+        "length": 24026,
+        "md5": "41332C8C95231D5D191CAB6278CF02A3",
+        "sha256": "d980607d869ab93ce1840101c04639cf199356d462edef096c56dbc6bc08ac38",
+        "md5_verified": true
+      },
+      "node_id": "CAB-26b49902568ae4908fc4c335d305ed1d:3166632517782963705",
+      "path": "map02_lv004_building/Glow04",
+      "manager_component_id": "CAB-26b49902568ae4908fc4c335d305ed1d:-4537844551009794567",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-26b49902568ae4908fc4c335d305ed1d:-9114898328020417031",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:1808801069315504428",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_building.prefab",
+      "source_scene": "scenes/map02_lv004_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/363e987d64fe0f4343d0bdb2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 173654961,
+        "length": 24026,
+        "md5": "41332C8C95231D5D191CAB6278CF02A3",
+        "sha256": "d980607d869ab93ce1840101c04639cf199356d462edef096c56dbc6bc08ac38",
+        "md5_verified": true
+      },
+      "node_id": "CAB-26b49902568ae4908fc4c335d305ed1d:-133336820765260295",
+      "path": "map02_lv004_building/Glow01_hover",
+      "manager_component_id": "CAB-26b49902568ae4908fc4c335d305ed1d:-504942605338638855",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-26b49902568ae4908fc4c335d305ed1d:-7693356654339783175",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_building.prefab",
+      "source_scene": "scenes/map02_lv004_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/363e987d64fe0f4343d0bdb2.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 173654961,
+        "length": 24026,
+        "md5": "41332C8C95231D5D191CAB6278CF02A3",
+        "sha256": "d980607d869ab93ce1840101c04639cf199356d462edef096c56dbc6bc08ac38",
+        "md5_verified": true
+      },
+      "node_id": "CAB-26b49902568ae4908fc4c335d305ed1d:4370474964451231225",
+      "path": "map02_lv004_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-26b49902568ae4908fc4c335d305ed1d:-9025914188559841799",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-26b49902568ae4908fc4c335d305ed1d:5283572428140545529",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_ground.prefab",
+      "source_scene": "scenes/map02_lv004_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/57ab6b380ed93007aa701459.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180458933,
+        "length": 26311,
+        "md5": "6A4148FD614D413E4ECC0DBCD4A0400F",
+        "sha256": "9f138ace8d773dcdc1af95a904becbcdada21db67bcca8a1f847060b7adcab3f",
+        "md5_verified": true
+      },
+      "node_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:6875115362089512783",
+      "path": "map02_lv004_ground",
+      "manager_component_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:-3876520923720110257",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:2957812290025369423",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:-9116040948500704571",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv004_ground.prefab",
+      "source_scene": "scenes/map02_lv004_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/57ab6b380ed93007aa701459.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180458933,
+        "length": 26311,
+        "md5": "6A4148FD614D413E4ECC0DBCD4A0400F",
+        "sha256": "9f138ace8d773dcdc1af95a904becbcdada21db67bcca8a1f847060b7adcab3f",
+        "md5_verified": true
+      },
+      "node_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:588869015406391119",
+      "path": "map02_lv004_ground/lv004",
+      "manager_component_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:5400815190612455247",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:4800832894096125775",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-760ef0c4170598d5d21fb16a2cad5b64:-9116040948500704571",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_building.prefab",
+      "source_scene": "scenes/map02_lv005_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/fc8bae7071338a73ca13ceba.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 238268764,
+        "length": 45239,
+        "md5": "0D998A76509D9B4E37B7D50EE51E2FA5",
+        "sha256": "6eeb0d85e0900c077325d89d5f740f78511dec1b2d12bf4b976aa75e966d0061",
+        "md5_verified": true
+      },
+      "node_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:6264278201531763081",
+      "path": "map02_lv005_building/Glow05",
+      "manager_component_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:-2192881460452521591",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:4549718383527135625",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-213845300137141800",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_building.prefab",
+      "source_scene": "scenes/map02_lv005_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/fc8bae7071338a73ca13ceba.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 238268764,
+        "length": 45239,
+        "md5": "0D998A76509D9B4E37B7D50EE51E2FA5",
+        "sha256": "6eeb0d85e0900c077325d89d5f740f78511dec1b2d12bf4b976aa75e966d0061",
+        "md5_verified": true
+      },
+      "node_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:4165474797498730889",
+      "path": "map02_lv005_building/Glow01_hover",
+      "manager_component_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:6916632083733350793",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:289149826271938953",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_building.prefab",
+      "source_scene": "scenes/map02_lv005_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/fc8bae7071338a73ca13ceba.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 238268764,
+        "length": 45239,
+        "md5": "0D998A76509D9B4E37B7D50EE51E2FA5",
+        "sha256": "6eeb0d85e0900c077325d89d5f740f78511dec1b2d12bf4b976aa75e966d0061",
+        "md5_verified": true
+      },
+      "node_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:5643372603448625545",
+      "path": "map02_lv005_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:7210841294379747721",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-37ae64d59d37c7de44d3cb20ada8085a:-1859861883160426103",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_ground.prefab",
+      "source_scene": "scenes/map02_lv005_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/d20588fd2afa08e5cadccb30.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180764813,
+        "length": 26369,
+        "md5": "97963ACDA19348D570E42AF91C42772C",
+        "sha256": "2e7fdf81e7e9a3b9e6c53fa818d8bbded284f27ca471355c89c2454616c2623e",
+        "md5_verified": true
+      },
+      "node_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:-8541471062032129953",
+      "path": "map02_lv005_ground",
+      "manager_component_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:994998965827592287",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:207080813269737567",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:6110342881534965045",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv005_ground.prefab",
+      "source_scene": "scenes/map02_lv005_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/d20588fd2afa08e5cadccb30.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "DD8F91FB0EDBD59B8FA0B0EA2690420F",
+        "offset": 180764813,
+        "length": 26369,
+        "md5": "97963ACDA19348D570E42AF91C42772C",
+        "sha256": "2e7fdf81e7e9a3b9e6c53fa818d8bbded284f27ca471355c89c2454616c2623e",
+        "md5_verified": true
+      },
+      "node_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:3152325954414370911",
+      "path": "map02_lv005_ground/lv001",
+      "manager_component_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:649543511497039967",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:2605156993131405407",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3c1cfa862c20d72b54ec6d2cef492a66:6110342881534965045",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_building.prefab",
+      "source_scene": "scenes/map02_lv006_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80b1939e88adfa908aa585e9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 82985303,
+        "length": 32683,
+        "md5": "C6433F695D84ACC5CA8B8623C8C924B6",
+        "sha256": "b953e224b0c127fa6626677e346220e35fc1d1822d6375a29cca1893107a2e63",
+        "md5_verified": true
+      },
+      "node_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:6435644114360148946",
+      "path": "map02_lv006_building/Glow06",
+      "manager_component_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-3187464074414578734",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-4184492470176308270",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:28729348985856102",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_building.prefab",
+      "source_scene": "scenes/map02_lv006_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80b1939e88adfa908aa585e9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 82985303,
+        "length": 32683,
+        "md5": "C6433F695D84ACC5CA8B8623C8C924B6",
+        "sha256": "b953e224b0c127fa6626677e346220e35fc1d1822d6375a29cca1893107a2e63",
+        "md5_verified": true
+      },
+      "node_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-6796358207266675758",
+      "path": "map02_lv006_building/Glow01_hover",
+      "manager_component_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:7912752590215914450",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:679983886535893970",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_building.prefab",
+      "source_scene": "scenes/map02_lv006_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/80b1939e88adfa908aa585e9.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 82985303,
+        "length": 32683,
+        "md5": "C6433F695D84ACC5CA8B8623C8C924B6",
+        "sha256": "b953e224b0c127fa6626677e346220e35fc1d1822d6375a29cca1893107a2e63",
+        "md5_verified": true
+      },
+      "node_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-959249499326766126",
+      "path": "map02_lv006_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-8673352765999340590",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-075909a72dcf319f2b994c9f286f4c3f:-4600600476919323694",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_ground.prefab",
+      "source_scene": "scenes/map02_lv006_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/639385ba713e740441606d63.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 98224609,
+        "length": 38378,
+        "md5": "771588F78D8C869D5FC8EDF53074F449",
+        "sha256": "13eca498b1f8f89d60cc55dc8ea50d6abb24f5334ecf6a3e32c8ab7221f02bb3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-45c445765ed08de8cfb23d8110266025:-6268889248194105040",
+      "path": "map02_lv006_ground",
+      "manager_component_id": "CAB-45c445765ed08de8cfb23d8110266025:2696636129362964784",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-45c445765ed08de8cfb23d8110266025:-6625667552631852752",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-45c445765ed08de8cfb23d8110266025:4248116634518733454",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv006_ground.prefab",
+      "source_scene": "scenes/map02_lv006_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/639385ba713e740441606d63.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "1AF31A06BD22048215930D498DF6E1B0",
+        "offset": 98224609,
+        "length": 38378,
+        "md5": "771588F78D8C869D5FC8EDF53074F449",
+        "sha256": "13eca498b1f8f89d60cc55dc8ea50d6abb24f5334ecf6a3e32c8ab7221f02bb3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-45c445765ed08de8cfb23d8110266025:-6495230139817004752",
+      "path": "map02_lv006_ground/lv006",
+      "manager_component_id": "CAB-45c445765ed08de8cfb23d8110266025:-5362998935753461456",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-45c445765ed08de8cfb23d8110266025:-7280481071299235536",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-45c445765ed08de8cfb23d8110266025:4248116634518733454",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_building.prefab",
+      "source_scene": "scenes/map02_lv007_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/86d169cd3eb6ca22eb647c0c.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 348603398,
+        "length": 46557,
+        "md5": "06B1DCC30C0EC753C3D55AAF4082A075",
+        "sha256": "f91b54755d7cb6ab14771fc2b91c24a80a4b6684d9014b5999a2dfb71e0681f3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:7481681304205922773",
+      "path": "map02_lv007_building/Glow06",
+      "manager_component_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:467050137532633557",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:5894283218447045077",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-1585664649887358733",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_building.prefab",
+      "source_scene": "scenes/map02_lv007_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/86d169cd3eb6ca22eb647c0c.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 348603398,
+        "length": 46557,
+        "md5": "06B1DCC30C0EC753C3D55AAF4082A075",
+        "sha256": "f91b54755d7cb6ab14771fc2b91c24a80a4b6684d9014b5999a2dfb71e0681f3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:-3707537692576771627",
+      "path": "map02_lv007_building/Glow01_hover",
+      "manager_component_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:1427842357784089045",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:7914914892911415765",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_building.prefab",
+      "source_scene": "scenes/map02_lv007_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/86d169cd3eb6ca22eb647c0c.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 348603398,
+        "length": 46557,
+        "md5": "06B1DCC30C0EC753C3D55AAF4082A075",
+        "sha256": "f91b54755d7cb6ab14771fc2b91c24a80a4b6684d9014b5999a2dfb71e0681f3",
+        "md5_verified": true
+      },
+      "node_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:-1376998089588993579",
+      "path": "map02_lv007_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:551741188272361941",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-5b48e6dd80305bdb3a51bc76d304daae:7975459879202984405",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_ground.prefab",
+      "source_scene": "scenes/map02_lv007_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/27d547fbeec27f8116c30b1d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 213232592,
+        "length": 22174,
+        "md5": "D62569ED344B84C9CE9CEBC893957623",
+        "sha256": "44b028ef354d66e28f098be0c4093f582313a0f806a4021a23dc3301e0b00c0c",
+        "md5_verified": true
+      },
+      "node_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:7129004434121333366",
+      "path": "map02_lv007_ground",
+      "manager_component_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-2324005105852835210",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:8460650607508167286",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-6794573065034727467",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv007_ground.prefab",
+      "source_scene": "scenes/map02_lv007_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/27d547fbeec27f8116c30b1d.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 213232592,
+        "length": 22174,
+        "md5": "D62569ED344B84C9CE9CEBC893957623",
+        "sha256": "44b028ef354d66e28f098be0c4093f582313a0f806a4021a23dc3301e0b00c0c",
+        "md5_verified": true
+      },
+      "node_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-4855711045828896138",
+      "path": "map02_lv007_ground/lv007",
+      "manager_component_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:3240835353693231734",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-792551594206258570",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-d110bd617c82d477ec69e26a02cf1a87:-6794573065034727467",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_building.prefab",
+      "source_scene": "scenes/map02_lv008_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 763622404,
+        "length": 168656,
+        "md5": "81EB8C3D2188B2C12BF008B2B171E830",
+        "sha256": "04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:2887584836494265472",
+      "path": "map02_lv008_building/Glow06",
+      "manager_component_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:2279541045717666944",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:-464738118907884416",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:-1701304502918558251",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_building.prefab",
+      "source_scene": "scenes/map02_lv008_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 763622404,
+        "length": 168656,
+        "md5": "81EB8C3D2188B2C12BF008B2B171E830",
+        "sha256": "04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:8184564503683501184",
+      "path": "map02_lv008_building/Glow01_hover",
+      "manager_component_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:4225693086368238720",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:-2932457740554761088",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_building.prefab",
+      "source_scene": "scenes/map02_lv008_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/a3f9d5c335bceb256585eabc.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 763622404,
+        "length": 168656,
+        "md5": "81EB8C3D2188B2C12BF008B2B171E830",
+        "sha256": "04bf7752eea78a51d9b29e2e99868655fbd2c5e8ac2aea715d7a8b9a1c1759ea",
+        "md5_verified": true
+      },
+      "node_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:2256149579067853952",
+      "path": "map02_lv008_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:4322741715379522688",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-e3868540e5b268d35b2ff5587ee8e77a:-4991780738534765440",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_ground.prefab",
+      "source_scene": "scenes/map02_lv008_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/595f1d8c2fffaac57eb4cd29.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 362554375,
+        "length": 50076,
+        "md5": "F942F91E280C9C32376ABBCDD2FC1483",
+        "sha256": "4e66b0ba0e6af3221560252df36d8cb0f934777477b121c2c5e3c5597b11713a",
+        "md5_verified": true
+      },
+      "node_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-2833007527102751380",
+      "path": "map02_lv008_ground",
+      "manager_component_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-1677373425887060628",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:2580100712417025388",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-1324616633903220316",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv008_ground.prefab",
+      "source_scene": "scenes/map02_lv008_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/595f1d8c2fffaac57eb4cd29.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "B02CFCA60CEABD61B6AEC2AA55ACB411",
+        "offset": 362554375,
+        "length": 50076,
+        "md5": "F942F91E280C9C32376ABBCDD2FC1483",
+        "sha256": "4e66b0ba0e6af3221560252df36d8cb0f934777477b121c2c5e3c5597b11713a",
+        "md5_verified": true
+      },
+      "node_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-8063206132206248596",
+      "path": "map02_lv008_ground/lv008",
+      "manager_component_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:5264076158699199852",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-2924390844798182036",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-62e7605cc5477d0fadcc5fe255f637f9:-1324616633903220316",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_building.prefab",
+      "source_scene": "scenes/map02_lv009_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ddac051390287156a0b073bf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 92413110,
+        "length": 22689,
+        "md5": "71B7C2972D356A541E2A729A8282A0FF",
+        "sha256": "12e1be0e9aad843b7902eea25baac9b0f3de4e0aeaa899f3757dfdc7e4a720d9",
+        "md5_verified": true
+      },
+      "node_id": "CAB-92f680b6a73364a74eabab8e5feab65f:290149419417844700",
+      "path": "map02_lv009_building/Glow09",
+      "manager_component_id": "CAB-92f680b6a73364a74eabab8e5feab65f:-6461955768533992484",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-92f680b6a73364a74eabab8e5feab65f:6014814293763013596",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-18b095294e8c2cbc38223244e7112ab8:6543666175246653684",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-9fba7d9e7901411a0d4acefb14e04d1a:-78391122243584068",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_building.prefab",
+      "source_scene": "scenes/map02_lv009_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ddac051390287156a0b073bf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 92413110,
+        "length": 22689,
+        "md5": "71B7C2972D356A541E2A729A8282A0FF",
+        "sha256": "12e1be0e9aad843b7902eea25baac9b0f3de4e0aeaa899f3757dfdc7e4a720d9",
+        "md5_verified": true
+      },
+      "node_id": "CAB-92f680b6a73364a74eabab8e5feab65f:5721530450931530716",
+      "path": "map02_lv009_building/Glow01_hover",
+      "manager_component_id": "CAB-92f680b6a73364a74eabab8e5feab65f:7962320211536886748",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-92f680b6a73364a74eabab8e5feab65f:-1280853088391349284",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-2c0270486d58ce16e5d597fa7d4309f2:-1640941011107609933",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:7420359496790989051",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_building.prefab",
+      "source_scene": "scenes/map02_lv009_building.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/ddac051390287156a0b073bf.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 92413110,
+        "length": 22689,
+        "md5": "71B7C2972D356A541E2A729A8282A0FF",
+        "sha256": "12e1be0e9aad843b7902eea25baac9b0f3de4e0aeaa899f3757dfdc7e4a720d9",
+        "md5_verified": true
+      },
+      "node_id": "CAB-92f680b6a73364a74eabab8e5feab65f:7934308990366956508",
+      "path": "map02_lv009_building/Glow01_hover/Glow01_shadow_hover",
+      "manager_component_id": "CAB-92f680b6a73364a74eabab8e5feab65f:-6568641773728973860",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-92f680b6a73364a74eabab8e5feab65f:4426903770230864860",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-3ab0882e410ea50fde97917dc4c9b0d2:5878083957641791626",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-e0bf9992b0c38530be7957e92a2cb7fb:-6203324873417955711",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_ground.prefab",
+      "source_scene": "scenes/map02_lv009_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/affa7f078acb73919451e488.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 151878352,
+        "length": 46016,
+        "md5": "0FD9389A2B18D5071018ED0E10709AA7",
+        "sha256": "4f314632b3e6860ad8d644249bc2b59863e603f95b4b5ba68c348a6b002e4999",
+        "md5_verified": true
+      },
+      "node_id": "CAB-a00dcacd425c618176071b42bd3140cb:1139269037211858365",
+      "path": "map02_lv009_ground",
+      "manager_component_id": "CAB-a00dcacd425c618176071b42bd3140cb:4852884944079893949",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-a00dcacd425c618176071b42bd3140cb:-6554594578987010627",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-a00dcacd425c618176071b42bd3140cb:2279490683766080768",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-967468280695286239",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    },
+    {
+      "source_asset": "assets/beyond/dynamicassets/gameplay/ui/prefabs/map/region3d/level3d/map02_lv009_ground.prefab",
+      "source_scene": "scenes/map02_lv009_ground.json",
+      "source": {
+        "name": "Data/Bundles/Windows/main/affa7f078acb73919451e488.ab",
+        "layer": "StreamingAssets",
+        "manifest": "D:\\Arknights Endfield\\Endfield_Data\\StreamingAssets\\VFS\\7064D8E2\\7064D8E2.blc",
+        "chunk": "A265B2E0A50967C0B824C6A105DDD267",
+        "offset": 151878352,
+        "length": 46016,
+        "md5": "0FD9389A2B18D5071018ED0E10709AA7",
+        "sha256": "4f314632b3e6860ad8d644249bc2b59863e603f95b4b5ba68c348a6b002e4999",
+        "md5_verified": true
+      },
+      "node_id": "CAB-a00dcacd425c618176071b42bd3140cb:-8114901488138766915",
+      "path": "map02_lv009_ground/lv009",
+      "manager_component_id": "CAB-a00dcacd425c618176071b42bd3140cb:-3456382756643064387",
+      "manager_enabled": true,
+      "source_active_self": true,
+      "source_active_in_hierarchy": true,
+      "renderer_component_id": "CAB-a00dcacd425c618176071b42bd3140cb:988485529800684989",
+      "renderer_enabled": true,
+      "shader_filter_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+      "texture_id": "CAB-a00dcacd425c618176071b42bd3140cb:2279490683766080768",
+      "property_name": "_BuildingTex",
+      "material_slots": [
+        {
+          "material_index": 0,
+          "material_id": "CAB-348c1eaef5658e92abecb4f495f2b33d:-1828286244243561270",
+          "material_shader_id": "CAB-ed0ef62aed688764274ce4df5f36b609:505394952752169778",
+          "shader_matches": true
+        }
+      ],
+      "any_shared_material_shader_matches": true,
+      "on_enable_source_eligible": true,
+      "renderer_wide": true,
+      "material_index": null
+    }
+  ],
+  "policy": "Exact installed metadata literal and serialized source manager/renderer/material/texture identities. Runtime enabled/active state still controls OnEnable; no game-state visibility or process-specific numeric propertyID is invented."
+}

@@ -1,0 +1,480 @@
+{
+  "policy": "Exact original pass1 variants; offline SMOLV decode and SPIRV-Cross MSL/reflection. No macOS Metal compilation, runtime uniforms or pixel equivalence inferred.",
+  "package_sha256": "5c8ea3fcf588584950be018cd47e728ac2d7d4cbbe07b205c0cc6a47c53a06a9",
+  "dll_sha256": "1b00f8c042d4eb4060b1f4b2c1ee1ef2f0935c7857efe60c62d9cea236ea834e",
+  "cross_version": [
+    0,
+    67,
+    0
+  ],
+  "modules": [
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.smolv",
+      "source_sha256": "81432304d4a4f0c8e4819cc23a03c76fb733a5af8da707bbe6fe020b8aeb536b",
+      "stage": "fragment",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 33,
+        "instruction_count": 45,
+        "entry_points": [
+          {
+            "execution_model": 4,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.spv",
+          "sha256": "4eaf1483a70ae8db0f151a7323d5aef050a94a7c8bf314d93a6433da1ce8b7dd",
+          "bytes": 764
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.metal",
+          "sha256": "06d581042ee67277111054e6f5b9d4e71e30daa8af3f3308ed55b43db0b3d793",
+          "bytes": 450
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.reflection.json",
+          "sha256": "6d09868332208ed68de25a7d9d72c18d6f2684b40ece479ef4c64d951554f7bb",
+          "bytes": 512
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.bindings.json",
+          "sha256": "74d6d4ed2c40a7b3213b196fa2cd17bf5018d12ff58dc11ebe992369dfee7daf",
+          "bytes": 324
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.smolv",
+      "source_sha256": "f46a4708250a4663744e58ec0a32b0ddd44856e54e281e966906606c3124660a",
+      "stage": "vertex",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 55,
+        "instruction_count": 75,
+        "entry_points": [
+          {
+            "execution_model": 0,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.spv",
+          "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+          "bytes": 1336
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.metal",
+          "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+          "bytes": 811
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.reflection.json",
+          "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+          "bytes": 1152
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.bindings.json",
+          "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+          "bytes": 166
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.smolv",
+      "source_sha256": "b0fde67436af88568cd17c40ade49bba81c1cb32e9400114acb7a2068eae63c9",
+      "stage": "fragment",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 98,
+        "instruction_count": 287,
+        "entry_points": [
+          {
+            "execution_model": 4,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.spv",
+          "sha256": "fb1b5d513e3d4933ebf6880f3cc146498130077337675034d4b81ee3ba29426f",
+          "bytes": 6208
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.metal",
+          "sha256": "57272aaff648de23b5c09eef654c07a59dcaa5ee1f164cbace9ffd3ba07e8400",
+          "bytes": 3774
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.reflection.json",
+          "sha256": "dc37783405fb34512dcff0d9311f9895f3a39fe7b1e884834bec80fe6c4a4f32",
+          "bytes": 18828
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.bindings.json",
+          "sha256": "ee254056c2f05b4871cca7ba68831263fe04592fe7db3be7713241c3bb0b11a4",
+          "bytes": 657
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.smolv",
+      "source_sha256": "f46a4708250a4663744e58ec0a32b0ddd44856e54e281e966906606c3124660a",
+      "stage": "vertex",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 55,
+        "instruction_count": 75,
+        "entry_points": [
+          {
+            "execution_model": 0,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.spv",
+          "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+          "bytes": 1336
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.metal",
+          "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+          "bytes": 811
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.reflection.json",
+          "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+          "bytes": 1152
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.bindings.json",
+          "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+          "bytes": 166
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.smolv",
+      "source_sha256": "8d025576be411d1f25b676350d0d3daaf58d2943a53d6ea1f13cccc06f29e701",
+      "stage": "fragment",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 70,
+        "instruction_count": 115,
+        "entry_points": [
+          {
+            "execution_model": 4,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.spv",
+          "sha256": "1c7f9718060057c938db4f4480b6ea18b90a48e943e023c1ba55e41b2d57bdfd",
+          "bytes": 2244
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.metal",
+          "sha256": "1f89977ab45b918680621523521da0b739f1541f45c1720bbc387143b1805a76",
+          "bytes": 1357
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.reflection.json",
+          "sha256": "fe81bff46f98c5faa9a115f5e7446b319c9e2f93877aaa1c63ff2b488380ffd8",
+          "bytes": 3423
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.bindings.json",
+          "sha256": "036e67e8451962b5891a7d7f86eb136f094b2cecee90341965fb2ae2c78dff60",
+          "bytes": 815
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.smolv",
+      "source_sha256": "f46a4708250a4663744e58ec0a32b0ddd44856e54e281e966906606c3124660a",
+      "stage": "vertex",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 55,
+        "instruction_count": 75,
+        "entry_points": [
+          {
+            "execution_model": 0,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.spv",
+          "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+          "bytes": 1336
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.metal",
+          "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+          "bytes": 811
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.reflection.json",
+          "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+          "bytes": 1152
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.bindings.json",
+          "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+          "bytes": 166
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.smolv",
+      "source_sha256": "f5836dc005e20381f992a7a6f7c4d6f049b1e7befaaa4464692c0c24195fb235",
+      "stage": "fragment",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 107,
+        "instruction_count": 150,
+        "entry_points": [
+          {
+            "execution_model": 4,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.spv",
+          "sha256": "6e4abc6aa24936f8e0ff4ce501b10d9bcd39993bbfa4bca9201ae4f8fa1cc37b",
+          "bytes": 2964
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.metal",
+          "sha256": "2d895ac7319e2ee9d37a66c1f98d3252fab0e86ebfa1490d690f3e3d81efa55e",
+          "bytes": 1592
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.reflection.json",
+          "sha256": "866eec563fac181fd269394cebbe7ee4affb0455accc76f629db3976539919a5",
+          "bytes": 3329
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.bindings.json",
+          "sha256": "395e5a90f9f9ee7d0f2ceb5e6b86d5ae0fb8a0d49094142475bc56eb7b5f8c5e",
+          "bytes": 653
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.smolv",
+      "source_sha256": "f46a4708250a4663744e58ec0a32b0ddd44856e54e281e966906606c3124660a",
+      "stage": "vertex",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 55,
+        "instruction_count": 75,
+        "entry_points": [
+          {
+            "execution_model": 0,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.spv",
+          "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+          "bytes": 1336
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.metal",
+          "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+          "bytes": 811
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.reflection.json",
+          "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+          "bytes": 1152
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.bindings.json",
+          "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+          "bytes": 166
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.smolv",
+      "source_sha256": "c152d4bc3dbe5c58a1ee90101ddc4aad19818cedb308f2fa30219006992d5410",
+      "stage": "fragment",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 163,
+        "instruction_count": 354,
+        "entry_points": [
+          {
+            "execution_model": 4,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.spv",
+          "sha256": "9befd2caaff1bf566f1e4fb57918100f678b24efa50dce542ad33d1b72901340",
+          "bytes": 7604
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.metal",
+          "sha256": "e727be9f2620512b677e34dc4711c5ab13a77543c511287659d5b9e2af9edd76",
+          "bytes": 4451
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.reflection.json",
+          "sha256": "5013e16657ae0eb1d6bf9dffac780bd72e2a536eba318027e736f0338c443a5c",
+          "bytes": 18924
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.bindings.json",
+          "sha256": "0e69c5900cb164860cc88aee416d89fca182aae308e22a7cd3bf683e7da6b1cc",
+          "bytes": 819
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.smolv",
+      "source_sha256": "f46a4708250a4663744e58ec0a32b0ddd44856e54e281e966906606c3124660a",
+      "stage": "vertex",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 55,
+        "instruction_count": 75,
+        "entry_points": [
+          {
+            "execution_model": 0,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.spv",
+          "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+          "bytes": 1336
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.metal",
+          "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+          "bytes": 811
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.reflection.json",
+          "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+          "bytes": 1152
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.bindings.json",
+          "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+          "bytes": 166
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.smolv",
+      "source_sha256": "8f507afe0d6cdf78718ac94fee6c9320e97583028a86d1bd2671fdcdb075139f",
+      "stage": "fragment",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 137,
+        "instruction_count": 184,
+        "entry_points": [
+          {
+            "execution_model": 4,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.spv",
+          "sha256": "8dc8acf984a11a0bc218c20bf4675add561f893f1a030c3ef2ccdfd257698d1d",
+          "bytes": 3672
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.metal",
+          "sha256": "8d10ca4a0449fa9596df18b5008b02f4564181d0485b5624bd68514ddef95101",
+          "bytes": 2036
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.reflection.json",
+          "sha256": "5c99688fa23c4a9eec9018c0fc1b216cfac86df4302986dcca741afc03de23fb",
+          "bytes": 3519
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.bindings.json",
+          "sha256": "bb3d2bd70f30a5433d5c5a1098898fcd413c1da441023d73834fcb5b71e57227",
+          "bytes": 977
+        }
+      ]
+    },
+    {
+      "source": "precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.smolv",
+      "source_sha256": "f46a4708250a4663744e58ec0a32b0ddd44856e54e281e966906606c3124660a",
+      "stage": "vertex",
+      "structure": {
+        "spirv_version": "0x00010000",
+        "bound": 55,
+        "instruction_count": 75,
+        "entry_points": [
+          {
+            "execution_model": 0,
+            "function_id": 2,
+            "name": "main"
+          }
+        ]
+      },
+      "outputs": [
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.spv",
+          "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+          "bytes": 1336
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.metal",
+          "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+          "bytes": 811
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.reflection.json",
+          "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+          "bytes": 1152
+        },
+        {
+          "file": "precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.bindings.json",
+          "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+          "bytes": 166
+        }
+      ]
+    }
+  ]
+}

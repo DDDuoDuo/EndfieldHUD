@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "extracted_on": "2026-09-30",
+  "upstream_commit": "a8770680044c4f7b664c6c8adecc0c02bed02a2c",
+  "installed_bundle_md5_checks": {
+    "verified": 245,
+    "total": 245
+  },
+  "linear_rotation_adapter_checks": [
+    {
+      "node": "BlueRingNode",
+      "samples": 821,
+      "max_angular_error_degrees": 3.5053094613601843e-06
+    },
+    {
+      "node": "OutRingNode",
+      "samples": 821,
+      "max_angular_error_degrees": 3.5053094613601843e-06
+    },
+    {
+      "node": "TriagleNode",
+      "samples": 821,
+      "max_angular_error_degrees": 3.5053094613601843e-06
+    },
+    {
+      "node": "YellowLineNode",
+      "samples": 821,
+      "max_angular_error_degrees": 3.5053094613601843e-06
+    },
+    {
+      "node": "MeshNode",
+      "samples": 821,
+      "max_angular_error_degrees": 5.812996409559901e-06
+    },
+    {
+      "node": "DecoOut",
+      "samples": 821,
+      "max_angular_error_degrees": 3.5053094613601843e-06
+    }
+  ],
+  "packaged_sprites": [
+    {
+      "file": "ui_mid_ring.png",
+      "sha256": "0e00cd2096764f5c02aa58700e1cf1756f8aa96bda00043fa6d9b2d9b37adb66",
+      "dimensions": [
+        1004,
+        1004
+      ],
+      "byte_identical": true
+    },
+    {
+      "file": "ui_triangle_fx.png",
+      "sha256": "8b9c6742b0a86441437462c8d4d1d87eba23d774cc7c88f527e43f8029ad6920",
+      "dimensions": [
+        143,
+        123
+      ],
+      "byte_identical": true
+    }
+  ],
+  "native_macos_checks": "Native validation is tracked by the macOS checks and watch-motion-previews artifact on https://github.com/DDDuoDuo/EndfieldHUD/pull/1; this report verifies Windows-side source integrity and numerical correspondence."
+}

@@ -14,6 +14,12 @@ final class HUDMechanicalArtwork {
     static let dotGridSpacing: CGFloat = 24
     static let dotGridRadius: CGFloat = 174
     static let dotSize: CGFloat = 1.8
+    /// WatchPanel_PC's watch_loop: the decorative rings share a 15-degree
+    /// excursion, while MeshNode moves 25 degrees in the opposite direction.
+    /// Convert Unity's Y-up rotation to our Y-down drawing coordinates.
+    static let watchLoopLegDuration: TimeInterval = 41 / 6
+    static let watchRingExcursion: CGFloat = -.pi / 12
+    static let watchMeshExcursion: CGFloat = 25 * .pi / 180
 
     /// A Cartesian lattice, clipped to the center well. It is built once and
     /// drawn as one cached vector path, not a collection of animated particles.
@@ -32,15 +38,9 @@ final class HUDMechanicalArtwork {
         return points
     }()
 
-    struct TriangleOrbit: Equatable {
-        /// Static rotation of the marker child, in radians. Positive animated
-        /// rotation is clockwise in the HUD's flipped display coordinates.
-        let phase: CGFloat
-        let period: TimeInterval
-        let direction: CGFloat
-        var fromValue: CGFloat { 0 }
-        var toValue: CGFloat { direction * .pi * 2 }
-    }
+    /// TriagleNode has six markers at 35.5 + n*60 degrees in Unity's Y-up
+    /// plane. Our marker path starts at -90 degrees, in a Y-down plane.
+    static let trianglePhases: [CGFloat] = (0..<6).map { (54.5 - CGFloat($0) * 60) * .pi / 180 }
 
     // Each group uses the same full-canvas coordinate system, making it safe
     // to put each one in a different depth plane without repositioning it.
@@ -57,15 +57,16 @@ final class HUDMechanicalArtwork {
     // position in the design canvas is (500,320). Rotation never moves the HUD.
     let rearRotor = CALayer()
     let secondaryRotor = CALayer()
-    let triangleRotors: [CALayer] = (0..<3).map { _ in CALayer() }
-    private(set) var triangleOrbits: [TriangleOrbit] = []
-    private var triangleMarkers: [CAShapeLayer] = []
+    let triangleRotors: [CALayer] = (0..<6).map { _ in CALayer() }
     // Full-canvas bounds, with the same (500,320) pivot as the square rotors.
     let innerGuideRotor = CALayer()
+    let meshRotor = CALayer()
     let scanLayer = CAGradientLayer()
     let indicatorGlow = CALayer()
     let gridDrift = CALayer()
     let highlightCarrier = CALayer()
+    private let midRingTexture = CALayer()
+    private var triangleTextures: [CALayer] = []
 
     private enum Ink {
         case chassis, sidewall, well, wellBottom, groove, shadowEdge, litEdge
@@ -93,6 +94,7 @@ final class HUDMechanicalArtwork {
         }
         gridDrift.frame = bounds
         innerGuideRotor.frame = bounds
+        meshRotor.frame = bounds
         gridDrift.opacity = Self.gridOpacity
         indicatorGlow.frame = bounds
         indicatorGlow.opacity = Self.indicatorGlowOpacity
@@ -103,7 +105,6 @@ final class HUDMechanicalArtwork {
         makeFrame()
         makeInner()
         makeMarkers()
-        randomizeTriangleOrbits()
         makeGlass()
         // Scale the mechanical instrument about its center, independently of
         // navigation and content so editable canvas coordinates stay stable.
@@ -114,41 +115,6 @@ final class HUDMechanicalArtwork {
     }
 
     var groups: [CALayer] { [distant, rear, secondary, frame, inner, markers, glass, rim] }
-
-    /// Call once before each opening's motion registration/start. Only each
-    /// permanent marker child's static pose changes; the managed rotor remains
-    /// untouched, so restoring motion baselines cannot erase the random phase.
-    /// The same pose is visible during opening and when Reduce Motion is on.
-    @discardableResult
-    func randomizeTriangleOrbits() -> [TriangleOrbit] {
-        var generator = SystemRandomNumberGenerator()
-        return randomizeTriangleOrbits(using: &generator)
-    }
-
-    @discardableResult
-    func randomizeTriangleOrbits<R: RandomNumberGenerator>(using generator: inout R) -> [TriangleOrbit] {
-        let turn = Double.pi * 2
-        let origin = Double.random(in: 0..<turn, using: &generator)
-        // Independent jitter in three sectors keeps the initial markers apart
-        // while allowing their positions to change throughout the full circle.
-        let phases = (0..<3).map { index -> CGFloat in
-            let jitter = Double.random(in: (-Double.pi / 7)...(Double.pi / 7), using: &generator)
-            let angle = (origin + Double(index) * turn / 3 + jitter).truncatingRemainder(dividingBy: turn)
-            return CGFloat(angle < 0 ? angle + turn : angle)
-        }.shuffled(using: &generator)
-        let periods = [Double.random(in: 28...38, using: &generator),
-                       Double.random(in: 40...50, using: &generator),
-                       Double.random(in: 52...64, using: &generator)].shuffled(using: &generator)
-        let directions: [CGFloat] = [1, -1, Bool.random(using: &generator) ? 1 : -1].shuffled(using: &generator)
-        triangleOrbits = (0..<3).map { TriangleOrbit(phase: phases[$0], period: periods[$0], direction: directions[$0]) }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for (index, orbit) in triangleOrbits.enumerated() {
-            triangleMarkers[index].transform = CATransform3DMakeRotation(orbit.phase, 0, 0, 1)
-        }
-        CATransaction.commit()
-        return triangleOrbits
-    }
 
     func update(dark: Bool, chargeColor: NSColor, accentColor: NSColor? = nil) {
         // Decorative accents follow the chosen theme independently of the
@@ -166,6 +132,14 @@ final class HUDMechanicalArtwork {
             item.0.colors = item.1.map { color($0, dark: dark, charge: chargeColor, accent: accent).cgColor }
         }
         for shadow in shadowLayers { shadow.shadowOpacity = dark ? 0.42 : 0.16 }
+        midRingTexture.contents = HUDWatchArtwork.image(.midRing, tint: color(.muted, dark: dark, charge: chargeColor, accent: accent))
+        let triangleImage = HUDWatchArtwork.image(.triangle, tint: accent)
+        for triangle in triangleTextures {
+            triangle.contents = triangleImage
+            triangle.isHidden = triangleImage == nil
+            (triangle.superlayer as? CAShapeLayer)?.strokeColor = triangleImage == nil
+                ? color(.accent, dark: dark, charge: chargeColor, accent: accent).cgColor : nil
+        }
         let clear = chargeColor.withAlphaComponent(0).cgColor
         scanLayer.colors = [clear, chargeColor.withAlphaComponent(dark ? 0.13 : 0.09).cgColor, clear]
         CATransaction.commit()
@@ -266,6 +240,13 @@ final class HUDMechanicalArtwork {
         let accentRing = shape(Self.arc(center: c, radius: 226, from: 19, to: 91),
                                in: secondaryRotor, stroke: .accent, width: 1.8)
         accentRing.name = "hud.secondary.accentRing"
+        // The game's segmented fine ticks live behind the stationary bearing;
+        // the opaque readout well covers the inner arcs without a second mask.
+        midRingTexture.name = "hud.watch.midRing"
+        midRingTexture.frame = CGRect(x: 25, y: 25, width: 450, height: 450)
+        midRingTexture.contentsGravity = .resizeAspect
+        midRingTexture.opacity = 0.48
+        secondaryRotor.addSublayer(midRingTexture)
     }
 
     private func makeFrame() {
@@ -315,6 +296,15 @@ final class HUDMechanicalArtwork {
         }
         let dots = shape(dotGrid, in: inner, fill: .muted)
         dots.name = "hud.backplane.dots"; dots.opacity = 0.30
+        // The clipping disc stays still while only the texture coordinate
+        // plane counter-rotates. Content/readout layers never join this rotor.
+        let meshClip = CALayer()
+        meshClip.name = "hud.backplane.meshClip"; meshClip.frame = inner.bounds
+        mask(meshClip, path: CGPath(ellipseIn: CGRect(x: 326, y: 146, width: 348, height: 348), transform: nil))
+        inner.addSublayer(meshClip)
+        meshRotor.name = "hud.backplane.meshRotor"
+        meshClip.addSublayer(meshRotor)
+        meshRotor.addSublayer(dots)
         let localCrosses = CGMutablePath()
         for center in [CGPoint(x: 363, y: 251), CGPoint(x: 634, y: 390)] {
             for sign in [-1.0, 1.0] {
@@ -324,7 +314,7 @@ final class HUDMechanicalArtwork {
                 localCrosses.addLine(to: CGPoint(x: center.x, y: center.y + CGFloat(sign) * 7))
             }
         }
-        let localMarks = shape(localCrosses, in: inner, stroke: .muted, width: 0.65)
+        let localMarks = shape(localCrosses, in: meshRotor, stroke: .muted, width: 0.65)
         localMarks.opacity = 0.65
         let scanner = CALayer()
         scanner.frame = CGRect(origin: .zero, size: Self.canvasSize)
@@ -351,7 +341,15 @@ final class HUDMechanicalArtwork {
             let p = CGMutablePath(); p.move(to: tip); p.addLine(to: left); p.addLine(to: right); p.closeSubpath()
             let mark = shape(p, in: rotor, stroke: .accent, width: 1.15)
             mark.name = "hud.orbit.triangle.\(index)"
-            triangleMarkers.append(mark)
+            mark.transform = CATransform3DMakeRotation(Self.trianglePhases[index], 0, 0, 1)
+            let triangle = CALayer()
+            triangle.name = "hud.watch.triangleTexture.\(index)"
+            // The exported sprite points down: at the top of the instrument
+            // this is inward, matching the original marker's radial alignment.
+            triangle.frame = CGRect(x: 239.5, y: 10, width: 21, height: 18.06)
+            triangle.contentsGravity = .resizeAspect
+            mark.addSublayer(triangle)
+            triangleTextures.append(triangle)
         }
         markers.addSublayer(indicatorGlow)
         shape(Self.arc(center: Self.center, radius: 201, from: -37, to: -34),
