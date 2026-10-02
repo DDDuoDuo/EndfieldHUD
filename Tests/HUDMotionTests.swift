@@ -510,6 +510,15 @@ enum HUDMotionTests {
                     source.m41 = viewport.width * (0.17 + offset.x)
                     source.m42 = viewport.height * (0.19 + offset.y)
                     let native = HUDMotionMath.sourcePlaneTransform(source, origin: origin, scale: scale)
+                    let confirmation = HUDMotionMath.centeredSourceTransform(source, scale: scale)
+                    let sourceCenter = HUDMotionMath.project(CGPoint(x: 500, y: 320), through: source)
+                    for p in [CGPoint.zero, CGPoint(x: -195, y: -95), CGPoint(x: 195, y: 95)] {
+                        let expected = HUDMotionMath.project(CGPoint(x: 500 + p.x / scale, y: 320 + p.y / scale), through: source)
+                        let actual = HUDMotionMath.project(p, through: confirmation)
+                        check(abs(actual.x - (expected.x - sourceCenter.x)) < 0.00001
+                            && abs(actual.y - (expected.y - sourceCenter.y)) < 0.00001,
+                            "Screen-centered confirmations follow the exact source projection at every HUD scale and offset")
+                    }
                     for p in [CGPoint.zero, CGPoint(x: 1000, y: 0), CGPoint(x: 1000, y: 640), CGPoint(x: 0, y: 640), CGPoint(x: 500, y: 320)] {
                         let expected = HUDMotionMath.project(p, through: source)
                         let local = HUDMotionMath.project(CGPoint(x: p.x - 500, y: p.y - 320), through: native)

@@ -127,6 +127,17 @@ enum HUDMotionMath {
     }
 
     /// Homogeneous projection for checking the bounded perspective geometry.
+    /// Share the source plane's live perspective without inheriting a user's
+    /// potentially unsafe scale/position. Confirmation cards stay screen-centered.
+    static func centeredSourceTransform(_ projection: CATransform3D, scale: CGFloat) -> CATransform3D {
+        guard scale.isFinite, scale > 0 else { return CATransform3DIdentity }
+        let center = project(CGPoint(x: 500, y: 320), through: projection)
+        var result = CATransform3DMakeScale(1 / scale, 1 / scale, 1)
+        result = CATransform3DConcat(result, CATransform3DMakeTranslation(500, 320, 0))
+        result = CATransform3DConcat(result, projection)
+        return CATransform3DConcat(result, CATransform3DMakeTranslation(-center.x, -center.y, 0))
+    }
+
     static func project(_ point: CGPoint, through transform: CATransform3D) -> CGPoint {
         guard point.x.isFinite, point.y.isFinite else { return .zero }
         let divisor = transform.m14 * point.x + transform.m24 * point.y + transform.m44

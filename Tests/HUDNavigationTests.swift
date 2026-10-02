@@ -187,6 +187,24 @@ enum HUDNavigationTests {
         let navigation = HUDNavigation()
         check(AppShortcutArtwork.gameIcon(for: .grid) == .worldMap,
               "Custom app presets use the earth icon independently of square Map navigation")
+        for preset in AppShortcutIcon.allCases {
+            let ink = NSColor(white: 0.12, alpha: 1)
+            let picker = AppShortcutArtwork.makeGlyph(preset, rect: CGRect(x: 0, y: 0, width: 48, height: 48),
+                                                       color: ink, contentsScale: 2)
+            let image = AppShortcutArtwork.image(for: preset, size: 96, color: ink)
+            if AppShortcutArtwork.gameIcon(for: preset) != nil {
+                check(image != nil && picker.contents != nil && picker.path == nil,
+                      "Every game preset resolves identical raster artwork for the picker and shortcut buttons")
+                if let actual = image?.dataProvider?.data, let contents = picker.contents,
+                   CFGetTypeID(contents as CFTypeRef) == CGImage.typeID {
+                    let expected = (contents as! CGImage).dataProvider!.data!
+                    check(CFEqual(actual, expected), "Picker and navigation retain the same game-icon pixels and tint")
+                }
+            } else {
+                check(image == nil && picker.contents == nil && picker.path != nil,
+                      "Vector-only presets keep their shared stroked fallback instead of an unrelated raster")
+            }
+        }
         let identity = HUDIdentityCard()
         var identityProfile = UserProfile()
         func labels(in layer: CALayer) -> [String] {

@@ -391,6 +391,13 @@ struct HUDSourceScene: Codable {
 }
 
 enum HUDSourceGeometry {
+    /// Geometry is baked in Double before its final Float upload. A cache key
+    /// must preserve that input precision, including differences that cancel
+    /// against a local vertex before the final rounding.
+    static func matrixElements(_ matrix: simd_double4x4) -> [Double] {
+        (0..<4).flatMap { column in (0..<4).map { matrix[column][$0] } }
+    }
+
     /// Swift SIMD matrices have no cross-precision initializer. Convert each
     /// column explicitly at the CPU/GPU boundary without changing its order.
     static func floatMatrix(_ matrix: simd_double4x4) -> simd_float4x4 {

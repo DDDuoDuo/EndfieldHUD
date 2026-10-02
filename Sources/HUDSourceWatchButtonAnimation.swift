@@ -30,9 +30,8 @@ final class HUDSourceWatchButtonAnimation {
     private var sampleCache: [HUDSourceID: [State: CachedSample]] = [:]
 
     convenience init(document: HUDSourceWatchDocument) throws {
-        let data = try HUDSourceResourceData.read(document.root.appendingPathComponent("controller-transitions.json"))
-        let transitions = try HUDSourceJSON.decoder().decode(HUDSourceJSONValue.self, from: data)
-        try self.init(scene: document.scene, library: document.library, animators: document.animators, transitionData: transitions)
+        try self.init(scene: document.scene, library: document.library, animators: document.animators,
+                      transitionData: document.controllerTransitions)
     }
     init(scene: HUDSourceScene, library: HUDSourceAnimationLibrary,
          animators: [HUDSourceWatchDocument.Animator], transitionData: HUDSourceJSONValue) throws {

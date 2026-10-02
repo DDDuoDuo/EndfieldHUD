@@ -304,7 +304,7 @@ enum HUDSourceTextGeometryTests {
         }
         var checks = 0
         func check(_ value: Bool, _ message: String) { checks += 1; precondition(value, message) }
-        let files = ["scene", "clips", "watch-blur", "sprites", "materials", "desktop-profile-card"]
+        let files = ["scene", "clips", "watch-blur", "sprites", "materials", "desktop-profile-card", "runtime-root-camera", "controller-transitions"]
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("endfield-cache-" + UUID().uuidString)
         let alias = temporary.appendingPathExtension("alias")
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)

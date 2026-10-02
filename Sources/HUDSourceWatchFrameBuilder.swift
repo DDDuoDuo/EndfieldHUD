@@ -74,6 +74,7 @@ final class HUDSourceWatchFrameBuilder {
     struct DesktopGraphicStyle: Equatable {
         var tint: SIMD3<Float>? = nil
         var opacity: Float = 1
+        var highlightOnly = false
     }
     var desktopGraphicStyles: [HUDSourceID: DesktopGraphicStyle] = [:] {
         didSet { if oldValue != desktopGraphicStyles { cacheGeneration &+= 1 } }
@@ -597,7 +598,7 @@ final class HUDSourceWatchFrameBuilder {
                 sequence += 1
                 guard !indices.isEmpty, color.w > 0 else { continue }
                 let baseGeometryKey = key
-                key.append(contentsOf: Self.flatten(toCanvas).map(Double.init))
+                key.append(contentsOf: HUDSourceGeometry.matrixElements(toCanvas))
                 let meshName = "ui/" + component.id.rawValue
                 if geometryKeys[component.id] != key || geometryContentKeys[component.id] != contentKey {
                     let positions = localPositions.map { p -> SIMD4<Float> in
@@ -626,7 +627,10 @@ final class HUDSourceWatchFrameBuilder {
                     softMask: sourceSoftMask != nil) { material = key }
                 else { diagnostics.append("Unresolved original material clipping variant: \(n.node.path)"); continue }
                 if let style = desktopGraphicStyles[id] {
-                    if let tint = style.tint { color.x = tint.x; color.y = tint.y; color.z = tint.z }
+                    if let tint = style.tint {
+                        if style.highlightOnly { color = HUDSourceDesktopButtonAppearance.highlighted(color, accent: tint) }
+                        else { color.x = tint.x; color.y = tint.y; color.z = tint.z }
+                    }
                     color.w *= style.opacity
                 }
                 var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: material,
@@ -829,7 +833,7 @@ final class HUDSourceWatchFrameBuilder {
                 throw HUDSourceError.invalid("Missing cached ambient Canvas")
             }
             let toCanvas = inverse * graphic.worldMatrix
-            let key = geometry.baseKey + Self.flatten(toCanvas).map(Double.init)
+            let key = geometry.baseKey + HUDSourceGeometry.matrixElements(toCanvas)
             if geometryKeys[geometry.componentID] != key || geometryContentKeys[geometry.componentID] != geometry.contentKey {
                 let positions = geometry.positions.map { p -> SIMD4<Float> in
                     let value = toCanvas * SIMD4<Double>(Double(p.x), Double(p.y), Double(p.z), Double(p.w))
@@ -890,7 +894,7 @@ final class HUDSourceWatchFrameBuilder {
                 var materialID = component["m_Material"].targetID
                 var color = component["m_Color"].color
                 let texture: String
-                var key = [rect.origin.x, rect.origin.y, rect.size.x, rect.size.y] + Self.flatten(toCanvas).map(Double.init)
+                var key = [rect.origin.x, rect.origin.y, rect.size.x, rect.size.y] + HUDSourceGeometry.matrixElements(toCanvas)
                 if component.kind == "UIText" {
                     guard let literal = text?.literal(on: id), !literal.isEmpty else { continue }
                     let sdfScale = simd_length(SIMD3(node.worldMatrix.columns.1.x, node.worldMatrix.columns.1.y, node.worldMatrix.columns.1.z))

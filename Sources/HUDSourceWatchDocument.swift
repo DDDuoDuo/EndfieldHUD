@@ -126,6 +126,8 @@ final class HUDSourceWatchDocument {
     let library: HUDSourceAnimationLibrary
     let animation: HUDSourceWatchAnimation
     let blurAnimation: HUDSourceWatchBlurAnimation
+    let runtimeRoot: HUDSourceJSONValue
+    let controllerTransitions: HUDSourceJSONValue
     let components: [HUDSourceID: [HUDSourceWatchComponent]]
     let buttons: [HUDSourceWatchButton]
     let animators: [Animator]
@@ -148,6 +150,8 @@ final class HUDSourceWatchDocument {
         func data(_ name: String) throws -> Data { try HUDSourceResourceData.read(root.appendingPathComponent(name + ".json")) }
         let sceneData = try data("scene"), clipData = try data("clips")
         let details = try decoder.decode(ScenePayload.self, from: sceneData)
+        runtimeRoot = try decoder.decode(HUDSourceJSONValue.self, from: data("runtime-root-camera"))
+        controllerTransitions = try decoder.decode(HUDSourceJSONValue.self, from: data("controller-transitions"))
         let originalScene = details.scene
         let widgetURL = root.appendingPathComponent("Widgets/widget.json")
         let widgets: HUDSourceWatchWidgets?
@@ -328,7 +332,7 @@ final class HUDSourceDesktopDocumentCache {
             let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
             self.root = canonicalRoot
             // Every immutable desktop input, including the selected profile prefab.
-            files = try ["scene", "clips", "watch-blur", "sprites", "materials", "desktop-profile-card"].map { name in
+            files = try ["scene", "clips", "watch-blur", "sprites", "materials", "desktop-profile-card", "runtime-root-camera", "controller-transitions"].map { name in
                 let file = canonicalRoot.appendingPathComponent(name + ".json").resolvingSymlinksInPath()
                 let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
                 guard let size = attributes[.size] as? NSNumber,

@@ -37,6 +37,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var sourceWatchForVerification: HUDSourceWatchView? { sourceWatch }
     var isPreparingSourceBackdrop: Bool { sourceWatch?.isPreparingBackdrop == true }
     var sourceFailureForVerification: String? { sourceWatchFailureReason }
+    var legacyProgressHiddenForVerification: Bool { progress.isHidden }
+    var confirmationFollowsSourceForVerification: Bool {
+        guard let projection = sourceCenterProjection, let quitConfirmation, quitConfirmation.isPresented else { return false }
+        return CATransform3DEqualToTransform(quitConfirmation.cardTransformForVerification,
+            HUDMotionMath.centeredSourceTransform(projection, scale: designScale))
+    }
     var clockIsInStatusPanelForVerification: Bool {
         usesSourceShell && !statusPanel.isHidden && clockTime.superlayer === statusPanel
             && clockDate.superlayer === statusPanel && workBadge.superlayer === statusPanel
@@ -561,6 +567,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             updateNavigationGeometry()
         }
         updateContent()
+        if old.language != configuration.language {
+            sourceWatch?.refreshDesktopLanguage()
+            quitConfirmation?.configure(dark: currentDark, accent: currentAccent)
+            refreshIdentityProfile()
+        }
         if layoutChanged, interactionEnabled, !HUDRuntimeAppearance.reduceMotion {
             animate(canvas, "transform", from: previousTransform, to: canvas.transform, duration: 0.2)
             let movement = CABasicAnimation(keyPath: "position")
@@ -584,7 +595,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     /// Static model pose, also used for detached previews. Ambient motion starts
     /// only once the controller has enabled interaction on an attached view.
-    func showStable(preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false) {
+    func showStable(preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
+                    preparingSourceEntrance: Bool = false) {
         cancelAnimations(preservingChargeAnimation: preservingChargeAnimation, preservingPointerMotion: preservingPointerMotion)
         sourceOverviewPresented = true
         headerClock.setActive(window != nil)
@@ -622,13 +634,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             for item in self.contentGroups { item.opacity = 1; item.transform = CATransform3DIdentity }
         }
         if !preservingChargeAnimation { chargeBadge.setStable() }
-        updateSourceOverviewPresentation(stable: true)
+        updateSourceOverviewPresentation(stable: !preparingSourceEntrance)
         updateButtonStates()
         if let projection = sourceCenterProjection { applySourceCenterProjection(projection) }
     }
 
     func animateEntrance(ready: @escaping () -> Void = {}, completion: @escaping () -> Void = {}) {
-        showStable()
+        // Prepare native planes without first building an invisible, fully
+        // deployed Metal scene that open() immediately discards again.
+        showStable(preparingSourceEntrance: usesSourceShell)
         if usesSourceShell {
             animateSourceEntrance(ready: ready, completion: completion)
             return
@@ -1209,6 +1223,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func updateConfirmationTilt() {
+        if usesSourceShell, let projection = sourceCenterProjection {
+            let transform = HUDMotionMath.centeredSourceTransform(projection, scale: designScale)
+            quitConfirmation?.setSourceTransform(transform)
+            scaleSafety?.setSourceTransform(transform)
+            return
+        }
         guard let window else { return }
         let point = convert(window.convertPoint(fromScreen: pointerLocationProvider()), from: nil)
         let normalized = HUDMotionMath.normalizedPointer(location: point,
@@ -1470,7 +1490,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             statusPanel.isHidden = statusHidden
             if let statusProjection = sourceStatusProjection {
                 HUDSourceWatchView.renderProjectedContent(statusPanel, opacity: canvas.opacity, clip: nil,
-                    flippedRaster: true, projection: statusProjection,
+                    flippedRaster: true, projection: CATransform3DConcat(CATransform3DMakeTranslation(168.28, 0, 0), statusProjection),
                     rasterBounds: statusPanel.bounds.insetBy(dx: 0, dy: -12), subdivisions: 12, in: context)
             }
             var notesProjection = CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0)
@@ -1538,6 +1558,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func applySourceCenterProjection(_ projection: CATransform3D) {
         guard usesSourceShell, designScale > 0 else { return }
         sourceCenterProjection = projection
+        updateConfirmationTilt()
         let local = HUDMotionMath.sourcePlaneTransform(projection, origin: designOrigin, scale: designScale)
         if let previous = motion.externalProjection, CATransform3DEqualToTransform(previous, local),
            (depthPlanes + [notesPlane]).allSatisfy({ CATransform3DEqualToTransform($0.spatial.transform, local) }) { return }
@@ -1556,7 +1577,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private func applySourceStatusProjection(_ projection: CATransform3D) {
         guard usesSourceShell, designScale > 0 else { return }
         sourceStatusProjection = projection
-        var local = CATransform3DConcat(projection, CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0))
+        // Keep the right edge on the authored banner while shortening its plate.
+        var local = CATransform3DConcat(CATransform3DMakeTranslation(168.28, 0, 0), projection)
+        local = CATransform3DConcat(local, CATransform3DMakeTranslation(-designOrigin.x, -designOrigin.y, 0))
         local = CATransform3DConcat(local, CATransform3DMakeScale(1 / designScale, 1 / designScale, 1))
         withoutActions { self.statusPanel.transform = local }
     }
@@ -1568,11 +1591,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 if self.clockTime.superlayer !== self.statusPanel {
                     for item in [self.clockTime, self.clockDate, self.workBadge] { self.statusPanel.addSublayer(item) }
                 }
-                self.clockTime.frame = CGRect(x: 26, y: 20, width: 474, height: 39)
+                self.clockTime.frame = CGRect(x: 22, y: 20, width: 316, height: 39)
                 self.clockTime.fontSize = 32
-                self.clockDate.frame = CGRect(x: 26, y: 61, width: 474, height: 20)
+                self.clockDate.frame = CGRect(x: 22, y: 61, width: 316, height: 20)
                 self.clockDate.fontSize = 13
-                self.workBadge.frame = CGRect(x: 26, y: 89, width: 474, height: 20)
+                self.workBadge.frame = CGRect(x: 22, y: 89, width: 316, height: 20)
                 self.workBadge.fontSize = 14
                 self.clockTime.foregroundColor = NSColor(white: 0.96, alpha: 1).cgColor
                 self.clockDate.foregroundColor = NSColor(white: 0.64, alpha: 1).cgColor
@@ -1893,7 +1916,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         workBadge.actions = ["contents": NSNull()]
         statusPanel.name = "hud.clock.panel"
         statusPanel.anchorPoint = .zero; statusPanel.position = .zero
-        statusPanel.bounds = CGRect(x: 0, y: 0, width: 528.28, height: 122)
+        statusPanel.bounds = CGRect(x: 0, y: 0, width: 360, height: 122)
         statusPanel.isHidden = true
         let outer = CGPath(roundedRect: statusPanel.bounds.insetBy(dx: 0.8, dy: 0.8), cornerWidth: 6, cornerHeight: 6, transform: nil)
         statusPlate.path = CGPath(roundedRect: statusPanel.bounds.insetBy(dx: 7, dy: 7), cornerWidth: 3, cornerHeight: 3, transform: nil)
@@ -1901,7 +1924,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         statusPlate.strokeColor = NSColor(white: 0.70, alpha: 0.35).cgColor; statusPlate.lineWidth = 1
         statusFrame.path = outer; statusFrame.fillColor = nil; statusFrame.lineWidth = 1.5
         let marks = CGMutablePath()
-        for x in stride(from: CGFloat(14), through: 490, by: 56) {
+        for x in stride(from: CGFloat(14), through: 322, by: 56) {
             marks.move(to: CGPoint(x: x, y: 131)); marks.addLine(to: CGPoint(x: x + 42, y: 131))
         }
         statusUnderline.path = marks; statusUnderline.lineWidth = 3; statusUnderline.fillColor = nil
@@ -2242,7 +2265,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.moduleContent?.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.updateButtonStates()
             self.progress.strokeColor = (self.selectedModule == .power ? tone : yellow).cgColor
-            self.progress.isHidden = self.selectedModule == .workMode
+            self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
             self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
             self.percent.string = self.snapshot.percentage.map { "\($0)%" } ?? "—"
             self.percent.foregroundColor = tone.cgColor

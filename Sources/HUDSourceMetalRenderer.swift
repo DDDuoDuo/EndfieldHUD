@@ -468,9 +468,13 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         let objects: [String: Any]
         let sourceBytes: Int
         let materialInputs: [MaterialInputs]
-        init(key: String, shaders: [String: Shader], objects: [String: Any], sourceBytes: Int, materialInputs: [MaterialInputs]) {
+        let fragmentsWriteDepth: Bool
+        let bundledRoot: String?
+        init(key: String, shaders: [String: Shader], objects: [String: Any], sourceBytes: Int, materialInputs: [MaterialInputs], fragmentsWriteDepth: Bool, bundledRoot: String?) {
             self.key = key; self.shaders = shaders; self.objects = objects; self.sourceBytes = sourceBytes
             self.materialInputs = materialInputs
+            self.fragmentsWriteDepth = fragmentsWriteDepth
+            self.bundledRoot = bundledRoot
         }
     }
     private static let metadataCondition = NSCondition()
@@ -520,11 +524,25 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
 
     private static func desktopMetadata(root: URL) throws -> MetadataCatalog {
+        // The running .app's resource catalog is immutable for its process
+        // lifetime; updates relaunch the app. Validate it once during preload.
+        // External preview/probe trees keep full per-request file validation.
+        let path = root.standardizedFileURL.path
+        let bundledRoot = Bundle.main.bundleURL.pathExtension == "app"
+            && Bundle.main.resourceURL?.appendingPathComponent("WatchSource").standardizedFileURL.path == path ? path : nil
+        if let bundledRoot {
+            metadataCondition.lock()
+            let cached = retainedMetadata.flatMap { $0.bundledRoot == bundledRoot ? $0 : nil }
+            metadataCondition.unlock()
+            if let cached { return cached }
+        }
         let material = FileManager.default.fileExists(atPath: root.appendingPathComponent("runtime-materials.json").path)
             ? "runtime-materials.json" : "materials.json"
         let objectFiles = ["render-color-policy.json", "textures.json", material]
             + ["Equipring", "watchline", "Plane", "Cylinder"].map { "Meshes/" + $0 + ".json" }
-        let files = objectFiles + shaderSpecifications.map(\.1) + ["runtime-selection.json"]
+        let fragmentFiles = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("Shaders").path)
+            .filter { $0.hasSuffix(".fragment.metal") }.map { "Shaders/" + $0 }
+        let files = objectFiles + shaderSpecifications.map(\.1) + ["runtime-selection.json"] + fragmentFiles
         let key = try metadataKey(root: root, files: files)
         metadataCondition.lock()
         if metadataLoading {
@@ -550,8 +568,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             let selection = try JSONDecoder().decode(RuntimeSelection.self, from: read("runtime-selection.json"))
             let records = try materialRecords(object: objects[material]!, compact: material == "runtime-materials.json", selection: selection)
             let inputs = try records.map { try parseMaterialInputs(record: $0) }
+            let fragmentsWriteDepth = try Self.fragmentsWriteDepth(shaders: shaders, root: root)
             guard try metadataKey(root: root, files: files) == key else { throw Failure.message("Watch metadata changed while loading") }
-            let catalog = MetadataCatalog(key: key, shaders: shaders, objects: objects, sourceBytes: sourceBytes, materialInputs: inputs)
+            let catalog = MetadataCatalog(key: key, shaders: shaders, objects: objects, sourceBytes: sourceBytes,
+                materialInputs: inputs, fragmentsWriteDepth: fragmentsWriteDepth, bundledRoot: bundledRoot)
             metadataCondition.lock(); retainedMetadata = catalog; metadataLoading = false
             metadataCondition.broadcast(); metadataCondition.unlock()
             return catalog
@@ -610,7 +630,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                   }) else { throw Failure.message("Cached material values differ: " + fresh.name) }
         }
         return ["catalogs": 1, "objects": catalog.objects.count, "shaders": catalog.shaders.count,
-                "materials": inputs.count, "sourceBytes": catalog.sourceBytes]
+                "materials": inputs.count, "sourceBytes": catalog.sourceBytes,
+                "fragmentsWriteDepth": catalog.fragmentsWriteDepth ? 1 : 0]
     }
     #endif
     // A color-attachment change needs new pipelines, not new compilation of
@@ -2202,15 +2223,20 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             }
         }
         guard passCount > 0 else { return false }
+        if let metadata { return !metadata.fragmentsWriteDepth }
+        return try !Self.fragmentsWriteDepth(shaders: shaders, root: root)
+    }
+
+    private static func fragmentsWriteDepth(shaders: [String: Shader], root: URL) throws -> Bool {
         // Check the entire available fragment catalog, including clip/mask
         // variants, rather than only programs reached by the first frame.
         let files = Set(shaders.values.compactMap { $0.stages["fragment"]?.file })
         let depthAttribute = try NSRegularExpression(pattern: #"\[\[\s*depth\b"#)
         for file in files {
             let source = try String(contentsOf: root.appendingPathComponent(file), encoding: .utf8)
-            if depthAttribute.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)) != nil { return false }
+            if depthAttribute.firstMatch(in: source, range: NSRange(source.startIndex..., in: source)) != nil { return true }
         }
-        return true
+        return false
     }
 
     private func selectedIndices(_ selected: [Int]?, count: Int) throws -> [Int] {

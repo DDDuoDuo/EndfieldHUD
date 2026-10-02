@@ -20,13 +20,16 @@ struct HUDSourceMetadataCacheProbe {
             throw Failure.invalid("Metadata probe requires a new, owned scratch directory")
         }
         try manager.createDirectory(at: root.appendingPathComponent("Meshes"), withIntermediateDirectories: true)
+        try manager.createDirectory(at: root.appendingPathComponent("Shaders"), withIntermediateDirectories: true)
 
-        // Copy just the selected CPU metadata. No textures, shader programs,
-        // source scenes or app executable are needed by this probe.
+        // Copy CPU metadata and fragment text used for depth eligibility.
+        // No textures, compiled programs, scene or executable is needed.
         let shaders = try manager.contentsOfDirectory(atPath: source.path).filter { $0.hasSuffix("-shader.json") }
+        let fragments = try manager.contentsOfDirectory(atPath: source.appendingPathComponent("Shaders").path)
+            .filter { $0.hasSuffix(".fragment.metal") }.map { "Shaders/" + $0 }
         let names = shaders + ["runtime-inventory.json", "runtime-selection.json", "runtime-materials.json",
             "render-color-policy.json", "textures.json"]
-            + ["Equipring", "watchline", "Plane", "Cylinder"].map { "Meshes/" + $0 + ".json" }
+            + ["Equipring", "watchline", "Plane", "Cylinder"].map { "Meshes/" + $0 + ".json" } + fragments
         for name in names {
             try manager.copyItem(at: source.appendingPathComponent(name), to: root.appendingPathComponent(name))
         }
@@ -65,6 +68,19 @@ struct HUDSourceMetadataCacheProbe {
         try original.write(to: shader)
         let recovered = try HUDSourceMetalRenderer.verifyMetadataValuesForVerification(root: root)
         try check(recovered == values, "A failed load must allow an exact subsequent recovery")
+
+        let descriptor = try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent("image-shader.json"))) as! [String: Any]
+        let stages = descriptor["stages"] as! [String: [String: Any]]
+        let fragment = root.appendingPathComponent(stages["fragment"]!["file"] as! String)
+        let originalFragment = try Data(contentsOf: fragment)
+        var withDepth = originalFragment
+        withDepth.append(contentsOf: "\n// [[depth(any)]] conservative eligibility probe\n".utf8)
+        try withDepth.write(to: fragment)
+        let changedFragment = try HUDSourceMetalRenderer.verifyMetadataValuesForVerification(root: root)
+        try check(changedFragment["fragmentsWriteDepth"] == 1, "Fragment replacement invalidates cached depth eligibility")
+        try originalFragment.write(to: fragment)
+        try check(try HUDSourceMetalRenderer.verifyMetadataValuesForVerification(root: root) == values,
+                  "Restoring the shader restores its exact depth eligibility")
 
         try HUDSourceMetalRenderer.prepareDesktopMetadataIfNeeded(resourceRoot: root)
         let prepared = try HUDSourceMetalRenderer.metadataIdentityForVerification(root: root)

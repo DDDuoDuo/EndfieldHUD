@@ -424,7 +424,7 @@ Run both paths serially
 after the correctness fixture, without recompiling between timed comparisons.
 
 
-### Measured branch result — 2026-10-01
+### Measured branch result — 2026-10-02
 
 The local universal bundle is approximately **35 MiB**. Its selected source-scene
 payload is **11.65 MiB**, compared with a 354 MiB authoring resource tree.
@@ -438,21 +438,24 @@ CPU values are percentages of **one CPU core** for the application process.
 
 | Scenario | Stable CPU | Integration CPU | Stable footprint | Integration footprint |
 | --- | ---: | ---: | ---: | ---: |
-| Closed after use | 0.04% | 0.04% | 52 MiB | 122 MiB |
-| Map idle | 0.24% | 10.95% | 78 MiB | 191 MiB |
-| Clipboard idle | 0.15% | 9.85% | 79 MiB | 192 MiB |
-| Notes idle | 0.17% | 9.12% | 79 MiB | 191 MiB |
-| Activity Monitor idle | 0.15% | 10.53% | 74 MiB | 191 MiB |
-| Pointer motion | 4.47% | 45.22% | 74 MiB | 192 MiB |
+| Closed after use | 0.04% | 0.04% | 52 MiB | 127 MiB |
+| Map idle | 0.24% | 8.94% | 78 MiB | 197 MiB |
+| Clipboard idle | 0.15% | 7.77% | 79 MiB | 190 MiB |
+| Notes idle | 0.17% | 10.00% | 79 MiB | 190 MiB |
+| Activity Monitor idle | 0.15% | 9.29% | 74 MiB | 191 MiB |
+| Pointer motion | 4.47% | 42.09% | 74 MiB | 191 MiB |
 
-The integration submitted about 30 source frames/second idle and 59.4 during
+The integration submitted about 30 source frames/second idle and 58.9 during
 pointer motion. Once closed, its source timer stopped and submitted zero frames.
-The current follow-up opened in 210 ms synchronously (stable 93 ms), with its
-first source frame presented at 421 ms. Reopening took 162 ms (stable 54 ms).
-Before this follow-up, the integration measured 346/563/363 ms respectively.
+The current follow-up opened in 206 ms synchronously (stable 93 ms), with its
+first source frame presented at 414 ms. Reopening took 133 ms (stable 54 ms).
+The previous branch build measured 210/421/162 ms respectively; the earlier
+integration measured 346/563/363 ms. Cold startup has not materially improved
+over the previous build. Warm synchronous work is reduced by avoiding repeated
+JSON decoding, bundled-file validation, and a discarded fully deployed frame.
 A bounded, resource-fingerprinted CPU metadata cache moves shader/material JSON
 parsing into one-time background preparation. It retains no view or texture and
-runs no timer. First launch preparation took 1.21 s off the main thread; opening
+runs no timer. First launch preparation took 1.28 s off the main thread; opening
 before preparation finishes can still wait for it. Retained metadata trades some
 closed memory for faster subsequent openings. These are single-run measurements,
 not percentile latency or guarantees on other Macs.
@@ -467,14 +470,19 @@ GPU utilization from these process counters. Instruments was unavailable here.
 The raw samples and input fingerprints are in
 [integration-benchmark.json](integration-benchmark.json).
 
-The current local core suite passed 49,815 assertions. The compatibility guard
-checks 50 unchanged files plus the explicitly reviewed Focus-controller hash,
-575 stable translated entries, and bundle/update identity. Nine CPU cache
+The local core suite passed 50,046 assertions. The final focused scene suite
+passed 69, including three added Double-precision geometry-key regression cases;
+the exact cached/full GPU packet comparison then passed on the final sources.
+The compatibility guard checks 50 unchanged files plus the explicitly reviewed Focus-controller hash,
+575 stable translated entries, and bundle/update identity. Eleven CPU cache
 regression checks verify all 132 material inputs, reuse, invalidation, corrupt
 input recovery, and reference fallback. Native navigation passed 623 checks with
 normal motion and 889 with forced Reduce Motion. Lifecycle checks include blank
-center clicks, the clock's source plane, shared modal geometry, quit cancellation
-and teardown. The prior renderer evidence remains separate: The renderer's 66 paired GPU comparisons, including
+center clicks, the clock's source plane, live modal pointer movement, icon-change
+ring visibility, quit cancellation and teardown. The shortcut harness passed 78
+checks including preset pixels, recycled captions, and four live languages.
+Profile helpers passed 14 CPU checks and 12 source-shader GPU checks.
+The prior renderer evidence remains separate: 66 paired GPU comparisons, including
 independent profile-color checks, passed before switching its already-tested
 batching path on by default; only that default and its test selectors changed
 after the comparison. The separate offline Metal compiler probe cannot run on
@@ -489,18 +497,44 @@ modules, notes and battery badge keep their established plane. The original
 full-screen source close target is disabled in desktop mode; the native host
 accepts outside-circle dismissal through inverse projected geometry.
 
-Quit and layout-preview recovery share a safely sized centered card. Its real
+Quit and layout-preview recovery share a safely sized centered card. Both now
+use the central source projection directly, with scale and position removed for
+safe screen placement. There is no separate pointer easing clock. The real
 presentation-layer conversion drives pointer hits and accessibility bounds.
 Re-previewing during dismissal cancels the old completion. The larger battery
 capsule still clears the unchanged central buttons.
 
 Desktop ambient rings receive a signed random rate once per opening; the six
-triangles also spin independently. Right-list scrolling uses bounded edge
-travel and a finite settling motion on the existing display clock. Source
+triangles also spin independently. Right-list trackpad input follows the gesture
+directly, then uses bounded edge travel and a finite settling motion on the
+existing display clock. Momentum tails cannot restart an edge rebound. Limit
+arrows grey out and reject further scrolling in that direction. Source
 reference fixtures retain their authored movement. Right captions are smaller,
-icon bounds are normalized, glow is reduced, and outer frames follow theme color.
+icon bounds are normalized, hover glow is reduced and themed, and side shadows
+retain their neutral source colors. Custom shortcuts use the same artwork resolver
+as their picker, and recycled slots explicitly activate their primary caption.
+A language change refreshes source captions, profile labels and accessibility
+actions in place while preserving custom names and scroll position.
 
 The card uses an existing dark industrial default, right-aligned authority/MAX
 labels, and no additive avatar/card Light overlay. Uploaded card backgrounds are
-cropped first and multiplied by the source alpha silhouette so they cannot
-escape its rounded shape. No profile value or saved image is rewritten.
+cropped and darkened inside the rounded photo panel, preserving the original
+outer decoration pixels and alpha silhouette. User artwork is explicitly uploaded
+as straight-alpha sRGB: an offscreen source-shader probe reproduced the previous
+gray-128-to-188 washout and verifies gray 128 now stays 128. No profile value or
+saved image is rewritten. The proof in `scripts/VerifyProfileArtwork.swift` also
+checks transparent edges and 4,251 visible source decoration pixels.
+
+The shorter clock plate retains the right edge of its source banner plane. The
+retired native battery arc remains hidden on every appearance/settings update.
+Opening prepares the native layer hierarchy without first constructing a fully
+deployed source frame that would immediately be discarded. Camera/controller
+JSON and fragment-depth eligibility are prepared once; bundled metadata bypasses
+repeat filesystem validation during the same app process. External preview and
+probe directories retain file-identity validation and corruption rejection.
+
+Geometry cache keys preserve the Double precision used when baking vertices.
+Rounding the input matrix to Float could incorrectly reuse a buffer even when
+the final baked Float vertices differed. Uniform and vertex calculations remain
+unchanged; the regression compares exact uploaded geometry rather than loosening
+tolerances.

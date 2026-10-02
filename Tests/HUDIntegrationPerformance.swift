@@ -113,7 +113,12 @@ enum HUDIntegrationPerformance {
                 fatalError("Integrated source shell missing: \(overlay.systemSourceFailureForVerification ?? "unknown")")
             }
             do {
-                func require(_ value: Bool, _ message: String) { precondition(value, message) }
+                func require(_ value: Bool, _ message: String = "Packet shape/alpha/diagnostics differs") {
+                    guard value else {
+                        fputs("Source cache verification failed: " + message + "\n", stderr)
+                        fatalError(message)
+                    }
+                }
                 let size = SIMD2<Double>(Double(source.bounds.width), Double(source.bounds.height))
                 let builder = source.frameBuilder
                 let before = builder.cachedLayoutFrameCount
@@ -133,28 +138,28 @@ enum HUDIntegrationPerformance {
                     var buttonsWarm = pose, buttonsCold = pose
                     source.applyDesktopButtons(to: &buttonsWarm, at: 0, reduceMotion: false)
                     source.applyDesktopButtons(to: &buttonsCold, at: 0, reduceMotion: false, forceRebuild: true)
-                    precondition(buttonsWarm.transforms == buttonsCold.transforms && buttonsWarm.properties == buttonsCold.properties
+                    require(buttonsWarm.transforms == buttonsCold.transforms && buttonsWarm.properties == buttonsCold.properties
                         && buttonsWarm.unboundPaths == buttonsCold.unboundPaths,
                         "Settled button pose differs from authoritative sampled channels")
                     let warm = try builder.build(pose: buttonsWarm, worldRoot: camera.worldRoot)
                     let warmGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(warm.batches.map(\.mesh)))
                     let cold = try builder.build(pose: buttonsCold, worldRoot: camera.worldRoot, forceRebuild: true)
                     let coldGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(cold.batches.map(\.mesh)))
-                    precondition(warmGeometry == coldGeometry, "Cached ambient GPU vertex/index bytes differ from full rebuild")
-                    precondition(warm.batches.count == cold.batches.count && warm.hits.count == cold.hits.count)
+                    require(warmGeometry == coldGeometry, "Cached ambient GPU vertex/index bytes differ from full rebuild at sample \(index): \(warmGeometry.keys.filter { warmGeometry[$0] != coldGeometry[$0] }.sorted())")
+                    require(warm.batches.count == cold.batches.count && warm.hits.count == cold.hits.count)
                     for (a, b) in zip(warm.batches, cold.batches) {
-                        precondition(a.mesh == b.mesh && a.material == b.material && a.world == b.world
+                        require(a.mesh == b.mesh && a.material == b.material && a.world == b.world
                             && a.color == b.color && a.appliesDesktopAccent == b.appliesDesktopAccent
                             && a.uniformOverrides == b.uniformOverrides
                             && a.textureOverrides == b.textureOverrides && a.indexRange == b.indexRange,
                             "Cached source batch differs from authoritative rebuild")
                     }
                     for (id, node) in warm.resolved {
-                        precondition(cold.resolved[id].map { $0.worldMatrix == node.worldMatrix } == true,
+                        require(cold.resolved[id].map { $0.worldMatrix == node.worldMatrix } == true,
                                      "Cached layout changes source transforms")
                     }
                     for (a, b) in zip(warm.hits, cold.hits) {
-                        precondition(a.graphicID == b.graphicID && a.buttonID == b.buttonID && a.world == b.world
+                        require(a.graphicID == b.graphicID && a.buttonID == b.buttonID && a.world == b.world
                             && a.rect.origin == b.rect.origin && a.rect.size == b.rect.size,
                             "Cached hit geometry differs from the displayed source")
                     }
@@ -176,11 +181,11 @@ enum HUDIntegrationPerformance {
                     source.applyDesktopButtons(to: &nextPose, at: 0, reduceMotion: false, forceRebuild: true)
                     let nextCold = try builder.build(pose: nextPose, worldRoot: camera.worldRoot, forceRebuild: true)
                     let nextGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(nextCold.batches.map(\.mesh)))
-                    precondition(directGeometry == nextGeometry, "Sparse packet GPU vertices/indices differ from authoritative rebuild")
-                    precondition(direct.batches.count == nextCold.batches.count && direct.hits.count == nextCold.hits.count
+                    require(directGeometry == nextGeometry, "Sparse packet GPU vertices/indices differ from authoritative rebuild")
+                    require(direct.batches.count == nextCold.batches.count && direct.hits.count == nextCold.hits.count
                         && direct.inheritedAlpha == nextCold.inheritedAlpha && direct.diagnostics == nextCold.diagnostics)
                     for (a, b) in zip(direct.batches, nextCold.batches) {
-                        precondition(a.mesh == b.mesh && a.material == b.material && a.world == b.world
+                        require(a.mesh == b.mesh && a.material == b.material && a.world == b.world
                             && a.color == b.color && a.appliesDesktopAccent == b.appliesDesktopAccent
                             && a.uniformOverrides == b.uniformOverrides
                             && a.textureOverrides == b.textureOverrides && a.indexRange == b.indexRange
@@ -189,12 +194,12 @@ enum HUDIntegrationPerformance {
                     }
                     let nextResolved = nextCold.resolved
                     for (id, node) in direct.resolved {
-                        precondition(nextResolved[id].map { $0.localMatrix == node.localMatrix && $0.worldMatrix == node.worldMatrix
+                        require(nextResolved[id].map { $0.localMatrix == node.localMatrix && $0.worldMatrix == node.worldMatrix
                             && $0.rect == node.rect && $0.activeInHierarchy == node.activeInHierarchy } == true,
                             "Sparse packet changes complete resolved geometry")
                     }
                     for (a, b) in zip(direct.hits, nextCold.hits) {
-                        precondition(a.graphicID == b.graphicID && a.buttonID == b.buttonID && a.world == b.world && a.rect == b.rect
+                        require(a.graphicID == b.graphicID && a.buttonID == b.buttonID && a.world == b.world && a.rect == b.rect
                             && a.masks.count == b.masks.count && zip(a.masks, b.masks).allSatisfy { $0.rect == $1.rect && $0.world == $1.world },
                             "Sparse packet changes clipped hit regions")
                     }
@@ -246,16 +251,16 @@ enum HUDIntegrationPerformance {
                         require(try rejected(), "External geometry replacement invalidates a packet")
                         let lifecycle = HUDSourceWatchPlayback(animation: source.document.animation)
                         lifecycle.open(at: 0, reduceMotion: false)
-                        precondition(lifecycle.sampleAmbient(at: 0.1) == nil, "Opening cannot use a settled sample")
+                        require(lifecycle.sampleAmbient(at: 0.1) == nil, "Opening cannot use a settled sample")
                         lifecycle.showStable(at: 1)
-                        precondition(lifecycle.sampleAmbient(at: 1.2) != nil, "Visible state exposes the original loop clock")
+                        require(lifecycle.sampleAmbient(at: 1.2) != nil, "Visible state exposes the original loop clock")
                         lifecycle.close(at: 2, reduceMotion: false)
-                        precondition(lifecycle.sampleAmbient(at: 2.1) == nil, "Closing cannot use a settled sample")
+                        require(lifecycle.sampleAmbient(at: 2.1) == nil, "Closing cannot use a settled sample")
                     }
                 }
-                precondition(builder.cachedLayoutFrameCount > before, "Ambient samples must reuse their unchanged layout")
-                precondition(builder.fastAmbientFrameCount > ambientBefore, "Settled ambient presentation must skip static traversal")
-                precondition(builder.directAmbientFrameCount == directBefore + 43, "Every direct packet must pass the independent GPU geometry comparison")
+                require(builder.cachedLayoutFrameCount > before, "Ambient samples must reuse their unchanged layout")
+                require(builder.fastAmbientFrameCount > ambientBefore, "Settled ambient presentation must skip static traversal")
+                require(builder.directAmbientFrameCount == directBefore + 43, "Every direct packet must pass the independent GPU geometry comparison")
                 source.buttonAnimation.reset(at: 0, reduceMotion: true)
                 print("PASS: cached and rebuilt source frames preserve batches, transforms, and hit geometry")
             } catch { fatalError("Source cache verification: \(error)") }
