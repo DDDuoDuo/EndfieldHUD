@@ -1,0 +1,3181 @@
+{
+  "schema_version": 1,
+  "shader": "HGRP/UI/TextMeshPro/Distance Field",
+  "program": 109,
+  "parameter_prefix": {
+    "serialized_version": 202506210,
+    "buffers": [
+      {
+        "name": "",
+        "size": 0,
+        "fields": []
+      },
+      {
+        "name": "UnityPerCamera",
+        "size": 144,
+        "fields": [
+          {
+            "name": "_Time",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "name": "$Globals",
+        "size": 144,
+        "fields": [
+          {
+            "name": "_EnableSDFDisturb",
+            "offset": 32,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              32
+            ]
+          },
+          {
+            "name": "_DisturbAlphaFade",
+            "offset": 76,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              76
+            ]
+          },
+          {
+            "name": "_GlitchStrength",
+            "offset": 80,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              80
+            ]
+          },
+          {
+            "name": "_GlitchFrequency",
+            "offset": 84,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              84
+            ]
+          },
+          {
+            "name": "_GlitchSpeed",
+            "offset": 88,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              88
+            ]
+          },
+          {
+            "name": "_GlitchBandSharpness",
+            "offset": 92,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              92
+            ]
+          },
+          {
+            "name": "_EnableSDFHalo",
+            "offset": 96,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              96
+            ]
+          },
+          {
+            "name": "_HaloThickness",
+            "offset": 100,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              100
+            ]
+          },
+          {
+            "name": "_HaloRadius",
+            "offset": 104,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              104
+            ]
+          },
+          {
+            "name": "_HaloSoftness",
+            "offset": 108,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              108
+            ]
+          },
+          {
+            "name": "_HaloAdditiveBlendMode",
+            "offset": 112,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              112
+            ]
+          },
+          {
+            "name": "_DisturbUVSpeedX",
+            "offset": 36,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              36
+            ]
+          },
+          {
+            "name": "_DisturbUVSpeedY",
+            "offset": 40,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              40
+            ]
+          },
+          {
+            "name": "_DisturbIntensityU",
+            "offset": 44,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              44
+            ]
+          },
+          {
+            "name": "_DisturbIntensityV",
+            "offset": 48,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              48
+            ]
+          },
+          {
+            "name": "_DisturbStrength",
+            "offset": 52,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              52
+            ]
+          },
+          {
+            "name": "_DisturbStrengthRight",
+            "offset": 56,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              56
+            ]
+          },
+          {
+            "name": "_DisturbFrequency",
+            "offset": 60,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              60
+            ]
+          },
+          {
+            "name": "_DisturbFrequencyRight",
+            "offset": 64,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              64
+            ]
+          },
+          {
+            "name": "_DisturbRangeLeft",
+            "offset": 68,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              68
+            ]
+          },
+          {
+            "name": "_DisturbRangeRight",
+            "offset": 72,
+            "serialized_fields": [
+              0,
+              1,
+              1,
+              0,
+              0,
+              72
+            ]
+          },
+          {
+            "name": "_DisturbTex_ST",
+            "offset": 128,
+            "serialized_fields": [
+              0,
+              1,
+              4,
+              0,
+              0,
+              128
+            ]
+          }
+        ]
+      },
+      {
+        "name": "UnityPerMaterial",
+        "size": 544,
+        "fields": [
+          {
+            "name": "_SoftMaskTex_ST",
+            "offset": 432,
+            "serialized_fields": [
+              0,
+              1,
+              4,
+              0,
+              0,
+              432
+            ]
+          },
+          {
+            "name": "_WorldToSoftMask",
+            "offset": 448,
+            "serialized_fields": [
+              0,
+              4,
+              4,
+              1,
+              0,
+              448
+            ]
+          },
+          {
+            "name": "_FaceUVSpeedX",
+            "offset": 0
+          },
+          {
+            "name": "_FaceUVSpeedY",
+            "offset": 4
+          },
+          {
+            "name": "_FaceColor",
+            "offset": 16
+          },
+          {
+            "name": "_OutlineSoftness",
+            "offset": 36
+          },
+          {
+            "name": "_OutlineUVSpeedX",
+            "offset": 40
+          },
+          {
+            "name": "_OutlineUVSpeedY",
+            "offset": 44
+          },
+          {
+            "name": "_OutlineColor",
+            "offset": 48
+          },
+          {
+            "name": "_OutlineWidth",
+            "offset": 64
+          },
+          {
+            "name": "_ScaleRatioA",
+            "offset": 332
+          },
+          {
+            "name": "_TextureWidth",
+            "offset": 392
+          },
+          {
+            "name": "_TextureHeight",
+            "offset": 396
+          },
+          {
+            "name": "_GradientScale",
+            "offset": 400
+          },
+          {
+            "name": "_FaceDilate",
+            "offset": 32
+          },
+          {
+            "name": "_WeightNormal",
+            "offset": 324
+          },
+          {
+            "name": "_WeightBold",
+            "offset": 328
+          },
+          {
+            "name": "_VertexOffsetX",
+            "offset": 344
+          },
+          {
+            "name": "_VertexOffsetY",
+            "offset": 348
+          },
+          {
+            "name": "_MaskSoftnessX",
+            "offset": 384
+          },
+          {
+            "name": "_MaskSoftnessY",
+            "offset": 388
+          },
+          {
+            "name": "_ScaleX",
+            "offset": 404
+          },
+          {
+            "name": "_ScaleY",
+            "offset": 408
+          },
+          {
+            "name": "_PerspectiveFilter",
+            "offset": 412
+          },
+          {
+            "name": "_Sharpness",
+            "offset": 416
+          },
+          {
+            "name": "_FaceTex_ST",
+            "offset": 512
+          },
+          {
+            "name": "_OutlineTex_ST",
+            "offset": 528
+          },
+          {
+            "name": "_EnvMatrix",
+            "offset": 144
+          }
+        ]
+      },
+      {
+        "name": "_UIRenderingConstants",
+        "size": 784,
+        "fields": [
+          {
+            "name": "_UITime",
+            "offset": 720
+          },
+          {
+            "name": "_UIScreenParams",
+            "offset": 752
+          },
+          {
+            "name": "_WorldSpaceCameraPos_Internal",
+            "offset": 704
+          },
+          {
+            "name": "_UIProjectionParams",
+            "offset": 736
+          },
+          {
+            "name": "_ProjMatrix",
+            "offset": 128
+          },
+          {
+            "name": "_NonJitteredViewNoTransProjMatrix",
+            "offset": 512
+          }
+        ]
+      },
+      {
+        "name": "UnityInstancing_SRP_UnityPerDraw",
+        "size": 144,
+        "fields": [
+          {
+            "name": "mainTexTexelSize",
+            "offset": 64
+          },
+          {
+            "name": "textureSampleAdd",
+            "offset": 80
+          },
+          {
+            "name": "clipRect",
+            "offset": 96
+          },
+          {
+            "name": "uiMaskHGSoftness",
+            "offset": 112
+          },
+          {
+            "name": "clipRectParam",
+            "offset": 128
+          },
+          {
+            "name": "ObjectToWorld",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "name": "UnityPerFrame",
+        "size": 368,
+        "fields": [
+          {
+            "name": "glstate_matrix_projection",
+            "offset": 80
+          },
+          {
+            "name": "unity_MatrixVP",
+            "offset": 272
+          }
+        ]
+      },
+      {
+        "name": "_PerPassConstants",
+        "size": 16,
+        "fields": [
+          {
+            "name": "_RenderPathInjected",
+            "offset": 0
+          },
+          {
+            "name": "_HGFlipX",
+            "offset": 4
+          },
+          {
+            "name": "_HGFlipY",
+            "offset": 8
+          }
+        ]
+      }
+    ],
+    "parsed_prefix_bytes": 1372,
+    "unparsed_tail_hex": "070000000b0000005f4f75746c696e655465780000000000070001890400010904000000080000005f4661636554657800000000080001890500010904000000080000005f4d61696e546578000000000300038902000309040000000c0000005f536f66744d61736b546578000000000600018903000109040000000e000000556e69747950657243616d6572610000010000000000030d000000000800000024476c6f62616c73010000000100030d0000000020000000556e697479496e7374616e63696e675f5352505f556e69747950657244726177010000000000020d000000000400000006000000476c6f62616c0000000000000300000002000000150000005f554952656e646572696e67436f6e7374616e747300000000000000060000000300000003000100110000005f50657250617373436f6e7374616e7473000000010000000600000003000000060001000d000000556e6974795065724672616d65000000020000000600000003000000050001000b0000005065724d6174657269616c000100000009000000080000000b0000005f4469737475726254657800000000000000000001000000ffff01000b0000005f44697374757262546578000100000002000000010000000002010010000000556e6974795065724d6174657269616c020000000600000003000000020001000c0000005f536f66744d61736b546578030000000000000002000000ffff01000b0000005f4f75746c696e6554657800040000000000000002000000ffff0100080000005f46616365546578050000000000000002000000ffff01000c0000005f536f66744d61736b546578060000000200000002000000030201000b0000005f4f75746c696e655465780007000000020000000200000004020100080000005f4661636554657808000000020000000200000005020100090000005065724f626a65637400000002000000010000000000000020000000556e697479496e7374616e63696e675f5352505f556e697479506572447261770000000006000000030000000400010008000000437573746f6d56320300000004000000030000000e000000556e69747950657243616d6572610000000000000600000003000000000001000800000024476c6f62616c7301000000060000000300000001000100080000005f4d61696e546578020000000000000002000000ffff0100080000005f4d61696e54657803000000020000000200000002020100"
+  },
+  "descriptor_tail": {
+    "legacy_resources": [
+      {
+        "source_offset": 1376,
+        "name": "_OutlineTex",
+        "kind": 0,
+        "fields": [
+          2298544135,
+          151060484,
+          4
+        ]
+      },
+      {
+        "source_offset": 1408,
+        "name": "_FaceTex",
+        "kind": 0,
+        "fields": [
+          2298544136,
+          151060485,
+          4
+        ]
+      },
+      {
+        "source_offset": 1436,
+        "name": "_MainTex",
+        "kind": 0,
+        "fields": [
+          2298675203,
+          151191554,
+          4
+        ]
+      },
+      {
+        "source_offset": 1464,
+        "name": "_SoftMaskTex",
+        "kind": 0,
+        "fields": [
+          2298544134,
+          151060483,
+          4
+        ]
+      },
+      {
+        "source_offset": 1496,
+        "name": "UnityPerCamera",
+        "kind": 1,
+        "fields": [
+          218300416,
+          0
+        ]
+      },
+      {
+        "source_offset": 1528,
+        "name": "$Globals",
+        "kind": 1,
+        "fields": [
+          218300417,
+          0
+        ]
+      },
+      {
+        "source_offset": 1552,
+        "name": "UnityInstancing_SRP_UnityPerDraw",
+        "kind": 1,
+        "fields": [
+          218234880,
+          0
+        ]
+      }
+    ],
+    "descriptor_sets": [
+      {
+        "name": "Global",
+        "set": 0,
+        "max_binding": 2,
+        "resources": [
+          {
+            "source_offset": 1628,
+            "name": "_UIRenderingConstants",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65539
+          },
+          {
+            "source_offset": 1672,
+            "name": "_PerPassConstants",
+            "binding": 1,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65542
+          },
+          {
+            "source_offset": 1712,
+            "name": "UnityPerFrame",
+            "binding": 2,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65541
+          }
+        ]
+      },
+      {
+        "name": "PerMaterial",
+        "set": 1,
+        "max_binding": 8,
+        "resources": [
+          {
+            "source_offset": 1776,
+            "name": "_DisturbTex",
+            "binding": 0,
+            "resource_type": 0,
+            "stage_mask": 1,
+            "flags": 131071
+          },
+          {
+            "source_offset": 1808,
+            "name": "_DisturbTex",
+            "binding": 1,
+            "resource_type": 2,
+            "stage_mask": 1,
+            "flags": 66048
+          },
+          {
+            "source_offset": 1840,
+            "name": "UnityPerMaterial",
+            "binding": 2,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65538
+          },
+          {
+            "source_offset": 1876,
+            "name": "_SoftMaskTex",
+            "binding": 3,
+            "resource_type": 0,
+            "stage_mask": 2,
+            "flags": 131071
+          },
+          {
+            "source_offset": 1908,
+            "name": "_OutlineTex",
+            "binding": 4,
+            "resource_type": 0,
+            "stage_mask": 2,
+            "flags": 131071
+          },
+          {
+            "source_offset": 1940,
+            "name": "_FaceTex",
+            "binding": 5,
+            "resource_type": 0,
+            "stage_mask": 2,
+            "flags": 131071
+          },
+          {
+            "source_offset": 1968,
+            "name": "_SoftMaskTex",
+            "binding": 6,
+            "resource_type": 2,
+            "stage_mask": 2,
+            "flags": 66051
+          },
+          {
+            "source_offset": 2000,
+            "name": "_OutlineTex",
+            "binding": 7,
+            "resource_type": 2,
+            "stage_mask": 2,
+            "flags": 66052
+          },
+          {
+            "source_offset": 2032,
+            "name": "_FaceTex",
+            "binding": 8,
+            "resource_type": 2,
+            "stage_mask": 2,
+            "flags": 66053
+          }
+        ]
+      },
+      {
+        "name": "PerObject",
+        "set": 2,
+        "max_binding": 0,
+        "resources": [
+          {
+            "source_offset": 2088,
+            "name": "UnityInstancing_SRP_UnityPerDraw",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65540
+          }
+        ]
+      },
+      {
+        "name": "CustomV2",
+        "set": 3,
+        "max_binding": 3,
+        "resources": [
+          {
+            "source_offset": 2164,
+            "name": "UnityPerCamera",
+            "binding": 0,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65536
+          },
+          {
+            "source_offset": 2200,
+            "name": "$Globals",
+            "binding": 1,
+            "resource_type": 6,
+            "stage_mask": 3,
+            "flags": 65537
+          },
+          {
+            "source_offset": 2228,
+            "name": "_MainTex",
+            "binding": 2,
+            "resource_type": 0,
+            "stage_mask": 2,
+            "flags": 131071
+          },
+          {
+            "source_offset": 2256,
+            "name": "_MainTex",
+            "binding": 3,
+            "resource_type": 2,
+            "stage_mask": 2,
+            "flags": 66050
+          }
+        ]
+      }
+    ],
+    "source_bytes_consumed": 912
+  },
+  "stages": {
+    "vertex": {
+      "file": "Shaders/HGRP_UI_TextMeshPro_Distance_Field-ss0-p18-seg0-program109.vertex.metal",
+      "function": "main0",
+      "uniforms": [
+        {
+          "name": "UnityPerCamera",
+          "size": 144,
+          "index": 0,
+          "fields": [
+            {
+              "name": "_Time",
+              "offset": 0
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m4",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m5",
+              "type": "vec4",
+              "offset": 80
+            },
+            {
+              "name": "_m6",
+              "type": "vec4",
+              "offset": 96
+            },
+            {
+              "name": "_m7",
+              "type": "vec4",
+              "offset": 112
+            },
+            {
+              "name": "_m8",
+              "type": "vec4",
+              "offset": 128
+            }
+          ]
+        },
+        {
+          "name": "UnityPerFrame",
+          "size": 368,
+          "index": 1,
+          "fields": [
+            {
+              "name": "glstate_matrix_projection",
+              "offset": 80
+            },
+            {
+              "name": "unity_MatrixVP",
+              "offset": 272
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m4",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 80,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 144,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 208,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 272,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "int",
+              "offset": 336
+            },
+            {
+              "name": "_m10",
+              "type": "vec4",
+              "offset": 352
+            }
+          ]
+        },
+        {
+          "name": "$Globals",
+          "size": 144,
+          "index": 2,
+          "fields": [
+            {
+              "name": "_EnableSDFDisturb",
+              "offset": 32,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                32
+              ]
+            },
+            {
+              "name": "_DisturbAlphaFade",
+              "offset": 76,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                76
+              ]
+            },
+            {
+              "name": "_GlitchStrength",
+              "offset": 80,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                80
+              ]
+            },
+            {
+              "name": "_GlitchFrequency",
+              "offset": 84,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                84
+              ]
+            },
+            {
+              "name": "_GlitchSpeed",
+              "offset": 88,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                88
+              ]
+            },
+            {
+              "name": "_GlitchBandSharpness",
+              "offset": 92,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                92
+              ]
+            },
+            {
+              "name": "_EnableSDFHalo",
+              "offset": 96,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                96
+              ]
+            },
+            {
+              "name": "_HaloThickness",
+              "offset": 100,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                100
+              ]
+            },
+            {
+              "name": "_HaloRadius",
+              "offset": 104,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                104
+              ]
+            },
+            {
+              "name": "_HaloSoftness",
+              "offset": 108,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                108
+              ]
+            },
+            {
+              "name": "_HaloAdditiveBlendMode",
+              "offset": 112,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                112
+              ]
+            },
+            {
+              "name": "_DisturbUVSpeedX",
+              "offset": 36,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                36
+              ]
+            },
+            {
+              "name": "_DisturbUVSpeedY",
+              "offset": 40,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                40
+              ]
+            },
+            {
+              "name": "_DisturbIntensityU",
+              "offset": 44,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                44
+              ]
+            },
+            {
+              "name": "_DisturbIntensityV",
+              "offset": 48,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                48
+              ]
+            },
+            {
+              "name": "_DisturbStrength",
+              "offset": 52,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                52
+              ]
+            },
+            {
+              "name": "_DisturbStrengthRight",
+              "offset": 56,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                56
+              ]
+            },
+            {
+              "name": "_DisturbFrequency",
+              "offset": 60,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                60
+              ]
+            },
+            {
+              "name": "_DisturbFrequencyRight",
+              "offset": 64,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                64
+              ]
+            },
+            {
+              "name": "_DisturbRangeLeft",
+              "offset": 68,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                68
+              ]
+            },
+            {
+              "name": "_DisturbRangeRight",
+              "offset": 72,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                72
+              ]
+            },
+            {
+              "name": "_DisturbTex_ST",
+              "offset": 128,
+              "serialized_fields": [
+                0,
+                1,
+                4,
+                0,
+                0,
+                128
+              ]
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 36
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 40
+            },
+            {
+              "name": "_m5",
+              "type": "float",
+              "offset": 44
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 48
+            },
+            {
+              "name": "_m7",
+              "type": "float",
+              "offset": 52
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 56
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 60
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 64
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 68
+            },
+            {
+              "name": "_m12",
+              "type": "float",
+              "offset": 72
+            },
+            {
+              "name": "_m13",
+              "type": "float",
+              "offset": 76
+            },
+            {
+              "name": "_m14",
+              "type": "float",
+              "offset": 80
+            },
+            {
+              "name": "_m15",
+              "type": "float",
+              "offset": 84
+            },
+            {
+              "name": "_m16",
+              "type": "float",
+              "offset": 88
+            },
+            {
+              "name": "_m17",
+              "type": "float",
+              "offset": 92
+            },
+            {
+              "name": "_m18",
+              "type": "float",
+              "offset": 96
+            },
+            {
+              "name": "_m19",
+              "type": "float",
+              "offset": 100
+            },
+            {
+              "name": "_m20",
+              "type": "float",
+              "offset": 104
+            },
+            {
+              "name": "_m21",
+              "type": "float",
+              "offset": 108
+            },
+            {
+              "name": "_m22",
+              "type": "float",
+              "offset": 112
+            },
+            {
+              "name": "_m23",
+              "type": "vec4",
+              "offset": 128
+            }
+          ]
+        },
+        {
+          "name": "UnityPerMaterial",
+          "size": 544,
+          "index": 3,
+          "fields": [
+            {
+              "name": "_SoftMaskTex_ST",
+              "offset": 432,
+              "serialized_fields": [
+                0,
+                1,
+                4,
+                0,
+                0,
+                432
+              ]
+            },
+            {
+              "name": "_WorldToSoftMask",
+              "offset": 448,
+              "serialized_fields": [
+                0,
+                4,
+                4,
+                1,
+                0,
+                448
+              ]
+            },
+            {
+              "name": "_FaceUVSpeedX",
+              "offset": 0
+            },
+            {
+              "name": "_FaceUVSpeedY",
+              "offset": 4
+            },
+            {
+              "name": "_FaceColor",
+              "offset": 16
+            },
+            {
+              "name": "_OutlineSoftness",
+              "offset": 36
+            },
+            {
+              "name": "_OutlineUVSpeedX",
+              "offset": 40
+            },
+            {
+              "name": "_OutlineUVSpeedY",
+              "offset": 44
+            },
+            {
+              "name": "_OutlineColor",
+              "offset": 48
+            },
+            {
+              "name": "_OutlineWidth",
+              "offset": 64
+            },
+            {
+              "name": "_ScaleRatioA",
+              "offset": 332
+            },
+            {
+              "name": "_TextureWidth",
+              "offset": 392
+            },
+            {
+              "name": "_TextureHeight",
+              "offset": 396
+            },
+            {
+              "name": "_GradientScale",
+              "offset": 400
+            },
+            {
+              "name": "_FaceDilate",
+              "offset": 32
+            },
+            {
+              "name": "_WeightNormal",
+              "offset": 324
+            },
+            {
+              "name": "_WeightBold",
+              "offset": 328
+            },
+            {
+              "name": "_VertexOffsetX",
+              "offset": 344
+            },
+            {
+              "name": "_VertexOffsetY",
+              "offset": 348
+            },
+            {
+              "name": "_MaskSoftnessX",
+              "offset": 384
+            },
+            {
+              "name": "_MaskSoftnessY",
+              "offset": 388
+            },
+            {
+              "name": "_ScaleX",
+              "offset": 404
+            },
+            {
+              "name": "_ScaleY",
+              "offset": 408
+            },
+            {
+              "name": "_PerspectiveFilter",
+              "offset": 412
+            },
+            {
+              "name": "_Sharpness",
+              "offset": 416
+            },
+            {
+              "name": "_FaceTex_ST",
+              "offset": 512
+            },
+            {
+              "name": "_OutlineTex_ST",
+              "offset": 528
+            },
+            {
+              "name": "_EnvMatrix",
+              "offset": 144
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 32
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 36
+            },
+            {
+              "name": "_m5",
+              "type": "float",
+              "offset": 40
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 44
+            },
+            {
+              "name": "_m7",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 64
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 68
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 72
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 76
+            },
+            {
+              "name": "_m12",
+              "type": "float",
+              "offset": 80
+            },
+            {
+              "name": "_m13",
+              "type": "float",
+              "offset": 84
+            },
+            {
+              "name": "_m14",
+              "type": "float",
+              "offset": 88
+            },
+            {
+              "name": "_m15",
+              "type": "float",
+              "offset": 92
+            },
+            {
+              "name": "_m16",
+              "type": "vec4",
+              "offset": 96
+            },
+            {
+              "name": "_m17",
+              "type": "vec4",
+              "offset": 112
+            },
+            {
+              "name": "_m18",
+              "type": "vec3",
+              "offset": 128
+            },
+            {
+              "name": "_m19",
+              "type": "mat4",
+              "offset": 144,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m20",
+              "type": "vec4",
+              "offset": 208
+            },
+            {
+              "name": "_m21",
+              "type": "float",
+              "offset": 224
+            },
+            {
+              "name": "_m22",
+              "type": "float",
+              "offset": 228
+            },
+            {
+              "name": "_m23",
+              "type": "float",
+              "offset": 232
+            },
+            {
+              "name": "_m24",
+              "type": "float",
+              "offset": 236
+            },
+            {
+              "name": "_m25",
+              "type": "float",
+              "offset": 240
+            },
+            {
+              "name": "_m26",
+              "type": "vec4",
+              "offset": 256
+            },
+            {
+              "name": "_m27",
+              "type": "float",
+              "offset": 272
+            },
+            {
+              "name": "_m28",
+              "type": "float",
+              "offset": 276
+            },
+            {
+              "name": "_m29",
+              "type": "float",
+              "offset": 280
+            },
+            {
+              "name": "_m30",
+              "type": "float",
+              "offset": 284
+            },
+            {
+              "name": "_m31",
+              "type": "vec4",
+              "offset": 288
+            },
+            {
+              "name": "_m32",
+              "type": "float",
+              "offset": 304
+            },
+            {
+              "name": "_m33",
+              "type": "float",
+              "offset": 308
+            },
+            {
+              "name": "_m34",
+              "type": "float",
+              "offset": 312
+            },
+            {
+              "name": "_m35",
+              "type": "float",
+              "offset": 316
+            },
+            {
+              "name": "_m36",
+              "type": "float",
+              "offset": 320
+            },
+            {
+              "name": "_m37",
+              "type": "float",
+              "offset": 324
+            },
+            {
+              "name": "_m38",
+              "type": "float",
+              "offset": 328
+            },
+            {
+              "name": "_m39",
+              "type": "float",
+              "offset": 332
+            },
+            {
+              "name": "_m40",
+              "type": "float",
+              "offset": 336
+            },
+            {
+              "name": "_m41",
+              "type": "float",
+              "offset": 340
+            },
+            {
+              "name": "_m42",
+              "type": "float",
+              "offset": 344
+            },
+            {
+              "name": "_m43",
+              "type": "float",
+              "offset": 348
+            },
+            {
+              "name": "_m44",
+              "type": "float",
+              "offset": 352
+            },
+            {
+              "name": "_m45",
+              "type": "vec4",
+              "offset": 368
+            },
+            {
+              "name": "_m46",
+              "type": "float",
+              "offset": 384
+            },
+            {
+              "name": "_m47",
+              "type": "float",
+              "offset": 388
+            },
+            {
+              "name": "_m48",
+              "type": "float",
+              "offset": 392
+            },
+            {
+              "name": "_m49",
+              "type": "float",
+              "offset": 396
+            },
+            {
+              "name": "_m50",
+              "type": "float",
+              "offset": 400
+            },
+            {
+              "name": "_m51",
+              "type": "float",
+              "offset": 404
+            },
+            {
+              "name": "_m52",
+              "type": "float",
+              "offset": 408
+            },
+            {
+              "name": "_m53",
+              "type": "float",
+              "offset": 412
+            },
+            {
+              "name": "_m54",
+              "type": "float",
+              "offset": 416
+            },
+            {
+              "name": "_m55",
+              "type": "vec4",
+              "offset": 432
+            },
+            {
+              "name": "_m56",
+              "type": "mat4",
+              "offset": 448,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m57",
+              "type": "vec4",
+              "offset": 512
+            },
+            {
+              "name": "_m58",
+              "type": "vec4",
+              "offset": 528
+            }
+          ]
+        },
+        {
+          "name": "_PerPassConstants",
+          "size": 16,
+          "index": 4,
+          "fields": [
+            {
+              "name": "_RenderPathInjected",
+              "offset": 0
+            },
+            {
+              "name": "_HGFlipX",
+              "offset": 4
+            },
+            {
+              "name": "_HGFlipY",
+              "offset": 8
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 8
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 12
+            }
+          ]
+        },
+        {
+          "name": "_UIRenderingConstants",
+          "size": 784,
+          "index": 5,
+          "fields": [
+            {
+              "name": "_UITime",
+              "offset": 720
+            },
+            {
+              "name": "_UIScreenParams",
+              "offset": 752
+            },
+            {
+              "name": "_WorldSpaceCameraPos_Internal",
+              "offset": 704
+            },
+            {
+              "name": "_UIProjectionParams",
+              "offset": 736
+            },
+            {
+              "name": "_ProjMatrix",
+              "offset": 128
+            },
+            {
+              "name": "_NonJitteredViewNoTransProjMatrix",
+              "offset": 512
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "mat4",
+              "offset": 0,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m1",
+              "type": "mat4",
+              "offset": 64,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m2",
+              "type": "mat4",
+              "offset": 128,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m3",
+              "type": "mat4",
+              "offset": 192,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m4",
+              "type": "mat4",
+              "offset": 256,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 320,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 384,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 448,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 512,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "mat4",
+              "offset": 576,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m10",
+              "type": "mat4",
+              "offset": 640,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m11",
+              "type": "vec4",
+              "offset": 704
+            },
+            {
+              "name": "_m12",
+              "type": "vec4",
+              "offset": 720
+            },
+            {
+              "name": "_m13",
+              "type": "vec4",
+              "offset": 736
+            },
+            {
+              "name": "_m14",
+              "type": "vec4",
+              "offset": 752
+            },
+            {
+              "name": "_m15",
+              "type": "vec4",
+              "offset": 768
+            }
+          ]
+        },
+        {
+          "name": "UnityInstancing_SRP_UnityPerDraw",
+          "size": 144,
+          "index": 6,
+          "fields": [
+            {
+              "name": "mainTexTexelSize",
+              "offset": 64
+            },
+            {
+              "name": "textureSampleAdd",
+              "offset": 80
+            },
+            {
+              "name": "clipRect",
+              "offset": 96
+            },
+            {
+              "name": "uiMaskHGSoftness",
+              "offset": 112
+            },
+            {
+              "name": "clipRectParam",
+              "offset": 128
+            },
+            {
+              "name": "ObjectToWorld",
+              "offset": 0
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "_32",
+              "array": [
+                1
+              ],
+              "array_size_is_literal": [
+                true
+              ],
+              "offset": 0,
+              "array_stride": 144
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "type": "vec4",
+          "name": "_3",
+          "location": 0
+        },
+        {
+          "type": "vec3",
+          "name": "_4",
+          "location": 1
+        },
+        {
+          "type": "vec4",
+          "name": "_5",
+          "location": 2
+        },
+        {
+          "type": "vec2",
+          "name": "_6",
+          "location": 3
+        },
+        {
+          "type": "vec2",
+          "name": "_7",
+          "location": 4
+        }
+      ],
+      "outputs": [
+        {
+          "type": "vec4",
+          "name": "_9",
+          "location": 0
+        },
+        {
+          "type": "vec2",
+          "name": "_10",
+          "location": 1
+        },
+        {
+          "type": "vec4",
+          "name": "_11",
+          "location": 2
+        },
+        {
+          "type": "vec4",
+          "name": "_12",
+          "location": 3
+        },
+        {
+          "type": "vec4",
+          "name": "_13",
+          "location": 4
+        },
+        {
+          "type": "vec4",
+          "name": "_14",
+          "location": 5
+        },
+        {
+          "type": "vec4",
+          "name": "_15",
+          "location": 6
+        },
+        {
+          "type": "vec2",
+          "name": "_16",
+          "location": 7
+        }
+      ]
+    },
+    "fragment": {
+      "file": "Shaders/HGRP_UI_TextMeshPro_Distance_Field-ss0-p18-seg0-program109.fragment.metal",
+      "function": "main0",
+      "uniforms": [
+        {
+          "name": "UnityPerCamera",
+          "size": 144,
+          "index": 0,
+          "fields": [
+            {
+              "name": "_Time",
+              "offset": 0
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m4",
+              "type": "vec4",
+              "offset": 64
+            },
+            {
+              "name": "_m5",
+              "type": "vec4",
+              "offset": 80
+            },
+            {
+              "name": "_m6",
+              "type": "vec4",
+              "offset": 96
+            },
+            {
+              "name": "_m7",
+              "type": "vec4",
+              "offset": 112
+            },
+            {
+              "name": "_m8",
+              "type": "vec4",
+              "offset": 128
+            }
+          ]
+        },
+        {
+          "name": "$Globals",
+          "size": 144,
+          "index": 1,
+          "fields": [
+            {
+              "name": "_EnableSDFDisturb",
+              "offset": 32,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                32
+              ]
+            },
+            {
+              "name": "_DisturbAlphaFade",
+              "offset": 76,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                76
+              ]
+            },
+            {
+              "name": "_GlitchStrength",
+              "offset": 80,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                80
+              ]
+            },
+            {
+              "name": "_GlitchFrequency",
+              "offset": 84,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                84
+              ]
+            },
+            {
+              "name": "_GlitchSpeed",
+              "offset": 88,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                88
+              ]
+            },
+            {
+              "name": "_GlitchBandSharpness",
+              "offset": 92,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                92
+              ]
+            },
+            {
+              "name": "_EnableSDFHalo",
+              "offset": 96,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                96
+              ]
+            },
+            {
+              "name": "_HaloThickness",
+              "offset": 100,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                100
+              ]
+            },
+            {
+              "name": "_HaloRadius",
+              "offset": 104,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                104
+              ]
+            },
+            {
+              "name": "_HaloSoftness",
+              "offset": 108,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                108
+              ]
+            },
+            {
+              "name": "_HaloAdditiveBlendMode",
+              "offset": 112,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                112
+              ]
+            },
+            {
+              "name": "_DisturbUVSpeedX",
+              "offset": 36,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                36
+              ]
+            },
+            {
+              "name": "_DisturbUVSpeedY",
+              "offset": 40,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                40
+              ]
+            },
+            {
+              "name": "_DisturbIntensityU",
+              "offset": 44,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                44
+              ]
+            },
+            {
+              "name": "_DisturbIntensityV",
+              "offset": 48,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                48
+              ]
+            },
+            {
+              "name": "_DisturbStrength",
+              "offset": 52,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                52
+              ]
+            },
+            {
+              "name": "_DisturbStrengthRight",
+              "offset": 56,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                56
+              ]
+            },
+            {
+              "name": "_DisturbFrequency",
+              "offset": 60,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                60
+              ]
+            },
+            {
+              "name": "_DisturbFrequencyRight",
+              "offset": 64,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                64
+              ]
+            },
+            {
+              "name": "_DisturbRangeLeft",
+              "offset": 68,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                68
+              ]
+            },
+            {
+              "name": "_DisturbRangeRight",
+              "offset": 72,
+              "serialized_fields": [
+                0,
+                1,
+                1,
+                0,
+                0,
+                72
+              ]
+            },
+            {
+              "name": "_DisturbTex_ST",
+              "offset": 128,
+              "serialized_fields": [
+                0,
+                1,
+                4,
+                0,
+                0,
+                128
+              ]
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "vec4",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m2",
+              "type": "float",
+              "offset": 32
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 36
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 40
+            },
+            {
+              "name": "_m5",
+              "type": "float",
+              "offset": 44
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 48
+            },
+            {
+              "name": "_m7",
+              "type": "float",
+              "offset": 52
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 56
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 60
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 64
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 68
+            },
+            {
+              "name": "_m12",
+              "type": "float",
+              "offset": 72
+            },
+            {
+              "name": "_m13",
+              "type": "float",
+              "offset": 76
+            },
+            {
+              "name": "_m14",
+              "type": "float",
+              "offset": 80
+            },
+            {
+              "name": "_m15",
+              "type": "float",
+              "offset": 84
+            },
+            {
+              "name": "_m16",
+              "type": "float",
+              "offset": 88
+            },
+            {
+              "name": "_m17",
+              "type": "float",
+              "offset": 92
+            },
+            {
+              "name": "_m18",
+              "type": "float",
+              "offset": 96
+            },
+            {
+              "name": "_m19",
+              "type": "float",
+              "offset": 100
+            },
+            {
+              "name": "_m20",
+              "type": "float",
+              "offset": 104
+            },
+            {
+              "name": "_m21",
+              "type": "float",
+              "offset": 108
+            },
+            {
+              "name": "_m22",
+              "type": "float",
+              "offset": 112
+            },
+            {
+              "name": "_m23",
+              "type": "vec4",
+              "offset": 128
+            }
+          ]
+        },
+        {
+          "name": "UnityPerMaterial",
+          "size": 544,
+          "index": 2,
+          "fields": [
+            {
+              "name": "_SoftMaskTex_ST",
+              "offset": 432,
+              "serialized_fields": [
+                0,
+                1,
+                4,
+                0,
+                0,
+                432
+              ]
+            },
+            {
+              "name": "_WorldToSoftMask",
+              "offset": 448,
+              "serialized_fields": [
+                0,
+                4,
+                4,
+                1,
+                0,
+                448
+              ]
+            },
+            {
+              "name": "_FaceUVSpeedX",
+              "offset": 0
+            },
+            {
+              "name": "_FaceUVSpeedY",
+              "offset": 4
+            },
+            {
+              "name": "_FaceColor",
+              "offset": 16
+            },
+            {
+              "name": "_OutlineSoftness",
+              "offset": 36
+            },
+            {
+              "name": "_OutlineUVSpeedX",
+              "offset": 40
+            },
+            {
+              "name": "_OutlineUVSpeedY",
+              "offset": 44
+            },
+            {
+              "name": "_OutlineColor",
+              "offset": 48
+            },
+            {
+              "name": "_OutlineWidth",
+              "offset": 64
+            },
+            {
+              "name": "_ScaleRatioA",
+              "offset": 332
+            },
+            {
+              "name": "_TextureWidth",
+              "offset": 392
+            },
+            {
+              "name": "_TextureHeight",
+              "offset": 396
+            },
+            {
+              "name": "_GradientScale",
+              "offset": 400
+            },
+            {
+              "name": "_FaceDilate",
+              "offset": 32
+            },
+            {
+              "name": "_WeightNormal",
+              "offset": 324
+            },
+            {
+              "name": "_WeightBold",
+              "offset": 328
+            },
+            {
+              "name": "_VertexOffsetX",
+              "offset": 344
+            },
+            {
+              "name": "_VertexOffsetY",
+              "offset": 348
+            },
+            {
+              "name": "_MaskSoftnessX",
+              "offset": 384
+            },
+            {
+              "name": "_MaskSoftnessY",
+              "offset": 388
+            },
+            {
+              "name": "_ScaleX",
+              "offset": 404
+            },
+            {
+              "name": "_ScaleY",
+              "offset": 408
+            },
+            {
+              "name": "_PerspectiveFilter",
+              "offset": 412
+            },
+            {
+              "name": "_Sharpness",
+              "offset": 416
+            },
+            {
+              "name": "_FaceTex_ST",
+              "offset": 512
+            },
+            {
+              "name": "_OutlineTex_ST",
+              "offset": 528
+            },
+            {
+              "name": "_EnvMatrix",
+              "offset": 144
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "float",
+              "offset": 0
+            },
+            {
+              "name": "_m1",
+              "type": "float",
+              "offset": 4
+            },
+            {
+              "name": "_m2",
+              "type": "vec4",
+              "offset": 16
+            },
+            {
+              "name": "_m3",
+              "type": "float",
+              "offset": 32
+            },
+            {
+              "name": "_m4",
+              "type": "float",
+              "offset": 36
+            },
+            {
+              "name": "_m5",
+              "type": "float",
+              "offset": 40
+            },
+            {
+              "name": "_m6",
+              "type": "float",
+              "offset": 44
+            },
+            {
+              "name": "_m7",
+              "type": "vec4",
+              "offset": 48
+            },
+            {
+              "name": "_m8",
+              "type": "float",
+              "offset": 64
+            },
+            {
+              "name": "_m9",
+              "type": "float",
+              "offset": 68
+            },
+            {
+              "name": "_m10",
+              "type": "float",
+              "offset": 72
+            },
+            {
+              "name": "_m11",
+              "type": "float",
+              "offset": 76
+            },
+            {
+              "name": "_m12",
+              "type": "float",
+              "offset": 80
+            },
+            {
+              "name": "_m13",
+              "type": "float",
+              "offset": 84
+            },
+            {
+              "name": "_m14",
+              "type": "float",
+              "offset": 88
+            },
+            {
+              "name": "_m15",
+              "type": "float",
+              "offset": 92
+            },
+            {
+              "name": "_m16",
+              "type": "vec4",
+              "offset": 96
+            },
+            {
+              "name": "_m17",
+              "type": "vec4",
+              "offset": 112
+            },
+            {
+              "name": "_m18",
+              "type": "vec3",
+              "offset": 128
+            },
+            {
+              "name": "_m19",
+              "type": "mat4",
+              "offset": 144,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m20",
+              "type": "vec4",
+              "offset": 208
+            },
+            {
+              "name": "_m21",
+              "type": "float",
+              "offset": 224
+            },
+            {
+              "name": "_m22",
+              "type": "float",
+              "offset": 228
+            },
+            {
+              "name": "_m23",
+              "type": "float",
+              "offset": 232
+            },
+            {
+              "name": "_m24",
+              "type": "float",
+              "offset": 236
+            },
+            {
+              "name": "_m25",
+              "type": "float",
+              "offset": 240
+            },
+            {
+              "name": "_m26",
+              "type": "vec4",
+              "offset": 256
+            },
+            {
+              "name": "_m27",
+              "type": "float",
+              "offset": 272
+            },
+            {
+              "name": "_m28",
+              "type": "float",
+              "offset": 276
+            },
+            {
+              "name": "_m29",
+              "type": "float",
+              "offset": 280
+            },
+            {
+              "name": "_m30",
+              "type": "float",
+              "offset": 284
+            },
+            {
+              "name": "_m31",
+              "type": "vec4",
+              "offset": 288
+            },
+            {
+              "name": "_m32",
+              "type": "float",
+              "offset": 304
+            },
+            {
+              "name": "_m33",
+              "type": "float",
+              "offset": 308
+            },
+            {
+              "name": "_m34",
+              "type": "float",
+              "offset": 312
+            },
+            {
+              "name": "_m35",
+              "type": "float",
+              "offset": 316
+            },
+            {
+              "name": "_m36",
+              "type": "float",
+              "offset": 320
+            },
+            {
+              "name": "_m37",
+              "type": "float",
+              "offset": 324
+            },
+            {
+              "name": "_m38",
+              "type": "float",
+              "offset": 328
+            },
+            {
+              "name": "_m39",
+              "type": "float",
+              "offset": 332
+            },
+            {
+              "name": "_m40",
+              "type": "float",
+              "offset": 336
+            },
+            {
+              "name": "_m41",
+              "type": "float",
+              "offset": 340
+            },
+            {
+              "name": "_m42",
+              "type": "float",
+              "offset": 344
+            },
+            {
+              "name": "_m43",
+              "type": "float",
+              "offset": 348
+            },
+            {
+              "name": "_m44",
+              "type": "float",
+              "offset": 352
+            },
+            {
+              "name": "_m45",
+              "type": "vec4",
+              "offset": 368
+            },
+            {
+              "name": "_m46",
+              "type": "float",
+              "offset": 384
+            },
+            {
+              "name": "_m47",
+              "type": "float",
+              "offset": 388
+            },
+            {
+              "name": "_m48",
+              "type": "float",
+              "offset": 392
+            },
+            {
+              "name": "_m49",
+              "type": "float",
+              "offset": 396
+            },
+            {
+              "name": "_m50",
+              "type": "float",
+              "offset": 400
+            },
+            {
+              "name": "_m51",
+              "type": "float",
+              "offset": 404
+            },
+            {
+              "name": "_m52",
+              "type": "float",
+              "offset": 408
+            },
+            {
+              "name": "_m53",
+              "type": "float",
+              "offset": 412
+            },
+            {
+              "name": "_m54",
+              "type": "float",
+              "offset": 416
+            },
+            {
+              "name": "_m55",
+              "type": "vec4",
+              "offset": 432
+            },
+            {
+              "name": "_m56",
+              "type": "mat4",
+              "offset": 448,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m57",
+              "type": "vec4",
+              "offset": 512
+            },
+            {
+              "name": "_m58",
+              "type": "vec4",
+              "offset": 528
+            }
+          ]
+        },
+        {
+          "name": "_UIRenderingConstants",
+          "size": 784,
+          "index": 3,
+          "fields": [
+            {
+              "name": "_UITime",
+              "offset": 720
+            },
+            {
+              "name": "_UIScreenParams",
+              "offset": 752
+            },
+            {
+              "name": "_WorldSpaceCameraPos_Internal",
+              "offset": 704
+            },
+            {
+              "name": "_UIProjectionParams",
+              "offset": 736
+            },
+            {
+              "name": "_ProjMatrix",
+              "offset": 128
+            },
+            {
+              "name": "_NonJitteredViewNoTransProjMatrix",
+              "offset": 512
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "mat4",
+              "offset": 0,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m1",
+              "type": "mat4",
+              "offset": 64,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m2",
+              "type": "mat4",
+              "offset": 128,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m3",
+              "type": "mat4",
+              "offset": 192,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m4",
+              "type": "mat4",
+              "offset": 256,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m5",
+              "type": "mat4",
+              "offset": 320,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m6",
+              "type": "mat4",
+              "offset": 384,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m7",
+              "type": "mat4",
+              "offset": 448,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m8",
+              "type": "mat4",
+              "offset": 512,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m9",
+              "type": "mat4",
+              "offset": 576,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m10",
+              "type": "mat4",
+              "offset": 640,
+              "matrix_stride": 16,
+              "row_major": true
+            },
+            {
+              "name": "_m11",
+              "type": "vec4",
+              "offset": 704
+            },
+            {
+              "name": "_m12",
+              "type": "vec4",
+              "offset": 720
+            },
+            {
+              "name": "_m13",
+              "type": "vec4",
+              "offset": 736
+            },
+            {
+              "name": "_m14",
+              "type": "vec4",
+              "offset": 752
+            },
+            {
+              "name": "_m15",
+              "type": "vec4",
+              "offset": 768
+            }
+          ]
+        },
+        {
+          "name": "UnityInstancing_SRP_UnityPerDraw",
+          "size": 144,
+          "index": 4,
+          "fields": [
+            {
+              "name": "mainTexTexelSize",
+              "offset": 64
+            },
+            {
+              "name": "textureSampleAdd",
+              "offset": 80
+            },
+            {
+              "name": "clipRect",
+              "offset": 96
+            },
+            {
+              "name": "uiMaskHGSoftness",
+              "offset": 112
+            },
+            {
+              "name": "clipRectParam",
+              "offset": 128
+            },
+            {
+              "name": "ObjectToWorld",
+              "offset": 0
+            }
+          ],
+          "members": [
+            {
+              "name": "_m0",
+              "type": "_23",
+              "array": [
+                1
+              ],
+              "array_size_is_literal": [
+                true
+              ],
+              "offset": 0,
+              "array_stride": 144
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "type": "vec4",
+          "name": "_3",
+          "location": 0
+        },
+        {
+          "type": "vec2",
+          "name": "_4",
+          "location": 1
+        },
+        {
+          "type": "vec4",
+          "name": "_5",
+          "location": 2
+        },
+        {
+          "type": "vec4",
+          "name": "_6",
+          "location": 3
+        },
+        {
+          "type": "vec4",
+          "name": "_7",
+          "location": 4
+        },
+        {
+          "type": "vec4",
+          "name": "_8",
+          "location": 5
+        },
+        {
+          "type": "vec4",
+          "name": "_9",
+          "location": 6
+        },
+        {
+          "type": "vec2",
+          "name": "_10",
+          "location": 7
+        }
+      ],
+      "outputs": [
+        {
+          "type": "vec4",
+          "name": "_11",
+          "location": 0
+        }
+      ]
+    }
+  },
+  "textures": [
+    {
+      "name": "_DisturbTex",
+      "index": 0,
+      "sampler_index": 0,
+      "stage": "vertex"
+    },
+    {
+      "name": "_OutlineTex",
+      "index": 0,
+      "sampler_index": 0,
+      "stage": "fragment"
+    },
+    {
+      "name": "_FaceTex",
+      "index": 1,
+      "sampler_index": 1,
+      "stage": "fragment"
+    },
+    {
+      "name": "_MainTex",
+      "index": 2,
+      "sampler_index": 2,
+      "stage": "fragment"
+    },
+    {
+      "name": "_SoftMaskTex",
+      "index": 3,
+      "sampler_index": 3,
+      "stage": "fragment"
+    }
+  ],
+  "status": "Actual translated source program; exact named descriptors and reflected offsets"
+}

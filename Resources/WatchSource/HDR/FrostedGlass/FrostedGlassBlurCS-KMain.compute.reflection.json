@@ -1,0 +1,79 @@
+{
+  "entryPoints": [
+    {
+      "name": "main",
+      "mode": "comp",
+      "workgroup_size": [
+        8,
+        8,
+        1
+      ],
+      "workgroup_size_is_spec_constant_id": [
+        false,
+        false,
+        false
+      ]
+    }
+  ],
+  "types": {
+    "_12": {
+      "name": "_12",
+      "members": [
+        {
+          "name": "_m0",
+          "type": "vec4",
+          "offset": 0
+        },
+        {
+          "name": "_m1",
+          "type": "vec4",
+          "offset": 16
+        },
+        {
+          "name": "_m2",
+          "type": "vec4",
+          "offset": 32
+        },
+        {
+          "name": "_m3",
+          "type": "vec4",
+          "offset": 48
+        }
+      ]
+    }
+  },
+  "separate_images": [
+    {
+      "type": "texture2D",
+      "name": "_9",
+      "set": 0,
+      "binding": 1
+    }
+  ],
+  "separate_samplers": [
+    {
+      "type": "sampler",
+      "name": "_7",
+      "set": 0,
+      "binding": 2
+    }
+  ],
+  "images": [
+    {
+      "type": "image2D",
+      "name": "_11",
+      "set": 0,
+      "binding": 0,
+      "format": "r11f_g11f_b10f"
+    }
+  ],
+  "ubos": [
+    {
+      "type": "_12",
+      "name": "_12_13",
+      "block_size": 64,
+      "set": 1,
+      "binding": 0
+    }
+  ]
+}

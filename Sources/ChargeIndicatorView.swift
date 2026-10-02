@@ -11,6 +11,7 @@ final class ChargeIndicatorView: NSView {
     static let canvasSize = NSSize(width: 300, height: 84)
     static let entranceDuration: TimeInterval = 1.50
     static let exitDuration: TimeInterval = 0.64
+    private static let bannerTitleWidth: CGFloat = 121
 
     private let canvas = CALayer()
     private let shadowLayer = CALayer()
@@ -18,7 +19,7 @@ final class ChargeIndicatorView: NSView {
     private let emblem = CAShapeLayer()
     private let bolt = CAShapeLayer()
     private let bannerEnglish = CATextLayer()
-    private let bannerChinese = CATextLayer()
+    private let bannerTitle = CATextLayer()
     private let capacityLabel = CATextLayer()
     private let percentageLabel = CATextLayer()
     private let ringContainer = CALayer()
@@ -72,7 +73,7 @@ final class ChargeIndicatorView: NSView {
         bolt.bounds = CGRect(x: 0, y: 0, width: 24, height: 24)
         bolt.path = Self.boltPath()
 
-        for textLayer in [bannerEnglish, bannerChinese, capacityLabel, percentageLabel] {
+        for textLayer in [bannerEnglish, bannerTitle, capacityLabel, percentageLabel] {
             textLayer.anchorPoint = .zero
             textLayer.alignmentMode = .left
             textLayer.truncationMode = .none
@@ -323,13 +324,23 @@ final class ChargeIndicatorView: NSView {
 
     private func updateContent() {
         withoutActions {
-            let title = NSAttributedString(string: "// SUPERCHARGE", attributes: [
+            let englishMode = self.snapshot.isCharging ? "CHARGE MODE" : "BATTERY MODE"
+            let localizedMode = self.snapshot.isCharging ? L10n.text("CHARGE MODE", "充电模式")
+                : L10n.text("BATTERY MODE", "电池模式")
+            let title = NSAttributedString(string: "// " + englishMode, attributes: [
                 .font: NSFont.systemFont(ofSize: 7.5, weight: .medium),
                 .foregroundColor: self.foreground.withAlphaComponent(0.55), .kern: 0.2
             ])
             self.bannerEnglish.string = title
-            self.bannerChinese.string = NSAttributedString(string: "超充模式", attributes: [
-                .font: NSFont.systemFont(ofSize: 20, weight: .semibold), .foregroundColor: self.foreground
+            // Keep the original bilingual styling and capsule geometry while
+            // fitting longer English and Japanese titles without clipping.
+            var titleFont = NSFont.systemFont(ofSize: 20, weight: .semibold)
+            while titleFont.pointSize > 10,
+                  (localizedMode as NSString).size(withAttributes: [.font: titleFont]).width > Self.bannerTitleWidth - 2 {
+                titleFont = NSFont.systemFont(ofSize: titleFont.pointSize - 0.5, weight: .semibold)
+            }
+            self.bannerTitle.string = NSAttributedString(string: localizedMode, attributes: [
+                .font: titleFont, .foregroundColor: self.foreground
             ])
             let current = self.snapshot.capacity.map { Self.number($0.current) } ?? "—"
             let maximum = self.snapshot.capacity.map { Self.number($0.maximum) } ?? "—"
@@ -436,7 +447,7 @@ final class ChargeIndicatorView: NSView {
         // The text translates with the morph; it is never squashed with the body.
         place(bannerEnglish, at: CGRect(x: isBanner ? 126 : 150, y: 27, width: 116, height: 12),
               visible: isBanner, duration: duration)
-        place(bannerChinese, at: CGRect(x: isBanner ? 124 : 149, y: 36, width: 121, height: 28),
+        place(bannerTitle, at: CGRect(x: isBanner ? 124 : 149, y: 36, width: Self.bannerTitleWidth, height: 28),
               visible: isBanner, duration: duration)
         place(capacityLabel, at: CGRect(x: isCompact ? 55 : 83, y: 33, width: 143, height: 19),
               visible: isCompact, duration: duration)

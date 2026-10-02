@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "frozen_export_manifest_sha256": "c0f004727e456ada94e78f968ea9ae8030251c51cbc462d9583087cd4911a3c7",
+  "source_prefab": "assets/beyond/dynamicassets/gameplay/ui/prefabs/common/widgets/businesscard/playinfobp13cell.prefab",
+  "source_scene_sha256": "68d6f6657f5fae28e31ce7cde94152f118cf593b075fea455abacaf899757480",
+  "runtime_contract_sha256": "55228032888a1c428a9407c4e88ab2a6b0a0c3f942effc2b66b153b9a4f490d8",
+  "source_parent_id": "CAB-194e41a66c2317b9df19269f505210be:7686435424458337495",
+  "source_root_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:-8536182027554143077",
+  "source_local_size": [
+    364,
+    128
+  ],
+  "source_create_object_world_position_stays": false,
+  "source_canvas_group_ignore_parent_groups": false,
+  "owned_animation_components": 0,
+  "localization": {
+    "entries": [
+      {
+        "key": "ui_common_lv",
+        "numeric_id": "8938885397659906600",
+        "cn_literal": "LV."
+      },
+      {
+        "key": "ui_common_new_eng",
+        "numeric_id": "8386187332605640164",
+        "cn_literal": "NEW"
+      },
+      {
+        "key": "ui_friend_card_birthday_bubble",
+        "numeric_id": "16386624891719876603",
+        "cn_literal": "生日信息待填写"
+      },
+      {
+        "key": "LUA_ADVENTURE_LEVEL_NAME_DESC",
+        "numeric_id": "399853122320053285",
+        "cn_literal": "权限等阶"
+      },
+      {
+        "key": "LUA_ADVENTURE_MAX_LEVEL_DESC",
+        "numeric_id": "7556549654660894082",
+        "cn_literal": "满级"
+      },
+      {
+        "key": "LUA_ADVENTURE_LEVEL_FORMAT",
+        "numeric_id": "10211358822898879663",
+        "cn_literal": "%02d"
+      }
+    ],
+    "tables": [
+      {
+        "file": "extracted/Persistent/Data/TableCfg/TextTable.bytes",
+        "sha256": "11c14c5b310e246ba27c1b797bc26b663e287a34ff51fe1f1d2cf4e43430f272"
+      },
+      {
+        "file": "extracted/Persistent/Data/TableCfg/I18nTextTable_CN.bytes",
+        "sha256": "fca1a4ea03ccd38dd20c664e5c4efc53178cb4e9df722c1ebba10e37f4426ea1"
+      }
+    ]
+  },
+  "adapter_projection": {
+    "pointer_target_id_join": "Original resolved PPtrs, no identity remapping.",
+    "cleared_editor_text": [
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:5202136222228989083",
+        "field": "m_text",
+        "source_utf8_sha256": "2abaca4911e68fa9bfbf3482ee797fd5b9045b841fdff7253557c5fe15de6477",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:2469764134018139291",
+        "field": "m_text",
+        "source_utf8_sha256": "9488f25b792b0492fb36ff46fce9250d042b7a3159bd2728e043ce0365aacb7c",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:-5900193949031283557",
+        "field": "m_text",
+        "source_utf8_sha256": "7902699be42c8a8e46fbbb4501726517e86b22c56a189f7625a6da49081b2451",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:7008529592813208731",
+        "field": "m_text",
+        "source_utf8_sha256": "c13e1ee7f0219bf96b903149aec745de70194afd1fae875e8917ce3cde457ae4",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:2437365865176286363",
+        "field": "m_text",
+        "source_utf8_sha256": "f1534392279bddbf9d43dde8701cb5be14b82f76ec6607bf8d6ad557f60f304e",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:2491290974647927963",
+        "field": "m_text",
+        "source_utf8_sha256": "590e654e9cc8dc0eecfcb218f6ee320272143af28cbde3775de64af658e1efdc",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:4711297524568278171",
+        "field": "m_text",
+        "source_utf8_sha256": "83cf8b609de60036a8277bd0e96135751bbc07eb234256d4b65b893360651bf2",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      },
+      {
+        "component_id": "CAB-7979328e8a85d73c8b989cdca5a79bf8:-3524934113807645541",
+        "field": "m_text",
+        "source_utf8_sha256": "627ac5c82b89789cf80bdbe9d1704d8244922a00e56109c0c5e2d082eca37848",
+        "projection": "Empty until an explicit host/account profile value is supplied."
+      }
+    ],
+    "parent": "Mounted at runtime under original PlayInfoPosNode without changing prefab local TRS."
+  },
+  "published_sprite_count": 46,
+  "published_texture_count": 46,
+  "new_native_texture_ids": [
+    "CAB-0312882f199140c0b37665cece303d21:-7432388592649361033",
+    "CAB-087a11ecaae81863b3f301b7bec84107:-6283680980313229020",
+    "CAB-087a11ecaae81863b3f301b7bec84107:-8255304472001022337",
+    "CAB-1d0a4c08b5a9c475680941da45a0073d:-3936017606796499761",
+    "CAB-1d0a4c08b5a9c475680941da45a0073d:-6666574239406991612",
+    "CAB-1e9110703bab5c74ab15ee8bbe322264:6604503700508031526",
+    "CAB-21fa3e4db2ab8ba19d63e38ee4c3bc76:-7837820514655709531",
+    "CAB-2321ab8d4e73803c9463a61c89eef3e6:-5617890141016146480",
+    "CAB-2e174e70d0b78db7c620b4c91ac39c7e:-7307584321334895209",
+    "CAB-31312492155b19d92caa19aefe62abdb:536018404453109699",
+    "CAB-319a8368749a488df6051e7cb00f8373:4912919567347065062",
+    "CAB-35a7cca9302ef10ec2d1a1bf58fcd9ed:316596898254617328",
+    "CAB-453a2bda20bf8e297e653335ba1e9836:569085612372656602",
+    "CAB-469bb0f192c662bbc3d1da6f2fb0c5d3:8325197967690250039",
+    "CAB-4a2267055b2c5652681adcf56a5c9ac3:-4827637915678035611",
+    "CAB-4b5ec4694c532299b6753cca407c6019:1938194382649467457",
+    "CAB-520854379894316bbed598088030cd9c:-2921224509596559758",
+    "CAB-5afab0f1255f77e60af14605feaf2c66:3512998325388039613",
+    "CAB-5e16a5aceddad45f5241b9cb5a12d02f:-4854298880539517495",
+    "CAB-5f6a225d6033240b64dfdb22b7c22b2b:7576613479449390581",
+    "CAB-63c7ff925764ef7e901f962df477c835:-972626935785960784",
+    "CAB-63c7ff925764ef7e901f962df477c835:7647223879671712896",
+    "CAB-68732eb3389e32dbc4ba5f33cd6a32a0:-473964426479086428",
+    "CAB-6f271997816c572beae9aa23e3c4685d:4724295821681277709",
+    "CAB-7ef70e0d7d12df13ce31f0a0854e2ea3:2316211278412445563",
+    "CAB-83641ec861226c5df6a079b5fc252eb6:-2594488112794597847",
+    "CAB-842bfdb00b6e10a3fb4eb67982915d3a:-3522140888998863637",
+    "CAB-85bbbaad49693a20536c970ee1171505:1279771994715387770",
+    "CAB-8999d03f559a81e5e92594b0648b267d:5148809778073028939",
+    "CAB-998b7a85d51895c797eb50cc3c0a1329:996604966726403669",
+    "CAB-9b24f1b95922646821100b5142302b8c:-1959326597459816875",
+    "CAB-a725c4827e7ea40d7a4b806b12b3f1ad:5938234194269448460",
+    "CAB-ad8b705c66d92a94bf1837182e075bb0:-8453182628307212728",
+    "CAB-bafe084bceb70adcc12d7e4131951600:-5358264342952264872",
+    "CAB-c532c5282d24c29cccc7340b3ccbc5c7:6591727633268659541",
+    "CAB-cb07a3ef6b17f98f89cad785fad5f999:-5034372977490163095",
+    "CAB-cd30ea2206a2ef01733ddbd453d0ccab:-6002316461495314111",
+    "CAB-db754200ac9a164478218c58d9a6ce71:6349671078421088745",
+    "CAB-dccbc05df41624aba7f420c75ae991f8:-8070658409433931058",
+    "CAB-efb43652871651599301eec551ccf3c0:2528983727120053097",
+    "CAB-fbff487e283d324d08e8013164cb56fd:-4254894133338498107",
+    "CAB-fe12ae679ecff8a646bc828bb15ee580:-1764866413146737665",
+    "CAB-fe38ae0fbd568d14b5e01872f55cc263:1050045739101015854"
+  ],
+  "new_material_ids": [],
+  "unsupported_materials": [
+    {
+      "id": "CAB-39feda335f037c20c587737b0729c4ee:-6102533767379688996",
+      "name": "M_fx_activity_deco010",
+      "unsupported_keywords": [
+        "HG_UI_VFX_MASKTEX"
+      ],
+      "gate": "Original CommonPlayerHead first init hides levelTag/seasonTag; desktop widget preserves those inactive gates."
+    },
+    {
+      "id": "CAB-39feda335f037c20c587737b0729c4ee:-6179991381471969346",
+      "name": "M_fx_activity_deco11",
+      "unsupported_keywords": [
+        "HG_UI_VFX_DISTURB",
+        "HG_UI_VFX_MASKTEX"
+      ],
+      "gate": "Original CommonPlayerHead first init hides levelTag/seasonTag; desktop widget preserves those inactive gates."
+    },
+    {
+      "id": "CAB-39feda335f037c20c587737b0729c4ee:5516386864991498288",
+      "name": "M_fx_activity_deco12",
+      "unsupported_keywords": [
+        "HG_UI_COLORLOOP",
+        "HG_UI_VFX_MASKTEX"
+      ],
+      "gate": "Original CommonPlayerHead first init hides levelTag/seasonTag; desktop widget preserves those inactive gates."
+    }
+  ],
+  "excluded": [
+    "Other business-card themes",
+    "1920px research candidates",
+    "inactive account-driven UIStateController Sprite candidates",
+    "candidate banner/account sequence",
+    "font TTF/OTF/outlines",
+    "recording frames",
+    "personal account name/UID"
+  ],
+  "validation": "Original PNG and every authored mip byte/hash checked; no resampling or mip generation. Native Swift/GPU integration still requires macOS validation.",
+  "banner_runtime_contract": {
+    "file": "banner-runtime.json",
+    "sha256": "ce328f387b488cce88f56fefbe28e24f6d56346593a0f6c8424de6bc66e526f2",
+    "policy": "Runtime projection of installed source cloning/scroll contract. Default static single artwork. An explicit two-artwork desktop reference is not a recovered game account eligible list. Source templates and scene bytes are unchanged.",
+    "source_lua_sha256": "2b046ebe5601b15a87b722a81993d17047420e413cb9769ef9eea224e66300bf",
+    "source_cache_lua_sha256": "13a490021a2b76381db7dcd8b09b69d250338bc3c7a3808cbc99041eb27ab505",
+    "source_native_scroll_contract_sha256": "a562f1dbc63cb0c55e9b778a2ab701c3e184d4706623565efab4065a0a87105d"
+  }
+}

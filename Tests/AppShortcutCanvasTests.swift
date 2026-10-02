@@ -34,7 +34,11 @@ enum AppShortcutCanvasTests {
             var chooserRequests = 0; var renameRequests = 0
             canvas.onLaunch = { launches.append($0) }; canvas.onSaved = { saves.append($0.id) }; canvas.onRemoved = { removals.append($0) }
             canvas.onChooseApplication = { chooserRequests += 1 }; canvas.onEditName = { _, _ in renameRequests += 1 }
+            let preparedHeading = originalLayer.sublayers?.first?.sublayers?.compactMap { $0 as? CATextLayer }.first
             canvas.activate()
+            check(preparedHeading != nil
+                  && originalLayer.sublayers?.first?.sublayers?.contains { $0 === preparedHeading } == true,
+                  "Enabling application input retains the artwork that just completed its module reveal")
             check(canvas.itemCount == 0 && !canvas.isEditing, "Empty application shelf has no draft or launch target")
             check(!canvas.mouseDown(at: CGPoint(x: -1, y: 10)), "Outside clicks remain with the shell")
             canvas.perform(actionID: "apps:choose")

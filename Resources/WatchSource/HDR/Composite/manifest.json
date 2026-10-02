@@ -1,0 +1,5145 @@
+{
+  "schema_version": 1,
+  "policy": "Outer evidence only. Offline original pass1 modules, no Apple GPU compilation or pixel-equivalence claim.",
+  "source_shader": {
+    "id": "CAB-feee320eebbc6443871160405c47e630:-2664880953429036268",
+    "name": "HGRP/PostProcessing/UberPost",
+    "raw_sha256": "e2ebdf125bd63641d81e2e13ece530e784f705c9c5b6f0a027a1acca8fd0676f",
+    "source_asset": "Packages/com.hg.render-pipelines/Runtime/Shaders/PostProcessing/UberPost.shader"
+  },
+  "pass_index": 1,
+  "pass_name": "UberPost_CompositeUI",
+  "state": {
+    "m_Name": "UberPost_CompositeUI",
+    "rtBlend0": {
+      "srcBlend": {
+        "val": 5.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 10.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 5.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 10.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend1": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend2": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend3": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend4": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend5": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend6": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtBlend7": {
+      "srcBlend": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlend": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "srcBlendAlpha": {
+        "val": 1.0,
+        "name": "<noninit>"
+      },
+      "destBlendAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOp": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "blendOpAlpha": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "colMask": {
+        "val": 15.0,
+        "name": "<noninit>"
+      }
+    },
+    "rtSeparateBlend": false,
+    "zClip": {
+      "val": 1.0,
+      "name": "<noninit>"
+    },
+    "zTest": {
+      "val": 8.0,
+      "name": "<noninit>"
+    },
+    "zWrite": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "culling": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "conservative": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "offsetFactor": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "offsetUnits": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "alphaToMask": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "stencilOp": {
+      "pass": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "fail": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "zFail": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "comp": {
+        "val": 8.0,
+        "name": "<noninit>"
+      }
+    },
+    "stencilOpFront": {
+      "pass": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "fail": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "zFail": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "comp": {
+        "val": 8.0,
+        "name": "<noninit>"
+      }
+    },
+    "stencilOpBack": {
+      "pass": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "fail": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "zFail": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "comp": {
+        "val": 8.0,
+        "name": "<noninit>"
+      }
+    },
+    "stencilReadMask": {
+      "val": 255.0,
+      "name": "<noninit>"
+    },
+    "stencilWriteMask": {
+      "val": 255.0,
+      "name": "<noninit>"
+    },
+    "stencilRef": {
+      "val": 0.0,
+      "name": "<noninit>"
+    },
+    "fogStart": {
+      "val": 0.0,
+      "name": "unity_FogStart"
+    },
+    "fogEnd": {
+      "val": 0.0,
+      "name": "unity_FogEnd"
+    },
+    "fogDensity": {
+      "val": 0.0,
+      "name": "unity_FogDensity"
+    },
+    "fogColor": {
+      "x": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "y": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "z": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "w": {
+        "val": 0.0,
+        "name": "<noninit>"
+      },
+      "name": "unity_FogColor"
+    },
+    "fogMode": -1,
+    "gpuProgramID": 99575,
+    "m_Tags": {
+      "tags": [
+        [
+          "RenderPipeline",
+          "HGRenderPipeline"
+        ]
+      ]
+    },
+    "m_LOD": 600,
+    "lighting": false
+  },
+  "variants": [
+    {
+      "program": 726,
+      "keywords": [],
+      "parameter_index": 720,
+      "parameter_file": "Composite/UberPost-ss0-p18-seg0-entry720.bin",
+      "parameter_sha256": "ce984c212ad82db844a2a648c4f832f9c923dfeda52b134d990db6afb2e7a4b5",
+      "parameter_prefix": {
+        "serialized_version": 202506210,
+        "buffers": [
+          {
+            "name": "",
+            "size": 0,
+            "fields": []
+          },
+          {
+            "name": "_PerPassConstants",
+            "size": 32,
+            "fields": [
+              {
+                "name": "_HGFlipX",
+                "offset": 4
+              },
+              {
+                "name": "_HGFlipY",
+                "offset": 8
+              }
+            ]
+          }
+        ],
+        "parsed_prefix_bytes": 60,
+        "unparsed_tail_hex": "020000000d0000005f496e707574546578747572650000000000000002000389ffffffff0400000000000000040000000100030955000000010000000c00000044656661756c745365745f33030000000300000002000000110000005f50657250617373436f6e7374616e7473000000000000000600000001000000000001001300000073616d706c65725f4c696e656172436c616d7000010000000000000002000000550001000d0000005f496e70757454657874757265000000020000000200000002000000ff020100"
+      },
+      "descriptor_tail": {
+        "legacy_resources": [
+          {
+            "source_offset": 64,
+            "name": "_InputTexture",
+            "kind": 0,
+            "fields": [
+              2298675202,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 100,
+            "name": "",
+            "kind": 4,
+            "fields": [
+              151191553,
+              85
+            ]
+          }
+        ],
+        "descriptor_sets": [
+          {
+            "name": "DefaultSet_3",
+            "set": 3,
+            "max_binding": 2,
+            "resources": [
+              {
+                "source_offset": 148,
+                "name": "_PerPassConstants",
+                "binding": 0,
+                "resource_type": 6,
+                "stage_mask": 1,
+                "flags": 65536
+              },
+              {
+                "source_offset": 188,
+                "name": "sampler_LinearClamp",
+                "binding": 1,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 65621
+              },
+              {
+                "source_offset": 228,
+                "name": "_InputTexture",
+                "binding": 2,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              }
+            ]
+          }
+        ],
+        "source_bytes_consumed": 204
+      },
+      "stages": {
+        "vertex": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_6",
+              "name": "_6_7",
+              "block_size": 32,
+              "set": 3,
+              "binding": 0,
+              "source_name": "_PerPassConstants",
+              "source_offset": 148,
+              "category": "ubos",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "_PerPassConstants",
+              "size": 32,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_HGFlipX",
+                  "offset": 4
+                },
+                {
+                  "name": "_HGFlipY",
+                  "offset": 8
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "float",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "float",
+                  "offset": 4
+                },
+                {
+                  "name": "_m2",
+                  "type": "float",
+                  "offset": 8
+                },
+                {
+                  "name": "_m3",
+                  "type": "float",
+                  "offset": 12
+                },
+                {
+                  "name": "_m4",
+                  "type": "float",
+                  "offset": 16
+                },
+                {
+                  "name": "_m5",
+                  "type": "float",
+                  "offset": 20
+                },
+                {
+                  "name": "_m6",
+                  "type": "float",
+                  "offset": 24
+                },
+                {
+                  "name": "_m7",
+                  "type": "float",
+                  "offset": 28
+                }
+              ]
+            }
+          ],
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "vec2",
+              "name": "_5",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program726.vertex.metal",
+              "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program726.vertex.spv",
+              "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program726.vertex.reflection.json",
+              "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program726.vertex.bindings.json",
+              "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef"
+            }
+          ]
+        },
+        "fragment": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "texture2D",
+              "name": "_7",
+              "set": 3,
+              "binding": 2,
+              "source_name": "_InputTexture",
+              "source_offset": 228,
+              "category": "separate_images",
+              "msl_index": 0
+            },
+            {
+              "type": "sampler",
+              "name": "_8",
+              "set": 3,
+              "binding": 1,
+              "source_name": "sampler_LinearClamp",
+              "source_offset": 188,
+              "category": "separate_samplers",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [],
+          "inputs": [
+            {
+              "type": "vec2",
+              "name": "_3",
+              "location": 0
+            }
+          ],
+          "outputs": [
+            {
+              "type": "vec4",
+              "name": "_4",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program726.fragment.metal",
+              "sha256": "06d581042ee67277111054e6f5b9d4e71e30daa8af3f3308ed55b43db0b3d793"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program726.fragment.spv",
+              "sha256": "4eaf1483a70ae8db0f151a7323d5aef050a94a7c8bf314d93a6433da1ce8b7dd"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program726.fragment.reflection.json",
+              "sha256": "6d09868332208ed68de25a7d9d72c18d6f2684b40ece479ef4c64d951554f7bb"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program726.fragment.bindings.json",
+              "sha256": "74d6d4ed2c40a7b3213b196fa2cd17bf5018d12ff58dc11ebe992369dfee7daf"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "program": 727,
+      "keywords": [
+        "VIGNETTE"
+      ],
+      "parameter_index": 721,
+      "parameter_file": "Composite/UberPost-ss0-p18-seg0-entry721.bin",
+      "parameter_sha256": "d73b7d6bae5f8b4033649f1f161bde9bce952b465f76f4da651a91f2c86de421",
+      "parameter_prefix": {
+        "serialized_version": 202506210,
+        "buffers": [
+          {
+            "name": "",
+            "size": 0,
+            "fields": []
+          },
+          {
+            "name": "ShaderVariablesGlobal",
+            "size": 3200,
+            "fields": [
+              {
+                "name": "_ExposureWithMiscParams",
+                "offset": 432,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  432
+                ]
+              }
+            ]
+          },
+          {
+            "name": "cb0",
+            "size": 416,
+            "fields": [
+              {
+                "name": "_VignetteParams1",
+                "offset": 16,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  16
+                ]
+              },
+              {
+                "name": "_VignetteParams2",
+                "offset": 32,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  32
+                ]
+              },
+              {
+                "name": "_VignetteColor",
+                "offset": 64,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  64
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_PerPassConstants",
+            "size": 32,
+            "fields": [
+              {
+                "name": "_HGFlipX",
+                "offset": 4
+              },
+              {
+                "name": "_HGFlipY",
+                "offset": 8
+              }
+            ]
+          }
+        ],
+        "parsed_prefix_bytes": 304,
+        "unparsed_tail_hex": "040000000d0000005f496e707574546578747572650000000000000002000389ffffffff04000000150000005368616465725661726961626c6573476c6f62616c000000010000000400030900000000030000006362300001000000030003090000000000000000040000000100030955000000010000000c00000044656661756c745365745f33030000000500000004000000110000005f50657250617373436f6e7374616e7473000000000000000600000001000000020001001300000073616d706c65725f4c696e656172436c616d7000010000000000000002000000550001000d0000005f496e70757454657874757265000000020000000200000002000000ff020100030000006362300003000000060000000200000001000100150000005368616465725661726961626c6573476c6f62616c00000004000000060000000200000000000100"
+      },
+      "descriptor_tail": {
+        "legacy_resources": [
+          {
+            "source_offset": 308,
+            "name": "_InputTexture",
+            "kind": 0,
+            "fields": [
+              2298675202,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 344,
+            "name": "ShaderVariablesGlobal",
+            "kind": 1,
+            "fields": [
+              151191556,
+              0
+            ]
+          },
+          {
+            "source_offset": 384,
+            "name": "cb0",
+            "kind": 1,
+            "fields": [
+              151191555,
+              0
+            ]
+          },
+          {
+            "source_offset": 404,
+            "name": "",
+            "kind": 4,
+            "fields": [
+              151191553,
+              85
+            ]
+          }
+        ],
+        "descriptor_sets": [
+          {
+            "name": "DefaultSet_3",
+            "set": 3,
+            "max_binding": 4,
+            "resources": [
+              {
+                "source_offset": 452,
+                "name": "_PerPassConstants",
+                "binding": 0,
+                "resource_type": 6,
+                "stage_mask": 1,
+                "flags": 65538
+              },
+              {
+                "source_offset": 492,
+                "name": "sampler_LinearClamp",
+                "binding": 1,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 65621
+              },
+              {
+                "source_offset": 532,
+                "name": "_InputTexture",
+                "binding": 2,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 568,
+                "name": "cb0",
+                "binding": 3,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65537
+              },
+              {
+                "source_offset": 592,
+                "name": "ShaderVariablesGlobal",
+                "binding": 4,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65536
+              }
+            ]
+          }
+        ],
+        "source_bytes_consumed": 332
+      },
+      "stages": {
+        "vertex": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_6",
+              "name": "_6_7",
+              "block_size": 32,
+              "set": 3,
+              "binding": 0,
+              "source_name": "_PerPassConstants",
+              "source_offset": 452,
+              "category": "ubos",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "_PerPassConstants",
+              "size": 32,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_HGFlipX",
+                  "offset": 4
+                },
+                {
+                  "name": "_HGFlipY",
+                  "offset": 8
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "float",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "float",
+                  "offset": 4
+                },
+                {
+                  "name": "_m2",
+                  "type": "float",
+                  "offset": 8
+                },
+                {
+                  "name": "_m3",
+                  "type": "float",
+                  "offset": 12
+                },
+                {
+                  "name": "_m4",
+                  "type": "float",
+                  "offset": 16
+                },
+                {
+                  "name": "_m5",
+                  "type": "float",
+                  "offset": 20
+                },
+                {
+                  "name": "_m6",
+                  "type": "float",
+                  "offset": 24
+                },
+                {
+                  "name": "_m7",
+                  "type": "float",
+                  "offset": 28
+                }
+              ]
+            }
+          ],
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "vec2",
+              "name": "_5",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program727.vertex.metal",
+              "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program727.vertex.spv",
+              "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program727.vertex.reflection.json",
+              "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program727.vertex.bindings.json",
+              "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef"
+            }
+          ]
+        },
+        "fragment": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_5",
+              "name": "_5_6",
+              "block_size": 3200,
+              "set": 3,
+              "binding": 4,
+              "source_name": "ShaderVariablesGlobal",
+              "source_offset": 592,
+              "category": "ubos",
+              "msl_index": 0
+            },
+            {
+              "type": "_11",
+              "name": "_11_12",
+              "block_size": 416,
+              "set": 3,
+              "binding": 3,
+              "source_name": "cb0",
+              "source_offset": 568,
+              "category": "ubos",
+              "msl_index": 1
+            },
+            {
+              "type": "texture2D",
+              "name": "_9",
+              "set": 3,
+              "binding": 2,
+              "source_name": "_InputTexture",
+              "source_offset": 532,
+              "category": "separate_images",
+              "msl_index": 0
+            },
+            {
+              "type": "sampler",
+              "name": "_10",
+              "set": 3,
+              "binding": 1,
+              "source_name": "sampler_LinearClamp",
+              "source_offset": 492,
+              "category": "separate_samplers",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "ShaderVariablesGlobal",
+              "size": 3200,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_ExposureWithMiscParams",
+                  "offset": 432,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    432
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "array": [
+                    6
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 96,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "array": [
+                    6
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 192,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 400
+                },
+                {
+                  "name": "_m16",
+                  "type": "float",
+                  "offset": 416
+                },
+                {
+                  "name": "_m17",
+                  "type": "float",
+                  "offset": 420
+                },
+                {
+                  "name": "_m18",
+                  "type": "float",
+                  "offset": 424
+                },
+                {
+                  "name": "_m19",
+                  "type": "uint",
+                  "offset": 428
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 432
+                },
+                {
+                  "name": "_m21",
+                  "type": "ivec4",
+                  "offset": 448
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 464
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 480
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 496
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 512
+                },
+                {
+                  "name": "_m26",
+                  "type": "vec4",
+                  "offset": 528
+                },
+                {
+                  "name": "_m27",
+                  "type": "vec4",
+                  "offset": 544
+                },
+                {
+                  "name": "_m28",
+                  "type": "vec4",
+                  "offset": 560
+                },
+                {
+                  "name": "_m29",
+                  "type": "vec4",
+                  "offset": 576
+                },
+                {
+                  "name": "_m30",
+                  "type": "vec4",
+                  "offset": 592
+                },
+                {
+                  "name": "_m31",
+                  "type": "vec4",
+                  "offset": 608
+                },
+                {
+                  "name": "_m32",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 624,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m33",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 688,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m34",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 752,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m35",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 816,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m36",
+                  "type": "vec4",
+                  "offset": 880
+                },
+                {
+                  "name": "_m37",
+                  "type": "vec4",
+                  "offset": 896
+                },
+                {
+                  "name": "_m38",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 912,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m39",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 976,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m40",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 1040,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m41",
+                  "type": "vec4",
+                  "offset": 1104
+                },
+                {
+                  "name": "_m42",
+                  "type": "vec4",
+                  "offset": 1120
+                },
+                {
+                  "name": "_m43",
+                  "type": "vec4",
+                  "offset": 1136
+                },
+                {
+                  "name": "_m44",
+                  "type": "vec4",
+                  "offset": 1152
+                },
+                {
+                  "name": "_m45",
+                  "type": "vec4",
+                  "offset": 1168
+                },
+                {
+                  "name": "_m46",
+                  "type": "vec4",
+                  "offset": 1184
+                },
+                {
+                  "name": "_m47",
+                  "type": "vec4",
+                  "offset": 1200
+                },
+                {
+                  "name": "_m48",
+                  "type": "vec4",
+                  "offset": 1216
+                },
+                {
+                  "name": "_m49",
+                  "type": "vec4",
+                  "offset": 1232
+                },
+                {
+                  "name": "_m50",
+                  "type": "vec4",
+                  "offset": 1248
+                },
+                {
+                  "name": "_m51",
+                  "type": "vec4",
+                  "offset": 1264
+                },
+                {
+                  "name": "_m52",
+                  "type": "vec4",
+                  "offset": 1280
+                },
+                {
+                  "name": "_m53",
+                  "type": "vec4",
+                  "offset": 1296
+                },
+                {
+                  "name": "_m54",
+                  "type": "vec4",
+                  "offset": 1312
+                },
+                {
+                  "name": "_m55",
+                  "type": "vec4",
+                  "offset": 1328
+                },
+                {
+                  "name": "_m56",
+                  "type": "vec4",
+                  "offset": 1344
+                },
+                {
+                  "name": "_m57",
+                  "type": "vec4",
+                  "offset": 1360
+                },
+                {
+                  "name": "_m58",
+                  "type": "vec4",
+                  "offset": 1376
+                },
+                {
+                  "name": "_m59",
+                  "type": "vec4",
+                  "offset": 1392
+                },
+                {
+                  "name": "_m60",
+                  "type": "vec4",
+                  "offset": 1408
+                },
+                {
+                  "name": "_m61",
+                  "type": "vec4",
+                  "offset": 1424
+                },
+                {
+                  "name": "_m62",
+                  "type": "vec4",
+                  "offset": 1440
+                },
+                {
+                  "name": "_m63",
+                  "type": "vec4",
+                  "offset": 1456
+                },
+                {
+                  "name": "_m64",
+                  "type": "vec4",
+                  "offset": 1472
+                },
+                {
+                  "name": "_m65",
+                  "type": "vec4",
+                  "offset": 1488
+                },
+                {
+                  "name": "_m66",
+                  "type": "vec4",
+                  "offset": 1504
+                },
+                {
+                  "name": "_m67",
+                  "type": "vec4",
+                  "offset": 1520
+                },
+                {
+                  "name": "_m68",
+                  "type": "vec4",
+                  "offset": 1536
+                },
+                {
+                  "name": "_m69",
+                  "type": "vec4",
+                  "offset": 1552
+                },
+                {
+                  "name": "_m70",
+                  "type": "vec4",
+                  "offset": 1568
+                },
+                {
+                  "name": "_m71",
+                  "type": "vec4",
+                  "offset": 1584
+                },
+                {
+                  "name": "_m72",
+                  "type": "vec4",
+                  "offset": 1600
+                },
+                {
+                  "name": "_m73",
+                  "type": "vec4",
+                  "offset": 1616
+                },
+                {
+                  "name": "_m74",
+                  "type": "vec4",
+                  "offset": 1632
+                },
+                {
+                  "name": "_m75",
+                  "type": "vec4",
+                  "offset": 1648
+                },
+                {
+                  "name": "_m76",
+                  "type": "vec4",
+                  "offset": 1664
+                },
+                {
+                  "name": "_m77",
+                  "type": "vec4",
+                  "offset": 1680
+                },
+                {
+                  "name": "_m78",
+                  "type": "vec4",
+                  "offset": 1696
+                },
+                {
+                  "name": "_m79",
+                  "type": "vec4",
+                  "offset": 1712
+                },
+                {
+                  "name": "_m80",
+                  "type": "vec4",
+                  "offset": 1728
+                },
+                {
+                  "name": "_m81",
+                  "type": "vec4",
+                  "offset": 1744
+                },
+                {
+                  "name": "_m82",
+                  "type": "vec4",
+                  "offset": 1760
+                },
+                {
+                  "name": "_m83",
+                  "type": "vec4",
+                  "offset": 1776
+                },
+                {
+                  "name": "_m84",
+                  "type": "vec4",
+                  "offset": 1792
+                },
+                {
+                  "name": "_m85",
+                  "type": "vec4",
+                  "offset": 1808
+                },
+                {
+                  "name": "_m86",
+                  "type": "vec4",
+                  "offset": 1824
+                },
+                {
+                  "name": "_m87",
+                  "type": "vec4",
+                  "offset": 1840
+                },
+                {
+                  "name": "_m88",
+                  "type": "vec4",
+                  "offset": 1856
+                },
+                {
+                  "name": "_m89",
+                  "type": "vec4",
+                  "offset": 1872
+                },
+                {
+                  "name": "_m90",
+                  "type": "vec4",
+                  "offset": 1888
+                },
+                {
+                  "name": "_m91",
+                  "type": "vec4",
+                  "offset": 1904
+                },
+                {
+                  "name": "_m92",
+                  "type": "vec4",
+                  "offset": 1920
+                },
+                {
+                  "name": "_m93",
+                  "type": "vec4",
+                  "offset": 1936
+                },
+                {
+                  "name": "_m94",
+                  "type": "vec4",
+                  "offset": 1952
+                },
+                {
+                  "name": "_m95",
+                  "type": "vec4",
+                  "offset": 1968
+                },
+                {
+                  "name": "_m96",
+                  "type": "vec4",
+                  "offset": 1984
+                },
+                {
+                  "name": "_m97",
+                  "type": "vec4",
+                  "offset": 2000
+                },
+                {
+                  "name": "_m98",
+                  "type": "vec4",
+                  "offset": 2016
+                },
+                {
+                  "name": "_m99",
+                  "type": "vec4",
+                  "array": [
+                    2
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 2032,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m100",
+                  "type": "vec4",
+                  "array": [
+                    2
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 2064,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m101",
+                  "type": "float",
+                  "offset": 2096
+                },
+                {
+                  "name": "_m102",
+                  "type": "float",
+                  "offset": 2100
+                },
+                {
+                  "name": "_m103",
+                  "type": "float",
+                  "offset": 2104
+                },
+                {
+                  "name": "_m104",
+                  "type": "float",
+                  "offset": 2108
+                },
+                {
+                  "name": "_m105",
+                  "type": "vec4",
+                  "offset": 2112
+                },
+                {
+                  "name": "_m106",
+                  "type": "vec4",
+                  "offset": 2128
+                },
+                {
+                  "name": "_m107",
+                  "type": "vec4",
+                  "offset": 2144
+                },
+                {
+                  "name": "_m108",
+                  "type": "vec4",
+                  "offset": 2160
+                },
+                {
+                  "name": "_m109",
+                  "type": "vec4",
+                  "offset": 2176
+                },
+                {
+                  "name": "_m110",
+                  "type": "vec4",
+                  "offset": 2192
+                },
+                {
+                  "name": "_m111",
+                  "type": "vec4",
+                  "offset": 2208
+                },
+                {
+                  "name": "_m112",
+                  "type": "vec4",
+                  "offset": 2224
+                },
+                {
+                  "name": "_m113",
+                  "type": "vec4",
+                  "offset": 2240
+                },
+                {
+                  "name": "_m114",
+                  "type": "vec4",
+                  "offset": 2256
+                },
+                {
+                  "name": "_m115",
+                  "type": "vec4",
+                  "offset": 2272
+                },
+                {
+                  "name": "_m116",
+                  "type": "vec4",
+                  "offset": 2288
+                },
+                {
+                  "name": "_m117",
+                  "type": "vec4",
+                  "offset": 2304
+                },
+                {
+                  "name": "_m118",
+                  "type": "vec4",
+                  "offset": 2320
+                },
+                {
+                  "name": "_m119",
+                  "type": "vec4",
+                  "offset": 2336
+                },
+                {
+                  "name": "_m120",
+                  "type": "vec4",
+                  "offset": 2352
+                },
+                {
+                  "name": "_m121",
+                  "type": "vec4",
+                  "offset": 2368
+                },
+                {
+                  "name": "_m122",
+                  "type": "vec4",
+                  "offset": 2384
+                },
+                {
+                  "name": "_m123",
+                  "type": "vec4",
+                  "offset": 2400
+                },
+                {
+                  "name": "_m124",
+                  "type": "vec4",
+                  "offset": 2416
+                },
+                {
+                  "name": "_m125",
+                  "type": "vec4",
+                  "offset": 2432
+                },
+                {
+                  "name": "_m126",
+                  "type": "vec4",
+                  "offset": 2448
+                },
+                {
+                  "name": "_m127",
+                  "type": "vec4",
+                  "offset": 2464
+                },
+                {
+                  "name": "_m128",
+                  "type": "vec4",
+                  "offset": 2480
+                },
+                {
+                  "name": "_m129",
+                  "type": "vec4",
+                  "offset": 2496
+                },
+                {
+                  "name": "_m130",
+                  "type": "vec4",
+                  "offset": 2512
+                },
+                {
+                  "name": "_m131",
+                  "type": "vec4",
+                  "offset": 2528
+                },
+                {
+                  "name": "_m132",
+                  "type": "vec4",
+                  "offset": 2544
+                },
+                {
+                  "name": "_m133",
+                  "type": "vec4",
+                  "offset": 2560
+                },
+                {
+                  "name": "_m134",
+                  "type": "vec4",
+                  "offset": 2576
+                },
+                {
+                  "name": "_m135",
+                  "type": "mat4",
+                  "offset": 2592,
+                  "matrix_stride": 16,
+                  "row_major": true
+                },
+                {
+                  "name": "_m136",
+                  "type": "vec4",
+                  "offset": 2656
+                },
+                {
+                  "name": "_m137",
+                  "type": "vec4",
+                  "offset": 2672
+                },
+                {
+                  "name": "_m138",
+                  "type": "vec4",
+                  "array": [
+                    32
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 2688,
+                  "array_stride": 16
+                }
+              ]
+            },
+            {
+              "name": "cb0",
+              "size": 416,
+              "msl_index": 1,
+              "fields": [
+                {
+                  "name": "_VignetteParams1",
+                  "offset": 16,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    16
+                  ]
+                },
+                {
+                  "name": "_VignetteParams2",
+                  "offset": 32,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    32
+                  ]
+                },
+                {
+                  "name": "_VignetteColor",
+                  "offset": 64,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    64
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "offset": 96
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "offset": 112
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 128
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 144
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 160
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 176
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 192
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 208
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 224
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 240
+                },
+                {
+                  "name": "_m16",
+                  "type": "vec4",
+                  "offset": 256
+                },
+                {
+                  "name": "_m17",
+                  "type": "vec4",
+                  "offset": 272
+                },
+                {
+                  "name": "_m18",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m19",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m21",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 400
+                }
+              ]
+            }
+          ],
+          "inputs": [
+            {
+              "type": "vec2",
+              "name": "_3",
+              "location": 0
+            }
+          ],
+          "outputs": [
+            {
+              "type": "vec4",
+              "name": "_4",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program727.fragment.metal",
+              "sha256": "57272aaff648de23b5c09eef654c07a59dcaa5ee1f164cbace9ffd3ba07e8400"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program727.fragment.spv",
+              "sha256": "fb1b5d513e3d4933ebf6880f3cc146498130077337675034d4b81ee3ba29426f"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program727.fragment.reflection.json",
+              "sha256": "dc37783405fb34512dcff0d9311f9895f3a39fe7b1e884834bec80fe6c4a4f32"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program727.fragment.bindings.json",
+              "sha256": "ee254056c2f05b4871cca7ba68831263fe04592fe7db3be7713241c3bb0b11a4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "program": 728,
+      "keywords": [
+        "VIGNETTE_MASK"
+      ],
+      "parameter_index": 722,
+      "parameter_file": "Composite/UberPost-ss0-p18-seg0-entry722.bin",
+      "parameter_sha256": "e7ee9312fc7ff2c603087c4ce2ab2b63d5940d38971582a6f1a386909fa7dd5d",
+      "parameter_prefix": {
+        "serialized_version": 202506210,
+        "buffers": [
+          {
+            "name": "",
+            "size": 0,
+            "fields": []
+          },
+          {
+            "name": "cb0",
+            "size": 416,
+            "fields": [
+              {
+                "name": "_VignetteColor",
+                "offset": 64,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  64
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_PerPassConstants",
+            "size": 32,
+            "fields": [
+              {
+                "name": "_HGFlipX",
+                "offset": 4
+              },
+              {
+                "name": "_HGFlipY",
+                "offset": 8
+              }
+            ]
+          }
+        ],
+        "parsed_prefix_bytes": 124,
+        "unparsed_tail_hex": "040000000d0000005f496e707574546578747572650000000000000004000389ffffffff040000000d0000005f5669676e657474654d61736b00000000000000030003890100030904000000030000006362300001000000050003090000000000000000040000000200030955000000010000000c00000044656661756c745365745f33030000000600000005000000110000005f50657250617373436f6e7374616e7473000000000000000600000001000000010001000d0000005f5669676e657474654d61736b000000010000000000000002000000ffff01001300000073616d706c65725f4c696e656172436c616d7000020000000000000002000000550001000d0000005f5669676e657474654d61736b000000030000000200000002000000010201000d0000005f496e70757454657874757265000000040000000200000002000000ff020100030000006362300005000000060000000200000000000100"
+      },
+      "descriptor_tail": {
+        "legacy_resources": [
+          {
+            "source_offset": 128,
+            "name": "_InputTexture",
+            "kind": 0,
+            "fields": [
+              2298675204,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 164,
+            "name": "_VignetteMask",
+            "kind": 0,
+            "fields": [
+              2298675203,
+              151191553,
+              4
+            ]
+          },
+          {
+            "source_offset": 200,
+            "name": "cb0",
+            "kind": 1,
+            "fields": [
+              151191557,
+              0
+            ]
+          },
+          {
+            "source_offset": 220,
+            "name": "",
+            "kind": 4,
+            "fields": [
+              151191554,
+              85
+            ]
+          }
+        ],
+        "descriptor_sets": [
+          {
+            "name": "DefaultSet_3",
+            "set": 3,
+            "max_binding": 5,
+            "resources": [
+              {
+                "source_offset": 268,
+                "name": "_PerPassConstants",
+                "binding": 0,
+                "resource_type": 6,
+                "stage_mask": 1,
+                "flags": 65537
+              },
+              {
+                "source_offset": 308,
+                "name": "_VignetteMask",
+                "binding": 1,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 131071
+              },
+              {
+                "source_offset": 344,
+                "name": "sampler_LinearClamp",
+                "binding": 2,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 65621
+              },
+              {
+                "source_offset": 384,
+                "name": "_VignetteMask",
+                "binding": 3,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66049
+              },
+              {
+                "source_offset": 420,
+                "name": "_InputTexture",
+                "binding": 4,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 456,
+                "name": "cb0",
+                "binding": 5,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65536
+              }
+            ]
+          }
+        ],
+        "source_bytes_consumed": 356
+      },
+      "stages": {
+        "vertex": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_6",
+              "name": "_6_7",
+              "block_size": 32,
+              "set": 3,
+              "binding": 0,
+              "source_name": "_PerPassConstants",
+              "source_offset": 268,
+              "category": "ubos",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "_PerPassConstants",
+              "size": 32,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_HGFlipX",
+                  "offset": 4
+                },
+                {
+                  "name": "_HGFlipY",
+                  "offset": 8
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "float",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "float",
+                  "offset": 4
+                },
+                {
+                  "name": "_m2",
+                  "type": "float",
+                  "offset": 8
+                },
+                {
+                  "name": "_m3",
+                  "type": "float",
+                  "offset": 12
+                },
+                {
+                  "name": "_m4",
+                  "type": "float",
+                  "offset": 16
+                },
+                {
+                  "name": "_m5",
+                  "type": "float",
+                  "offset": 20
+                },
+                {
+                  "name": "_m6",
+                  "type": "float",
+                  "offset": 24
+                },
+                {
+                  "name": "_m7",
+                  "type": "float",
+                  "offset": 28
+                }
+              ]
+            }
+          ],
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "vec2",
+              "name": "_5",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program728.vertex.metal",
+              "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program728.vertex.spv",
+              "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program728.vertex.reflection.json",
+              "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program728.vertex.bindings.json",
+              "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef"
+            }
+          ]
+        },
+        "fragment": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_11",
+              "name": "_11_12",
+              "block_size": 416,
+              "set": 3,
+              "binding": 5,
+              "source_name": "cb0",
+              "source_offset": 456,
+              "category": "ubos",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_7",
+              "set": 3,
+              "binding": 4,
+              "source_name": "_InputTexture",
+              "source_offset": 420,
+              "category": "separate_images",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_8",
+              "set": 3,
+              "binding": 3,
+              "source_name": "_VignetteMask",
+              "source_offset": 384,
+              "category": "separate_images",
+              "msl_index": 1
+            },
+            {
+              "type": "sampler",
+              "name": "_9",
+              "set": 3,
+              "binding": 1,
+              "source_name": "_VignetteMask",
+              "source_offset": 308,
+              "category": "separate_samplers",
+              "msl_index": 0
+            },
+            {
+              "type": "sampler",
+              "name": "_10",
+              "set": 3,
+              "binding": 2,
+              "source_name": "sampler_LinearClamp",
+              "source_offset": 344,
+              "category": "separate_samplers",
+              "msl_index": 1
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "cb0",
+              "size": 416,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_VignetteColor",
+                  "offset": 64,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    64
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "offset": 96
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "offset": 112
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 128
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 144
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 160
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 176
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 192
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 208
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 224
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 240
+                },
+                {
+                  "name": "_m16",
+                  "type": "vec4",
+                  "offset": 256
+                },
+                {
+                  "name": "_m17",
+                  "type": "vec4",
+                  "offset": 272
+                },
+                {
+                  "name": "_m18",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m19",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m21",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 400
+                }
+              ]
+            }
+          ],
+          "inputs": [
+            {
+              "type": "vec2",
+              "name": "_3",
+              "location": 0
+            }
+          ],
+          "outputs": [
+            {
+              "type": "vec4",
+              "name": "_4",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program728.fragment.metal",
+              "sha256": "1f89977ab45b918680621523521da0b739f1541f45c1720bbc387143b1805a76"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program728.fragment.spv",
+              "sha256": "1c7f9718060057c938db4f4480b6ea18b90a48e943e023c1ba55e41b2d57bdfd"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program728.fragment.reflection.json",
+              "sha256": "fe81bff46f98c5faa9a115f5e7446b319c9e2f93877aaa1c63ff2b488380ffd8"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program728.fragment.bindings.json",
+              "sha256": "036e67e8451962b5891a7d7f86eb136f094b2cecee90341965fb2ae2c78dff60"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "program": 729,
+      "keywords": [
+        "BLOOM"
+      ],
+      "parameter_index": 723,
+      "parameter_file": "Composite/UberPost-ss0-p18-seg0-entry723.bin",
+      "parameter_sha256": "4f87ffa582b2dc5022f23de97bc329091a6b8a414c6d663828fa020c74f36e7f",
+      "parameter_prefix": {
+        "serialized_version": 202506210,
+        "buffers": [
+          {
+            "name": "",
+            "size": 0,
+            "fields": []
+          },
+          {
+            "name": "cb0",
+            "size": 416,
+            "fields": [
+              {
+                "name": "_BloomParams",
+                "offset": 144,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  144
+                ]
+              },
+              {
+                "name": "_BloomThreshold",
+                "offset": 160,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  160
+                ]
+              },
+              {
+                "name": "_BloomTint",
+                "offset": 176,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  176
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_PerPassConstants",
+            "size": 32,
+            "fields": [
+              {
+                "name": "_HGFlipX",
+                "offset": 4
+              },
+              {
+                "name": "_HGFlipY",
+                "offset": 8
+              }
+            ]
+          }
+        ],
+        "parsed_prefix_bytes": 204,
+        "unparsed_tail_hex": "040000000d0000005f496e707574546578747572650000000000000002000389ffffffff040000000d0000005f426c6f6f6d546578747572650000000000000003000389ffffffff04000000030000006362300001000000040003090000000000000000040000000100030955000000010000000c00000044656661756c745365745f33030000000500000004000000110000005f50657250617373436f6e7374616e7473000000000000000600000001000000010001001300000073616d706c65725f4c696e656172436c616d7000010000000000000002000000550001000d0000005f496e70757454657874757265000000020000000200000002000000ff0201000d0000005f426c6f6f6d54657874757265000000030000000200000002000000ff020100030000006362300004000000060000000200000000000100"
+      },
+      "descriptor_tail": {
+        "legacy_resources": [
+          {
+            "source_offset": 208,
+            "name": "_InputTexture",
+            "kind": 0,
+            "fields": [
+              2298675202,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 244,
+            "name": "_BloomTexture",
+            "kind": 0,
+            "fields": [
+              2298675203,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 280,
+            "name": "cb0",
+            "kind": 1,
+            "fields": [
+              151191556,
+              0
+            ]
+          },
+          {
+            "source_offset": 300,
+            "name": "",
+            "kind": 4,
+            "fields": [
+              151191553,
+              85
+            ]
+          }
+        ],
+        "descriptor_sets": [
+          {
+            "name": "DefaultSet_3",
+            "set": 3,
+            "max_binding": 4,
+            "resources": [
+              {
+                "source_offset": 348,
+                "name": "_PerPassConstants",
+                "binding": 0,
+                "resource_type": 6,
+                "stage_mask": 1,
+                "flags": 65537
+              },
+              {
+                "source_offset": 388,
+                "name": "sampler_LinearClamp",
+                "binding": 1,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 65621
+              },
+              {
+                "source_offset": 428,
+                "name": "_InputTexture",
+                "binding": 2,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 464,
+                "name": "_BloomTexture",
+                "binding": 3,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 500,
+                "name": "cb0",
+                "binding": 4,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65536
+              }
+            ]
+          }
+        ],
+        "source_bytes_consumed": 320
+      },
+      "stages": {
+        "vertex": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_6",
+              "name": "_6_7",
+              "block_size": 32,
+              "set": 3,
+              "binding": 0,
+              "source_name": "_PerPassConstants",
+              "source_offset": 348,
+              "category": "ubos",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "_PerPassConstants",
+              "size": 32,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_HGFlipX",
+                  "offset": 4
+                },
+                {
+                  "name": "_HGFlipY",
+                  "offset": 8
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "float",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "float",
+                  "offset": 4
+                },
+                {
+                  "name": "_m2",
+                  "type": "float",
+                  "offset": 8
+                },
+                {
+                  "name": "_m3",
+                  "type": "float",
+                  "offset": 12
+                },
+                {
+                  "name": "_m4",
+                  "type": "float",
+                  "offset": 16
+                },
+                {
+                  "name": "_m5",
+                  "type": "float",
+                  "offset": 20
+                },
+                {
+                  "name": "_m6",
+                  "type": "float",
+                  "offset": 24
+                },
+                {
+                  "name": "_m7",
+                  "type": "float",
+                  "offset": 28
+                }
+              ]
+            }
+          ],
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "vec2",
+              "name": "_5",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program729.vertex.metal",
+              "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program729.vertex.spv",
+              "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program729.vertex.reflection.json",
+              "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program729.vertex.bindings.json",
+              "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef"
+            }
+          ]
+        },
+        "fragment": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_10",
+              "name": "_10_11",
+              "block_size": 416,
+              "set": 3,
+              "binding": 4,
+              "source_name": "cb0",
+              "source_offset": 500,
+              "category": "ubos",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_7",
+              "set": 3,
+              "binding": 2,
+              "source_name": "_InputTexture",
+              "source_offset": 428,
+              "category": "separate_images",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_8",
+              "set": 3,
+              "binding": 3,
+              "source_name": "_BloomTexture",
+              "source_offset": 464,
+              "category": "separate_images",
+              "msl_index": 1
+            },
+            {
+              "type": "sampler",
+              "name": "_9",
+              "set": 3,
+              "binding": 1,
+              "source_name": "sampler_LinearClamp",
+              "source_offset": 388,
+              "category": "separate_samplers",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "cb0",
+              "size": 416,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_BloomParams",
+                  "offset": 144,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    144
+                  ]
+                },
+                {
+                  "name": "_BloomThreshold",
+                  "offset": 160,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    160
+                  ]
+                },
+                {
+                  "name": "_BloomTint",
+                  "offset": 176,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    176
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "offset": 96
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "offset": 112
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 128
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 144
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 160
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 176
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 192
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 208
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 224
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 240
+                },
+                {
+                  "name": "_m16",
+                  "type": "vec4",
+                  "offset": 256
+                },
+                {
+                  "name": "_m17",
+                  "type": "vec4",
+                  "offset": 272
+                },
+                {
+                  "name": "_m18",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m19",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m21",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 400
+                }
+              ]
+            }
+          ],
+          "inputs": [
+            {
+              "type": "vec2",
+              "name": "_3",
+              "location": 0
+            }
+          ],
+          "outputs": [
+            {
+              "type": "vec4",
+              "name": "_4",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program729.fragment.metal",
+              "sha256": "2d895ac7319e2ee9d37a66c1f98d3252fab0e86ebfa1490d690f3e3d81efa55e"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program729.fragment.spv",
+              "sha256": "6e4abc6aa24936f8e0ff4ce501b10d9bcd39993bbfa4bca9201ae4f8fa1cc37b"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program729.fragment.reflection.json",
+              "sha256": "866eec563fac181fd269394cebbe7ee4affb0455accc76f629db3976539919a5"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program729.fragment.bindings.json",
+              "sha256": "395e5a90f9f9ee7d0f2ceb5e6b86d5ae0fb8a0d49094142475bc56eb7b5f8c5e"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "program": 730,
+      "keywords": [
+        "BLOOM",
+        "VIGNETTE"
+      ],
+      "parameter_index": 724,
+      "parameter_file": "Composite/UberPost-ss0-p18-seg0-entry724.bin",
+      "parameter_sha256": "a75bd22f241603fa97caed29bf09615c621a8f279a6a4cfdf9ded1420f201219",
+      "parameter_prefix": {
+        "serialized_version": 202506210,
+        "buffers": [
+          {
+            "name": "",
+            "size": 0,
+            "fields": []
+          },
+          {
+            "name": "ShaderVariablesGlobal",
+            "size": 3200,
+            "fields": [
+              {
+                "name": "_ExposureWithMiscParams",
+                "offset": 432,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  432
+                ]
+              }
+            ]
+          },
+          {
+            "name": "cb0",
+            "size": 416,
+            "fields": [
+              {
+                "name": "_VignetteParams1",
+                "offset": 16,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  16
+                ]
+              },
+              {
+                "name": "_VignetteParams2",
+                "offset": 32,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  32
+                ]
+              },
+              {
+                "name": "_VignetteColor",
+                "offset": 64,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  64
+                ]
+              },
+              {
+                "name": "_BloomParams",
+                "offset": 144,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  144
+                ]
+              },
+              {
+                "name": "_BloomThreshold",
+                "offset": 160,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  160
+                ]
+              },
+              {
+                "name": "_BloomTint",
+                "offset": 176,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  176
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_PerPassConstants",
+            "size": 32,
+            "fields": [
+              {
+                "name": "_HGFlipX",
+                "offset": 4
+              },
+              {
+                "name": "_HGFlipY",
+                "offset": 8
+              }
+            ]
+          }
+        ],
+        "parsed_prefix_bytes": 428,
+        "unparsed_tail_hex": "050000000d0000005f496e707574546578747572650000000000000002000389ffffffff040000000d0000005f426c6f6f6d546578747572650000000000000003000389ffffffff04000000150000005368616465725661726961626c6573476c6f62616c000000010000000500030900000000030000006362300001000000040003090000000000000000040000000100030955000000010000000c00000044656661756c745365745f33030000000600000005000000110000005f50657250617373436f6e7374616e7473000000000000000600000001000000020001001300000073616d706c65725f4c696e656172436c616d7000010000000000000002000000550001000d0000005f496e70757454657874757265000000020000000200000002000000ff0201000d0000005f426c6f6f6d54657874757265000000030000000200000002000000ff020100030000006362300004000000060000000200000001000100150000005368616465725661726961626c6573476c6f62616c00000005000000060000000200000000000100"
+      },
+      "descriptor_tail": {
+        "legacy_resources": [
+          {
+            "source_offset": 432,
+            "name": "_InputTexture",
+            "kind": 0,
+            "fields": [
+              2298675202,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 468,
+            "name": "_BloomTexture",
+            "kind": 0,
+            "fields": [
+              2298675203,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 504,
+            "name": "ShaderVariablesGlobal",
+            "kind": 1,
+            "fields": [
+              151191557,
+              0
+            ]
+          },
+          {
+            "source_offset": 544,
+            "name": "cb0",
+            "kind": 1,
+            "fields": [
+              151191556,
+              0
+            ]
+          },
+          {
+            "source_offset": 564,
+            "name": "",
+            "kind": 4,
+            "fields": [
+              151191553,
+              85
+            ]
+          }
+        ],
+        "descriptor_sets": [
+          {
+            "name": "DefaultSet_3",
+            "set": 3,
+            "max_binding": 5,
+            "resources": [
+              {
+                "source_offset": 612,
+                "name": "_PerPassConstants",
+                "binding": 0,
+                "resource_type": 6,
+                "stage_mask": 1,
+                "flags": 65538
+              },
+              {
+                "source_offset": 652,
+                "name": "sampler_LinearClamp",
+                "binding": 1,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 65621
+              },
+              {
+                "source_offset": 692,
+                "name": "_InputTexture",
+                "binding": 2,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 728,
+                "name": "_BloomTexture",
+                "binding": 3,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 764,
+                "name": "cb0",
+                "binding": 4,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65537
+              },
+              {
+                "source_offset": 788,
+                "name": "ShaderVariablesGlobal",
+                "binding": 5,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65536
+              }
+            ]
+          }
+        ],
+        "source_bytes_consumed": 404
+      },
+      "stages": {
+        "vertex": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_6",
+              "name": "_6_7",
+              "block_size": 32,
+              "set": 3,
+              "binding": 0,
+              "source_name": "_PerPassConstants",
+              "source_offset": 612,
+              "category": "ubos",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "_PerPassConstants",
+              "size": 32,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_HGFlipX",
+                  "offset": 4
+                },
+                {
+                  "name": "_HGFlipY",
+                  "offset": 8
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "float",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "float",
+                  "offset": 4
+                },
+                {
+                  "name": "_m2",
+                  "type": "float",
+                  "offset": 8
+                },
+                {
+                  "name": "_m3",
+                  "type": "float",
+                  "offset": 12
+                },
+                {
+                  "name": "_m4",
+                  "type": "float",
+                  "offset": 16
+                },
+                {
+                  "name": "_m5",
+                  "type": "float",
+                  "offset": 20
+                },
+                {
+                  "name": "_m6",
+                  "type": "float",
+                  "offset": 24
+                },
+                {
+                  "name": "_m7",
+                  "type": "float",
+                  "offset": 28
+                }
+              ]
+            }
+          ],
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "vec2",
+              "name": "_5",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program730.vertex.metal",
+              "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program730.vertex.spv",
+              "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program730.vertex.reflection.json",
+              "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program730.vertex.bindings.json",
+              "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef"
+            }
+          ]
+        },
+        "fragment": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_5",
+              "name": "_5_6",
+              "block_size": 3200,
+              "set": 3,
+              "binding": 5,
+              "source_name": "ShaderVariablesGlobal",
+              "source_offset": 788,
+              "category": "ubos",
+              "msl_index": 0
+            },
+            {
+              "type": "_12",
+              "name": "_12_13",
+              "block_size": 416,
+              "set": 3,
+              "binding": 4,
+              "source_name": "cb0",
+              "source_offset": 764,
+              "category": "ubos",
+              "msl_index": 1
+            },
+            {
+              "type": "texture2D",
+              "name": "_9",
+              "set": 3,
+              "binding": 2,
+              "source_name": "_InputTexture",
+              "source_offset": 692,
+              "category": "separate_images",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_10",
+              "set": 3,
+              "binding": 3,
+              "source_name": "_BloomTexture",
+              "source_offset": 728,
+              "category": "separate_images",
+              "msl_index": 1
+            },
+            {
+              "type": "sampler",
+              "name": "_11",
+              "set": 3,
+              "binding": 1,
+              "source_name": "sampler_LinearClamp",
+              "source_offset": 652,
+              "category": "separate_samplers",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "ShaderVariablesGlobal",
+              "size": 3200,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_ExposureWithMiscParams",
+                  "offset": 432,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    432
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "array": [
+                    6
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 96,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "array": [
+                    6
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 192,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 400
+                },
+                {
+                  "name": "_m16",
+                  "type": "float",
+                  "offset": 416
+                },
+                {
+                  "name": "_m17",
+                  "type": "float",
+                  "offset": 420
+                },
+                {
+                  "name": "_m18",
+                  "type": "float",
+                  "offset": 424
+                },
+                {
+                  "name": "_m19",
+                  "type": "uint",
+                  "offset": 428
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 432
+                },
+                {
+                  "name": "_m21",
+                  "type": "ivec4",
+                  "offset": 448
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 464
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 480
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 496
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 512
+                },
+                {
+                  "name": "_m26",
+                  "type": "vec4",
+                  "offset": 528
+                },
+                {
+                  "name": "_m27",
+                  "type": "vec4",
+                  "offset": 544
+                },
+                {
+                  "name": "_m28",
+                  "type": "vec4",
+                  "offset": 560
+                },
+                {
+                  "name": "_m29",
+                  "type": "vec4",
+                  "offset": 576
+                },
+                {
+                  "name": "_m30",
+                  "type": "vec4",
+                  "offset": 592
+                },
+                {
+                  "name": "_m31",
+                  "type": "vec4",
+                  "offset": 608
+                },
+                {
+                  "name": "_m32",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 624,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m33",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 688,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m34",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 752,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m35",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 816,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m36",
+                  "type": "vec4",
+                  "offset": 880
+                },
+                {
+                  "name": "_m37",
+                  "type": "vec4",
+                  "offset": 896
+                },
+                {
+                  "name": "_m38",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 912,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m39",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 976,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m40",
+                  "type": "vec4",
+                  "array": [
+                    4
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 1040,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m41",
+                  "type": "vec4",
+                  "offset": 1104
+                },
+                {
+                  "name": "_m42",
+                  "type": "vec4",
+                  "offset": 1120
+                },
+                {
+                  "name": "_m43",
+                  "type": "vec4",
+                  "offset": 1136
+                },
+                {
+                  "name": "_m44",
+                  "type": "vec4",
+                  "offset": 1152
+                },
+                {
+                  "name": "_m45",
+                  "type": "vec4",
+                  "offset": 1168
+                },
+                {
+                  "name": "_m46",
+                  "type": "vec4",
+                  "offset": 1184
+                },
+                {
+                  "name": "_m47",
+                  "type": "vec4",
+                  "offset": 1200
+                },
+                {
+                  "name": "_m48",
+                  "type": "vec4",
+                  "offset": 1216
+                },
+                {
+                  "name": "_m49",
+                  "type": "vec4",
+                  "offset": 1232
+                },
+                {
+                  "name": "_m50",
+                  "type": "vec4",
+                  "offset": 1248
+                },
+                {
+                  "name": "_m51",
+                  "type": "vec4",
+                  "offset": 1264
+                },
+                {
+                  "name": "_m52",
+                  "type": "vec4",
+                  "offset": 1280
+                },
+                {
+                  "name": "_m53",
+                  "type": "vec4",
+                  "offset": 1296
+                },
+                {
+                  "name": "_m54",
+                  "type": "vec4",
+                  "offset": 1312
+                },
+                {
+                  "name": "_m55",
+                  "type": "vec4",
+                  "offset": 1328
+                },
+                {
+                  "name": "_m56",
+                  "type": "vec4",
+                  "offset": 1344
+                },
+                {
+                  "name": "_m57",
+                  "type": "vec4",
+                  "offset": 1360
+                },
+                {
+                  "name": "_m58",
+                  "type": "vec4",
+                  "offset": 1376
+                },
+                {
+                  "name": "_m59",
+                  "type": "vec4",
+                  "offset": 1392
+                },
+                {
+                  "name": "_m60",
+                  "type": "vec4",
+                  "offset": 1408
+                },
+                {
+                  "name": "_m61",
+                  "type": "vec4",
+                  "offset": 1424
+                },
+                {
+                  "name": "_m62",
+                  "type": "vec4",
+                  "offset": 1440
+                },
+                {
+                  "name": "_m63",
+                  "type": "vec4",
+                  "offset": 1456
+                },
+                {
+                  "name": "_m64",
+                  "type": "vec4",
+                  "offset": 1472
+                },
+                {
+                  "name": "_m65",
+                  "type": "vec4",
+                  "offset": 1488
+                },
+                {
+                  "name": "_m66",
+                  "type": "vec4",
+                  "offset": 1504
+                },
+                {
+                  "name": "_m67",
+                  "type": "vec4",
+                  "offset": 1520
+                },
+                {
+                  "name": "_m68",
+                  "type": "vec4",
+                  "offset": 1536
+                },
+                {
+                  "name": "_m69",
+                  "type": "vec4",
+                  "offset": 1552
+                },
+                {
+                  "name": "_m70",
+                  "type": "vec4",
+                  "offset": 1568
+                },
+                {
+                  "name": "_m71",
+                  "type": "vec4",
+                  "offset": 1584
+                },
+                {
+                  "name": "_m72",
+                  "type": "vec4",
+                  "offset": 1600
+                },
+                {
+                  "name": "_m73",
+                  "type": "vec4",
+                  "offset": 1616
+                },
+                {
+                  "name": "_m74",
+                  "type": "vec4",
+                  "offset": 1632
+                },
+                {
+                  "name": "_m75",
+                  "type": "vec4",
+                  "offset": 1648
+                },
+                {
+                  "name": "_m76",
+                  "type": "vec4",
+                  "offset": 1664
+                },
+                {
+                  "name": "_m77",
+                  "type": "vec4",
+                  "offset": 1680
+                },
+                {
+                  "name": "_m78",
+                  "type": "vec4",
+                  "offset": 1696
+                },
+                {
+                  "name": "_m79",
+                  "type": "vec4",
+                  "offset": 1712
+                },
+                {
+                  "name": "_m80",
+                  "type": "vec4",
+                  "offset": 1728
+                },
+                {
+                  "name": "_m81",
+                  "type": "vec4",
+                  "offset": 1744
+                },
+                {
+                  "name": "_m82",
+                  "type": "vec4",
+                  "offset": 1760
+                },
+                {
+                  "name": "_m83",
+                  "type": "vec4",
+                  "offset": 1776
+                },
+                {
+                  "name": "_m84",
+                  "type": "vec4",
+                  "offset": 1792
+                },
+                {
+                  "name": "_m85",
+                  "type": "vec4",
+                  "offset": 1808
+                },
+                {
+                  "name": "_m86",
+                  "type": "vec4",
+                  "offset": 1824
+                },
+                {
+                  "name": "_m87",
+                  "type": "vec4",
+                  "offset": 1840
+                },
+                {
+                  "name": "_m88",
+                  "type": "vec4",
+                  "offset": 1856
+                },
+                {
+                  "name": "_m89",
+                  "type": "vec4",
+                  "offset": 1872
+                },
+                {
+                  "name": "_m90",
+                  "type": "vec4",
+                  "offset": 1888
+                },
+                {
+                  "name": "_m91",
+                  "type": "vec4",
+                  "offset": 1904
+                },
+                {
+                  "name": "_m92",
+                  "type": "vec4",
+                  "offset": 1920
+                },
+                {
+                  "name": "_m93",
+                  "type": "vec4",
+                  "offset": 1936
+                },
+                {
+                  "name": "_m94",
+                  "type": "vec4",
+                  "offset": 1952
+                },
+                {
+                  "name": "_m95",
+                  "type": "vec4",
+                  "offset": 1968
+                },
+                {
+                  "name": "_m96",
+                  "type": "vec4",
+                  "offset": 1984
+                },
+                {
+                  "name": "_m97",
+                  "type": "vec4",
+                  "offset": 2000
+                },
+                {
+                  "name": "_m98",
+                  "type": "vec4",
+                  "offset": 2016
+                },
+                {
+                  "name": "_m99",
+                  "type": "vec4",
+                  "array": [
+                    2
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 2032,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m100",
+                  "type": "vec4",
+                  "array": [
+                    2
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 2064,
+                  "array_stride": 16
+                },
+                {
+                  "name": "_m101",
+                  "type": "float",
+                  "offset": 2096
+                },
+                {
+                  "name": "_m102",
+                  "type": "float",
+                  "offset": 2100
+                },
+                {
+                  "name": "_m103",
+                  "type": "float",
+                  "offset": 2104
+                },
+                {
+                  "name": "_m104",
+                  "type": "float",
+                  "offset": 2108
+                },
+                {
+                  "name": "_m105",
+                  "type": "vec4",
+                  "offset": 2112
+                },
+                {
+                  "name": "_m106",
+                  "type": "vec4",
+                  "offset": 2128
+                },
+                {
+                  "name": "_m107",
+                  "type": "vec4",
+                  "offset": 2144
+                },
+                {
+                  "name": "_m108",
+                  "type": "vec4",
+                  "offset": 2160
+                },
+                {
+                  "name": "_m109",
+                  "type": "vec4",
+                  "offset": 2176
+                },
+                {
+                  "name": "_m110",
+                  "type": "vec4",
+                  "offset": 2192
+                },
+                {
+                  "name": "_m111",
+                  "type": "vec4",
+                  "offset": 2208
+                },
+                {
+                  "name": "_m112",
+                  "type": "vec4",
+                  "offset": 2224
+                },
+                {
+                  "name": "_m113",
+                  "type": "vec4",
+                  "offset": 2240
+                },
+                {
+                  "name": "_m114",
+                  "type": "vec4",
+                  "offset": 2256
+                },
+                {
+                  "name": "_m115",
+                  "type": "vec4",
+                  "offset": 2272
+                },
+                {
+                  "name": "_m116",
+                  "type": "vec4",
+                  "offset": 2288
+                },
+                {
+                  "name": "_m117",
+                  "type": "vec4",
+                  "offset": 2304
+                },
+                {
+                  "name": "_m118",
+                  "type": "vec4",
+                  "offset": 2320
+                },
+                {
+                  "name": "_m119",
+                  "type": "vec4",
+                  "offset": 2336
+                },
+                {
+                  "name": "_m120",
+                  "type": "vec4",
+                  "offset": 2352
+                },
+                {
+                  "name": "_m121",
+                  "type": "vec4",
+                  "offset": 2368
+                },
+                {
+                  "name": "_m122",
+                  "type": "vec4",
+                  "offset": 2384
+                },
+                {
+                  "name": "_m123",
+                  "type": "vec4",
+                  "offset": 2400
+                },
+                {
+                  "name": "_m124",
+                  "type": "vec4",
+                  "offset": 2416
+                },
+                {
+                  "name": "_m125",
+                  "type": "vec4",
+                  "offset": 2432
+                },
+                {
+                  "name": "_m126",
+                  "type": "vec4",
+                  "offset": 2448
+                },
+                {
+                  "name": "_m127",
+                  "type": "vec4",
+                  "offset": 2464
+                },
+                {
+                  "name": "_m128",
+                  "type": "vec4",
+                  "offset": 2480
+                },
+                {
+                  "name": "_m129",
+                  "type": "vec4",
+                  "offset": 2496
+                },
+                {
+                  "name": "_m130",
+                  "type": "vec4",
+                  "offset": 2512
+                },
+                {
+                  "name": "_m131",
+                  "type": "vec4",
+                  "offset": 2528
+                },
+                {
+                  "name": "_m132",
+                  "type": "vec4",
+                  "offset": 2544
+                },
+                {
+                  "name": "_m133",
+                  "type": "vec4",
+                  "offset": 2560
+                },
+                {
+                  "name": "_m134",
+                  "type": "vec4",
+                  "offset": 2576
+                },
+                {
+                  "name": "_m135",
+                  "type": "mat4",
+                  "offset": 2592,
+                  "matrix_stride": 16,
+                  "row_major": true
+                },
+                {
+                  "name": "_m136",
+                  "type": "vec4",
+                  "offset": 2656
+                },
+                {
+                  "name": "_m137",
+                  "type": "vec4",
+                  "offset": 2672
+                },
+                {
+                  "name": "_m138",
+                  "type": "vec4",
+                  "array": [
+                    32
+                  ],
+                  "array_size_is_literal": [
+                    true
+                  ],
+                  "offset": 2688,
+                  "array_stride": 16
+                }
+              ]
+            },
+            {
+              "name": "cb0",
+              "size": 416,
+              "msl_index": 1,
+              "fields": [
+                {
+                  "name": "_VignetteParams1",
+                  "offset": 16,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    16
+                  ]
+                },
+                {
+                  "name": "_VignetteParams2",
+                  "offset": 32,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    32
+                  ]
+                },
+                {
+                  "name": "_VignetteColor",
+                  "offset": 64,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    64
+                  ]
+                },
+                {
+                  "name": "_BloomParams",
+                  "offset": 144,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    144
+                  ]
+                },
+                {
+                  "name": "_BloomThreshold",
+                  "offset": 160,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    160
+                  ]
+                },
+                {
+                  "name": "_BloomTint",
+                  "offset": 176,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    176
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "offset": 96
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "offset": 112
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 128
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 144
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 160
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 176
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 192
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 208
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 224
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 240
+                },
+                {
+                  "name": "_m16",
+                  "type": "vec4",
+                  "offset": 256
+                },
+                {
+                  "name": "_m17",
+                  "type": "vec4",
+                  "offset": 272
+                },
+                {
+                  "name": "_m18",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m19",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m21",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 400
+                }
+              ]
+            }
+          ],
+          "inputs": [
+            {
+              "type": "vec2",
+              "name": "_3",
+              "location": 0
+            }
+          ],
+          "outputs": [
+            {
+              "type": "vec4",
+              "name": "_4",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program730.fragment.metal",
+              "sha256": "e727be9f2620512b677e34dc4711c5ab13a77543c511287659d5b9e2af9edd76"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program730.fragment.spv",
+              "sha256": "9befd2caaff1bf566f1e4fb57918100f678b24efa50dce542ad33d1b72901340"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program730.fragment.reflection.json",
+              "sha256": "5013e16657ae0eb1d6bf9dffac780bd72e2a536eba318027e736f0338c443a5c"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program730.fragment.bindings.json",
+              "sha256": "0e69c5900cb164860cc88aee416d89fca182aae308e22a7cd3bf683e7da6b1cc"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "program": 731,
+      "keywords": [
+        "BLOOM",
+        "VIGNETTE_MASK"
+      ],
+      "parameter_index": 725,
+      "parameter_file": "Composite/UberPost-ss0-p18-seg0-entry725.bin",
+      "parameter_sha256": "a42f435356966c7ad6c20e9003969b7cb9aa7535ebbec7dfed1e42c23e66c687",
+      "parameter_prefix": {
+        "serialized_version": 202506210,
+        "buffers": [
+          {
+            "name": "",
+            "size": 0,
+            "fields": []
+          },
+          {
+            "name": "cb0",
+            "size": 416,
+            "fields": [
+              {
+                "name": "_VignetteColor",
+                "offset": 64,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  64
+                ]
+              },
+              {
+                "name": "_BloomParams",
+                "offset": 144,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  144
+                ]
+              },
+              {
+                "name": "_BloomThreshold",
+                "offset": 160,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  160
+                ]
+              },
+              {
+                "name": "_BloomTint",
+                "offset": 176,
+                "serialized_fields": [
+                  0,
+                  1,
+                  4,
+                  0,
+                  0,
+                  176
+                ]
+              }
+            ]
+          },
+          {
+            "name": "_PerPassConstants",
+            "size": 32,
+            "fields": [
+              {
+                "name": "_HGFlipX",
+                "offset": 4
+              },
+              {
+                "name": "_HGFlipY",
+                "offset": 8
+              }
+            ]
+          }
+        ],
+        "parsed_prefix_bytes": 248,
+        "unparsed_tail_hex": "050000000d0000005f496e707574546578747572650000000000000004000389ffffffff040000000d0000005f426c6f6f6d546578747572650000000000000005000389ffffffff040000000d0000005f5669676e657474654d61736b00000000000000030003890100030904000000030000006362300001000000060003090000000000000000040000000200030955000000010000000c00000044656661756c745365745f33030000000700000006000000110000005f50657250617373436f6e7374616e7473000000000000000600000001000000010001000d0000005f5669676e657474654d61736b000000010000000000000002000000ffff01001300000073616d706c65725f4c696e656172436c616d7000020000000000000002000000550001000d0000005f5669676e657474654d61736b000000030000000200000002000000010201000d0000005f496e70757454657874757265000000040000000200000002000000ff0201000d0000005f426c6f6f6d54657874757265000000050000000200000002000000ff020100030000006362300006000000060000000200000000000100"
+      },
+      "descriptor_tail": {
+        "legacy_resources": [
+          {
+            "source_offset": 252,
+            "name": "_InputTexture",
+            "kind": 0,
+            "fields": [
+              2298675204,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 288,
+            "name": "_BloomTexture",
+            "kind": 0,
+            "fields": [
+              2298675205,
+              4294967295,
+              4
+            ]
+          },
+          {
+            "source_offset": 324,
+            "name": "_VignetteMask",
+            "kind": 0,
+            "fields": [
+              2298675203,
+              151191553,
+              4
+            ]
+          },
+          {
+            "source_offset": 360,
+            "name": "cb0",
+            "kind": 1,
+            "fields": [
+              151191558,
+              0
+            ]
+          },
+          {
+            "source_offset": 380,
+            "name": "",
+            "kind": 4,
+            "fields": [
+              151191554,
+              85
+            ]
+          }
+        ],
+        "descriptor_sets": [
+          {
+            "name": "DefaultSet_3",
+            "set": 3,
+            "max_binding": 6,
+            "resources": [
+              {
+                "source_offset": 428,
+                "name": "_PerPassConstants",
+                "binding": 0,
+                "resource_type": 6,
+                "stage_mask": 1,
+                "flags": 65537
+              },
+              {
+                "source_offset": 468,
+                "name": "_VignetteMask",
+                "binding": 1,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 131071
+              },
+              {
+                "source_offset": 504,
+                "name": "sampler_LinearClamp",
+                "binding": 2,
+                "resource_type": 0,
+                "stage_mask": 2,
+                "flags": 65621
+              },
+              {
+                "source_offset": 544,
+                "name": "_VignetteMask",
+                "binding": 3,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66049
+              },
+              {
+                "source_offset": 580,
+                "name": "_InputTexture",
+                "binding": 4,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 616,
+                "name": "_BloomTexture",
+                "binding": 5,
+                "resource_type": 2,
+                "stage_mask": 2,
+                "flags": 66303
+              },
+              {
+                "source_offset": 652,
+                "name": "cb0",
+                "binding": 6,
+                "resource_type": 6,
+                "stage_mask": 2,
+                "flags": 65536
+              }
+            ]
+          }
+        ],
+        "source_bytes_consumed": 428
+      },
+      "stages": {
+        "vertex": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_6",
+              "name": "_6_7",
+              "block_size": 32,
+              "set": 3,
+              "binding": 0,
+              "source_name": "_PerPassConstants",
+              "source_offset": 428,
+              "category": "ubos",
+              "msl_index": 0
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "_PerPassConstants",
+              "size": 32,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_HGFlipX",
+                  "offset": 4
+                },
+                {
+                  "name": "_HGFlipY",
+                  "offset": 8
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "float",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "float",
+                  "offset": 4
+                },
+                {
+                  "name": "_m2",
+                  "type": "float",
+                  "offset": 8
+                },
+                {
+                  "name": "_m3",
+                  "type": "float",
+                  "offset": 12
+                },
+                {
+                  "name": "_m4",
+                  "type": "float",
+                  "offset": 16
+                },
+                {
+                  "name": "_m5",
+                  "type": "float",
+                  "offset": 20
+                },
+                {
+                  "name": "_m6",
+                  "type": "float",
+                  "offset": 24
+                },
+                {
+                  "name": "_m7",
+                  "type": "float",
+                  "offset": 28
+                }
+              ]
+            }
+          ],
+          "inputs": [],
+          "outputs": [
+            {
+              "type": "vec2",
+              "name": "_5",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program731.vertex.metal",
+              "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program731.vertex.spv",
+              "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program731.vertex.reflection.json",
+              "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program731.vertex.bindings.json",
+              "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef"
+            }
+          ]
+        },
+        "fragment": {
+          "function": "main0",
+          "resources": [
+            {
+              "type": "_12",
+              "name": "_12_13",
+              "block_size": 416,
+              "set": 3,
+              "binding": 6,
+              "source_name": "cb0",
+              "source_offset": 652,
+              "category": "ubos",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_7",
+              "set": 3,
+              "binding": 4,
+              "source_name": "_InputTexture",
+              "source_offset": 580,
+              "category": "separate_images",
+              "msl_index": 0
+            },
+            {
+              "type": "texture2D",
+              "name": "_8",
+              "set": 3,
+              "binding": 5,
+              "source_name": "_BloomTexture",
+              "source_offset": 616,
+              "category": "separate_images",
+              "msl_index": 1
+            },
+            {
+              "type": "texture2D",
+              "name": "_9",
+              "set": 3,
+              "binding": 3,
+              "source_name": "_VignetteMask",
+              "source_offset": 544,
+              "category": "separate_images",
+              "msl_index": 2
+            },
+            {
+              "type": "sampler",
+              "name": "_10",
+              "set": 3,
+              "binding": 1,
+              "source_name": "_VignetteMask",
+              "source_offset": 468,
+              "category": "separate_samplers",
+              "msl_index": 0
+            },
+            {
+              "type": "sampler",
+              "name": "_11",
+              "set": 3,
+              "binding": 2,
+              "source_name": "sampler_LinearClamp",
+              "source_offset": 504,
+              "category": "separate_samplers",
+              "msl_index": 1
+            }
+          ],
+          "uniforms": [
+            {
+              "name": "cb0",
+              "size": 416,
+              "msl_index": 0,
+              "fields": [
+                {
+                  "name": "_VignetteColor",
+                  "offset": 64,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    64
+                  ]
+                },
+                {
+                  "name": "_BloomParams",
+                  "offset": 144,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    144
+                  ]
+                },
+                {
+                  "name": "_BloomThreshold",
+                  "offset": 160,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    160
+                  ]
+                },
+                {
+                  "name": "_BloomTint",
+                  "offset": 176,
+                  "serialized_fields": [
+                    0,
+                    1,
+                    4,
+                    0,
+                    0,
+                    176
+                  ]
+                }
+              ],
+              "members": [
+                {
+                  "name": "_m0",
+                  "type": "vec4",
+                  "offset": 0
+                },
+                {
+                  "name": "_m1",
+                  "type": "vec4",
+                  "offset": 16
+                },
+                {
+                  "name": "_m2",
+                  "type": "vec4",
+                  "offset": 32
+                },
+                {
+                  "name": "_m3",
+                  "type": "vec4",
+                  "offset": 48
+                },
+                {
+                  "name": "_m4",
+                  "type": "vec4",
+                  "offset": 64
+                },
+                {
+                  "name": "_m5",
+                  "type": "vec4",
+                  "offset": 80
+                },
+                {
+                  "name": "_m6",
+                  "type": "vec4",
+                  "offset": 96
+                },
+                {
+                  "name": "_m7",
+                  "type": "vec4",
+                  "offset": 112
+                },
+                {
+                  "name": "_m8",
+                  "type": "vec4",
+                  "offset": 128
+                },
+                {
+                  "name": "_m9",
+                  "type": "vec4",
+                  "offset": 144
+                },
+                {
+                  "name": "_m10",
+                  "type": "vec4",
+                  "offset": 160
+                },
+                {
+                  "name": "_m11",
+                  "type": "vec4",
+                  "offset": 176
+                },
+                {
+                  "name": "_m12",
+                  "type": "vec4",
+                  "offset": 192
+                },
+                {
+                  "name": "_m13",
+                  "type": "vec4",
+                  "offset": 208
+                },
+                {
+                  "name": "_m14",
+                  "type": "vec4",
+                  "offset": 224
+                },
+                {
+                  "name": "_m15",
+                  "type": "vec4",
+                  "offset": 240
+                },
+                {
+                  "name": "_m16",
+                  "type": "vec4",
+                  "offset": 256
+                },
+                {
+                  "name": "_m17",
+                  "type": "vec4",
+                  "offset": 272
+                },
+                {
+                  "name": "_m18",
+                  "type": "vec4",
+                  "offset": 288
+                },
+                {
+                  "name": "_m19",
+                  "type": "vec4",
+                  "offset": 304
+                },
+                {
+                  "name": "_m20",
+                  "type": "vec4",
+                  "offset": 320
+                },
+                {
+                  "name": "_m21",
+                  "type": "vec4",
+                  "offset": 336
+                },
+                {
+                  "name": "_m22",
+                  "type": "vec4",
+                  "offset": 352
+                },
+                {
+                  "name": "_m23",
+                  "type": "vec4",
+                  "offset": 368
+                },
+                {
+                  "name": "_m24",
+                  "type": "vec4",
+                  "offset": 384
+                },
+                {
+                  "name": "_m25",
+                  "type": "vec4",
+                  "offset": 400
+                }
+              ]
+            }
+          ],
+          "inputs": [
+            {
+              "type": "vec2",
+              "name": "_3",
+              "location": 0
+            }
+          ],
+          "outputs": [
+            {
+              "type": "vec4",
+              "name": "_4",
+              "location": 0
+            }
+          ],
+          "files": [
+            {
+              "path": "Composite/UberPost-ss0-program731.fragment.metal",
+              "sha256": "8d10ca4a0449fa9596df18b5008b02f4564181d0485b5624bd68514ddef95101"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program731.fragment.spv",
+              "sha256": "8dc8acf984a11a0bc218c20bf4675add561f893f1a030c3ef2ccdfd257698d1d"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program731.fragment.reflection.json",
+              "sha256": "5c99688fa23c4a9eec9018c0fc1b216cfac86df4302986dcca741afc03de23fb"
+            },
+            {
+              "path": "Composite/UberPost-ss0-program731.fragment.bindings.json",
+              "sha256": "bb3d2bd70f30a5433d5c5a1098898fcd413c1da441023d73834fcb5b71e57227"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "runtime_contract": {
+    "input_texture": {
+      "name": "_InputTexture",
+      "value": "Original new RGB HDR UI target; UIUber does not sample the CopyUIRT snapshot",
+      "source_call": "0x188ec1630"
+    },
+    "hdr_target": {
+      "graphics_format": 74,
+      "name": "B10G11R11_UFloatPack32",
+      "alpha_channel": false,
+      "source_create_call": "0x188ed1297"
+    },
+    "first_world_ui_attachment": {
+      "load_action": 1,
+      "load_name": "Clear",
+      "store_action": 0,
+      "store_name": "Store",
+      "clear_color": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "source_call": "0x188e84e27"
+    },
+    "composite_attachment": {
+      "load_action": 0,
+      "load_name": "Load",
+      "store_action": 0,
+      "store_name": "Store",
+      "source_call": "0x188ec6323"
+    },
+    "later_screen_ui_attachment": {
+      "load_action": 0,
+      "load_name": "Load",
+      "store_action": 0,
+      "store_name": "Store",
+      "source_call": "0x188e84e27",
+      "layer_assignment": "0x188ed186e"
+    },
+    "draw": {
+      "topology": "Triangles",
+      "vertex_count": 3,
+      "instance_count": 1,
+      "shader_pass": 1,
+      "source_call": "0x188ec1663"
+    },
+    "base_fragment": "sample input at LOD0; retain RGB; clamp alpha to [0,1]",
+    "optional_keywords": "Only enable BLOOM/VIGNETTE/VIGNETTE_MASK after active volume and HGSettingParameters gates. Exported variants do not establish live enablement.",
+    "sampling": "Source descriptor records name the shared sampler separately. Texture filter/wrap and final target orientation must follow the original resource/API adapter; no sampler is guessed here."
+  },
+  "boundaries": [
+    "Dynamic player scene capture pixels absent from installed assets.",
+    "Global volume weights and runtime config values were not observed.",
+    "Metal final RT UV orientation, target sRGB policy and HDR format fallback require an explicit platform adapter.",
+    "No production resources copied by this script."
+  ],
+  "package_source_manifest": {
+    "path": "game-reference/precision-reference/postprocess/ui-composite-port-manifest.json",
+    "sha256": "efeb633cbbc86fb59a2576c7a3760dd10315aa695b5c4115506775bea95da188",
+    "bundle": {
+      "layer": "Persistent",
+      "group": "InitBundle",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+      "name": "Data/Bundles/Windows/initial/4e05ece956bf6fec2be13d66.ab",
+      "name_hash": "3188574BEB66E5DE",
+      "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+      "md5": "76D0D1DBF38C77151A18EDFBDB765DEA",
+      "offset": 28715925,
+      "length": 656975,
+      "block_type": 2,
+      "encrypted": false,
+      "flags": 0,
+      "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\extracted\\Persistent\\Data\\Bundles\\Windows\\initial\\4e05ece956bf6fec2be13d66.ab",
+      "sha256": "318e03afe2cdaa948bdf7b4a59655f8b8f134751bb0fd57804d5577013e3db50",
+      "md5_verified": true
+    }
+  }
+}

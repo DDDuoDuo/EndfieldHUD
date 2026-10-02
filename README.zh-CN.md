@@ -4,6 +4,8 @@
 
 一款《明日方舟：终末地》风格的 macOS 菜单栏应用。按下快捷键，就能打开带有层次与动态效果的 HUD，使用便笺、文件暂存、计时、音量控制和系统状态等功能。
 
+**整合测试分支：**本分支将新的 Watch 界面与稳定版 1.0.1 的功能及存档格式整合。测试本分支时，请打开[本分支通过的 Build and test 构建](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration)，下载其中的 **EndfieldHUD-macOS-…** 产物。下方的正式版下载链接和预览属于稳定版，不是本分支。
+
 **[下载 v1.0.1 — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [所有版本](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD 电源页面，使用示例读数](docs/media/overview.png)
@@ -73,7 +75,7 @@
 | 文件与图片 | 访问你选择、粘贴或拖入的项目。文件架保存引用；图片便笺与个人名片图片保存本机副本。 |
 | 更新提醒 | 通知权限可选。即使拒绝通知，菜单栏和“关于”仍会显示更新信息。 |
 | 登录启动 | 先安装到“应用程序”；macOS 可能要求在登录项中批准。 |
-| 自动专注模式 | **macOS 13+**，并在 Apple“快捷指令”中自行创建两个指令，应用不会代为安装。按[专注模式设置说明](docs/audio-and-work-mode.md#automatic-focus-setup)配置；不配置也能使用计时器。 |
+| 自动专注模式 | 本整合分支在 **macOS 11+** 上优先使用控制中心，需要你授予**辅助功能**权限且系统控件可识别；**macOS 13+** 上已配置的快捷指令作为后备。稳定版 v1.0.1 下载仍需自行创建这两个快捷指令。参见[专注模式设置](docs/audio-and-work-mode.md#automatic-focus-setup)；没有自动专注也能使用计时器。 |
 
 便笺、文件引用、个人名片、地图标记与事件历史保存在本机。剪贴板历史只保存在内存中，退出后清空。检查和下载更新会连接 GitHub，使用应用无需账号。[设置说明](docs/settings.md) · [更新说明](docs/updates.md)
 

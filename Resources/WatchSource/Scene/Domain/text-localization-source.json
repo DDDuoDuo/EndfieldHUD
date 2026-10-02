@@ -1,0 +1,220 @@
+{
+  "runtime_chain": "RegionMapSetting._InitUI -> SceneBasicInfo.InitSceneBasicInfo(args.levelId) -> UIText.SetPhoneticText(DomainNamePhonetic, levelId)",
+  "level_desc_source": {
+    "file": "extracted\\Persistent\\Data\\TableCfg\\LevelDescTable.bytes",
+    "length": 10244,
+    "sha256": "c8bc04d1adde4607339e6dbd283fa06e46efe3d3c36293567956d2a9e1e366e6",
+    "source": {
+      "layer": "Persistent",
+      "name": "Data/TableCfg/LevelDescTable.bytes",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\42A8FCA6\\42A8FCA6.blc",
+      "chunk": "FC522F347C820CEB2CA69B3DC161F2C0",
+      "offset": 54120,
+      "length": 10244,
+      "md5": "4C54C6EABD107A67242B76990E07D522",
+      "sha256": "c8bc04d1adde4607339e6dbd283fa06e46efe3d3c36293567956d2a9e1e366e6",
+      "md5_verified": true
+    },
+    "header": {
+      "type_definitions": 12,
+      "root_definition": 110,
+      "data": 3120
+    },
+    "root": {
+      "type": 10,
+      "name": "LevelDescTable",
+      "key_type": 7,
+      "value_type": 8,
+      "value_hash": -643654917
+    },
+    "beans": {
+      "-643654917": {
+        "name": "LevelDescData",
+        "fields": [
+          {
+            "name": "id",
+            "type": 7,
+            "offset": 0
+          },
+          {
+            "name": "phoneticName",
+            "type": 7,
+            "offset": 4
+          },
+          {
+            "name": "showName",
+            "type": 8,
+            "offset": 8,
+            "hash": 184693291
+          }
+        ]
+      },
+      "184693291": {
+        "name": "I18nText",
+        "fields": [
+          {
+            "name": "id",
+            "type": 3,
+            "offset": 0
+          },
+          {
+            "name": "text",
+            "type": 7,
+            "offset": 8
+          }
+        ]
+      }
+    },
+    "enums": {},
+    "string_count": 187,
+    "validation": {
+      "map_slots": 178,
+      "map_entries": 178
+    }
+  },
+  "cn_table_source": {
+    "file": "extracted\\Persistent\\Data\\TableCfg\\I18nTextTable_CN.bytes",
+    "length": 9513700,
+    "sha256": "fca1a4ea03ccd38dd20c664e5c4efc53178cb4e9df722c1ebba10e37f4426ea1",
+    "source": {
+      "layer": "Persistent",
+      "name": "Data/TableCfg/I18nTextTable_CN.bytes",
+      "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\42A8FCA6\\42A8FCA6.blc",
+      "chunk": "5A335206B0AE4886177F824C1558557A",
+      "offset": 0,
+      "length": 9513700,
+      "md5": "BE13DE555D7C0812A322FB8B364F1961",
+      "sha256": "fca1a4ea03ccd38dd20c664e5c4efc53178cb4e9df722c1ebba10e37f4426ea1",
+      "md5_verified": true
+    },
+    "header": {
+      "type_definitions": 12,
+      "root_definition": 16,
+      "data": 5928888
+    },
+    "root": {
+      "type": 10,
+      "name": "I18nTextTable_CN",
+      "key_type": 3,
+      "value_type": 7
+    },
+    "beans": {},
+    "enums": {},
+    "string_count": 82231,
+    "validation": {
+      "map_slots": 149367,
+      "map_entries": 149367
+    }
+  },
+  "decoded_scene_basic_info_file": "extracted\\Persistent\\Data\\LuaScripts\\UI\\Widgets\\SceneBasicInfo.dec.lua",
+  "decoded_scene_basic_info_sha256": "2f8177908d3047a89815ba23a55bb96ac4d19bf026cc83d38101462701f04bd6",
+  "selected_level_labels": [
+    {
+      "level_id": "map01_lv001",
+      "show_name_numeric_id": "7662556729362592955",
+      "show_name_cn": "枢纽区",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map01_lv002",
+      "show_name_numeric_id": "2026806972916074596",
+      "show_name_cn": "谷地通道",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map01_lv003",
+      "show_name_numeric_id": "15651043983173525758",
+      "show_name_cn": "阿伯莉采石场",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map01_lv005",
+      "show_name_numeric_id": "5217299503347306584",
+      "show_name_cn": "源石研究园",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map01_lv006",
+      "show_name_numeric_id": "16697878615473254519",
+      "show_name_cn": "矿脉源区",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map01_lv007",
+      "show_name_numeric_id": "1073573170169539789",
+      "show_name_cn": "供能高地",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map02_lv001",
+      "show_name_numeric_id": "2302067058462212963",
+      "show_name_cn": "景玉谷",
+      "phonetic_name": "けいぎょくこく "
+    },
+    {
+      "level_id": "map02_lv002",
+      "show_name_numeric_id": "3661015786003670121",
+      "show_name_cn": "武陵城",
+      "phonetic_name": "ぶりょうじょう"
+    },
+    {
+      "level_id": "map02_lv003",
+      "show_name_numeric_id": "12568708434129561101",
+      "show_name_cn": "清波寨",
+      "phonetic_name": "せいはとりで"
+    },
+    {
+      "level_id": "map02_lv004",
+      "show_name_numeric_id": "6418967170731697021",
+      "show_name_cn": "首墩",
+      "phonetic_name": "しゅそ"
+    },
+    {
+      "level_id": "map02_lv005",
+      "show_name_numeric_id": "9905067915535224238",
+      "show_name_cn": "试验园区",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map02_lv006",
+      "show_name_numeric_id": "13689561210434687330",
+      "show_name_cn": "藏剑谷",
+      "phonetic_name": "ぞうけんこく"
+    },
+    {
+      "level_id": "map02_lv007",
+      "show_name_numeric_id": "986571157967411676",
+      "show_name_cn": "应龙关",
+      "phonetic_name": "おうりゅうせき"
+    },
+    {
+      "level_id": "map02_lv008",
+      "show_name_numeric_id": "17763582563463374278",
+      "show_name_cn": "北部禁区",
+      "phonetic_name": ""
+    },
+    {
+      "level_id": "map02_lv009",
+      "show_name_numeric_id": "14357278639136974169",
+      "show_name_cn": "雪松林",
+      "phonetic_name": "せつしょうりん"
+    }
+  ],
+  "resolved_level_texts": 15,
+  "unresolved_level_ids": [
+    "map02_indie_dg016"
+  ],
+  "native_formatter_evidence": {
+    "method": "UIText.GetPhoneticText",
+    "address": "0x1833bc020",
+    "facts": [
+      "DomainNamePhonetic enum=3.",
+      "After LevelDescData lookup and I18n resolution, current-language enum!=2 returns the plain string at0x1833bc139.",
+      "Only current-language enum2 follows phonetic markup branch at0x184b30643."
+    ]
+  },
+  "limitations": [
+    "CN plain strings are source-resolved. Other locales/ruby geometry and engine rendering validation remain separate.",
+    "Spaceship names, grade and level are runtime values and are not filled from serialized text."
+  ]
+}

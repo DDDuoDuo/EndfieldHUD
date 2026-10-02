@@ -650,6 +650,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         case .simplifiedChinese: return "简体中文"
         case .traditionalChinese: return "繁體中文"
         case .japanese: return "日本語"
+        case .korean: return "한국어"
         }
     }
     private func themeTitle(_ value: OverlayTheme) -> String {

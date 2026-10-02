@@ -1,0 +1,1429 @@
+{
+  "source": "D:\\Arknights Endfield\\Endfield_Data\\il2cpp_data\\Metadata\\global-metadata.dat",
+  "sha256": "0076743397acadf03d3b0064343a963c7c88863b8160526d397e4b3efb96f02e",
+  "encoding": "Metadata v29 compressed signed int32; preserve raw bytes for each enum literal.",
+  "types": [
+    {
+      "index": 12619,
+      "name": "EShaderParamBlendMode",
+      "namespace": "Beyond.Gameplay.Core",
+      "fields": [
+        {
+          "index": 58317,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x400e3ce",
+          "default": null
+        },
+        {
+          "index": 58318,
+          "name": "Lerp",
+          "type_index": 116165,
+          "token": "0x400e3cf",
+          "default": {
+            "type_index": 126157,
+            "data_index": 48672,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 58319,
+          "name": "Round",
+          "type_index": 116165,
+          "token": "0x400e3d0",
+          "default": {
+            "type_index": 126157,
+            "data_index": 48673,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 12792,
+      "name": "TransitionBlendMode",
+      "namespace": "Beyond.Gameplay.Core.ModelViewStateController",
+      "fields": [
+        {
+          "index": 59507,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x400e874",
+          "default": null
+        },
+        {
+          "index": 59508,
+          "name": "EaseEnum",
+          "type_index": 145346,
+          "token": "0x400e875",
+          "default": {
+            "type_index": 126157,
+            "data_index": 49088,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 59509,
+          "name": "SingleCurve",
+          "type_index": 145346,
+          "token": "0x400e876",
+          "default": {
+            "type_index": 126157,
+            "data_index": 49089,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 59510,
+          "name": "DualCurve",
+          "type_index": 145346,
+          "token": "0x400e877",
+          "default": {
+            "type_index": 126157,
+            "data_index": 49090,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 34504,
+      "name": "BlendMode",
+      "namespace": "HG.Rendering.Editor",
+      "fields": [
+        {
+          "index": 173057,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x400027d",
+          "default": null
+        },
+        {
+          "index": 173058,
+          "name": "Alpha",
+          "type_index": 108148,
+          "token": "0x400027e",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330742,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 173059,
+          "name": "Premultiply",
+          "type_index": 108148,
+          "token": "0x400027f",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330743,
+            "decoded": {
+              "value": 4,
+              "encoded_uint": 8,
+              "consumed_bytes": 1,
+              "raw": "08"
+            }
+          }
+        },
+        {
+          "index": 173060,
+          "name": "Additive",
+          "type_index": 108148,
+          "token": "0x4000280",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330744,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 173061,
+          "name": "Multiply",
+          "type_index": 108148,
+          "token": "0x4000281",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330745,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 34505,
+      "name": "TransParentBlendMode",
+      "namespace": "HG.Rendering.Editor",
+      "fields": [
+        {
+          "index": 173062,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000282",
+          "default": null
+        },
+        {
+          "index": 173063,
+          "name": "Traditional",
+          "type_index": 145273,
+          "token": "0x4000283",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330746,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 173064,
+          "name": "Premultiplied",
+          "type_index": 145273,
+          "token": "0x4000284",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330747,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 173065,
+          "name": "SoftAdditive",
+          "type_index": 145273,
+          "token": "0x4000285",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330748,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 173066,
+          "name": "Multiplicative",
+          "type_index": 145273,
+          "token": "0x4000286",
+          "default": {
+            "type_index": 126157,
+            "data_index": 330749,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 34651,
+      "name": "EnvBlendMode",
+      "namespace": "HG.Rendering.Runtime",
+      "fields": [
+        {
+          "index": 174345,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000785",
+          "default": null
+        },
+        {
+          "index": 174346,
+          "name": "None",
+          "type_index": 117443,
+          "token": "0x4000786",
+          "default": {
+            "type_index": 126157,
+            "data_index": 331058,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 174347,
+          "name": "Distance",
+          "type_index": 117443,
+          "token": "0x4000787",
+          "default": {
+            "type_index": 126157,
+            "data_index": 331059,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 174348,
+          "name": "Time",
+          "type_index": 117443,
+          "token": "0x4000788",
+          "default": {
+            "type_index": 126157,
+            "data_index": 331060,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 174349,
+          "name": "Manual",
+          "type_index": 117443,
+          "token": "0x4000789",
+          "default": {
+            "type_index": 126157,
+            "data_index": 331061,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 34939,
+      "name": "BlendMode",
+      "namespace": "",
+      "fields": [
+        {
+          "index": 176223,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000edb",
+          "default": null
+        },
+        {
+          "index": 176224,
+          "name": "Alpha",
+          "type_index": 163691,
+          "token": "0x4000edc",
+          "default": {
+            "type_index": 126157,
+            "data_index": 332637,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 176225,
+          "name": "Additive",
+          "type_index": 163691,
+          "token": "0x4000edd",
+          "default": {
+            "type_index": 126157,
+            "data_index": 332638,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 35016,
+      "name": "BloomBlendModeParameter",
+      "namespace": "HG.Rendering.Runtime",
+      "fields": []
+    },
+    {
+      "index": 44148,
+      "name": "RenderBufferLoadAction",
+      "namespace": "UnityEngine.Rendering",
+      "fields": [
+        {
+          "index": 228684,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000823",
+          "default": null
+        },
+        {
+          "index": 228685,
+          "name": "Load",
+          "type_index": 137676,
+          "token": "0x4000824",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470816,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 228686,
+          "name": "Clear",
+          "type_index": 137676,
+          "token": "0x4000825",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470817,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 228687,
+          "name": "DontCare",
+          "type_index": 137676,
+          "token": "0x4000826",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470818,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 44149,
+      "name": "RenderBufferStoreAction",
+      "namespace": "UnityEngine.Rendering",
+      "fields": [
+        {
+          "index": 228688,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000827",
+          "default": null
+        },
+        {
+          "index": 228689,
+          "name": "Store",
+          "type_index": 137681,
+          "token": "0x4000828",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470819,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 228690,
+          "name": "Resolve",
+          "type_index": 137681,
+          "token": "0x4000829",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470820,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 228691,
+          "name": "StoreAndResolve",
+          "type_index": 137681,
+          "token": "0x400082a",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470821,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 228692,
+          "name": "DontCare",
+          "type_index": 137681,
+          "token": "0x400082b",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470822,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 44151,
+      "name": "BlendMode",
+      "namespace": "UnityEngine.Rendering",
+      "fields": [
+        {
+          "index": 228697,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000830",
+          "default": null
+        },
+        {
+          "index": 228698,
+          "name": "Zero",
+          "type_index": 108150,
+          "token": "0x4000831",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470826,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 228699,
+          "name": "One",
+          "type_index": 108150,
+          "token": "0x4000832",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470827,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 228700,
+          "name": "DstColor",
+          "type_index": 108150,
+          "token": "0x4000833",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470828,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 228701,
+          "name": "SrcColor",
+          "type_index": 108150,
+          "token": "0x4000834",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470829,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        },
+        {
+          "index": 228702,
+          "name": "OneMinusDstColor",
+          "type_index": 108150,
+          "token": "0x4000835",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470830,
+            "decoded": {
+              "value": 4,
+              "encoded_uint": 8,
+              "consumed_bytes": 1,
+              "raw": "08"
+            }
+          }
+        },
+        {
+          "index": 228703,
+          "name": "SrcAlpha",
+          "type_index": 108150,
+          "token": "0x4000836",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470831,
+            "decoded": {
+              "value": 5,
+              "encoded_uint": 10,
+              "consumed_bytes": 1,
+              "raw": "0a"
+            }
+          }
+        },
+        {
+          "index": 228704,
+          "name": "OneMinusSrcColor",
+          "type_index": 108150,
+          "token": "0x4000837",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470832,
+            "decoded": {
+              "value": 6,
+              "encoded_uint": 12,
+              "consumed_bytes": 1,
+              "raw": "0c"
+            }
+          }
+        },
+        {
+          "index": 228705,
+          "name": "DstAlpha",
+          "type_index": 108150,
+          "token": "0x4000838",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470833,
+            "decoded": {
+              "value": 7,
+              "encoded_uint": 14,
+              "consumed_bytes": 1,
+              "raw": "0e"
+            }
+          }
+        },
+        {
+          "index": 228706,
+          "name": "OneMinusDstAlpha",
+          "type_index": 108150,
+          "token": "0x4000839",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470834,
+            "decoded": {
+              "value": 8,
+              "encoded_uint": 16,
+              "consumed_bytes": 1,
+              "raw": "10"
+            }
+          }
+        },
+        {
+          "index": 228707,
+          "name": "SrcAlphaSaturate",
+          "type_index": 108150,
+          "token": "0x400083a",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470835,
+            "decoded": {
+              "value": 9,
+              "encoded_uint": 18,
+              "consumed_bytes": 1,
+              "raw": "12"
+            }
+          }
+        },
+        {
+          "index": 228708,
+          "name": "OneMinusSrcAlpha",
+          "type_index": 108150,
+          "token": "0x400083b",
+          "default": {
+            "type_index": 126157,
+            "data_index": 470836,
+            "decoded": {
+              "value": 10,
+              "encoded_uint": 20,
+              "consumed_bytes": 1,
+              "raw": "14"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 51129,
+      "name": "SRPLensFlareBlendMode",
+      "namespace": "UnityEngine.Rendering",
+      "fields": [
+        {
+          "index": 264428,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x40003a8",
+          "default": null
+        },
+        {
+          "index": 264429,
+          "name": "Additive",
+          "type_index": 139818,
+          "token": "0x40003a9",
+          "default": {
+            "type_index": 126157,
+            "data_index": 571101,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 264430,
+          "name": "Screen",
+          "type_index": 139818,
+          "token": "0x40003aa",
+          "default": {
+            "type_index": 126157,
+            "data_index": 571102,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 264431,
+          "name": "Premultiply",
+          "type_index": 139818,
+          "token": "0x40003ab",
+          "default": {
+            "type_index": 126157,
+            "data_index": 571103,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 264432,
+          "name": "Lerp",
+          "type_index": 139818,
+          "token": "0x40003ac",
+          "default": {
+            "type_index": 126157,
+            "data_index": 571104,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 53909,
+      "name": "P3dBlendMode",
+      "namespace": "PaintIn3D",
+      "fields": [
+        {
+          "index": 278010,
+          "name": "ALPHA_BLEND",
+          "type_index": 126191,
+          "token": "0x400022c",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586452,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 278011,
+          "name": "ALPHA_BLEND_INVERSE",
+          "type_index": 126191,
+          "token": "0x400022d",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586453,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 278012,
+          "name": "PREMULTIPLIED",
+          "type_index": 126191,
+          "token": "0x400022e",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586454,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 278013,
+          "name": "ADDITIVE",
+          "type_index": 126191,
+          "token": "0x400022f",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586455,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        },
+        {
+          "index": 278014,
+          "name": "ADDITIVE_SOFT",
+          "type_index": 126191,
+          "token": "0x4000230",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586456,
+            "decoded": {
+              "value": 4,
+              "encoded_uint": 8,
+              "consumed_bytes": 1,
+              "raw": "08"
+            }
+          }
+        },
+        {
+          "index": 278015,
+          "name": "SUBTRACTIVE",
+          "type_index": 126191,
+          "token": "0x4000231",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586457,
+            "decoded": {
+              "value": 5,
+              "encoded_uint": 10,
+              "consumed_bytes": 1,
+              "raw": "0a"
+            }
+          }
+        },
+        {
+          "index": 278016,
+          "name": "SUBTRACTIVE_SOFT",
+          "type_index": 126191,
+          "token": "0x4000232",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586458,
+            "decoded": {
+              "value": 6,
+              "encoded_uint": 12,
+              "consumed_bytes": 1,
+              "raw": "0c"
+            }
+          }
+        },
+        {
+          "index": 278017,
+          "name": "REPLACE",
+          "type_index": 126191,
+          "token": "0x4000233",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586459,
+            "decoded": {
+              "value": 7,
+              "encoded_uint": 14,
+              "consumed_bytes": 1,
+              "raw": "0e"
+            }
+          }
+        },
+        {
+          "index": 278018,
+          "name": "REPLACE_ORIGINAL",
+          "type_index": 126191,
+          "token": "0x4000234",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586460,
+            "decoded": {
+              "value": 8,
+              "encoded_uint": 16,
+              "consumed_bytes": 1,
+              "raw": "10"
+            }
+          }
+        },
+        {
+          "index": 278019,
+          "name": "REPLACE_CUSTOM",
+          "type_index": 126191,
+          "token": "0x4000235",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586461,
+            "decoded": {
+              "value": 9,
+              "encoded_uint": 18,
+              "consumed_bytes": 1,
+              "raw": "12"
+            }
+          }
+        },
+        {
+          "index": 278020,
+          "name": "MULTIPLY_INVERSE_RGB",
+          "type_index": 126191,
+          "token": "0x4000236",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586462,
+            "decoded": {
+              "value": 10,
+              "encoded_uint": 20,
+              "consumed_bytes": 1,
+              "raw": "14"
+            }
+          }
+        },
+        {
+          "index": 278021,
+          "name": "BLUR",
+          "type_index": 126191,
+          "token": "0x4000237",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586463,
+            "decoded": {
+              "value": 11,
+              "encoded_uint": 22,
+              "consumed_bytes": 1,
+              "raw": "16"
+            }
+          }
+        },
+        {
+          "index": 278022,
+          "name": "NORMAL_BLEND",
+          "type_index": 126191,
+          "token": "0x4000238",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586464,
+            "decoded": {
+              "value": 12,
+              "encoded_uint": 24,
+              "consumed_bytes": 1,
+              "raw": "18"
+            }
+          }
+        },
+        {
+          "index": 278023,
+          "name": "NORMAL_REPLACE",
+          "type_index": 126191,
+          "token": "0x4000239",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586465,
+            "decoded": {
+              "value": 13,
+              "encoded_uint": 26,
+              "consumed_bytes": 1,
+              "raw": "1a"
+            }
+          }
+        },
+        {
+          "index": 278024,
+          "name": "FLOW",
+          "type_index": 126191,
+          "token": "0x400023a",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586466,
+            "decoded": {
+              "value": 14,
+              "encoded_uint": 28,
+              "consumed_bytes": 1,
+              "raw": "1c"
+            }
+          }
+        },
+        {
+          "index": 278025,
+          "name": "NORMAL_REPLACE_ORIGINAL",
+          "type_index": 126191,
+          "token": "0x400023b",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586467,
+            "decoded": {
+              "value": 15,
+              "encoded_uint": 30,
+              "consumed_bytes": 1,
+              "raw": "1e"
+            }
+          }
+        },
+        {
+          "index": 278026,
+          "name": "NORMAL_REPLACE_CUSTOM",
+          "type_index": 126191,
+          "token": "0x400023c",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586468,
+            "decoded": {
+              "value": 16,
+              "encoded_uint": 32,
+              "consumed_bytes": 1,
+              "raw": "20"
+            }
+          }
+        },
+        {
+          "index": 278027,
+          "name": "COUNT",
+          "type_index": 126191,
+          "token": "0x400023d",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586469,
+            "decoded": {
+              "value": 17,
+              "encoded_uint": 34,
+              "consumed_bytes": 1,
+              "raw": "22"
+            }
+          }
+        },
+        {
+          "index": 278028,
+          "name": "NAMES",
+          "type_index": 98606,
+          "token": "0x400023e",
+          "default": null
+        },
+        {
+          "index": 278029,
+          "name": "Index",
+          "type_index": 126163,
+          "token": "0x400023f",
+          "default": null
+        },
+        {
+          "index": 278030,
+          "name": "Color",
+          "type_index": 111838,
+          "token": "0x4000240",
+          "default": null
+        },
+        {
+          "index": 278031,
+          "name": "Texture",
+          "type_index": 144588,
+          "token": "0x4000241",
+          "default": null
+        },
+        {
+          "index": 278032,
+          "name": "Kernel",
+          "type_index": 141877,
+          "token": "0x4000242",
+          "default": null
+        },
+        {
+          "index": 278033,
+          "name": "Channels",
+          "type_index": 147838,
+          "token": "0x4000243",
+          "default": null
+        },
+        {
+          "index": 278034,
+          "name": "_Channels",
+          "type_index": 126164,
+          "token": "0x4000244",
+          "default": null
+        },
+        {
+          "index": 278035,
+          "name": "_ReplaceColor",
+          "type_index": 126164,
+          "token": "0x4000245",
+          "default": null
+        },
+        {
+          "index": 278036,
+          "name": "_ReplaceTexture",
+          "type_index": 126164,
+          "token": "0x4000246",
+          "default": null
+        },
+        {
+          "index": 278037,
+          "name": "_ReplaceTextureSize",
+          "type_index": 126164,
+          "token": "0x4000247",
+          "default": null
+        },
+        {
+          "index": 278038,
+          "name": "_Kernel",
+          "type_index": 126164,
+          "token": "0x4000248",
+          "default": null
+        }
+      ]
+    },
+    {
+      "index": 54188,
+      "name": "StandardShaderBlendMode",
+      "namespace": "",
+      "fields": [
+        {
+          "index": 278858,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x40000a7",
+          "default": null
+        },
+        {
+          "index": 278859,
+          "name": "Opaque",
+          "type_index": 178288,
+          "token": "0x40000a8",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586743,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 278860,
+          "name": "Cutout",
+          "type_index": 178288,
+          "token": "0x40000a9",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586744,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 278861,
+          "name": "Fade",
+          "type_index": 178288,
+          "token": "0x40000aa",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586745,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 278862,
+          "name": "Transparent",
+          "type_index": 178288,
+          "token": "0x40000ab",
+          "default": {
+            "type_index": 126157,
+            "data_index": 586746,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 54598,
+      "name": "AnimationBlendMode",
+      "namespace": "UnityEngine",
+      "fields": [
+        {
+          "index": 281017,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000007",
+          "default": null
+        },
+        {
+          "index": 281018,
+          "name": "Blend",
+          "type_index": 101093,
+          "token": "0x4000008",
+          "default": {
+            "type_index": 126157,
+            "data_index": 593359,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 281019,
+          "name": "Additive",
+          "type_index": 101093,
+          "token": "0x4000009",
+          "default": {
+            "type_index": 126157,
+            "data_index": 593360,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 55966,
+      "name": "BloomBlendMode",
+      "namespace": "UnityEngine.HyperGryphEngineCode",
+      "fields": [
+        {
+          "index": 287542,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000494",
+          "default": null
+        },
+        {
+          "index": 287543,
+          "name": "Add",
+          "type_index": 108232,
+          "token": "0x4000495",
+          "default": {
+            "type_index": 126157,
+            "data_index": 598260,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 287544,
+          "name": "EnergyConservation",
+          "type_index": 108232,
+          "token": "0x4000496",
+          "default": {
+            "type_index": 126157,
+            "data_index": 598261,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "index": 55986,
+      "name": "HGLensFlareBlendMode",
+      "namespace": "UnityEngine.HyperGryphEngineCode",
+      "fields": [
+        {
+          "index": 287675,
+          "name": "value__",
+          "type_index": 126184,
+          "token": "0x4000519",
+          "default": null
+        },
+        {
+          "index": 287676,
+          "name": "Additive",
+          "type_index": 122694,
+          "token": "0x400051a",
+          "default": {
+            "type_index": 126157,
+            "data_index": 598271,
+            "decoded": {
+              "value": 0,
+              "encoded_uint": 0,
+              "consumed_bytes": 1,
+              "raw": "00"
+            }
+          }
+        },
+        {
+          "index": 287677,
+          "name": "Screen",
+          "type_index": 122694,
+          "token": "0x400051b",
+          "default": {
+            "type_index": 126157,
+            "data_index": 598272,
+            "decoded": {
+              "value": 1,
+              "encoded_uint": 2,
+              "consumed_bytes": 1,
+              "raw": "02"
+            }
+          }
+        },
+        {
+          "index": 287678,
+          "name": "Premultiply",
+          "type_index": 122694,
+          "token": "0x400051c",
+          "default": {
+            "type_index": 126157,
+            "data_index": 598273,
+            "decoded": {
+              "value": 2,
+              "encoded_uint": 4,
+              "consumed_bytes": 1,
+              "raw": "04"
+            }
+          }
+        },
+        {
+          "index": 287679,
+          "name": "Lerp",
+          "type_index": 122694,
+          "token": "0x400051d",
+          "default": {
+            "type_index": 126157,
+            "data_index": 598274,
+            "decoded": {
+              "value": 3,
+              "encoded_uint": 6,
+              "consumed_bytes": 1,
+              "raw": "06"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

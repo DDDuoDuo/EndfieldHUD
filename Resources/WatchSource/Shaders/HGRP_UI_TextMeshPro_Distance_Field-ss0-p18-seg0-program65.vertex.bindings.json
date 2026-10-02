@@ -1,0 +1,83 @@
+[
+  {
+    "id": 19,
+    "name": "_18_19",
+    "resource_type": 1,
+    "base_type_id": 18,
+    "type_id": 101,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 21,
+    "name": "_20_21",
+    "resource_type": 1,
+    "base_type_id": 20,
+    "type_id": 103,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 25,
+    "name": "_24_25",
+    "resource_type": 1,
+    "base_type_id": 24,
+    "type_id": 104,
+    "msl_binding": 2,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 27,
+    "name": "_26_27",
+    "resource_type": 1,
+    "base_type_id": 26,
+    "type_id": 106,
+    "msl_binding": 3,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 29,
+    "name": "_28_29",
+    "resource_type": 1,
+    "base_type_id": 28,
+    "type_id": 107,
+    "msl_binding": 4,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 31,
+    "name": "_30_31",
+    "resource_type": 1,
+    "base_type_id": 30,
+    "type_id": 108,
+    "msl_binding": 5,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 34,
+    "name": "_32_34",
+    "resource_type": 1,
+    "base_type_id": 32,
+    "type_id": 109,
+    "msl_binding": 6,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 36,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 22,
+    "type_id": 126,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 37,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 23,
+    "type_id": 127,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  }
+]

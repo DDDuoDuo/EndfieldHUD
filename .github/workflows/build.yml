@@ -15,7 +15,7 @@ concurrency:
 jobs:
   macos:
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       # Exercise the same CLI-only path used on a Mac without full Xcode.
       DEVELOPER_DIR: /Library/Developer/CommandLineTools
@@ -29,20 +29,179 @@ jobs:
         run: |
           xcrun swiftc --version
           ./scripts/build.sh --print-sdk
+          bash -n ./scripts/dev.sh
+      - name: Verify original plate projection with isolated source pixels
+        if: always()
+        run: bash ./scripts/verify-source-plate-projection.sh
+      - name: Verify stable data and feature contracts
+        run: python3 ./scripts/test-integration-compatibility.py --self-test
       - name: Test core behavior
         run: ./scripts/test.sh
+      - name: Record original source layout without GPU
+        if: always()
+        run: bash ./scripts/render-source-layout-reference.sh
       - name: Verify release-only resource lookup
         run: ./scripts/test-release-resources.sh
       - name: Verify signed updater and packaging fixtures
         run: ./scripts/test-update-tools.sh
       - name: Build universal app
         run: ./scripts/build.sh
+      - name: Verify CPU source metadata cache
+        run: ./scripts/test-source-metadata-cache.sh build/EndfieldHUD.app
       - name: Verify bundle
         run: |
           ./scripts/verify-bundle.sh build/EndfieldHUD.app arm64 x86_64
+      - name: Verify native HUD lifecycle and navigation
+        run: |
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-test --backdrop-preparation-smoke-test --source-fallback-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test --reduce-motion-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --charge-badge-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --notes-shelf-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --telemetry-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --app-shortcut-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --work-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --event-log-smoke-test
+      - name: Verify cached desktop source geometry
+        env:
+          HUD_BENCHMARK_RESOURCE_APP: build/EndfieldHUD.app
+        run: ./scripts/benchmark-hud.sh --verify-only
       - name: Verify updater termination and bounded Focus cleanup
         run: |
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --termination-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --termination-smoke-test --stall-focus-cleanup
       - name: Verify local release packaging
         run: ./scripts/package.sh --skip-build --dmg
+      - name: Render original Watch scene through Metal
+        if: always()
+        run: bash ./scripts/render-source-watch-previews.sh
+      - name: Verify original backdrop filters with synthetic pixels
+        if: always()
+        run: bash ./scripts/verify-source-backdrop-gpu.sh
+      - name: Verify DMG installation contents and record branch build
+        if: success()
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SOURCE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          TESTED_COMMIT: ${{ github.sha }}
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/EndfieldHUD.app/Contents/Info.plist)
+          DMG="dist/EndfieldHUD-$VERSION-macOS.dmg"
+          MOUNT=$(mktemp -d "$RUNNER_TEMP/endfield-dmg.XXXXXX")
+          trap 'hdiutil detach "$MOUNT" >/dev/null 2>&1 || true; rmdir "$MOUNT"' EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT" "$DMG"
+          ./scripts/verify-bundle.sh "$MOUNT/EndfieldHUD.app" arm64 x86_64
+          test "$(readlink "$MOUNT/Applications")" = /Applications
+          diff -qr build/EndfieldHUD.app "$MOUNT/EndfieldHUD.app"
+          test -f "$MOUNT/Testing-build.md"
+          test -f "$MOUNT/LICENSE.txt"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import plistlib
+          import subprocess
+          app = pathlib.Path('build/EndfieldHUD.app')
+          info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+          stem = 'EndfieldHUD-' + info['CFBundleShortVersionString']
+          output = pathlib.Path('dist')
+          expected = {stem + suffix for suffix in ('-macOS.dmg', '-macOS.zip', '-source.zip')}
+          checksums = output / (stem + '-SHA256SUMS.txt')
+          recorded = {}
+          for line in checksums.read_text().splitlines():
+              digest, name = line.split('  ', 1)
+              assert name in expected and name not in recorded, name
+              raw = (output / name).read_bytes()
+              assert hashlib.sha256(raw).hexdigest() == digest, name
+              recorded[name] = {'sha256': digest, 'bytes': len(raw)}
+          assert set(recorded) == expected, recorded
+          architectures = subprocess.check_output(['lipo', '-archs', str(app / 'Contents/MacOS/EndfieldHUD')], text=True).split()
+          assert set(architectures) == {'arm64', 'x86_64'}, architectures
+          tested_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert tested_commit == os.environ['TESTED_COMMIT'], tested_commit
+          signature = subprocess.run(['codesign', '-d', '--verbose=2', str(app)], check=True, capture_output=True, text=True)
+          assert 'Signature=adhoc' in signature.stdout + signature.stderr
+          provenance = {
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'branch': os.environ['SOURCE_BRANCH'],
+              'sourceCommit': os.environ['SOURCE_COMMIT'],
+              'testedCommit': tested_commit,
+              'testedTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'baseCommit': os.environ['BASE_COMMIT'] or None,
+              'event': os.environ['GITHUB_EVENT_NAME'],
+              'ref': os.environ['GITHUB_REF'],
+              'runURL': os.environ['GITHUB_SERVER_URL'] + '/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID'],
+              'runAttempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'version': info['CFBundleShortVersionString'],
+              'build': info['CFBundleVersion'],
+              'architectures': architectures,
+              'appSigning': 'ad-hoc',
+              'notarized': False,
+              'dmgMountedBundleMatchesBuiltBundle': True,
+              'artifacts': recorded,
+          }
+          (output / 'branch-build.json').write_text(json.dumps(provenance, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Branch macOS download\n\nDownload the **EndfieldHUD-macOS-' + provenance['sourceCommit'] + '** artifact from this run. Unzip it, open **' + stem + '-macOS.dmg**, and drag the app to Applications.\n\n')
+              summary.write('Source commit: `' + provenance['sourceCommit'] + '`. Tested commit: `' + provenance['testedCommit'] + '`. Apple silicon and Intel bundle checks, read-only DMG mounting, and all package checksums passed. This is an ad hoc signed, unnotarized testing build.\n')
+          PY
+      - name: Upload verified branch DMG and packages
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: EndfieldHUD-macOS-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            dist/EndfieldHUD-*-macOS.dmg
+            dist/EndfieldHUD-*-macOS.zip
+            dist/EndfieldHUD-*-source.zip
+            dist/EndfieldHUD-*-SHA256SUMS.txt
+            dist/branch-build.json
+          compression-level: 0
+          retention-days: 30
+          if-no-files-found: error
+      - name: Record fixture crash diagnostics
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          import pathlib
+          import shutil
+          source = pathlib.Path.home() / 'Library/Logs/DiagnosticReports'
+          output = pathlib.Path('build/watch-source-crash-diagnostics')
+          output.mkdir(parents=True, exist_ok=True)
+          reports = []
+          for prefix in ('EndfieldHUD', 'RenderSourceWatchPreviews', 'VerifySourceBackdropGPU', 'VerifySourcePlateProjection'):
+              reports.extend(source.glob(prefix + '*.ips'))
+          for path in sorted(reports):
+              shutil.copyfile(path, output / path.name)
+              raw = path.read_text(errors='replace')
+              print('Fixture crash report:', path.name)
+              try:
+                  _, end = json.JSONDecoder().raw_decode(raw)
+                  report = json.loads(raw[end:].strip())
+                  print(json.dumps({key: report.get(key) for key in
+                      ('procName', 'exception', 'termination', 'asi', 'faultingThread')}, indent=2))
+                  fault = report.get('faultingThread', 0)
+                  threads = report.get('threads', [])
+                  if isinstance(fault, int) and 0 <= fault < len(threads):
+                      print(json.dumps(threads[fault].get('frames', [])[:30], indent=2))
+              except (ValueError, KeyError, TypeError):
+                  print(raw[:12000])
+          print('Fixture crash reports:', len(reports))
+          PY
+      - name: Upload original scene and Metal evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: watch-source-previews
+          path: |
+            build/watch-source-previews/
+            build/metal-source-probe/
+            build/watch-source-layout-reference/
+            build/watch-source-crash-diagnostics/
+            build/watch-source-backdrop/
+            build/watch-source-plate-projection/
+          retention-days: 7
+          if-no-files-found: warn

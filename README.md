@@ -4,6 +4,8 @@
 
 An Endfield-inspired menu bar app for macOS. Bring up a moving, layered HUD for notes, files, timers, audio controls, and a quick look at your Mac.
 
+**Integration branch:** This branch combines the new Watch presentation with the stable 1.0.1 features and saved-data formats. To test this branch, open a successful [Build and test run for this branch](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration) and download its **EndfieldHUD-macOS-…** artifact. The release download and previews below are for the stable version, not this branch.
+
 **[Download v1.0.1 — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![EndfieldHUD Power overview with sample readings](docs/media/overview.png)
@@ -73,7 +75,7 @@ Click a preview to see that section. The linked guides have more detail.
 | Files and images | Access to items you choose, paste, or drop into the app. The shelf keeps file references; image notes and profile pictures keep local copies. |
 | Update alerts | Optional notification permission. Update information is still available in the menu and About if notifications are denied. |
 | Launch at login | Install in Applications first; macOS may ask you to approve it in Login Items. |
-| Automatic Focus | **macOS 13+** and two shortcuts you create in Apple’s Shortcuts app. They are not installed for you. Follow the [Focus setup guide](docs/audio-and-work-mode.md#automatic-focus-setup). The timer works without them. |
+| Automatic Focus | This integration branch prefers Control Center with your **Accessibility** permission on **macOS 11+**, where its controls are recognized; configured Shortcuts on **macOS 13+** are a fallback. The stable v1.0.1 download requires those two user-created shortcuts. See [Focus setup](docs/audio-and-work-mode.md#automatic-focus-setup). The timer works without Focus automation. |
 
 Notes, shelf references, profile, map pins, and event history stay on this Mac. Clipboard history stays in memory and clears on quit. Update checks and downloads contact GitHub; the app does not need an account. [Settings guide](docs/settings.md) · [Update guide](docs/updates.md)
 

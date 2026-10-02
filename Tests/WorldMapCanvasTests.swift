@@ -63,9 +63,13 @@ enum WorldMapCanvasTests {
             let style = HUDModuleContentStyle(dark: true, accent: cyan, contentsScale: 2)
             let retained = canvas.makeContent(for: .map, style: style)
             check(retained.bounds.size == WorldMapGeometry.size && retained.mask != nil, "The map stays within the central HUD's circular content layer")
+            let edgeMask = retained.mask as? CAGradientLayer
+            check(edgeMask?.type == .radial && edgeMask?.colors?.count == 3
+                  && near(edgeMask?.locations?[1].doubleValue ?? 0, 1 - WorldMapGeometry.edgeFeatherWidth / WorldMapGeometry.radius),
+                  "One retained radial mask feathers the circular edge without allocating terrain-sized blur images")
             check(animatedLayers(canvas).isEmpty, "An inactive map starts without animation")
-            check(!canvas.containsMapPoint(CGPoint(x: -1, y: 220)) && !canvas.containsMapPoint(CGPoint(x: 220, y: 370)),
-                  "Map gestures exclude the exterior and the lower area reserved for shell controls")
+            check(!canvas.containsMapPoint(CGPoint(x: -1, y: 220)) && canvas.containsMapPoint(CGPoint(x: 220, y: 370)),
+                  "The complete visible map circle accepts gestures while exterior points remain excluded")
             check(!canvas.mouseDown(at: CGPoint(x: CGFloat.nan, y: 220)) && !canvas.rightMouseDown(at: CGPoint(x: 220, y: CGFloat.infinity)),
                   "Invalid pointer coordinates never start a drag or create a pin")
             check(!canvas.accessibleActions.first(where: { $0.id == "map:zoomOut" })!.enabled
@@ -116,12 +120,17 @@ enum WorldMapCanvasTests {
             let pin = canvas.pins[0]
             check(near(pin.x, expectedWorld.x) && near(pin.y, expectedWorld.y) && canvas.selectedPinID == pin.id,
                   "Pin placement uses world coordinates at the clicked point and selects the result")
+            check(canvas.showsPinCoordinates && descendants(retained).contains { $0.name == "map.pin.coordinates" },
+                  "Adding a pin displays its coordinates")
             check(nearPoint(marker(canvas, pin.id)?.position, placedAt), "The new marker is drawn where the user clicked")
             let dot = marker(canvas, pin.id)!.sublayers!.compactMap { $0 as? CAShapeLayer }.first { $0.name == "map.pin.dot" }!
             check(dot.fillColor == cyan.cgColor, "Marker dots use the selected HUD theme color")
             check(try WorldMapStore(directory: root.appendingPathComponent("navigation")).pins == [pin], "Placing a pin saves it immediately for relaunch")
 
             check(canvas.mouseDown(at: CGPoint(x: 303, y: 264)) && canvas.isDragging, "Dragging empty terrain begins a pan")
+            check(!canvas.showsPinCoordinates && canvas.selectedPinID == pin.id
+                  && !descendants(retained).contains { $0.name == "map.pin.coordinates" },
+                  "Left-clicking terrain dismisses coordinates while preserving the selected pin")
             let savedCamera = store.viewport
             canvas.mouseDragged(to: CGPoint(x: 331, y: 271))
             check(canvas.viewport != savedCamera && store.viewport == savedCamera, "Panning moves the map without writing every pointer update")
@@ -143,24 +152,32 @@ enum WorldMapCanvasTests {
             let invalidCamera = canvas.viewport
             canvas.zoom(at: WorldMapGeometry.center, factor: .nan)
             canvas.zoom(at: WorldMapGeometry.center, factor: -2)
-            canvas.zoom(at: CGPoint(x: 220, y: 370), factor: 2)
-            check(canvas.viewport == invalidCamera, "Invalid zoom and scrolling over reserved shell space do not alter the camera")
+            canvas.zoom(at: CGPoint(x: 220, y: 437), factor: 2)
+            check(canvas.viewport == invalidCamera, "Invalid zoom and scrolling outside the map circle do not alter the camera")
             _ = canvas.keyDown(keyCode: 53)
             check(canvas.selectedPinID == nil && !canvas.keyDown(keyCode: 51), "Escape clears selection and Delete without selection preserves pins")
             let pinScreen = WorldMapGeometry.screen(x: pin.x, y: pin.y, viewport: canvas.viewport)
-            check(canvas.mouseDown(at: pinScreen) && canvas.selectedPinID == pin.id && !canvas.isDragging,
-                  "Clicking an existing marker selects it instead of dragging the terrain")
-            let countBeforeExistingClick = canvas.pins.count
-            check(canvas.rightMouseDown(at: pinScreen) && canvas.pins.count == countBeforeExistingClick,
-                  "Right-clicking an existing pin selects it without stacking duplicates")
-            check(canvas.keyDown(keyCode: 51) && canvas.pins.isEmpty && canvas.selectedPinID == nil,
-                  "Delete removes the selected pin and clears selection")
+            canvas.perform(actionID: "map:pin:" + pin.id.uuidString)
+            check(canvas.showsPinCoordinates, "Selecting a pin through its accessible action exposes coordinates")
+            check(canvas.mouseDown(at: pinScreen) && canvas.selectedPinID == pin.id && !canvas.isDragging && !canvas.showsPinCoordinates,
+                  "Left-clicking an existing marker dismisses coordinates and retains selection without dragging")
+            check(canvas.rightMouseDown(at: pinScreen) && canvas.pins.isEmpty && canvas.selectedPinID == nil,
+                  "Right-clicking an existing pin removes it directly even while coordinates are hidden")
             check(try WorldMapStore(directory: root.appendingPathComponent("navigation")).pins.isEmpty, "Pin removal persists across relaunch")
             canvas.perform(actionID: "map:addPin")
             check(canvas.pins.count == 1 && near(canvas.pins[0].x, canvas.viewport.centerX) && near(canvas.pins[0].y, canvas.viewport.centerY),
                   "The accessible add action places a marker at the current map center")
+            check(canvas.mouseDown(at: buttonCenter) && !canvas.showsPinCoordinates && canvas.pins.count == 1,
+                  "Left-clicking a map toolbar control also hides coordinates while keeping its normal action")
+            check(canvas.keyDown(keyCode: 51) && canvas.pins.isEmpty && canvas.selectedPinID == nil,
+                  "Keyboard Delete still removes the selected pin after its coordinates are hidden")
+            check(canvas.rightMouseDown(at: placedAt) && canvas.showsPinCoordinates
+                  && canvas.rightMouseDown(at: placedAt) && canvas.pins.isEmpty && !canvas.showsPinCoordinates,
+                  "A second right click at a newly placed pin removes it without leaving coordinate chrome")
+            canvas.perform(actionID: "map:addPin")
             let sameLayer = canvas.makeContent(for: .map, style: HUDModuleContentStyle(dark: false, accent: .systemPink, contentsScale: 3))
-            check(sameLayer === retained && marker(canvas, canvas.pins[0].id) != nil, "Theme changes keep the same canvas and saved markers")
+            check(sameLayer === retained && sameLayer.mask === edgeMask && marker(canvas, canvas.pins[0].id) != nil,
+                  "Theme changes keep the same canvas, feather mask and saved markers")
             let pinkDot = marker(canvas, canvas.pins[0].id)!.sublayers!.compactMap { $0 as? CAShapeLayer }.first { $0.name == "map.pin.dot" }!
             check(pinkDot.fillColor == NSColor.systemPink.cgColor, "Existing markers update to a new theme color")
             check(changes > 0, "Map interactions notify the HUD to refresh projected controls")

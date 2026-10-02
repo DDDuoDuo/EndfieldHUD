@@ -1,0 +1,75 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct _8
+{
+    float4x4 _m0;
+    float4x4 _m1;
+    float4x4 _m2;
+    float4x4 _m3;
+    float4x4 _m4;
+    float4x4 _m5;
+    float4x4 _m6;
+    float4x4 _m7;
+    float4x4 _m8;
+    float4x4 _m9;
+    float4x4 _m10;
+    float4 _m11;
+    float4 _m12;
+    float4 _m13;
+    float4 _m14;
+    float4 _m15;
+};
+
+struct _10
+{
+    float4 _m0;
+    float4x4 _m1;
+    float4 _m2;
+    float4 _m3;
+    float _m4;
+    float4 _m5;
+    float4 _m6;
+    float4 _m7;
+    float _m8;
+    float _m9;
+    float _m10;
+    float _m11;
+    float _m12;
+    float _m13;
+    float _m14;
+    float _m15;
+    float4 _m16;
+    float4 _m17;
+    float4 _m18;
+};
+
+struct main0_out
+{
+    float4 m_5 [[color(0)]];
+};
+
+struct main0_in
+{
+    float4 m_3 [[user(locn0)]];
+    float4 m_4 [[user(locn1)]];
+};
+
+fragment main0_out main0(main0_in in [[stage_in]], constant _8& _9 [[buffer(0)]], constant _10& _11 [[buffer(1)]], texture2d<float> _13 [[texture(0)]], texture2d<float> _15 [[texture(1)]], sampler _14 [[sampler(0)]], sampler _16 [[sampler(1)]])
+{
+    main0_out out = {};
+    float4 _57 = in.m_3;
+    _57.w = rint(_57.w * 255.0) * 0.0039215688593685626983642578125;
+    float4 _100 = _15.sample(_16, ((((float2x2(float2(_11._m17.xy), float2(_11._m17.zw)) * ((mix(in.m_4.xy, in.m_4.xy, float2(_11._m15)) + (_11._m16.xy * fmod(_9._m12.y, 1024.0))) - float2(0.5))) + float2(0.5)) * _11._m18.xy) + _11._m18.zw));
+    float4 _105 = _57 * mix(_100, float4(1.0, 1.0, 1.0, _100.x), float4(_11._m14));
+    float2 _178 = select(in.m_4.zw, float2((in.m_4.z < 0.0) ? in.m_4.z : (((in.m_4.z >= 0.0) && (in.m_4.z <= _11._m2.x)) ? ((in.m_4.z * _11._m3.x) / _11._m2.x) : ((in.m_4.z <= _11._m2.y) ? ((((in.m_4.z - _11._m2.x) * (_11._m3.y - _11._m3.x)) / (_11._m2.y - _11._m2.x)) + _11._m3.x) : ((in.m_4.z <= 1.0) ? ((((in.m_4.z - _11._m2.y) * (1.0 - _11._m3.y)) / (1.0 - _11._m2.y)) + _11._m3.y) : in.m_4.z))), (in.m_4.w < 0.0) ? in.m_4.w : (((in.m_4.w >= 0.0) && (in.m_4.w <= _11._m2.z)) ? ((in.m_4.w * _11._m3.z) / _11._m2.z) : ((in.m_4.w <= _11._m2.w) ? ((((in.m_4.w - _11._m2.z) * (_11._m3.w - _11._m3.z)) / (_11._m2.w - _11._m2.z)) + _11._m3.z) : ((in.m_4.w <= 1.0) ? ((((in.m_4.w - _11._m2.w) * (1.0 - _11._m3.w)) / (1.0 - _11._m2.w)) + _11._m3.w) : in.m_4.w)))), bool2(_11._m4 != 0.0));
+    float _204 = _105.w * ((_13.sample(_14, ((_178.xy * _11._m0.xy) + _11._m0.zw)).w * (step(_178.x, 1.0) * step(-_178.x, 0.0))) * (step(_178.y, 1.0) * step(-_178.y, 0.0)));
+    float3 _206 = _105.xyz * _204;
+    float4 _207 = float4(_206.x, _206.y, _206.z, _105.w);
+    _207.w = mix(_204, 0.0, _11._m8);
+    out.m_5 = _207;
+    return out;
+}
+

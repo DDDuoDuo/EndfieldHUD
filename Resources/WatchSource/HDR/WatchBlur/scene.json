@@ -1,0 +1,3810 @@
+{
+  "schema_version": 1,
+  "scope": "Exact original WatchBlur prefab, engine layer table and metadata literals. No live RT or panel sorting observation.",
+  "prefab_cab": "CAB-da575b36066e0fe7c79a11cb7fa32b07",
+  "objects": [
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-8316786052132017515",
+      "type": "RectTransform",
+      "name": "",
+      "script": null,
+      "raw_sha256": "ea3badc7e37d84b5665d5a1d97862af82001b4c0ec76f2e0568c6d152caa253a",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_LocalRotation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 1.0
+        },
+        "m_LocalPosition": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "m_LocalScale": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "m_Children": [
+          {
+            "m_FileID": 0,
+            "m_PathID": 4887915659283163797
+          },
+          {
+            "m_FileID": 0,
+            "m_PathID": -679247896259368299
+          }
+        ],
+        "m_Father": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "m_AnchorMin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_AnchorMax": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_AnchoredPosition": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_SizeDelta": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_Pivot": {
+          "x": 0.0,
+          "y": 0.0
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-8130889658415748459",
+      "type": "Animation",
+      "name": "",
+      "script": null,
+      "raw_sha256": "06910223612c8786d1475db180fae1a94a7ee47913a4158405149fa2cceac2e1",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Animation": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "m_Animations": [
+          {
+            "m_FileID": 0,
+            "m_PathID": -4766204379165600086
+          },
+          {
+            "m_FileID": 0,
+            "m_PathID": -1133048434166449674
+          }
+        ],
+        "m_WrapMode": 0,
+        "m_PlayAutomatically": false,
+        "m_AnimatePhysics": false,
+        "m_CullingType": 0
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-7121192982786708843",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "LuaPanel",
+      "raw_sha256": "c510a0059f339c644cb34a73192ea4ad3ce0cf137fcefceeb1e19f2cdcd02e5b",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": 7501836781467252332
+        },
+        "m_Name": "",
+        "_isPCOnlyPanel": 0,
+        "_isControllerPanel": 0,
+        "_isWorldUI": 0,
+        "_uiRot": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "_blockWhileAnim": 0,
+        "animationWrapper": {
+          "m_FileID": 0,
+          "m_PathID": 1670513283918293653
+        },
+        "_uiAudioType": 0,
+        "onAnimationInFinished": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-6939870546399303019",
+      "type": "GameObject",
+      "name": "BlurBG",
+      "script": null,
+      "raw_sha256": "0ad0f86a95693c52392d093f4b0d76d3dd575ee7e16744dca05ba7a8c0f83827",
+      "data": {
+        "m_Component": [
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -679247896259368299
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -4780823390082798955
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 4667585945048214165
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -3267040612389721451
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 432012895015299733
+            }
+          }
+        ],
+        "m_Layer": 10,
+        "m_Name": "BlurBG",
+        "m_Tag": 102,
+        "m_ArtTag": 0,
+        "m_IsActive": true
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-6038954849694291307",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "FullScreenSceneBlurMarker",
+      "raw_sha256": "8e5760c4b619ed60c7a84bfec0b082f89f37b6876e2184ba82f3a68b49c2baa2",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": 3918295402269600405
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": -4453551283587701642
+        },
+        "m_Name": "",
+        "useWhiteBlur": 0,
+        "useSceneColorPS": 0,
+        "thisLuaPanelHidesCamera": 0
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-5271881080090236267",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "InputBindingGroupMonoTarget",
+      "raw_sha256": "d1b82324031ba1c17819422c7e8b9a3e98f2ca3ab04ca638ece8ce2700be265f",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": -2180267349390791956
+        },
+        "m_Name": ""
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-5059779944537429355",
+      "type": "GameObject",
+      "name": "WatchBlurPanel",
+      "script": null,
+      "raw_sha256": "ad00b6c7c5909995d782593f6f507839235a2a2772d79e209b14c51ba7311f8d",
+      "data": {
+        "m_Component": [
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -8316786052132017515
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 213636480254372501
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 7591914819884313237
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 306388719076403861
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -5271881080090236267
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -7121192982786708843
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 7722268642306452117
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 2977133815523142293
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 8478140971457079957
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -203886897415755115
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -8130889658415748459
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 1670513283918293653
+            }
+          }
+        ],
+        "m_Layer": 10,
+        "m_Name": "WatchBlurPanel",
+        "m_Tag": 0,
+        "m_ArtTag": 0,
+        "m_IsActive": true
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-4766204379165600086",
+      "type": "AnimationClip",
+      "name": "watch_blur_in",
+      "script": null,
+      "raw_sha256": "7cba074dc28bada777bb2dad9b8f410d700e30f1d9b6887d8dd68bb1dfd57ca4",
+      "data": {
+        "m_Name": "watch_blur_in",
+        "m_Legacy": true,
+        "m_Compressed": false,
+        "m_TransferCompressed": true,
+        "m_UseHighQualityCurve": true,
+        "m_RotationCurves": [],
+        "m_CompressedRotationCurves": [],
+        "m_EulerCurves": [],
+        "m_PositionCurves": [],
+        "m_ScaleCurves": [],
+        "m_FloatCurves": [
+          {
+            "curve": {
+              "m_Curve": [
+                {
+                  "time": 0.0,
+                  "value": 0.0,
+                  "inSlope": 0.0,
+                  "outSlope": 0.0,
+                  "weightedMode": 0,
+                  "inWeight": 0.3333333432674408,
+                  "outWeight": 0.3333333432674408
+                },
+                {
+                  "time": 0.13333334028720856,
+                  "value": 1.0,
+                  "inSlope": 0.0,
+                  "outSlope": 0.0,
+                  "weightedMode": 0,
+                  "inWeight": 0.3333333432674408,
+                  "outWeight": 0.3333333432674408
+                }
+              ],
+              "m_PreInfinity": 2,
+              "m_PostInfinity": 2,
+              "m_RotationOrder": 4
+            },
+            "attribute": "m_Alpha",
+            "path": "BlurBG",
+            "classID": 225,
+            "script": {
+              "m_FileID": 0,
+              "m_PathID": 0
+            }
+          },
+          {
+            "curve": {
+              "m_Curve": [
+                {
+                  "time": 0.0,
+                  "value": 0.0,
+                  "inSlope": Infinity,
+                  "outSlope": Infinity,
+                  "weightedMode": 0,
+                  "inWeight": 0.0,
+                  "outWeight": 0.0
+                },
+                {
+                  "time": 0.06666667014360428,
+                  "value": 1.0,
+                  "inSlope": Infinity,
+                  "outSlope": Infinity,
+                  "weightedMode": 0,
+                  "inWeight": 0.0,
+                  "outWeight": 0.0
+                }
+              ],
+              "m_PreInfinity": 2,
+              "m_PostInfinity": 2,
+              "m_RotationOrder": 4
+            },
+            "attribute": "m_IsActive",
+            "path": "FullScreenBlurScene",
+            "classID": 1,
+            "script": {
+              "m_FileID": 0,
+              "m_PathID": 0
+            }
+          }
+        ],
+        "m_PPtrCurves": [],
+        "m_SampleRate": 30.0,
+        "m_WrapMode": 0,
+        "m_aclType": 0,
+        "m_Bounds": {
+          "m_Center": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "m_Extent": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        "m_MuscleClipSize": 0,
+        "m_MuscleClip": {
+          "m_DeltaPose": {
+            "m_RootX": {
+              "t": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              "q": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+              },
+              "s": {
+                "x": 1.0,
+                "y": 1.0,
+                "z": 1.0
+              }
+            },
+            "m_LookAtPosition": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "m_LookAtWeight": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 0.0
+            },
+            "m_GoalArray": [
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              },
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              },
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              },
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              }
+            ],
+            "m_LeftHandPose": {
+              "m_GrabX": {
+                "t": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "q": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0,
+                  "w": 1.0
+                },
+                "s": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                }
+              },
+              "m_DoFArray": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "m_Override": 0.0,
+              "m_CloseOpen": 0.0,
+              "m_InOut": 0.0,
+              "m_Grab": 0.0
+            },
+            "m_RightHandPose": {
+              "m_GrabX": {
+                "t": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "q": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0,
+                  "w": 1.0
+                },
+                "s": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                }
+              },
+              "m_DoFArray": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "m_Override": 0.0,
+              "m_CloseOpen": 0.0,
+              "m_InOut": 0.0,
+              "m_Grab": 0.0
+            },
+            "m_DoFArray": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "m_TDoFArray": [
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              }
+            ]
+          },
+          "m_StartX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_StopX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_LeftFootStartX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_RightFootStartX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_AverageSpeed": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "m_Clip": {
+            "data": {
+              "m_StreamedClip": {
+                "data": [],
+                "curveCount": 0
+              },
+              "m_DenseClip": {
+                "m_FrameCount": 0,
+                "m_CurveCount": 0,
+                "m_SampleRate": 0.0,
+                "m_BeginTime": 0.0,
+                "m_SampleArray": [],
+                "m_ACLType": 0,
+                "m_ACLArray": [],
+                "m_PositionFactor": 0.0,
+                "m_EulerFactor": 0.0,
+                "m_ScaleFactor": 0.0,
+                "m_FloatFactor": 0.0,
+                "m_nPositionCurves": 0,
+                "m_nRotationCurves": 0,
+                "m_nEulerCurves": 0,
+                "m_nScaleCurves": 0
+              },
+              "m_ConstantClip": {
+                "data": []
+              },
+              "m_CompressedCurveCount": 0
+            }
+          },
+          "m_StartTime": 0.0,
+          "m_StopTime": 1.0,
+          "m_OrientationOffsetY": 0.0,
+          "m_Level": 0.0,
+          "m_CycleOffset": 0.0,
+          "m_AverageAngularSpeed": 0.0,
+          "m_IndexArray": [
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1
+          ],
+          "m_ValueArrayDelta": [],
+          "m_ValueArrayReferencePose": [],
+          "m_Mirror": false,
+          "m_LoopTime": false,
+          "m_LoopBlend": false,
+          "m_LoopBlendOrientation": false,
+          "m_LoopBlendPositionY": false,
+          "m_LoopBlendPositionXZ": false,
+          "m_StartAtOrigin": true,
+          "m_KeepOriginalOrientation": false,
+          "m_KeepOriginalPositionY": true,
+          "m_KeepOriginalPositionXZ": false,
+          "m_HeightFromFeet": false
+        },
+        "m_ClipBindingConstant": {
+          "genericBindings": [],
+          "pptrCurveMapping": []
+        },
+        "m_AclCompressedBuffer": {
+          "Header": {
+            "Version": 4294967295
+          },
+          "TransformBufferData": [],
+          "RootMotionBufferData": [],
+          "FloatBufferData": [],
+          "TransformSubTrackMasks": [],
+          "TransformSubTrackConstantMasks": [],
+          "OutputTrackCount": 0,
+          "RootPosIndex": 65535,
+          "RootRotIndex": 65535,
+          "RootScaleIndex": 65535,
+          "RootTrackCount": 0,
+          "FloatCurveCount": 0,
+          "m_DefaultIndexs": [],
+          "m_ConstantIndexs": [],
+          "m_ConstantValues": []
+        },
+        "m_HasGenericRootTransform": false,
+        "m_HasMotionFloatCurves": false,
+        "m_Events": [],
+        "m_ClipTag": 0,
+        "m_TransitionRotateMode": 0,
+        "m_TransitionRotateDirType": 0,
+        "m_TotalSize": 0,
+        "m_TransitionRotateCurveIndex": 65535
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-3267040612389721451",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "UIBlurRT",
+      "raw_sha256": "820f807aa760d09f0c428d3c606a5f5a6a9c447867956a6aed9c0a0b50176e5b",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -6939870546399303019
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": -4078830373474156871
+        },
+        "m_Name": "",
+        "_rawImage": {
+          "m_FileID": 0,
+          "m_PathID": 4667585945048214165
+        },
+        "_autoUpdate": 0,
+        "_rtExtractionType": 1,
+        "_rtExtractionDuration": 1,
+        "_needUseSceneColorPS": 0
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-1133048434166449674",
+      "type": "AnimationClip",
+      "name": "watch_blur_out",
+      "script": null,
+      "raw_sha256": "4f9cabb91fcfed1548e525872e7ee401a14258c4b62b4cc2331ff8d710c61a36",
+      "data": {
+        "m_Name": "watch_blur_out",
+        "m_Legacy": true,
+        "m_Compressed": false,
+        "m_TransferCompressed": true,
+        "m_UseHighQualityCurve": true,
+        "m_RotationCurves": [],
+        "m_CompressedRotationCurves": [],
+        "m_EulerCurves": [],
+        "m_PositionCurves": [],
+        "m_ScaleCurves": [],
+        "m_FloatCurves": [
+          {
+            "curve": {
+              "m_Curve": [
+                {
+                  "time": 0.0,
+                  "value": 1.0,
+                  "inSlope": 0.0,
+                  "outSlope": -7.499999523162842,
+                  "weightedMode": 0,
+                  "inWeight": 0.3333333432674408,
+                  "outWeight": 0.06775762140750885
+                },
+                {
+                  "time": 0.13333334028720856,
+                  "value": 0.0,
+                  "inSlope": -7.499999523162842,
+                  "outSlope": 0.0,
+                  "weightedMode": 0,
+                  "inWeight": 0.05455685779452324,
+                  "outWeight": 0.3333333432674408
+                }
+              ],
+              "m_PreInfinity": 2,
+              "m_PostInfinity": 2,
+              "m_RotationOrder": 4
+            },
+            "attribute": "m_Alpha",
+            "path": "BlurBG",
+            "classID": 225,
+            "script": {
+              "m_FileID": 0,
+              "m_PathID": 0
+            }
+          },
+          {
+            "curve": {
+              "m_Curve": [
+                {
+                  "time": 0.0,
+                  "value": 0.0,
+                  "inSlope": Infinity,
+                  "outSlope": Infinity,
+                  "weightedMode": 0,
+                  "inWeight": 0.0,
+                  "outWeight": 0.0
+                }
+              ],
+              "m_PreInfinity": 2,
+              "m_PostInfinity": 2,
+              "m_RotationOrder": 4
+            },
+            "attribute": "m_IsActive",
+            "path": "FullScreenBlurScene",
+            "classID": 1,
+            "script": {
+              "m_FileID": 0,
+              "m_PathID": 0
+            }
+          }
+        ],
+        "m_PPtrCurves": [],
+        "m_SampleRate": 30.0,
+        "m_WrapMode": 0,
+        "m_aclType": 0,
+        "m_Bounds": {
+          "m_Center": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "m_Extent": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          }
+        },
+        "m_MuscleClipSize": 0,
+        "m_MuscleClip": {
+          "m_DeltaPose": {
+            "m_RootX": {
+              "t": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              "q": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0
+              },
+              "s": {
+                "x": 1.0,
+                "y": 1.0,
+                "z": 1.0
+              }
+            },
+            "m_LookAtPosition": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "m_LookAtWeight": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 0.0
+            },
+            "m_GoalArray": [
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              },
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              },
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              },
+              {
+                "m_X": {
+                  "t": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0
+                  },
+                  "q": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "z": 0.0,
+                    "w": 1.0
+                  },
+                  "s": {
+                    "x": 1.0,
+                    "y": 1.0,
+                    "z": 1.0
+                  }
+                },
+                "m_WeightT": 0.0,
+                "m_WeightR": 0.0,
+                "m_HintT": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "m_HintWeightT": 0.0
+              }
+            ],
+            "m_LeftHandPose": {
+              "m_GrabX": {
+                "t": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "q": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0,
+                  "w": 1.0
+                },
+                "s": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                }
+              },
+              "m_DoFArray": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "m_Override": 0.0,
+              "m_CloseOpen": 0.0,
+              "m_InOut": 0.0,
+              "m_Grab": 0.0
+            },
+            "m_RightHandPose": {
+              "m_GrabX": {
+                "t": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "q": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0,
+                  "w": 1.0
+                },
+                "s": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                }
+              },
+              "m_DoFArray": [
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ],
+              "m_Override": 0.0,
+              "m_CloseOpen": 0.0,
+              "m_InOut": 0.0,
+              "m_Grab": 0.0
+            },
+            "m_DoFArray": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "m_TDoFArray": [
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              },
+              {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+              }
+            ]
+          },
+          "m_StartX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_StopX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_LeftFootStartX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_RightFootStartX": {
+            "t": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0
+            },
+            "q": {
+              "x": 0.0,
+              "y": 0.0,
+              "z": 0.0,
+              "w": 1.0
+            },
+            "s": {
+              "x": 1.0,
+              "y": 1.0,
+              "z": 1.0
+            }
+          },
+          "m_AverageSpeed": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "m_Clip": {
+            "data": {
+              "m_StreamedClip": {
+                "data": [],
+                "curveCount": 0
+              },
+              "m_DenseClip": {
+                "m_FrameCount": 0,
+                "m_CurveCount": 0,
+                "m_SampleRate": 0.0,
+                "m_BeginTime": 0.0,
+                "m_SampleArray": [],
+                "m_ACLType": 0,
+                "m_ACLArray": [],
+                "m_PositionFactor": 0.0,
+                "m_EulerFactor": 0.0,
+                "m_ScaleFactor": 0.0,
+                "m_FloatFactor": 0.0,
+                "m_nPositionCurves": 0,
+                "m_nRotationCurves": 0,
+                "m_nEulerCurves": 0,
+                "m_nScaleCurves": 0
+              },
+              "m_ConstantClip": {
+                "data": []
+              },
+              "m_CompressedCurveCount": 0
+            }
+          },
+          "m_StartTime": 0.0,
+          "m_StopTime": 1.0,
+          "m_OrientationOffsetY": 0.0,
+          "m_Level": 0.0,
+          "m_CycleOffset": 0.0,
+          "m_AverageAngularSpeed": 0.0,
+          "m_IndexArray": [
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1
+          ],
+          "m_ValueArrayDelta": [],
+          "m_ValueArrayReferencePose": [],
+          "m_Mirror": false,
+          "m_LoopTime": false,
+          "m_LoopBlend": false,
+          "m_LoopBlendOrientation": false,
+          "m_LoopBlendPositionY": false,
+          "m_LoopBlendPositionXZ": false,
+          "m_StartAtOrigin": true,
+          "m_KeepOriginalOrientation": false,
+          "m_KeepOriginalPositionY": true,
+          "m_KeepOriginalPositionXZ": false,
+          "m_HeightFromFeet": false
+        },
+        "m_ClipBindingConstant": {
+          "genericBindings": [],
+          "pptrCurveMapping": []
+        },
+        "m_AclCompressedBuffer": {
+          "Header": {
+            "Version": 4294967295
+          },
+          "TransformBufferData": [],
+          "RootMotionBufferData": [],
+          "FloatBufferData": [],
+          "TransformSubTrackMasks": [],
+          "TransformSubTrackConstantMasks": [],
+          "OutputTrackCount": 0,
+          "RootPosIndex": 65535,
+          "RootRotIndex": 65535,
+          "RootScaleIndex": 65535,
+          "RootTrackCount": 0,
+          "FloatCurveCount": 0,
+          "m_DefaultIndexs": [],
+          "m_ConstantIndexs": [],
+          "m_ConstantValues": []
+        },
+        "m_HasGenericRootTransform": false,
+        "m_HasMotionFloatCurves": false,
+        "m_Events": [],
+        "m_ClipTag": 0,
+        "m_TransitionRotateMode": 0,
+        "m_TransitionRotateDirType": 0,
+        "m_TotalSize": 0,
+        "m_TransitionRotateCurveIndex": 65535
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-679247896259368299",
+      "type": "RectTransform",
+      "name": "",
+      "script": null,
+      "raw_sha256": "b2bfba2ee3e089e49826010e4c52361fb1415325cdee4bd7b30f944e60a6992b",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -6939870546399303019
+        },
+        "m_LocalRotation": {
+          "x": -0.0,
+          "y": -0.0,
+          "z": 7.275957614183426e-11,
+          "w": 1.0
+        },
+        "m_LocalPosition": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "m_LocalScale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        },
+        "m_Children": [],
+        "m_Father": {
+          "m_FileID": 0,
+          "m_PathID": -8316786052132017515
+        },
+        "m_AnchorMin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_AnchorMax": {
+          "x": 1.0,
+          "y": 1.0
+        },
+        "m_AnchoredPosition": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_SizeDelta": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_Pivot": {
+          "x": 0.5,
+          "y": 0.5
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:-203886897415755115",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "UISelectableNaviGroup",
+      "raw_sha256": "0e13e77e20bc41a187b0957e80d993452e2d56d7ab66578eecf45547d8380b8b",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": -6277768070729411153
+        },
+        "m_Name": "",
+        "isIsolate": 1,
+        "isLayer": 1,
+        "removeLayerOnDisable": 0,
+        "parentNaviGroup": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "internalNaviStrategy": 0,
+        "navigationBindingType": 0,
+        "enablePartner": 1,
+        "naviPartnerOnUp": [],
+        "naviPartnerOnDown": [],
+        "naviPartnerOnLeft": [],
+        "naviPartnerOnRight": [],
+        "relatedInputBindingGroups": [],
+        "focusActionId": "",
+        "stopFocusActionId": "",
+        "hideItemTipsOnUnFocus": 1,
+        "useDefaultTargetOnFocus": 1,
+        "useFocusHighlight": 1,
+        "focusHighlightMask": 0,
+        "focusHighlightNormalFrame": 1,
+        "focusHighlightDarkFrame": 0,
+        "focusOverrideHighlightRect": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "focusActionKeyHint": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "stopFocusActionKeyHint": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "onIsFocusedChange": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:213636480254372501",
+      "type": "Canvas",
+      "name": "",
+      "script": null,
+      "raw_sha256": "09cf326c824f58889108b49fbd89fbd8ebfbe48640dc83639f56a273b3c6588d",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_RenderMode": 1,
+        "m_Camera": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "m_PlaneDistance": 30.0,
+        "m_PixelPerfect": false,
+        "m_ReceivesEvents": true,
+        "m_OverrideSorting": true,
+        "m_OverridePixelPerfect": false,
+        "m_SortingBucketNormalizedSize": 0.0,
+        "m_VertexColorAlwaysGammaSpace": false,
+        "m_AdditionalShaderChannelsFlag": 0,
+        "m_SortingLayerID": 0,
+        "m_SortingOrder": 0,
+        "m_TargetDisplay": 0,
+        "m_DoCPUFrameInterpolation": false,
+        "m_JoinGPUFrameInterpolation": false
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:306388719076403861",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "GraphicRaycaster",
+      "raw_sha256": "56615517b289ff6c3469286baf3b991fa2a3895385db1743c1242abddba29ee9",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": -313811669401408955
+        },
+        "m_Name": "",
+        "m_IgnoreReversedGraphics": 1,
+        "m_BlockingObjects": 0,
+        "m_BlockingMask": {
+          "m_Bits": 1783
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:432012895015299733",
+      "type": "CanvasGroup",
+      "name": "",
+      "script": null,
+      "raw_sha256": "889dc33efc86a0b376a1ff4fa0a4e5d7a744127609161fa8584391f7af371cce",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -6939870546399303019
+        },
+        "m_Enabled": 1,
+        "m_Color": {
+          "r": 1.0,
+          "g": 1.0,
+          "b": 1.0,
+          "a": 1.0
+        },
+        "m_Alpha": 1.0,
+        "m_Interactable": true,
+        "m_BlocksRaycasts": true,
+        "m_IgnoreParentGroups": false
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:1670513283918293653",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "UIAnimationWrapper",
+      "raw_sha256": "b8aa58529c255fe82b88589be262f2753a89f4fe03a844c60f47165d1ccc0389",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": 8803230974266453151
+        },
+        "m_Name": "",
+        "_animationIn": {
+          "m_FileID": 0,
+          "m_PathID": -4766204379165600086
+        },
+        "_animationInEasing": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "_animationLoop": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "_animationOut": {
+          "m_FileID": 0,
+          "m_PathID": -1133048434166449674
+        },
+        "autoPlay": 1,
+        "_onlyOnce": 1,
+        "_needSyncLoopAnim": 0,
+        "_syncLoopAnimKey": "",
+        "_options": {
+          "animEase": 1
+        },
+        "onAnimationInEasingFinished": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "_audioOnOpen": "",
+        "_audioOnClose": ""
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:2977133815523142293",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "LuaCustomConfig",
+      "raw_sha256": "3f024a6a5f45e08e188f0127630fa98d582f821ca9f96d4f2f671db67fa0e3f1",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": 7829268728939344836
+        },
+        "m_Name": "",
+        "itemList": []
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:3918295402269600405",
+      "type": "GameObject",
+      "name": "FullScreenBlurScene",
+      "script": null,
+      "raw_sha256": "b76e323304baa7361d86d047b3568042a6caf27234f0574021096e30ea544012",
+      "data": {
+        "m_Component": [
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": 4887915659283163797
+            }
+          },
+          {
+            "component": {
+              "m_FileID": 0,
+              "m_PathID": -6038954849694291307
+            }
+          }
+        ],
+        "m_Layer": 5,
+        "m_Name": "FullScreenBlurScene",
+        "m_Tag": 102,
+        "m_ArtTag": 0,
+        "m_IsActive": true
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:4667585945048214165",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "RawImage",
+      "raw_sha256": "4e8502aa3c6c8925044dda6ab86296dae79b8fbc68436ad5731decb10856852d",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -6939870546399303019
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": 8211606541286769707
+        },
+        "m_Name": "",
+        "m_Material": {
+          "m_FileID": 2,
+          "m_PathID": 8413750250904750805
+        },
+        "m_Color": {
+          "r": 0.2980392277240753,
+          "g": 0.2980392277240753,
+          "b": 0.2980392277240753,
+          "a": 1.0
+        },
+        "m_RaycastTarget": 1,
+        "m_RaycastPadding": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 0.0
+        },
+        "m_RaycastIgnoreMask": 0,
+        "m_Maskable": 1,
+        "m_OnCullStateChanged": {
+          "m_PersistentCalls": {
+            "m_Calls": []
+          }
+        },
+        "m_Texture": {
+          "m_FileID": 0,
+          "m_PathID": 0
+        },
+        "m_UVRect": {
+          "x": 0.0,
+          "y": 0.0,
+          "width": 1.0,
+          "height": 1.0
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:4887915659283163797",
+      "type": "RectTransform",
+      "name": "",
+      "script": null,
+      "raw_sha256": "4cbb8c6e49dd26120de43e374a4d728e8bee6cbf2ce0d7227d09c88de3123697",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": 3918295402269600405
+        },
+        "m_LocalRotation": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "w": 1.0
+        },
+        "m_LocalPosition": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "m_LocalScale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        },
+        "m_Children": [],
+        "m_Father": {
+          "m_FileID": 0,
+          "m_PathID": -8316786052132017515
+        },
+        "m_AnchorMin": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_AnchorMax": {
+          "x": 1.0,
+          "y": 1.0
+        },
+        "m_AnchoredPosition": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_SizeDelta": {
+          "x": 0.0,
+          "y": 0.0
+        },
+        "m_Pivot": {
+          "x": 0.5,
+          "y": 0.5
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:7591914819884313237",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "CanvasScaler",
+      "raw_sha256": "d4286e85c08459c0e0371654126942b22e218bf3972377e24769860dbf1ad530",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": 5240002574328891800
+        },
+        "m_Name": "",
+        "m_UiScaleMode": 0,
+        "m_ReferencePixelsPerUnit": 100.0,
+        "m_ScaleFactor": 1.0,
+        "m_ReferenceResolution": {
+          "x": 800.0,
+          "y": 600.0
+        },
+        "m_ScreenMatchMode": 0,
+        "m_MatchWidthOrHeight": 0.0,
+        "m_PhysicalUnit": 3,
+        "m_FallbackScreenDPI": 96.0,
+        "m_DefaultSpriteDPI": 96.0,
+        "m_DynamicPixelsPerUnit": 1.0,
+        "m_PresetInfoIsWorld": 0
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:7722268642306452117",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "LuaReference",
+      "raw_sha256": "c1703463937f07c44c6c55357a6379b580c925e3254ea7c994421106e47c778f",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": -3893951356388347130
+        },
+        "m_Name": "",
+        "refDict": {
+          "_keys": [
+            "blurBG",
+            "fullScreenBlurScene"
+          ],
+          "_values": [
+            {
+              "m_FileID": 0,
+              "m_PathID": -3267040612389721451
+            },
+            {
+              "m_FileID": 0,
+              "m_PathID": 4887915659283163797
+            }
+          ]
+        },
+        "refExtraInfoDict": {
+          "_keys": [],
+          "_values": []
+        },
+        "isRootRef": 1,
+        "subReferences": [],
+        "references": {
+          "version": 2,
+          "RefIds": []
+        }
+      }
+    },
+    {
+      "id": "CAB-da575b36066e0fe7c79a11cb7fa32b07:8478140971457079957",
+      "type": "MonoBehaviour",
+      "name": "",
+      "script": "NotchAdapter",
+      "raw_sha256": "2e389f65d868b9ae26af9b7ed5c4047227ababc371a8db40f0d619607fdeb99a",
+      "data": {
+        "m_GameObject": {
+          "m_FileID": 0,
+          "m_PathID": -5059779944537429355
+        },
+        "m_Enabled": 1,
+        "m_Script": {
+          "m_FileID": 1,
+          "m_PathID": 2717534713133723722
+        },
+        "m_Name": "",
+        "leftSideUIList": [],
+        "rightSideUIList": [],
+        "bottomSideUIList": [],
+        "fullHorizontalStretchUIList": [],
+        "alwaysFindSideUI": 0
+      }
+    }
+  ],
+  "layers": {
+    "source": "globalgamemanagers:3",
+    "raw_sha256": "cb46b5f354ce368547b37d615b3fb4cb2c0952f161250c8892184b712eed9cb5",
+    "names": [
+      "Default",
+      "TransparentFX",
+      "Ignore Raycast",
+      "Fog",
+      "Water",
+      "UI",
+      "Walkable",
+      "Climbable",
+      "PostProcessVolume",
+      "Trigger",
+      "UIPP",
+      "Character",
+      "Enemy",
+      "UIModel",
+      "Building",
+      "UIInteract",
+      "WorldUI",
+      "Projectile",
+      "AbilityEntity",
+      "Interactive",
+      "Terrain",
+      "IK",
+      "NPC",
+      "",
+      "UltimateShow",
+      "BattleShape",
+      "Physics",
+      "DropItem",
+      "Hide",
+      "Liquid",
+      "Gacha",
+      ""
+    ],
+    "decoded_prefix": {
+      "tags": [
+        "AgentsRoot",
+        "EntitiesRoot",
+        "LuaReference",
+        "LevelStart",
+        "GrassRoot",
+        "TreeRoot",
+        "RockRoot",
+        "ArchitectureRoot",
+        "PropRoot",
+        "EnemyRoot",
+        "InteractiveRoot",
+        "CheckpointRoot",
+        "NavMesh",
+        "SceneEffectRoot",
+        "NoNavMesh",
+        "CamCollisionIgnore",
+        "GameplayInteract",
+        "StreamingSceneRoot",
+        "TriggerCast.Box",
+        "LevelEditor.Mud",
+        "TriggerCast.AnchorWave",
+        "EditorOnly.FactoryOcclude",
+        "ExcludeFromNavMeshBuild",
+        "Aura",
+        "Airborne",
+        "DynamicBattleShape",
+        "LuaReference-Ignore"
+      ],
+      "layers_byte_start": 508,
+      "layers_byte_end": 920,
+      "unparsed_suffix_bytes": 388
+    },
+    "UI": {
+      "layer": 5,
+      "mask": 32
+    },
+    "UIPP": {
+      "layer": 10,
+      "mask": 1024
+    },
+    "normal_manager_camera_culling_request": 1056,
+    "HGUtils_UI_2D_LAYER": {
+      "mask": 32,
+      "setter": "0x18456144a"
+    },
+    "HGUtils_UI_3D_LAYER": {
+      "mask": 1024,
+      "setter": "0x184561494"
+    }
+  },
+  "atlas_callback_literals": [
+    {
+      "encoded": "0xa000e467",
+      "index": 29235,
+      "string": "_Param0"
+    },
+    {
+      "encoded": "0xa000e469",
+      "index": 29236,
+      "string": "_Param1"
+    },
+    {
+      "encoded": "0xa000eddb",
+      "index": 30445,
+      "string": "_paramAtlas"
+    },
+    {
+      "encoded": "0xa000e7bb",
+      "index": 29661,
+      "string": "_SrcColor"
+    },
+    {
+      "encoded": "0xa000e879",
+      "index": 29756,
+      "string": "_TempColor"
+    }
+  ],
+  "blur_background_material": {
+    "id": "CAB-19672075dc041493137296c53a2330a5:8413750250904750805",
+    "data": {
+      "m_Name": "M_ui_blur_bg",
+      "m_Shader": {
+        "m_FileID": 1,
+        "m_PathID": -5686924490240107124
+      },
+      "m_ValidKeywords": [
+        "STENCIL_ALPHA_BLEND"
+      ],
+      "m_InvalidKeywords": [],
+      "m_LightmapFlags": 4,
+      "m_EnableInstancingVariants": false,
+      "m_DoubleSidedGI": false,
+      "m_CustomRenderQueue": -1,
+      "stringTagMap": [],
+      "disabledShaderPasses": [
+        "ForwardOnly",
+        "DepthOnly"
+      ],
+      "m_SavedProperties": {
+        "m_TexEnvs": [
+          [
+            "_BlendTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_DissolveTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_DisturbTex1",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_DisturbTex2",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_LEDMaskTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_MainTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_MaskTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_NoiseTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_ScratchCard",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_SoftMaskTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_StretchTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_VFXMainTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ],
+          [
+            "_WeightTex",
+            {
+              "m_Texture": {
+                "m_FileID": 0,
+                "m_PathID": 0
+              },
+              "m_Scale": {
+                "x": 1.0,
+                "y": 1.0
+              },
+              "m_Offset": {
+                "x": 0.0,
+                "y": 0.0
+              },
+              "m_UVSetIndex": 0
+            }
+          ]
+        ],
+        "m_Ints": [],
+        "m_Floats": [
+          [
+            "_Amount",
+            0.5
+          ],
+          [
+            "_BendAmount",
+            0.0
+          ],
+          [
+            "_BendAngle",
+            1.0
+          ],
+          [
+            "_BendLeftEdge",
+            0.0
+          ],
+          [
+            "_BendPartHeight1",
+            2.0
+          ],
+          [
+            "_BendPartHeight2",
+            2.0
+          ],
+          [
+            "_BendPartHeight3",
+            2.0
+          ],
+          [
+            "_BendPartHeight4",
+            2.0
+          ],
+          [
+            "_BendPartHeight5",
+            2.0
+          ],
+          [
+            "_BendPartHeight6",
+            2.0
+          ],
+          [
+            "_BendRadius",
+            1.0
+          ],
+          [
+            "_BendRightEdge",
+            1.0
+          ],
+          [
+            "_BendUVClip",
+            0.0
+          ],
+          [
+            "_Bi_Disturb",
+            0.0
+          ],
+          [
+            "_Bi_Stretch",
+            0.0
+          ],
+          [
+            "_BlendTexUVRotate",
+            0.0
+          ],
+          [
+            "_BlendTexUseDisturb",
+            0.0
+          ],
+          [
+            "_BlendUVSet",
+            0.0
+          ],
+          [
+            "_BlockX",
+            5.0
+          ],
+          [
+            "_BlockY",
+            5.0
+          ],
+          [
+            "_ColorAmount",
+            2.0
+          ],
+          [
+            "_ColorLoopFadeOffset",
+            0.0
+          ],
+          [
+            "_ColorLoopSpeed",
+            1.0
+          ],
+          [
+            "_ColorMask",
+            15.0
+          ],
+          [
+            "_ColorPositionoffset",
+            0.0
+          ],
+          [
+            "_DissolveByDir",
+            0.0
+          ],
+          [
+            "_DissolveColorRamp",
+            0.0
+          ],
+          [
+            "_DissolveColorWidth",
+            1.0
+          ],
+          [
+            "_DissolveEdgeHardness",
+            0.0
+          ],
+          [
+            "_DissolveEdgeIntensity",
+            0.0
+          ],
+          [
+            "_DissolveEdgeWidth",
+            0.5
+          ],
+          [
+            "_DissolveScheduleOffset",
+            0.0
+          ],
+          [
+            "_DissolveTexUseDisturb",
+            0.0
+          ],
+          [
+            "_DissolveUVRotate",
+            0.0
+          ],
+          [
+            "_DissolveUVSet",
+            0.0
+          ],
+          [
+            "_DissolveUseWeight",
+            0.0
+          ],
+          [
+            "_Disturb2UVSet",
+            0.0
+          ],
+          [
+            "_DisturbTex1Normal",
+            0.0
+          ],
+          [
+            "_DisturbTex2Normal",
+            0.0
+          ],
+          [
+            "_DisturbTexUVRotate",
+            0.0
+          ],
+          [
+            "_DisturbUIntensity1",
+            0.0
+          ],
+          [
+            "_DisturbUIntensity2",
+            0.0
+          ],
+          [
+            "_DisturbUVSet",
+            0.0
+          ],
+          [
+            "_DisturbUseWeight",
+            0.0
+          ],
+          [
+            "_DisturbVIntensity1",
+            0.0
+          ],
+          [
+            "_DisturbVIntensity2",
+            0.0
+          ],
+          [
+            "_EnableBlockNoise",
+            0.0
+          ],
+          [
+            "_EnableColorLoop",
+            0.0
+          ],
+          [
+            "_EnableFilpBook",
+            0.0
+          ],
+          [
+            "_EnableGlitch",
+            0.0
+          ],
+          [
+            "_EnableGrid",
+            0.0
+          ],
+          [
+            "_EnableLinearLight",
+            0.0
+          ],
+          [
+            "_EnablePolar",
+            0.0
+          ],
+          [
+            "_EnableRotate",
+            0.0
+          ],
+          [
+            "_EnableScratchCards",
+            0.0
+          ],
+          [
+            "_EnableStencilAlphaBlend",
+            1.0
+          ],
+          [
+            "_EnableUIAlphaClip",
+            0.0
+          ],
+          [
+            "_EnableUIBlendTex",
+            0.0
+          ],
+          [
+            "_EnableUIClipOnlyChar",
+            0.0
+          ],
+          [
+            "_EnableUIClipSceneDepth",
+            0.0
+          ],
+          [
+            "_EnableUIDissolve",
+            0.0
+          ],
+          [
+            "_EnableUIDisturb",
+            0.0
+          ],
+          [
+            "_EnableUIMaskTex",
+            0.0
+          ],
+          [
+            "_EnableUIMinimapMist",
+            0.0
+          ],
+          [
+            "_EnableUIPixelStretch",
+            0.0
+          ],
+          [
+            "_EnableUIVFX",
+            0.0
+          ],
+          [
+            "_EnableUIVFXMainTex",
+            0.0
+          ],
+          [
+            "_EnableUIWeightTex",
+            0.0
+          ],
+          [
+            "_EnableWorldUI",
+            0.0
+          ],
+          [
+            "_FrameIndexOffset",
+            0.0
+          ],
+          [
+            "_Freq",
+            5.0
+          ],
+          [
+            "_GridScale",
+            0.10000000149011612
+          ],
+          [
+            "_GridTilling",
+            20.0
+          ],
+          [
+            "_Intensity",
+            0.005900000222027302
+          ],
+          [
+            "_LEDBlendFactor",
+            1.0
+          ],
+          [
+            "_LEDIntensity",
+            1.0
+          ],
+          [
+            "_Linear2Gamma",
+            0.0
+          ],
+          [
+            "_LinesWidth",
+            0.800000011920929
+          ],
+          [
+            "_MainProperties",
+            0.0
+          ],
+          [
+            "_MainTexUVRotate",
+            0.0
+          ],
+          [
+            "_MainTexUseDisturb",
+            1.0
+          ],
+          [
+            "_MainUVSet",
+            0.0
+          ],
+          [
+            "_MaskTexUVRotate",
+            0.0
+          ],
+          [
+            "_MaskTexUseDisturb",
+            0.0
+          ],
+          [
+            "_MaskUVSet",
+            0.0
+          ],
+          [
+            "_NoiseTime",
+            0.0
+          ],
+          [
+            "_Offset",
+            1.0
+          ],
+          [
+            "_OnlyBendPart",
+            0.0
+          ],
+          [
+            "_Stencil",
+            0.0
+          ],
+          [
+            "_StencilAlpha",
+            0.15000000596046448
+          ],
+          [
+            "_StencilAlphaBlend",
+            32.0
+          ],
+          [
+            "_StencilAlphaBlendComp",
+            3.0
+          ],
+          [
+            "_StencilAlphaBlendOp",
+            0.0
+          ],
+          [
+            "_StencilAlphaBlendReadMask",
+            255.0
+          ],
+          [
+            "_StencilAlphaBlendWriteMask",
+            255.0
+          ],
+          [
+            "_StencilComp",
+            3.0
+          ],
+          [
+            "_StencilOp",
+            0.0
+          ],
+          [
+            "_StencilReadMask",
+            255.0
+          ],
+          [
+            "_StencilWriteMask",
+            255.0
+          ],
+          [
+            "_StretchIntensity",
+            1.0
+          ],
+          [
+            "_StretchTexUVRotate",
+            0.0
+          ],
+          [
+            "_StretchUseDisturb",
+            0.0
+          ],
+          [
+            "_StretchUseWeight",
+            0.0
+          ],
+          [
+            "_Threshold",
+            0.5
+          ],
+          [
+            "_TimeAnamtionSpeed",
+            20.0
+          ],
+          [
+            "_TintColorAlpha",
+            1.0
+          ],
+          [
+            "_TintColorIntensity",
+            1.0
+          ],
+          [
+            "_UIImageBlurToggle",
+            0.0
+          ],
+          [
+            "_UIImageOpaque",
+            1.0
+          ],
+          [
+            "_UIVFXParameters",
+            0.0
+          ],
+          [
+            "_UseAdditiveBlendMode",
+            0.0
+          ],
+          [
+            "_UseBendPartFade",
+            0.0
+          ],
+          [
+            "_UseDisturb",
+            0.0
+          ],
+          [
+            "_UseDisturb2",
+            0.0
+          ],
+          [
+            "_UseLEDScreen",
+            0.0
+          ],
+          [
+            "_UseMainTexAsAlpha",
+            1.0
+          ],
+          [
+            "_UseMaskTexAsAlpha",
+            1.0
+          ],
+          [
+            "_VFXBlendMode",
+            0.0
+          ],
+          [
+            "_WeightTexIntensity",
+            1.0
+          ],
+          [
+            "_WeightTexUVRotate",
+            0.0
+          ],
+          [
+            "_WeightUVSet",
+            0.0
+          ],
+          [
+            "_ZTestUI",
+            8.0
+          ],
+          [
+            "_farPlaneDepthOffset",
+            0.004999999888241291
+          ],
+          [
+            "_isFarPlaneDepth",
+            0.0
+          ],
+          [
+            "_isZDepthOffset",
+            0.0
+          ],
+          [
+            "_zDepthOffset",
+            0.004999999888241291
+          ]
+        ],
+        "m_Colors": [
+          [
+            "_BendPoint",
+            {
+              "r": 0.5,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.5
+            }
+          ],
+          [
+            "_BlendTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_BlendTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_BlendTint",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_Color",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_DissolveDir",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolveEmissiveColor",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolveEmissiveColor2",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolvePoint",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DissolveUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_DissolveUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DisturbTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_DisturbUVSpeed1",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_DisturbUVSpeed2",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_GridColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_InnerSoftMask",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_InnerSoftMaskPos",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_InnerSoftMaskUV",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_LoopColor1",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_LoopColor2",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_LoopColor3",
+            {
+              "r": 0.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_LoopColor4",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MainTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MainTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_MaskTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_MaskTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_PolarTilingOffset",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_RightEdgeColor",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 1.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_RowsColumns",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_SoftMaskPos",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_StretchDir",
+            {
+              "r": 1.0,
+              "g": 1.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_StretchTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_StretchUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ],
+          [
+            "_WeightTexUVRotateMat",
+            {
+              "r": 1.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 1.0
+            }
+          ],
+          [
+            "_WeightTexUVSpeed",
+            {
+              "r": 0.0,
+              "g": 0.0,
+              "b": 0.0,
+              "a": 0.0
+            }
+          ]
+        ]
+      },
+      "m_BuildTextureStacks": [],
+      "m_SubsurfaceProfile": {
+        "m_FileID": 0,
+        "m_PathID": 0
+      }
+    },
+    "raw_sha256": "32128b6752024efedcd49fcf74d011a951952a086b1758364b5542f2113ad32f",
+    "shader_id": "CAB-a9639464a220db7366f9e133dbb4751c:-5686924490240107124",
+    "source_file": "precision-reference/blur-cursor/objects/CAB-19672075dc041493137296c53a2330a5--8413750250904750805.json",
+    "runtime_texture_name": "_MainTex",
+    "runtime_texture_source": "UIBlurRT-owned extracted main-camera texture; source serialized m_Texture is null."
+  },
+  "normal_phase": {
+    "phase_file": "extracted/Persistent/Data/LuaScripts/Phase/Watch/PhaseWatch.dec.lua",
+    "initialize": "Open or retain PanelId.WatchBlur in _InitAllPhaseItems lines28-34.",
+    "layer_write": "TransitionIn line63 _ChangeBlurSetting(true), line110 recursive UIPP layer assignment; BackToTop line144 repeats true.",
+    "distinction": "BlurBG UIBlurRT wraps rawImage component4667585945048214165. This is main-camera scene extraction, not UIImageBlur atlas manager.",
+    "not_hidden_by_clear": "PanelConfig.WatchBlur clearedPanel=false. UIManager._GetClearScreenTargets only selects GetCurPanelCfg(clearedPanel)==true.",
+    "ordering": "Types.UI3D=1, Window=7; WatchBlur is UI3D/isWorldUI=false and Watch is Window/isWorldUI=true. UIManager dynamically assigns type*1000+20 stack increments (range init..init+980), and UICtrl.SetSortingOrder writes panelCanvas.sortingOrder. Normal source category orders therefore place Blur before Watch; exact stack slot is live state."
+  },
+  "boundary": "Exact runtime sorting canvas root allocation and actual player scene capture pixels are not contained in this prefab. Shader/font/source dimensions remain original; no fit to recording."
+}

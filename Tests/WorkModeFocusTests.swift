@@ -113,9 +113,10 @@ enum WorkModeFocusTests {
             let failedRunner = FakeExecutor()
             let failed = WorkModeFocusController(executor: failedRunner)
             failed.receive(snapshot(.running)); failedRunner.complete(0, .failure(error))
-            check(!failed.isPending && failed.statusMessage?.isEmpty == false
+            check(!failed.isPending
+                  && (error == .notConfigured ? failed.statusMessage == nil : failed.statusMessage?.isEmpty == false)
                   && failed.state == (error == .notConfigured || error == .unavailable ? .unavailable : .failed),
-                  "A failed Focus request is visible and never marked enabled: \(error)")
+                  "Missing optional setup has no reminder; actual failures remain visible and never marked enabled: \(error)")
             failed.receive(snapshot(.running, elapsed: 2)); failed.receive(snapshot(.paused)); failed.receive(snapshot(.running))
             check(failedRunner.commands == [.start], "Ticks and pause/resume cannot create an automatic failure-retry loop")
             var result: Bool?
@@ -192,7 +193,7 @@ enum WorkModeFocusTests {
             }
             return arguments.last == WorkModeFocusCommand.start.shortcutName ? "enabled" : "released"
         }, availability: { true })
-        func runExecutor(_ executor: ShortcutsWorkModeFocusExecutor, _ command: WorkModeFocusCommand) -> Result<String, WorkModeFocusRunError>? {
+        func runExecutor(_ executor: WorkModeFocusExecuting, _ command: WorkModeFocusCommand) -> Result<String, WorkModeFocusRunError>? {
             var result: Result<String, WorkModeFocusRunError>?
             executor.run(command) {
                 check(Thread.isMainThread, "Production executor delivers command acknowledgements on main")
@@ -219,6 +220,107 @@ enum WorkModeFocusTests {
         }, availability: { true })
         check(runExecutor(incomplete, .start) == .failure(.notConfigured) && incompleteInvocations == [["list"]],
               "An absent cleanup shortcut stops before any Focus-changing process is dispatched")
+
+        // The direct adapter uses observed public AX roles/state, with a fake
+        // boundary here: no real permission checks, UI or Focus changes.
+        let panel = FakeFocusAccess()
+        var notificationDrains: [() -> Void] = []
+        let direct = ControlCenterWorkModeFocusExecutor(access: panel, scheduleNotificationDrain: { notificationDrains.append($0) })
+        check(runExecutor(direct, .start) == .success("enabled") && panel.presses == [false],
+              "A confirmed all-off panel enables only Do Not Disturb and waits for readback")
+        check(direct.isPresentingSystemControls && notificationDrains.count == 1 && panel.closeCount == 1 && panel.workerOnly,
+              "Direct operations dismiss owned UI off-main but retain their flag while queued focus notifications drain")
+        check(runExecutor(direct, .end) == .success("released") && panel.presses == [false, true],
+              "The direct owner confirms Do Not Disturb release before acknowledging End")
+        notificationDrains[0]()
+        check(direct.isPresentingSystemControls,
+              "An older notification-drain callback cannot clear a newer Control Center transaction")
+        notificationDrains[1]()
+        check(!direct.isPresentingSystemControls,
+              "The latest one-shot notification drain releases the transient flag without an idle timer")
+        panel.choices = [.init(identifier: ControlCenterFocusChoice.doNotDisturb, enabled: false),
+                         .init(identifier: "focus-mode-activity-user-work", enabled: true)]
+        check(runExecutor(direct, .start) == .success("preserved") && panel.presses.count == 2,
+              "An existing user Focus is preserved without any toggle")
+        check(runExecutor(direct, .end) == .success("unchanged") && panel.presses.count == 2,
+              "Cleanup does not disable a different Focus chosen by the user")
+        panel.choices = [.init(identifier: ControlCenterFocusChoice.doNotDisturb, enabled: false)]
+        check(runExecutor(direct, .end) == .success("unchanged") && panel.presses.count == 2,
+              "Already-off Focus requires no compensating toggle")
+        panel.choices = []
+        check(runExecutor(direct, .start) == .failure(.controlCenterUnavailable) && panel.presses.count == 2,
+              "Unknown or absent Focus controls fail before mutation")
+        let duplicate = ControlCenterFocusChoice(identifier: ControlCenterFocusChoice.doNotDisturb, enabled: false)
+        check((try? ControlCenterFocusDecision.evaluate(.start, choices: [duplicate, duplicate])) == nil,
+              "Duplicate mode identities are not accepted as an unambiguous off state")
+        panel.choices = [duplicate]; panel.failReadback = true
+        check(runExecutor(direct, .start) == .failure(.invalidResponse) && direct.isPresentingSystemControls,
+              "An unconfirmed post-toggle state stays uncertain while queued focus notifications drain")
+        notificationDrains.last?()
+        check(!direct.isPresentingSystemControls,
+              "Failed transactions also release their transient flag after the bounded notification grace")
+        let raced = FakeFocusAccess(); raced.changeBeforePress = true
+        check(runExecutor(ControlCenterWorkModeFocusExecutor(access: raced), .start) == .failure(.invalidResponse)
+              && raced.presses.isEmpty,
+              "A user Focus change during UI setup prevents the toggle and cannot trigger a second backend")
+        let denied = FakeFocusAccess(); denied.isTrusted = false
+        check(runExecutor(ControlCenterWorkModeFocusExecutor(access: denied), .start) == .failure(.accessibilityRequired)
+              && denied.openCount == 0 && denied.presses.isEmpty,
+              "Missing Accessibility permission never opens UI, prompts, or attempts a Focus toggle")
+
+        let preferred = FakeExecutor(), fallback = FakeExecutor()
+        let automatic = AutomaticWorkModeFocusExecutor(direct: preferred, shortcuts: fallback)
+        var automaticResult: Result<String, WorkModeFocusRunError>?
+        automatic.run(.start) { automaticResult = $0 }
+        preferred.complete(0, .failure(.controlCenterUnavailable))
+        check(fallback.commands == [.start] && automaticResult == nil,
+              "A recognized pre-mutation direct failure can use configured Shortcuts")
+        fallback.complete(0, .success("enabled"))
+        automatic.run(.end) { automaticResult = $0 }
+        check(preferred.commands == [.start] && fallback.commands == [.start, .end],
+              "Cleanup remains on the backend that actually enabled Focus")
+        fallback.complete(1, .failure(.commandFailed(1)))
+        automatic.run(.end) { automaticResult = $0 }
+        check(fallback.commands == [.start, .end, .end], "Failed cleanup retains its backend ownership for retry")
+        fallback.complete(2, .success("released"))
+        check(automaticResult == .success("released"), "Only acknowledged cleanup releases backend ownership")
+
+        let uncertainDirect = FakeExecutor(), unusedFallback = FakeExecutor()
+        let uncertainAutomatic = AutomaticWorkModeFocusExecutor(direct: uncertainDirect, shortcuts: unusedFallback)
+        uncertainAutomatic.run(.start) { automaticResult = $0 }
+        uncertainDirect.complete(0, .failure(.invalidResponse))
+        check(automaticResult == .failure(.invalidResponse) && unusedFallback.commands.isEmpty,
+              "A potentially applied direct toggle never falls back and toggles Focus again")
+        uncertainAutomatic.run(.start) { automaticResult = $0 }
+        uncertainDirect.complete(1, .failure(.interrupted))
+        check(automaticResult == .failure(.interrupted) && unusedFallback.commands.isEmpty,
+              "Foreground interruption aborts automation without trying a different backend")
+        let permissionDirect = FakeExecutor(), missingShortcuts = FakeExecutor()
+        permissionDirect.isAvailable = false
+        let permissionController = WorkModeFocusController(executor: AutomaticWorkModeFocusExecutor(direct: permissionDirect, shortcuts: missingShortcuts))
+        permissionController.receive(snapshot(.running)); missingShortcuts.complete(0, .failure(.notConfigured))
+        check(permissionController.needsAccessibilityPermission && permissionController.state == .unavailable
+              && permissionController.statusMessage == WorkModeFocusRunError.accessibilityRequired.message
+              && permissionDirect.commands.isEmpty,
+              "Absent optional Shortcuts expose the native permission requirement without a Shortcuts setup reminder")
+        permissionController.refreshAuthorization()
+        check(permissionDirect.commands.isEmpty && missingShortcuts.commands.count == 1,
+              "App activation without permission cannot repeatedly retry or prompt")
+        permissionDirect.isAvailable = true
+        permissionController.refreshAuthorization(); permissionController.refreshAuthorization()
+        check(permissionDirect.commands == [.start] && permissionController.isPending,
+              "A new Accessibility grant retries the still-active session once, coalescing repeated activation")
+        permissionDirect.complete(0, .success("enabled"))
+        permissionController.refreshAuthorization()
+        check(permissionDirect.commands == [.start] && permissionController.state == .enabled,
+              "Permission refresh cannot toggle an already-owned active Focus")
+        let stoppedDirect = FakeExecutor(), stoppedFallback = FakeExecutor()
+        stoppedDirect.isAvailable = false
+        let stoppedController = WorkModeFocusController(executor: AutomaticWorkModeFocusExecutor(direct: stoppedDirect, shortcuts: stoppedFallback))
+        stoppedController.receive(snapshot(.running)); stoppedFallback.complete(0, .failure(.notConfigured))
+        stoppedController.receive(snapshot(.idle)); stoppedDirect.isAvailable = true
+        stoppedController.refreshAuthorization()
+        check(stoppedDirect.commands.isEmpty, "Granting permission after reset cannot start Focus for an ended work session")
         return count
     }
 
@@ -230,5 +332,25 @@ enum WorkModeFocusTests {
             commands.append(command); completions.append(completion)
         }
         func complete(_ index: Int, _ result: Result<String, WorkModeFocusRunError>) { completions[index](result) }
+    }
+
+    private final class FakeFocusAccess: ControlCenterFocusAccessing {
+        var isTrusted = true
+        var choices = [ControlCenterFocusChoice(identifier: ControlCenterFocusChoice.doNotDisturb, enabled: false)]
+        var presses: [Bool] = []
+        var closeCount = 0, openCount = 0
+        var workerOnly = true, failReadback = false, changeBeforePress = false
+        func open() throws { workerOnly = workerOnly && !Thread.isMainThread; openCount += 1 }
+        func read() throws -> [ControlCenterFocusChoice] { choices }
+        func pressDoNotDisturb(expectedEnabled: Bool) throws {
+            if changeBeforePress { throw WorkModeFocusRunError.controlCenterUnavailable }
+            presses.append(expectedEnabled)
+            choices = [.init(identifier: ControlCenterFocusChoice.doNotDisturb, enabled: !expectedEnabled)]
+        }
+        func waitForReadback(enabled: Bool) throws {
+            if failReadback { throw WorkModeFocusRunError.controlCenterUnavailable }
+            precondition(choices[0].enabled == enabled)
+        }
+        func close() { closeCount += 1 }
     }
 }

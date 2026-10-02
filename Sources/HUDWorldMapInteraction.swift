@@ -145,8 +145,8 @@ final class HUDWorldMapInteraction: NSObject {
         lastAccessibilityUpdate = timeSource()
         let label = canvas.accessibilityStatus
         let help = label + L10n.text(
-            ". Drag to pan. Scroll or pinch to zoom. Right-click to place a pin. Arrow keys move the map.",
-            "。拖动平移，滚动或捏合缩放，右键放置标记，方向键移动地图。")
+            ". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Left-click to hide coordinates. Arrow keys move the map.",
+            "。拖动平移，滚动或捏合缩放，右键放置或移除标记，左键隐藏坐标，方向键移动地图。")
         if status.isHidden { status.isHidden = false }
         if status.accessibilityLabel() != label { status.setAccessibilityLabel(label) }
         if status.accessibilityHelp() != help { status.setAccessibilityHelp(help) }

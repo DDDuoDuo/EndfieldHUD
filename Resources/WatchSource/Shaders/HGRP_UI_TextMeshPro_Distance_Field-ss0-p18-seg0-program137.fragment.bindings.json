@@ -1,0 +1,101 @@
+[
+  {
+    "id": 14,
+    "name": "_13_14",
+    "resource_type": 1,
+    "base_type_id": 13,
+    "type_id": 80,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 18,
+    "name": "_17_18",
+    "resource_type": 1,
+    "base_type_id": 17,
+    "type_id": 82,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 20,
+    "name": "_19_20",
+    "resource_type": 1,
+    "base_type_id": 19,
+    "type_id": 84,
+    "msl_binding": 2,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 22,
+    "name": "_21_22",
+    "resource_type": 1,
+    "base_type_id": 21,
+    "type_id": 85,
+    "msl_binding": 3,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 25,
+    "name": "_23_25",
+    "resource_type": 1,
+    "base_type_id": 23,
+    "type_id": 86,
+    "msl_binding": 4,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 27,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 15,
+    "type_id": 98,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 29,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 15,
+    "type_id": 98,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 31,
+    "name": "",
+    "resource_type": 10,
+    "base_type_id": 15,
+    "type_id": 98,
+    "msl_binding": 2,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 28,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 16,
+    "type_id": 99,
+    "msl_binding": 0,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 30,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 16,
+    "type_id": 99,
+    "msl_binding": 1,
+    "msl_secondary_binding": null
+  },
+  {
+    "id": 32,
+    "name": "",
+    "resource_type": 11,
+    "base_type_id": 16,
+    "type_id": 99,
+    "msl_binding": 2,
+    "msl_secondary_binding": null
+  }
+]

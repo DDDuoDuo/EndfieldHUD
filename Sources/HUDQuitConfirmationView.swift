@@ -1,8 +1,8 @@
 import AppKit
 import QuartzCore
 
-/// Screen-aligned confirmation inside the existing HUD window. The full-size
-/// scrim owns input until dismissal ends, including outside the visible card.
+/// Shared confirmation surface. Its readable size and screen center are kept
+/// independent of HUD layout previews, while the card follows pointer tilt.
 final class HUDQuitConfirmationView: NSView {
     var onCancel: (() -> Void)?
     var onConfirm: (() -> Void)?
@@ -21,11 +21,15 @@ final class HUDQuitConfirmationView: NSView {
     private let quitPlate = CAShapeLayer()
     private var generation = 0
     private var finishing = false
+    var isDismissing: Bool { finishing }
     private var submitted = false
     private var dark = true
     private var accent = NSColor.systemYellow
     private var pointerTracking: NSTrackingArea?
     private weak var priorResponder: NSResponder?
+    private var customContent: (title: String, message: String, cancel: String, confirm: String)?
+    private var initiallyFocusConfirm = false
+    private var pressedAction: Int?
     override var isFlipped: Bool { true }
 
     init(frame: NSRect = .zero, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
@@ -59,6 +63,14 @@ final class HUDQuitConfirmationView: NSView {
             button.onFeedback = { [weak self] in self?.updateButtonAppearance(animated: true) }
             button.onPointerMove = { [weak self] in self?.onPointerMove?() }
             button.onKey = { [weak self] event in self?.handleKey(event) ?? false }
+            button.projectedFrame = { [weak self, weak button] in
+                guard let self, let button, let window = self.window else { return .zero }
+                let corners = [CGPoint(x: button.frame.minX, y: button.frame.minY), CGPoint(x: button.frame.maxX, y: button.frame.minY),
+                               CGPoint(x: button.frame.maxX, y: button.frame.maxY), CGPoint(x: button.frame.minX, y: button.frame.maxY)]
+                    .map { self.convert(self.projectCardPoint($0), to: nil) }
+                let x = corners.map(\.x), y = corners.map(\.y)
+                return window.convertToScreen(CGRect(x: x.min()!, y: y.min()!, width: x.max()! - x.min()!, height: y.max()! - y.min()!))
+            }
             card.addSubview(button)
         }
         cancelButton.action = #selector(cancel)
@@ -75,12 +87,12 @@ final class HUDQuitConfirmationView: NSView {
 
     func configure(dark: Bool, accent: NSColor) {
         self.dark = dark; self.accent = accent
-        titleLabel.stringValue = L10n.text("Quit EndfieldHUD?", "退出 EndfieldHUD？")
-        messageLabel.stringValue = L10n.text("The application will quit after the HUD closes.", "界面收起后，将退出应用。")
-        cancelButton.title = L10n.text("Cancel", "取消")
-        quitButton.title = L10n.text("Quit", "退出")
-        cancelButton.setAccessibilityLabel(L10n.text("Cancel quitting EndfieldHUD", "取消退出 EndfieldHUD"))
-        quitButton.setAccessibilityLabel(L10n.text("Quit EndfieldHUD application", "退出 EndfieldHUD 应用"))
+        titleLabel.stringValue = customContent?.title ?? L10n.text("Quit EndfieldHUD?", "退出 EndfieldHUD？")
+        messageLabel.stringValue = customContent?.message ?? L10n.text("The application will quit after the HUD closes.", "界面收起后，将退出应用。")
+        cancelButton.title = customContent?.cancel ?? L10n.text("Cancel", "取消")
+        quitButton.title = customContent?.confirm ?? L10n.text("Quit", "退出")
+        cancelButton.setAccessibilityLabel(customContent?.cancel ?? L10n.text("Cancel quitting EndfieldHUD", "取消退出 EndfieldHUD"))
+        quitButton.setAccessibilityLabel(customContent?.confirm ?? L10n.text("Quit EndfieldHUD application", "退出 EndfieldHUD 应用"))
         setAccessibilityLabel(titleLabel.stringValue)
         setAccessibilityHelp(messageLabel.stringValue)
         let primary = NSColor(white: dark ? 0.95 : 0.10, alpha: 1)
@@ -102,6 +114,38 @@ final class HUDQuitConfirmationView: NSView {
         needsLayout = true
     }
 
+    func setContent(title: String, message: String, cancel: String, confirm: String, focusConfirm: Bool) {
+        customContent = (title, message, cancel, confirm)
+        initiallyFocusConfirm = focusConfirm
+        configure(dark: dark, accent: accent)
+    }
+
+    /// No additional display timer: the HUD's pointer stream supplies updates.
+    func setSourceTransform(_ transform: CATransform3D) {
+        guard isPresented, let plate = card.layer else { return }
+        plate.removeAnimation(forKey: "confirmation.pointer")
+        withoutActions { plate.transform = transform }
+    }
+
+    func setPointer(_ point: CGPoint, parallax: CGFloat = 1, perspective: CGFloat = 1) {
+        guard isPresented else { return }
+        let target = HUDMotionMath.transform(normalizedPoint: point, depth: 0, travel: 2,
+            reducedMotion: shouldReduceMotion(), parallaxIntensity: parallax * 1.25,
+            perspectiveIntensity: perspective,
+            projectionBounds: CGRect(x: -210, y: -110, width: 420, height: 220))
+        guard let plate = card.layer else { return }
+        if shouldReduceMotion() { plate.removeAnimation(forKey: "confirmation.pointer") }
+        guard !CATransform3DEqualToTransform(plate.transform, target) else { return }
+        let previous = plate.presentation()?.transform ?? plate.transform
+        withoutActions { plate.transform = target }
+        if !shouldReduceMotion() {
+            let change = CABasicAnimation(keyPath: "transform")
+            change.fromValue = NSValue(caTransform3D: previous); change.toValue = NSValue(caTransform3D: target)
+            change.duration = 0.10; change.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            plate.add(change, forKey: "confirmation.pointer")
+        } else { plate.removeAnimation(forKey: "confirmation.pointer") }
+    }
+
     override func layout() {
         super.layout()
         let width = min(390, max(220, bounds.width - 40))
@@ -115,6 +159,10 @@ final class HUDQuitConfirmationView: NSView {
         cancelButton.frame = CGRect(x: 23, y: 137, width: buttonWidth, height: 32)
         quitButton.frame = CGRect(x: 23 + buttonWidth + gap, y: 137, width: buttonWidth, height: 32)
         withoutActions {
+            // AppKit's backing layer starts with a top-left anchor. Keep the
+            // readable card centered while rotating it about its own center.
+            card.layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            card.layer?.position = CGPoint(x: card.frame.midX, y: card.frame.midY)
             cardPlate.frame = card.bounds
             cardPlate.path = Self.cutCorner(card.bounds.insetBy(dx: 0.5, dy: 0.5), corner: 10)
             headerLine.frame = CGRect(x: 23, y: 0, width: 62, height: 2)
@@ -131,9 +179,14 @@ final class HUDQuitConfirmationView: NSView {
         isPresented = true; isHidden = false; alphaValue = 1
         cancelButton.isEnabled = true; quitButton.isEnabled = true
         removeTransitionAnimations()
+        if shouldReduceMotion() {
+            card.layer?.removeAnimation(forKey: "confirmation.pointer")
+            withoutActions { card.layer?.transform = CATransform3DIdentity }
+        }
         configure(dark: dark, accent: accent)
         layoutSubtreeIfNeeded()
-        window?.makeFirstResponder(cancelButton)
+        pressedAction = nil
+        window?.makeFirstResponder(initiallyFocusConfirm ? quitButton : cancelButton)
         updateButtonAppearance(animated: false)
         if !wasVisible && !shouldReduceMotion() {
             animate(layer, keyPath: "opacity", from: 0, to: 1, duration: 0.16, key: "quit.reveal")
@@ -156,6 +209,8 @@ final class HUDQuitConfirmationView: NSView {
             self.isHidden = true; self.alphaValue = 1; self.isPresented = false
             self.finishing = false
             self.removeTransitionAnimations()
+            self.card.layer?.removeAnimation(forKey: "confirmation.pointer")
+            self.withoutActions { self.card.layer?.transform = CATransform3DIdentity }
             if let previous = self.priorResponder, self.window?.firstResponder === self.cancelButton || self.window?.firstResponder === self.quitButton {
                 self.window?.makeFirstResponder(previous)
             }
@@ -202,15 +257,55 @@ final class HUDQuitConfirmationView: NSView {
     override func cancelOperation(_ sender: Any?) { cancel() }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard isPresented, !isHidden else { return nil }
-        return super.hitTest(point) ?? self
+        return self // Route through the displayed projective card, not AppKit's flat frames.
     }
-    override func mouseDown(with event: NSEvent) { onPointerMove?() }
+    override func mouseDown(with event: NSEvent) {
+        onPointerMove?()
+        guard !finishing, !submitted else { return }
+        pressedAction = action(at: convert(event.locationInWindow, from: nil))
+        if let action = pressedAction {
+            let button = action == 0 ? cancelButton : quitButton
+            window?.makeFirstResponder(button); button.highlight(true)
+        }
+    }
+    override func mouseUp(with event: NSEvent) {
+        let selected = action(at: convert(event.locationInWindow, from: nil))
+        let pressed = pressedAction; pressedAction = nil
+        cancelButton.highlight(false); quitButton.highlight(false)
+        guard let pressed, pressed == selected else { return }
+        if pressed == 0 { cancel() } else { confirm() }
+    }
     override func rightMouseDown(with event: NSEvent) { onPointerMove?() }
     override func otherMouseDown(with event: NSEvent) { onPointerMove?() }
     override func scrollWheel(with event: NSEvent) {}
-    override func mouseMoved(with event: NSEvent) { onPointerMove?() }
+    override func mouseMoved(with event: NSEvent) {
+        onPointerMove?()
+        let index = action(at: convert(event.locationInWindow, from: nil))
+        cancelButton.setHovered(index == 0); quitButton.setHovered(index == 1)
+    }
     override func mouseEntered(with event: NSEvent) { onPointerMove?() }
     override func mouseDragged(with event: NSEvent) { onPointerMove?() }
+
+    private func projectCardPoint(_ point: CGPoint) -> CGPoint {
+        guard let plate = card.layer?.presentation() ?? card.layer else { return card.convert(point, to: self) }
+        // Core Animation includes the real anchor, position, flipped backing
+        // coordinates and presentation transform, including a reveal in flight.
+        return plate.convert(point, to: plate.superlayer)
+    }
+
+    private func action(at point: CGPoint) -> Int? {
+        guard let plate = card.layer?.presentation() ?? card.layer else { return nil }
+        let local = plate.convert(point, from: plate.superlayer)
+        guard local.x.isFinite, local.y.isFinite else { return nil }
+        if cancelButton.frame.contains(local) { return 0 }
+        if quitButton.frame.contains(local) { return 1 }
+        return nil
+    }
+    func actionPointForVerification(confirm: Bool) -> CGPoint {
+        let frame = confirm ? quitButton.frame : cancelButton.frame
+        return projectCardPoint(CGPoint(x: frame.midX, y: frame.midY))
+    }
+    var cardTransformForVerification: CATransform3D { card.layer?.transform ?? CATransform3DIdentity }
     override func updateTrackingAreas() {
         if let pointerTracking { removeTrackingArea(pointerTracking) }
         let area = NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .mouseMoved, .mouseEnteredAndExited], owner: self, userInfo: nil)
@@ -263,12 +358,15 @@ private final class HUDQuitCardView: NSView {
 }
 
 private final class HUDQuitActionButton: NSButton {
+    var projectedFrame: (() -> NSRect)?
     var onFeedback: (() -> Void)?
     var onKey: ((NSEvent) -> Bool)?
     var onPointerMove: (() -> Void)?
     private(set) var hovered = false
     private var pointerTracking: NSTrackingArea?
     override var acceptsFirstResponder: Bool { true }
+    override func accessibilityFrame() -> NSRect { projectedFrame?() ?? super.accessibilityFrame() }
+    func setHovered(_ value: Bool) { guard value != hovered else { return }; hovered = value; onFeedback?() }
     override func becomeFirstResponder() -> Bool { let result = super.becomeFirstResponder(); onFeedback?(); return result }
     override func resignFirstResponder() -> Bool { let result = super.resignFirstResponder(); onFeedback?(); return result }
     override func keyDown(with event: NSEvent) { if onKey?(event) != true { super.keyDown(with: event) } }

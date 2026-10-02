@@ -4,6 +4,8 @@
 
 『アークナイツ：エンドフィールド』をモチーフにした macOS のメニューバーアプリです。ショートカットで立体的に動く HUD を開き、メモ、ファイルの一時置き、タイマー、音量調整、Mac の状態確認などを使えます。
 
+**統合テスト用ブランチ：**新しい Watch の外観に、安定版 1.0.1 の機能と保存データ形式を組み合わせています。このブランチを試すには、[このブランチの成功した Build and test 実行](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration)から **EndfieldHUD-macOS-…** アーティファクトをダウンロードしてください。以下のリリースへのリンクとプレビューは安定版のもので、このブランチのものではありません。
+
 **[v1.0.1 をダウンロード — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [すべてのリリース](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 ![サンプルの数値を表示した EndfieldHUD の電源画面](docs/media/overview.png)
@@ -73,7 +75,7 @@ HUD の開閉と、マウスに合わせた傾き：
 | ファイルと画像 | 自分で選ぶ、貼り付ける、ドロップする項目へのアクセス。シェルフは参照を保持し、画像メモとプロフィール画像はローカルにコピーを保存します。 |
 | 更新のお知らせ | 通知の許可は任意です。許可しなくても、メニューと「このアプリについて」で更新を確認できます。 |
 | ログイン時の起動 | 先に「アプリケーション」にインストールしてください。macOS のログイン項目で承認が必要な場合があります。 |
-| 集中モードとの連携 | **macOS 13 以降**と、Apple の「ショートカット」で自分で作成する 2 つのショートカット。自動では追加されません。[設定手順](docs/audio-and-work-mode.md#automatic-focus-setup)を参照してください。タイマーだけなら設定不要です。 |
+| 集中モードとの連携 | この統合ブランチは **macOS 11 以降**で、**アクセシビリティ**の許可と認識できるコントロールセンターの操作項目を使います。利用できない場合は、**macOS 13 以降**で設定済みのショートカットを使います。安定版 v1.0.1 のダウンロードでは、2 つのショートカットを自分で作成する必要があります。[設定手順](docs/audio-and-work-mode.md#automatic-focus-setup)を参照してください。集中モードとの連携なしでもタイマーは使えます。 |
 
 メモ、ファイル参照、プロフィール、地図のピン、イベント履歴は、この Mac に保存されます。クリップボード履歴はメモリ上だけに保持され、終了すると消えます。更新の確認とダウンロードでは GitHub に接続します。アカウントは不要です。[設定ガイド](docs/settings.md)・[更新ガイド](docs/updates.md)
 

@@ -2,8 +2,8 @@ import AppKit
 import QuartzCore
 import CoreImage
 
-/// One portrait crop and frame renderer serves the profile and shell card.
-/// Geometry stays vector-based; the imported image is decoded by the store once.
+/// One portrait crop and the selected source avatar frame serve both profiles.
+/// The imported image is decoded by the store once.
 enum HUDPortraitArtwork {
     private final class RenderedPortrait {
         // Retaining the source also prevents an object-identifier cache key
@@ -18,6 +18,38 @@ enum HUDPortraitArtwork {
         cache.countLimit = 6; cache.totalCostLimit = 8 * 1024 * 1024
         return cache
     }()
+    // The same decoded source mip and untrimmed 254×254 sprite rect used by
+    // HeadFrameImg in desktop-profile-card.json. Keep the transparent padding:
+    // the exported trimmed PNG would move the frame relative to the portrait.
+    private static let sourceFrame: CGImage? = {
+        guard let url = HUDResources.url(for: "WatchSource/Textures/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.bgra-mips.bin"),
+              let data = try? HUDSourceResourceData.read(url) else { return nil }
+        return try? HUDSourceProfileArtwork.backgroundArtwork(bgra: data, textureWidth: 256, textureHeight: 256,
+            spriteRect: CGRect(x: 1, y: 1, width: 254, height: 254))
+    }()
+
+    static func frameImage(accent: NSColor) -> CGImage? {
+        guard let sourceFrame, let rgb = accent.usingColorSpace(.sRGB) else { return nil }
+        let key = "source-frame-\(rgb.redComponent)-\(rgb.greenComponent)-\(rgb.blueComponent)" as NSString
+        if let existing = renderedCache.object(forKey: key) { return existing.output }
+        guard let context = CGContext(data: nil, width: sourceFrame.width, height: sourceFrame.height,
+            bitsPerComponent: 8, bytesPerRow: sourceFrame.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return nil }
+        let bounds = CGRect(x: 0, y: 0, width: sourceFrame.width, height: sourceFrame.height)
+        context.draw(sourceFrame, in: bounds)
+        guard let data = context.data else { return nil }
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        let tint = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent]
+        for y in 0..<sourceFrame.height { for x in 0..<sourceFrame.width {
+            let index = y * context.bytesPerRow + x * 4
+            // Keep the selected frame's dark keyline and shadow pixels dark.
+            for channel in 0..<3 { pixels[index + channel] = UInt8((CGFloat(pixels[index + channel]) * tint[channel]).rounded()) }
+        } }
+        guard let output = context.makeImage() else { return nil }
+        renderedCache.setObject(RenderedPortrait(source: sourceFrame, output: output), forKey: key,
+                                cost: output.bytesPerRow * output.height)
+        return output
+    }
 
     /// Crop the native-resolution source before making a small display bitmap.
     /// Avoids enlarging a 512px thumbnail or uploading a full-source texture at 20×.
@@ -64,17 +96,19 @@ enum HUDPortraitArtwork {
     }
 
     static func makeLayer(image: CGImage?, profile: UserProfile?, size: CGSize,
-                          ink: NSColor, accent: NSColor, contentsScale: CGFloat, orientation: Int32 = 1) -> CALayer {
+                          ink: NSColor, accent: NSColor, contentsScale: CGFloat, orientation: Int32 = 1,
+                          includeFrame: Bool = true) -> CALayer {
         let root = CALayer(); root.name = "profile.portrait"
         root.bounds = CGRect(origin: .zero, size: size)
         root.allowsGroupOpacity = false
-        let unit = min(size.width / 66, size.height / 71)
-        let photo = CALayer(); photo.name = "portrait.image"; photo.frame = root.bounds
+        let side = min(size.width, size.height)
+        let photo = CALayer(); photo.name = "portrait.image"
+        photo.frame = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
         photo.backgroundColor = NSColor(white: 0.22, alpha: 0.85).cgColor
         photo.masksToBounds = true; photo.contentsScale = contentsScale
         root.addSublayer(photo)
         if let image {
-            photo.contents = renderedImage(image, targetSize: size,
+            photo.contents = renderedImage(image, targetSize: photo.bounds.size,
                 zoom: profile?.avatarZoom ?? 1,
                 offset: CGPoint(x: profile?.avatarOffsetX ?? 0, y: profile?.avatarOffsetY ?? 0),
                 contentsScale: contentsScale, orientation: orientation)
@@ -90,41 +124,14 @@ enum HUDPortraitArtwork {
             silhouette.closeSubpath()
             photo.addSublayer(shape(silhouette, fill: ink.withAlphaComponent(0.63), scale: contentsScale))
         }
-        // Four soft inner shadows darken the edges without dimming the face.
-        let vignette = CALayer(); vignette.name = "portrait.vignette"; vignette.frame = photo.bounds
-        let w = size.width, h = size.height
-        let gradients: [(CGRect, CGPoint, CGPoint)] = [
-            (CGRect(x: 0, y: 0, width: w, height: h * 0.21), CGPoint(x: 0.5, y: 0), CGPoint(x: 0.5, y: 1)),
-            (CGRect(x: 0, y: h * 0.79, width: w, height: h * 0.21), CGPoint(x: 0.5, y: 1), CGPoint(x: 0.5, y: 0)),
-            (CGRect(x: 0, y: 0, width: w * 0.21, height: h), CGPoint(x: 0, y: 0.5), CGPoint(x: 1, y: 0.5)),
-            (CGRect(x: w * 0.79, y: 0, width: w * 0.21, height: h), CGPoint(x: 1, y: 0.5), CGPoint(x: 0, y: 0.5))
-        ]
-        for (rect, start, end) in gradients {
-            let edge = CAGradientLayer(); edge.frame = rect; edge.startPoint = start; edge.endPoint = end
-            edge.colors = [NSColor.black.withAlphaComponent(0.67).cgColor, NSColor.black.withAlphaComponent(0.20).cgColor, NSColor.clear.cgColor]
-            edge.locations = [0, 0.42, 1]; vignette.addSublayer(edge)
-        }
-        photo.addSublayer(vignette)
-
-        let frame = CALayer(); frame.name = "portrait.frame"; frame.frame = root.bounds
-        let outline = CGPath(rect: root.bounds.insetBy(dx: -2.8 * unit, dy: -2.8 * unit), transform: nil)
-        frame.addSublayer(shape(outline, stroke: ink.withAlphaComponent(0.90), width: 0.9 * unit, scale: contentsScale))
-        let edge = CGPath(rect: root.bounds.insetBy(dx: -1 * unit, dy: -1 * unit), transform: nil)
-        frame.addSublayer(shape(edge, stroke: accent.withAlphaComponent(0.43), width: 0.65 * unit, scale: contentsScale))
-        func line(_ points: [CGPoint], color: NSColor, width: CGFloat) {
-            let path = CGMutablePath(); if let first = points.first { path.move(to: first) }
-            points.dropFirst().forEach { path.addLine(to: $0) }
-            frame.addSublayer(shape(path, stroke: color, width: width * unit, scale: contentsScale))
-        }
-        // Broken corner rails and the registration cross from the reference.
-        line([CGPoint(x: -6 * unit, y: h - 5 * unit), CGPoint(x: -6 * unit, y: -5 * unit), CGPoint(x: 16 * unit, y: -5 * unit)], color: ink.withAlphaComponent(0.78), width: 1.8)
-        line([CGPoint(x: -3 * unit, y: 16 * unit), CGPoint(x: -3 * unit, y: -9 * unit)], color: accent, width: 2.4)
-        line([CGPoint(x: -10 * unit, y: 1 * unit), CGPoint(x: 7 * unit, y: 1 * unit)], color: accent, width: 2.4)
-        line([CGPoint(x: 1 * unit, y: -9 * unit), CGPoint(x: 1 * unit, y: -3 * unit), CGPoint(x: 17 * unit, y: -3 * unit)], color: accent.withAlphaComponent(0.76), width: 1.7)
-        let marker = CGRect(x: -17 * unit, y: -2 * unit, width: 7 * unit, height: 3.5 * unit)
-        frame.addSublayer(shape(CGPath(rect: marker, transform: nil), fill: accent, scale: contentsScale))
-        line([CGPoint(x: w + 4 * unit, y: h - 7 * unit), CGPoint(x: w + 4 * unit, y: h + 4 * unit), CGPoint(x: w - 7 * unit, y: h + 4 * unit)], color: ink.withAlphaComponent(0.77), width: 1.8)
-        line([CGPoint(x: w + 7 * unit, y: h - 4 * unit), CGPoint(x: w + 7 * unit, y: h + 7 * unit), CGPoint(x: w - 4 * unit, y: h + 7 * unit)], color: ink.withAlphaComponent(0.43), width: 2.1)
+        guard includeFrame else { return root }
+        // Exact HeadFrameImg placement around the source's 136×136 photo.
+        let unit = side / 136
+        let frame = CALayer(); frame.name = "portrait.frame"
+        frame.frame = CGRect(x: photo.frame.midX + 0.4164 * unit - 195 * unit / 2,
+            y: photo.frame.midY - 195 * unit / 2, width: 195 * unit, height: 195 * unit)
+        frame.contents = frameImage(accent: accent)
+        frame.contentsScale = contentsScale; frame.contentsGravity = .resize
         root.addSublayer(frame)
         return root
     }

@@ -301,6 +301,36 @@ enum NotesCanvasTests {
         animated.cancelAnimations()
         check(animated.activeAnimationCount == 0, "Closing cancels all note action animations")
 
+        let presentationStore = store("section-presentation")
+        let looseNote = CanvasNote(kind: .text, text: "Arrive with Notes")
+        let fixedNote = CanvasNote(kind: .text, text: "Stay pinned", isPinned: true)
+        try! presentationStore.upsert(looseNote); try! presentationStore.upsert(fixedNote)
+        let storedPresentationNotes = presentationStore.notes
+        let presentation = NotesCanvas(store: presentationStore, notesSelected: false, reduceMotion: { false })
+        presentation.setPresentation(notesSelected: true, direction: CGPoint(x: 0, y: -1))
+        let cards = noteLayers(presentation)
+        let incoming = cards.first { $0.name == "notes.note.\(looseNote.id.uuidString)" }!
+        let stationary = cards.first { $0.name == "notes.note.\(fixedNote.id.uuidString)" }!
+        let arrival = incoming.animation(forKey: "notes.section") as! CAAnimationGroup
+        let arrivalTravel = arrival.animations!.first as! CABasicAnimation
+        let arrivalOpacity = arrival.animations!.last as! CABasicAnimation
+        check(arrival.duration == HUDModuleContent.transitionDuration
+              && (arrivalTravel.fromValue as! NSValue).caTransform3DValue.m42 < 0
+              && (arrivalOpacity.fromValue as! NSNumber).floatValue == 0,
+              "Map-to-Notes cards start transparent and travel with the center's direction and duration")
+        check(stationary.animationKeys()?.isEmpty != false && !stationary.isHidden && stationary.opacity == 1,
+              "Pinned notes remain fully visible without joining the section arrival")
+        presentation.setPresentation(notesSelected: false, direction: CGPoint(x: 0, y: 1))
+        check(incoming.animation(forKey: "notes.section")?.duration == HUDModuleContent.transitionDuration
+              && !incoming.isHidden && incoming.opacity == 0,
+              "Leaving Notes retains outgoing cards for the whole matching fade")
+        presentation.setPresentation(notesSelected: true, direction: CGPoint(x: 0, y: -1))
+        presentation.setPresentation(notesSelected: true, animated: false)
+        check(incoming.animationKeys()?.isEmpty != false && !incoming.isHidden && incoming.opacity == 1,
+              "Immediate settlement after a reversed request removes the card track without losing its final visibility")
+        check(presentationStore.notes == storedPresentationNotes,
+              "Section presentation changes never rewrite note data or pin state")
+
         let unavailable = NotesCanvas(store: nil, error: "Read-only storage")
         _ = unavailable.mouseDown(at: CGPoint(x: 80, y: 80), clickCount: 1)
         check(unavailable.noteCount == 0, "Unavailable persistence cannot create a note that appears saved")

@@ -1,30 +1,26 @@
 import AppKit
 import QuartzCore
 
-/// A screen-aligned recovery control: scaling the HUD cannot move or shrink it.
+/// The same confirmation card as Quit, kept at a safe screen size even while
+/// previewing an extreme HUD scale or position. Only its pointer tilt changes.
 final class HUDScaleSafetyView: NSView {
     private let controller: HUDSettingsController
     private var observation: UUID?
-    private var visibilityGeneration = 0
-    private let label = NSTextField(labelWithString: "")
-    private let keep = NSButton(title: "", target: nil, action: nil)
-    private let revert = NSButton(title: "", target: nil, action: nil)
+    private let confirmation: HUDQuitConfirmationView
+    var onPointerMove: (() -> Void)? {
+        didSet { confirmation.onPointerMove = onPointerMove }
+    }
     override var isFlipped: Bool { true }
-    init(controller: HUDSettingsController) {
+    init(controller: HUDSettingsController, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.controller = controller
+        confirmation = HUDQuitConfirmationView(reduceMotion: reduceMotion)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.zPosition = 3_000_000
-        layer?.cornerRadius = 10
-        layer?.backgroundColor = NSColor(white: 0.1, alpha: 0.98).cgColor
-        layer?.borderColor = NSColor.systemYellow.withAlphaComponent(0.7).cgColor
-        layer?.borderWidth = 1
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .white
-        keep.bezelStyle = .rounded; revert.bezelStyle = .rounded
-        keep.target = self; keep.action = #selector(confirm)
-        revert.target = self; revert.action = #selector(cancel)
-        addSubview(label); addSubview(keep); addSubview(revert)
+        autoresizingMask = [.width, .height]
+        addSubview(confirmation)
+        confirmation.onConfirm = { [weak self] in self?.controller.confirmLayout() }
+        confirmation.onCancel = { [weak self] in self?.controller.revertLayout() }
         isHidden = true
         observation = controller.addObserver { [weak self] in self?.refresh() }
         refresh()
@@ -33,55 +29,46 @@ final class HUDScaleSafetyView: NSView {
     deinit { if let observation { controller.removeObserver(observation) } }
     override func layout() {
         super.layout()
-        label.frame = CGRect(x: 14, y: 9, width: bounds.width - 28, height: 18)
-        revert.frame = CGRect(x: bounds.width - 204, y: 35, width: 90, height: 27)
-        keep.frame = CGRect(x: bounds.width - 110, y: 35, width: 96, height: 27)
+        confirmation.frame = bounds
     }
     private func refresh() {
-        layer?.borderColor = controller.configuration.accentColor.withAlphaComponent(0.7).cgColor
         guard let remaining = controller.layoutConfirmationRemaining else {
             guard !isHidden else { return }
-            visibilityGeneration += 1
-            let generation = visibilityGeneration
-            if HUDRuntimeAppearance.reduceMotion { isHidden = true; alphaValue = 1; return }
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.14
-                self.animator().alphaValue = 0
-            }, completionHandler: { [weak self] in
-                guard let self, self.visibilityGeneration == generation else { return }
+            confirmation.dismiss { [weak self] in
+                guard let self, self.controller.layoutConfirmationRemaining == nil else { return }
                 self.isHidden = true
-                self.alphaValue = 1
-            })
+            }
             return
         }
-        let wasHidden = isHidden || alphaValue < 1
-        visibilityGeneration += 1
         isHidden = false
-        alphaValue = 1
+        let title: String, message: String
         if controller.isPositionPreviewPending {
-            label.stringValue = L10n.text("Keep this position? Reverts in \(remaining)s", "保留此位置？\(remaining) 秒后自动恢复")
+            title = L10n.text("Keep this position?", "保留此位置？")
+            message = L10n.text("Keep this position? Reverts in \(remaining)s", "保留此位置？\(remaining) 秒后自动恢复")
         } else {
-            label.stringValue = L10n.text("Keep this UI scale? Reverts in \(remaining)s", "保留此缩放？\(remaining) 秒后自动恢复")
+            title = L10n.text("Keep this UI scale?", "保留此缩放？")
+            message = L10n.text("Keep this UI scale? Reverts in \(remaining)s", "保留此缩放？\(remaining) 秒后自动恢复")
         }
-        keep.title = L10n.text("Keep ↵", "保留 ↵")
-        revert.title = L10n.text("Revert ⎋", "恢复 ⎋")
-        if wasHidden && !HUDRuntimeAppearance.reduceMotion {
-            let animation = CABasicAnimation(keyPath: "opacity")
-            animation.fromValue = 0; animation.toValue = 1; animation.duration = 0.18
-            layer?.add(animation, forKey: "settings.safety")
-        }
+        let dark = controller.configuration.theme == .dark || (controller.configuration.theme == .system
+            && effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
+        confirmation.configure(dark: dark, accent: controller.configuration.accentColor)
+        confirmation.setContent(title: title, message: message, cancel: L10n.text("Revert ⎋", "恢复 ⎋"),
+                                confirm: L10n.text("Keep ↵", "保留 ↵"), focusConfirm: true)
+        if !confirmation.isPresented || confirmation.isDismissing { confirmation.show(); onPointerMove?() }
     }
     func handleKey(_ event: NSEvent) -> Bool {
-        guard controller.layoutConfirmationRemaining != nil else { return false }
-        if event.keyCode == 53 { controller.revertLayout(); return true }
-        if event.keyCode == 36 || event.keyCode == 76 { controller.confirmLayout(); return true }
-        return false
+        confirmation.handleKey(event)
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        controller.layoutConfirmationRemaining == nil ? nil : super.hitTest(point)
+        guard confirmation.isPresented, !isHidden else { return nil }
+        return confirmation.hitTest(convert(point, from: superview))
     }
-    @objc private func confirm() { controller.confirmLayout() }
-    @objc private func cancel() { controller.revertLayout() }
+    func setPointer(_ point: CGPoint, parallax: CGFloat, perspective: CGFloat) {
+        confirmation.setPointer(point, parallax: parallax, perspective: perspective)
+    }
+    func setSourceTransform(_ transform: CATransform3D) {
+        confirmation.setSourceTransform(transform)
+    }
 }
 
 /// A passive native material behind the drawing; never intercepts HUD input.

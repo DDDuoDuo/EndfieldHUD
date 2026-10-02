@@ -4,7 +4,14 @@ import AppKit
 enum ChargeBadgeHUDVerification {
     static func run(overlay: OverlayController) {
         var assertions = 0
-        func check(_ value: Bool, _ message: String) { assertions += 1; precondition(value, message) }
+        func check(_ value: Bool, _ message: String) {
+            assertions += 1
+            if !value {
+                fputs("FAIL: charge assertion \(assertions): \(message); phase=\(overlay.systemPhase.rawValue) stage=\(overlay.systemChargeStageForVerification) rect=\(overlay.systemChargeHitRectForVerification)\n", stderr)
+                fflush(stderr)
+            }
+            precondition(value, message)
+        }
         func later(_ delay: TimeInterval, _ action: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
         }
@@ -33,8 +40,10 @@ enum ChargeBadgeHUDVerification {
         later(entrance + HUDChargeBadge.compactHoldDuration + 0.4) {
             check(overlay.systemChargeStageForVerification == .circle, "Unhovered badge collapses after the fixed hold")
             let circle = overlay.systemChargeHitRectForVerification
-            check(abs(circle.width - circle.height) < 0.5 && circle.width < 30,
-                  "Resting badge owns only its visible circular hit area")
+            check(abs(circle.width - circle.height) < 0.5
+                  && abs(circle.width - HUDChargeBadge.circleHitRect.width) < 0.5
+                  && circle.width < HUDChargeBadge.compactHitRect.width,
+                  "Resting badge owns the current circular artwork's hit area")
             overlay.setSystemChargeHoveredForVerification(true)
             later(0.35) {
                 check(overlay.systemChargeStageForVerification == .compact, "Hover expands the resting badge")

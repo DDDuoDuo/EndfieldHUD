@@ -82,7 +82,7 @@ enum SystemActivityDerivation {
         let memory = current.memory?.bytes
         var notes: [String] = []
         if cpu == nil { notes.append(current.cpu == nil ? "CPU unavailable" : "Collecting CPU baseline") }
-        if memory == nil { notes.append("Memory unavailable") }
+        if memory == nil { notes.append("RAM unavailable") }
         if network == nil { notes.append(current.network == nil ? "Network unavailable" : "Collecting network baseline") }
         if disk == nil { notes.append(current.disk == nil ? "Disk activity unavailable" : "Collecting disk baseline") }
         return SystemActivitySnapshot(timestamp: current.timestamp, uptime: current.uptime, cpuPercent: cpu,

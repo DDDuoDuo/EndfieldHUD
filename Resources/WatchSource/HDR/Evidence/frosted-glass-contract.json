@@ -1,0 +1,309 @@
+{
+  "schema_version": 1,
+  "policy": "Static installed bytes only; no game launch, runtime player state, DLL execution or visual fitting.",
+  "data": {
+    "source_size": "HGCamera.taauRTSize",
+    "scales": [
+      0.25,
+      0.125,
+      0.0625
+    ],
+    "size_rounding": "ceil each original dimension*scale independently",
+    "rounding_writer": "0x18341fac0 -> CRT 0x1801b42b0, roundsd mode 0xa (toward +infinity) and equivalent scalar fallback",
+    "downsample_count": 3,
+    "color_threshold": 2.5,
+    "graphics_format": 74,
+    "format": "B10G11R11_UFloatPack32",
+    "rt_filter_mode": 1,
+    "rt_wrap_mode": 1,
+    "returned_mipsDown_index": 2,
+    "shader_texel_size": "(currentLevelWidth,currentLevelHeight,1/currentLevelWidth,1/currentLevelHeight)"
+  },
+  "ps": {
+    "source_shader_id": "CAB-b082e5ab245c784edd5281cc07e7478b:1206146243247115526",
+    "horizontal_programs": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "vertical_program": 8,
+    "sequence": "For each level: input previous mipsDown (original camera input on level0), horizontal -> mipsDownTemp[level], vertical -> mipsDown[level].",
+    "horizontal_offsets": [
+      -4,
+      -3,
+      -2,
+      -1,
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "horizontal_weights": [
+      0.01621622033417225,
+      0.054054051637649536,
+      0.12162162363529205,
+      0.1945945918560028,
+      0.227027028799057,
+      0.1945945918560028,
+      0.12162162363529205,
+      0.054054051637649536,
+      0.01621622033417225
+    ],
+    "vertical_offsets": [
+      -3.230769157409668,
+      -1.384615421295166,
+      0,
+      1.384615421295166,
+      3.230769157409668
+    ],
+    "vertical_weights": [
+      0.07027027010917664,
+      0.31621623039245605,
+      0.227027028799057,
+      0.31621623039245605,
+      0.07027027010917664
+    ],
+    "threshold": "Each tap RGB /= max(max(R,G,B),2.5)/2.5 before weighted sum. Output alpha1.",
+    "mip_bias": "ShaderVariablesGlobal._GlobalMipBias @416; value depends on runtime.",
+    "first_horizontal_normal_scene_keywords": [
+      "APPLY_LUT"
+    ],
+    "lut": "First-level scene PS uses dynamic exposure and logLut. Optional USER_LUT is gated by HGColorGradingConfig.IsColorLookupEnabled. Not reconstructed from disabled prefab Volume."
+  },
+  "cs": {
+    "source_shader_id": "CAB-319d31cdd969435718e4a0dcdbec6255:-8009949654665516336",
+    "kernels": [
+      "KMain",
+      "KMainWithLut"
+    ],
+    "threads": [
+      8,
+      8,
+      1
+    ],
+    "one_dimensional_weights": [
+      1,
+      8,
+      28,
+      56,
+      70,
+      56,
+      28,
+      8,
+      1
+    ],
+    "denominator": 256,
+    "kernel": "9x9 separable binomial applied in original compute program with shared packed-half caches; distinct from PS kernel.",
+    "selection": "HGSettingParameters.frostedGlassUseComputeShader.value; constructor default true, live override not observed."
+  },
+  "gates": {
+    "want_update": "enablePermenantSceneFrostedGlass.value || HGCamera.enableUpdatingSceneFrostedGlass",
+    "refresh": "want_update && frostedGlassEnabled.value && camera.cameraType != SceneView(2)",
+    "defaults": {
+      "frostedGlassUseComputeShader": true,
+      "enablePermenantSceneFrostedGlass": true,
+      "frostedGlassEnabled": true
+    },
+    "boundary": "Constructor defaults are not observations of current game configuration.",
+    "skip_cases": [
+      {
+        "condition": "non-SceneView and want_update",
+        "source": "cached heavy RT index2, medium1, light0"
+      },
+      {
+        "condition": "non-SceneView and not want_update",
+        "source": "grayTexture"
+      },
+      {
+        "condition": "SceneView",
+        "source": "blackTexture"
+      }
+    ]
+  },
+  "extraction": {
+    "source_call": "HGRenderPathScene.RenderPostProcessPhase2 0x188ee359e calls ProcessRTExtraction(type1) with FrostedGlassPass return handle",
+    "copy_call": "0x188ef1344/0x188ef14ad -> CopyTexturePass.BlitTexture 0x188e73560",
+    "copy_pass_index": 1,
+    "use_native_blit": false,
+    "copy_shader_id": "CAB-efcc216cc7fc3300dfd22cef00cb39c7:8218498280856943329",
+    "copy_shader": "Hidden/HGRP/Blit",
+    "copy_program": 1,
+    "copy_sampler": "sampler_LinearClamp",
+    "capture_rt": {
+      "ordinary_size": [
+        "Screen.width",
+        "Screen.height"
+      ],
+      "graphics_format": 4,
+      "format": "R8G8B8A8_SRGB",
+      "source_alloc": "UIBlurRT.InitRT 0x183589fd8 -> RTHandleSystem.Alloc 0x18358b9c0 (method409383 GraphicsFormat overload)",
+      "filter_mode": 0,
+      "wrap_mode": 0,
+      "mips": false,
+      "autoGenerateMips": true,
+      "slices": 1,
+      "depth_bits": 0,
+      "dimension": 2,
+      "random_write": false,
+      "aniso": 1,
+      "mip_bias": 0,
+      "msaa": 1,
+      "bind_ms": false,
+      "memoryless": 0,
+      "platform_scale_branch": {
+        "address": "0x184dd820c",
+        "gate_helper": "0x1832e6620",
+        "extra_half_helper": "0x1836588e0",
+        "rule": "Screen dimensions * HGPipeline.GetRemappedRenderingScale(), optional *0.5, then integer truncation",
+        "boundary": "Helper platform identities/actual branch unresolved; ordinary full size is not asserted on all source devices."
+      }
+    }
+  },
+  "desktop_adapter": {
+    "input": "single-mip top-left display-pixel texture",
+    "mode": "desktopDisplayPixels",
+    "ps_programs": [
+      3,
+      8
+    ],
+    "reason": "Display capture is already display-graded; original dynamic scene exposure/logLut unavailable.",
+    "source_scene_mode": "Explicitly unsupported until dynamic LUT/exposure/gates are supplied.",
+    "capture_copy_scale_bias": [
+      1,
+      -1,
+      0,
+      1
+    ],
+    "orientation": "Unmodified Vulkan fullscreen stages have final Y negate and UV.y=1-v. Six H/V passes flip twice per level; final Metal top-left Copy applies the named ScaleBias Y conversion.",
+    "sampler": "Explicit Metal linear/clamp/single-mip mapping. Original packed flags retained; native decoder not yet closed.",
+    "capture_size": "Caller desktop outputSize; source optional scaled-device branch not selected by assumption.",
+    "validation": "Apple shader compilation, reflection and asymmetric pixel readback still required. No engine equivalence claimed."
+  },
+  "blur_material": {
+    "enabled_passes": [
+      "Default",
+      "Default-Stencil-Alpha-Blend"
+    ],
+    "stencil_ref": [
+      0,
+      32
+    ],
+    "stencil_compare": [
+      "Equal",
+      "Equal"
+    ],
+    "stencil_operation": [
+      "Keep",
+      "Keep"
+    ],
+    "source_programs": [
+      194,
+      1615
+    ],
+    "boundary": "Default pass is not a proven writer of stencil32. Neither source fragment emits stencil output. Original HGDrawUIRendererList native overrides not closed; preserve both raw material pass states."
+  },
+  "evidence": [
+    {
+      "path": "game-reference/precision-reference/postprocess/native/UberPostPassUtils--PrepareFrostedGlassData--268511.asm.txt",
+      "sha256": "029db2d6f08720b2ada9b190eff07e3d39eb488f42d495c3160b5cfeb96f2de7",
+      "bytes": 11522
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/UberPostPassUtils--PrepareFrostedGlassSceneRTs--268513.asm.txt",
+      "sha256": "1b4803b87c6c943254ada7d6789b43b820e9f3d3a5474fa866accf4a304a7609",
+      "bytes": 16226
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/UberPostPassUtils--PrepareFrostedGlassLutData--268512.asm.txt",
+      "sha256": "ebc7da7b5cbdefe56c09609739687d48420fbf098f91b6a23d33f64cc098ffd6",
+      "bytes": 16315
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/UberPostPassUtils--FrostedGlassPass--268518.asm.txt",
+      "sha256": "d177804f6176f1a6052a8f30cc78cbcc689a564127ab47a1d19092a02d50d04e",
+      "bytes": 12941
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/UberPostPassUtils--FrostedGlassAddSkipPass--268516.asm.txt",
+      "sha256": "a685e1bee4d720b61177441386f3aa0448769dc599cb0288d3cea7b9b0c45958",
+      "bytes": 21993
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/UberPostPassUtils--FrostedGlassAddPass--268515.asm.txt",
+      "sha256": "8507c1464e26ed2e8c2b5a9906233502d98e2f35ec595d714ffe9e9829626d3d",
+      "bytes": 25150
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/__c--__cctor_b__104_8--268557.asm.txt",
+      "sha256": "bd759cd30f002d67608136e6b915c8d1ba056b0098d7ceadd173fad602d7b4c7",
+      "bytes": 39410
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/__c--__cctor_b__104_9--268558.asm.txt",
+      "sha256": "855579fa78b7876e51c3ce98dc14ca87f100b4823ff6dc18c0165a766467388a",
+      "bytes": 48339
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/HGSettingParameters--_ctor--270194.asm.txt",
+      "sha256": "fce1a69cf745b7660a26df534ad74fce9c7724bfe4371ac6c759278be15179aa",
+      "bytes": 151287
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/HGRenderPathScene--RenderPostProcessPhase2--269697.asm.txt",
+      "sha256": "5dabc5c3f4ea146fa45a64b7d11643804efc93f492609bc5d6785f578053bb92",
+      "bytes": 96623
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/HGUtils--ProcessRTExtraction--270008.asm.txt",
+      "sha256": "c47cde00213034c372b01a137c6e01bd64b42b1474ff0832d37e93debf399792",
+      "bytes": 14869
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/native/CopyTexturePass--BlitTexture--268733.asm.txt",
+      "sha256": "b0fa7da1fb1c22afc957890d4011c63c37c90eb1084efcd0a9097dce31b31e68",
+      "bytes": 14712
+    },
+    {
+      "path": "game-reference/precision-reference/native-blur-cursor/UIBlurRT--InitRT--352099.asm.txt",
+      "sha256": "69f2436cf036e61235f93759d9c6924b3b5fb581d4e854ab97b8e37ac3f50a16",
+      "bytes": 17882
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-glass-decode.json",
+      "sha256": "707f7dcb3cafcc7608003b34cb1249a4d1bdb723b10f665330fcbce9da274094",
+      "bytes": 1991
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-copy-decode.json",
+      "sha256": "d4429880e706c6d22c2dc4ba674d683c9fedaa698b8e07cdf7e37c7d6dc2c600",
+      "bytes": 940
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-enum-defaults.json",
+      "sha256": "da2478385fd0b232f327ce61da239c49d706b833150e5d7d67fa2a9e2212cb7b",
+      "bytes": 80000
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-glass-fields.json",
+      "sha256": "02d1be267c4a78078a703c56c5e363a1e08223cf14162b4ac8389f31384b909b",
+      "bytes": 733648
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-capture-fields.json",
+      "sha256": "bea301736bbb31701f514fdfa78f13989bf6480fdd8b786cf41e0b1da96488a8",
+      "bytes": 286859
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-shader/frosted-glass-shader.json",
+      "sha256": "46971b7ab76d9cd6d7a443ea40c20c74846f78674302dfe3d3ada72163f55d14",
+      "bytes": 57575
+    },
+    {
+      "path": "game-reference/precision-reference/postprocess/frosted-copy-shader/frosted-copy-shader.json",
+      "sha256": "de393ca2a98f981b5ad4dfebf84ee4e678570c270776c98d9400473d502eb459",
+      "bytes": 12316
+    }
+  ]
+}

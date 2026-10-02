@@ -67,6 +67,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     // A hidden shelf does not resolve bookmarks or ask Finder for file icons.
     // Keep its semantic state available before the first presentation.
     private var artworkEnabled = false
+    private var presentationPrepared = false
     private var pageTransition: HUDSubsectionTransition!
     private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.11, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.68 : 0.38, alpha: 1) }
@@ -114,7 +115,8 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         dark = style.dark
         scale = style.contentsScale
         artworkEnabled = true
-        withoutActions { repaint() }
+        if presentationPrepared { withoutActions { repaint() } }
+        else { preparePresentation() }
         return layer
     }
 
@@ -128,6 +130,19 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
 
     func activate() {
         active = true; artworkEnabled = true
+        let previousError = errorMessage
+        do { try store?.refresh() }
+        catch { errorMessage = error.localizedDescription }
+        if !presentationPrepared || items != (store?.items ?? []) || errorMessage != previousError {
+            presentationPrepared = true
+            refreshFromStore()
+        }
+    }
+
+    /// Resolve and draw before the module reveal. Enabling input afterwards
+    /// must not replace the cards that just completed their arrival.
+    private func preparePresentation() {
+        presentationPrepared = true
         do { try store?.refresh() }
         catch { errorMessage = error.localizedDescription }
         refreshFromStore()
@@ -135,6 +150,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
 
     func deactivate() {
         active = false; artworkEnabled = false; pageTransition.settle(); settleAnimations(in: layer)
+        presentationPrepared = false
         pendingSingleSelection = nil
         scrollAccumulation = 0
         guard confirmingClear || dropTarget else { return }

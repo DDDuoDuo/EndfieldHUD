@@ -11,6 +11,13 @@ enum HUDNavigationTests {
             if !condition { fatalError(message, file: file, line: line) }
         }
         func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 0.000001 }
+        func colorsEqual(_ first: Any?, _ second: Any?) -> Bool {
+            guard let first, let second else { return false }
+            let left = first as AnyObject, right = second as AnyObject
+            guard CFGetTypeID(left) == CGColor.typeID,
+                  CFGetTypeID(right) == CGColor.typeID else { return false }
+            return CFEqual(left, right)
+        }
         func animationCount(_ layer: CALayer) -> Int {
             (layer.animationKeys()?.count ?? 0)
                 + (layer.sublayers ?? []).reduce(0) { $0 + animationCount($1) }
@@ -19,6 +26,52 @@ enum HUDNavigationTests {
         let previousLanguage = L10n.language
         defer { L10n.language = previousLanguage }
         L10n.language = .english
+        // The new shell may recycle a finite number of authored plates, but
+        // its logical desktop actions must not truncate or change saved data.
+        do {
+            let shortcuts = (0..<100).map { index in
+                HUDAppShortcutPresentation(id: UUID(), name: "Saved app \(index) · 应用",
+                                           iconPreset: .original, icon: nil)
+            }
+            for amount in [0, 1, 6, 7, 24, 100] {
+                let saved = Array(shortcuts.prefix(amount))
+                let entries = HUDDesktopWatchNavigation.entries(shortcuts: saved)
+                let modules = entries.compactMap { $0.target.module }
+                check(entries.count == HUDModule.allCases.count + amount
+                      && modules.count == HUDModule.allCases.count
+                      && Set(modules) == Set(HUDModule.allCases),
+                      "The source shell retains each of the sixteen stable modules and every saved app")
+                check(entries.prefix(4).compactMap { $0.target.module } == [.system, .display, .hotkeys, .about],
+                      "The four left-side source slots retain the stable settings categories")
+                check(entries.last?.target == .module(.addApp)
+                      && entries.last?.title == HUDModule.addApp.title,
+                      "Add App remains the final logical navigation action after any number of shortcuts")
+                let apps = entries.filter { $0.target.module == nil }
+                check(apps.map(\.target) == saved.map { .appShortcut($0.id) }
+                      && apps.map(\.title) == saved.map(\.name),
+                      "Application IDs, order and user-edited names survive source-slot recycling")
+                check(Set(entries.map(\.target)).count == entries.count,
+                      "Source navigation never aliases a saved app to a module or another shortcut")
+                check(entries.allSatisfy { entry in
+                    entry.target.module.map { entry.title == $0.title } ?? true
+                }, "Desktop module names replace game labels without changing stable translations")
+            }
+            let first = shortcuts[0]
+            let duplicate = HUDAppShortcutPresentation(id: first.id, name: "Duplicate should not replace first",
+                                                       iconPreset: .star, icon: nil)
+            let deduplicated = HUDDesktopWatchNavigation.entries(shortcuts: [first, duplicate, shortcuts[1]])
+            check(deduplicated.filter { $0.target == .appShortcut(first.id) }.count == 1
+                  && deduplicated.first { $0.target == .appShortcut(first.id) }?.title == first.name,
+                  "Repeated presentation IDs keep the first saved action and do not duplicate hit targets")
+            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese, .korean] {
+                L10n.language = language
+                let entries = HUDDesktopWatchNavigation.entries(shortcuts: [first])
+                check(entries.allSatisfy { entry in
+                    entry.target.module.map { entry.title == $0.title } ?? (entry.title == first.name)
+                }, "Changing HUD language translates module names without translating user app names")
+            }
+            L10n.language = .english
+        }
         for size in [CGSize(width: 2400, height: 800), CGSize(width: 800, height: 2400)] {
             let target = CGSize(width: 240, height: 82)
             for x: CGFloat in [-1, 0, 1] {
@@ -134,6 +187,24 @@ enum HUDNavigationTests {
         let navigation = HUDNavigation()
         check(AppShortcutArtwork.gameIcon(for: .grid) == .worldMap,
               "Custom app presets use the earth icon independently of square Map navigation")
+        for preset in AppShortcutIcon.allCases {
+            let ink = NSColor(white: 0.12, alpha: 1)
+            let picker = AppShortcutArtwork.makeGlyph(preset, rect: CGRect(x: 0, y: 0, width: 48, height: 48),
+                                                       color: ink, contentsScale: 2)
+            let image = AppShortcutArtwork.image(for: preset, size: 96, color: ink)
+            if AppShortcutArtwork.gameIcon(for: preset) != nil {
+                check(image != nil && picker.contents != nil && picker.path == nil,
+                      "Every game preset resolves identical raster artwork for the picker and shortcut buttons")
+                if let actual = image?.dataProvider?.data, let contents = picker.contents,
+                   CFGetTypeID(contents as CFTypeRef) == CGImage.typeID {
+                    let expected = (contents as! CGImage).dataProvider!.data!
+                    check(CFEqual(actual, expected), "Picker and navigation retain the same game-icon pixels and tint")
+                }
+            } else {
+                check(image == nil && picker.contents == nil && picker.path != nil,
+                      "Vector-only presets keep their shared stroked fallback instead of an unrelated raster")
+            }
+        }
         let identity = HUDIdentityCard()
         var identityProfile = UserProfile()
         func labels(in layer: CALayer) -> [String] {
@@ -336,13 +407,30 @@ enum HUDNavigationTests {
             check(clip.path == plate.path && CATransform3DIsIdentity(contentClip.transform)
                   && zip(contents.sublayers ?? [], glyphs).allSatisfy { CATransform3DEqualToTransform($0.0.transform, $0.1) },
                   "A stationary face-shaped mask contains the raised glyphs while preserving their individual sizes")
-            check((lamp.animationKeys() ?? []).isEmpty && lamp.opacity == 0.72,
-                  "Hover highlight stays steady without blink or opacity tracks")
+            check(lamp.opacity == 0.72 && plate.fillColor == NSColor(white: 1, alpha: 1).cgColor,
+                  "Hover commits a steady opaque white face and lamp after its finite activation")
+            let activation = plate.animation(forKey: "navigation.fillColor") as? CAKeyframeAnimation
+            if !HUDRuntimeAppearance.reduceMotion {
+                let colors = activation?.values
+                check(activation?.duration == 1.0 / 6.0
+                      && activation?.keyTimes == [0, 0.2, 0.4, 0.6, 1]
+                      && activation?.timingFunctions?.count == 4
+                      && activation?.repeatCount == 0 && activation?.autoreverses == false
+                      && colors?.count == 5 && colorsEqual(colors?[1], colors?[3]) && colorsEqual(colors?[3], colors?[4])
+                      && colorsEqual(colors?[0], colors?[2]) && !colorsEqual(colors?[0], colors?[1]),
+                      "Highlighted replays two 30 Hz brightness activations over one sixth second and then holds")
+                check(lamp.animation(forKey: "navigation.opacity")?.duration == HUDNavigation.hoverTransitionDuration,
+                      "The lamp joins the finite activation instead of changing opacity abruptly")
+            } else {
+                check(activation == nil && (lamp.animationKeys() ?? []).isEmpty,
+                      "Reduce Motion commits the steady highlight without either brightness activation")
+            }
             let liftBegan = entry.faceLayer.animation(forKey: "navigation.transform")?.beginTime
+            let activationBegan = activation?.beginTime
             depth.hover(entry.module)
-            check((lamp.animationKeys() ?? []).isEmpty
+            check(plate.animation(forKey: "navigation.fillColor")?.beginTime == activationBegan
                   && entry.faceLayer.animation(forKey: "navigation.transform")?.beginTime == liftBegan,
-                  "Repeated hover neither flashes the highlight nor restarts the lift")
+                  "Repeated pointer samples restart neither the brightness activation nor the lift")
             guard let border = entry.faceLayer.sublayers?.first(where: { $0.name == "navigation.outerBorder" }) as? CAShapeLayer,
                   let faceBounds = plate.path?.boundingBoxOfPath, let borderBounds = border.path?.boundingBoxOfPath else {
                 fatalError("Side buttons need a detached outer border")
@@ -352,7 +440,11 @@ enum HUDNavigationTests {
                   "The only face outline sits outside the filled tile with a three-point clear gap")
             depth.hover(nil)
             check(lamp.animation(forKey: "navigation.hoverBlink") == nil && lamp.opacity == 0
-                  && CATransform3DIsIdentity(contents.transform), "Leaving immediately removes the lamp cue and restores glyph depth")
+                  && CATransform3DIsIdentity(contents.transform), "Leaving commits the resting lamp and glyph depth without a repeating blink")
+            check(HUDRuntimeAppearance.reduceMotion
+                  ? lamp.animation(forKey: "navigation.opacity") == nil
+                  : lamp.animation(forKey: "navigation.opacity")?.duration == HUDNavigation.hoverExitDuration,
+                  "Leaving follows the controller's 0.1 second Normal blend, respecting Reduce Motion")
             depth.cancelAnimations()
         }
         let stableNote = depth.entries.first { $0.module == .notes }!
@@ -367,10 +459,47 @@ enum HUDNavigationTests {
         depth.hover(nil); depth.hover(.notes)
         RunLoop.main.run(until: Date().addingTimeInterval(0.30))
         check(animationCount(depth.layer) == 0 && lamp.opacity == 0.72,
-              "Reentering settles to a steady highlight with no pending blink or hover tracks")
+              "Reentering settles to a steady highlight after the finite brightness activation")
         depth.hover(nil); depth.hover(.notes); depth.cancelAnimations()
         check(animationCount(depth.layer) == 0 && lamp.opacity == 0 && near(stableNote.faceLayer.transform.m42, 0),
               "Hiding removes all pending feedback and commits the resting pose")
+
+        if !HUDRuntimeAppearance.reduceMotion {
+            let plate = stableNote.faceLayer.sublayers!.first { $0.name == "navigation.plate" } as! CAShapeLayer
+            let border = stableNote.faceLayer.sublayers!.first { $0.name == "navigation.outerBorder" } as! CAShapeLayer
+            let backing = stableNote.layer.sublayers!.first { $0.name == "navigation.backingPlate" } as! CAShapeLayer
+            depth.hover(.notes)
+            let shownColor = plate.presentation()?.fillColor ?? plate.fillColor!
+            let shownLamp = lamp.presentation()?.opacity ?? lamp.opacity
+            depth.hover(nil)
+            let exit = plate.animation(forKey: "navigation.fillColor") as? CABasicAnimation
+            let lampExit = lamp.animation(forKey: "navigation.opacity") as? CABasicAnimation
+            check((exit == nil ? shownColor == plate.fillColor : colorsEqual(exit?.fromValue, shownColor))
+                  && (lampExit == nil ? shownLamp == lamp.opacity : lampExit?.fromValue as? Float == shownLamp),
+                  "A fast exit retargets the rendered color and opacity instead of restarting from an idle value")
+            for _ in 0..<16 {
+                depth.hover(.notes); depth.hover(nil)
+                check((plate.animationKeys() ?? []).count <= 2
+                      && (lamp.animationKeys() ?? []).count <= 1
+                      && plate.fillColor != NSColor(white: 1, alpha: 1).cgColor && lamp.opacity == 0,
+                      "Rapid enter and exit replace finite feedback tracks without accumulating animations")
+            }
+            depth.hover(.notes)
+            check(border.animation(forKey: "navigation.strokeColor") != nil
+                  && backing.animation(forKey: "navigation.fillColor") != nil,
+                  "The detached outline and subdued backing smoothly join the hover state")
+            let appearance = HUDRuntimeAppearance.configuration
+            HUDRuntimeAppearance.configuration.reduceMotion = true
+            depth.update(dark: true, accent: HUDRuntimeAppearance.accent, contentsScale: 2)
+            check(animationCount(depth.layer) == 0 && lamp.opacity == 0.72
+                  && plate.fillColor == NSColor(white: 1, alpha: 1).cgColor,
+                  "Enabling Reduce Motion cancels in-flight feedback and preserves the steady hovered state")
+            depth.hover(nil)
+            check(animationCount(depth.layer) == 0 && lamp.opacity == 0,
+                  "Reduce Motion also makes hover exit immediate without retaining finite tracks")
+            HUDRuntimeAppearance.configuration = appearance
+            depth.cancelAnimations()
+        }
 
         check(navigation.hitTest(point: CGPoint(x: CGFloat.nan, y: 0)) == nil
               && navigation.hitTest(point: CGPoint(x: -1000, y: -1000)) == nil,
@@ -465,9 +594,9 @@ enum HUDNavigationTests {
               && near(sectors[0].rect.minX + sectors[1].rect.maxX, 1000),
               "The mirrored sectors retain a narrow twelve-point central gap")
         let centerButtonSpan = sectors[1].rect.maxX - sectors[0].rect.minX
-        check((0.55...0.58).contains(HUDChargeBadge.compactHitRect.width / centerButtonSpan)
+        check((0.70...0.75).contains(HUDChargeBadge.compactHitRect.width / centerButtonSpan)
               && HUDChargeBadge.compactHitRect.maxY < sectors[0].rect.minY,
-              "The smaller battery bar spans slightly over half the unchanged center-button pair and clears their top edge")
+              "The enlarged battery bar stays narrower than the center-button pair and clears their top edge")
         var sectorPaths: [CGPath] = []
         for entry in sectors {
             guard let plate = entry.faceLayer.sublayers?.first(where: { $0.name == "navigation.plate" }) as? CAShapeLayer,
@@ -704,7 +833,7 @@ enum HUDNavigationTests {
                       "Hover preserves side-card size, lifts them gently, and keeps bottom sectors fixed inside reserved hit geometry")
                 if side {
                     check(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? first == nil
-                          : first is CABasicAnimation && !(first is CASpringAnimation) && first!.duration == 0.18
+                          : first is CABasicAnimation && !(first is CASpringAnimation) && first!.duration == HUDNavigation.hoverTransitionDuration
                             && entry.faceLayer.animation(forKey: "navigation.transform")?.beginTime == first!.beginTime,
                           "Hover uses one monotonic lift that repeated pointer samples do not restart")
                 }

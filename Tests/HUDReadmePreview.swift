@@ -6,6 +6,12 @@ import QuartzCore
 @main
 enum HUDReadmePreview {
     static func main() throws {
+        guard CommandLine.arguments.count == 2
+            || (CommandLine.arguments.count == 3 && CommandLine.arguments[2] == "--watch-motion") else {
+            throw NSError(domain: "HUDReadmePreview", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Usage: EndfieldHUDPreview OUTPUT_DIRECTORY [--watch-motion]"])
+        }
+        let watchMotion = CommandLine.arguments.contains("--watch-motion")
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
@@ -22,6 +28,7 @@ enum HUDReadmePreview {
         settings.update { c in
             c.language = .english; c.blurAmount = 0; c.closeOnFocusLost = false
             c.launchAtLogin = false; c.ambientAnimation = true
+            c.reduceMotion = false; c.lowPowerVisualMode = false
         }
         L10n.language = .english
         let notes = try NotesStore(directory: root.appendingPathComponent("Notes"))
@@ -96,6 +103,12 @@ enum HUDReadmePreview {
         func still(_ name: String) throws {
             try view.writePNG(to: output.appendingPathComponent(name + ".png"), scale: 1, presentation: true, background: background)
         }
+        if watchMotion {
+            pointer = .zero
+            try renderWatchMotion(view: view, settings: settings, snapshot: snapshot,
+                                  output: output, background: background)
+            return
+        }
         try still("overview")
         let sections: [(String, HUDModule)] = [("notes", .notes), ("shelf", .fileShelf), ("clipboard", .clipboard),
             ("volume", .volume), ("work-mode", .workMode), ("event-log", .eventLog), ("storage", .storage),
@@ -148,6 +161,131 @@ enum HUDReadmePreview {
                               scale: 0.75, presentation: true, background: background)
         }
         print("Rendered fixture previews to \(output.path)")
+    }
+
+    /// Focused native layer captures. Each short hover trial starts afresh so
+    /// encoding a PNG cannot consume the next 30 Hz sample's time budget.
+    static func renderWatchMotion(view: SystemHUDView, settings: HUDSettingsController,
+                                  snapshot: BatterySnapshot, output: URL, background: CGColor) throws {
+        struct Capture: Encodable {
+            let file: String
+            let phase: String
+            let requestedSeconds: TimeInterval
+            let measuredSeconds: TimeInterval
+            let renderSeconds: TimeInterval
+            let ambientAnimations: Int
+        }
+        struct Manifest: Encodable {
+            let renderer: String
+            let sampling: String
+            let dataSources: String
+            let motionPolicy: String
+            let systemReduceMotion: Bool
+            let reduceMotion: Bool
+            let captures: [Capture]
+        }
+        guard !HUDRuntimeAppearance.reduceMotion else {
+            throw NSError(domain: "HUDReadmePreview", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "Watch motion captures require the isolated fixture build from scripts/render-watch-previews.sh; static Reduce Motion captures cannot verify animation."])
+        }
+        var captures: [Capture] = []
+        func capture(_ name: String, phase: String, requested: TimeInterval, epoch: TimeInterval) throws {
+            pumpUntil(epoch + requested)
+            let start = CACurrentMediaTime()
+            let url = output.appendingPathComponent(name + ".png")
+            try view.writePNG(to: url,
+                              scale: 1, presentation: true, background: background)
+            try verifyWatchImage(url)
+            captures.append(Capture(file: name + ".png", phase: phase, requestedSeconds: requested,
+                                    measuredSeconds: start - epoch,
+                                    renderSeconds: CACurrentMediaTime() - start,
+                                    ambientAnimations: view.ambientAnimationCount))
+        }
+
+        // Keep background tracks static while comparing only the button cue.
+        settings.update { $0.ambientAnimation = false }
+        view.set(snapshot: snapshot, configuration: settings.configuration)
+        view.showStable()
+        view.interactionEnabled = true
+        pump(0.05)
+        try capture("00-idle", phase: "idle", requested: 0, epoch: CACurrentMediaTime())
+        let samples: [(String, TimeInterval)] = [
+            ("01-hover-033ms", 1.0 / 30.0), ("02-hover-067ms", 2.0 / 30.0),
+            ("03-hover-100ms", 0.1), ("04-hover-167ms", 1.0 / 6.0),
+            ("05-hover-steady-250ms", 0.25)
+        ]
+        for (name, requested) in samples {
+            view.setNavigationHoverForVerification(nil)
+            pump(HUDNavigation.hoverExitDuration + 0.05)
+            let epoch = CACurrentMediaTime()
+            view.setNavigationHoverForVerification(.notes)
+            CATransaction.flush()
+            try capture(name, phase: "hover", requested: requested, epoch: epoch)
+        }
+        let exitEpoch = CACurrentMediaTime()
+        view.setNavigationHoverForVerification(nil)
+        CATransaction.flush()
+        try capture("06-hover-exit-100ms", phase: "exit", requested: 0.1, epoch: exitEpoch)
+
+        // Start a single ambient cycle and use its real Core Animation epoch.
+        // Absolute deadlines include any time spent rendering preceding PNGs.
+        settings.update { $0.ambientAnimation = true }
+        view.set(snapshot: snapshot, configuration: settings.configuration)
+        view.showStable()
+        view.interactionEnabled = true
+        pump(0.02)
+        guard let ambientEpoch = view.ambientStartTime, view.ambientAnimationCount > 0 else {
+            throw NSError(domain: "HUDReadmePreview", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Watch preview did not start ambient Core Animation tracks."])
+        }
+        for (name, requested) in [("07-ambient-start", 0.0),
+                                  ("08-ambient-peak", 41.0 / 6.0),
+                                  ("09-ambient-return", 41.0 / 3.0)] {
+            try capture(name, phase: "ambient", requested: requested, epoch: ambientEpoch)
+        }
+        let manifest = Manifest(renderer: "SystemHUDView AppKit/Core Animation presentation layers, 1280 x 800",
+            sampling: "Approximate capture-start times measured with CACurrentMediaTime; these PNGs are not frame-exact source renders. Hover samples use independent activations; ambient samples share one epoch.",
+            dataSources: "Isolated temporary stores, private pasteboard and fixture telemetry; no desktop framebuffer capture.",
+            motionPolicy: "HUD_WATCH_MOTION_PREVIEW affects only this fixture binary; it ignores the host Reduce Motion preference without changing system settings or shipped app behavior.",
+            systemReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            reduceMotion: HUDRuntimeAppearance.reduceMotion, captures: captures)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(manifest).write(to: output.appendingPathComponent("capture-times.json"), options: .atomic)
+        print("Rendered \(captures.count) native Watch fixture captures to \(output.path)")
+    }
+
+    /// Verify the exported dimensions and central fixture content from the
+    /// actual PNG pixels, rather than accepting only renderer process success.
+    private static func verifyWatchImage(_ url: URL) throws {
+        guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: url)),
+              bitmap.pixelsWide == 1280, bitmap.pixelsHigh == 800 else {
+            throw NSError(domain: "HUDReadmePreview", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "Invalid Watch capture: \(url.lastPathComponent)"])
+        }
+        var visible = 0
+        // The central battery digits/status remain visible throughout these
+        // navigation and ambient trials. The clock is outside this region.
+        for y in stride(from: 250, to: 470, by: 3) {
+            for x in stride(from: 540, to: 740, by: 3) {
+                if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                   color.alphaComponent > 0.5,
+                   max(color.redComponent, max(color.greenComponent, color.blueComponent)) > 0.35 {
+                    visible += 1
+                }
+            }
+        }
+        guard visible >= 40 else {
+            throw NSError(domain: "HUDReadmePreview", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "Missing central HUD layers in \(url.lastPathComponent)"])
+        }
+    }
+
+    static func pumpUntil(_ end: TimeInterval) {
+        while CACurrentMediaTime() < end {
+            let remaining = end - CACurrentMediaTime()
+            RunLoop.main.run(until: Date().addingTimeInterval(min(0.004, max(0, remaining))))
+        }
     }
 
     static func pump(_ duration: TimeInterval) {

@@ -1,0 +1,1266 @@
+{
+  "schema_version": 1,
+  "policy": "Outer-only bounded source resource package; no game execution or production modification.",
+  "source_shader": {
+    "id": "CAB-feee320eebbc6443871160405c47e630:-2664880953429036268",
+    "name": "HGRP/PostProcessing/UberPost",
+    "raw_sha256": "e2ebdf125bd63641d81e2e13ece530e784f705c9c5b6f0a027a1acca8fd0676f",
+    "source_asset": "Packages/com.hg.render-pipelines/Runtime/Shaders/PostProcessing/UberPost.shader"
+  },
+  "source_bundle": {
+    "layer": "Persistent",
+    "group": "InitBundle",
+    "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+    "name": "Data/Bundles/Windows/initial/4e05ece956bf6fec2be13d66.ab",
+    "name_hash": "3188574BEB66E5DE",
+    "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+    "md5": "76D0D1DBF38C77151A18EDFBDB765DEA",
+    "offset": 28715925,
+    "length": 656975,
+    "block_type": 2,
+    "encrypted": false,
+    "flags": 0,
+    "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\extracted\\Persistent\\Data\\Bundles\\Windows\\initial\\4e05ece956bf6fec2be13d66.ab",
+    "sha256": "318e03afe2cdaa948bdf7b4a59655f8b8f134751bb0fd57804d5577013e3db50",
+    "md5_verified": true
+  },
+  "composite_variants": 6,
+  "composite_stages": 12,
+  "frosted_ps_stages": 10,
+  "frosted_cs_stages": 4,
+  "capture_copy_stages": 2,
+  "files": [
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry720.bin",
+      "bytes": 264,
+      "sha256": "ce984c212ad82db844a2a648c4f832f9c923dfeda52b134d990db6afb2e7a4b5",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry720.bin",
+      "source_sha256": "ce984c212ad82db844a2a648c4f832f9c923dfeda52b134d990db6afb2e7a4b5",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry721.bin",
+      "bytes": 636,
+      "sha256": "d73b7d6bae5f8b4033649f1f161bde9bce952b465f76f4da651a91f2c86de421",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry721.bin",
+      "source_sha256": "d73b7d6bae5f8b4033649f1f161bde9bce952b465f76f4da651a91f2c86de421",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry722.bin",
+      "bytes": 480,
+      "sha256": "e7ee9312fc7ff2c603087c4ce2ab2b63d5940d38971582a6f1a386909fa7dd5d",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry722.bin",
+      "source_sha256": "e7ee9312fc7ff2c603087c4ce2ab2b63d5940d38971582a6f1a386909fa7dd5d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry723.bin",
+      "bytes": 524,
+      "sha256": "4f87ffa582b2dc5022f23de97bc329091a6b8a414c6d663828fa020c74f36e7f",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry723.bin",
+      "source_sha256": "4f87ffa582b2dc5022f23de97bc329091a6b8a414c6d663828fa020c74f36e7f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry724.bin",
+      "bytes": 832,
+      "sha256": "a75bd22f241603fa97caed29bf09615c621a8f279a6a4cfdf9ded1420f201219",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry724.bin",
+      "source_sha256": "a75bd22f241603fa97caed29bf09615c621a8f279a6a4cfdf9ded1420f201219",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-p18-seg0-entry725.bin",
+      "bytes": 676,
+      "sha256": "a42f435356966c7ad6c20e9003969b7cb9aa7535ebbec7dfed1e42c23e66c687",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-p18-seg0-entry725.bin",
+      "source_sha256": "a42f435356966c7ad6c20e9003969b7cb9aa7535ebbec7dfed1e42c23e66c687",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.bindings.json",
+      "bytes": 324,
+      "sha256": "74d6d4ed2c40a7b3213b196fa2cd17bf5018d12ff58dc11ebe992369dfee7daf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.bindings.json",
+      "source_sha256": "74d6d4ed2c40a7b3213b196fa2cd17bf5018d12ff58dc11ebe992369dfee7daf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.metal",
+      "bytes": 450,
+      "sha256": "06d581042ee67277111054e6f5b9d4e71e30daa8af3f3308ed55b43db0b3d793",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.metal",
+      "source_sha256": "06d581042ee67277111054e6f5b9d4e71e30daa8af3f3308ed55b43db0b3d793",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.reflection.json",
+      "bytes": 512,
+      "sha256": "6d09868332208ed68de25a7d9d72c18d6f2684b40ece479ef4c64d951554f7bb",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.reflection.json",
+      "source_sha256": "6d09868332208ed68de25a7d9d72c18d6f2684b40ece479ef4c64d951554f7bb",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.fragment.spv",
+      "bytes": 764,
+      "sha256": "4eaf1483a70ae8db0f151a7323d5aef050a94a7c8bf314d93a6433da1ce8b7dd",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.fragment.spv",
+      "source_sha256": "4eaf1483a70ae8db0f151a7323d5aef050a94a7c8bf314d93a6433da1ce8b7dd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program726.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program726.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.bindings.json",
+      "bytes": 657,
+      "sha256": "ee254056c2f05b4871cca7ba68831263fe04592fe7db3be7713241c3bb0b11a4",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.bindings.json",
+      "source_sha256": "ee254056c2f05b4871cca7ba68831263fe04592fe7db3be7713241c3bb0b11a4",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.metal",
+      "bytes": 3774,
+      "sha256": "57272aaff648de23b5c09eef654c07a59dcaa5ee1f164cbace9ffd3ba07e8400",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.metal",
+      "source_sha256": "57272aaff648de23b5c09eef654c07a59dcaa5ee1f164cbace9ffd3ba07e8400",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.reflection.json",
+      "bytes": 18828,
+      "sha256": "dc37783405fb34512dcff0d9311f9895f3a39fe7b1e884834bec80fe6c4a4f32",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.reflection.json",
+      "source_sha256": "dc37783405fb34512dcff0d9311f9895f3a39fe7b1e884834bec80fe6c4a4f32",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.fragment.spv",
+      "bytes": 6208,
+      "sha256": "fb1b5d513e3d4933ebf6880f3cc146498130077337675034d4b81ee3ba29426f",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.fragment.spv",
+      "source_sha256": "fb1b5d513e3d4933ebf6880f3cc146498130077337675034d4b81ee3ba29426f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program727.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program727.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.bindings.json",
+      "bytes": 815,
+      "sha256": "036e67e8451962b5891a7d7f86eb136f094b2cecee90341965fb2ae2c78dff60",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.bindings.json",
+      "source_sha256": "036e67e8451962b5891a7d7f86eb136f094b2cecee90341965fb2ae2c78dff60",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.metal",
+      "bytes": 1357,
+      "sha256": "1f89977ab45b918680621523521da0b739f1541f45c1720bbc387143b1805a76",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.metal",
+      "source_sha256": "1f89977ab45b918680621523521da0b739f1541f45c1720bbc387143b1805a76",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.reflection.json",
+      "bytes": 3423,
+      "sha256": "fe81bff46f98c5faa9a115f5e7446b319c9e2f93877aaa1c63ff2b488380ffd8",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.reflection.json",
+      "source_sha256": "fe81bff46f98c5faa9a115f5e7446b319c9e2f93877aaa1c63ff2b488380ffd8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.fragment.spv",
+      "bytes": 2244,
+      "sha256": "1c7f9718060057c938db4f4480b6ea18b90a48e943e023c1ba55e41b2d57bdfd",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.fragment.spv",
+      "source_sha256": "1c7f9718060057c938db4f4480b6ea18b90a48e943e023c1ba55e41b2d57bdfd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program728.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program728.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.bindings.json",
+      "bytes": 653,
+      "sha256": "395e5a90f9f9ee7d0f2ceb5e6b86d5ae0fb8a0d49094142475bc56eb7b5f8c5e",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.bindings.json",
+      "source_sha256": "395e5a90f9f9ee7d0f2ceb5e6b86d5ae0fb8a0d49094142475bc56eb7b5f8c5e",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.metal",
+      "bytes": 1592,
+      "sha256": "2d895ac7319e2ee9d37a66c1f98d3252fab0e86ebfa1490d690f3e3d81efa55e",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.metal",
+      "source_sha256": "2d895ac7319e2ee9d37a66c1f98d3252fab0e86ebfa1490d690f3e3d81efa55e",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.reflection.json",
+      "bytes": 3329,
+      "sha256": "866eec563fac181fd269394cebbe7ee4affb0455accc76f629db3976539919a5",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.reflection.json",
+      "source_sha256": "866eec563fac181fd269394cebbe7ee4affb0455accc76f629db3976539919a5",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.fragment.spv",
+      "bytes": 2964,
+      "sha256": "6e4abc6aa24936f8e0ff4ce501b10d9bcd39993bbfa4bca9201ae4f8fa1cc37b",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.fragment.spv",
+      "source_sha256": "6e4abc6aa24936f8e0ff4ce501b10d9bcd39993bbfa4bca9201ae4f8fa1cc37b",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program729.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program729.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.bindings.json",
+      "bytes": 819,
+      "sha256": "0e69c5900cb164860cc88aee416d89fca182aae308e22a7cd3bf683e7da6b1cc",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.bindings.json",
+      "source_sha256": "0e69c5900cb164860cc88aee416d89fca182aae308e22a7cd3bf683e7da6b1cc",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.metal",
+      "bytes": 4451,
+      "sha256": "e727be9f2620512b677e34dc4711c5ab13a77543c511287659d5b9e2af9edd76",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.metal",
+      "source_sha256": "e727be9f2620512b677e34dc4711c5ab13a77543c511287659d5b9e2af9edd76",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.reflection.json",
+      "bytes": 18924,
+      "sha256": "5013e16657ae0eb1d6bf9dffac780bd72e2a536eba318027e736f0338c443a5c",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.reflection.json",
+      "source_sha256": "5013e16657ae0eb1d6bf9dffac780bd72e2a536eba318027e736f0338c443a5c",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.fragment.spv",
+      "bytes": 7604,
+      "sha256": "9befd2caaff1bf566f1e4fb57918100f678b24efa50dce542ad33d1b72901340",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.fragment.spv",
+      "source_sha256": "9befd2caaff1bf566f1e4fb57918100f678b24efa50dce542ad33d1b72901340",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program730.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program730.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.bindings.json",
+      "bytes": 977,
+      "sha256": "bb3d2bd70f30a5433d5c5a1098898fcd413c1da441023d73834fcb5b71e57227",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.bindings.json",
+      "source_sha256": "bb3d2bd70f30a5433d5c5a1098898fcd413c1da441023d73834fcb5b71e57227",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.metal",
+      "bytes": 2036,
+      "sha256": "8d10ca4a0449fa9596df18b5008b02f4564181d0485b5624bd68514ddef95101",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.metal",
+      "source_sha256": "8d10ca4a0449fa9596df18b5008b02f4564181d0485b5624bd68514ddef95101",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.reflection.json",
+      "bytes": 3519,
+      "sha256": "5c99688fa23c4a9eec9018c0fc1b216cfac86df4302986dcca741afc03de23fb",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.reflection.json",
+      "source_sha256": "5c99688fa23c4a9eec9018c0fc1b216cfac86df4302986dcca741afc03de23fb",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.fragment.spv",
+      "bytes": 3672,
+      "sha256": "8dc8acf984a11a0bc218c20bf4675add561f893f1a030c3ef2ccdfd257698d1d",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.fragment.spv",
+      "source_sha256": "8dc8acf984a11a0bc218c20bf4675add561f893f1a030c3ef2ccdfd257698d1d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.bindings.json",
+      "source_sha256": "4de6f706c6ef38223f280e05cba99de10dbc99d41d102a3e7981f6a15ed84eef",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.metal",
+      "bytes": 811,
+      "sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.metal",
+      "source_sha256": "e774eda7e7a23eee4419de3e47f3d79a67933be6840808a85fea905298c6c871",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.reflection.json",
+      "bytes": 1152,
+      "sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.reflection.json",
+      "source_sha256": "5856033b3af11f27c96f2a69b190c733cf9f8ec1e8307952afe632170f4739e0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/UberPost-ss0-program731.vertex.spv",
+      "bytes": 1336,
+      "sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "source_path": "game-reference/precision-reference/postprocess/shader/UberPost-ss0-program731.vertex.spv",
+      "source_sha256": "f815adae608e767f6148cb0472892c08853d5e466123058abf83401e101472cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Composite/manifest.json",
+      "bytes": 147956,
+      "sha256": "c6228c94683b8ea7888f2abd83f00f291cdf07ef75d36b75700b7ede11d51837",
+      "source_refs": [
+        {
+          "path": "game-reference/precision-reference/postprocess/ui-composite-port-manifest.json",
+          "sha256": "efeb633cbbc86fb59a2576c7a3760dd10315aa695b5c4115506775bea95da188",
+          "bundle": {
+            "layer": "Persistent",
+            "group": "InitBundle",
+            "manifest": "D:\\Arknights Endfield\\Endfield_Data\\Persistent\\VFS\\0CE8FA57\\0CE8FA57.blc",
+            "name": "Data/Bundles/Windows/initial/4e05ece956bf6fec2be13d66.ab",
+            "name_hash": "3188574BEB66E5DE",
+            "chunk": "F047E09F2560D0C7BD5C8862CE3F8D3C",
+            "md5": "76D0D1DBF38C77151A18EDFBDB765DEA",
+            "offset": 28715925,
+            "length": 656975,
+            "block_type": 2,
+            "encrypted": false,
+            "flags": 0,
+            "extracted": "C:\\Users\\mario\\Documents\\ChatGPT\\EndfieldUI\\game-reference\\extracted\\Persistent\\Data\\Bundles\\Windows\\initial\\4e05ece956bf6fec2be13d66.ab",
+            "sha256": "318e03afe2cdaa948bdf7b4a59655f8b8f134751bb0fd57804d5577013e3db50",
+            "md5_verified": true
+          }
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "Evidence/composite-enum-defaults.json",
+      "bytes": 36922,
+      "sha256": "3cc6fc7667fb96ee1231941d463fa77b72b90347fa9fe48b5e0456b6a048b7a8",
+      "source_path": "game-reference/precision-reference/postprocess/composite-enum-defaults.json",
+      "source_sha256": "3cc6fc7667fb96ee1231941d463fa77b72b90347fa9fe48b5e0456b6a048b7a8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/conversion-report.json",
+      "bytes": 18475,
+      "sha256": "ebc8d4b8affb581cd3c75e2dc141b89cadf610a6c204f409ce8e7719d3383006",
+      "source_path": "game-reference/precision-reference/postprocess/shader/conversion-report.json",
+      "source_sha256": "ebc8d4b8affb581cd3c75e2dc141b89cadf610a6c204f409ce8e7719d3383006",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/frosted-copy-decode.json",
+      "bytes": 940,
+      "sha256": "d4429880e706c6d22c2dc4ba674d683c9fedaa698b8e07cdf7e37c7d6dc2c600",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-decode.json",
+      "source_sha256": "d4429880e706c6d22c2dc4ba674d683c9fedaa698b8e07cdf7e37c7d6dc2c600",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/frosted-glass-contract.json",
+      "bytes": 11702,
+      "sha256": "1fc211714c12e063c05996f8c365ebac1266acdb8bcd9294589d06a66621c8a5",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-glass-contract.json",
+      "source_sha256": "1fc211714c12e063c05996f8c365ebac1266acdb8bcd9294589d06a66621c8a5",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/frosted-glass-contract.md",
+      "bytes": 2557,
+      "sha256": "d8e376e20960cfa554381774bced36008faec8cea30af367035887260234243d",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-glass-contract.md",
+      "source_sha256": "d8e376e20960cfa554381774bced36008faec8cea30af367035887260234243d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/frosted-glass-decode.json",
+      "bytes": 1991,
+      "sha256": "707f7dcb3cafcc7608003b34cb1249a4d1bdb723b10f665330fcbce9da274094",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-glass-decode.json",
+      "source_sha256": "707f7dcb3cafcc7608003b34cb1249a4d1bdb723b10f665330fcbce9da274094",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-camera-relative.json",
+      "bytes": 9053,
+      "sha256": "27b540182fedab0b00176100616e7a54b444d8740d383900e2624b669ed2fbc8",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-camera-relative.json",
+      "source_sha256": "27b540182fedab0b00176100616e7a54b444d8740d383900e2624b669ed2fbc8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-camera-relative.md",
+      "bytes": 2962,
+      "sha256": "a8f07587d3031916420802299d8375f36853c95e36e2ee38894df2e56b3ac824",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-camera-relative.md",
+      "source_sha256": "a8f07587d3031916420802299d8375f36853c95e36e2ee38894df2e56b3ac824",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-render-target.json",
+      "bytes": 21701,
+      "sha256": "72a22049b954e218e651faa1e64ab28c5fe40b5926e5c12300aaf79e029d4931",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-render-target.json",
+      "source_sha256": "72a22049b954e218e651faa1e64ab28c5fe40b5926e5c12300aaf79e029d4931",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/hg-ui-render-target.md",
+      "bytes": 6626,
+      "sha256": "ea8f1ee1b9eb1ac272b4e41106b33ecb188ea2a05a18c4515ce3954b2d374444",
+      "source_path": "game-reference/precision-reference/postprocess/hg-ui-render-target.md",
+      "source_sha256": "ea8f1ee1b9eb1ac272b4e41106b33ecb188ea2a05a18c4515ce3954b2d374444",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/ui-composite-graph.json",
+      "bytes": 44570,
+      "sha256": "f70b1fac8efc78ce90683cdeb8cb96a31b90f726f9369c8221527486cd5e94ed",
+      "source_path": "game-reference/precision-reference/postprocess/ui-composite-graph.json",
+      "source_sha256": "f70b1fac8efc78ce90683cdeb8cb96a31b90f726f9369c8221527486cd5e94ed",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/ui-composite-graph.md",
+      "bytes": 5571,
+      "sha256": "006224d13ca572fb54cd217e7711770d000cc7da567a5b1f7f6bd36d0638a28b",
+      "source_path": "game-reference/precision-reference/postprocess/ui-composite-graph.md",
+      "source_sha256": "006224d13ca572fb54cd217e7711770d000cc7da567a5b1f7f6bd36d0638a28b",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "Evidence/ui-composite-shader-decode.json",
+      "bytes": 1007,
+      "sha256": "82b232075a2137785ee8e47202b5dbe42d6094891c347c5f69239dfc9f642129",
+      "source_path": "game-reference/precision-reference/postprocess/ui-composite-shader-decode.json",
+      "source_sha256": "82b232075a2137785ee8e47202b5dbe42d6094891c347c5f69239dfc9f642129",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-p18-entry9.bin",
+      "bytes": 296,
+      "sha256": "837f615603309676441d8c5c69c5539f0feb8ec02e87eb22376cb35ff22dbada",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-p18-entry9.bin",
+      "source_sha256": "837f615603309676441d8c5c69c5539f0feb8ec02e87eb22376cb35ff22dbada",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.fragment.bindings.json",
+      "bytes": 488,
+      "sha256": "2373bd96a942772084b5b0cba57ac84319868fa54f70dbf3fa688cf045c2e3e3",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.fragment.bindings.json",
+      "source_sha256": "2373bd96a942772084b5b0cba57ac84319868fa54f70dbf3fa688cf045c2e3e3",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.fragment.metal",
+      "bytes": 533,
+      "sha256": "82c44efcbffee1c281949f3f3010a01712ebaa5e01286ed481b445211d08a94a",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.fragment.metal",
+      "source_sha256": "82c44efcbffee1c281949f3f3010a01712ebaa5e01286ed481b445211d08a94a",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.fragment.reflection.json",
+      "bytes": 1293,
+      "sha256": "a39265b0af1cee883822e5ac6a1db022b7ef3783452116606c03eb9c1ac3ef5c",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.fragment.reflection.json",
+      "source_sha256": "a39265b0af1cee883822e5ac6a1db022b7ef3783452116606c03eb9c1ac3ef5c",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.fragment.spv",
+      "bytes": 896,
+      "sha256": "f7488944fa869e88bd197922d334b15347209945c30267a8a7d50aa05a54e7eb",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.fragment.spv",
+      "source_sha256": "f7488944fa869e88bd197922d334b15347209945c30267a8a7d50aa05a54e7eb",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.vertex.bindings.json",
+      "bytes": 166,
+      "sha256": "2eeeeadb5e60e924a823cd38a374160b993281ca414465798599b7480d2350a9",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.vertex.bindings.json",
+      "source_sha256": "2eeeeadb5e60e924a823cd38a374160b993281ca414465798599b7480d2350a9",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.vertex.metal",
+      "bytes": 715,
+      "sha256": "513d7c4ae4e60870f3d9d4e467aad46c315057e3168ae2663a06e270eff2349b",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.vertex.metal",
+      "source_sha256": "513d7c4ae4e60870f3d9d4e467aad46c315057e3168ae2663a06e270eff2349b",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.vertex.reflection.json",
+      "bytes": 956,
+      "sha256": "b4db89940c8d52b61ba67ff488741f3fa0513bae6cc4d28ae642abde822e474e",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.vertex.reflection.json",
+      "source_sha256": "b4db89940c8d52b61ba67ff488741f3fa0513bae6cc4d28ae642abde822e474e",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/Blit-program1.vertex.spv",
+      "bytes": 1164,
+      "sha256": "cadff416cb2b344a39c6a651b44337bfa99f34af24910771f39a41e3cf71b770",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-copy-shader/Blit-program1.vertex.spv",
+      "source_sha256": "cadff416cb2b344a39c6a651b44337bfa99f34af24910771f39a41e3cf71b770",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.fragment.bindings.json",
+      "bytes": 657,
+      "sha256": "628277712e2e5c88f0fdb61cc17ce0fad4eeb0a72e50e103f0a551a6b7cdef5f",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.fragment.bindings.json",
+      "source_sha256": "628277712e2e5c88f0fdb61cc17ce0fad4eeb0a72e50e103f0a551a6b7cdef5f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.fragment.metal",
+      "bytes": 5054,
+      "sha256": "ef78fe9a4a802ae7d2977edbde53ca01e501d48b1c61c62baf796513c2c68ed8",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.fragment.metal",
+      "source_sha256": "ef78fe9a4a802ae7d2977edbde53ca01e501d48b1c61c62baf796513c2c68ed8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.fragment.reflection.json",
+      "bytes": 16702,
+      "sha256": "e7af358b2c70b81e3831a441140931a4dad1d9243f5b14cde4a63964d3a8abfd",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.fragment.reflection.json",
+      "source_sha256": "e7af358b2c70b81e3831a441140931a4dad1d9243f5b14cde4a63964d3a8abfd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.fragment.spv",
+      "bytes": 8384,
+      "sha256": "31bca620d18361dd98516e491b19250d54afbda4fdbe00523524643c8a8c6b89",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.fragment.spv",
+      "source_sha256": "31bca620d18361dd98516e491b19250d54afbda4fdbe00523524643c8a8c6b89",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.vertex.bindings.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.vertex.bindings.json",
+      "source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.vertex.metal",
+      "bytes": 545,
+      "sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.vertex.metal",
+      "source_sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.vertex.reflection.json",
+      "bytes": 175,
+      "sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.vertex.reflection.json",
+      "source_sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program3.vertex.spv",
+      "bytes": 756,
+      "sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program3.vertex.spv",
+      "source_sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.fragment.bindings.json",
+      "bytes": 657,
+      "sha256": "628277712e2e5c88f0fdb61cc17ce0fad4eeb0a72e50e103f0a551a6b7cdef5f",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.fragment.bindings.json",
+      "source_sha256": "628277712e2e5c88f0fdb61cc17ce0fad4eeb0a72e50e103f0a551a6b7cdef5f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.fragment.metal",
+      "bytes": 5054,
+      "sha256": "ef78fe9a4a802ae7d2977edbde53ca01e501d48b1c61c62baf796513c2c68ed8",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.fragment.metal",
+      "source_sha256": "ef78fe9a4a802ae7d2977edbde53ca01e501d48b1c61c62baf796513c2c68ed8",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.fragment.reflection.json",
+      "bytes": 16702,
+      "sha256": "e7af358b2c70b81e3831a441140931a4dad1d9243f5b14cde4a63964d3a8abfd",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.fragment.reflection.json",
+      "source_sha256": "e7af358b2c70b81e3831a441140931a4dad1d9243f5b14cde4a63964d3a8abfd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.fragment.spv",
+      "bytes": 8384,
+      "sha256": "31bca620d18361dd98516e491b19250d54afbda4fdbe00523524643c8a8c6b89",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.fragment.spv",
+      "source_sha256": "31bca620d18361dd98516e491b19250d54afbda4fdbe00523524643c8a8c6b89",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.vertex.bindings.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.vertex.bindings.json",
+      "source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.vertex.metal",
+      "bytes": 545,
+      "sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.vertex.metal",
+      "source_sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.vertex.reflection.json",
+      "bytes": 175,
+      "sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.vertex.reflection.json",
+      "source_sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program4.vertex.spv",
+      "bytes": 756,
+      "sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program4.vertex.spv",
+      "source_sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.fragment.bindings.json",
+      "bytes": 981,
+      "sha256": "4c9fffaf5f77c37361d6eba0c205c06a2f12eff92265ab9d68c9b71d1cf050a3",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.fragment.bindings.json",
+      "source_sha256": "4c9fffaf5f77c37361d6eba0c205c06a2f12eff92265ab9d68c9b71d1cf050a3",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.fragment.metal",
+      "bytes": 12929,
+      "sha256": "864e04b87408e5beec446ea5d26c9364f3b876eaad1fb0a5658b3b612ebe1a86",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.fragment.metal",
+      "source_sha256": "864e04b87408e5beec446ea5d26c9364f3b876eaad1fb0a5658b3b612ebe1a86",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.fragment.reflection.json",
+      "bytes": 16892,
+      "sha256": "1468009747e9a56d017be86c6ffd308dfa6239dbfc4c4a84f7884c52ca491976",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.fragment.reflection.json",
+      "source_sha256": "1468009747e9a56d017be86c6ffd308dfa6239dbfc4c4a84f7884c52ca491976",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.fragment.spv",
+      "bytes": 17808,
+      "sha256": "7da12851a8abf71c4a51e3e9253b089a5a4e6f7fc01319cbeb7963b263075ceb",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.fragment.spv",
+      "source_sha256": "7da12851a8abf71c4a51e3e9253b089a5a4e6f7fc01319cbeb7963b263075ceb",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.vertex.bindings.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.vertex.bindings.json",
+      "source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.vertex.metal",
+      "bytes": 545,
+      "sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.vertex.metal",
+      "source_sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.vertex.reflection.json",
+      "bytes": 175,
+      "sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.vertex.reflection.json",
+      "source_sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program5.vertex.spv",
+      "bytes": 756,
+      "sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program5.vertex.spv",
+      "source_sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.fragment.bindings.json",
+      "bytes": 1305,
+      "sha256": "d805c10b97edc9792040adfccd3a0c963be8fb060b481e6f4c3fc29608de8935",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.fragment.bindings.json",
+      "source_sha256": "d805c10b97edc9792040adfccd3a0c963be8fb060b481e6f4c3fc29608de8935",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.fragment.metal",
+      "bytes": 21157,
+      "sha256": "9cf62868a38ac8832f5697f2f9e76a3445e125cfee1ad98cf50e678a57c0b4a5",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.fragment.metal",
+      "source_sha256": "9cf62868a38ac8832f5697f2f9e76a3445e125cfee1ad98cf50e678a57c0b4a5",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.fragment.reflection.json",
+      "bytes": 17082,
+      "sha256": "a3806028ea6f0ea4b7213981b5f320f0ee19b1afddeccb92196e2a397dfbc307",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.fragment.reflection.json",
+      "source_sha256": "a3806028ea6f0ea4b7213981b5f320f0ee19b1afddeccb92196e2a397dfbc307",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.fragment.spv",
+      "bytes": 26912,
+      "sha256": "99285efeab973e2dda19ede64281aebab55b080d8ef3014bcdae49eaac717882",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.fragment.spv",
+      "source_sha256": "99285efeab973e2dda19ede64281aebab55b080d8ef3014bcdae49eaac717882",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.vertex.bindings.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.vertex.bindings.json",
+      "source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.vertex.metal",
+      "bytes": 545,
+      "sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.vertex.metal",
+      "source_sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.vertex.reflection.json",
+      "bytes": 175,
+      "sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.vertex.reflection.json",
+      "source_sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program6.vertex.spv",
+      "bytes": 756,
+      "sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program6.vertex.spv",
+      "source_sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.fragment.bindings.json",
+      "bytes": 657,
+      "sha256": "ec3eb9a64a44c7cdaf2de0a0ef16d873f5a93b44e43c81e7d844bdf591b9cc2c",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.fragment.bindings.json",
+      "source_sha256": "ec3eb9a64a44c7cdaf2de0a0ef16d873f5a93b44e43c81e7d844bdf591b9cc2c",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.fragment.metal",
+      "bytes": 4119,
+      "sha256": "501ffb2abd171852d1e86960b73e8b1f252ac1c87fc649f1e9208e19a3fdca05",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.fragment.metal",
+      "source_sha256": "501ffb2abd171852d1e86960b73e8b1f252ac1c87fc649f1e9208e19a3fdca05",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.fragment.reflection.json",
+      "bytes": 16702,
+      "sha256": "e7af358b2c70b81e3831a441140931a4dad1d9243f5b14cde4a63964d3a8abfd",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.fragment.reflection.json",
+      "source_sha256": "e7af358b2c70b81e3831a441140931a4dad1d9243f5b14cde4a63964d3a8abfd",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.fragment.spv",
+      "bytes": 6756,
+      "sha256": "2a001be7178f8c2e2e4608c4d45e2646b474cf52dac7aca3331b9ccf738bd684",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.fragment.spv",
+      "source_sha256": "2a001be7178f8c2e2e4608c4d45e2646b474cf52dac7aca3331b9ccf738bd684",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.vertex.bindings.json",
+      "bytes": 2,
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.vertex.bindings.json",
+      "source_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.vertex.metal",
+      "bytes": 545,
+      "sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.vertex.metal",
+      "source_sha256": "f055d393bd9dc46dead9f14689456372d7e8621762933849ba12eebe4f723148",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.vertex.reflection.json",
+      "bytes": 175,
+      "sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.vertex.reflection.json",
+      "source_sha256": "ba076f31badb51bd22a861367a9b6e4c0e16cfca5de8a7b8c0c861f7b0ea1118",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-program8.vertex.spv",
+      "bytes": 756,
+      "sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-program8.vertex.spv",
+      "source_sha256": "2bc75e187e48e40fa35c857d9a20e66ad8a1ed4591fa6b3c8c10340f4a0386d1",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-ss0-p18-entry0.bin",
+      "bytes": 476,
+      "sha256": "3abd3aff643f1833e25442a62591d6466fd21a6f9e00307eb396058b9265822a",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-ss0-p18-entry0.bin",
+      "source_sha256": "3abd3aff643f1833e25442a62591d6466fd21a6f9e00307eb396058b9265822a",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-ss0-p18-entry1.bin",
+      "bytes": 664,
+      "sha256": "6cad543cda3496355dafaa10a50f12111c03fb34146f8e2951d421617b75482f",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-ss0-p18-entry1.bin",
+      "source_sha256": "6cad543cda3496355dafaa10a50f12111c03fb34146f8e2951d421617b75482f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-ss0-p18-entry2.bin",
+      "bytes": 792,
+      "sha256": "c17929b4ec1f3771cefda0ed3a39a1e8cf53a6e547b869ada48adcd9a63e2c90",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-ss0-p18-entry2.bin",
+      "source_sha256": "c17929b4ec1f3771cefda0ed3a39a1e8cf53a6e547b869ada48adcd9a63e2c90",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlur-ss0-p18-entry7.bin",
+      "bytes": 424,
+      "sha256": "d09b99c374223f751c2170e3c55ae58609acec8b25d38d67e290ba8c100eb3b2",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlur-ss0-p18-entry7.bin",
+      "source_sha256": "d09b99c374223f751c2170e3c55ae58609acec8b25d38d67e290ba8c100eb3b2",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain-USER_LUT.compute.bindings.json",
+      "bytes": 654,
+      "sha256": "13044b3c5102e26da137230ba2f5c8b21faae60b14820792836351236991d58a",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain-USER_LUT.compute.bindings.json",
+      "source_sha256": "13044b3c5102e26da137230ba2f5c8b21faae60b14820792836351236991d58a",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain-USER_LUT.compute.metal",
+      "bytes": 6982,
+      "sha256": "3ea0f86725cc41c5c56b87b9cc45bf5f713d312cd34007426e90a56fd16523a0",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain-USER_LUT.compute.metal",
+      "source_sha256": "3ea0f86725cc41c5c56b87b9cc45bf5f713d312cd34007426e90a56fd16523a0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain-USER_LUT.compute.reflection.json",
+      "bytes": 1233,
+      "sha256": "d33409633a5daa1ce313088150d8bdd7516613726b8f82fadf61ef3a552e372f",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain-USER_LUT.compute.reflection.json",
+      "source_sha256": "d33409633a5daa1ce313088150d8bdd7516613726b8f82fadf61ef3a552e372f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain-USER_LUT.compute.spv",
+      "bytes": 10192,
+      "sha256": "f43abb4b44ad5112dbb8c51acfd00dd51481e34905a73fdfb5ca96ff9a82d5d0",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain-USER_LUT.compute.spv",
+      "source_sha256": "f43abb4b44ad5112dbb8c51acfd00dd51481e34905a73fdfb5ca96ff9a82d5d0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain.compute.bindings.json",
+      "bytes": 654,
+      "sha256": "13044b3c5102e26da137230ba2f5c8b21faae60b14820792836351236991d58a",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain.compute.bindings.json",
+      "source_sha256": "13044b3c5102e26da137230ba2f5c8b21faae60b14820792836351236991d58a",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain.compute.metal",
+      "bytes": 6982,
+      "sha256": "3ea0f86725cc41c5c56b87b9cc45bf5f713d312cd34007426e90a56fd16523a0",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain.compute.metal",
+      "source_sha256": "3ea0f86725cc41c5c56b87b9cc45bf5f713d312cd34007426e90a56fd16523a0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain.compute.reflection.json",
+      "bytes": 1233,
+      "sha256": "d33409633a5daa1ce313088150d8bdd7516613726b8f82fadf61ef3a552e372f",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain.compute.reflection.json",
+      "source_sha256": "d33409633a5daa1ce313088150d8bdd7516613726b8f82fadf61ef3a552e372f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMain.compute.spv",
+      "bytes": 10192,
+      "sha256": "f43abb4b44ad5112dbb8c51acfd00dd51481e34905a73fdfb5ca96ff9a82d5d0",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMain.compute.spv",
+      "source_sha256": "f43abb4b44ad5112dbb8c51acfd00dd51481e34905a73fdfb5ca96ff9a82d5d0",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.bindings.json",
+      "bytes": 1470,
+      "sha256": "f230ce380962468ddf5ad66df0649d9f00185a1f9aa8813fad2027fc52326056",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.bindings.json",
+      "source_sha256": "f230ce380962468ddf5ad66df0649d9f00185a1f9aa8813fad2027fc52326056",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.metal",
+      "bytes": 16803,
+      "sha256": "9459638c8fab06309759e431e58256c0142b1a4edd7aff7a32984086d5097e07",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.metal",
+      "source_sha256": "9459638c8fab06309759e431e58256c0142b1a4edd7aff7a32984086d5097e07",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.reflection.json",
+      "bytes": 17207,
+      "sha256": "68ecee86785542c84e91d87681e14eb528f50e87404d9e481d0e2d14143b3344",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.reflection.json",
+      "source_sha256": "68ecee86785542c84e91d87681e14eb528f50e87404d9e481d0e2d14143b3344",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.spv",
+      "bytes": 22708,
+      "sha256": "e08f6ff71b0429e51424ec78da3a3c4b57e6d086bf6f1f04f7ada568ae68276e",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut-USER_LUT.compute.spv",
+      "source_sha256": "e08f6ff71b0429e51424ec78da3a3c4b57e6d086bf6f1f04f7ada568ae68276e",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut.compute.bindings.json",
+      "bytes": 1145,
+      "sha256": "79a212ca0aed6be044610408a5f1759d192b487374513867681cdd25545f28cf",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut.compute.bindings.json",
+      "source_sha256": "79a212ca0aed6be044610408a5f1759d192b487374513867681cdd25545f28cf",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut.compute.metal",
+      "bytes": 13047,
+      "sha256": "0ff69e9d61fdbf7695f83839429cf40534847c146544db91fe68d3375375997f",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut.compute.metal",
+      "source_sha256": "0ff69e9d61fdbf7695f83839429cf40534847c146544db91fe68d3375375997f",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut.compute.reflection.json",
+      "bytes": 17017,
+      "sha256": "9c296037a9ff971d59cdd7a318e1825bb30b1be8efaa07dffca7733608960b0d",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut.compute.reflection.json",
+      "source_sha256": "9c296037a9ff971d59cdd7a318e1825bb30b1be8efaa07dffca7733608960b0d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/FrostedGlassBlurCS-KMainWithLut.compute.spv",
+      "bytes": 18404,
+      "sha256": "3b52085a680492e6a21381d9e1ee0ec3448d16279f74cb759236cc7f246fd8fa",
+      "source_path": "game-reference/precision-reference/postprocess/frosted-shader/FrostedGlassBlurCS-KMainWithLut.compute.spv",
+      "source_sha256": "3b52085a680492e6a21381d9e1ee0ec3448d16279f74cb759236cc7f246fd8fa",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "FrostedGlass/manifest.json",
+      "bytes": 291190,
+      "sha256": "617692cf8c2d9ea2c992b314a556b36e54c71a0b8ed456974217b520de969706",
+      "source_path": "deliverables/source-hdr-assets/FrostedGlass/manifest.json",
+      "source_sha256": "617692cf8c2d9ea2c992b314a556b36e54c71a0b8ed456974217b520de969706",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "README.md",
+      "bytes": 2642,
+      "sha256": "738c576fd4d59ddde7dd9fb55106a70005693109103716fe23fb2848966f6271",
+      "source_refs": [
+        {
+          "path": "game-reference/package_source_hdr_assets.py",
+          "sha256": "b47b7187be9733223edbd38a5cdf1b22cc4d263d086081610c8ae9d8c0f304e2"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/HGRP_UI_Default-ss0-p18-seg0-program1615.fragment.metal",
+      "bytes": 1239,
+      "sha256": "15c68ad349f730a96521a6d2ba56ba31762b6604fdb7fa3fa18463e945d48f79",
+      "source_path": "EndfieldHUD/Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program1615.fragment.metal",
+      "source_sha256": "15c68ad349f730a96521a6d2ba56ba31762b6604fdb7fa3fa18463e945d48f79",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/HGRP_UI_Default-ss0-p18-seg0-program1615.vertex.metal",
+      "bytes": 3674,
+      "sha256": "4f8c2e4232a8638f0839fcd34c9cc4952bd0de6582204a9e8d74f2f988c6bbea",
+      "source_path": "EndfieldHUD/Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program1615.vertex.metal",
+      "source_sha256": "4f8c2e4232a8638f0839fcd34c9cc4952bd0de6582204a9e8d74f2f988c6bbea",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/HGRP_UI_Default-ss0-p18-seg0-program194.fragment.metal",
+      "bytes": 1196,
+      "sha256": "b25f8c172738a60c7e4d61585a4d0779fad4f27643c2cf8c880452bf6213e32d",
+      "source_path": "EndfieldHUD/Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program194.fragment.metal",
+      "source_sha256": "b25f8c172738a60c7e4d61585a4d0779fad4f27643c2cf8c880452bf6213e32d",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/HGRP_UI_Default-ss0-p18-seg0-program194.vertex.metal",
+      "bytes": 3642,
+      "sha256": "8785040e8849789a9ad08990bd8a713c250bc1f1ee5769b2559ee1d13b438cc6",
+      "source_path": "EndfieldHUD/Resources/WatchSource/Shaders/HGRP_UI_Default-ss0-p18-seg0-program194.vertex.metal",
+      "source_sha256": "8785040e8849789a9ad08990bd8a713c250bc1f1ee5769b2559ee1d13b438cc6",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/image-shader.json",
+      "bytes": 22192,
+      "sha256": "993943ef0801f956f72208fea70c32df4bde3605f710929d51851ed5bba0578a",
+      "source_refs": [
+        {
+          "path": "EndfieldHUD/Resources/WatchSource/image-shader.json",
+          "sha256": "215144c9a66858e3a849f4df1c7d04478fcfd56143be7916192c16fe1fc1f320"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/image-stencil-shader.json",
+      "bytes": 22693,
+      "sha256": "da04f81016afd24057966bff5ea52fdf30c90ecbc7fd4e0ed95740db83b181c6",
+      "source_refs": [
+        {
+          "path": "EndfieldHUD/Resources/WatchSource/image-stencil-shader.json",
+          "sha256": "d17214dce7638e649df1e50aa31a2e8c37c118333b4b0305f933cb3aedaebeb4"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/material-contract.json",
+      "bytes": 34808,
+      "sha256": "659cb60773263c9c462aeae16a085d13efab02c2c4f7dd820434f5c2c47bf2de",
+      "source_refs": [
+        {
+          "path": "game-reference/precision-reference/postprocess/watch-blur-composite-scene.json",
+          "sha256": "0ec2d2abf7672c9cdba777959ea6bc372f83e305879924318da8e610bf735987"
+        }
+      ],
+      "transformation": "bounded derived manifest"
+    },
+    {
+      "path": "WatchBlur/material-runtime.json",
+      "bytes": 48890,
+      "sha256": "b9f85e309ff712f83861c1db3b5b5d267c26ad63b78205f038c99461cb0eb315",
+      "source_path": "deliverables/source-hdr-assets/WatchBlur/material-runtime.json",
+      "source_sha256": "b9f85e309ff712f83861c1db3b5b5d267c26ad63b78205f038c99461cb0eb315",
+      "transformation": "byte-identical copy"
+    },
+    {
+      "path": "WatchBlur/scene.json",
+      "bytes": 91174,
+      "sha256": "0ec2d2abf7672c9cdba777959ea6bc372f83e305879924318da8e610bf735987",
+      "source_path": "game-reference/precision-reference/postprocess/watch-blur-composite-scene.json",
+      "source_sha256": "0ec2d2abf7672c9cdba777959ea6bc372f83e305879924318da8e610bf735987",
+      "transformation": "byte-identical copy"
+    }
+  ],
+  "integrity": {
+    "each_file_hash_verified": true,
+    "source_bundle_sha256_verified": true,
+    "existing_stencil_stages_original_byte_equal": true
+  },
+  "boundaries": [
+    "Dynamic player scene capture pixels absent from installed assets.",
+    "Global volume weights and runtime config values were not observed.",
+    "Metal final RT UV orientation, target sRGB policy and HDR format fallback require an explicit platform adapter.",
+    "No production resources copied by this script."
+  ]
+}
