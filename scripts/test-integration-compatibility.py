@@ -18,6 +18,10 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "Tests/Fixtures/stable-integration-contract.json"
 
+# The approved 1.1.0 release changes version metadata, not the stable bundle,
+# preferences, permission or signed-update identity recorded in the baseline.
+RELEASE_METADATA = {"CFBundleShortVersionString": "1.1.0", "CFBundleVersion": "12"}
+
 
 # Exact user-requested copy changes; every replacement remains required.
 ALLOWED_TRANSLATION_UPDATES = {
@@ -62,10 +66,14 @@ def check(root, baseline):
     try:
         info = plistlib.loads((root / "Resources/Info.plist").read_bytes())
         for key, expected in baseline["infoPlist"].items():
+            if key in RELEASE_METADATA:
+                expected = RELEASE_METADATA[key]
             if key == "CFBundleLocalizations":
                 expected = expected + ["ko"]
             if info.get(key) != expected:
                 failures.append(f"Stable application/update identity changed: {key}")
+        if info.get("HUDReleaseTag") != "v" + RELEASE_METADATA["CFBundleShortVersionString"]:
+            failures.append("Release tag does not match the approved version: HUDReleaseTag")
     except (OSError, ValueError, plistlib.InvalidFileException) as error:
         failures.append(f"Cannot inspect Info.plist: {error}")
     try:
@@ -108,6 +116,13 @@ def self_test(baseline):
         plist.write_bytes(plistlib.dumps(values))
         assert any("CFBundleIdentifier" in failure for failure in check(root, baseline)), "A changed defaults/permission identity must fail"
         plist.write_bytes(original)
+        for key, invalid in (("CFBundleVersion", "999"), ("HUDReleaseTag", "v0.0.0"),
+                             ("SUFeedURL", "https://example.invalid/appcast.xml")):
+            values = plistlib.loads(original)
+            values[key] = invalid
+            plist.write_bytes(plistlib.dumps(values))
+            assert any(key in failure for failure in check(root, baseline)), "Release metadata and update identity remain guarded"
+            plist.write_bytes(original)
         values = plistlib.loads(original)
         values["CFBundleLocalizations"].remove("en")
         plist.write_bytes(plistlib.dumps(values))
@@ -144,7 +159,7 @@ def self_test(baseline):
         original = next(iter(unauthorized["reviewedTranslationUpdates"]))
         unauthorized["reviewedTranslationUpdates"][original]["entry"] = 'Entry("Arbitrary", "任意", "任意", "任意")'
         assert any("Invalid reviewed translation update" in failure for failure in check(root, unauthorized)), "Unreviewed copy replacements cannot be exempted"
-    count = 8 + len(baseline.get("reviewedBehaviorUpdates", {})) + len(baseline.get("reviewedTranslationUpdates", {}))
+    count = 11 + len(baseline.get("reviewedBehaviorUpdates", {})) + len(baseline.get("reviewedTranslationUpdates", {}))
     print(f"Passed {count} isolated compatibility-guard mutation checks.")
 
 
