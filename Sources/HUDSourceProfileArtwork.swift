@@ -1,11 +1,12 @@
 import AppKit
+import Metal
 
-/// User artwork keeps its color and crop. Only the authored card's alpha
-/// silhouette is applied; no game tint, glow or image filter is baked in.
+/// The portrait keeps its colors. The custom card photo is dimmed inside the
+/// authored panel, while its outer decoration and alpha silhouette stay intact.
 enum HUDSourceProfileArtwork {
     enum Failure: Error { case invalidMask, cannotRender }
 
-    static func backgroundMask(bgra: Data, textureWidth: Int, textureHeight: Int,
+    static func backgroundArtwork(bgra: Data, textureWidth: Int, textureHeight: Int,
                                spriteRect: CGRect) throws -> CGImage {
         guard textureWidth > 0, textureWidth <= 16384, textureHeight > 0, textureHeight <= 16384,
               [spriteRect.minX, spriteRect.minY, spriteRect.width, spriteRect.height].allSatisfy(\.isFinite),
@@ -17,14 +18,17 @@ enum HUDSourceProfileArtwork {
               spriteRect == CGRect(x: x, y: y, width: width, height: height),
               x >= 0, y >= 0, x + width <= textureWidth, y + height <= textureHeight,
               bgra.count >= textureWidth * textureHeight * 4 else { throw Failure.invalidMask }
-        var rgba = Data(repeating: 255, count: width * height * 4)
+        var rgba = Data(repeating: 0, count: width * height * 4)
         // The decoded source mip has bottom-origin rows. CGImage uses top-origin
         // rows, just like the cropped user image produced by HUDPortraitArtwork.
         rgba.withUnsafeMutableBytes { target in
             bgra.withUnsafeBytes { source in
                 let output = target.bindMemory(to: UInt8.self), input = source.bindMemory(to: UInt8.self)
                 for row in 0..<height { for column in 0..<width {
-                    output[(row * width + column) * 4 + 3] = input[((y + height - row - 1) * textureWidth + x + column) * 4 + 3]
+                    let target = (row * width + column) * 4
+                    let source = ((y + height - row - 1) * textureWidth + x + column) * 4
+                    output[target] = input[source + 2]; output[target + 1] = input[source + 1]
+                    output[target + 2] = input[source]; output[target + 3] = input[source + 3]
                 } }
             }
         }
@@ -36,16 +40,81 @@ enum HUDSourceProfileArtwork {
         return result
     }
 
-    static func applyingBackgroundMask(_ mask: CGImage, to image: CGImage) throws -> CGImage {
-        guard let context = CGContext(data: nil, width: image.width, height: image.height,
-            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw Failure.cannotRender }
+    static func compositedBackground(_ image: CGImage, artwork: CGImage) throws -> CGImage {
+        let context = try bitmapContext(width: image.width, height: image.height)
+        let photo = try bitmapContext(width: image.width, height: image.height)
         let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         context.interpolationQuality = .high
-        context.draw(image, in: bounds)
-        context.setBlendMode(.destinationIn)
-        context.draw(mask, in: bounds)
+        context.draw(artwork, in: bounds)
+        photo.draw(image, in: bounds)
+        photo.setBlendMode(.sourceAtop)
+        photo.setFillColor(CGColor(gray: 0, alpha: 0.48))
+        photo.fill(bounds)
+        guard let darkened = photo.makeImage() else { throw Failure.cannotRender }
+        // business_card_topic_normal_1: its inner rounded panel is (20,22) to
+        // (507,182) in the 530×204 sprite. Keep the actual outer source pixels;
+        // replacing the whole sprite erased the stripes, edge and corner cuts.
+        let sx = bounds.width / 530, sy = bounds.height / 204
+        let panel = CGRect(x: 20 * sx, y: 22 * sy, width: 487 * sx, height: 160 * sy)
+        context.addPath(CGPath(roundedRect: panel, cornerWidth: 22 * sx, cornerHeight: 22 * sy, transform: nil))
+        context.clip()
+        context.setBlendMode(.sourceAtop) // Preserve the authored alpha even at rounded edges.
+        context.draw(darkened, in: bounds)
         guard let result = context.makeImage() else { throw Failure.cannotRender }
         return result
+    }
+
+    struct TexturePixels {
+        let width: Int
+        let height: Int
+        let rgba: Data
+    }
+
+    static func texturePixels(_ image: CGImage) throws -> TexturePixels {
+        let context = try bitmapContext(width: image.width, height: image.height)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let base = context.data else { throw Failure.cannotRender }
+        let input = base.assumingMemoryBound(to: UInt8.self)
+        var data = Data(repeating: 0, count: image.width * image.height * 4)
+        data.withUnsafeMutableBytes { raw in
+            let output = raw.bindMemory(to: UInt8.self)
+            for row in 0..<image.height { for column in 0..<image.width {
+                let source = row * context.bytesPerRow + column * 4
+                let target = ((image.height - row - 1) * image.width + column) * 4
+                let alpha = Int(input[source + 3])
+                // The source UI shader premultiplies sampled RGB by alpha.
+                // Supply straight alpha so translucent artwork is multiplied once.
+                for channel in 0..<3 {
+                    output[target + channel] = alpha == 0 ? 0 : UInt8(min(255, (Int(input[source + channel]) * 255 + alpha / 2) / alpha))
+                }
+                output[target + 3] = UInt8(alpha)
+            } }
+        }
+        return TexturePixels(width: image.width, height: image.height, rgba: data)
+    }
+
+    static func makeTexture(_ image: CGImage, device: MTLDevice) throws -> MTLTexture {
+        let pixels = try texturePixels(image)
+        // MTKTextureLoader's CGImage initializer can return rgba8Unorm despite
+        // SRGB=true. Explicit sRGB storage prevents a second gamma encoding when
+        // the source shader writes to its sRGB drawable (128 became about 188).
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm_srgb,
+            width: pixels.width, height: pixels.height, mipmapped: false)
+        descriptor.usage = .shaderRead
+        // Keep the hardware default: shared on Apple, managed on Intel/AMD.
+        guard let texture = device.makeTexture(descriptor: descriptor) else { throw Failure.cannotRender }
+        pixels.rgba.withUnsafeBytes { raw in
+            texture.replace(region: MTLRegionMake2D(0, 0, pixels.width, pixels.height), mipmapLevel: 0,
+                withBytes: raw.baseAddress!, bytesPerRow: pixels.width * 4)
+        }
+        return texture
+    }
+
+    private static func bitmapContext(width: Int, height: Int) throws -> CGContext {
+        guard width > 0, height > 0, width <= 16384, height <= 16384,
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { throw Failure.cannotRender }
+        return context
     }
 }

@@ -66,6 +66,9 @@ final class HUDScaleSafetyView: NSView {
     func setPointer(_ point: CGPoint, parallax: CGFloat, perspective: CGFloat) {
         confirmation.setPointer(point, parallax: parallax, perspective: perspective)
     }
+    func setSourceTransform(_ transform: CATransform3D) {
+        confirmation.setSourceTransform(transform)
+    }
 }
 
 /// A passive native material behind the drawing; never intercepts HUD input.

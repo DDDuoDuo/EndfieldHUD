@@ -16,6 +16,72 @@ enum AppShortcutHUDVerification {
         func later(_ delay: TimeInterval, _ action: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
         }
+        func verifyDesktopPresentations() {
+            guard let source = overlay.systemSourceWatchForVerification else {
+                check(false, "Shortcut artwork requires the existing live source shell"); return
+            }
+            let original = source.desktopNavigationForVerification, language = L10n.language
+            defer {
+                L10n.language = language
+                source.setDesktopNavigation(original)
+                source.refreshDesktopLanguage()
+            }
+            let bitmap = CGContext(data: nil, width: 12, height: 8, bitsPerComponent: 8,
+                bytesPerRow: 48, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            bitmap.setFillColor(NSColor.systemRed.cgColor); bitmap.fill(CGRect(x: 2, y: 1, width: 8, height: 6))
+            let originalIcon = NSImage(cgImage: bitmap.makeImage()!, size: CGSize(width: 12, height: 8))
+            let shortcuts = AppShortcutIcon.allCases.enumerated().map { index, preset in
+                HUDAppShortcutPresentation(id: UUID(), name: index == 1 ? "微信 WeChat" : "Saved application \(index)",
+                    iconPreset: preset, icon: originalIcon)
+            }
+            source.setDesktopNavigation(HUDDesktopWatchNavigation.entries(shortcuts: shortcuts))
+            func reveal(_ target: HUDNavigationTarget) {
+                for _ in 0..<100 { if !source.scrollDesktopNavigation(-1) { break } }
+                for _ in 0..<100 {
+                    if source.desktopPointForVerification(target: target) != nil
+                        && source.desktopPresentationForVerification(target: target)?.captionVisible == true { return }
+                    if !source.scrollDesktopNavigation(1) { break }
+                }
+                check(false, "Every recycled shortcut must show its saved name when reached: \(target.identifier)")
+            }
+            for shortcut in shortcuts {
+                let target = HUDNavigationTarget.appShortcut(shortcut.id)
+                reveal(target)
+                guard let shown = source.desktopPresentationForVerification(target: target) else {
+                    check(false, "A reached shortcut must have rendered artwork and a caption"); continue
+                }
+                check(shown.caption == shortcut.name && shown.captionVisible && !shown.wrapped,
+                      "Recycled plates keep the complete, single-line saved app name, including previously hidden BackPack text")
+                let chosen = AppShortcutArtwork.image(for: shortcut.iconPreset, original: originalIcon,
+                    size: 96, color: NSColor(white: 0.12, alpha: 1)).map(HUDSourceDesktopIconLayout.image)
+                check((shown.image != nil) == (chosen != nil) && shown.vectorVisible == (chosen == nil),
+                      "The displayed app uses its chosen game/original raster or shared vector fallback")
+                if let chosen, let image = shown.image {
+                    check(image.width == chosen.width && image.height == chosen.height
+                        && CFEqual(image.dataProvider!.data!, chosen.dataProvider!.data!),
+                          "Displayed shortcut pixels match the selected artwork, including original app colors")
+                }
+            }
+            let selected = source.selectedDesktopModule
+            for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese] {
+                L10n.language = language
+                source.refreshDesktopLanguage()
+                check(source.desktopPresentationForVerification(target: .module(.system))?.caption == HUDModule.system.title
+                    && source.desktopPresentationForVerification(target: .module(.about))?.caption == HUDModule.about.title,
+                      "Language changes update visible navigation captions without recreating the HUD")
+                check(source.desktopAccessibilityLabelsForVerification.contains(HUDModule.profile.title)
+                    && source.desktopAccessibilityLabelsForVerification.contains(L10n.text("Quit EndfieldHUD", "退出 EndfieldHUD"))
+                    && source.desktopProfileCaptionsForVerification.contains(L10n.text("Authority", "权限等级")),
+                      "Profile text and accessibility action labels follow the new language immediately")
+                reveal(.module(.fileShelf))
+                check(source.desktopPresentationForVerification(target: .module(.fileShelf))?.wrapped == !L10n.isCJK,
+                      "CJK shelf titles remain on one line after a live language switch")
+                reveal(.appShortcut(shortcuts[1].id))
+                check(source.desktopPresentationForVerification(target: .appShortcut(shortcuts[1].id))?.caption == shortcuts[1].name
+                    && source.selectedDesktopModule == selected,
+                      "Language refresh preserves custom names and the selected module")
+            }
+        }
         func clickSource(_ target: HUDNavigationTarget) {
             guard let source = overlay.systemSourceWatchForVerification, let window = source.window else {
                 check(false, "A source navigation click requires the live scene and its shared window")
@@ -63,6 +129,7 @@ enum AppShortcutHUDVerification {
         }
         _ = overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: .defaults)
         later(SystemHUDView.entranceDuration + 0.3) {
+            verifyDesktopPresentations()
             let shell = overlay.systemShellIdentity, host = overlay.systemCenterHostIdentity
             overlay.selectSystemModule(.addApp)
             later(HUDModuleContent.transitionDuration + 0.3) {

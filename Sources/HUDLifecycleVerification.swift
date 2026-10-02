@@ -194,6 +194,14 @@ enum HUDLifecycleVerification {
             clickProjectedQuit()
             check(overlay.systemQuitConfirmationVisibleForVerification && currentWindowIDs() == windowIDs,
                   "Power confirmation stays inside the existing HUD window")
+            let priorCenter = host.centerPointForVerification(CGPoint(x: 760, y: 80))
+            _ = movePointer(x: 430, y: -275)
+            later(0.25) { [self] in
+            check(host.confirmationFollowsSourceForVerification, "Confirmation uses the current source tilt with no second easing clock")
+            if !reduced {
+                check(host.centerPointForVerification(CGPoint(x: 760, y: 80)) != priorCenter,
+                      "Pointer movement continues to tilt the HUD while quit confirmation is open")
+            }
             overlay.answerQuitConfirmationForVerification(false)
             later(0.25) { [self] in
                 check(!overlay.systemQuitConfirmationVisibleForVerification && overlay.systemPhase == .open,
@@ -205,6 +213,7 @@ enum HUDLifecycleVerification {
                       "Cancel neither accepts quit nor closes the HUD")
                 closeWithPointerMotion()
             }
+            }
         }
 
         private func closeWithPointerMotion() {
@@ -213,6 +222,12 @@ enum HUDLifecycleVerification {
                 fail("Outside-click verification requires the live source and native host")
             }
             check(host.clockIsInStatusPanelForVerification, "Clock/date and Work Mode badge share the source upper-right plane")
+            check(host.legacyProgressHiddenForVerification, "Legacy battery arc stays hidden under the source shell")
+            var appearanceChange = configuration
+            appearanceChange.applicationIcon = configuration.applicationIcon == .endfield ? .battery : .endfield
+            host.set(snapshot: snapshot, configuration: appearanceChange)
+            check(host.legacyProgressHiddenForVerification, "Changing the menu icon cannot reveal a retired native ring")
+            host.set(snapshot: snapshot, configuration: configuration)
             // This point lies within the displayed center near its blank upper
             // rim, away from module controls. It must not hit FullScreenCloseBtn.
             if let center = host.centerPointForVerification(CGPoint(x: 500, y: 70)) {

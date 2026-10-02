@@ -82,6 +82,19 @@ enum HUDSourceSceneTests {
             let transformed = composed.worldMatrix * SIMD4<Double>(1, 0, 0, 1)
             close(transformed.x, 4, "A normalized quaternion rotates the scaled local X axis")
             close(transformed.y, 30, "Child vertices use the same world matrix as the child origin")
+            // Rounding a matrix before baking can hide a transform change.
+            // Cancellation leaves a visible Float difference after multiplying
+            // the original Double transform by an exactly representable vertex.
+            let keyTransformA = HUDSourceGeometry.translation(SIMD3(1, 0, 0))
+            let keyTransformB = HUDSourceGeometry.translation(SIMD3(1 + 1 / 33_554_432.0, 0, 0))
+            check(HUDSourceGeometry.floatMatrix(keyTransformA) == HUDSourceGeometry.floatMatrix(keyTransformB),
+                  "Regression transforms collide when cache keys round to Float")
+            check(HUDSourceGeometry.matrixElements(keyTransformA) != HUDSourceGeometry.matrixElements(keyTransformB),
+                  "Geometry cache keys retain every Double transform component")
+            let keyVertex = SIMD4<Double>(-1, 0, 0, 1)
+            check(Float((keyTransformA * keyVertex).x) == 0
+                && Float((keyTransformB * keyVertex).x) == Float(1 / 33_554_432.0),
+                  "Colliding rounded transforms produce different uploaded Float vertices")
             let zeroRoot = HUDSourceNode(id: rootID, path: "root", name: "root", parentID: nil, childIDs: [],
                 transform: HUDSourceTransform(kind: .transform, localPosition: HUDSourceVector3(0, 0, 0),
                     localScale: HUDSourceVector3(0, 0, 0)))

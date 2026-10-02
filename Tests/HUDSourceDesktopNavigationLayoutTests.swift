@@ -9,6 +9,47 @@ enum HUDSourceDesktopNavigationLayoutTests {
             assertions += 1; precondition(value, message)
         }
         do {
+            var gesture = HUDSourceDesktopScrollMotion()
+            gesture.reset(to: 0.5, at: 0)
+            gesture.gesture(by: -0.1, hiddenLength: 1000, at: 0.01, phase: .began, momentum: .none, reduceMotion: false)
+            check(gesture.position == 0.4 && gesture.isGestureActive && gesture.requiresFrames,
+                  "Precise scrolling follows the finger immediately on the shared display clock")
+            _ = gesture.advance(at: 0.5)
+            check(gesture.position == 0.4, "A held gesture must not drift toward a spring target")
+            gesture.gesture(by: 2, hiddenLength: 1000, at: 0.6, phase: .changed, momentum: .none, reduceMotion: false)
+            let rubber = gesture.position
+            check(rubber > 1 && (rubber - 1) * 1000 < 58 && !gesture.canScroll(-1),
+                  "Precise edge movement uses bounded native-style rubber and disables its limit arrow")
+            gesture.gesture(by: 2, hiddenLength: 1000, at: 0.7, phase: .changed, momentum: .none, reduceMotion: false)
+            check(gesture.position > rubber && gesture.position - rubber < 0.01, "Rubber resistance increases near its finite limit")
+            gesture.gesture(by: 0, hiddenLength: 1000, at: 0.8, phase: .ended, momentum: .none, reduceMotion: false)
+            check(!gesture.isGestureActive && gesture.isAnimating, "Finger release starts one finite rebound")
+            _ = gesture.advance(at: 2)
+            gesture.gesture(by: 0.2, hiddenLength: 1000, at: 2.1, phase: .none, momentum: .began, reduceMotion: false)
+            check(gesture.position == 1 && !gesture.isAnimating, "The inertial tail cannot restart an already completed edge rebound")
+            gesture.gesture(by: 0, hiddenLength: 1000, at: 2.2, phase: .none, momentum: .ended, reduceMotion: false)
+            check(!gesture.acceptsGestureContinuation, "A zero-delta momentum end releases gesture ownership")
+            gesture.gesture(by: -0.4, hiddenLength: 1000, at: 3, phase: .began, momentum: .none, reduceMotion: false)
+            check(abs(gesture.position - 0.6) < 1e-12, "A fresh direct gesture interrupts the old inertial suppression")
+            gesture.gesture(by: -2, hiddenLength: 1000, at: 3.1, phase: .none, momentum: .changed, reduceMotion: false)
+            check(gesture.position < 0 && !gesture.isGestureActive && gesture.isAnimating && !gesture.canScroll(1),
+                  "Momentum rebounds immediately on crossing the opposite boundary")
+            gesture.gesture(by: 0, hiddenLength: 1000, at: 3.2, phase: .cancelled, momentum: .none, reduceMotion: false)
+            check(gesture.position == 0 && !gesture.requiresFrames && !gesture.acceptsGestureContinuation,
+                  "Cancellation clamps the strip and cancels all finite scrolling")
+            gesture.reset(to: 1, at: 4)
+            gesture.gesture(by: 2, hiddenLength: 1000, at: 4, phase: .began, momentum: .none, reduceMotion: true)
+            check(gesture.position == 1 && !gesture.isAnimating, "Reduce Motion preserves a clamped gesture with no bounce")
+            let normal = SIMD4<Float>(repeating: HUDSourceDesktopButtonAppearance.normalLinear)
+            let blue = SIMD3<Float>(0.02, 0.2, 1)
+            check(HUDSourceDesktopButtonAppearance.highlighted(normal, accent: blue) == normal,
+                  "The normal and pressed neutral source face must not acquire a theme tint")
+            let hover = HUDSourceDesktopButtonAppearance.highlighted(SIMD4<Float>(repeating: 1), accent: blue)
+            check(hover.w < 0.9 && hover.z > hover.x && hover.x > 0.5,
+                  "Only hover gets a subdued theme accent, with substantially lower white glow")
+            let dark = SIMD4<Float>(0.4, 0.4, 0.4, 0.3)
+            check(HUDSourceDesktopButtonAppearance.highlighted(dark, accent: blue) == dark,
+                  "Disabled/dim source colors stay exact")
             var scroll = HUDSourceDesktopScrollMotion()
             scroll.reset(to: 1, at: 0)
             scroll.scroll(by: -0.3, hiddenLength: 1200, at: 0, reduceMotion: false)
@@ -94,6 +135,11 @@ enum HUDSourceDesktopNavigationLayoutTests {
                 for row in layout.rows {
                     check(nodes[row.id]?.activeInHierarchy == (bottom.logicalRows[row.id] != nil),
                           "Only assigned physical rows render and receive input")
+                }
+                for button in document.buttons where button.path.contains("/RightBottomNode/") {
+                    guard let caption = button.label else { preconditionFailure("Every recyclable plate needs a caption plane") }
+                    check(nodes[caption.nodeID]?.activeInHierarchy == (bottom.assignments[button.nodeID] != nil),
+                          "Every assigned slot displays its caption, including the authored inactive BackPack label; unassigned slots remain hidden")
                 }
             }
         } catch { fatalError("Desktop source navigation: \(error)") }

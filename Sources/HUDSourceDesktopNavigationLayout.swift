@@ -36,6 +36,23 @@ enum HUDSourceDesktopIconLayout {
     }
 }
 
+/// Keep source shadows neutral. Only the authored inner-face highlight ramp
+/// receives a restrained accent; idle and pressed source colors are exact.
+enum HUDSourceDesktopButtonAppearance {
+    static let normalLinear: Float = {
+        let c = (Float(0.9056603908538818) * 255).rounded(.toNearestOrEven) / 255
+        return pow((c + 0.055) / 1.055, 2.4)
+    }()
+    static func highlighted(_ color: SIMD4<Float>, accent: SIMD3<Float>) -> SIMD4<Float> {
+        let amount = min(1, max(0, (min(color.x, min(color.y, color.z)) - normalLinear) / (1 - normalLinear)))
+        guard amount > 0 else { return color }
+        let original = SIMD3(color.x, color.y, color.z)
+        let endpoint = SIMD3<Float>(repeating: normalLinear) * 0.78 + accent * 0.22
+        let tinted = original * (1 - amount) + endpoint * amount
+        return SIMD4(tinted.x, tinted.y, tinted.z, color.w * (1 - amount * 0.12))
+    }
+}
+
 /// Finite scroll response on the Watch's existing clock. The closed-form
 /// spring is independent of frame cadence and returns an exact settled value.
 struct HUDSourceDesktopScrollMotion {
@@ -45,15 +62,25 @@ struct HUDSourceDesktopScrollMotion {
     private var lastTime: Double?
     private var edgeLimit: Double = 0.08
     private var epsilon: Double = 0.0001
-    var isAnimating: Bool { abs(position - target) > epsilon || abs(velocity) > epsilon * 18 }
+    enum Phase { case none, began, changed, ended, cancelled }
+    private(set) var isGestureActive = false
+    private(set) var ownsMomentum = false
+    private var suppressesMomentum = false
+    private var rawPosition: Double = 1
+    var acceptsGestureContinuation: Bool { isGestureActive || ownsMomentum }
+    var requiresFrames: Bool { isGestureActive || isAnimating }
+    func canScroll(_ direction: Int) -> Bool { direction < 0 ? target < 1 - 1e-9 : target > 1e-9 }
+    var isAnimating: Bool { !isGestureActive && (abs(position - target) > epsilon || abs(velocity) > epsilon * 18) }
 
     mutating func reset(to value: Double, at time: Double) {
         position = min(1, max(0, value.isFinite ? value : 1)); target = position
         velocity = 0; lastTime = time.isFinite ? time : nil
+        rawPosition = position; isGestureActive = false; ownsMomentum = false; suppressesMomentum = false
     }
     mutating func scroll(by delta: Double, hiddenLength: Double, at time: Double, reduceMotion: Bool) {
         guard delta.isFinite, hiddenLength.isFinite, hiddenLength > 0, time.isFinite else { return }
         _ = advance(at: time)
+        isGestureActive = false; ownsMomentum = false; suppressesMomentum = false
         edgeLimit = min(0.08, 36 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
         let requested = target + delta
         target = min(1, max(0, requested))
@@ -63,6 +90,41 @@ struct HUDSourceDesktopScrollMotion {
             position += min(edgeLimit * 0.5, max(-edgeLimit * 0.5, overflow * 0.32))
             position = min(1 + edgeLimit, max(-edgeLimit, position))
         }
+    }
+    /// Precise input follows the finger with the same bounded rubber-band
+    /// formula as the native strip. Only release/edge rebound uses our clock.
+    mutating func gesture(by delta: Double, hiddenLength: Double, at time: Double,
+                          phase: Phase, momentum: Phase, reduceMotion: Bool) {
+        guard delta.isFinite, hiddenLength.isFinite, hiddenLength > 0, time.isFinite else { return }
+        if phase == .none && momentum == .none {
+            scroll(by: delta, hiddenLength: hiddenLength, at: time, reduceMotion: reduceMotion); return
+        }
+        let isMomentum = momentum != .none
+        let ended = isMomentum ? momentum == .ended : phase == .ended
+        if phase == .cancelled || momentum == .cancelled { reset(to: position, at: time); return }
+        if phase == .began && !isMomentum { ownsMomentum = false; suppressesMomentum = false }
+        if isMomentum && suppressesMomentum {
+            if ended { ownsMomentum = false; suppressesMomentum = false }
+            return
+        }
+        edgeLimit = min(0.08, 58 / hiddenLength); epsilon = min(0.0001, 0.25 / hiddenLength)
+        if !isGestureActive {
+            _ = advance(at: time)
+            let bound = min(1, max(0, position)), excess = position - bound
+            rawPosition = bound + excess / max(0.001, 1 - abs(excess) / edgeLimit)
+            isGestureActive = true; velocity = 0
+        }
+        ownsMomentum = true; lastTime = time
+        rawPosition = min(1 + 10_000 / hiddenLength, max(-10_000 / hiddenLength, rawPosition + delta))
+        target = min(1, max(0, rawPosition))
+        let excess = rawPosition - target
+        position = reduceMotion ? target : target + excess / (1 + abs(excess) / edgeLimit)
+        let beyond = position < 0 || position > 1
+        if ended || (isMomentum && beyond) {
+            isGestureActive = false; rawPosition = target
+            if beyond { suppressesMomentum = !isMomentum || !ended }
+        }
+        if isMomentum && ended { ownsMomentum = false; suppressesMomentum = false }
     }
     @discardableResult mutating func advance(at time: Double) -> Double {
         guard time.isFinite else { return position }
@@ -102,10 +164,14 @@ struct HUDSourceDesktopNavigationLayout {
     private let cycleHeight: Double
     private let rowScale: Double
     private let columns: Int
+    private let captionIDs: [HUDSourceID: HUDSourceID]
 
     init(document: HUDSourceWatchDocument, entryCount: Int) throws {
         let scene = document.scene
         let buttons = document.buttons.filter { $0.path.contains("/RightBottomNode/") }
+        captionIDs = Dictionary(uniqueKeysWithValues: buttons.compactMap { button in
+            button.label.map { (button.nodeID, $0.nodeID) }
+        })
         var rowIDs: [HUDSourceID] = []
         var byRow: [HUDSourceID: [HUDSourceID]] = [:]
         for button in buttons {
@@ -195,6 +261,13 @@ struct HUDSourceDesktopNavigationLayout {
                 var item = pose.transforms[button] ?? HUDSourceTransformOverride()
                 item.active = sample.assignments[button] != nil
                 pose.transforms[button] = item
+                // Some game slots (notably BackPack) hide their own caption.
+                // Recycled desktop slots must always display the saved name,
+                // while their parent still controls visibility and scrolling.
+                if let caption = captionIDs[button] {
+                    var text = pose.transforms[caption] ?? HUDSourceTransformOverride()
+                    text.active = item.active; pose.transforms[caption] = text
+                }
             }
         }
     }

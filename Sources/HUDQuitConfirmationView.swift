@@ -121,6 +121,12 @@ final class HUDQuitConfirmationView: NSView {
     }
 
     /// No additional display timer: the HUD's pointer stream supplies updates.
+    func setSourceTransform(_ transform: CATransform3D) {
+        guard isPresented, let plate = card.layer else { return }
+        plate.removeAnimation(forKey: "confirmation.pointer")
+        withoutActions { plate.transform = transform }
+    }
+
     func setPointer(_ point: CGPoint, parallax: CGFloat = 1, perspective: CGFloat = 1) {
         guard isPresented else { return }
         let target = HUDMotionMath.transform(normalizedPoint: point, depth: 0, travel: 2,
