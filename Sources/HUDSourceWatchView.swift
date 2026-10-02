@@ -108,9 +108,7 @@ final class HUDSourceWatchView: NSView {
         }
         return result
     }()
-    private lazy var desktopButtonFaceIDs: [HUDSourceID] = document.buttons.compactMap { button in
-        document.scene.nodes.first { $0.path == button.path + "/Btn" }?.id
-    }
+    private lazy var desktopHoverFeedback = HUDSourceDesktopHoverFeedback(document: document, selectable: selectableColor)
     private(set) var cumulativeFrameBuildSeconds: TimeInterval = 0
     private(set) var maximumFrameBuildSeconds: TimeInterval = 0
     var onUnhandledKey: ((NSEvent) -> Void)?
@@ -491,13 +489,10 @@ final class HUDSourceWatchView: NSView {
 
     private func refreshDesktopGlowStyles() {
         guard desktopMode else { return }
-        let linearSpace = NSColorSpace(cgColorSpace: CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!)!
-        let color = HUDRuntimeAppearance.accent.usingColorSpace(linearSpace) ?? .white
-        let tint = SIMD3<Float>(Float(color.redComponent), Float(color.greenComponent), Float(color.blueComponent))
         var styles: [HUDSourceID: HUDSourceWatchFrameBuilder.DesktopGraphicStyle] = [:]
-        // Leave every outer shadow at its original neutral color/opacity.
-        // Only the inner face's authored hover ramp receives a subdued accent.
-        for id in desktopButtonFaceIDs { styles[id] = .init(tint: tint, highlightOnly: true) }
+        // These separate hover sprites carry the luminous edge. Preserve the
+        // authored face/highlight colors and neutral outer shadows exactly.
+        for id in desktopHoverFeedback.sideEdgeIDs { styles[id] = .init(opacity: HUDSourceDesktopHoverFeedback.sideEdgeOpacity) }
         for (direction, id) in desktopScrollIndicatorIDs {
             let enabled = desktopScrollIndicatorState[direction] == true
             styles[id] = .init(tint: SIMD3(repeating: enabled ? 1 : 0.32), opacity: enabled ? 1 : 0.65)
@@ -506,6 +501,15 @@ final class HUDSourceWatchView: NSView {
             if node.name == "triangle_fx1" || node.name == "RingFoMesh" {
                 styles[node.id] = .init(opacity: 0.88)
             } else if node.name == "EndfieldTextGlow" { styles[node.id] = .init(opacity: 0.78) }
+        }
+        frameBuilder.desktopGraphicStyles = styles
+    }
+
+    private func refreshDesktopHoverStyles(selectableTints: [HUDSourceID: SIMD4<Float>]) {
+        guard desktopMode else { return }
+        var styles = frameBuilder.desktopGraphicStyles
+        for (id, opacity) in desktopHoverFeedback.opacities(selectableTints: selectableTints) {
+            styles[id] = .init(opacity: opacity)
         }
         frameBuilder.desktopGraphicStyles = styles
     }
@@ -866,6 +870,7 @@ final class HUDSourceWatchView: NSView {
                 refreshDesktopScrollIndicators()
             }
             let tints = selectableColor.colors(at: time, reduceMotion: reduce)
+            refreshDesktopHoverStyles(selectableTints: tints)
             let settled = desktopMode && playback.phase == .visible && !reduce && HUDRuntimeAppearance.ambientEnabled
                 && !gyro.isAnimating && !buttonAnimation.requiresFrames(at: time) && !selectableColor.requiresFrames(at: time)
             var wrapperPose: HUDSourceWatchPose?
@@ -907,6 +912,8 @@ final class HUDSourceWatchView: NSView {
             } else { nextHover = nil }
             if nextHover != hovered {
                 hovered = nextHover; updateAnimatorStates(at: time)
+                let tints = selectableColor.colors(at: time, reduceMotion: reduce)
+                refreshDesktopHoverStyles(selectableTints: tints)
                 guard var pose = try wrapperPose ?? playback.sample(at: time, canvasResolution: camera.layout.canvasSize, reduceMotion: reduce) else {
                     stopTimer(); return
                 }
@@ -914,7 +921,7 @@ final class HUDSourceWatchView: NSView {
                 frame = try frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
                     verticalNormalizedPosition: verticalNormalizedPosition, desktopNavigation: desktopNavigation,
                     domainAnimationState: .init(ambientTime: reduce || !HUDRuntimeAppearance.ambientEnabled ? 0 : time),
-                    widgetTime: time, selectableTints: selectableColor.colors(at: time, reduceMotion: reduce))
+                    widgetTime: time, selectableTints: tints)
                 finalPose = pose
             }
             lastHitQuery = (pointerPoint, frameBuilder.presentationRevision, interactive)
@@ -969,9 +976,11 @@ final class HUDSourceWatchView: NSView {
         settledButtonPose = nil
         settledRenderPacket = nil
         let reduce = HUDRuntimeAppearance.reduceMotion
+        let tintHovered = desktopMode ? desktopHoverFeedback.groupedButton(hovered) : hovered
+        let tintPressed = desktopMode ? desktopHoverFeedback.groupedButton(pressed) : pressed
         for binding in selectableColor.bindings {
             let desired: HUDSourceSelectableColor.State = !binding.sourceInteractable ? .disabled
-                : (binding.buttonNodeID == pressed ? .pressed : (binding.buttonNodeID == hovered ? .highlighted : .normal))
+                : (binding.buttonNodeID == tintPressed ? .pressed : (binding.buttonNodeID == tintHovered ? .highlighted : .normal))
             if selectableColor.state(on: binding.buttonNodeID) != desired {
                 selectableColor.setState(desired, on: binding.buttonNodeID, at: time, reduceMotion: reduce)
             }

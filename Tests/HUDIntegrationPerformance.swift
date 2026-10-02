@@ -27,6 +27,9 @@ enum HUDIntegrationPerformance {
         private var firstCompletedMilliseconds: Double?
         private var firstPresentedMilliseconds: Double?
         private var sourcePreparationMilliseconds: Double?
+        private var sourceProgramPreparationMilliseconds: Double?
+        private var sourceProgramPreparationStatistics: [String: Int] = [:]
+        private var sourceProgramPreparationFailure: String?
         private var warmOpenMilliseconds: Double?
         private let output: URL = {
             let args = CommandLine.arguments
@@ -66,9 +69,33 @@ enum HUDIntegrationPerformance {
                         try HUDSourceMetalRenderer.prepareDesktopMetadataIfNeeded()
                     }
                     catch { fatalError("Source preparation failed: \(error)") }
+                    var programMilliseconds: Double?
+                    var programFailure: String?
+                    if !CommandLine.arguments.contains("--skip-program-prewarm") {
+                        let programBegan = CACurrentMediaTime()
+                        do {
+                            let first = try HUDSourceMetalRenderer.prepareDesktopProgramsIfNeeded()
+                            precondition(first["prewarmCompleted"] == 1 && (first["prewarmShaders"] ?? 0) > 0
+                                && (first["prewarmShaders"] ?? 0) <= 8 && (first["libraries"] ?? 0) <= 16
+                                && first["pipelines"] == 0, "Program preparation exceeded its bounded scope")
+                            if CommandLine.arguments.contains("--verify-only") {
+                                let repeated = try HUDSourceMetalRenderer.prepareDesktopProgramsIfNeeded()
+                                precondition(first == repeated, "Repeated program preparation changed its cache")
+                            }
+                        } catch {
+                            // Launch preparation is optional. Preserve any
+                            // usable entries and exercise the usual lazy path.
+                            programFailure = String(describing: error)
+                        }
+                        programMilliseconds = (CACurrentMediaTime() - programBegan) * 1000
+                    }
+                    let programStatistics = HUDSourceMetalRenderer.programCacheStatisticsForVerification()
                     let elapsed = (CACurrentMediaTime() - began) * 1000
                     DispatchQueue.main.async {
                         self.sourcePreparationMilliseconds = elapsed
+                        self.sourceProgramPreparationMilliseconds = programMilliseconds
+                        self.sourceProgramPreparationStatistics = programStatistics
+                        self.sourceProgramPreparationFailure = programFailure
                         self.measure("closed-before", seconds: 5) { self.open() }
                     }
                 }
@@ -395,6 +422,11 @@ enum HUDIntegrationPerformance {
             report["startupSourcePreparationMilliseconds"] = sourcePreparationMilliseconds
             report["warmOpenSynchronousMilliseconds"] = warmOpenMilliseconds
             #if HUD_SOURCE_INTEGRATION
+            report["sourceProgramPrewarmEnabled"] = !CommandLine.arguments.contains("--cold-source")
+                && !CommandLine.arguments.contains("--skip-program-prewarm")
+            report["sourceProgramPreparationMilliseconds"] = sourceProgramPreparationMilliseconds
+            report["sourceProgramPreparationStatistics"] = sourceProgramPreparationStatistics
+            report["sourceProgramPreparationFailure"] = sourceProgramPreparationFailure
             report["sourceUniformPath"] = CommandLine.arguments.contains("--ui-test")
                 && CommandLine.arguments.contains("--legacy-source-uniforms") ? "legacy" : "prepared"
             report["sourceBatchPath"] = CommandLine.arguments.contains("--ui-test")

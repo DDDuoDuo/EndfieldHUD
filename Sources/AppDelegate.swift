@@ -100,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         completedNormalStartup = true
         if diagnosticDomain == nil && !args.contains("--ui-test") {
             HUDSourceWatchDocument.prewarmDesktop()
-            HUDSourceMetalRenderer.prewarmDesktopMetadata()
+            HUDSourceMetalRenderer.prewarmDesktopResources()
         }
         overlay.onPositionEditFinished = { [weak self] position in
             guard let self = self else { return }

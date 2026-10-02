@@ -40,16 +40,6 @@ enum HUDSourceDesktopNavigationLayoutTests {
             gesture.reset(to: 1, at: 4)
             gesture.gesture(by: 2, hiddenLength: 1000, at: 4, phase: .began, momentum: .none, reduceMotion: true)
             check(gesture.position == 1 && !gesture.isAnimating, "Reduce Motion preserves a clamped gesture with no bounce")
-            let normal = SIMD4<Float>(repeating: HUDSourceDesktopButtonAppearance.normalLinear)
-            let blue = SIMD3<Float>(0.02, 0.2, 1)
-            check(HUDSourceDesktopButtonAppearance.highlighted(normal, accent: blue) == normal,
-                  "The normal and pressed neutral source face must not acquire a theme tint")
-            let hover = HUDSourceDesktopButtonAppearance.highlighted(SIMD4<Float>(repeating: 1), accent: blue)
-            check(hover.w < 0.9 && hover.z > hover.x && hover.x > 0.5,
-                  "Only hover gets a subdued theme accent, with substantially lower white glow")
-            let dark = SIMD4<Float>(0.4, 0.4, 0.4, 0.3)
-            check(HUDSourceDesktopButtonAppearance.highlighted(dark, accent: blue) == dark,
-                  "Disabled/dim source colors stay exact")
             var scroll = HUDSourceDesktopScrollMotion()
             scroll.reset(to: 1, at: 0)
             scroll.scroll(by: -0.3, hiddenLength: 1200, at: 0, reduceMotion: false)
@@ -80,6 +70,36 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(abs(max(fitted.width, fitted.height) - 26) < 1e-10 && abs(fitted.midX - 16) < 1e-10 && abs(fitted.midY - 16) < 1e-10,
                   "Vector icons share centered visible bounds without stretching")
             let document = try HUDSourceWatchDocument(includeWidgets: false)
+            let desktop = try HUDSourceWatchDocument(includeWidgets: false, includeSourceText: false, includeDesktopProfile: true)
+            let selectable = try HUDSourceSelectableColor(document: desktop)
+            let feedback = HUDSourceDesktopHoverFeedback(document: desktop, selectable: selectable)
+            let card = desktop.desktopProfileCard!
+            check(feedback.sideEdgeIDs.count == desktop.buttons.count && HUDSourceDesktopHoverFeedback.sideEdgeOpacity < 0.25,
+                  "Every authored side-button luminous edge is substantially quieter")
+            check(feedback.sideEdgeIDs.allSatisfy { desktop.scene.node($0)?.path.hasSuffix("/HoverHint/NaviHint/Img") == true },
+                  "Edge attenuation never targets side faces, neutral shadows, or central ambient decoration")
+            check(card.buttonIDs.allSatisfy { feedback.groupedButton($0) == card.scene.rootID },
+                  "Every profile hit region drives one consistent card highlight")
+            let initialFeedback = feedback.opacities(selectableTints: selectable.colors(at: 0))
+            check(initialFeedback.count == 8 && initialFeedback.values.allSatisfy { $0 == 1 },
+                  "Profile decoration and quit background preserve their authored idle opacity")
+            let changedIDs = Set(initialFeedback.keys)
+            let excludedIDs = Set([card.node("playerHead"), card.backgroundNodeID].compactMap { $0 }).union(card.artworkGlowNodeIDs)
+            check(changedIDs.isDisjoint(with: excludedIDs), "Hover feedback never changes personal artwork or reactivates its broad additive lights")
+            let quit = selectable.bindings.first { desktop.scene.node($0.buttonNodeID)?.name == "QuitBtn" }!
+            check(feedback.groupedButton(quit.buttonNodeID) == quit.buttonNodeID,
+                  "Quit retains its own independent hit and ColorTint state")
+            for id in [card.scene.rootID, quit.buttonNodeID] { selectable.setState(.highlighted, on: id, at: 1) }
+            let midFeedback = feedback.opacities(selectableTints: selectable.colors(at: 1.05))
+            let hoveredFeedback = feedback.opacities(selectableTints: selectable.colors(at: 1.2))
+            check(initialFeedback.keys.allSatisfy { midFeedback[$0]! > initialFeedback[$0]! && midFeedback[$0]! < hoveredFeedback[$0]! },
+                  "Both added highlights follow the existing finite fade instead of jumping or adding an independent clock")
+            check(!selectable.requiresFrames(at: 1.2), "A stationary hover releases finite frame demand after the authored fade")
+            for id in [card.scene.rootID, quit.buttonNodeID] { selectable.setState(.normal, on: id, at: 2) }
+            check(feedback.opacities(selectableTints: selectable.colors(at: 2.2)) == initialFeedback,
+                  "Pointer exit restores the exact idle decoration and quit background")
+            selectable.setState(.highlighted, on: card.scene.rootID, at: 3, reduceMotion: true)
+            check(!selectable.requiresFrames(at: 3), "Reduce Motion applies card feedback immediately without animation demand")
             let motion = HUDSourceDesktopAmbientMotion(animation: document.animation, seed: 1234)
             let same = HUDSourceDesktopAmbientMotion(animation: document.animation, seed: 1234)
             let other = HUDSourceDesktopAmbientMotion(animation: document.animation, seed: 5678)

@@ -36,20 +36,67 @@ enum HUDSourceDesktopIconLayout {
     }
 }
 
-/// Keep source shadows neutral. Only the authored inner-face highlight ramp
-/// receives a restrained accent; idle and pressed source colors are exact.
-enum HUDSourceDesktopButtonAppearance {
-    static let normalLinear: Float = {
-        let c = (Float(0.9056603908538818) * 255).rounded(.toNearestOrEven) / 255
-        return pow((c + 0.055) / 1.055, 2.4)
-    }()
-    static func highlighted(_ color: SIMD4<Float>, accent: SIMD3<Float>) -> SIMD4<Float> {
-        let amount = min(1, max(0, (min(color.x, min(color.y, color.z)) - normalLinear) / (1 - normalLinear)))
-        guard amount > 0 else { return color }
-        let original = SIMD3(color.x, color.y, color.z)
-        let endpoint = SIMD3<Float>(repeating: normalLinear) * 0.78 + accent * 0.22
-        let tinted = original * (1 - amount) + endpoint * amount
-        return SIMD4(tinted.x, tinted.y, tinted.z, color.w * (1 - amount * 0.12))
+/// Reuse the authored finite ColorTint fades for desktop feedback. Profile
+/// decoration and the quit background are separate from photographs, shadows,
+/// and side-button faces; none of those need a new animation clock.
+struct HUDSourceDesktopHoverFeedback {
+    static let sideEdgeOpacity: Float = 0.18
+    let sideEdgeIDs: Set<HUDSourceID>
+    let profileButtonIDs: Set<HUDSourceID>
+    let profileRootID: HUDSourceID?
+    private let profileBinding: HUDSourceSelectableColor.Binding?
+    private let profileDecorationAlpha: [HUDSourceID: Float]
+    private let quitBindings: [(background: HUDSourceID, binding: HUDSourceSelectableColor.Binding)]
+
+    init(document: HUDSourceWatchDocument, selectable: HUDSourceSelectableColor) {
+        sideEdgeIDs = Set(document.scene.nodes.filter { node in
+            node.path.hasSuffix("/HoverHint/NaviHint/Img")
+                && document.buttons.contains { node.path.hasPrefix($0.path + "/") }
+        }.map(\.id))
+        let card = document.desktopProfileCard
+        profileButtonIDs = card?.buttonIDs ?? []
+        profileRootID = card?.scene.rootID
+        profileBinding = selectable.bindings.first { $0.buttonNodeID == card?.scene.rootID }
+        profileDecorationAlpha = Dictionary(uniqueKeysWithValues: (card?.scene.nodes ?? []).compactMap { node in
+            guard node.path.contains("/PlayerInfo/DecoNode/"),
+                  ["LeftLineImage", "RightLineImage", "LineImage", "LeftBottomImage"].contains(node.name),
+                  let image = document.component("UIImage", on: node.id) else { return nil }
+            return (node.id, image["m_Color"].color.w)
+        })
+        quitBindings = selectable.bindings.compactMap { binding in
+            guard let node = document.scene.node(binding.buttonNodeID), node.name == "QuitBtn",
+                  let background = document.scene.nodes.first(where: { $0.path == node.path + "/Bg" }) else { return nil }
+            return (background.id, binding)
+        }
+    }
+
+    /// Every original profile hit region opens the same desktop profile.
+    /// Its root ColorTint also provides consistent feedback across those regions.
+    func groupedButton(_ id: HUDSourceID?) -> HUDSourceID? {
+        guard let id, profileButtonIDs.contains(id) else { return id }
+        return profileRootID
+    }
+
+    func opacities(selectableTints: [HUDSourceID: SIMD4<Float>]) -> [HUDSourceID: Float] {
+        func progress(_ binding: HUDSourceSelectableColor.Binding) -> Float {
+            let normal = binding.colors.color(for: .normal).w
+            let range = binding.colors.color(for: .highlighted).w - normal
+            guard range > 0, let tint = selectableTints[binding.targetNodeID], tint.w.isFinite else { return 0 }
+            return min(1, max(0, (tint.w - normal) / range))
+        }
+        var result: [HUDSourceID: Float] = [:]
+        if let profileBinding {
+            let amount = progress(profileBinding)
+            for (id, alpha) in profileDecorationAlpha where alpha > 0 {
+                // A restrained outline response, without restoring the broad
+                // additive Light layers that wash out personal artwork.
+                result[id] = 1 + max(0, 0.62 - alpha) / alpha * amount
+            }
+        }
+        for (background, binding) in quitBindings {
+            result[background] = 1 + 0.25 * progress(binding)
+        }
+        return result
     }
 }
 

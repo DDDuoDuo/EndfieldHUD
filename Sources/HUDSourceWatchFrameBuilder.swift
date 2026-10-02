@@ -74,7 +74,6 @@ final class HUDSourceWatchFrameBuilder {
     struct DesktopGraphicStyle: Equatable {
         var tint: SIMD3<Float>? = nil
         var opacity: Float = 1
-        var highlightOnly = false
     }
     var desktopGraphicStyles: [HUDSourceID: DesktopGraphicStyle] = [:] {
         didSet { if oldValue != desktopGraphicStyles { cacheGeneration &+= 1 } }
@@ -627,10 +626,7 @@ final class HUDSourceWatchFrameBuilder {
                     softMask: sourceSoftMask != nil) { material = key }
                 else { diagnostics.append("Unresolved original material clipping variant: \(n.node.path)"); continue }
                 if let style = desktopGraphicStyles[id] {
-                    if let tint = style.tint {
-                        if style.highlightOnly { color = HUDSourceDesktopButtonAppearance.highlighted(color, accent: tint) }
-                        else { color.x = tint.x; color.y = tint.y; color.z = tint.z }
-                    }
+                    if let tint = style.tint { color.x = tint.x; color.y = tint.y; color.z = tint.z }
                     color.w *= style.opacity
                 }
                 var batch = HUDSourceMetalRenderer.Batch(mesh: meshName, material: material,
