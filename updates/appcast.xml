@@ -7,6 +7,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Signed EndfieldHUD updates</description>
         <language>en</language>
         <item>
+            <title>1.1.0</title>
+            <pubDate>Fri, 02 Oct 2026 15:22:35 -0700</pubDate>
+            <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
+            <sparkle:version>12</sparkle:version>
+            <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>10.15.4</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text">New game-inspired HUD interface and animations, with existing tools and saved data preserved. Added Korean, improved sidebar scrolling, and fixed the HUD cursor.
+</description>
+            <enclosure url="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.1.0/EndfieldHUD-1.1.0-build12-macOS.zip" length="22025137" type="application/octet-stream" sparkle:edSignature="AMnWHdtYMAmS4mZJHQkRW3BzIWiSF7xu3FzCRng7wcKDsZkhYG2qZQDaXNV+EJ/2LeHQobwdrabnYpcZZkuvAw=="></enclosure>
+        </item>
+        <item>
             <title>1.0.1</title>
             <pubDate>Mon, 28 Sep 2026 23:23:33 -0700</pubDate>
             <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
@@ -163,6 +174,6 @@ Original code: MIT. Game artwork belongs to its respective owners; see [credits]
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: xwrhsJ9Ej1oQFKs3ecOOxAMC/U1ImYpDSl2XZOnV43k8v0pMM4XjRsYzukPkeJ+uA2wHXqjXAT/AlIqK6YUkBA==
-length: 14954
+edSignature: fAIwdHbw3maNlp0YRcbXX+lrjdwBqpzlg6ucfuzvhwjBQl4E2DH2A4TsfJh7BrwcrEYbakvLUP3xNsoSBlbWAA==
+length: 15886
 -->
