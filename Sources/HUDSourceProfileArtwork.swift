@@ -64,6 +64,48 @@ enum HUDSourceProfileArtwork {
         return result
     }
 
+    /// The selected source card stores its yellow edge in the bitmap. Replace
+    /// that chroma without tinting the neutral panel or a user's photograph.
+    static func themedBackgroundArtwork(_ artwork: CGImage, accent: NSColor) throws -> CGImage {
+        guard let accent = accent.usingColorSpace(.sRGB) else { throw Failure.cannotRender }
+        let context = try bitmapContext(width: artwork.width, height: artwork.height)
+        context.draw(artwork, in: CGRect(x: 0, y: 0, width: artwork.width, height: artwork.height))
+        guard let data = context.data else { throw Failure.cannotRender }
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        let tint = [accent.redComponent, accent.greenComponent, accent.blueComponent]
+        for y in 0..<artwork.height { for x in 0..<artwork.width {
+            let index = y * context.bytesPerRow + x * 4
+            let yellow = max(0, min(Int(pixels[index]), Int(pixels[index + 1])) - Int(pixels[index + 2]))
+            guard yellow > 0 else { continue }
+            // Pixels are premultiplied; the chroma and neutral component are
+            // already scaled by source alpha and must remain that way.
+            for channel in 0..<3 {
+                let neutral = Int(pixels[index + channel]) - (channel < 2 ? yellow : 0)
+                pixels[index + channel] = UInt8(min(255, max(0, neutral + Int((CGFloat(yellow) * tint[channel]).rounded()))))
+            }
+        } }
+        guard let result = context.makeImage() else { throw Failure.cannotRender }
+        return result
+    }
+
+    /// A normal-alpha hover plate carries a 5% interior wash and a stronger
+    /// outer edge. The source ColorTint controls its finite enter/exit fade.
+    static func hoverArtwork(_ artwork: CGImage, accent: NSColor) throws -> CGImage {
+        let context = try bitmapContext(width: artwork.width, height: artwork.height)
+        let bounds = CGRect(x: 0, y: 0, width: artwork.width, height: artwork.height)
+        context.draw(artwork, in: bounds)
+        context.setBlendMode(.sourceIn)
+        context.setFillColor(accent.withAlphaComponent(0.38).cgColor); context.fill(bounds)
+        let sx = bounds.width / 530, sy = bounds.height / 204
+        let panel = CGRect(x: 20 * sx, y: 22 * sy, width: 487 * sx, height: 160 * sy)
+        context.addPath(CGPath(roundedRect: panel, cornerWidth: 22 * sx, cornerHeight: 22 * sy, transform: nil))
+        context.clip()
+        context.setBlendMode(.destinationIn)
+        context.setFillColor(CGColor(gray: 1, alpha: 0.05 / 0.38)); context.fill(bounds)
+        guard let result = context.makeImage() else { throw Failure.cannotRender }
+        return result
+    }
+
     struct TexturePixels {
         let width: Int
         let height: Int

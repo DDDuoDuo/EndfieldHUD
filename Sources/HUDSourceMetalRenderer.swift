@@ -679,7 +679,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     /// Prepare only immutable programs referenced by the desktop's drawable
     /// components. No view, command queue, pipeline, texture or geometry is
-    /// constructed. Clip/mask variants and any omitted programs stay lazy.
+    /// constructed. Required clip/mask variants share the same fixed budget;
+    /// any omitted programs stay lazy.
     @discardableResult
     static func prepareDesktopProgramsIfNeeded(resourceRoot: URL? = nil) throws -> [String: Int] {
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource"),
@@ -724,22 +725,42 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private static func desktopProgramShaderKeys(catalog: MetadataCatalog,
                                                  document: HUDSourceWatchDocument, root: URL) throws -> [String] {
         let hidden = document.desktopHiddenNodeIDs
+        let sorting = HUDSourceCanvasSorting(scene: document.scene, components: document.components).resolve(panelBase: 0)
         var materialIDs = Set<String>()
+        var variantRequests: [String: Set<String>] = [:]
         for node in document.scene.nodes {
             var ancestor: HUDSourceID? = node.id
             var excluded = false
+            var searchesClip = true, hasClip = false
+            var nearestSoftMaskEnabled: Bool?
             while let id = ancestor {
                 if hidden.contains(id) { excluded = true; break }
+                // Match FrameBuilder's Canvas sorting boundaries and its
+                // nearest-mask rule, including a disabled nearest soft mask.
+                if searchesClip {
+                    hasClip = hasClip || document.component("RectMask2D", on: id) != nil
+                    if sorting[id]?.startsSortingBoundary == true { searchesClip = false }
+                }
+                if nearestSoftMaskEnabled == nil,
+                   let mask = document.components[id]?.first(where: { $0.kind == "UISoftMask" }) {
+                    nearestSoftMaskEnabled = mask.enabled
+                }
                 ancestor = document.scene.node(id)?.parentID
             }
             guard !excluded else { continue }
+            let usesSoftMask = document.component("UISoftMaskable", on: node.id) != nil && nearestSoftMaskEnabled == true
+            let variant = usesSoftMask ? (hasClip ? "softClip" : "soft") : (hasClip ? "clip" : nil)
+            func includeGraphicMaterial(_ id: String) {
+                materialIDs.insert(id)
+                if let variant { variantRequests[id, default: []].insert(variant) }
+            }
             for component in document.components[node.id] ?? [] where component.enabled {
                 if ["UIImage", "Image", "UIRawImage", "RawImage"].contains(component.kind) {
-                    materialIDs.insert(component["m_Material"].targetID?.rawValue ?? "__ui_default")
+                    includeGraphicMaterial(component["m_Material"].targetID?.rawValue ?? "__ui_default")
                     if ["UIRawImage", "RawImage"].contains(component.kind),
                        let animation = document.component("UIGraphicAnimation", on: node.id),
                        let material = animation["_material"].targetID {
-                        materialIDs.insert(material.rawValue)
+                        includeGraphicMaterial(material.rawValue)
                     }
                 } else if component.kind == "MeshRenderer" {
                     for material in component["m_Materials"].array {
@@ -753,19 +774,41 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         let compact = catalog.objects["runtime-materials.json"] != nil
         let records = try materialRecords(object: catalog.objects[compact ? "runtime-materials.json" : "materials.json"]!,
             compact: compact, selection: selection)
-        var keys = Set<String>()
+        var variantMaterialIDs = Set<String>()
+        for inputs in catalog.materialInputs {
+            let flags = (variantRequests[inputs.name] ?? []).union(inputs.id.flatMap { variantRequests[$0] } ?? [])
+            for flag in flags {
+                if let id = inputs.clipVariants?[flag] { variantMaterialIDs.insert(id) }
+            }
+        }
+        var keys = Set<String>(), variantKeys = Set<String>()
         for (record, inputs) in zip(records, catalog.materialInputs)
-            where materialIDs.contains(inputs.name) || inputs.id.map(materialIDs.contains) == true {
+            where materialIDs.contains(inputs.name) || inputs.id.map(materialIDs.contains) == true
+                || variantMaterialIDs.contains(inputs.name) || inputs.id.map(variantMaterialIDs.contains) == true {
+            let isVariant = variantMaterialIDs.contains(inputs.name) || inputs.id.map(variantMaterialIDs.contains) == true
             let isMap = inputs.shaderID == "505394952752169778"
             for pass in record["static_pass_states"] as? [[String: Any]] ?? [] {
                 if pass["disabled_in_serialized_material"] as? Bool == true { continue }
                 guard let name = pass["name"] as? String else { throw Failure.message("Incomplete source pass") }
                 guard name == "Default" || name == "Default-Stencil-Alpha-Blend" || isMap && name == "ForwardOnly" else { continue }
-                keys.insert(shaderKey(inputs: inputs, passName: name))
+                let key = shaderKey(inputs: inputs, passName: name)
+                keys.insert(key)
+                if isVariant { variantKeys.insert(key) }
             }
         }
-        return keys.sorted()
+        // Visible clipped buttons must not fall beyond the preparation cap
+        // merely because their shader names sort after unclipped variants.
+        return variantKeys.sorted() + keys.subtracting(variantKeys).sorted()
     }
+
+    #if HUD_SOURCE_RENDER_PREVIEW
+    /// CPU-only selection seam; does not construct a Metal device or view.
+    static func desktopPrewarmShaderKeysForVerification(resourceRoot: URL) throws -> [String] {
+        let catalog = try desktopMetadata(root: resourceRoot)
+        let document = try HUDSourceWatchDocument.desktop(resourceRoot: resourceRoot.appendingPathComponent("Scene"))
+        return Array(try desktopProgramShaderKeys(catalog: catalog, document: document, root: resourceRoot).prefix(8))
+    }
+    #endif
 
     private static func programFunctions(for key: String, shader: Shader, root: URL,
                                          device: MTLDevice, cache: ProgramCache,

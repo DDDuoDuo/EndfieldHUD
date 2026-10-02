@@ -71,6 +71,10 @@ final class HUDSourceWatchFrameBuilder {
     var desktopProperties: [HUDSourceID: [String: Double]] = [:] {
         didSet { if oldValue != desktopProperties { cacheGeneration &+= 1 } }
     }
+    /// Only explicitly replaced desktop plates use the ordinary alpha UI shader.
+    var desktopNormalMaterialNodes: Set<HUDSourceID> = [] {
+        didSet { if oldValue != desktopNormalMaterialNodes { cacheGeneration &+= 1 } }
+    }
     struct DesktopGraphicStyle: Equatable {
         var tint: SIMD3<Float>? = nil
         var opacity: Float = 1
@@ -614,7 +618,7 @@ final class HUDSourceWatchFrameBuilder {
                     geometryKeys[component.id] = key
                     geometryContentKeys[component.id] = contentKey
                 }
-                let baseMaterial = materialID?.rawValue ?? "__ui_default"
+                let baseMaterial = desktopNormalMaterialNodes.contains(id) ? "__ui_default" : (materialID?.rawValue ?? "__ui_default")
                 let maskable = document.component("UISoftMaskable", on: id) != nil
                 let softMaskID = maskable ? nearestSoftMask(id) : nil
                 let sourceSoftMask = softMaskID.flatMap { softMasks[$0] }

@@ -18,7 +18,7 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(gesture.position == 0.4, "A held gesture must not drift toward a spring target")
             gesture.gesture(by: 2, hiddenLength: 1000, at: 0.6, phase: .changed, momentum: .none, reduceMotion: false)
             let rubber = gesture.position
-            check(rubber > 1 && (rubber - 1) * 1000 < 58 && !gesture.canScroll(-1),
+            check(rubber > 1 && (rubber - 1) * 1000 > 58 && (rubber - 1) * 1000 < 96 && !gesture.canScroll(-1),
                   "Precise edge movement uses bounded native-style rubber and disables its limit arrow")
             gesture.gesture(by: 2, hiddenLength: 1000, at: 0.7, phase: .changed, momentum: .none, reduceMotion: false)
             check(gesture.position > rubber && gesture.position - rubber < 0.01, "Rubber resistance increases near its finite limit")
@@ -50,7 +50,7 @@ enum HUDSourceDesktopNavigationLayoutTests {
             check(scroll.position == 0.7 && !scroll.isAnimating, "Scroll settles exactly and releases its animation clock")
             scroll.reset(to: 1, at: 3)
             scroll.scroll(by: 5, hiddenLength: 20_000, at: 3, reduceMotion: false)
-            check(scroll.position > 1 && (scroll.position - 1) * 20_000 <= 36.0001, "Edge bounce is bounded in content pixels even with many shortcuts")
+            check(scroll.position > 1 && (scroll.position - 1) * 20_000 <= 64.0001, "Edge bounce is bounded in content pixels even with many shortcuts")
             _ = scroll.advance(at: 5)
             check(scroll.position == 1 && !scroll.isAnimating, "Elastic edge returns to the exact valid endpoint")
             scroll.scroll(by: -0.4, hiddenLength: 1200, at: 6, reduceMotion: true)
@@ -80,6 +80,9 @@ enum HUDSourceDesktopNavigationLayoutTests {
                   "Edge attenuation never targets side faces, neutral shadows, or central ambient decoration")
             check(card.buttonIDs.allSatisfy { feedback.groupedButton($0) == card.scene.rootID },
                   "Every profile hit region drives one consistent card highlight")
+            check(feedback.profileHighlightNodeID.flatMap { card.scene.node($0) }?.parentID == card.scene.rootID
+                && feedback.profileHighlightNodeID.flatMap { card.scene.node($0) }?.transform.rect?.sizeDelta == HUDSourceVector2(412, 158),
+                  "The grouped profile fade targets the entire source card plate, not the portrait's smaller light")
             let initialFeedback = feedback.opacities(selectableTints: selectable.colors(at: 0))
             check(initialFeedback.count == 8 && initialFeedback.values.allSatisfy { $0 == 1 },
                   "Profile decoration and quit background preserve their authored idle opacity")

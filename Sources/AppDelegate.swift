@@ -976,8 +976,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 check((1...2).contains(overlay.systemCenterContentCount), "A swap may retain at most two center screens")
                 if stable {
                     let accessible = (source.accessibilityChildren() ?? []).compactMap { $0 as? NSAccessibilityElement }
-                    check(!accessible.isEmpty && accessible.count <= 28,
-                          "Desktop accessibility stays bounded by the authored cards and two scroll actions")
+                    check(!accessible.isEmpty && accessible.count <= 29,
+                          "Desktop accessibility stays bounded by the authored cards, two scroll actions and the wordmark")
                     check(accessible.allSatisfy { !$0.isAccessibilityHidden() || !$0.isAccessibilityEnabled() },
                           "Unassigned or clipped source cards cannot remain enabled for accessibility")
                     if let window = source.window {

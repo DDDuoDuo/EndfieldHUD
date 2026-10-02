@@ -663,6 +663,35 @@
       "baselineSha256": "eb4f1f61f21f1dff9c3dced7aa34510dc6c1bc4d9b2152c2f8f4c233c3faff3e",
       "sha256": "630b0bcbde5cbc29115ce8ec4aef0a130f5234adb733ae72e139cf0312d354d0",
       "reason": "User requested removing the Shortcuts setup reminder and an alternative automatic macOS Focus route. Uses public Accessibility controls with ownership/readback checks and retains the configured Shortcuts fallback; persistence and timer behavior are unchanged."
+    },
+    "Sources/WorldMapGeometry.swift": {
+      "baselineSha256": "3b36229be2230a2eb211371c8a580b5f5e38d2f684eb828ca90d1a2a3771ce37",
+      "sha256": "d50681c2b132cb4a0d5ad9951c7d18d5bad9c6be551fa667df00526b26e1295e",
+      "reason": "User requested a soft circular map edge. Adds only the 9-point edge feather width used by the canvas mask; projection, viewport constraints, hit geometry, pin data and persistence remain unchanged."
+    },
+    "Sources/AppActivityMonitor.swift": {
+      "baselineSha256": "cbc4676306e0485d45adffb8907d4a308bebcd3c56330a1e8f1486f66cfec7b2",
+      "sha256": "af190c1bac054f3e4a11d0674ffabc6aced59182b8651b9915ba7ad904c3e1ee",
+      "reason": "User requested RAM wording throughout telemetry. Changes only the visible fallback note from Memory unavailable to RAM unavailable; sampling, metrics, aggregation, availability conditions and persistence are unchanged."
+    },
+    "Sources/SystemActivityMonitor.swift": {
+      "baselineSha256": "7462e31c918f24c7e2f686883e19474be8c7c4a2ec459beee6f0dcf95888f2d3",
+      "sha256": "173f75faf8be8c1a73062e8300b07ee7fd03078ab8f7b0244751d4fefc6edc8f",
+      "reason": "User requested RAM wording throughout telemetry. Changes only the visible fallback note from Memory unavailable to RAM unavailable; sampling, metrics, aggregation, availability conditions and persistence are unchanged."
+    }
+  },
+  "reviewedTranslationUpdates": {
+    "Entry(\"Memory \", \"内存 \", \"記憶體 \", \"メモリ \")": {
+      "entry": "Entry(\"RAM \", \"RAM \", \"RAM \", \"RAM \")",
+      "reason": "User requested the RAM label in app/overview telemetry and accessibility text, in every supported language."
+    },
+    "Entry(\"Memory\", \"内存\", \"記憶體\", \"メモリ\")": {
+      "entry": "Entry(\"RAM\", \"RAM\", \"RAM\", \"RAM\")",
+      "reason": "User requested the RAM label in app/overview telemetry and accessibility text, in every supported language."
+    },
+    "Entry(\". Drag to pan. Scroll or pinch to zoom. Right-click to place a pin. Arrow keys move the map.\", \"。拖动平移，滚动或捏合缩放，右键放置标记，方向键移动地图。\", \"。拖動平移，滾動或捏合縮放，右鍵放置標記，方向鍵移動地圖。\", \"。ドラッグで移動、スクロールまたはピンチで拡大縮小、右クリックでピンを配置、矢印キーでマップを移動します。\")": {
+      "entry": "Entry(\". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Left-click to hide coordinates. Arrow keys move the map.\", \"。拖动平移，滚动或捏合缩放，右键放置或移除标记，左键隐藏坐标，方向键移动地图。\", \"。拖動平移，滾動或捏合縮放，右鍵放置或移除標記，左鍵隱藏座標，方向鍵移動地圖。\", \"。ドラッグで移動、スクロールまたはピンチで拡大縮小、右クリックでピンを配置または削除、左クリックで座標を非表示、矢印キーでマップを移動します。\")",
+      "reason": "User requested direct right-click pin deletion and left-click coordinate-card dismissal. Accessibility instructions now describe those map controls in all four languages."
     }
   }
 }

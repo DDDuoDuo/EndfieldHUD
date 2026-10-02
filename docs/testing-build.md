@@ -5,6 +5,22 @@ The download is a universal macOS application. It is
 is not an Apple Developer ID identity or Apple approval. No Developer ID
 certificate is included in this repository.
 
+## Current integration test build
+
+`codex/endfield-hud-integration` combines the Watch presentation with the stable
+desktop functions and saved-data identity. It remains version 1.0.1/internal
+build 11 and is a manual test build, not a replacement for the published release.
+See the [design record](design.md) and [integration checks and measurements](integration-preservation.md).
+Local packages include `integration-build.json` beside the DMG with the exact
+commit, architecture checks and artifact hashes; branch CI artifacts have their
+own provenance file. Install only one running copy, following the steps below.
+
+In this integration branch, Work Mode first tries public Control Center controls
+when Accessibility access is available. Existing configured Focus shortcuts are
+a fallback where supported. It preserves an already-active Focus and verifies
+changes; UI differences between macOS versions can still prevent automation.
+The shortcut-only setup described below applies to the original Watch branch.
+
 ## Current Watch branch build
 
 For `codex/endfield-watch-motion`, download **EndfieldHUD-macOS-<source commit>**

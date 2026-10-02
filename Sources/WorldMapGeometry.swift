@@ -6,6 +6,7 @@ enum WorldMapGeometry {
     static let size = CGSize(width: 440, height: 440)
     static let center = CGPoint(x: 220, y: 220)
     static let radius: CGFloat = 216
+    static let edgeFeatherWidth: CGFloat = 9
     static func constrained(_ value: WorldMapViewport) -> WorldMapViewport {
         var value = (try? value.normalized()) ?? WorldMapViewport()
         let halfHeight = min(0.5, Double(size.height / 2) / (220 * value.zoom))

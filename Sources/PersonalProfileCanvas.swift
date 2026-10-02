@@ -120,7 +120,9 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     static let dateValueRect = CGRect(x: 165, y: 77, width: 90, height: 16)
     static let introductionRect = CGRect(x: 259, y: 172, width: 128, height: 77)
     static let introductionActionRect = CGRect(x: 257, y: 157, width: 132, height: 101)
-    static let portraitRect = CGRect(x: 18, y: 35, width: 66, height: 71)
+    // The selected source frame extends beyond its square photo. Reserve its
+    // full outer extent between the heading, identity labels and edit button.
+    static let portraitRect = CGRect(x: 28, y: 44, width: 55, height: 55)
     var accessibilityStatus: String { errorMessage ?? L10n.text("Personal profile", "个人名片") }
     var profileValue: UserProfile { profile }
     var activeAnimationCount: Int {

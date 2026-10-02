@@ -16,6 +16,43 @@ enum AppShortcutHUDVerification {
         func later(_ delay: TimeInterval, _ action: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
         }
+        func verifyMapButtonCutouts() {
+            guard let source = overlay.systemSourceWatchForVerification,
+                  let frame = source.currentFrameForVerification,
+                  let camera = source.currentCameraForVerification else {
+                check(false, "Map cutout routing requires the live source frame"); return
+            }
+            let original = source.desktopMapOcclusionEnabled
+            defer { source.desktopMapOcclusionEnabled = original }
+            source.desktopMapOcclusionEnabled = false
+            let targets: [HUDNavigationTarget] = [.module(.storage), .module(.activityMonitor)]
+            var samples: [(point: CGPoint, target: HUDNavigationTarget)] = []
+            for hit in frame.hits {
+                let center = hit.rect.origin + hit.rect.size * 0.5
+                guard let projected = camera.camera.project(SIMD3(center.x, center.y, 0), world: hit.world, viewport: source.bounds)?.point,
+                      let target = source.navigationTarget(at: projected), targets.contains(target) else { continue }
+                for y in 1...9 { for x in 1...9 {
+                    let p = hit.rect.origin + hit.rect.size * SIMD2(Double(x) / 10, Double(y) / 10)
+                    guard let point = camera.camera.project(SIMD3(p.x, p.y, 0), world: hit.world, viewport: source.bounds)?.point,
+                          source.navigationTarget(at: point) == target else { continue }
+                    samples.append((point, target))
+                } }
+            }
+            source.desktopMapOcclusionEnabled = true
+            for target in targets {
+                let visible = samples.filter { $0.target == target && source.bottomButtonContains($0.point) }
+                let cutouts = samples.filter { $0.target == target && !source.bottomButtonContains($0.point) }
+                check(!visible.isEmpty && !cutouts.isEmpty,
+                      "Both bottom plates have sampled visible faces and transparent parts inside their original raycast quads")
+                check(visible.allSatisfy { source.navigationTarget(at: $0.point) == target },
+                      "Map clipping preserves navigation on each visible bottom plate")
+                check(cutouts.allSatisfy { source.navigationTarget(at: $0.point) == nil },
+                      "Transparent bottom-card cutouts leave native Map clicks and pin actions available")
+            }
+            source.desktopMapOcclusionEnabled = false
+            check(samples.allSatisfy { source.navigationTarget(at: $0.point) == $0.target },
+                  "Other modules retain the authored bottom-button hit regions")
+        }
         func verifyDesktopPresentations() {
             guard let source = overlay.systemSourceWatchForVerification else {
                 check(false, "Shortcut artwork requires the existing live source shell"); return
@@ -129,6 +166,7 @@ enum AppShortcutHUDVerification {
         }
         _ = overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: .defaults)
         later(SystemHUDView.entranceDuration + 0.3) {
+            verifyMapButtonCutouts()
             verifyDesktopPresentations()
             let shell = overlay.systemShellIdentity, host = overlay.systemCenterHostIdentity
             overlay.selectSystemModule(.addApp)

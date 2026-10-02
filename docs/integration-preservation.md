@@ -117,7 +117,7 @@ Existing canvases and native interactions continue to provide:
 - Work Mode: countdown/stopwatch, pause/reset, Focus integration and tracked hours.
 - Event Log: application actions and selected power/audio/display events, filter/clear.
 - Storage: cached capacity/details and animated handoff to macOS Storage settings.
-- Activity Monitor: overview/history and sortable per-app CPU/memory/network/disk.
+- Activity Monitor: overview/history and sortable per-app CPU/RAM/network/disk.
 - App launcher: choose/drop/rename/icon selection, launch or reopen a closed window.
 - Map: offline terrain, coalesced pan/zoom rendering, bounded pins and saved camera.
 - Settings: language/display/hotkeys/appearance/battery options, scale/position rollback.
@@ -308,11 +308,12 @@ python3 scripts/test-integration-compatibility.py --self-test
 python3 scripts/test-integration-compatibility.py --behavioral
 ```
 
-The static guard preserves 50 functional/localization files byte-for-byte and
-records one explicitly requested, reviewed Focus-controller change alongside its
-original and current hashes. All 51 files remain guarded. It also preserves all
-575 baseline catalog entries and checks bundle/update identity.
-New translations are allowed; removal or rewriting of existing copy is not.
+The static guard preserves 47 functional files byte-for-byte and records four
+explicitly requested changes beside their original and current hashes: Focus
+control, the map-edge constant, and two RAM unavailable labels. All 51 files
+remain guarded. It also preserves the 575-entry baseline with three exact,
+reviewed replacements (RAM labels and map help) and checks bundle/update identity.
+New translations are allowed; unreviewed removal or rewriting still fails.
 Intentional future functional changes need a separate compatibility review;
 do not regenerate the manifest merely to make a failure disappear.
 
@@ -441,35 +442,38 @@ CPU values are percentages of **one CPU core** for the application process.
 
 | Scenario | Stable CPU | Integration CPU | Stable footprint | Integration footprint |
 | --- | ---: | ---: | ---: | ---: |
-| Closed after use | 0.04% | 0.05% | 52 MiB | 126 MiB |
-| Map idle | 0.24% | 11.29% | 78 MiB | 199 MiB |
-| Clipboard idle | 0.15% | 10.44% | 79 MiB | 198 MiB |
-| Notes idle | 0.17% | 10.23% | 79 MiB | 198 MiB |
-| Activity Monitor idle | 0.15% | 12.87% | 74 MiB | 201 MiB |
-| Pointer motion | 4.47% | 41.02% | 74 MiB | 192 MiB |
+| Closed after use | 0.04% | 0.06% | 52 MiB | 121 MiB |
+| Map idle | 0.24% | 12.44% | 78 MiB | 190 MiB |
+| Clipboard idle | 0.15% | 6.64% | 79 MiB | 190 MiB |
+| Notes idle | 0.17% | 12.28% | 79 MiB | 191 MiB |
+| Activity Monitor idle | 0.15% | 12.89% | 74 MiB | 191 MiB |
+| Pointer motion | 4.47% | 42.24% | 74 MiB | 189 MiB |
 
 The integration submitted about 30 source frames/second idle and
 59.4 during pointer motion. Once closed, its source timer stopped and
 submitted zero frames. The current build opened in
-169 ms synchronously (stable 93 ms), presented its first source frame at
-391 ms, and reopened in 138 ms (stable 54 ms).
+178 ms synchronously (stable 93 ms), presented its first source frame at
+382 ms, and reopened in 131 ms (stable 54 ms).
 
 A same-binary comparison with shader preparation disabled measured
-170 ms synchronous opening and 413 ms first presentation. With it enabled,
-eight shader libraries/four function pairs were prepared in
-12 ms on the utility queue. No pipelines, textures, renderer or window were
-created by preparation. Two additional libraries and the required pipelines
-remained lazy. This is a modest first-frame improvement, not elimination of
-the remaining opening delay.
+191 ms synchronous opening and 404 ms first presentation. With it enabled,
+twelve shader libraries/six function pairs, including required clipped variants,
+were prepared in 20 ms on the utility queue within the existing eight-pair cap.
+No pipelines, textures, renderer or window were created by preparation. The
+first visible fixture compiled zero additional shader libraries; pipelines
+remained lazy. This moves bounded compilation off first presentation, but does
+not eliminate the remaining opening delay. The prior branch's single sample
+was 169/391/138 ms for synchronous opening/first presentation/reopening; this
+pass does not establish an across-the-board speedup over that sample.
 
-Total CPU/document/shader preparation took 1.24 s off the main thread.
+Total CPU/document/shader preparation took 1.25 s off the main thread.
 These opening figures start after launch preparation has completed; they do
 not measure the whole application's cold launch. An immediate first opening
 can still wait for CPU document preparation, and GPU programs remain lazy if
 their preparation has not finished. A bounded immutable cache retains no view
-or texture and runs no timer. The previous branch measured 206/414/133 ms for
-synchronous opening/first presentation/reopening. These are single-run samples,
-not percentile latency or guarantees on other Macs.
+or texture and runs no timer. These are single-run samples, not percentile
+latency or guarantees on other Macs. The larger map preserves its raster budget;
+projected button cutouts update only when their geometry or camera changes.
 
 **Performance parity with stable has not been achieved.** Resource size and
 closed rendering are bounded, and the new renderer has been substantially
@@ -481,24 +485,24 @@ GPU utilization from these process counters. Instruments was unavailable here.
 The raw samples and input fingerprints are in
 [integration-benchmark.json](integration-benchmark.json).
 
-The local core suite passed 50,056 assertions, including finite profile/quit
-hover feedback, scope exclusion for personal artwork, and Double-precision
-geometry-key regression cases. Exact cached/full GPU geometry and hit
-comparison passed; program preparation also passed its idempotence and bound
-checks before any renderer was constructed. The compatibility guard checks 50 unchanged files plus the explicitly reviewed Focus-controller hash,
-575 stable translated entries, and bundle/update identity. Eleven CPU cache
-regression checks verify all 132 material inputs, reuse, invalidation, corrupt
-input recovery, and reference fallback. Native navigation passed 623 checks with
-normal motion and 889 with forced Reduce Motion. Lifecycle checks include blank
-center clicks, the clock's source plane, live modal pointer movement, icon-change
-ring visibility, quit cancellation and teardown. The shortcut harness passed 78
-checks including preset pixels, recycled captions, and four live languages.
-Profile helpers passed 14 CPU checks and 12 source-shader GPU checks.
-The prior renderer evidence remains separate: 66 paired GPU comparisons, including
-independent profile-color checks, passed before switching its already-tested
-batching path on by default; only that default and its test selectors changed
-after the comparison. The separate offline Metal compiler probe cannot run on
-this host because its Metal compiler is unavailable; runtime Metal checks work.
+The core suite passed 50,090 assertions during this pass. Final native checks
+passed 623 navigation assertions across all 16 sections, 40 Notes/Shelf arrival
+and queued-navigation assertions, 86 lifecycle assertions, and 85 shortcut
+assertions. The latter include visible-versus-transparent map/button hit routing,
+close-first launch, preset artwork, captions and live language changes. The compatibility guard retains 47 unchanged
+files plus four exact reviewed changes, all 575 baseline translated entries
+with three exact reviewed replacements, and bundle/update identity. All 13
+isolated guard mutation checks passed. Fourteen CPU metadata checks verify all
+132 material inputs, cache reuse/invalidation, corrupt-input recovery, reference
+fallback and bounded required clip-shader selection without creating a GPU view.
+
+Exact cached/full GPU geometry and hit comparison passed, including program
+preparation's idempotence and bounds. Profile artwork helpers passed 18 CPU
+checks and portrait helpers passed four; the packaged profile preview also
+confirmed that both locations load the same frame through the compressed
+resource reader. The prior 12 source-shader profile-color checks and 66 paired
+renderer comparisons remain separate historical evidence. The offline Metal
+compiler is unavailable on this host; runtime Metal checks work.
 
 
 ## Current presentation follow-up
@@ -528,12 +532,13 @@ shadows, which keep their original color and opacity. Custom shortcuts use the s
 as their picker, and recycled slots explicitly activate their primary caption.
 A language change refreshes source captions, profile labels and accessibility
 actions in place while preserving custom names and scroll position. Side hover
-sprites use 18% of their authored alpha. Profile edge/corner decoration and the
-red quit background use the existing 100 ms ColorTint fade for subtle feedback;
-no new clock or additive photo overlay is introduced.
+sprites use 18% of their authored alpha. The whole profile plate and red quit background use the existing 100 ms
+ColorTint fade. The plate has a normal-alpha 5% interior wash and 38% outer
+edge; no new clock or additive photo overlay is introduced.
 
 The card uses an existing dark industrial default, right-aligned authority/MAX
-labels, and no additive avatar/card Light overlay. Uploaded card backgrounds are
+labels, a profile-colored outer border, and no additive avatar/card wash. The
+profile editor reuses the exact selected source avatar-frame sprite. Uploaded card backgrounds are
 cropped and darkened inside the rounded photo panel, preserving the original
 outer decoration pixels and alpha silhouette. User artwork is explicitly uploaded
 as straight-alpha sRGB: an offscreen source-shader probe reproduced the previous
@@ -541,8 +546,8 @@ gray-128-to-188 washout and verifies gray 128 now stays 128. No profile value or
 saved image is rewritten. The proof in `scripts/VerifyProfileArtwork.swift` also
 checks transparent edges and 4,251 visible source decoration pixels.
 
-The shorter clock plate is inset 24 source points to the left of its previous
-right-edge alignment on the banner plane. The
+The 340-point clock plate is offset to (126.28, 8) in its original banner
+plane, further left/down and shorter at the right edge. The
 retired native battery arc remains hidden on every appearance/settings update.
 Opening prepares the native layer hierarchy without first constructing a fully
 deployed source frame that would immediately be discarded. Camera/controller
@@ -551,9 +556,9 @@ repeat filesystem validation during the same app process. External preview and
 probe directories retain file-identity validation and corruption rejection.
 
 Launch preparation also derives the desktop drawable materials and prepares
-their original Metal shader functions on a utility queue. It currently selects
-four base shader pairs; a hard limit of eight pairs bounds future resource
-changes. No renderer, textures, geometry, command queue, drawable, pipeline or
+their original Metal shader functions on a utility queue. Clip and soft-mask
+variants are resolved using the same ancestor/Canvas boundaries as the frame
+builder; required variants take priority within a hard limit of eight pairs. No renderer, textures, geometry, command queue, drawable, pipeline or
 view is constructed. The existing one-device/inventory program cache retains
 the result, and the foreground lazy path remains usable without waiting on a
 compilation lock. Unsupported/failed preparation leaves ordinary lazy rendering
@@ -566,3 +571,22 @@ Rounding the input matrix to Float could incorrectly reuse a buffer even when
 the final baked Float vertices differed. Uniform and vertex calculations remain
 unchanged; the regression compares exact uploaded geometry rather than loosening
 tolerances.
+
+The map presents its retained 440-point canvas at 1.14× without increasing the
+raster budget. A cached radial mask feathers its last 9 points. Source sprite
+boundaries define the foreground cutouts for the lower two buttons and their
+pointer precedence. Only changed camera/geometry projections rebuild these
+small paths. Pin coordinate visibility is independent of persistent selection;
+left-click hides coordinates, and right-click on a pin removes it. No map store
+schema or initial camera setting changes.
+
+Section swaps use a monotonic 300 ms reveal and matching exit. Notes workspace
+visibility is driven by the actual swap, including queued requests and
+cancellation, rather than the latest click. Input is deactivated again at the actual handoff
+after navigation layout callbacks, before Notes installs its arrival; queued
+clicks do not cancel it. Shelf and Add App reuse prepared
+content on activation when unchanged. The wordmark's two brief opacity dips run
+on the source clock and finish after 460 ms; Reduce Motion leaves it steady.
+RAM replaces user-facing memory labels, including unavailable-data status,
+without renaming stored identifiers or altering sampling. These explicit
+interaction/copy updates are recorded narrowly in the compatibility guard.
