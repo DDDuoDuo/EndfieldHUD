@@ -357,6 +357,7 @@ build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --lifecycle-smoke-tes
 build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --navigation-smoke-test
 bash ./scripts/render-source-watch-previews.sh
 bash ./scripts/verify-source-backdrop-gpu.sh
+bash ./scripts/verify-source-plate-projection.sh
 ```
 
 The core suite covers source projection/inverse hits, curve sampling, layout,
@@ -394,6 +395,20 @@ quantization ambiguity and deterministic raw samples. `stable-raw.bgra` retains
 the full stable GPU blit with its report's row pitch. This output representation
 does not alter the live CAMetalLayer, source blend state or tone mapping and
 does not capture the desktop blur or reproduce HG's opaque game background.
+
+The isolated plate fixture submits the original character-button UIImage batch
+through the same Metal renderer, with the other batches excluded. It retains
+the actual uploaded vertices, indices, pipeline and raw BGRA readback. An
+independent pixel-center rasterizer projects those uploaded vertices and samples
+the verified original alpha texture with perspective-correct UVs and linear
+clamp filtering. The fixed acceptance limits are four alpha byte values outside
+a 1.5-pixel band around the outer quad, and a one-pixel bidirectional contour
+distance. Internal sprite edges remain fully tested. The comparison is required;
+an unsupported pipeline, new source diagnostic or GPU error fails the fixture.
+The fifteen existing informational and unbound-curve messages remain visible,
+including the two unresolved path CRCs. This check establishes the projection
+and texture path for the submitted plate; it does not establish the game's
+vertex generation, live camera state, animation bindings or recording parity.
 
 Compilation, source correspondence and an inspected preview each establish
 different evidence. They must be reported for the exact tested commit.
