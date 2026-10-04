@@ -111,7 +111,14 @@ final class HUDSettingsController {
         layoutPreview.map { $0.x != store.configuration.hudOffsetX || $0.y != store.configuration.hudOffsetY } ?? false
     }
 
-    var about: HUDAboutInformation { HUDAboutInformation.current() }
+    private var cachedAbout: (language: AppLanguage, information: HUDAboutInformation)?
+    var about: HUDAboutInformation {
+        let language = L10n.resolvedLanguage
+        if let cachedAbout, cachedAbout.language == language { return cachedAbout.information }
+        let information = HUDAboutInformation.current()
+        cachedAbout = (language, information)
+        return information
+    }
     var presetAccentHexes: [String] { Self.presetAccentHexes }
 
     init(store: ConfigurationStore, clock: (() -> TimeInterval)? = nil, scheduleTimer: ScheduleTimer? = nil) {
@@ -267,8 +274,11 @@ final class HUDSettingsController {
     }
 
     func refreshExternalStatus() {
-        loginStatus = loginStatusProvider?()
-        shortcutRegistrationStatus = shortcutRegistrationStatusProvider?()
+        let login = loginStatusProvider?()
+        let shortcut = shortcutRegistrationStatusProvider?()
+        guard login != loginStatus || shortcut != shortcutRegistrationStatus else { return }
+        loginStatus = login
+        shortcutRegistrationStatus = shortcut
         publish()
     }
 

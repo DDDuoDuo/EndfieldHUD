@@ -133,6 +133,28 @@ final class HUDSourceWatchDocument {
             animators = try decoder.container(keyedBy: CodingKeys.self).decode([Animator].self, forKey: .animators)
         }
     }
+    /// The desktop's immutable clip library can decode alongside its scene
+    /// graph. One serial worker bounds this to one extra CPU task globally;
+    /// each task owns its decoder and publishes one immutable result. Neither
+    /// AppKit nor GPU objects are constructed, and no work survives completion.
+    private final class AnimationDecodeFlight {
+        private static let queue = DispatchQueue(label: "EndfieldHUD.source-clip-decoding", qos: .userInitiated)
+        private let condition = NSCondition()
+        private var result: Result<AnimationPayload, Error>?
+        init(data: Data) {
+            Self.queue.async { [self] in
+                let decoded = Result { try HUDSourceJSON.decoder().decode(AnimationPayload.self, from: data) }
+                condition.lock(); result = decoded; condition.broadcast(); condition.unlock()
+            }
+        }
+        func value() throws -> AnimationPayload {
+            condition.lock()
+            while result == nil { condition.wait() }
+            let decoded = result!
+            condition.unlock()
+            return try decoded.get()
+        }
+    }
     let root: URL
     let scene: HUDSourceScene
     let library: HUDSourceAnimationLibrary
@@ -215,7 +237,8 @@ final class HUDSourceWatchDocument {
         return result
     }
 
-    init(resourceRoot: URL? = nil, includeWidgets: Bool = true, includeSourceText: Bool = true, includeDesktopProfile: Bool = false) throws {
+    init(resourceRoot: URL? = nil, includeWidgets: Bool = true, includeSourceText: Bool = true,
+         includeDesktopProfile: Bool = false, serialAnimationDecodingForVerification: Bool = false) throws {
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource/Scene") else {
             throw HUDSourceError.invalid("Watch source scene resources are missing")
         }
@@ -223,6 +246,8 @@ final class HUDSourceWatchDocument {
         let decoder = HUDSourceJSON.decoder()
         func data(_ name: String) throws -> Data { try HUDSourceResourceData.read(root.appendingPathComponent(name + ".json")) }
         let sceneData = try data("scene"), clipData = try data("clips")
+        let clipDecode = includeDesktopProfile && !includeWidgets && !includeSourceText && !serialAnimationDecodingForVerification
+            ? AnimationDecodeFlight(data: clipData) : nil
         let details = try decoder.decode(ScenePayload.self, from: sceneData)
         runtimeRoot = try decoder.decode(HUDSourceJSONValue.self, from: data("runtime-root-camera"))
         controllerTransitions = try decoder.decode(HUDSourceJSONValue.self, from: data("controller-transitions"))
@@ -252,7 +277,9 @@ final class HUDSourceWatchDocument {
             while let id = ancestor, !mainButtons.contains(id) { ancestor = navigationScene.node(id)?.parentID }
             return ancestor == nil ? nil : node.id
         }
-        let clips = try decoder.decode(AnimationPayload.self, from: clipData)
+        // Observe a worker failure at the same point as the serial decoder:
+        // earlier scene/profile errors retain their original precedence.
+        let clips = try clipDecode?.value() ?? decoder.decode(AnimationPayload.self, from: clipData)
         library = clips.library
         animation = try HUDSourceWatchAnimation(scene: scene, library: library)
         blurAnimation = try HUDSourceWatchBlurAnimation(data: data("watch-blur"))

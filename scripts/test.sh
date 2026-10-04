@@ -8,7 +8,7 @@ mkdir -p "$BUILD_DIR/tests" "$BUILD_DIR/module-cache"
 
 xcrun swiftc -swift-version 5 -parse-as-library \
     -sdk "$SELECTED_SDK" -module-cache-path "$BUILD_DIR/module-cache" \
-    -framework Cocoa -framework IOKit -framework CoreAudio -framework Quartz -framework Carbon -lsqlite3 \
+    -framework Cocoa -framework IOKit -framework CoreAudio -framework Quartz -framework Carbon -framework ServiceManagement -lsqlite3 \
     "$PROJECT_DIR/Sources/Models.swift" \
     "$PROJECT_DIR/Sources/HUDResources.swift" \
     "$PROJECT_DIR/Sources/HUDWatchArtwork.swift" \
@@ -37,6 +37,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDApplicationIcon.swift" \
     "$PROJECT_DIR/Sources/EndfieldGameIcon.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsController.swift" \
+    "$PROJECT_DIR/Sources/LoginItemManager.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDQuitConfirmationView.swift" \
     "$PROJECT_DIR/Sources/HUDScaleSafetyView.swift" \
@@ -191,6 +192,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/ShortcutPolicyTests.swift" \
     "$PROJECT_DIR/Tests/SummonShortcutTests.swift" \
     "$PROJECT_DIR/Tests/SettingsTests.swift" \
+    "$PROJECT_DIR/Tests/LoginItemManagerTests.swift" \
     "$PROJECT_DIR/Tests/HUDDisplayPolicyTests.swift" \
     "$PROJECT_DIR/Tests/HUDClockTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \

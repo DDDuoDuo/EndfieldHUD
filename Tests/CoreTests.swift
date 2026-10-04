@@ -13,6 +13,7 @@ enum CoreTests {
         testDisplayPolicy()
         testConfigurationPersistence()
         assertionCount += SettingsTests.run() + HUDSettingsCanvasTests.run() + HUDDisplayPolicyTests.run()
+        assertionCount += LoginItemManagerTests.run()
         assertionCount += HUDGitHubReleaseTests.run()
         assertionCount += HUDUpdateStateTests.run()
         assertionCount += HUDClockTests.run()

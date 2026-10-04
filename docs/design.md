@@ -95,6 +95,15 @@ where they conflict.
   Apps workload, underlying changes and measurement limits; old-native
   performance parity remains unachieved.
 
+
+- **2026-10-03 — Left tabs and opening:** Keep existing presentation and motion.
+  Reuse unchanged Settings rows, move passive login-status IPC off the main
+  thread, and materialize hidden native fallback artwork only on recovery.
+  Prepare bounded immutable pipelines before opening and overlap independent
+  clip/scene decoding with the same numeric decoder. The
+  [opening investigation](tab-opening-performance.md) records measurements and
+  preserves the distinction between prepared and completely cold opening.
+
 ## Verification evidence
 
 The integration document records the current

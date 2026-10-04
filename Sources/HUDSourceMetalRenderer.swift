@@ -800,6 +800,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         var prewarmCompleted = false
         var prewarmShaderCount = 0
         var prewarmLibraryCompilations = 0
+        var prewarmPipelineCompilations = 0
         init(key: String) { self.key = key }
         func access<T>(_ body: (ProgramCache) -> T) -> T {
             lock.lock(); defer { lock.unlock() }
@@ -821,9 +822,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
 
     /// Prepare only immutable programs referenced by the desktop's drawable
-    /// components. No view, command queue, pipeline, texture or geometry is
-    /// constructed. Required clip/mask variants share the same fixed budget;
-    /// any omitted programs stay lazy.
+    /// components. No view, command queue, texture or geometry is constructed.
+    /// Both shader functions and exact render pipelines are immutable program
+    /// objects; required clip/mask variants share fixed preparation budgets.
+    /// Any omitted programs stay lazy.
     @discardableResult
     static func prepareDesktopProgramsIfNeeded(resourceRoot: URL? = nil) throws -> [String: Int] {
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource"),
@@ -850,6 +852,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                     cache.access { $0.prewarmLibraryCompilations += 1 }
                 }
             }
+            try prepareDesktopPipelines(catalog: catalog, root: root, device: device,
+                cache: cache, shaderKeys: Set(keys.prefix(8)))
             cache.access { $0.prewarmCompleted = true }
         }
         return programCacheStatisticsForVerification()
@@ -858,11 +862,54 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     static func programCacheStatisticsForVerification() -> [String: Int] {
         programCacheLock.lock(); let cache = retainedPrograms; programCacheLock.unlock()
         guard let cache else { return ["libraries": 0, "functions": 0, "pipelines": 0,
-            "prewarmStarted": 0, "prewarmCompleted": 0, "prewarmShaders": 0, "prewarmLibraryCompilations": 0] }
+            "prewarmStarted": 0, "prewarmCompleted": 0, "prewarmShaders": 0, "prewarmLibraryCompilations": 0,
+            "prewarmPipelineCompilations": 0] }
         return cache.access { ["libraries": $0.libraries.count, "functions": $0.functions.count,
             "pipelines": $0.pipelines.count, "prewarmStarted": $0.prewarmStarted ? 1 : 0,
             "prewarmCompleted": $0.prewarmCompleted ? 1 : 0, "prewarmShaders": $0.prewarmShaderCount,
-            "prewarmLibraryCompilations": $0.prewarmLibraryCompilations] }
+            "prewarmLibraryCompilations": $0.prewarmLibraryCompilations,
+            "prewarmPipelineCompilations": $0.prewarmPipelineCompilations] }
+    }
+
+    private static func prepareDesktopPipelines(catalog: MetadataCatalog, root: URL,
+        device: MTLDevice, cache: ProgramCache, shaderKeys: Set<String>) throws {
+        let selection = try JSONDecoder().decode(RuntimeSelection.self,
+            from: HUDSourceResourceData.read(root.appendingPathComponent("runtime-selection.json")))
+        let compact = catalog.objects["runtime-materials.json"] != nil
+        let records = try materialRecords(object: catalog.objects[compact ? "runtime-materials.json" : "materials.json"]!,
+            compact: compact, selection: selection)
+        let depthFormat: MTLPixelFormat = depthIsRedundant(records: records,
+            fragmentsWriteDepth: catalog.fragmentsWriteDepth) ? .stencil8 : .depth32Float_stencil8
+        var selected = Set<SourcePipelineKey>()
+        for (record, inputs) in zip(records, catalog.materialInputs) {
+            let isMap = inputs.shaderID == "505394952752169778"
+            for pass in record["static_pass_states"] as? [[String: Any]] ?? [] {
+                if pass["disabled_in_serialized_material"] as? Bool == true { continue }
+                guard let name = pass["name"] as? String else { throw Failure.message("Incomplete source pass") }
+                guard name == "Default" || name == "Default-Stencil-Alpha-Blend" || isMap && name == "ForwardOnly" else { continue }
+                let shaderKey = self.shaderKey(inputs: inputs, passName: name)
+                guard shaderKeys.contains(shaderKey), let shader = catalog.shaders[shaderKey],
+                      let state = pass["state"] as? [String: Any], let blend = state["rtBlend0"] as? [String: Any] else { continue }
+                let (descriptor, key) = try makeSourcePipelineDescriptor(shaderKey: shaderKey,
+                    shaderID: inputs.shaderID, blend: blend, depthFormat: depthFormat, colorFormat: .bgra8Unorm_srgb)
+                guard selected.count < 16 else { return }
+                guard selected.insert(key).inserted, cache.access({ $0.pipelines[key] == nil }) else { continue }
+                let functions = try programFunctions(for: shaderKey, shader: shader, root: root,
+                    device: device, cache: cache) { cache.access { $0.prewarmLibraryCompilations += 1 } }
+                descriptor.vertexFunction = functions.0; descriptor.fragmentFunction = functions.1
+                // Metal compilation never owns the cache lock. If opening
+                // wins this race, it need not wait for the utility worker.
+                var reflection: MTLRenderPipelineReflection?
+                let pipeline = try device.makeRenderPipelineState(descriptor: descriptor,
+                    options: .argumentInfo, reflection: &reflection)
+                guard let reflection else { throw Failure.message("Source pipeline reflection unavailable: " + shaderKey) }
+                let prepared = PreparedPipeline(pipeline: pipeline, reflectedBufferSizes: reflectedBufferSizes(reflection))
+                cache.access {
+                    if $0.pipelines[key] == nil && $0.pipelines.count < 64 { $0.pipelines[key] = prepared }
+                    $0.prewarmPipelineCompilations += 1
+                }
+            }
+        }
     }
 
     private static func desktopProgramShaderKeys(catalog: MetadataCatalog,
@@ -3032,6 +3079,62 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
     }
 
+    /// Both launch preparation and the live renderer use the exact authored
+    /// attachment/vertex descriptor. Preparing a program never needs a view,
+    /// scene texture, drawable, command queue, or geometry allocation.
+    private static func makeSourcePipelineDescriptor(shaderKey: String, shaderID: String?,
+        blend: [String: Any], depthFormat: MTLPixelFormat, colorFormat: MTLPixelFormat)
+        throws -> (MTLRenderPipelineDescriptor, SourcePipelineKey) {
+        let isMap = shaderID == "505394952752169778"
+        let isFont = shaderID == "2786552470741801451"
+        let isFX = shaderID == "-7864008769510089003"
+        func number(_ object: [String: Any], _ key: String) throws -> Float {
+            guard let value = object[key] as? [String: Any], let scalar = value["value"] as? NSNumber else {
+                throw Failure.message("Unresolved source pipeline state: " + shaderKey + "/" + key)
+            }
+            return scalar.floatValue
+        }
+        let pipeline = MTLRenderPipelineDescriptor()
+        let layout = MTLVertexDescriptor()
+        let attributes: [(Int, MTLVertexFormat, Int)]
+        if isMap {
+            attributes = [(0, .float4, 0), (1, .float2, 16), (2, .float2, 64), (3, .float3, 48), (5, .float4, 32)]
+        } else if isFont {
+            attributes = [(0, .float4, 0), (1, .float3, 48), (2, .float4, 32), (3, .float2, 16), (4, .float2, 64)]
+        } else if isFX { attributes = [(0, .float4, 0), (1, .float2, 16), (2, .float4, 32)] }
+        else { attributes = [(0, .float4, 0), (1, .float4, 32), (2, .float2, 16)] }
+        for (index, format, offset) in attributes {
+            layout.attributes[index].format = format
+            layout.attributes[index].offset = offset
+            layout.attributes[index].bufferIndex = 30
+        }
+        layout.layouts[30].stride = MemoryLayout<Vertex>.stride
+        layout.layouts[30].stepFunction = .perVertex
+        pipeline.vertexDescriptor = layout
+        pipeline.depthAttachmentPixelFormat = depthFormat == .stencil8 ? .invalid : depthFormat
+        pipeline.stencilAttachmentPixelFormat = depthFormat
+        let color = pipeline.colorAttachments[0]!
+        color.pixelFormat = colorFormat
+        color.isBlendingEnabled = true
+        color.sourceRGBBlendFactor = try Self.blend(number(blend, "srcBlend"))
+        color.destinationRGBBlendFactor = try Self.blend(number(blend, "destBlend"))
+        color.sourceAlphaBlendFactor = try Self.blend(number(blend, "srcBlendAlpha"))
+        color.destinationAlphaBlendFactor = try Self.blend(number(blend, "destBlendAlpha"))
+        color.rgbBlendOperation = try Self.blendOperation(number(blend, "blendOp"))
+        color.alphaBlendOperation = try Self.blendOperation(number(blend, "blendOpAlpha"))
+        let write = Int(try number(blend, "colMask"))
+        color.writeMask = Self.colorMask(write)
+        let pipelineKey = SourcePipelineKey(shader: shaderKey,
+            vertexLayout: attributes.flatMap { [$0.0, Int($0.1.rawValue), $0.2] }
+                + [30, MemoryLayout<Vertex>.stride, Int(MTLVertexStepFunction.perVertex.rawValue)],
+            attachmentState: [pipeline.depthAttachmentPixelFormat.rawValue, pipeline.stencilAttachmentPixelFormat.rawValue,
+                color.pixelFormat.rawValue, color.isBlendingEnabled ? 1 : 0,
+                color.sourceRGBBlendFactor.rawValue, color.destinationRGBBlendFactor.rawValue,
+                color.sourceAlphaBlendFactor.rawValue, color.destinationAlphaBlendFactor.rawValue,
+                color.rgbBlendOperation.rawValue, color.alphaBlendOperation.rawValue, color.writeMask.rawValue])
+        return (pipeline, pipelineKey)
+    }
+
     @discardableResult private func loadMaterials(device: MTLDevice, recordStartupTimings: Bool = false) throws -> [String: Double] {
         let started = recordStartupTimings ? CACurrentMediaTime() : 0
         var previous = started, timings: [String: Double] = [:]
@@ -3058,8 +3161,6 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             let inputs = index < (metadata?.materialInputs.count ?? 0)
                 ? metadata!.materialInputs[index] : try Self.parseMaterialInputs(record: record)
             let name = inputs.name, values = inputs.values, propertyTypes = inputs.propertyTypes, textureIDs = inputs.textureIDs
-            let isFX = inputs.shaderID == "-7864008769510089003"
-            let isFont = inputs.shaderID == "2786552470741801451"
             let isMap = inputs.shaderID == "505394952752169778"
             var passes: [Pass] = []
             for sourcePass in record["static_pass_states"] as? [[String: Any]] ?? [] {
@@ -3077,36 +3178,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 }
                 return scalar.floatValue
             }
-            let pipeline = MTLRenderPipelineDescriptor()
-            let layout = MTLVertexDescriptor()
-            let attributes: [(Int, MTLVertexFormat, Int)]
-            if isMap {
-                attributes = [(0, .float4, 0), (1, .float2, 16), (2, .float2, 64), (3, .float3, 48), (5, .float4, 32)]
-            } else if isFont {
-                attributes = [(0, .float4, 0), (1, .float3, 48), (2, .float4, 32), (3, .float2, 16), (4, .float2, 64)]
-            } else if isFX { attributes = [(0, .float4, 0), (1, .float2, 16), (2, .float4, 32)] }
-            else { attributes = [(0, .float4, 0), (1, .float4, 32), (2, .float2, 16)] }
-            for (index, format, offset) in attributes {
-                layout.attributes[index].format = format
-                layout.attributes[index].offset = offset
-                layout.attributes[index].bufferIndex = 30
-            }
-            layout.layouts[30].stride = MemoryLayout<Vertex>.stride
-            layout.layouts[30].stepFunction = .perVertex
-            pipeline.vertexDescriptor = layout
-            pipeline.depthAttachmentPixelFormat = depthStencilPixelFormat == .stencil8 ? .invalid : depthStencilPixelFormat
-            pipeline.stencilAttachmentPixelFormat = depthStencilPixelFormat
-            let color = pipeline.colorAttachments[0]!
-            color.pixelFormat = sceneColorPixelFormat
-            color.isBlendingEnabled = true
-            color.sourceRGBBlendFactor = try Self.blend(number(blend, "srcBlend"))
-            color.destinationRGBBlendFactor = try Self.blend(number(blend, "destBlend"))
-            color.sourceAlphaBlendFactor = try Self.blend(number(blend, "srcBlendAlpha"))
-            color.destinationAlphaBlendFactor = try Self.blend(number(blend, "destBlendAlpha"))
-            color.rgbBlendOperation = try Self.blendOperation(number(blend, "blendOp"))
-            color.alphaBlendOperation = try Self.blendOperation(number(blend, "blendOpAlpha"))
-            let write = Int(try number(blend, "colMask"))
-            color.writeMask = Self.colorMask(write)
+            let (pipeline, pipelineKey) = try Self.makeSourcePipelineDescriptor(shaderKey: key,
+                shaderID: inputs.shaderID, blend: blend, depthFormat: depthStencilPixelFormat,
+                colorFormat: sceneColorPixelFormat)
             let depth = MTLDepthStencilDescriptor()
             depth.depthCompareFunction = depthStencilPixelFormat == .stencil8 ? .always : try Self.compare(number(state, "zTest"))
             depth.isDepthWriteEnabled = try number(state, "zWrite") != 0
@@ -3126,14 +3200,6 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             // none changes an otherwise identical immutable render pipeline.
             // Include every nondefault descriptor field used above. Reflection
             // is shared only with that exact shader interface and layout.
-            let pipelineKey = SourcePipelineKey(shader: key,
-                vertexLayout: attributes.flatMap { [$0.0, Int($0.1.rawValue), $0.2] }
-                    + [30, MemoryLayout<Vertex>.stride, Int(MTLVertexStepFunction.perVertex.rawValue)],
-                attachmentState: [pipeline.depthAttachmentPixelFormat.rawValue, pipeline.stencilAttachmentPixelFormat.rawValue,
-                    color.pixelFormat.rawValue, color.isBlendingEnabled ? 1 : 0,
-                    color.sourceRGBBlendFactor.rawValue, color.destinationRGBBlendFactor.rawValue,
-                    color.sourceAlphaBlendFactor.rawValue, color.destinationAlphaBlendFactor.rawValue,
-                    color.rgbBlendOperation.rawValue, color.alphaBlendOperation.rawValue, color.writeMask.rawValue])
             let pass = Pass(shaderKey: key, pipelineKey: pipelineKey, shader: shader, depth: depthState,
                 stencilReference: UInt32(try number(state, "stencilRef")), cull: cull,
                 id: (record["id"] as? String ?? name) + "/" + passName,
@@ -3173,6 +3239,11 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private func desktopDepthIsRedundant(records: [[String: Any]]) throws -> Bool {
         guard runtimeSelection != nil, sceneColorMode == .directLDR,
               !requiresCombinedDepth, clearDepth == 1 else { return false }
+        let writesDepth = try metadata?.fragmentsWriteDepth ?? Self.fragmentsWriteDepth(shaders: shaders, root: root)
+        return Self.depthIsRedundant(records: records, fragmentsWriteDepth: writesDepth)
+    }
+
+    private static func depthIsRedundant(records: [[String: Any]], fragmentsWriteDepth: Bool) -> Bool {
         var passCount = 0
         func scalar(_ object: [String: Any], _ key: String) -> Double? {
             ((object[key] as? [String: Any])?["value"] as? NSNumber)?.doubleValue
@@ -3196,8 +3267,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             }
         }
         guard passCount > 0 else { return false }
-        if let metadata { return !metadata.fragmentsWriteDepth }
-        return try !Self.fragmentsWriteDepth(shaders: shaders, root: root)
+        return !fragmentsWriteDepth
     }
 
     private static func fragmentsWriteDepth(shaders: [String: Shader], root: URL) throws -> Bool {

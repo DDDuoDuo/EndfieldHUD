@@ -683,6 +683,16 @@
       "baselineSha256": "ca4266f41e69557bbe8d959c192795a8354805f847114a1e6fd7c84e999e87e6",
       "sha256": "69215e36d18ad58314ddc9d4ffee6bd94ac95409700bfaae9574d9dffcc291fe",
       "reason": "User-requested Korean locale detection and catalog rendering; existing source keys, language raw values, prior translations and interpolation semantics are preserved. Korean coverage and persistence are tested."
+    },
+    "Sources/HUDSettingsController.swift": {
+      "baselineSha256": "1be22bb6c31c711f0feb8daa40f51b67362fc7043ec0cee0ba9d652fa7cd0a89",
+      "sha256": "ea8f868626d2b0c5dd4ec019ae42cac7df09fd3e0b6ef26420569d62d4df6b6f",
+      "reason": "User requested eliminating left-tab and opening stalls without changing behavior. Cache immutable About bundle metadata per resolved language and publish external login/shortcut status only when its returned values change. Reviewed every production observer: settings canvases consume those status values; layout safety observes its own unchanged preview/deadline publications; no production onChange subscriber depends on unchanged external-status notifications. Explicit registration, permission refresh, launch-at-login operations, configuration writes, preview safety timers, persisted data, real status-change notifications and language invalidation are unchanged. Regression checks cover unchanged publication suppression, live changed status and relocalized credits."
+    },
+    "Sources/LoginItemManager.swift": {
+      "baselineSha256": "ffd6de0dc4b9afd68a35a7fc29f17183c233b0e9b5de857316ada9030fe8bac9",
+      "sha256": "f353a6d68ca3ca1384b57dcf8527402c50210e49b67e2fb62818d9b22f37109a",
+      "reason": "User requested eliminating measured opening/tab stalls. Confines raw ServiceManagement status, registration and legacy-file operations to one serial utility queue. Passive status refresh is bounded and coalesced; main reads a localized value snapshot, and generation checks discard results predating explicit edits. Startup applies the same saved launch-at-login preference asynchronously before activation observation; explicit edits retain synchronous error/rollback behavior and refresh their verified snapshot. Installation validation, legacy LaunchAgent format/migration, service registration semantics, permission status precedence and persistent settings are unchanged. Fake-reader regressions cover a blocked read while main stays responsive, coalescing, main publication, stale-read rejection after edits, external status changes, errors, startup preference handling and relocalization."
     }
   },
   "reviewedTranslationUpdates": {

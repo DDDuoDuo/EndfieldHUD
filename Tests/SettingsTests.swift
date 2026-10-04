@@ -284,6 +284,10 @@ enum SettingsTests {
         controller.loginStatusProvider = { "Enabled in macOS" }
         controller.refreshExternalStatus()
         check(controller.loginStatus == "Enabled in macOS", "OS login state is reported through an injected live provider")
+        let afterExternalStatus = subscriberB
+        controller.refreshExternalStatus()
+        check(subscriberB == afterExternalStatus,
+              "Reading unchanged external status does not republish every retained settings canvas")
         controller.update { $0.launchAtLogin = false }
         check(!store.configuration.launchAtLogin && loginRequests == [false, false],
               "Successful login operation saves preference once")
