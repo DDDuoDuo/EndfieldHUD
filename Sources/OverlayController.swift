@@ -172,13 +172,13 @@ final class OverlayController: NSObject {
     func receiveStatusItemFiles(_ urls: [URL], snapshot: BatterySnapshot,
                                 configuration: AppConfiguration) -> Bool {
         guard !urls.isEmpty, urls.allSatisfy(\.isFileURL), canPresentShelfDrop else { return false }
+        if systemView == nil, case .failure = shelfStore {
+            shelfStore = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
+        }
         let previousIDs = Set((try? shelfStore.get().items.map(\.id)) ?? [])
         if let systemView {
             guard systemView.importShelfFiles(urls) else { return false }
         } else {
-            if case .failure = shelfStore {
-                shelfStore = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
-            }
             do {
                 let store = try shelfStore.get()
                 try store.add(urls: urls)
