@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 /// One shared panel. The charging HUD rests idle; the summonable Power HUD
 /// owns ambient Core Animation tracks only while fully open.
@@ -18,6 +19,28 @@ final class OverlayController: NSObject {
     private var presentationCompleted = false
     private var requestedDuration: Double = 5
     private var systemView: SystemHUDView?
+    private final class ClosedHeapCleanupTicket {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+        func begin() -> Bool { lock.lock(); defer { lock.unlock() }; return !cancelled }
+    }
+    private var closedHeapCleanup: DispatchWorkItem?
+    private var closedHeapCleanupTicket: ClosedHeapCleanupTicket?
+    private var closedHeapCleanupGeneration: UInt64 = 0
+    private var closedHeapCleanupInFlight = false
+    private(set) var closedHeapCleanupRunsForVerification = 0
+    private(set) var closedHeapCleanupLastRunGenerationForVerification: UInt64?
+    private(set) var lastClosedHeapCleanupMillisecondsForVerification = 0.0
+    var closedHeapCleanupPendingForVerification: Bool { closedHeapCleanup != nil }
+    var closedHeapCleanupActiveForVerification: Bool { closedHeapCleanup != nil || closedHeapCleanupInFlight }
+    func rescheduleClosedHeapCleanupForVerification() -> UInt64 {
+        precondition(CommandLine.arguments.contains("--ui-test") && Thread.isMainThread
+            && systemPhase == .closed && systemView == nil)
+        cancelClosedHeapCleanup()
+        scheduleClosedHeapCleanup()
+        return closedHeapCleanupGeneration
+    }
     private lazy var mapStore: Result<WorldMapStore, Error> = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }
     private lazy var notesStore: Result<NotesStore, Error> = Result { try NotesStore(directory: NotesStore.applicationDirectory()) }
     private lazy var shelfStore: Result<FileShelfStore, Error> = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
@@ -248,6 +271,8 @@ final class OverlayController: NSObject {
         }
     }
 
+    deinit { cancelClosedHeapCleanup() }
+
     func update(snapshot: BatterySnapshot, configuration: AppConfiguration, preview: Bool = false) {
         let displayChanged = self.configuration.hudDisplayUUID != configuration.hudDisplayUUID
             || self.configuration.openOnActiveDisplay != configuration.openOnActiveDisplay
@@ -436,6 +461,7 @@ final class OverlayController: NSObject {
     /// closing animation, discard unrelated handoffs, then return to Sparkle.
     func closeForApplicationUpdate(completion: @escaping () -> Void) {
         guard applicationUpdateCompletion == nil else { return }
+        cancelClosedHeapCleanup()
         quitRequested = true
         pendingAppLaunch = nil
         pendingShelfReveal?.close(); pendingShelfReveal = nil
@@ -473,6 +499,7 @@ final class OverlayController: NSObject {
 
     /// Sleep/session shutdown and termination cannot wait for visible animations.
     func forceCloseSystemOverlay() {
+        cancelClosedHeapCleanup()
         pendingAppLaunch = nil
         pendingShelfReveal?.close(); pendingShelfReveal = nil
         appLaunchGeneration &+= 1
@@ -501,6 +528,7 @@ final class OverlayController: NSObject {
         switch action {
         case .none: return
         case .open(let token):
+            cancelClosedHeapCleanup()
             logSystemPhase()
             if case .failure = mapStore {
                 mapStore = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }
@@ -753,6 +781,7 @@ final class OverlayController: NSObject {
     }
 
     private func tearDownSystemPresentation(restoreFocus: Bool, notify: Bool) {
+        cancelClosedHeapCleanup()
         let shouldQuit = quitAfterSystemClose
         let updateCompletion = applicationUpdateCompletion
         applicationUpdateCompletion = nil
@@ -802,11 +831,57 @@ final class OverlayController: NSObject {
             onQuitAfterSystemClose?()
             return
         }
+        if notify { scheduleClosedHeapCleanup() }
         if let action, notify { DispatchQueue.main.async(execute: action) }
         if notify { onSystemClosed?() }
         if openStorage && notify { _ = openSystemStorage() }
         if let shelfReveal, notify { revealShelfFile(shelfReveal.url) }
         if let appLaunch { completeAppShortcutHandoff(appLaunch) }
+    }
+
+    private func cancelClosedHeapCleanup() {
+        closedHeapCleanupGeneration &+= 1
+        closedHeapCleanup?.cancel(); closedHeapCleanup = nil
+        closedHeapCleanupTicket?.cancel(); closedHeapCleanupTicket = nil
+    }
+
+    private func scheduleClosedHeapCleanup() {
+        let generation = closedHeapCleanupGeneration
+        let ticket = ClosedHeapCleanupTicket()
+        closedHeapCleanupTicket = ticket
+        let work = DispatchWorkItem { [weak self, ticket] in
+            guard let self, self.closedHeapCleanupGeneration == generation,
+                  self.systemPhase == .closed, self.systemView == nil else { return }
+            self.closedHeapCleanup = nil
+            guard !self.closedHeapCleanupInFlight else {
+                self.closedHeapCleanupTicket = nil
+                return
+            }
+            self.closedHeapCleanupInFlight = true
+            // Frame construction leaves reusable malloc pages after the views
+            // are released. Return only free pages once, off the main thread;
+            // live shader/document/image caches remain ready for the next open.
+            DispatchQueue.global(qos: .utility).async { [weak self, ticket] in
+                let elapsed: Double?
+                if ticket.begin() {
+                    let began = CACurrentMediaTime()
+                    _ = malloc_zone_pressure_relief(nil, 0)
+                    elapsed = (CACurrentMediaTime() - began) * 1000
+                } else { elapsed = nil }
+                DispatchQueue.main.async { [weak self, ticket] in
+                    guard let self else { return }
+                    self.closedHeapCleanupInFlight = false
+                    if self.closedHeapCleanupTicket === ticket { self.closedHeapCleanupTicket = nil }
+                    if let elapsed {
+                        self.closedHeapCleanupRunsForVerification += 1
+                        self.closedHeapCleanupLastRunGenerationForVerification = generation
+                        self.lastClosedHeapCleanupMillisecondsForVerification = elapsed
+                    }
+                }
+            }
+        }
+        closedHeapCleanup = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     @objc private func discardPosition() { finishPositionEditing(position: nil) }

@@ -1007,7 +1007,8 @@ final class HUDSourceWatchView: NSView {
                 projection: gpuProjection, inverseView: HUDSourceGeometry.floatMatrix(cameraModel.shaderCameraToWorld),
                 uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: gpuProjection,
                     near: Float(cameraModel.near), far: Float(cameraModel.far))),
-                batches: batches)
+                batches: batches, structureToken: frame.batchStructureToken,
+                dynamicPrefixCount: batches.count - frame.batches.count)
             renderedFrameCount += 1
             if desktopMode {
                 updateDesktopLabels(frame: frame, camera: camera)
@@ -2128,13 +2129,6 @@ final class HUDSourceWatchView: NSView {
     }
 
     private func updateAccessibility(frame: HUDSourceWatchFrameBuilder.Frame, camera: HUDSourceCamera) {
-        if desktopMode, let window {
-            let polygon = industryLogoPolygon()
-            let rect = Self.polygonPath(polygon).boundingBoxOfPath
-            logoAccessibility.setAccessibilityHidden(polygon.count != 4 || isHidden)
-            logoAccessibility.setAccessibilityEnabled(inputEnabled)
-            if !rect.isNull { logoAccessibility.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil))) }
-        }
         guard let window else { return }
         if desktopMode, let root = renderedCamera?.worldRoot {
             let animated = playback.phase != .visible || buttonAnimation.requiresFrames(at: now)
@@ -2143,6 +2137,13 @@ final class HUDSourceWatchView: NSView {
                prior.scroll == verticalNormalizedPosition, prior.input == inputEnabled { return }
             accessibilityGeometryWasAnimating = animated
             lastAccessibilityGeometry = (root, bounds, window.frame, verticalNormalizedPosition, inputEnabled)
+        }
+        if desktopMode {
+            let polygon = industryLogoPolygon()
+            let rect = Self.polygonPath(polygon).boundingBoxOfPath
+            logoAccessibility.setAccessibilityHidden(polygon.count != 4 || isHidden)
+            logoAccessibility.setAccessibilityEnabled(inputEnabled)
+            if !rect.isNull { logoAccessibility.setAccessibilityFrame(window.convertToScreen(convert(rect, to: nil))) }
         }
         var scrollArea: CGRect?
         if desktopMode, let scroll = frame.layoutReport.scroll, scroll.hiddenLength > 0,

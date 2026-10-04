@@ -69,6 +69,14 @@ where they conflict.
   polling and avoid unchanged hover/logo style copies. Clear obsolete local
   compiler caches while retaining build dependencies and verification evidence.
 
+- **2026-10-03 — Performance preservation:** Keep the exact released motion,
+  effects, frame cadence and render resolution. Reuse unchanged scene/image and
+  draw preparation, defer hidden fallback artwork, shorten JSON loading, and
+  release replaced portraits and unused allocator pages after close. Retain live
+  caches for reopening and preserve existing saved-data contracts. The
+  [performance investigation](performance-parity.md) records exact GPU comparisons
+  and measured gains; old-native-shell CPU/RAM parity remains an open limitation.
+
 ## Verification evidence
 
 The integration document records the current

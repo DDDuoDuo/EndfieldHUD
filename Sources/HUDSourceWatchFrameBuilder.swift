@@ -28,6 +28,7 @@ final class HUDSourceWatchFrameBuilder {
         }
         func node(_ id: HUDSourceID) -> HUDSourceResolvedNode? { resolvedDelta[id] ?? resolvedBase[id] }
         let batches: [HUDSourceMetalRenderer.Batch]
+        let batchStructureToken: HUDSourceMetalRenderer.BatchStructureToken
         let hits: [Hit]
         let layoutReport: HUDSourceWatchLayout.Report
         let diagnostics: [String]
@@ -35,8 +36,10 @@ final class HUDSourceWatchFrameBuilder {
 
         init(resolved: [HUDSourceID: HUDSourceResolvedNode], batches: [HUDSourceMetalRenderer.Batch], hits: [Hit],
              layoutReport: HUDSourceWatchLayout.Report, diagnostics: [String], inheritedAlpha: [HUDSourceID: Double] = [:],
-             resolvedDelta: [HUDSourceID: HUDSourceResolvedNode] = [:]) {
+             resolvedDelta: [HUDSourceID: HUDSourceResolvedNode] = [:],
+             batchStructureToken: HUDSourceMetalRenderer.BatchStructureToken = .init()) {
             resolvedBase = resolved; self.resolvedDelta = resolvedDelta; self.batches = batches; self.hits = hits
+            self.batchStructureToken = batchStructureToken
             self.layoutReport = layoutReport; self.diagnostics = diagnostics; self.inheritedAlpha = inheritedAlpha
         }
 
@@ -92,9 +95,12 @@ final class HUDSourceWatchFrameBuilder {
     private let softMaskIDs: [HUDSourceID]
     private let cutNodeIDs: [HUDSourceID]
     private let sourceSorting: [HUDSourceID: HUDSourceCanvasSorting.State]
+    private let sourceLayout: HUDSourceWatchLayout
+    private let sceneResolver: HUDSourceScene.IncrementalResolver
     private var cacheGeneration: UInt64 = 0
     private var cachedGeneration: UInt64 = .max
     private var cachedStaticTransforms: [HUDSourceID: HUDSourceTransformOverride] = [:]
+    private var cachedLayoutText: [HUDSourceID: String] = [:]
     private var cachedProperties: [HUDSourceID: [String: Double]] = [:]
     private var cachedUnboundPaths: Set<String> = []
     private var cachedUnregisteredBindings: Set<String> = []
@@ -108,15 +114,32 @@ final class HUDSourceWatchFrameBuilder {
     private let slantIndependentOfAmbient: Bool
     private var cachedLayoutReport: HUDSourceWatchLayout.Report?
     private var cachedAlpha: [HUDSourceID: Double] = [:]
+    private let alphaChannels: [(node: HUDSourceID, fallback: Double)]
+    private var cachedAlphaInputs: [Double]?
+    private(set) var reusedInheritedAlphaCount = 0
+    private(set) var reusedClipRectCount = 0
+    private(set) var reusedImagePresentationCount = 0
     private var cachedResolved: [HUDSourceID: HUDSourceResolvedNode] = [:]
     private typealias OrderedBatch = (order: Int, sequence: Int, batch: HUDSourceMetalRenderer.Batch)
     private typealias OrderedHit = (order: Int, sequence: Int, hit: Hit)
+    private struct ImagePresentationKey: Equatable {
+        let generation: UInt64
+        let rect: HUDSourceRect?
+        let pivot: SIMD2<Double>
+        let toCanvas: simd_double4x4
+        let clip: [Float]?
+        let properties: [String: Double]?
+        let tint: SIMD4<Float>?
+        let alpha: Double
+    }
+    private let imagePresentationNodeIDs: Set<HUDSourceID>
     private struct NodeOutput {
         let batches: [OrderedBatch]
         let hits: [OrderedHit]
         let diagnostics: [String]
         let sequenceStart: Int
         let sequenceCount: Int
+        let imageKey: ImagePresentationKey?
     }
     private var nodeOutputs: [HUDSourceID: NodeOutput] = [:]
     private struct AmbientGeometry {
@@ -261,10 +284,39 @@ final class HUDSourceWatchFrameBuilder {
     private var registeredDomainMeshes: Set<HUDSourceID> = []
     private var geometryKeys: [HUDSourceID: [Double]] = [:]
     private var geometryContentKeys: [HUDSourceID: String] = [:]
+    private struct ImageMeshKey: Equatable {
+        let rect: HUDSourceRect
+        let pivot: SIMD2<Double>
+        let fill: Double?
+        let sprite: String?
+        let desktopUV: Bool
+    }
+    private struct CachedImageMesh {
+        let key: ImageMeshKey
+        let mesh: HUDSourceImageMesh
+    }
+    /// One entry per immutable source component, replaced when its inputs
+    /// change. Gyro/hover transforms do not change the local sprite mesh.
+    private var imageMeshes: [HUDSourceID: CachedImageMesh] = [:]
+    private(set) var reusedImageMeshCount = 0
+    private(set) var rebuiltImageMeshCount = 0
     private var textMeshes: [HUDSourceID: (key: [Double], literal: String, mesh: HUDSourceTextGeometry.Mesh)] = [:]
     private var sourceMaterialVectors: [HUDSourceID: [String: [Float]]] = [:]
     private let buttonIDs: Set<HUDSourceID>
     private let canvasSorting: HUDSourceCanvasSorting
+    private struct ClipKey: Hashable {
+        let canvas: HUDSourceID
+        let masks: [HUDSourceID]
+    }
+    private struct CachedClipRect { let value: [Float]? }
+    private struct NodeAncestry {
+        let button: HUDSourceID?
+        let softMask: HUDSourceID?
+        let acceptsInput: Bool
+        let masks: [HUDSourceID]
+        let clipKey: ClipKey?
+    }
+    private let ancestry: [HUDSourceID: NodeAncestry]
     private struct SoftMask {
         let worldToUnit: simd_double4x4
         let textureID: String
@@ -287,6 +339,8 @@ final class HUDSourceWatchFrameBuilder {
          domain: HUDSourceWatchDomain? = nil, includeDomain: Bool = true, includeSourceText: Bool = true,
          additionalAmbientRotationIDs: Set<HUDSourceID> = []) throws {
         self.document = document; self.renderer = renderer; self.includeSourceText = includeSourceText
+        sourceLayout = HUDSourceWatchLayout(document: document)
+        sceneResolver = HUDSourceScene.IncrementalResolver(scene: document.scene)
         desktopProfileNodeIDs = Set(document.desktopProfileCard?.scene.nodes.map(\.id) ?? [])
         ambientRoots = Set(document.animation.ambient.curves.filter { $0.group == "m_RotationCurves" }.flatMap(\.nodeIDs))
             .union(additionalAmbientRotationIDs)
@@ -306,6 +360,12 @@ final class HUDSourceWatchFrameBuilder {
         defaultSelectableTints = try HUDSourceSelectableColor(document: document).colors(at: 0)
         canvasSorting = HUDSourceCanvasSorting(scene: document.scene, components: document.components)
         sourceSorting = canvasSorting.resolve(panelBase: Int(document.component("Canvas", on: document.scene.rootID)?["m_SortingOrder"].float() ?? 0))
+        alphaChannels = traversalIDs.flatMap { id in
+            (document.components[id] ?? []).compactMap { component in
+                component.kind == "CanvasGroup" && component.enabled
+                    ? (node: id, fallback: component["m_Alpha"].float(1)) : nil
+            }
+        }
         let sourceDomain = try includeDomain ? (domain ?? HUDSourceWatchDomain(resourceRoot: document.root.appendingPathComponent("Domain"))) : nil
         self.domain = sourceDomain
         text = includeSourceText || sourceDomain != nil
@@ -316,6 +376,36 @@ final class HUDSourceWatchFrameBuilder {
         }).merging(sourceDomain?.materials ?? [:]) { watch, _ in watch }
         buttonIDs = Set(document.components.compactMap { id, records in
             records.contains(where: { $0.kind == "UIButton" && $0.enabled }) ? id : nil
+        })
+        var ancestry: [HUDSourceID: NodeAncestry] = [:]
+        for id in traversalIDs {
+            let parent = document.scene.node(id)?.parentID.flatMap { ancestry[$0] }
+            let components = document.components[id] ?? []
+            let closestMask = components.first { $0.kind == "UISoftMask" }
+            // A disabled closest mask still stops the ancestor search.
+            let mask: HUDSourceID?
+            if let closestMask { mask = closestMask.enabled ? id : nil }
+            else { mask = parent?.softMask }
+            var acceptsInput = true, ignoresParent = false
+            for group in components where group.kind == "CanvasGroup" && group.enabled {
+                acceptsInput = acceptsInput && group["m_BlocksRaycasts"].flag(true) && group["m_Interactable"].flag(true)
+                ignoresParent = ignoresParent || group["m_IgnoreParentGroups"].flag()
+            }
+            if !ignoresParent { acceptsInput = acceptsInput && (parent?.acceptsInput ?? true) }
+            var masks = sourceSorting[id]?.startsSortingBoundary == true ? [] : (parent?.masks ?? [])
+            if document.component("RectMask2D", on: id) != nil { masks.append(id) }
+            let clipKey = masks.isEmpty ? nil : sourceSorting[id]?.nearestCanvasID.map { ClipKey(canvas: $0, masks: masks) }
+            ancestry[id] = NodeAncestry(button: buttonIDs.contains(id) ? id : parent?.button,
+                softMask: mask, acceptsInput: acceptsInput, masks: masks, clipKey: clipKey)
+        }
+        self.ancestry = ancestry
+        imagePresentationNodeIDs = Set(traversalIDs.filter { id in
+            guard !dynamicNodes.contains(id) else { return false }
+            let components = document.components[id] ?? []
+            // World-dependent text, meshes and soft-mask uniforms retain the
+            // complete builder. Plain UI graphics have Canvas-local geometry.
+            return components.contains { ["UIImage", "Image", "UIRawImage", "RawImage", "NonDrawingGraphic"].contains($0.kind) && $0.enabled }
+                && !components.contains { ["UIText", "MeshFilter", "UISoftMask", "UISoftMaskable"].contains($0.kind) }
         })
         var textures: [String: HUDSourceJSONValue] = [:]
         for texture in document.sprites["source_textures"].array {
@@ -391,10 +481,10 @@ final class HUDSourceWatchFrameBuilder {
             var value = pose.transforms[id] ?? HUDSourceTransformOverride()
             value.active = false; pose.transforms[id] = value
         }
-        // The loop changes only seven decorative rotations. Preserve native
-        // scrolling/hover/wrapper semantics by invalidating for every other
-        // transform, material property, layout or input change. Reference
-        // Domain/widget playback always uses the uncached authoritative path.
+        // Decorative rotations do not affect intrinsic sizing. The layout
+        // writers read transforms, text and scroll inputs; color/material
+        // changes still invalidate presentation without repeating sizing.
+        // Reference Domain/widget playback keeps its authoritative path.
         var staticTransforms = pose.transforms
         for id in ambientRoots {
             var value = staticTransforms[id] ?? HUDSourceTransformOverride()
@@ -402,37 +492,43 @@ final class HUDSourceWatchFrameBuilder {
         }
         let staticProperties = pose.properties
         let canCache = domain == nil && document.widgets == nil
-        let reuseLayout = canCache && cachedGeneration == cacheGeneration
-            && cachedStaticTransforms == staticTransforms && cachedProperties == pose.properties
-            && cachedUnboundPaths == pose.unboundPaths && cachedUnregisteredBindings == pose.unregisteredBindings
-            && cachedTints == selectableTints
+        let reuseLayout = canCache && !forceRebuild
+            && cachedStaticTransforms == staticTransforms && cachedLayoutText == widget.text
             && cachedScroll == verticalNormalizedPosition && cachedEntryCount == desktopNavigation?.entryCount
             && cachedLayoutPose != nil && cachedLayoutReport != nil
-        let reuse = reuseLayout && cachedRoot == worldRoot
+        let reuseTransform = reuseLayout && cachedRoot == worldRoot
+        let reuse = reuseTransform && cachedGeneration == cacheGeneration
+            && cachedProperties == pose.properties && cachedTints == selectableTints
+            && cachedUnboundPaths == pose.unboundPaths && cachedUnregisteredBindings == pose.unregisteredBindings
         let report: HUDSourceWatchLayout.Report
         if reuseLayout {
-            var layoutPose = reuse ? cachedLayoutPose! : cachedBeforeSlant!
+            var layoutPose = reuseTransform ? cachedLayoutPose! : cachedBeforeSlant!
             for id in ambientRoots { layoutPose.transforms[id]?.localRotation = pose.transforms[id]?.localRotation }
-            if !reuse {
+            if !reuseTransform {
                 if slantIndependentOfAmbient && cachedBeforeSlantResolved == nil {
                     cachedBeforeSlantResolved = try document.scene.resolve(overrides: cachedBeforeSlant!.transforms)
                 }
-                try HUDSourceWatchLayout(document: document).applySlant(to: &layoutPose, worldRoot: worldRoot,
+                try sourceLayout.applySlant(to: &layoutPose, worldRoot: worldRoot,
                     resolvedBeforeSlant: slantIndependentOfAmbient ? cachedBeforeSlantResolved : nil)
-                nodeOutputs.removeAll(keepingCapacity: true)
-                cachedLayoutPose = layoutPose
             }
+            // Layout does not write these fields. Always retain this frame's
+            // current alpha, material channels and diagnostics.
+            layoutPose.properties = pose.properties
+            layoutPose.unboundPaths = pose.unboundPaths
+            layoutPose.unregisteredBindings = pose.unregisteredBindings
+            cachedLayoutPose = layoutPose
             pose = layoutPose; report = cachedLayoutReport!; cachedLayoutFrameCount += 1
         } else {
             cachedBeforeSlantResolved = nil
-            let layout = HUDSourceWatchLayout(document: document) { [weak self] id, _ in
+            var layout = sourceLayout
+            layout.intrinsicSize = { [weak self] id, _ in
                 guard let self else { return nil }
                 return try? self.text?.preferredSize(on: id, literal: widget.text[id])
             }
             report = try layout.apply(to: &pose, verticalNormalizedPosition: verticalNormalizedPosition,
-                worldRoot: worldRoot, desktopNavigation: desktopNavigation, beforeSlant: { [weak self] in self?.cachedBeforeSlant = $0 })
+                worldRoot: worldRoot, desktopNavigation: desktopNavigation, beforeSlant: { [weak self] in self?.cachedBeforeSlant = $0 },
+                forceSlantRebuild: forceRebuild)
             cachedLayoutPose = pose; cachedLayoutReport = report; rebuiltLayoutFrameCount += 1
-            nodeOutputs.removeAll(keepingCapacity: true)
         }
         if reuse, ambientFastPathSupported, let cached = cachedPresentation {
             return try ambientFrame(rotations: pose.transforms, layoutPose: pose, cached: cached, worldRoot: worldRoot)
@@ -441,12 +537,21 @@ final class HUDSourceWatchFrameBuilder {
         if reuse {
             resolved = cachedResolved.merging(try ambientResolved(rotations: pose.transforms, layoutPose: pose)) { _, current in current }
         } else {
-            resolved = try document.scene.resolve(overrides: pose.transforms)
+            resolved = try canCache && !forceRebuild
+                ? sceneResolver.resolve(overrides: pose.transforms)
+                : document.scene.resolve(overrides: pose.transforms)
             cachedResolved = resolved
         }
         ambientGeometry.removeAll(keepingCapacity: true)
         ambientFastPathSupported = canCache && !cutNodeIDs.contains(where: { ambientNodes.contains($0) })
-        let alpha = reuse ? cachedAlpha : document.inheritedAlpha(pose: pose)
+        // CanvasGroup inheritance does not inspect transforms or visibility.
+        // Preserve the exact ordered scalar inputs, including inactive groups;
+        // pointer/slant movement alone cannot invalidate their products.
+        let alphaInputs = canCache ? alphaChannels.map { pose.value("m_Alpha", on: $0.node, fallback: $0.fallback) } : []
+        let alpha: [HUDSourceID: Double]
+        if canCache && !forceRebuild && cachedAlphaInputs == alphaInputs {
+            alpha = cachedAlpha; reusedInheritedAlphaCount += 1
+        } else { alpha = document.inheritedAlpha(pose: pose) }
         var batches: [(order: Int, sequence: Int, batch: HUDSourceMetalRenderer.Batch)] = []
         var hits: [(order: Int, sequence: Int, hit: Hit)] = []
         var diagnostics: [String] = []
@@ -464,26 +569,34 @@ final class HUDSourceWatchFrameBuilder {
         // a source reference; registered Canvas writers all receive that same
         // base, independently of their parent Canvas's offset.
         let sorting = sourceSorting
-        var canvases: [HUDSourceID: HUDSourceID] = [:], orders: [HUDSourceID: Int] = [:]
-        var masks: [HUDSourceID: [HUDSourceID]] = [:]
+        var canvasInverses: [HUDSourceID: simd_double4x4] = [:]
+        var singularCanvases: Set<HUDSourceID> = []
+        var clipRects: [ClipKey: CachedClipRect] = [:]
+        var rebuiltMasks: [HUDSourceID: [HUDSourceID]] = [:]
         var sequence = 0
+        var completedPresentation = false
+        defer {
+            // Never retain a partially built template after a throwing image
+            // or material path. Successful frames keep one output per node.
+            if !completedPresentation { nodeOutputs.removeAll(keepingCapacity: true) }
+        }
         for id in traversalIDs {
             guard let n = resolved[id], n.activeInHierarchy else { continue }
             let batchStart = batches.count, hitStart = hits.count, diagnosticStart = diagnostics.count
             let sequenceStart = sequence
+            var imageKey: ImagePresentationKey?, reusedImageOutput = false
+            if forceRebuild {
+                rebuiltMasks[id] = sorting[id]?.startsSortingBoundary == true ? [] : (n.node.parentID.flatMap { rebuiltMasks[$0] } ?? [])
+                if document.component("RectMask2D", on: id) != nil { rebuiltMasks[id, default: []].append(id) }
+            }
             defer {
-                if canCache && !ambientNodes.contains(id) && !reuse {
+                if canCache && !ambientNodes.contains(id) && !reuse && !reusedImageOutput {
                     nodeOutputs[id] = NodeOutput(batches: Array(batches[batchStart...]), hits: Array(hits[hitStart...]),
                         diagnostics: Array(diagnostics[diagnosticStart...]), sequenceStart: sequenceStart,
-                        sequenceCount: sequence - sequenceStart)
+                        sequenceCount: sequence - sequenceStart, imageKey: imageKey)
                 }
             }
-            let parent = n.node.parentID
-            canvases[id] = sorting[id]?.nearestCanvasID
-            orders[id] = sorting[id]?.sortingOrder ?? 0
-            masks[id] = sorting[id]?.startsSortingBoundary == true ? [] : (parent.flatMap { masks[$0] } ?? [])
-            if document.component("RectMask2D", on: id) != nil { masks[id, default: []].append(id) }
-            if reuse, let output = nodeOutputs[id], !ambientNodes.contains(id) {
+            if reuse, let output = nodeOutputs[id], output.imageKey == nil, !ambientNodes.contains(id) {
                 let offset = sequence - output.sequenceStart
                 batches.append(contentsOf: output.batches.map { ($0.order, $0.sequence + offset, $0.batch) })
                 hits.append(contentsOf: output.hits.map { ($0.order, $0.sequence + offset, $0.hit) })
@@ -491,16 +604,59 @@ final class HUDSourceWatchFrameBuilder {
                 sequence += output.sequenceCount
                 continue
             }
-            guard let canvasID = canvases[id], let canvasNode = resolved[canvasID] else { continue }
+            guard let canvasID = sorting[id]?.nearestCanvasID, let canvasNode = resolved[canvasID],
+                  !singularCanvases.contains(canvasID) else { continue }
             let canvasWorld = simd_mul(worldRoot, canvasNode.worldMatrix)
-            guard let inverseCanvas = HUDSourceGeometry.inverse(canvasNode.worldMatrix) else { continue }
+            let inverseCanvas: simd_double4x4
+            if !forceRebuild, let cached = canvasInverses[canvasID] { inverseCanvas = cached }
+            else if let inverse = HUDSourceGeometry.inverse(canvasNode.worldMatrix) {
+                inverseCanvas = inverse; canvasInverses[canvasID] = inverse
+            } else { singularCanvases.insert(canvasID); continue }
             let toCanvas = simd_mul(inverseCanvas, n.worldMatrix)
             let world = simd_mul(worldRoot, n.worldMatrix)
-            let maskIDs = masks[id] ?? []
-            let clip = clipRect(maskIDs, resolved: resolved, inverseCanvas: inverseCanvas)
+            let maskIDs = (forceRebuild ? rebuiltMasks[id] : ancestry[id]?.masks) ?? []
+            let clip: [Float]?
+            if !forceRebuild, let key = ancestry[id]?.clipKey {
+                if let cached = clipRects[key] { clip = cached.value; reusedClipRectCount += 1 }
+                else {
+                    clip = clipRect(maskIDs, resolved: resolved, inverseCanvas: inverseCanvas)
+                    clipRects[key] = CachedClipRect(value: clip)
+                }
+            } else { clip = clipRect(maskIDs, resolved: resolved, inverseCanvas: inverseCanvas) }
+            if canCache && imagePresentationNodeIDs.contains(id) {
+                let key = ImagePresentationKey(generation: cacheGeneration, rect: n.rect,
+                    pivot: pose.transforms[id]?.pivot?.simd ?? n.node.transform.rect?.pivot.simd ?? SIMD2(0.5, 0.5),
+                    toCanvas: toCanvas, clip: clip, properties: pose.properties[id],
+                    tint: selectableTints[id], alpha: alpha[id] ?? 1)
+                imageKey = key
+                if !forceRebuild, let output = nodeOutputs[id], output.imageKey == key {
+                    let offset = sequence - output.sequenceStart
+                    let batchWorld = HUDSourceGeometry.floatMatrix(canvasWorld)
+                    for entry in output.batches {
+                        var batch = entry.batch
+                        batch.world = batchWorld
+                        batches.append((entry.order, entry.sequence + offset, batch))
+                    }
+                    if !output.hits.isEmpty {
+                        let hitMasks = maskIDs.compactMap { mask -> (rect: HUDSourceRect, world: simd_double4x4)? in
+                            guard let m = resolved[mask], let r = m.rect else { return nil }
+                            return (r, simd_mul(worldRoot, m.worldMatrix))
+                        }
+                        for entry in output.hits {
+                            let hit = entry.hit
+                            hits.append((entry.order, entry.sequence + offset, Hit(graphicID: hit.graphicID,
+                                buttonID: hit.buttonID, rect: hit.rect, world: world, masks: hitMasks)))
+                        }
+                    }
+                    diagnostics.append(contentsOf: output.diagnostics)
+                    sequence += output.sequenceCount
+                    reusedImageOutput = true; reusedImagePresentationCount += 1
+                    continue
+                }
+            }
             for component in document.components[id] ?? [] where component.enabled {
                 if component.kind == "NonDrawingGraphic", let rect = n.rect,
-                   component["m_RaycastTarget"].flag(), let buttonID = buttonAncestor(id), canReceiveInput(id) {
+                   component["m_RaycastTarget"].flag(), let buttonID = buttonAncestor(id, forceWalk: forceRebuild), canReceiveInput(id, forceWalk: forceRebuild) {
                     let padding = component["m_RaycastPadding"]
                     let hitRect = HUDSourceRect(origin: rect.origin + SIMD2(padding["x"].float(), padding["y"].float()),
                         size: rect.size - SIMD2(padding["x"].float() + padding["z"].float(), padding["y"].float() + padding["w"].float()))
@@ -508,7 +664,7 @@ final class HUDSourceWatchFrameBuilder {
                         guard let m = resolved[mask], let r = m.rect else { return nil }
                         return (r, simd_mul(worldRoot, m.worldMatrix))
                     }
-                    hits.append((orders[id] ?? 0, sequence, Hit(graphicID: id, buttonID: buttonID,
+                    hits.append((sorting[id]?.sortingOrder ?? 0, sequence, Hit(graphicID: id, buttonID: buttonID,
                         rect: hitRect, world: world, masks: hitMasks))); sequence += 1
                     continue
                 }
@@ -534,12 +690,8 @@ final class HUDSourceWatchFrameBuilder {
                         key.append(sdfScale)
                     } catch { diagnostics.append("\(n.node.path): \(error)"); continue }
                 } else if component.kind == "UIRawImage" || component.kind == "RawImage" {
-                    let r = component["m_UVRect"]
-                    let u = r["x"].float(), v = r["y"].float(), w = r["width"].float(1), h = r["height"].float(1)
-                    var mesh = HUDSourceImageMesh()
-                    mesh.quad([rect.origin, SIMD2(rect.origin.x, rect.origin.y + rect.size.y), rect.origin + rect.size,
-                               SIMD2(rect.origin.x + rect.size.x, rect.origin.y)],
-                              [SIMD2(u, v), SIMD2(u, v + h), SIMD2(u + w, v + h), SIMD2(u + w, v)])
+                    let mesh = try localImage(component: component, sprite: nil, spriteID: nil, rect: rect,
+                        pivot: .zero, fill: nil, desktopUV: false, forceRebuild: forceRebuild)
                     localPositions = mesh.positions; uv = mesh.uv; indices = mesh.indices
                     textureID = component["m_Texture"].targetID?.rawValue ?? "__white"
                     if let animation = document.component("UIGraphicAnimation", on: id) {
@@ -547,7 +699,8 @@ final class HUDSourceWatchFrameBuilder {
                     }
                 } else {
                     let selectedSprite: HUDSourceImageGeometry.Sprite?
-                    if let spriteID = desktopSprites[id] ?? widget.sprites[component.id] {
+                    let spriteID = desktopSprites[id] ?? widget.sprites[component.id]
+                    if let spriteID {
                         guard let original = sourceSprites[spriteID] else { throw HUDSourceError.invalid("Explicit widget Sprite missing: " + spriteID) }
                         selectedSprite = original; contentKey = spriteID
                     } else { selectedSprite = sprites[component.id] }
@@ -560,16 +713,15 @@ final class HUDSourceWatchFrameBuilder {
                     }
                     let fill = pose.value("m_FillAmount", on: id, fallback: component["m_FillAmount"].float(1))
                     let pivot = pose.transforms[id]?.pivot?.simd ?? n.node.transform.rect?.pivot.simd ?? SIMD2(0.5, 0.5)
-                    let mesh = try HUDSourceImageGeometry.build(image: component, sprite: selectedSprite, rect: rect, pivot: pivot, fillAmount: fill)
-                    localPositions = mesh.positions; indices = mesh.indices
+                    let mesh = try localImage(component: component, sprite: selectedSprite, spriteID: spriteID,
+                        rect: rect, pivot: pivot, fill: fill, desktopUV: desktopImages[id] != nil, forceRebuild: forceRebuild)
+                    localPositions = mesh.positions; indices = mesh.indices; uv = mesh.uv
                     if let replacement = desktopImages[id] {
                         // Preserve the authored sprite mesh and ordering; only
                         // map this user image across its existing local rect.
-                        uv = mesh.positions.map { p in SIMD2((p.x - Float(rect.origin.x)) / Float(rect.size.x),
-                                                           (p.y - Float(rect.origin.y)) / Float(rect.size.y)) }
                         textureID = replacement.texture; contentKey += "desktop:" + replacement.texture
                         textureSizes[textureID] = replacement.size
-                    } else { uv = mesh.uv; textureID = selectedSprite?.textureID ?? "__white" }
+                    } else { textureID = selectedSprite?.textureID ?? "__white" }
                     key.append(fill)
                 }
                 let colorPrefix = isText ? "m_fontColor" : "m_Color"
@@ -587,8 +739,8 @@ final class HUDSourceWatchFrameBuilder {
                 }
                 color = Self.canvasVertexColor(color, alwaysGamma: document.component("Canvas", on: canvasID)?["m_VertexColorAlwaysGammaSpace"].flag() ?? false)
                 color.w *= Float(alpha[id] ?? 1)
-                let order = orders[id] ?? 0
-                if component["m_RaycastTarget"].flag(), let buttonID = buttonAncestor(id), canReceiveInput(id) {
+                let order = sorting[id]?.sortingOrder ?? 0
+                if component["m_RaycastTarget"].flag(), let buttonID = buttonAncestor(id, forceWalk: forceRebuild), canReceiveInput(id, forceWalk: forceRebuild) {
                     let padding = component["m_RaycastPadding"]
                     let hitRect = HUDSourceRect(origin: rect.origin + SIMD2(padding["x"].float(), padding["y"].float()),
                         size: rect.size - SIMD2(padding["x"].float() + padding["z"].float(), padding["y"].float() + padding["w"].float()))
@@ -620,7 +772,7 @@ final class HUDSourceWatchFrameBuilder {
                 }
                 let baseMaterial = desktopNormalMaterialNodes.contains(id) ? "__ui_default" : (materialID?.rawValue ?? "__ui_default")
                 let maskable = document.component("UISoftMaskable", on: id) != nil
-                let softMaskID = maskable ? nearestSoftMask(id) : nil
+                let softMaskID = maskable ? nearestSoftMask(id, forceWalk: forceRebuild) : nil
                 let sourceSoftMask = softMaskID.flatMap { softMasks[$0] }
                 if softMaskID != nil && sourceSoftMask == nil {
                     diagnostics.append("Unresolved original soft mask: " + n.node.path); continue
@@ -757,9 +909,11 @@ final class HUDSourceWatchFrameBuilder {
         hits.sort { $0.order == $1.order ? $0.sequence < $1.sequence : $0.order < $1.order }
         if canCache {
             cachedStaticTransforms = staticTransforms; cachedProperties = staticProperties
+            cachedLayoutText = widget.text
             cachedUnboundPaths = input.unboundPaths; cachedUnregisteredBindings = input.unregisteredBindings
             cachedTints = selectableTints; cachedRoot = worldRoot; cachedScroll = verticalNormalizedPosition
             cachedEntryCount = desktopNavigation?.entryCount; cachedGeneration = cacheGeneration; cachedAlpha = alpha
+            cachedAlphaInputs = alphaInputs
         }
         let frame = Frame(resolved: resolved, batches: batches.map(\.batch), hits: hits.map(\.hit), layoutReport: report,
             diagnostics: diagnostics + pose.unboundPaths.sorted().map { "Unbound source curve: " + $0 }
@@ -772,6 +926,7 @@ final class HUDSourceWatchFrameBuilder {
             }
         }
         cachedResourceGeneration = renderer.resourceGeneration
+        completedPresentation = true
         return frame
     }
 
@@ -867,7 +1022,8 @@ final class HUDSourceWatchFrameBuilder {
         cachedResourceGeneration = renderer.resourceGeneration
         fastAmbientFrameCount += 1
         return Frame(resolved: cachedResolved, batches: batches, hits: cached.hits, layoutReport: cached.layoutReport,
-            diagnostics: cached.diagnostics, inheritedAlpha: cached.inheritedAlpha, resolvedDelta: changed)
+            diagnostics: cached.diagnostics, inheritedAlpha: cached.inheritedAlpha, resolvedDelta: changed,
+            batchStructureToken: cached.batchStructureToken)
     }
 
     private func domainUIBatches(_ frame: HUDSourceWatchDomain.Frame, watchWorldToLocal: [Float],
@@ -948,7 +1104,8 @@ final class HUDSourceWatchFrameBuilder {
         }
         return result
     }
-    private func nearestSoftMask(_ id: HUDSourceID) -> HUDSourceID? {
+    private func nearestSoftMask(_ id: HUDSourceID, forceWalk: Bool = false) -> HUDSourceID? {
+        if !forceWalk { return ancestry[id]?.softMask }
         var current: HUDSourceID? = id
         while let node = current {
             if let mask = document.components[node]?.first(where: { $0.kind == "UISoftMask" }) {
@@ -1058,6 +1215,37 @@ final class HUDSourceWatchFrameBuilder {
         return value
     }
 
+    private func localImage(component: HUDSourceWatchComponent, sprite: HUDSourceImageGeometry.Sprite?,
+                            spriteID: String?, rect: HUDSourceRect, pivot: SIMD2<Double>, fill: Double?,
+                            desktopUV: Bool, forceRebuild: Bool) throws -> HUDSourceImageMesh {
+        let key = ImageMeshKey(rect: rect, pivot: pivot, fill: fill, sprite: spriteID, desktopUV: desktopUV)
+        if !forceRebuild, let cached = imageMeshes[component.id], cached.key == key {
+            reusedImageMeshCount += 1
+            return cached.mesh
+        }
+        var mesh: HUDSourceImageMesh
+        if component.kind == "UIRawImage" || component.kind == "RawImage" {
+            let r = component["m_UVRect"]
+            let u = r["x"].float(), v = r["y"].float(), w = r["width"].float(1), h = r["height"].float(1)
+            mesh = HUDSourceImageMesh()
+            mesh.quad([rect.origin, SIMD2(rect.origin.x, rect.origin.y + rect.size.y), rect.origin + rect.size,
+                       SIMD2(rect.origin.x + rect.size.x, rect.origin.y)],
+                      [SIMD2(u, v), SIMD2(u, v + h), SIMD2(u + w, v + h), SIMD2(u + w, v)])
+        } else {
+            mesh = try HUDSourceImageGeometry.build(image: component, sprite: sprite, rect: rect,
+                pivot: pivot, fillAmount: fill)
+            if desktopUV {
+                mesh.uv = mesh.positions.map { p in SIMD2((p.x - Float(rect.origin.x)) / Float(rect.size.x),
+                                                         (p.y - Float(rect.origin.y)) / Float(rect.size.y)) }
+            }
+        }
+        rebuiltImageMeshCount += 1
+        // forceRebuild deliberately executes the original generator. The
+        // verification path never compares cached bytes against themselves.
+        imageMeshes[component.id] = CachedImageMesh(key: key, mesh: mesh)
+        return mesh
+    }
+
     private func localText(on id: HUDSourceID, rect: HUDSourceRect, sdfScale: Double,
                            literal replacement: String? = nil) throws -> HUDSourceTextGeometry.Mesh {
         let key = [rect.origin.x, rect.origin.y, rect.size.x, rect.size.y, sdfScale]
@@ -1067,7 +1255,8 @@ final class HUDSourceWatchFrameBuilder {
         let mesh = try text.build(on: id, rect: rect, sdfScale: sdfScale, literal: replacement)
         textMeshes[id] = (key, literal, mesh); return mesh
     }
-    private func buttonAncestor(_ id: HUDSourceID) -> HUDSourceID? {
+    private func buttonAncestor(_ id: HUDSourceID, forceWalk: Bool = false) -> HUDSourceID? {
+        if !forceWalk { return ancestry[id]?.button }
         var current: HUDSourceID? = id
         while let node = current {
             if buttonIDs.contains(node) { return node }
@@ -1075,7 +1264,8 @@ final class HUDSourceWatchFrameBuilder {
         }
         return nil
     }
-    private func canReceiveInput(_ id: HUDSourceID) -> Bool {
+    private func canReceiveInput(_ id: HUDSourceID, forceWalk: Bool = false) -> Bool {
+        if !forceWalk { return ancestry[id]?.acceptsInput ?? true }
         var current: HUDSourceID? = id
         while let node = current {
             var stop = false

@@ -60,6 +60,60 @@ enum HUDSourceSceneTests {
             let moved = try scene.resolve(overrides: [childID: anchored])
             close(moved[childID]!.localMatrix.columns.3.x, 30, "Animated anchored XY keeps the source anchor reference")
             close(moved[childID]!.worldMatrix.columns.3.z, 40, "Animated anchoredPosition3D overrides Z")
+            let incremental = HUDSourceScene.IncrementalResolver(scene: scene)
+            func identicalMatrix(_ a: simd_double4x4, _ b: simd_double4x4) -> Bool {
+                (0..<4).allSatisfy { column in (0..<4).allSatisfy { a[column][$0].bitPattern == b[column][$0].bitPattern } }
+            }
+            func compareIncremental(_ overrides: [HUDSourceID: HUDSourceTransformOverride] = [:],
+                                    parentRect: HUDSourceRect? = nil) throws {
+                let cold = try scene.resolve(rootParentRect: parentRect, overrides: overrides)
+                let warm = try incremental.resolve(rootParentRect: parentRect, overrides: overrides)
+                check(warm.count == cold.count, "Incremental resolution preserves the full hierarchy")
+                for id in scene.traversalIDs {
+                    let a = warm[id]!, b = cold[id]!
+                    check(identicalMatrix(a.localMatrix, b.localMatrix) && identicalMatrix(a.worldMatrix, b.worldMatrix)
+                        && a.rect == b.rect && a.activeInHierarchy == b.activeInHierarchy,
+                        "Incremental resolution exactly matches unconditional node math")
+                }
+            }
+            try compareIncremental()
+            let rebuilt = incremental.rebuiltNodeCount
+            try compareIncremental()
+            check(incremental.rebuiltNodeCount == rebuilt && incremental.reusedNodeCount == scene.nodes.count,
+                "An unchanged pose skips all node math")
+            let mutations: [HUDSourceTransformOverride] = [
+                .init(localPosition: HUDSourceVector3(12, 34, 56)),
+                .init(localRotation: HUDSourceQuaternion(0, 0, sin(0.2), cos(0.2))),
+                .init(localScale: HUDSourceVector3(-2, 0.5, 1)),
+                .init(anchoredPosition3D: HUDSourceVector3(7, 8, 9)),
+                .init(sizeDelta: HUDSourceVector2(450, 270)),
+                .init(active: false),
+                .init(anchorMin: HUDSourceVector2(-0.2, 0.4), anchorMax: HUDSourceVector2(0.3, 0.8)),
+                .init(pivot: HUDSourceVector2(0.8, 0.1)),
+                .init(positionComponents: [0: 1 + 1 / 33_554_432.0, 2: -9])
+            ]
+            for mutation in mutations {
+                try compareIncremental([rootID: mutation])
+                try compareIncremental([rootID: mutation, childID: anchored])
+                try compareIncremental([childID: mutation])
+                try compareIncremental()
+            }
+            try compareIncremental(parentRect: HUDSourceRect(origin: SIMD2(-250, -70), size: SIMD2(700, 250)))
+            try compareIncremental(parentRect: HUDSourceRect(origin: SIMD2(0, 20), size: SIMD2(900, 400)))
+            try compareIncremental()
+            let positiveZero = HUDSourceTransformOverride(pivot: HUDSourceVector2(0, 0))
+            let negativeZero = HUDSourceTransformOverride(pivot: HUDSourceVector2(-Double.zero, 0))
+            try compareIncremental([rootID: positiveZero])
+            let beforeSignedZero = incremental.rebuiltNodeCount
+            try compareIncremental([rootID: negativeZero])
+            check(incremental.rebuiltNodeCount > beforeSignedZero, "Signed-zero inputs cannot alias a prior cache key")
+            fails("Incremental resolution preserves invalid rotation errors") {
+                _ = try incremental.resolve(overrides: [childID: .init(localRotation: HUDSourceQuaternion(0, 0, 0, 0))])
+            }
+            fails("Incremental resolution preserves invalid axis errors") {
+                _ = try incremental.resolve(overrides: [childID: .init(positionComponents: [3: 2])])
+            }
+            try compareIncremental() // A failed partial traversal cannot corrupt retained state.
             let noRectParent = HUDSourceRectTransform(anchorMin: HUDSourceVector2(1, 1), anchorMax: HUDSourceVector2(1, 1),
                 anchoredPosition: HUDSourceVector2(3, 4), sizeDelta: HUDSourceVector2(40, 20), pivot: HUDSourceVector2(0.5, 0.5))
                 .layout(parent: nil, localZ: 5)

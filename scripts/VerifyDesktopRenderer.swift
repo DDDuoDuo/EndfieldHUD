@@ -263,10 +263,22 @@ struct VerifyDesktopRenderer {
                 projection: projection, inverseView: HUDSourceGeometry.floatMatrix(model.shaderCameraToWorld),
                 uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: projection, near: Float(model.near), far: Float(model.far)))
             renderer.configureDesktopAccent(sample.accent)
+            #if HUD_SOURCE_INDEX_TOPOLOGY_VERIFY
+            let structureToken = HUDSourceMetalRenderer.BatchStructureToken()
+            renderer.submit(camera: camera, batches: batches, structureToken: structureToken); renderer.draw()
+            #else
             renderer.submit(camera: camera, batches: batches); renderer.draw()
+            #endif
             _ = try renderer.copyDrawableImage()
             guard let pixels = renderer.drawableReadbackBGRA, let pixelReport = renderer.drawableReadbackReport,
                   renderer.diagnostics.isEmpty else { throw HUDSourceError.invalid("Desktop draw failed: \(sample.name) \(renderer.diagnostics)") }
+            #if HUD_SOURCE_INDEX_TOPOLOGY_VERIFY
+            renderer.submit(camera: camera, batches: batches, structureToken: structureToken); renderer.draw()
+            _ = try renderer.copyDrawableImage()
+            guard renderer.diagnostics.isEmpty, renderer.drawableReadbackBGRA == pixels else {
+                throw HUDSourceError.invalid("Retained structure-token draw changed pixels: \(sample.name)")
+            }
+            #endif
             if sample.uniformCase != nil || sample.profileColorCase != nil {
                 // Exercise unchanged cells as well as the changed-input draw.
                 renderer.submit(camera: camera, batches: batches); renderer.draw()
@@ -316,6 +328,14 @@ struct VerifyDesktopRenderer {
         }
         print("Verified profile policy scope for", profileBatchCount, "drawable card batches from", profileNodeIDs.count,
             "selected nodes; independent yellow/green pixels and global blue control")
+        #if HUD_SOURCE_INDEX_TOPOLOGY_VERIFY
+        try renderer.verifyImmutableIndexReuseForVerification()
+        try renderer.verifyAdjacentPlanForVerification()
+        try renderer.verifyBatchStructureContractForVerification()
+        print("Verified unchanged index sharing and changed in-flight topology isolation")
+        print("Verified adjacent merge dependencies, retained geometry, world motion and vertex tint updates")
+        print("Verified producer token replacement, backdrop dependencies, external geometry and accent invalidation")
+        #endif
         #if HUD_SOURCE_PREPARED_UNIFORM_VERIFY
         try renderer.verifyPreparedUniformFieldOrderForVerification()
         guard renderer.verifiedPreparedUniformByteCount > 10_000,

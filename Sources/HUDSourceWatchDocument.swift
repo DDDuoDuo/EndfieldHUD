@@ -9,9 +9,12 @@ enum HUDSourceJSONValue: Decodable {
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if c.decodeNil() { self = .null }
-        else if let v = try? c.decode(Bool.self) { self = .bool(v) }
+        // Most source values are numbers or strings. Probe those before Bool
+        // to avoid an extra decoding error for each one. String must stay
+        // before Double: the shared decoder accepts nonfinite string sentinels.
         else if let v = try? c.decode(String.self) { self = .string(v) }
         else if let v = try? c.decode(Double.self) { self = .number(v) }
+        else if let v = try? c.decode(Bool.self) { self = .bool(v) }
         else if let v = try? c.decode([HUDSourceJSONValue].self) { self = .array(v) }
         else { self = .object(try c.decode([String: HUDSourceJSONValue].self)) }
     }

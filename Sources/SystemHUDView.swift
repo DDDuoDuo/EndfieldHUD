@@ -82,7 +82,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private let blurBackdrop = HUDBackgroundContainerView(frame: .zero)
     private let canvas = CALayer()
     private let vignette = CAGradientLayer()
-    private let artwork = HUDMechanicalArtwork()
+    // The source shell replaces this entire tree. Construct it only if its
+    // native fallback is needed, including its otherwise unused bitmap tints.
+    private var artwork: HUDMechanicalArtwork?
     private let distantPlane = HUDDepthPlane(name: "distant", depth: -95, travel: -12, lag: 0.40)
     private let rearPlane = HUDDepthPlane(name: "rear", depth: -52, travel: -10, lag: 0.36)
     private let secondaryPlane = HUDDepthPlane(name: "secondary", depth: -24, travel: 3, lag: 0.32)
@@ -400,7 +402,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 if HUDRuntimeAppearance.reduceMotion {
                     self.moduleContent?.settle()
                     self.navigation.cancelAnimations()
-                    self.artwork.frame.removeAnimation(forKey: "section.index")
+                    self.artwork?.frame.removeAnimation(forKey: "section.index")
                     self.selectedModule = self.moduleContent?.selectedModule ?? .power
                     self.navigation.select(self.selectedModule, animated: false)
                     self.updateContent()
@@ -805,7 +807,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard !HUDRuntimeAppearance.reduceMotion else { return }
         // A directional wave carries irregular local dropouts through the
         // scene. Backdrop/blur remain smooth; ambient geometry stays intact.
-        let machinery = artwork.groups.flatMap { $0.sublayers ?? [] } + [progress]
+        let machinery = (artwork?.groups.flatMap { $0.sublayers ?? [] } ?? []) + [progress]
         let cards = navigation.visibleEntries.filter { $0.module != .power && $0.module != .profile }.map(\.layer)
             + (identityCard.layer.sublayers ?? [])
         let readouts = moduleContent.layer.sublayers?.flatMap { wrapper in
@@ -1000,7 +1002,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var isSwitchingModule: Bool { moduleContent.isTransitioning }
     var shellIdentity: ObjectIdentifier { ObjectIdentifier(canvas) }
     var centerHostIdentity: ObjectIdentifier { ObjectIdentifier(moduleContent.layer) }
-    var ambientStartTime: CFTimeInterval? { artwork.rearRotor.animation(forKey: "ambient.rearRotation")?.beginTime }
+    var ambientStartTime: CFTimeInterval? { artwork?.rearRotor.animation(forKey: "ambient.rearRotation")?.beginTime }
+
+    var legacyArtworkLayerCountForVerification: Int {
+        func count(_ layer: CALayer) -> Int { 1 + (layer.sublayers ?? []).reduce(0) { $0 + count($1) } }
+        return artwork?.groups.reduce(0) { $0 + count($1) } ?? 0
+    }
 
     var ambientAnimationCount: Int { motion.ambientAnimationCount }
     var parallaxAnimationCount: Int { motion.parallaxAnimationCount + (usesSourceShell && sourceWatch?.pointerIsAnimatingForVerification == true ? 1 : 0) }
@@ -1134,7 +1141,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.updateMapOcclusionPresentation()
             self.updateButtonStates()
         }
-        if shouldAnimate && !usesSourceShell {
+        if shouldAnimate && !usesSourceShell, let artwork {
             // This frame is independent of the ambient rotors and pointer plane.
             let from = artwork.frame.presentation()?.transform ?? artwork.frame.transform
             let nudge = CAKeyframeAnimation(keyPath: "transform")
@@ -1167,7 +1174,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                                                        y: HUDChargeBadge.frame.midY + self.chargeSourceOffset)
             self.industryWordmark.backgroundColor = (self.currentDark ? NSColor.white : NSColor(white: 0.12, alpha: 1)).cgColor
             let color = self.selectedModule == .power ? self.currentBatteryTone : self.currentAccent
-            self.artwork.update(dark: self.currentDark, chargeColor: color, accentColor: self.currentAccent)
+            self.artwork?.update(dark: self.currentDark, chargeColor: color, accentColor: self.currentAccent)
             self.progress.strokeColor = color.cgColor
             self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
             self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
@@ -1693,6 +1700,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let ready = sourceEntranceReady
         transitionCompletion = nil; sourceEntranceReady = nil
         sourceWatchFailureReason = reason
+        installLegacyArtworkIfNeeded()
         sourceCenterProjection = nil
         motion.setExternalProjection(nil)
         sourceWatch?.conceal()
@@ -1736,7 +1744,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.backdrop.isHidden = false
             self.notesWorkspace.isHidden = false
             self.actionFeedback.isHidden = false
-            self.artwork.groups.forEach { $0.isHidden = overview }
+            self.artwork?.groups.forEach { $0.isHidden = overview }
             self.identityCard.layer.isHidden = overview
             self.navigation.layer.isHidden = overview
             self.navigation.bottomLayer.isHidden = overview
@@ -1840,11 +1848,19 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         vignette.locations = [0, 0.5, 1]
         backdrop.addSublayer(vignette)
         for plane in depthPlanes { canvas.addSublayer(plane.deployment) }
+    }
+
+    private func installLegacyArtworkIfNeeded() {
+        guard artwork == nil else { return }
+        let artwork = HUDMechanicalArtwork()
+        self.artwork = artwork
         distantPlane.content.addSublayer(artwork.distant)
         rearPlane.content.addSublayer(artwork.rear)
         secondaryPlane.content.addSublayer(artwork.secondary)
         framePlane.content.addSublayer(artwork.frame)
-        innerPlane.content.addSublayer(artwork.inner)
+        // The fallback may be installed after the module layers. Preserve the
+        // original ordering: mechanical artwork behind progress and controls.
+        innerPlane.content.insertSublayer(artwork.inner, at: 0)
         markersPlane.content.addSublayer(artwork.markers)
         glassPlane.content.addSublayer(artwork.glass)
         rimPlane.content.addSublayer(artwork.rim)
@@ -1867,9 +1883,20 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                                fromValue: -165, toValue: 165, duration: 6.1, beginOffset: -3.05)
         motion.registerAmbient(layer: artwork.highlightCarrier, key: "highlight", keyPath: "opacity",
                                fromValue: -0.06, toValue: 0.08, duration: 3.7)
+        artwork.update(dark: currentDark,
+            chargeColor: selectedModule == .power ? currentBatteryTone : currentAccent,
+            accentColor: currentAccent)
+        let scale = (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * designScale
+        func applyScale(_ layer: CALayer) {
+            if !(layer is CATransformLayer) { layer.contentsScale = HUDRenderScale.contentScale(for: layer, baseScale: scale) }
+            layer.sublayers?.forEach(applyScale)
+            if let mask = layer.mask { applyScale(mask) }
+        }
+        artwork.groups.forEach(applyScale)
     }
 
     private func registerTriangleMotion() {
+        guard let artwork else { return }
         for (index, rotor) in artwork.triangleRotors.enumerated() {
             motion.registerAmbient(layer: rotor, key: "triangleRotation.\(index)",
                                    keyPath: "transform.rotation.z", fromValue: 0,
@@ -2336,7 +2363,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.currentAccent = yellow
             self.updateStatusPanel()
             self.currentBatteryTone = tone
-            self.artwork.update(dark: dark, chargeColor: self.selectedModule == .power ? tone : yellow, accentColor: yellow)
+            self.artwork?.update(dark: dark, chargeColor: self.selectedModule == .power ? tone : yellow, accentColor: yellow)
             let contentScale = (self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * self.designScale
             self.navigation.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.chargeBadge.update(snapshot: self.snapshot, configuration: self.configuration, dark: dark, contentsScale: contentScale)

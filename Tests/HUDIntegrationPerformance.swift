@@ -31,6 +31,7 @@ enum HUDIntegrationPerformance {
         private var sourceProgramPreparationStatistics: [String: Int] = [:]
         private var sourceProgramPreparationFailure: String?
         private var warmOpenMilliseconds: Double?
+        private var closedHeapRelief: [String: Any]?
         private let output: URL = {
             let args = CommandLine.arguments
             let index = args.firstIndex(of: "--output")
@@ -289,6 +290,81 @@ enum HUDIntegrationPerformance {
                 require(builder.fastAmbientFrameCount > ambientBefore, "Settled ambient presentation must skip static traversal")
                 require(builder.directAmbientFrameCount == directBefore + 43, "Every direct packet must pass the independent GPU geometry comparison")
                 source.buttonAnimation.reset(at: 0, reduceMotion: true)
+                // Gyro movement rebuilds world/slant presentation, but not the
+                // products of unchanged CanvasGroup channels. Compare each
+                // cache branch with the original forced traversal, including
+                // groups that currently draw nothing.
+                let neutralCamera = try source.cameraModel.frame(screenSize: size,
+                    localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: .zero))
+                let tiltedCamera = try source.cameraModel.frame(screenSize: size,
+                    localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: SIMD3(7, -5, 0)))
+                var alphaPose = try source.document.animation.pose(
+                    entranceTime: source.document.animation.entrance.lastKeyTime,
+                    ambientTime: 0.413, exitTime: nil, canvasResolution: neutralCamera.layout.canvasSize)
+                source.playback.desktopAmbientMotion?.apply(at: 0.413, to: &alphaPose)
+                source.applyDesktopButtons(to: &alphaPose, at: 0, reduceMotion: false, forceRebuild: true)
+                let alphaSeed = try builder.build(pose: alphaPose, worldRoot: neutralCamera.worldRoot, forceRebuild: true)
+                func compareAlphaAndClip(_ pose: HUDSourceWatchPose, world: simd_double4x4,
+                                         reusesAlpha: Bool, checksClipReuse: Bool = false) throws -> HUDSourceWatchFrameBuilder.Frame {
+                    let alphaBefore = builder.reusedInheritedAlphaCount
+                    let clipBefore = builder.reusedClipRectCount
+                    let imageBefore = builder.reusedImagePresentationCount
+                    let warm = try builder.build(pose: pose, worldRoot: world)
+                    require(builder.reusedInheritedAlphaCount == alphaBefore + (reusesAlpha ? 1 : 0),
+                        "CanvasGroup cache must use exact scalar channels, independent of gyro or active state")
+                    if checksClipReuse {
+                        require(builder.reusedClipRectCount > clipBefore, "Shared Canvas/mask paths must reuse clip rectangles")
+                        require(builder.reusedImagePresentationCount > imageBefore,
+                            "Pointer-only movement must retain unchanged Canvas-local image presentation")
+                    }
+                    let warmGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(warm.batches.map(\.mesh)))
+                    let alphaBeforeCold = builder.reusedInheritedAlphaCount
+                    let clipBeforeCold = builder.reusedClipRectCount
+                    let imageBeforeCold = builder.reusedImagePresentationCount
+                    let cold = try builder.build(pose: pose, worldRoot: world, forceRebuild: true)
+                    require(builder.reusedInheritedAlphaCount == alphaBeforeCold && builder.reusedClipRectCount == clipBeforeCold
+                        && builder.reusedImagePresentationCount == imageBeforeCold,
+                        "Forced oracle must bypass inherited-alpha, clip and image presentation caches")
+                    let coldGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(cold.batches.map(\.mesh)))
+                    require(warmGeometry == coldGeometry && warm.inheritedAlpha == cold.inheritedAlpha
+                        && warm.diagnostics == cold.diagnostics && warm.batches.count == cold.batches.count
+                        && warm.hits.count == cold.hits.count, "Alpha/clip cache changes rendered geometry or inherited opacity")
+                    for (a, b) in zip(warm.batches, cold.batches) {
+                        require(a.mesh == b.mesh && a.material == b.material && a.world == b.world
+                            && a.color == b.color && a.appliesDesktopAccent == b.appliesDesktopAccent
+                            && a.uniformOverrides == b.uniformOverrides && a.textureOverrides == b.textureOverrides
+                            && a.indexRange == b.indexRange && a.stencilOverrides == b.stencilOverrides
+                            && a.colorWriteMask == b.colorWriteMask,
+                            "Cached clip bounds or alpha changes authored draw state")
+                    }
+                    for (a, b) in zip(warm.hits, cold.hits) {
+                        require(a.graphicID == b.graphicID && a.buttonID == b.buttonID && a.world == b.world && a.rect == b.rect
+                            && a.masks.count == b.masks.count && zip(a.masks, b.masks).allSatisfy { $0.rect == $1.rect && $0.world == $1.world },
+                            "Cached clip paths change hit testing")
+                    }
+                    return warm
+                }
+                let gyro = try compareAlphaAndClip(alphaPose, world: tiltedCamera.worldRoot, reusesAlpha: true, checksClipReuse: true)
+                require(gyro.inheritedAlpha == alphaSeed.inheritedAlpha, "Pointer motion changes no CanvasGroup opacity")
+                guard let alphaNode = source.document.scene.traversalIDs.first(where: { id in
+                    alphaSeed.node(id)?.activeInHierarchy == true && (alphaSeed.inheritedAlpha[id] ?? 0) > 0
+                        && builder.desktopProperties[id]?["m_Alpha"] == nil
+                        && (source.document.components[id] ?? []).contains { $0.kind == "CanvasGroup" && $0.enabled }
+                }) else { fatalError("Verification requires a visible editable CanvasGroup") }
+                alphaPose.properties[alphaNode, default: [:]]["m_Alpha"] = 0.271
+                let activeAlpha = try compareAlphaAndClip(alphaPose, world: tiltedCamera.worldRoot, reusesAlpha: false)
+                require(activeAlpha.inheritedAlpha != gyro.inheritedAlpha, "Changed visible CanvasGroup must change inherited opacity")
+                var inactive = alphaPose.transforms[alphaNode] ?? HUDSourceTransformOverride()
+                inactive.active = false; alphaPose.transforms[alphaNode] = inactive
+                let hiddenAlpha = try compareAlphaAndClip(alphaPose, world: tiltedCamera.worldRoot, reusesAlpha: true)
+                require(hiddenAlpha.node(alphaNode)?.activeInHierarchy == false
+                    && hiddenAlpha.inheritedAlpha == activeAlpha.inheritedAlpha,
+                    "Inactive groups still participate in the original alpha inheritance")
+                alphaPose.properties[alphaNode, default: [:]]["m_Alpha"] = 0.683
+                let changedHiddenAlpha = try compareAlphaAndClip(alphaPose, world: tiltedCamera.worldRoot, reusesAlpha: false)
+                require(changedHiddenAlpha.node(alphaNode)?.activeInHierarchy == false
+                    && changedHiddenAlpha.inheritedAlpha != hiddenAlpha.inheritedAlpha,
+                    "Changing an inactive CanvasGroup must invalidate the inherited-alpha cache")
                 print("PASS: cached and rebuilt source frames preserve batches, transforms, and hit geometry")
             } catch { fatalError("Source cache verification: \(error)") }
         }
@@ -323,6 +399,31 @@ enum HUDIntegrationPerformance {
                 self.later(1) {
                     precondition(self.overlay.systemPhase == .closed && self.overlay.lastClosedAnimationCount == 0,
                                  "Closing must remove hidden presentation and animations")
+                    self.measureClosedAfter()
+                }
+            }
+        }
+
+        private func measureClosedAfter() {
+            guard CommandLine.arguments.contains("--relieve-closed-heap") else {
+                measure("closed-after", seconds: 8) { self.reopen() }
+                return
+            }
+            // Opt-in experiment only. Reclaim already-free allocator pages;
+            // no live metadata, shader programs or decoded images are evicted.
+            // Keep the scan off the UI thread and outside the measured idle
+            // window, then measure the ordinary warm reopen with caches intact.
+            DispatchQueue.global(qos: .utility).async {
+                let before = self.usage(), began = CACurrentMediaTime()
+                let released = malloc_zone_pressure_relief(nil, 0)
+                let milliseconds = (CACurrentMediaTime() - began) * 1000
+                let after = self.usage()
+                DispatchQueue.main.async {
+                    self.closedHeapRelief = ["releasedAllocatorBytes": released,
+                        "milliseconds": milliseconds,
+                        "beforeFootprintBytes": before.footprint, "afterFootprintBytes": after.footprint,
+                        "beforeResidentBytes": before.resident, "afterResidentBytes": after.resident]
+                    print("Closed heap relief: \(self.closedHeapRelief!)"); fflush(stdout)
                     self.measure("closed-after", seconds: 8) { self.reopen() }
                 }
             }
@@ -421,7 +522,10 @@ enum HUDIntegrationPerformance {
             report["firstPresentedSourceFrameMilliseconds"] = firstPresentedMilliseconds
             report["startupSourcePreparationMilliseconds"] = sourcePreparationMilliseconds
             report["warmOpenSynchronousMilliseconds"] = warmOpenMilliseconds
+            report["closedHeapRelief"] = closedHeapRelief
             #if HUD_SOURCE_INTEGRATION
+            report["automaticClosedHeapCleanupRuns"] = overlay.closedHeapCleanupRunsForVerification
+            report["automaticClosedHeapCleanupMilliseconds"] = overlay.lastClosedHeapCleanupMillisecondsForVerification
             report["sourceProgramPrewarmEnabled"] = !CommandLine.arguments.contains("--cold-source")
                 && !CommandLine.arguments.contains("--skip-program-prewarm")
             report["sourceProgramPreparationMilliseconds"] = sourceProgramPreparationMilliseconds
