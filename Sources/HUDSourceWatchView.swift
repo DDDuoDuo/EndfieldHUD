@@ -81,6 +81,7 @@ final class HUDSourceWatchView: NSView {
     private var desktopLabels: [HUDSourceID: (container: CALayer, text: CATextLayer, clip: CAShapeLayer)] = [:]
     private var desktopLabelButtons: [HUDSourceID: HUDSourceID] = [:]
     private var desktopIcons: [HUDSourceID: (container: CALayer, content: CALayer, vector: CAShapeLayer, image: CALayer, clip: CAShapeLayer)] = [:]
+    private static var desktopReportIconArtwork: CGImage?
     private var desktopIconIDs: [HUDSourceID: HUDSourceID] = [:]
     private lazy var desktopRightButtonIDs = Set(desktopButtons.filter { $0.path.contains("/RightBottomNode/") }.map(\.nodeID))
     private struct DesktopLabelClip {
@@ -369,8 +370,8 @@ final class HUDSourceWatchView: NSView {
                       let label = document.scene.nodes.first(where: { $0.path.hasPrefix(node.path + "/") && $0.name == "BtnName" }) else { continue }
                 desktopSupplementalButtons.append(HUDSourceWatchButton(nodeID: node.id, path: node.path,
                     labels: [.init(nodeID: label.id, textID: "desktop." + module.rawValue, literal: module.title)]))
-                // Storage uses a desktop replacement. The Activity Monitor
-                // keeps the source Report glyph and its authored shadow.
+                // Keep the Report's authored black shadow beneath its matching
+                // source glyph; the desktop layer adds only the soft white glow.
                 for shadow in document.scene.nodes where shadow.path.hasPrefix(node.path + "/") && ["IconShadow", "ForbidIcon", "LockIcon"].contains(shadow.name) {
                     if module == .activityMonitor && shadow.name == "IconShadow" { continue }
                     frameBuilder.desktopHiddenNodes.insert(shadow.id)
@@ -1605,7 +1606,9 @@ final class HUDSourceWatchView: NSView {
             actionsByID[button.nodeID] = ButtonAction(source: button, target: entry.target)
             accessibilityButtons[button.nodeID]?.setAccessibilityLabel(entry.title)
             accessibilityButtons[button.nodeID]?.setAccessibilityHelp(entry.target.module?.title ?? (L10n.text("Open ", "打开 ") + entry.title))
-            if !(button.path.hasSuffix("/ReportBtn") && entry.target == .module(.activityMonitor)),
+            let isReport = button.path.hasSuffix("/ReportBtn") && entry.target == .module(.activityMonitor)
+            let reportArtwork = isReport ? desktopReportArtwork() : nil
+            if !isReport || reportArtwork != nil,
                let iconID = desktopIconIDs[button.nodeID] ?? document.scene.nodes.first(where: {
                 $0.path.hasPrefix(button.path + "/") && (entry.target.module?.group == .bottom
                     ? $0.path.contains("/IconShadow/") && $0.name.trimmingCharacters(in: .whitespaces) == "Icon"
@@ -1635,7 +1638,9 @@ final class HUDSourceWatchView: NSView {
                 let ink = entry.target.module?.group == .bottom ? NSColor.white : NSColor(white: 0.12, alpha: 1)
                 iconLayers.vector.fillColor = ink.cgColor; iconLayers.vector.strokeColor = ink.cgColor
                 let sourceImage: CGImage?
-                if let shortcut = entry.shortcut {
+                if isReport {
+                    sourceImage = reportArtwork
+                } else if let shortcut = entry.shortcut {
                     iconLayers.vector.path = HUDSourceDesktopIconLayout.path(AppShortcutArtwork.path(for: shortcut.iconPreset, in: iconLayers.content.bounds))
                     iconLayers.vector.lineWidth = 32 / 17
                     iconLayers.vector.fillColor = nil
@@ -1646,9 +1651,10 @@ final class HUDSourceWatchView: NSView {
                     iconLayers.vector.lineWidth = 0
                     sourceImage = HUDNavigationEntry.gameIcon(for: entry.target.module)?.cgImage(size: 96, tint: ink)
                 }
-                iconLayers.image.contents = sourceImage.map(HUDSourceDesktopIconLayout.image)
+                // Report retains its full authored canvas, size and padding.
+                iconLayers.image.contents = isReport ? sourceImage : sourceImage.map(HUDSourceDesktopIconLayout.image)
                 iconLayers.image.transform = CATransform3DIdentity
-                iconLayers.image.frame = iconLayers.content.bounds.insetBy(dx: 3, dy: 3)
+                iconLayers.image.frame = isReport ? iconLayers.content.bounds : iconLayers.content.bounds.insetBy(dx: 3, dy: 3)
                 let artworkScale: CGFloat = entry.target.module == .workMode ? 0.9 : 1
                 iconLayers.vector.transform = CATransform3DMakeScale(artworkScale, artworkScale, 1)
                 iconLayers.image.transform = CATransform3DMakeScale(artworkScale, artworkScale, 1)
@@ -1812,6 +1818,39 @@ final class HUDSourceWatchView: NSView {
                 y: textureRect["y"].float() - offset["y"].float(), width: raw["width"].float(), height: raw["height"].float()))
         desktopProfileBackgroundArtwork = artwork
         return artwork
+    }
+
+    private func desktopReportArtwork() -> CGImage? {
+        if let image = Self.desktopReportIconArtwork { return image }
+        guard let node = document.scene.nodes.first(where: { $0.path.hasSuffix("/ReportBtn/Icon/IconShadow/Icon") }),
+              let component = document.component("UIImage", on: node.id),
+              let sprite = document.spriteByComponent[component.id],
+              let textureID = sprite["texture"]["id"].string,
+              let texture = document.sprites["source_textures"].array.first(where: { $0["id"].string == textureID }),
+              let file = texture["png"]["file"].string, texture["texture_format"].float() == 25 else { return nil }
+        do {
+            let filename = URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent + ".bgra-mips.bin"
+            let bytes = try HUDSourceResourceData.read(document.root.deletingLastPathComponent().appendingPathComponent("Textures/" + filename))
+            let rect = sprite["raw_sprite"]["m_Rect"]
+            let original = try HUDSourceProfileArtwork.backgroundArtwork(bgra: bytes,
+                textureWidth: Int(texture["width"].float()), textureHeight: Int(texture["height"].float()),
+                spriteRect: CGRect(x: rect["x"].float(), y: rect["y"].float(),
+                    width: rect["width"].float(), height: rect["height"].float()))
+            guard let context = CGContext(data: nil, width: original.width, height: original.height,
+                bitsPerComponent: 8, bytesPerRow: original.width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            // Bake once into this tiny bitmap. Projection and inherited opacity
+            // follow the existing icon plane, without a live blur or new timer.
+            context.setShadow(offset: .zero, blur: 3,
+                color: NSColor.white.withAlphaComponent(0.65).cgColor)
+            context.draw(original, in: CGRect(x: 0, y: 0, width: original.width, height: original.height))
+            Self.desktopReportIconArtwork = context.makeImage()
+            return Self.desktopReportIconArtwork
+        } catch {
+            diagnostics.append("Report icon artwork: " + String(describing: error))
+            return nil // Preserve the original Metal glyph if extraction fails.
+        }
     }
 
     private func desktopCaptionSize(_ original: CGSize, target: HUDNavigationTarget?) -> CGSize {
