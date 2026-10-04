@@ -76,8 +76,13 @@ final class HUDControlHighlightLayer: CALayer {
         var hit: HUDControlHighlightLayer?
         func visit(_ item: CALayer, visible: Bool, pointVisible: Bool) {
             let shown = visible && !item.isHidden && item.opacity > 0.01
-            let local = point.map { item.convert($0, from: root) }
             var inside = pointVisible && shown
+            // Artwork and text layers have no hit region. Convert only at
+            // actual controls and clip boundaries; walking every glyph/graph
+            // layer through Core Animation's ancestor transforms on each
+            // pointer event does not contribute to the highlight result.
+            let needsLocal = inside && (item is HUDControlHighlightLayer || item.masksToBounds || item.mask != nil)
+            let local = needsLocal ? point.map { item.convert($0, from: root) } : nil
             if let local {
                 if item.masksToBounds && !item.bounds.contains(local) { inside = false }
                 if let mask = item.mask {

@@ -18,9 +18,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "Tests/Fixtures/stable-integration-contract.json"
 
-# The approved 1.1.0 release changes version metadata, not the stable bundle,
+# The approved 1.1.1 release changes version metadata, not the stable bundle,
 # preferences, permission or signed-update identity recorded in the baseline.
-RELEASE_METADATA = {"CFBundleShortVersionString": "1.1.0", "CFBundleVersion": "12"}
+RELEASE_METADATA = {"CFBundleShortVersionString": "1.1.1", "CFBundleVersion": "13"}
 
 
 # Exact user-requested copy changes; every replacement remains required.
@@ -45,7 +45,8 @@ def check(root, baseline):
     # Persistence files cannot be exempted by these explicit behavior changes.
     allowed_updates = {"Sources/WorkModeFocusController.swift", "Sources/WorldMapGeometry.swift",
                        "Sources/AppActivityMonitor.swift", "Sources/SystemActivityMonitor.swift",
-                       "Sources/Localization.swift"}
+                       "Sources/Localization.swift", "Sources/HUDSettingsController.swift",
+                       "Sources/LoginItemManager.swift"}
     for name, update in updates.items():
         if name not in allowed_updates or update.get("baselineSha256") != baseline["files"].get(name) or not update.get("reason"):
             failures.append(f"Invalid reviewed behavior update: {name}")

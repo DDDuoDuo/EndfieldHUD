@@ -74,7 +74,35 @@ enum HUDSettingsCanvasTests {
             }
         }
         let system = canvases[0], display = canvases[1], hotkeys = canvases[2], about = canvases[3]
+        func visibleRows(_ canvas: HUDSettingsCanvas) -> [CALayer] {
+            func collect(_ layer: CALayer) -> [CALayer] {
+                if layer.name?.hasPrefix("settings.row.") == true { return [layer] }
+                return (layer.sublayers ?? []).flatMap(collect)
+            }
+            return collect(canvas.layer)
+        }
+        let preparedSystemRows = visibleRows(system).map(ObjectIdentifier.init)
+        var systemChanges = 0
+        system.onChange = { systemChanges += 1 }
+        var platformStatusReads = 0
+        controller.loginStatusProvider = { platformStatusReads += 1; return "Enabled in macOS" }
         system.activate()
+        check(visibleRows(system).map(ObjectIdentifier.init) == preparedSystemRows,
+              "Activating prepared settings retains existing text/control layers instead of repainting after the transition")
+        check(systemChanges == 1, "Activation announces accessibility once even when its prepared artwork is unchanged")
+        check(platformStatusReads == 0, "Selecting settings consumes cached OS status instead of querying login services on the tab transition")
+        system.refresh()
+        check(systemChanges == 1 && visibleRows(system).map(ObjectIdentifier.init) == preparedSystemRows,
+              "Unchanged refreshes neither reconstruct settings rows nor repeat accessibility layout")
+        system.deactivate(); _ = system.makeContent(for: .system, style: style); system.activate()
+        check(visibleRows(system).map(ObjectIdentifier.init) == preparedSystemRows && systemChanges == 2,
+              "Reentering an unchanged left-side tab reuses its exact retained artwork and reactivates accessibility once")
+        controller.refreshExternalStatus()
+        check(strings(system.layer).contains("Enabled in macOS") && systemChanges == 3,
+              "A real external-status change still repaints the visible page immediately")
+        controller.refreshExternalStatus()
+        check(systemChanges == 3, "Repeated identical platform status does not republish or repaint the settings page")
+        system.onChange = nil
         for id in ["language", "login", "focus", "screen", "ambient", "batteryEnabled", "restore"] {
             check(reach(id, in: system), "Every system setting remains reachable by continuous scrolling: \(id)")
         }
@@ -299,9 +327,27 @@ enum HUDSettingsCanvasTests {
         check(strings(about.layer).contains("Credits:"), "About separates attribution with the Credits heading")
         controller.update { $0.language = .simplifiedChinese }
         check(strings(about.layer).contains("Credits:"), "The requested Credits heading remains English in the Chinese interface")
+        check(controller.about.credits.first?.role == "非官方同人项目",
+              "Cached About metadata resolves its localized credits again when the language changes")
         check(about.layer === about.makeContent(for: .about, style: style), "About styling updates reuse the retained section layer")
         check(!about.accessibleActions.contains(where: { $0.id == "github" }), "Unset repository metadata never creates an invented GitHub destination")
         about.deactivate()
+        let accessibilityHost = NSView(frame: CGRect(x: 0, y: 0, width: 400, height: 334))
+        let retainedCanvas = HUDSettingsCanvas(module: .display, controller: controller)
+        _ = retainedCanvas.makeContent(for: .display, style: style)
+        let retainedInteraction = HUDSettingsInteraction(canvas: retainedCanvas, host: accessibilityHost)
+        retainedInteraction.setActive(true)
+        let retainedControls = accessibilityHost.subviews.map(ObjectIdentifier.init)
+        check(!retainedControls.isEmpty && accessibilityHost.subviews.allSatisfy { !$0.isHidden },
+              "A reused settings page exposes its native accessibility controls on activation")
+        retainedInteraction.setActive(false)
+        check(accessibilityHost.subviews.allSatisfy(\.isHidden), "Inactive retained settings controls stay hidden")
+        _ = retainedCanvas.makeContent(for: .display, style: style)
+        retainedInteraction.setActive(true)
+        check(accessibilityHost.subviews.map(ObjectIdentifier.init) == retainedControls
+              && accessibilityHost.subviews.allSatisfy { !$0.isHidden },
+              "Reentering the unchanged page restores the same accessibility controls without repainting")
+        retainedInteraction.setActive(false)
         return assertions
     }
 }

@@ -82,7 +82,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private let blurBackdrop = HUDBackgroundContainerView(frame: .zero)
     private let canvas = CALayer()
     private let vignette = CAGradientLayer()
-    private let artwork = HUDMechanicalArtwork()
+    // The source shell replaces this entire tree. Construct it only if its
+    // native fallback is needed, including its otherwise unused bitmap tints.
+    private var artwork: HUDMechanicalArtwork?
     private let distantPlane = HUDDepthPlane(name: "distant", depth: -95, travel: -12, lag: 0.40)
     private let rearPlane = HUDDepthPlane(name: "rear", depth: -52, travel: -10, lag: 0.36)
     private let secondaryPlane = HUDDepthPlane(name: "secondary", depth: -24, travel: 3, lag: 0.32)
@@ -119,9 +121,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private(set) var clickFeedbackCountForVerification = 0
     private var motionPreferenceObserver: NSObjectProtocol?
     private let core = CALayer()
-    private let navigation = HUDNavigation()
+    private let navigation = HUDNavigation(prepareArtwork: false)
     private let chargeBadge = HUDChargeBadge()
-    private let identityCard = HUDIdentityCard()
+    private let identityCard = HUDIdentityCard(prepareArtwork: false)
     private let closeHUDButton = HUDIdentityCloseButton(frame: .zero)
     private var moduleContent: HUDModuleContent!
     private let notesCanvas: NotesCanvas
@@ -353,7 +355,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         buildRing()
         buildPanels()
         buildNavigation()
-        refreshAppNavigation(animated: false)
         notesWorkspace.name = "hud.notesWorkspace"
         // Keep screen placement/scale outside the deployment transform, just
         // as canvas does for the other planes. Retraction must not replace the
@@ -383,7 +384,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         configureTelemetryInteractions()
         configureAppShortcutInteraction()
         configureProfileInteraction()
-        refreshIdentityProfile()
         profileObserver = profileStore?.observe { [weak self] in self?.refreshIdentityProfile() }
         configureSettingsInteraction()
         workObserver = workMode.observe { [weak self] in self?.updateWorkPresentation() }
@@ -400,7 +400,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                 if HUDRuntimeAppearance.reduceMotion {
                     self.moduleContent?.settle()
                     self.navigation.cancelAnimations()
-                    self.artwork.frame.removeAnimation(forKey: "section.index")
+                    self.artwork?.frame.removeAnimation(forKey: "section.index")
                     self.selectedModule = self.moduleContent?.selectedModule ?? .power
                     self.navigation.select(self.selectedModule, animated: false)
                     self.updateContent()
@@ -805,7 +805,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard !HUDRuntimeAppearance.reduceMotion else { return }
         // A directional wave carries irregular local dropouts through the
         // scene. Backdrop/blur remain smooth; ambient geometry stays intact.
-        let machinery = artwork.groups.flatMap { $0.sublayers ?? [] } + [progress]
+        let machinery = (artwork?.groups.flatMap { $0.sublayers ?? [] } ?? []) + [progress]
         let cards = navigation.visibleEntries.filter { $0.module != .power && $0.module != .profile }.map(\.layer)
             + (identityCard.layer.sublayers ?? [])
         let readouts = moduleContent.layer.sublayers?.flatMap { wrapper in
@@ -1000,7 +1000,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     var isSwitchingModule: Bool { moduleContent.isTransitioning }
     var shellIdentity: ObjectIdentifier { ObjectIdentifier(canvas) }
     var centerHostIdentity: ObjectIdentifier { ObjectIdentifier(moduleContent.layer) }
-    var ambientStartTime: CFTimeInterval? { artwork.rearRotor.animation(forKey: "ambient.rearRotation")?.beginTime }
+    var ambientStartTime: CFTimeInterval? { artwork?.rearRotor.animation(forKey: "ambient.rearRotation")?.beginTime }
+
+    var legacyArtworkLayerCountForVerification: Int {
+        func count(_ layer: CALayer) -> Int { 1 + (layer.sublayers ?? []).reduce(0) { $0 + count($1) } }
+        return artwork?.groups.reduce(0) { $0 + count($1) } ?? 0
+    }
 
     var ambientAnimationCount: Int { motion.ambientAnimationCount }
     var parallaxAnimationCount: Int { motion.parallaxAnimationCount + (usesSourceShell && sourceWatch?.pointerIsAnimatingForVerification == true ? 1 : 0) }
@@ -1016,6 +1021,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     func performStorageActionForVerification(_ id: String) {
         guard storageIsInteractive else { return }
         storageCanvas.perform(actionID: id)
+    }
+    func performActivityActionForVerification(_ id: String) {
+        guard activityIsInteractive else { return }
+        activityCanvas.perform(actionID: id)
     }
 
     func performAppShortcutActionForVerification(_ id: String) {
@@ -1134,7 +1143,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.updateMapOcclusionPresentation()
             self.updateButtonStates()
         }
-        if shouldAnimate && !usesSourceShell {
+        if shouldAnimate && !usesSourceShell, let artwork {
             // This frame is independent of the ambient rotors and pointer plane.
             let from = artwork.frame.presentation()?.transform ?? artwork.frame.transform
             let nudge = CAKeyframeAnimation(keyPath: "transform")
@@ -1167,7 +1176,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                                                        y: HUDChargeBadge.frame.midY + self.chargeSourceOffset)
             self.industryWordmark.backgroundColor = (self.currentDark ? NSColor.white : NSColor(white: 0.12, alpha: 1)).cgColor
             let color = self.selectedModule == .power ? self.currentBatteryTone : self.currentAccent
-            self.artwork.update(dark: self.currentDark, chargeColor: color, accentColor: self.currentAccent)
+            self.artwork?.update(dark: self.currentDark, chargeColor: color, accentColor: self.currentAccent)
             self.progress.strokeColor = color.cgColor
             self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
             self.progress.strokeEnd = self.selectedModule == .power ? CGFloat(self.snapshot.percentage ?? 0) / 100 : 0.12
@@ -1225,8 +1234,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
     override func mouseExited(with event: NSEvent) {
-        navigation.hover(nil)
-        identityCard.resetInteraction(animated: true)
+        if !usesSourceShell {
+            navigation.hover(nil)
+            identityCard.resetInteraction(animated: true)
+        }
         chargeBadge.setHovered(false)
         clearControlHighlights()
         if window != nil, interactionEnabled || transitioning, !isModuleInputLocked {
@@ -1268,8 +1279,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         updateControlHighlights(at: location)
         let menuCapturesPointer = profileIsInteractive && profileInteraction?.capturesPointer == true
         let hoveredTarget = menuCapturesPointer ? nil : navigationTargetAtDesignPoint(point, forHover: true)
-        navigation.hoverTarget(hoveredTarget)
-        identityCard.setHovered(menuCapturesPointer ? nil : navigationPoint(point).flatMap { identityCard.target(at: $0) })
+        if !usesSourceShell {
+            navigation.hoverTarget(hoveredTarget)
+            identityCard.setHovered(menuCapturesPointer ? nil : navigationPoint(point).flatMap { identityCard.target(at: $0) })
+        }
         chargeBadge.setHovered(hoveredTarget == .module(.power))
     }
 
@@ -1303,7 +1316,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             clear(moduleContent.layer)
         }
         HUDControlHighlightLayer.update(in: notesCanvas.workspaceLayer, point: nil)
-        HUDControlHighlightLayer.update(in: navigation.layer, point: nil)
+        if !usesSourceShell { HUDControlHighlightLayer.update(in: navigation.layer, point: nil) }
     }
 
     func refreshControlHighlights() {
@@ -1320,8 +1333,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let notesCoverPointer = !menuCapturesPointer && notePoint.map { notesCanvas.containsWorkspacePoint($0) } == true
         HUDControlHighlightLayer.update(in: notesCanvas.workspaceLayer,
                                         point: notesCoverPointer ? notePoint : nil, pressed: pressed)
-        HUDControlHighlightLayer.update(in: navigation.layer,
+        // The source shell owns its own button feedback. Its retained native
+        // fallback is hidden, so traversing that layer tree does no visible work.
+        if !usesSourceShell {
+            HUDControlHighlightLayer.update(in: navigation.layer,
                 point: notesCoverPointer || menuCapturesPointer ? nil : navigationPoint(designPoint(location)), pressed: pressed)
+        }
         if let content = moduleContent.activeContentLayer {
             let root = content === mapCanvas.layer ? mapCanvas.controlHighlightRoot : content
             let point = notesCoverPointer ? nil : centerPoint(designPoint(location))
@@ -1541,7 +1558,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     private func configureSourceWatch() {
         do {
-            let view = try HUDSourceWatchView(frame: bounds, desktopMode: true)
+            let items = appNavigationPresentations()
+            let view = try HUDSourceWatchView(frame: bounds, desktopMode: true,
+                desktopNavigationEntries: HUDDesktopWatchNavigation.entries(shortcuts: items))
             view.isHidden = true
             view.pointerLocationProvider = { [weak self] in self?.pointerLocationProvider() ?? NSEvent.mouseLocation }
             view.onAction = { [weak self] action in
@@ -1572,8 +1591,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             backdrop.zPosition = -1500
             sourceWatch = view
             refreshIdentityProfile()
-            refreshAppNavigation(animated: false)
-            addSubview(view, positioned: .below, relativeTo: closeHUDButton)
+            refreshAppNavigation(animated: false, presentations: items)
+            addSubview(view, positioned: .below, relativeTo: nil)
         } catch { presentSourceFailure(String(describing: error)) }
     }
 
@@ -1693,9 +1712,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let ready = sourceEntranceReady
         transitionCompletion = nil; sourceEntranceReady = nil
         sourceWatchFailureReason = reason
+        installLegacyNavigationControlsIfNeeded()
+        installLegacyArtworkIfNeeded()
         sourceCenterProjection = nil
         motion.setExternalProjection(nil)
         sourceWatch?.conceal()
+        refreshIdentityProfile()
         refreshAppNavigation(animated: false)
         let field = sourceWatchFailure ?? NSTextField(wrappingLabelWithString: "")
         NSLog("Source Watch render failure: %@", reason)
@@ -1736,7 +1758,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.backdrop.isHidden = false
             self.notesWorkspace.isHidden = false
             self.actionFeedback.isHidden = false
-            self.artwork.groups.forEach { $0.isHidden = overview }
+            self.artwork?.groups.forEach { $0.isHidden = overview }
             self.identityCard.layer.isHidden = overview
             self.navigation.layer.isHidden = overview
             self.navigation.bottomLayer.isHidden = overview
@@ -1840,11 +1862,19 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         vignette.locations = [0, 0.5, 1]
         backdrop.addSublayer(vignette)
         for plane in depthPlanes { canvas.addSublayer(plane.deployment) }
+    }
+
+    private func installLegacyArtworkIfNeeded() {
+        guard artwork == nil else { return }
+        let artwork = HUDMechanicalArtwork()
+        self.artwork = artwork
         distantPlane.content.addSublayer(artwork.distant)
         rearPlane.content.addSublayer(artwork.rear)
         secondaryPlane.content.addSublayer(artwork.secondary)
         framePlane.content.addSublayer(artwork.frame)
-        innerPlane.content.addSublayer(artwork.inner)
+        // The fallback may be installed after the module layers. Preserve the
+        // original ordering: mechanical artwork behind progress and controls.
+        innerPlane.content.insertSublayer(artwork.inner, at: 0)
         markersPlane.content.addSublayer(artwork.markers)
         glassPlane.content.addSublayer(artwork.glass)
         rimPlane.content.addSublayer(artwork.rim)
@@ -1867,9 +1897,20 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
                                fromValue: -165, toValue: 165, duration: 6.1, beginOffset: -3.05)
         motion.registerAmbient(layer: artwork.highlightCarrier, key: "highlight", keyPath: "opacity",
                                fromValue: -0.06, toValue: 0.08, duration: 3.7)
+        artwork.update(dark: currentDark,
+            chargeColor: selectedModule == .power ? currentBatteryTone : currentAccent,
+            accentColor: currentAccent)
+        let scale = (window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * designScale
+        func applyScale(_ layer: CALayer) {
+            if !(layer is CATransformLayer) { layer.contentsScale = HUDRenderScale.contentScale(for: layer, baseScale: scale) }
+            layer.sublayers?.forEach(applyScale)
+            if let mask = layer.mask { applyScale(mask) }
+        }
+        artwork.groups.forEach(applyScale)
     }
 
     private func registerTriangleMotion() {
+        guard let artwork else { return }
         for (index, rotor) in artwork.triangleRotors.enumerated() {
             motion.registerAmbient(layer: rotor, key: "triangleRotation.\(index)",
                                    keyPath: "transform.rotation.z", fromValue: 0,
@@ -2043,6 +2084,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self?.updateButtonStates()
         }
         synchronizeNavigationButtons()
+    }
+
+    private func installLegacyNavigationControlsIfNeeded() {
+        guard closeHUDButton.superview == nil else { return }
+        navigation.prepareArtwork()
+        identityCard.prepareArtwork()
         closeHUDButton.title = ""; closeHUDButton.isBordered = false
         closeHUDButton.target = self; closeHUDButton.action = #selector(closeFromIdentity)
         closeHUDButton.acceptsPoint = { [weak self] point in
@@ -2072,11 +2119,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
     }
 
-    private func refreshAppNavigation(animated: Bool) {
-        let items = (appShortcutStore?.items ?? []).map { item in
+    private func appNavigationPresentations() -> [HUDAppShortcutPresentation] {
+        (appShortcutStore?.items ?? []).map { item in
             HUDAppShortcutPresentation(id: item.id, name: item.name, iconPreset: item.iconPreset,
                 icon: item.iconPreset == .original ? appShortcutStore?.icon(for: item.id) : nil)
         }
+    }
+
+    private func refreshAppNavigation(animated: Bool, presentations: [HUDAppShortcutPresentation]? = nil) {
+        let items = presentations ?? appNavigationPresentations()
         // The source row pool owns live app navigation. Populate the retained
         // fallback's native cards only when that shell is actually in use.
         navigation.updateAppShortcuts(usesSourceShell ? [] : items, animated: animated && !usesSourceShell)
@@ -2087,11 +2138,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func synchronizeNavigationButtons() {
-        let targets = Set(navigation.entries.map(\.target))
+        let entries = navigation.entries.filter { sourceWatchFailureReason != nil || $0.module == .power }
+        let targets = Set(entries.map(\.target))
         for target in Array(navigationButtons.keys) where !targets.contains(target) {
             navigationButtons.removeValue(forKey: target)?.removeFromSuperview()
         }
-        for entry in navigation.entries where navigationButtons[entry.target] == nil {
+        for entry in entries where navigationButtons[entry.target] == nil {
             let button = HUDNavigationHitButton(navigationTarget: entry.target)
             button.title = ""
             button.isBordered = false
@@ -2260,7 +2312,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             let frame = viewRect(envelope)
             if button.frame != frame { button.frame = frame }
         }
-        closeHUDButton.frame = viewRect(projectedBounds(identityCard.closeRect.insetBy(dx: -10, dy: -10), through: transforms))
+        if closeHUDButton.superview != nil {
+            closeHUDButton.frame = viewRect(projectedBounds(identityCard.closeRect.insetBy(dx: -10, dy: -10), through: transforms))
+        }
         for (direction, button) in navigationScrollButtons {
             let rect = direction < 0 ? navigation.scrollUpRect : navigation.scrollDownRect
             button.frame = viewRect(projectedBounds(rect, through: transforms))
@@ -2336,14 +2390,13 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.currentAccent = yellow
             self.updateStatusPanel()
             self.currentBatteryTone = tone
-            self.artwork.update(dark: dark, chargeColor: self.selectedModule == .power ? tone : yellow, accentColor: yellow)
+            self.artwork?.update(dark: dark, chargeColor: self.selectedModule == .power ? tone : yellow, accentColor: yellow)
             let contentScale = (self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2) * self.designScale
             self.navigation.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.chargeBadge.update(snapshot: self.snapshot, configuration: self.configuration, dark: dark, contentsScale: contentScale)
             self.identityCard.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.notesCanvas.updateAppearance(style: HUDModuleContentStyle(dark: dark, accent: yellow,
                 contentsScale: self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2))
-            self.moduleContent?.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.updateButtonStates()
             self.progress.strokeColor = (self.selectedModule == .power ? tone : yellow).cgColor
             self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
@@ -2672,11 +2725,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         input.onToggle = { [weak self] in self?.onToggle?() }
         input.isDark = { [weak self] in self?.currentDark ?? true }
         profileCanvas.onGeometryPreview = { [weak self] profile in
-            guard let self, let store = self.profileStore else { return }
-            self.identityCard.setProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                         avatarOrientation: store.imageOrientation(for: .avatar))
-            self.sourceWatch?.setDesktopProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                                avatarOrientation: store.imageOrientation(for: .avatar))
+            self?.applyIdentityProfile(profile)
         }
         profileInteraction = input
     }
@@ -2690,10 +2739,18 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     private func refreshIdentityProfile() {
         guard let store = profileStore else { return }
-        identityCard.setProfile(store.profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                avatarOrientation: store.imageOrientation(for: .avatar))
-        sourceWatch?.setDesktopProfile(store.profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                      avatarOrientation: store.imageOrientation(for: .avatar))
+        applyIdentityProfile(store.profile)
+    }
+
+    private func applyIdentityProfile(_ profile: UserProfile) {
+        guard let store = profileStore else { return }
+        if usesSourceShell {
+            sourceWatch?.setDesktopProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
+                                          avatarOrientation: store.imageOrientation(for: .avatar))
+        } else {
+            identityCard.setProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
+                                    avatarOrientation: store.imageOrientation(for: .avatar))
+        }
     }
 
     private func configureTelemetryInteractions() {
@@ -2974,6 +3031,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         selectModule(.fileShelf)
         return imported
     }
+
+    @discardableResult
+    func importShelfFiles(_ urls: [URL]) -> Bool {
+        shelfCanvas.importURLs(urls)
+    }
+
+    func revealShelfItems(_ ids: Set<UUID>) { shelfCanvas.revealItems(ids) }
+    var shelfPageForVerification: Int { shelfCanvas.pageIndex }
+    var shelfSelectedCountForVerification: Int { shelfCanvas.selectedIDs.count }
 
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
         shelfInteraction?.acceptsPreviewPanelControl() ?? false

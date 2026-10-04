@@ -31,7 +31,44 @@ struct HUDSourceWatchLayout {
     let scene: HUDSourceScene
     let components: [HUDSourceID: [HUDSourceWatchComponent]]
     let spriteByComponent: [HUDSourceID: HUDSourceJSONValue]
-    let intrinsicSize: IntrinsicSize?
+    var intrinsicSize: IntrinsicSize?
+    private struct SlantConfiguration {
+        let bottom: Double
+        let range: Double
+        let left: Double
+        let width: Double
+        let cells: [HUDSourceID]
+        let curve: HUDSourceScalarCurve
+        init(_ effect: HUDSourceWatchComponent) throws {
+            bottom = effect["_bottomY"].float()
+            range = effect["_topY"].float() - bottom
+            guard range != 0 else { throw HUDSourceError.invalid("Zero Watch slant Y range") }
+            left = effect["_leftX"].float(); width = effect["_maxWidth"].float()
+            cells = effect["_cells"].array.compactMap(\.targetID)
+            curve = try HUDSourceWatchLayout.slantCurve(effect)
+        }
+    }
+    /// Component metadata is immutable. Keep validation failures deferred
+    /// until an active effect is used, as in the original layout path.
+    private let slants: [HUDSourceID: Result<SlantConfiguration, Error>]
+    let slantRootIDs: Set<HUDSourceID>
+    private let slantEffectIDs: [HUDSourceID]
+    private let enabledComponents: [HUDSourceID: [String: HUDSourceWatchComponent]]
+    private let layoutGroups: [HUDSourceID: HUDSourceWatchComponent]
+    private let layoutChildren: [HUDSourceID: [HUDSourceID]]
+    private typealias MetricCandidate = (priority: Int, value: Metrics)
+    private let fixedMetrics: [HUDSourceID: [[MetricCandidate]]]
+    /// Scroll bounds read only the scroll owner, viewport, content and their
+    /// ancestors. Their topology is immutable; sampled transforms are not.
+    private let scrollNodeIDs: [HUDSourceID]
+    private let scrollResolutionChains: [HUDSourceID: [HUDSourceNode]]
+    func scrollResolutionNodeCount(for id: HUDSourceID) -> Int? { scrollResolutionChains[id]?.count }
+    /// A single apply call owns this cache. Every rect-writing operation clears
+    /// it; no sampled layout values survive into another animation frame.
+    private final class Evaluation {
+        var rects: [HUDSourceID: HUDSourceRect] = [:]
+    }
+    private var evaluation: Evaluation?
 
     init(document: HUDSourceWatchDocument, intrinsicSize: IntrinsicSize? = nil) {
         self.init(scene: document.scene, components: document.components,
@@ -41,12 +78,78 @@ struct HUDSourceWatchLayout {
          spriteByComponent: [HUDSourceID: HUDSourceJSONValue] = [:], intrinsicSize: IntrinsicSize? = nil) {
         self.scene = scene; self.components = components
         self.spriteByComponent = spriteByComponent; self.intrinsicSize = intrinsicSize
+        var slants: [HUDSourceID: Result<SlantConfiguration, Error>] = [:]
+        for records in components.values {
+            for effect in records where effect.enabled && effect.kind == "UIScrollCellSlantEffect" {
+                slants[effect.id] = Result { try SlantConfiguration(effect) }
+            }
+        }
+        self.slants = slants
+        slantEffectIDs = scene.traversalIDs.filter { id in
+            (components[id] ?? []).contains { $0.enabled && $0.kind == "UIScrollCellSlantEffect" }
+        }
+        slantRootIDs = Set(slantEffectIDs.flatMap { id in
+            (components[id]?.first { $0.enabled && $0.kind == "UIScrollCellSlantEffect" })?["_cells"].array.compactMap(\.targetID) ?? []
+        })
+        var enabled: [HUDSourceID: [String: HUDSourceWatchComponent]] = [:]
+        var groups: [HUDSourceID: HUDSourceWatchComponent] = [:]
+        var children: [HUDSourceID: [HUDSourceID]] = [:]
+        var metrics: [HUDSourceID: [[MetricCandidate]]] = [:]
+        for node in scene.nodes {
+            let records = components[node.id] ?? []
+            for record in records where record.enabled {
+                if enabled[node.id]?[record.kind] == nil { enabled[node.id, default: [:]][record.kind] = record }
+                if groups[node.id] == nil && ["HorizontalLayoutGroup", "VerticalLayoutGroup"].contains(record.kind) {
+                    groups[node.id] = record
+                }
+            }
+            children[node.id] = node.childIDs.filter { child in
+                guard scene.node(child)?.transform.rect != nil else { return false }
+                let ignorers = (components[child] ?? []).filter { $0.kind == "LayoutElement" }
+                return ignorers.isEmpty || ignorers.contains { !$0["m_IgnoreLayout"].flag() }
+            }
+            metrics[node.id] = (0...1).map { axis in
+                Self.fixedMetricCandidates(on: node.id, axis: axis, scene: scene,
+                    components: components, sprites: spriteByComponent)
+            }
+        }
+        enabledComponents = enabled; layoutGroups = groups; layoutChildren = children; fixedMetrics = metrics
+        var scrollIDs: [HUDSourceID] = []
+        var scrollChains: [HUDSourceID: [HUDSourceNode]] = [:]
+        for id in scene.traversalIDs {
+            guard let scroll = enabled[id]?["UIScrollRect"] ?? enabled[id]?["ScrollRect"] else { continue }
+            scrollIDs.append(id)
+            var required = Set<HUDSourceID>()
+            for start in [id, scroll["m_Content"].targetID, scroll["m_Viewport"].targetID].compactMap({ $0 }) {
+                var cursor: HUDSourceID? = start
+                while let current = cursor, required.insert(current).inserted {
+                    cursor = scene.node(current)?.parentID
+                }
+            }
+            // The same parent-first DFS order as the full resolver preserves
+            // every matrix product and its floating-point rounding.
+            scrollChains[id] = scene.traversalIDs.compactMap { required.contains($0) ? scene.node($0) : nil }
+        }
+        scrollNodeIDs = scrollIDs; scrollResolutionChains = scrollChains
     }
 
     func apply(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double = 1,
                slantMapping: SlantMapping? = nil, worldRoot: simd_double4x4 = matrix_identity_double4x4,
                desktopNavigation: HUDSourceDesktopNavigationLayout? = nil,
-               beforeSlant: ((HUDSourceWatchPose) -> Void)? = nil) throws -> Report {
+               beforeSlant: ((HUDSourceWatchPose) -> Void)? = nil,
+               forceSlantRebuild: Bool = false) throws -> Report {
+        var evaluator = self
+        evaluator.evaluation = forceSlantRebuild ? nil : Evaluation()
+        return try evaluator.applyEvaluated(to: &pose, verticalNormalizedPosition: verticalNormalizedPosition,
+            slantMapping: slantMapping, worldRoot: worldRoot, desktopNavigation: desktopNavigation,
+            beforeSlant: beforeSlant, forceSlantRebuild: forceSlantRebuild)
+    }
+
+    private func applyEvaluated(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double,
+                                slantMapping: SlantMapping?, worldRoot: simd_double4x4,
+                                desktopNavigation: HUDSourceDesktopNavigationLayout?,
+                                beforeSlant: ((HUDSourceWatchPose) -> Void)?,
+                                forceSlantRebuild: Bool) throws -> Report {
         guard verticalNormalizedPosition.isFinite else { throw HUDSourceError.invalid("Nonfinite Watch scroll position") }
         desktopNavigation?.apply(to: &pose, normalizedPosition: verticalNormalizedPosition)
         let initial = try scene.resolve(overrides: pose.transforms)
@@ -89,7 +192,8 @@ struct HUDSourceWatchLayout {
                             setAnchoredAxis(cell, axis: 0, value: x, resetAnchors: false, pose: &pose)
                         }
                     }
-                } else { try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose) }
+                } else { try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose,
+                    forceRebuild: forceSlantRebuild) }
             }
             for c in components[id] ?? [] where c.enabled && ["UIStepScrollList", "GridLayoutGroup", "NotchAdapter"].contains(c.kind) {
                 report.unverifiedCustomComponents.insert(c.kind)
@@ -101,11 +205,12 @@ struct HUDSourceWatchLayout {
     /// A gyro-only change does not rerun intrinsic sizing, layout groups, or
     /// scrolling. The authored slant writer still uses its new world axes.
     func applySlant(to pose: inout HUDSourceWatchPose, worldRoot: simd_double4x4,
-                    resolvedBeforeSlant: [HUDSourceID: HUDSourceResolvedNode]? = nil) throws {
+                    resolvedBeforeSlant: [HUDSourceID: HUDSourceResolvedNode]? = nil,
+                    forceRebuild: Bool = false) throws {
         let resolved = try resolvedBeforeSlant ?? scene.resolve(overrides: pose.transforms)
-        for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
+        for id in slantEffectIDs where resolved[id]?.activeInHierarchy == true {
             if let effect = component("UIScrollCellSlantEffect", on: id) {
-                try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose)
+                try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose, forceRebuild: forceRebuild)
             }
         }
     }
@@ -129,13 +234,16 @@ struct HUDSourceWatchLayout {
     }
 
     private func component(_ kind: String, on id: HUDSourceID) -> HUDSourceWatchComponent? {
-        components[id]?.first { $0.kind == kind && $0.enabled }
+        if evaluation != nil { return enabledComponents[id]?[kind] }
+        return components[id]?.first { $0.kind == kind && $0.enabled }
     }
     private func group(on id: HUDSourceID) -> HUDSourceWatchComponent? {
-        components[id]?.first { $0.enabled && ($0.kind == "HorizontalLayoutGroup" || $0.kind == "VerticalLayoutGroup") }
+        if evaluation != nil { return layoutGroups[id] }
+        return components[id]?.first { $0.enabled && ($0.kind == "HorizontalLayoutGroup" || $0.kind == "VerticalLayoutGroup") }
     }
     private func children(_ id: HUDSourceID, active: [HUDSourceID: HUDSourceResolvedNode]) -> [HUDSourceID] {
-        (scene.node(id)?.childIDs ?? []).filter { child in
+        if evaluation != nil { return (layoutChildren[id] ?? []).filter { active[$0]?.activeInHierarchy == true } }
+        return (scene.node(id)?.childIDs ?? []).filter { child in
             guard scene.node(child)?.transform.rect != nil, active[child]?.activeInHierarchy == true else { return false }
             // uGUI queries every ILayoutIgnorer, separately from its enabled
             // ILayoutElement measurement filter. At least one false includes it.
@@ -144,10 +252,13 @@ struct HUDSourceWatchLayout {
         }
     }
     private func rect(_ id: HUDSourceID, pose: HUDSourceWatchPose) -> HUDSourceRect? {
+        if let cached = evaluation?.rects[id] { return cached }
         guard let n = scene.node(id), let r = n.transform.rect else { return nil }
         let p = n.parentID.flatMap { rect($0, pose: pose) }, o = pose.transforms[id]
-        return r.layout(parent: p, anchoredPosition3D: o?.anchoredPosition3D, sizeDelta: o?.sizeDelta,
+        let value = r.layout(parent: p, anchoredPosition3D: o?.anchoredPosition3D, sizeDelta: o?.sizeDelta,
             localZ: n.transform.localPosition.z, anchorMin: o?.anchorMin, anchorMax: o?.anchorMax, pivot: o?.pivot).rect
+        evaluation?.rects[id] = value
+        return value
     }
     private func sizeDelta(_ id: HUDSourceID, pose: HUDSourceWatchPose) -> SIMD2<Double> {
         (pose.transforms[id]?.sizeDelta ?? scene.node(id)?.transform.rect?.sizeDelta ?? HUDSourceVector2(0, 0)).simd
@@ -170,12 +281,31 @@ struct HUDSourceWatchLayout {
                 candidates.append((0, Metrics(minimum: 0, preferred: max(0, sizeDelta(id, pose: pose)[axis]), flexible: 0)))
             }
         }
+        if evaluation != nil { candidates.append(contentsOf: fixedMetrics[id]?[axis] ?? []) }
+        else { candidates.append(contentsOf: Self.fixedMetricCandidates(on: id, axis: axis,
+            scene: scene, components: components, sprites: spriteByComponent)) }
+        func property(_ value: (Metrics) -> Double) -> Double {
+            var priority = Int.min, result = 0.0
+            for (p, m) in candidates {
+                let v = value(m)
+                guard v >= 0, p >= priority else { continue }
+                if p > priority { priority = p; result = v } else { result = max(result, v) }
+            }
+            return result
+        }
+        let minimum = property { $0.minimum }
+        return Metrics(minimum: minimum, preferred: max(minimum, property { $0.preferred }), flexible: property { $0.flexible })
+    }
+    private static func fixedMetricCandidates(on id: HUDSourceID, axis: Int, scene: HUDSourceScene,
+                                              components: [HUDSourceID: [HUDSourceWatchComponent]],
+                                              sprites: [HUDSourceID: HUDSourceJSONValue]) -> [MetricCandidate] {
+        var candidates: [MetricCandidate] = []
         for image in components[id] ?? [] where image.enabled && (image.kind == "UIImage" || image.kind == "Image") {
-            guard let sprite = spriteByComponent[image.id] else { continue }
+            guard let sprite = sprites[image.id] else { continue }
             let raw = sprite["raw_sprite"], border = raw["m_Border"]
             var referencePixels = 100.0, ancestor: HUDSourceID? = id
             while let current = ancestor {
-                if let scaler = component("CanvasScaler", on: current) { referencePixels = scaler["m_ReferencePixelsPerUnit"].float(100); break }
+                if let scaler = components[current]?.first(where: { $0.enabled && $0.kind == "CanvasScaler" }) { referencePixels = scaler["m_ReferencePixelsPerUnit"].float(100); break }
                 ancestor = scene.node(current)?.parentID
             }
             let ppu = raw["m_PixelsToUnits"].float(100) / referencePixels
@@ -190,18 +320,9 @@ struct HUDSourceWatchLayout {
                 minimum: element["m_Min" + suffix].float(-1), preferred: element["m_Preferred" + suffix].float(-1),
                 flexible: element["m_Flexible" + suffix].float(-1))))
         }
-        func property(_ value: (Metrics) -> Double) -> Double {
-            var priority = Int.min, result = 0.0
-            for (p, m) in candidates {
-                let v = value(m)
-                guard v >= 0, p >= priority else { continue }
-                if p > priority { priority = p; result = v } else { result = max(result, v) }
-            }
-            return result
-        }
-        let minimum = property { $0.minimum }
-        return Metrics(minimum: minimum, preferred: max(minimum, property { $0.preferred }), flexible: property { $0.flexible })
+        return candidates
     }
+
     private func padding(_ g: HUDSourceWatchComponent, axis: Int) -> (start: Double, total: Double) {
         let p = g["m_Padding"], start = p[axis == 0 ? "m_Left" : "m_Top"].float()
         return (start, start + p[axis == 0 ? "m_Right" : "m_Bottom"].float())
@@ -272,6 +393,7 @@ struct HUDSourceWatchLayout {
         let parentSize = node.parentID.flatMap { rect($0, pose: pose)?.size } ?? .zero
         size[axis] = value - parentSize[axis] * span[axis]
         o.sizeDelta = HUDSourceVector2(size.x, size.y); pose.transforms[id] = o
+        evaluation?.rects.removeAll(keepingCapacity: true)
     }
     private func setAnchoredAxis(_ id: HUDSourceID, axis: Int, value: Double, resetAnchors: Bool,
                                  pose: inout HUDSourceWatchPose) {
@@ -287,14 +409,22 @@ struct HUDSourceWatchLayout {
         o.anchoredPosition3D = HUDSourceVector3(anchored.x, anchored.y, anchored.z)
         if resetAnchors { o.anchorMin = HUDSourceVector2(0, 1); o.anchorMax = HUDSourceVector2(0, 1) }
         pose.transforms[id] = o
+        evaluation?.rects.removeAll(keepingCapacity: true)
     }
     private func applyScroll(to pose: inout HUDSourceWatchPose, position: Double,
                              desktopContentID: HUDSourceID?, report: inout Report) throws {
-        for id in scene.traversalIDs {
+        for id in evaluation == nil ? scene.traversalIDs : scrollNodeIDs {
             guard let scroll = component("UIScrollRect", on: id) ?? component("ScrollRect", on: id),
                   scroll["m_Vertical"].flag(), !scroll["disableScroll"].flag(),
                   let contentID = scroll["m_Content"].targetID, let viewportID = scroll["m_Viewport"].targetID else { continue }
-            let resolved = try scene.resolve(overrides: pose.transforms)
+            let resolved: [HUDSourceID: HUDSourceResolvedNode]
+            if evaluation != nil, let chain = scrollResolutionChains[id] {
+                resolved = try resolveScrollChain(chain, overrides: pose.transforms)
+            } else {
+                // Forced verification always retains the original full-scene
+                // path, independently of the scoped resolver.
+                resolved = try scene.resolve(overrides: pose.transforms)
+            }
             guard resolved[id]?.activeInHierarchy == true, let viewport = resolved[viewportID], let viewRect = viewport.rect,
                   let inverse = HUDSourceGeometry.inverse(viewport.worldMatrix), let content = resolved[contentID], let contentRect = content.rect else { continue }
             let transform = inverse * content.worldMatrix
@@ -320,21 +450,36 @@ struct HUDSourceWatchLayout {
             report.unverifiedCustomComponents.insert("UIScrollRect.elasticInertiaAndSmoothScrollScheduling")
         }
     }
+    private func resolveScrollChain(_ chain: [HUDSourceNode],
+                                    overrides: [HUDSourceID: HUDSourceTransformOverride]) throws -> [HUDSourceID: HUDSourceResolvedNode] {
+        var resolved: [HUDSourceID: HUDSourceResolvedNode] = [:]
+        resolved.reserveCapacity(chain.count)
+        // Resolve afresh for each scroll writer: a preceding nested/parent
+        // scroll may have changed a shared ancestor in this very layout pass.
+        for node in chain {
+            let parent = node.parentID.flatMap { resolved[$0] }
+            resolved[node.id] = try HUDSourceScene.resolveNode(node, override: overrides[node.id],
+                parentRect: parent?.rect, parentWorld: parent?.worldMatrix ?? matrix_identity_double4x4,
+                parentActive: parent?.activeInHierarchy ?? true)
+        }
+        return resolved
+    }
+
     private func applySlant(_ effect: HUDSourceWatchComponent, on id: HUDSourceID,
                             resolved: [HUDSourceID: HUDSourceResolvedNode], worldRoot: simd_double4x4,
-                            pose: inout HUDSourceWatchPose) throws {
+                            pose: inout HUDSourceWatchPose, forceRebuild: Bool) throws {
         guard let selfNode = resolved[id], let inverse = HUDSourceGeometry.inverse(simd_mul(worldRoot, selfNode.worldMatrix)) else { return }
-        let bottom = effect["_bottomY"].float(), range = effect["_topY"].float() - bottom
-        guard range != 0 else { throw HUDSourceError.invalid("Zero Watch slant Y range") }
-        let curve = try Self.slantCurve(effect)
-        for cellID in effect["_cells"].array.compactMap({ $0.targetID }) {
+        let configuration: SlantConfiguration
+        if !forceRebuild, let cached = slants[effect.id] { configuration = try cached.get() }
+        else { configuration = try SlantConfiguration(effect) }
+        for cellID in configuration.cells {
             guard let cell = resolved[cellID], let parentID = cell.node.parentID,
                   let parent = resolved[parentID], let parentInverse = HUDSourceGeometry.inverse(simd_mul(worldRoot, parent.worldMatrix)),
                   cell.node.transform.rect != nil else { continue }
             let world = simd_mul(worldRoot, cell.worldMatrix).columns.3, y = simd_mul(inverse, world).y
-            let t = min(1, max(0, (y - bottom) / range))
-            guard let value = curve.sample(at: t) else { continue }
-            let x = effect["_leftX"].float() + value * effect["_maxWidth"].float()
+            let t = min(1, max(0, (y - configuration.bottom) / configuration.range))
+            guard let value = configuration.curve.sample(at: t) else { continue }
+            let x = configuration.left + value * configuration.width
             let desiredWorldX = simd_mul(simd_mul(worldRoot, selfNode.worldMatrix), SIMD4<Double>(x, 0, 0, 1)).x
             let target = simd_mul(parentInverse, SIMD4<Double>(desiredWorldX, world.y, world.z, 1))
             setLocalPosition(cellID, target: target, parentRect: parent.rect, pose: &pose)
@@ -352,5 +497,6 @@ struct HUDSourceWatchLayout {
         override.positionComponents.removeValue(forKey: 0); override.positionComponents.removeValue(forKey: 1)
         override.positionComponents[2] = target.z
         pose.transforms[id] = override
+        evaluation?.rects.removeAll(keepingCapacity: true)
     }
 }

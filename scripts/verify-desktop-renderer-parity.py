@@ -14,7 +14,9 @@ def main():
     p.add_argument("--resources", type=Path)
     p.add_argument("--output", type=Path)
     p.add_argument("--source-directory", type=Path, help="Use an already frozen Sources directory for both variants")
-    p.add_argument("--optimization", choices=("stencil", "textures", "bindings", "uniforms", "batches"), default="stencil")
+    p.add_argument("--baseline-source-directory", type=Path, help="Compare the entire renderer/layout baseline, not just its Metal renderer")
+    p.add_argument("--jobs", type=int, choices=(1, 2), default=2, help="Maximum concurrent fixture compilers")
+    p.add_argument("--optimization", choices=("stencil", "textures", "bindings", "uniforms", "batches", "geometry"), default="stencil")
     a = p.parse_args()
     root = Path(__file__).resolve().parent.parent
     output = (a.output or root / "build/desktop-renderer-parity").resolve()
@@ -36,10 +38,22 @@ def main():
     fixture.write_bytes((root / "scripts/VerifyDesktopRenderer.swift").read_bytes())
     sdk = subprocess.check_output([str(root / "scripts/build.sh"), "--print-sdk"], cwd=root, text=True).strip()
     jobs = []
+    baseline_hashes = {}
     for mode in ("baseline", "current"):
         exe = output / (mode + "-fixture")
-        sources = [str(baseline if mode == "baseline" and name == "HUDSourceMetalRenderer"
-                       else snapshot / (name + ".swift")) for name in names]
+        sources = []
+        for name in names:
+            path = snapshot / (name + ".swift")
+            if mode == "baseline":
+                if a.baseline_source_directory:
+                    frozen = output / "baseline-source-snapshot" / (name + ".swift")
+                    frozen.parent.mkdir(exist_ok=True)
+                    frozen.write_bytes((a.baseline_source_directory / (name + ".swift")).read_bytes())
+                    path = frozen
+                elif name == "HUDSourceMetalRenderer":
+                    path = baseline
+                baseline_hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            sources.append(str(path))
         command = ["xcrun", "swiftc", "-swift-version", "5", "-O", "-whole-module-optimization", "-parse-as-library",
                    "-D", "HUD_SOURCE_RENDER_PREVIEW", "-sdk", sdk, "-module-cache-path", str(output / (mode + "-module-cache")),
                    "-framework", "Cocoa", "-framework", "Metal", "-framework", "MetalKit"]
@@ -48,8 +62,16 @@ def main():
             command += ["-D", "HUD_SOURCE_PREPARED_UNIFORM_VERIFY"]
         if mode == "current" and a.optimization == "batches":
             command += ["-D", "HUD_SOURCE_ADJACENT_MERGE_VERIFY"]
+        if mode == "current" and a.optimization == "geometry":
+            command += ["-D", "HUD_SOURCE_INDEX_TOPOLOGY_VERIFY", "-D", "HUD_SOURCE_RENDER_PACKET_VERIFY"]
         log = (output / (mode + "-compile.log")).open("w")
-        jobs.append((mode, exe, log, subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT)))
+        proc = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT)
+        jobs.append((mode, exe, log, proc))
+        if a.jobs == 1:
+            status = proc.wait()
+            if status:
+                log.close()
+                raise RuntimeError("Compilation failed: " + mode + "; see " + str(output))
     failed = []
     for mode, exe, log, proc in jobs:
         status = proc.wait(); log.close()
@@ -100,6 +122,7 @@ def main():
         assert after["statistics"]["mergedBatches"] > 0
         assert after["statistics"]["encodedPassDraws"] < after["statistics"]["sourcePassDraws"]
     report = {"baselineSHA256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+              "baselineSourceSHA256": baseline_hashes,
               "rendererSHA256": hashes["HUDSourceMetalRenderer"], "sourceSHA256": hashes,
               "resources": str(resources), "exactPixelFiles": records,
               "optimization": a.optimization,

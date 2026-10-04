@@ -217,6 +217,106 @@ enum HUDNavigationTests {
         func cardArtwork(_ root: CALayer) -> [CALayer] {
             [root] + (root.sublayers ?? []).flatMap(cardArtwork) + (root.mask.map(cardArtwork) ?? [])
         }
+        // The source shell keeps logical fallback state without drawing a
+        // second invisible HUD. Recovery must materialize that latest state,
+        // including changes made before the first fallback is required.
+        do {
+            func sameColor(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
+                if lhs == nil || rhs == nil { return lhs == nil && rhs == nil }
+                return lhs == rhs
+            }
+            func sameArtwork(_ lhs: CALayer, _ rhs: CALayer) -> Bool {
+                func mismatch(_ category: String) -> Bool {
+                    fputs("Fallback artwork mismatch: \(lhs.name ?? String(describing: type(of: lhs))) [\(category)]\n", stderr)
+                    return false
+                }
+                guard type(of: lhs) == type(of: rhs), lhs.name == rhs.name,
+                      lhs.bounds == rhs.bounds, lhs.position == rhs.position,
+                      lhs.anchorPoint == rhs.anchorPoint, lhs.opacity == rhs.opacity,
+                      lhs.isHidden == rhs.isHidden, lhs.contentsScale == rhs.contentsScale,
+                      lhs.contentsRect == rhs.contentsRect, lhs.contentsGravity == rhs.contentsGravity,
+                      lhs.masksToBounds == rhs.masksToBounds,
+                      CATransform3DEqualToTransform(lhs.transform, rhs.transform),
+                      CATransform3DEqualToTransform(lhs.sublayerTransform, rhs.sublayerTransform),
+                      sameColor(lhs.backgroundColor, rhs.backgroundColor) else {
+                    return mismatch("geometry/appearance: bounds \(lhs.bounds) / \(rhs.bounds); position \(lhs.position) / \(rhs.position); scale \(lhs.contentsScale) / \(rhs.contentsScale); hidden \(lhs.isHidden) / \(rhs.isHidden); opacity \(lhs.opacity) / \(rhs.opacity); transform \(lhs.transform) / \(rhs.transform)")
+                }
+                if let a = lhs as? CAShapeLayer, let b = rhs as? CAShapeLayer {
+                    guard a.path == b.path, sameColor(a.fillColor, b.fillColor), sameColor(a.strokeColor, b.strokeColor),
+                          a.lineWidth == b.lineWidth, a.lineCap == b.lineCap, a.lineJoin == b.lineJoin else { return mismatch("shape") }
+                }
+                if let a = lhs as? CATextLayer, let b = rhs as? CATextLayer {
+                    guard (a.string as? String) == (b.string as? String), a.fontSize == b.fontSize,
+                          a.alignmentMode == b.alignmentMode, a.isWrapped == b.isWrapped,
+                          sameColor(a.foregroundColor, b.foregroundColor) else { return mismatch("text") }
+                }
+                if let a = lhs as? CAGradientLayer, let b = rhs as? CAGradientLayer {
+                    guard a.locations == b.locations, a.startPoint == b.startPoint, a.endPoint == b.endPoint,
+                          (a.colors?.count ?? 0) == (b.colors?.count ?? 0),
+                          zip(a.colors ?? [], b.colors ?? []).allSatisfy({ colorsEqual($0.0, $0.1) }) else { return mismatch("gradient") }
+                }
+                switch (lhs.contents, rhs.contents) {
+                case (nil, nil): break
+                case (let a?, let b?):
+                    guard CFGetTypeID(a as CFTypeRef) == CGImage.typeID,
+                          CFGetTypeID(b as CFTypeRef) == CGImage.typeID else { return mismatch("image type") }
+                    let first = a as! CGImage, second = b as! CGImage
+                    guard first.width == second.width, first.height == second.height,
+                          first.bytesPerRow == second.bytesPerRow,
+                          let firstBytes = first.dataProvider?.data, let secondBytes = second.dataProvider?.data,
+                          CFEqual(firstBytes, secondBytes) else { return mismatch("image bytes") }
+                default: return mismatch("image presence")
+                }
+                guard (lhs.sublayers?.count ?? 0) == (rhs.sublayers?.count ?? 0),
+                      zip(lhs.sublayers ?? [], rhs.sublayers ?? []).allSatisfy({ sameArtwork($0.0, $0.1) }) else { return false }
+                switch (lhs.mask, rhs.mask) {
+                case (nil, nil): return true
+                case (let a?, let b?): return sameArtwork(a, b)
+                default: return false
+                }
+            }
+            let deferred = HUDNavigation(selected: .system, prepareArtwork: false)
+            let eager = HUDNavigation(selected: .system)
+            check(!deferred.isArtworkPrepared && deferred.entries.allSatisfy { ($0.layer.sublayers ?? []).isEmpty },
+                  "Deferred navigation exposes logical entries without building hidden tile artwork")
+            let shortcutID = UUID()
+            for navigation in [deferred, eager] {
+                navigation.update(dark: false, accent: .systemPink, contentsScale: 3)
+                navigation.select(.display, animated: false)
+                navigation.updateAppShortcuts([HUDAppShortcutPresentation(id: shortcutID, name: "Before edit", iconPreset: .star, icon: nil)], animated: false)
+                navigation.updateAppShortcuts([HUDAppShortcutPresentation(id: shortcutID, name: "Edited shortcut", iconPreset: .textBubble, icon: nil)], animated: false)
+                navigation.select(.about, animated: false)
+                navigation.pressShortcut(id: shortcutID, animated: false)
+                navigation.cancelAnimations()
+            }
+            check(!deferred.isArtworkPrepared && deferred.entries.allSatisfy { ($0.layer.sublayers ?? []).isEmpty },
+                  "Selection, appearance and shortcut edits do not accidentally materialize the unused fallback")
+            deferred.prepareArtwork()
+            check(deferred.isArtworkPrepared && sameArtwork(deferred.layer, eager.layer)
+                  && sameArtwork(deferred.bottomLayer, eager.bottomLayer),
+                  "Deferred fallback materializes the same geometry, text, icons, colors and selection as eager navigation")
+            let preparedIDs = (cardArtwork(deferred.layer) + cardArtwork(deferred.bottomLayer)).map(ObjectIdentifier.init)
+            deferred.prepareArtwork()
+            check((cardArtwork(deferred.layer) + cardArtwork(deferred.bottomLayer)).map(ObjectIdentifier.init) == preparedIDs,
+                  "Preparing fallback navigation twice neither duplicates nor replaces its artwork")
+            let deferredCard = HUDIdentityCard(prepareArtwork: false), eagerCard = HUDIdentityCard()
+            var profile = UserProfile(awakeningDate: Date(timeIntervalSince1970: 1), uid: "1234567890")
+            profile.name = "Updated profile"; profile.tag = "5678"; profile.permissionLevel = 37; profile.themeColorHex = "40C8A0"
+            for card in [deferredCard, eagerCard] {
+                card.update(dark: false, accent: .systemPink, contentsScale: 3)
+                card.setProfile(profile, avatar: nil, background: nil)
+                card.setHovered(.profile, animated: false)
+            }
+            check(!deferredCard.isArtworkPrepared && labels(in: deferredCard.layer).isEmpty,
+                  "Profile and appearance updates retain state without painting the unused fallback identity card")
+            deferredCard.prepareArtwork()
+            check(deferredCard.isArtworkPrepared && sameArtwork(deferredCard.layer, eagerCard.layer),
+                  "Identity fallback materializes the latest profile, local theme and hover pose exactly")
+            let preparedCardIDs = cardArtwork(deferredCard.layer).map(ObjectIdentifier.init)
+            deferredCard.prepareArtwork()
+            check(cardArtwork(deferredCard.layer).map(ObjectIdentifier.init) == preparedCardIDs,
+                  "Preparing the identity fallback twice retains its existing layer tree")
+        }
         let cardAccent = NSColor(srgbRed: 0.23, green: 0.77, blue: 0.64, alpha: 1)
         identity.update(dark: true, accent: cardAccent, contentsScale: 2)
         let retainedCardArtwork = cardArtwork(identity.layer)

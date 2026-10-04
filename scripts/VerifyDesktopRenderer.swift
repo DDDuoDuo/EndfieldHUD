@@ -31,10 +31,17 @@ struct VerifyDesktopRenderer {
         let viewport = CGRect(x: 0, y: 0, width: size.x, height: size.y)
         let document = try HUDSourceWatchDocument(resourceRoot: root.appendingPathComponent("Scene"), includeWidgets: false,
             includeSourceText: false, includeDesktopProfile: true)
+        if CommandLine.arguments.contains("--prewarm-programs") {
+            _ = try HUDSourceMetalRenderer.prepareDesktopProgramsIfNeeded(resourceRoot: root)
+        }
         let renderer = try HUDSourceMetalRenderer(frame: viewport, resourceRoot: root)
         // The desktop default may evolve; this executable's baseline must
         // always exercise original draws, with only the merge variant opting in.
         renderer.setAdjacentBatchMergingEnabledForVerification(false)
+        #if HUD_SOURCE_RENDER_PACKET_VERIFY
+        renderer.setRenderPacketsEnabledForVerification(false)
+        renderer.verifyPreparedUniformBytesForVerification = true
+        #endif
         #if HUD_SOURCE_PREPARED_UNIFORM_VERIFY
         renderer.verifyPreparedUniformBytesForVerification = true
         #endif
@@ -141,6 +148,12 @@ struct VerifyDesktopRenderer {
         var profilePixels: [String: Data] = [:]
         var profileBatchCount = 0
         for sample in samples {
+            #if HUD_SOURCE_RENDER_PACKET_VERIFY
+            // The same binary first runs the authoritative encoder. Retain the
+            // prior packet so the second draw proves invalidation across real
+            // material/geometry/texture/world changes, not only a fresh build.
+            renderer.setRenderPacketsEnabledForVerification(false, retainingPacket: true)
+            #endif
             let euler = try model.gyro.targetEuler(mouseUnity: sample.mouse * size, screenSize: size)
             let rotation = try HUDSourceWatchCamera.quaternion(eulerDegrees: euler)
             let view = try model.frame(screenSize: size, localRotation: rotation)
@@ -263,10 +276,103 @@ struct VerifyDesktopRenderer {
                 projection: projection, inverseView: HUDSourceGeometry.floatMatrix(model.shaderCameraToWorld),
                 uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: projection, near: Float(model.near), far: Float(model.far)))
             renderer.configureDesktopAccent(sample.accent)
+            #if HUD_SOURCE_INDEX_TOPOLOGY_VERIFY
+            let structureToken = HUDSourceMetalRenderer.BatchStructureToken()
+            renderer.submit(camera: camera, batches: batches, structureToken: structureToken); renderer.draw()
+            #else
             renderer.submit(camera: camera, batches: batches); renderer.draw()
+            #endif
             _ = try renderer.copyDrawableImage()
             guard let pixels = renderer.drawableReadbackBGRA, let pixelReport = renderer.drawableReadbackReport,
                   renderer.diagnostics.isEmpty else { throw HUDSourceError.invalid("Desktop draw failed: \(sample.name) \(renderer.diagnostics)") }
+            #if HUD_SOURCE_RENDER_PACKET_VERIFY
+            renderer.setRenderPacketsEnabledForVerification(true, retainingPacket: true)
+            for _ in 0..<2 {
+                renderer.submit(camera: camera, batches: batches); renderer.draw()
+                _ = try renderer.copyDrawableImage()
+                guard renderer.diagnostics.isEmpty, renderer.drawableReadbackBGRA == pixels else {
+                    throw HUDSourceError.invalid("Compiled render packet changed pixels: \(sample.name) \(renderer.diagnostics)")
+                }
+            }
+            var movedCamera = camera
+            movedCamera.timeSeconds += 0.037
+            var movedBatches = batches
+            for i in movedBatches.indices {
+                movedBatches[i].world.columns.3.x += 0.125
+                for name in ["_WorldToSoftMask", "_WatchWorldToLocalMatrix"] {
+                    if var matrix = movedBatches[i].uniformOverrides[name], matrix.count == 16 {
+                        matrix[12] += 0.03125; movedBatches[i].uniformOverrides[name] = matrix
+                    }
+                }
+                if var clip = movedBatches[i].uniformOverrides["clipRect"], clip.count == 4 {
+                    clip[0] += 0.125; clip[2] += 0.125; movedBatches[i].uniformOverrides["clipRect"] = clip
+                }
+            }
+            let packetsBeforeMotion = renderer.renderPacketBuildCount
+            renderer.setRenderPacketsEnabledForVerification(false, retainingPacket: true)
+            renderer.submit(camera: movedCamera, batches: movedBatches); renderer.draw()
+            _ = try renderer.copyDrawableImage()
+            let movedPixels = renderer.drawableReadbackBGRA
+            renderer.setRenderPacketsEnabledForVerification(true, retainingPacket: true)
+            renderer.submit(camera: movedCamera, batches: movedBatches); renderer.draw()
+            _ = try renderer.copyDrawableImage()
+            guard renderer.diagnostics.isEmpty, renderer.drawableReadbackBGRA == movedPixels,
+                  renderer.renderPacketBuildCount == packetsBeforeMotion else {
+                throw HUDSourceError.invalid("Retained render packet lost dynamic world/time: \(sample.name)")
+            }
+            if sample.name == "ambient-0.5" {
+                func comparePacketMutation(_ candidate: [HUDSourceMetalRenderer.Batch], expectedBuilds: Int, name: String,
+                                           unchangedPixels: Data? = nil) throws {
+                    let before = renderer.renderPacketBuildCount
+                    renderer.setRenderPacketsEnabledForVerification(false, retainingPacket: true)
+                    renderer.submit(camera: movedCamera, batches: candidate); renderer.draw()
+                    _ = try renderer.copyDrawableImage()
+                    guard renderer.diagnostics.isEmpty, let expected = renderer.drawableReadbackBGRA,
+                          unchangedPixels == nil || expected == unchangedPixels else {
+                        throw HUDSourceError.invalid("Generic packet mutation fixture failed: " + name)
+                    }
+                    renderer.setRenderPacketsEnabledForVerification(true, retainingPacket: true)
+                    renderer.submit(camera: movedCamera, batches: candidate); renderer.draw()
+                    _ = try renderer.copyDrawableImage()
+                    guard renderer.diagnostics.isEmpty, renderer.drawableReadbackBGRA == expected,
+                          renderer.renderPacketBuildCount == before + expectedBuilds else {
+                        throw HUDSourceError.invalid("Packet mutation changed pixels or rebuild count: " + name)
+                    }
+                }
+                var moving = movedBatches
+                for step in 1...4 {
+                    for index in moving.indices {
+                        moving[index].world.columns.3.y += 0.0625
+                        for name in ["_WorldToSoftMask", "_WatchWorldToLocalMatrix"] {
+                            if var matrix = moving[index].uniformOverrides[name], matrix.count == 16 {
+                                matrix[13] += Float(step) / 1024; moving[index].uniformOverrides[name] = matrix
+                            }
+                        }
+                    }
+                    try comparePacketMutation(moving, expectedBuilds: 0, name: "repeated gyro/soft-mask \(step)")
+                }
+                guard let target = moving.indices.first, let unchanged = renderer.drawableReadbackBGRA else {
+                    throw HUDSourceError.invalid("Packet mutation fixture needs a rendered batch")
+                }
+                var added = moving
+                added[target].uniformOverrides["__packet_unused_verification"] = [1]
+                try comparePacketMutation(added, expectedBuilds: 1, name: "added unused override key", unchangedPixels: unchanged)
+                var reshaped = added
+                reshaped[target].uniformOverrides["__packet_unused_verification"] = [1, 2]
+                try comparePacketMutation(reshaped, expectedBuilds: 1, name: "reshaped unused override", unchangedPixels: unchanged)
+                try comparePacketMutation(moving, expectedBuilds: 1, name: "removed unused override key", unchangedPixels: unchanged)
+            }
+            // Leave every export/report on the original sample.
+            renderer.submit(camera: camera, batches: batches); renderer.draw()
+            _ = try renderer.copyDrawableImage()
+            #endif
+            #if HUD_SOURCE_INDEX_TOPOLOGY_VERIFY
+            renderer.submit(camera: camera, batches: batches, structureToken: structureToken); renderer.draw()
+            _ = try renderer.copyDrawableImage()
+            guard renderer.diagnostics.isEmpty, renderer.drawableReadbackBGRA == pixels else {
+                throw HUDSourceError.invalid("Retained structure-token draw changed pixels: \(sample.name)")
+            }
+            #endif
             if sample.uniformCase != nil || sample.profileColorCase != nil {
                 // Exercise unchanged cells as well as the changed-input draw.
                 renderer.submit(camera: camera, batches: batches); renderer.draw()
@@ -316,6 +422,22 @@ struct VerifyDesktopRenderer {
         }
         print("Verified profile policy scope for", profileBatchCount, "drawable card batches from", profileNodeIDs.count,
             "selected nodes; independent yellow/green pixels and global blue control")
+        #if HUD_SOURCE_RENDER_PACKET_VERIFY
+        guard renderer.renderPacketBuildCount > 0, renderer.renderPacketReuseCount > samples.count,
+              renderer.renderPacketDrawCount > 0, renderer.renderPacketUniformUpdateCount > 0,
+              renderer.renderPacketFallbackCount == 0 else {
+            throw HUDSourceError.invalid("Compiled render packet fixtures failed to exercise complete stable packets")
+        }
+        print("Verified compiled packets against generic GPU pixels, repeated draws and moving world/time uniforms")
+        #endif
+        #if HUD_SOURCE_INDEX_TOPOLOGY_VERIFY
+        try renderer.verifyImmutableIndexReuseForVerification()
+        try renderer.verifyAdjacentPlanForVerification()
+        try renderer.verifyBatchStructureContractForVerification()
+        print("Verified unchanged index sharing and changed in-flight topology isolation")
+        print("Verified adjacent merge dependencies, retained geometry, world motion and vertex tint updates")
+        print("Verified producer token replacement, backdrop dependencies, external geometry and accent invalidation")
+        #endif
         #if HUD_SOURCE_PREPARED_UNIFORM_VERIFY
         try renderer.verifyPreparedUniformFieldOrderForVerification()
         guard renderer.verifiedPreparedUniformByteCount > 10_000,

@@ -77,8 +77,8 @@ enum HUDChargeBadgeTests {
         let notificationTexts = notification.embeddedContentLayer.sublayers?.compactMap { $0 as? CATextLayer } ?? []
         let languages: [(AppLanguage, String, String)] = [
             (.english, "CHARGE MODE", "BATTERY MODE"),
-            (.simplifiedChinese, "充电模式", "电池模式"),
-            (.traditionalChinese, "充電模式", "電池模式"),
+            (.simplifiedChinese, "超充模式", "电池模式"),
+            (.traditionalChinese, "超充模式", "電池模式"),
             (.japanese, "充電モード", "バッテリーモード"),
             (.korean, "충전 모드", "배터리 모드")
         ]

@@ -177,7 +177,12 @@ enum TelemetryCanvasTests {
               "Accessibility announces the selected column's current direction")
         check(!appCanvas.accessibilityStatus.isEmpty, "App metrics are available through accessibility")
         let appIDs = ids(appCanvas.layer)
+        let rendersBeforeSort = appCanvas.appRenderCount
+        var sortChanges = 0
+        appCanvas.onChange = { sortChanges += 1 }
         appCanvas.mouseDown(at: CGPoint(x: columnActions[1].rect.midX, y: columnActions[1].rect.midY))
+        check(appCanvas.appRenderCount == rendersBeforeSort + 1 && sortChanges == 1,
+              "A heading click publishes and redraws its rows once rather than duplicating synchronous observer work")
         check(appModel.sortKey == .cpu && !appModel.sortDescending && text("activity.apps.header.1", appCanvas.layer) == "CPU ↑",
               "Clicking the active table heading reverses CPU sorting")
         appCanvas.mouseDown(at: CGPoint(x: columnActions[2].rect.midX, y: columnActions[2].rect.midY))
@@ -211,6 +216,53 @@ enum TelemetryCanvasTests {
         check(appCanvas.cancelDetail() && !appModel.isActive, "Back to overview stops detailed process sampling")
         appCanvas.perform(actionID: "activity:apps"); appCanvas.deactivate()
         check(!appModel.isActive, "Closing the HUD releases detailed app sampling")
+
+        let busyItems = (0..<24).map { index in
+            AppActivityItem(id: "test-app-\(index)", name: String(format: "App %02d", index), bundleIdentifier: nil,
+                bundleURL: URL(fileURLWithPath: "/Fixture/\(index).app"), processIDs: [Int32(index + 100)],
+                cpuPercent: Double(index), memoryBytes: 1000, uploadBytesPerSecond: 0, downloadBytesPerSecond: 0,
+                diskReadBytesPerSecond: 0, diskWriteBytesPerSecond: 0, statusNotes: [])
+        }
+        let busyModel = AppActivityMonitor.fixture(items: busyItems)
+        let iconLoader = TelemetryIconLoader()
+        let busyCanvas = ActivityMonitorCanvas(controller: .fixture(), apps: busyModel, reduceMotion: { true },
+            loadAppIcon: { iconLoader.read($0) })
+        _ = busyCanvas.makeContent(for: .activityMonitor, style: dark)
+        busyCanvas.activate(); busyCanvas.perform(actionID: "activity:apps")
+        let initialContentUpdates = busyCanvas.appRowContentUpdateCount
+        var scrollNotifications = 0
+        busyCanvas.onChange = { scrollNotifications += 1 }
+        for _ in 0..<20 { _ = busyCanvas.scroll(at: CGPoint(x: 100, y: 150), delta: 1) }
+        check(busyCanvas.scrollOffset == 20 && busyCanvas.appRowContentUpdateCount == initialContentUpdates
+              && scrollNotifications == 0,
+              "Sub-row scrolling changes geometry without reformatting unchanged metrics or rerasterizing text")
+        _ = busyCanvas.scroll(at: CGPoint(x: 100, y: 150), delta: 50)
+        check(busyCanvas.appRowContentUpdateCount == initialContentUpdates + 6,
+              "Crossing a row boundary rebinds only the bounded six-row visible pool")
+        let afterRebind = busyCanvas.appRowContentUpdateCount
+        busyCanvas.updateRenderScale(3)
+        check(busyCanvas.appRowContentUpdateCount == afterRebind
+              && named("activity.app.name.0", busyCanvas.layer).contentsScale == 4,
+              "A scale change updates raster resolution without replacing metric text")
+        busyCanvas.perform(actionID: "activity:sort:name")
+        check(iconLoader.onlyOffMain, "Slow app-icon lookup never executes on the click/scroll thread")
+        busyCanvas.deactivate()
+        iconLoader.finish()
+        check(wait { iconLoader.image(at: busyModel.snapshot.items[0].bundleURL!) != nil },
+              "Already bounded icon requests can finish while the canvas is hidden")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        busyCanvas.activate()
+        check(wait {
+            let shown = Array(busyModel.snapshot.items.prefix(6))
+            return shown.enumerated().allSatisfy { index, item in
+                guard let expected = iconLoader.image(at: item.bundleURL!),
+                      let actual = named("activity.app.\(index)", busyCanvas.layer).sublayers?.first?.contents as? NSImage else { return false }
+                return actual === expected
+            }
+        }, "Late icon completion follows current row identities after scrolling and sorting")
+        check(iconLoader.onlyOffMain && iconLoader.readCount <= 14,
+              "Icon requests coalesce and remain bounded while a slow lookup overlaps row reuse")
+        busyCanvas.deactivate()
 
         var reduceSortMotion = false
         let sortedModel = AppActivityMonitor.fixture()
@@ -420,4 +472,23 @@ private final class TelemetryStorageDriver {
     var jobs: [() -> Void] = []
     let timer = TelemetryStorageTimer()
     func finish() { if !jobs.isEmpty { jobs.removeFirst()() } }
+}
+
+private final class TelemetryIconLoader {
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var images: [URL: NSImage] = [:]
+    private var mainRead = false
+    private var count = 0
+    var onlyOffMain: Bool { lock.lock(); defer { lock.unlock() }; return !mainRead }
+    var readCount: Int { lock.lock(); defer { lock.unlock() }; return count }
+    func image(at url: URL) -> NSImage? { lock.lock(); defer { lock.unlock() }; return images[url] }
+    func read(_ url: URL) -> NSImage {
+        lock.lock(); count += 1; mainRead = mainRead || Thread.isMainThread; lock.unlock()
+        if !Thread.isMainThread { gate.wait() }
+        let image = NSImage(size: NSSize(width: 32, height: 32))
+        lock.lock(); images[url] = image; lock.unlock()
+        return image
+    }
+    func finish() { for _ in 0..<64 { gate.signal() } }
 }

@@ -129,7 +129,7 @@ enum LocalizationCatalog {
         "Active audio apps require macOS 14.2 or later and compatible Core Audio support.\u{1F}活跃音频应用需要 macOS 14.2 或更新版本及兼容的 Core Audio 支持。": "오디오 재생 중인 앱을 감지하려면 macOS 14.2 이상 및 호환되는 Core Audio 지원이 필요합니다.",
         "Active audio app information is unavailable.\u{1F}活跃音频应用信息不可用。": "오디오 재생 중인 앱 정보를 확인할 수 없습니다.",
         "Some audio changes could not be observed. Reopen Volume to refresh.\u{1F}无法监听部分音频更改，请重新打开音量模块刷新。": "일부 오디오 변경 사항을 감지하지 못했습니다. 음량 모듈을 다시 열어 새로 고치세요.",
-        "CHARGE MODE\u{1F}充电模式": "충전 모드",
+        "CHARGE MODE\u{1F}超充模式": "충전 모드",
         "BATTERY MODE\u{1F}电池模式": "배터리 모드",
         "Battery unavailable\u{1F}电量不可用": "배터리 잔량 확인 불가",
         ", Preview\u{1F}，预览": ", 미리 보기",
@@ -725,7 +725,7 @@ enum LocalizationCatalog {
         Entry("Active audio app information is unavailable.", "活跃音频应用信息不可用。", "活躍音訊應用程式資訊不可用。", "音声を再生中のアプリの情報を取得できません。"),
         Entry("Some audio changes could not be observed. Reopen Volume to refresh.", "无法监听部分音频更改，请重新打开音量模块刷新。", "無法監聽部分音訊更改，請重新開啟音量模組重新整理。", "一部のオーディオ設定の変更を検出できませんでした。音量を開き直して更新してください。"),
         // ChargeIndicatorView.swift
-        Entry("CHARGE MODE", "充电模式", "充電模式", "充電モード"),
+        Entry("CHARGE MODE", "超充模式", "超充模式", "充電モード"),
         Entry("BATTERY MODE", "电池模式", "電池模式", "バッテリーモード"),
         Entry("Battery unavailable", "电量不可用", "電量不可用", "バッテリー残量を取得できません"),
         Entry(", Preview", "，预览", "，預覽", "、プレビュー"),

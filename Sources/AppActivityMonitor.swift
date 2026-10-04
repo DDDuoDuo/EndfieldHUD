@@ -171,7 +171,7 @@ final class AppActivityMonitor {
     private(set) var isActive = false
     private(set) var sortKey: AppActivitySortKey = .cpu
     private(set) var sortDescending = true
-    private let catalog: () -> [AppActivityIdentity]
+    private let catalog: (() -> [AppActivityIdentity])?
     private let schedule: SystemActivityMonitor.Schedule
     private let worker = DispatchQueue(label: "EndfieldCharge.activity.apps", qos: .utility)
     private let state: WorkerState
@@ -184,7 +184,7 @@ final class AppActivityMonitor {
     private var catalogTime: TimeInterval = -.infinity
     private var fixedFixture = false
 
-    init(catalog: @escaping () -> [AppActivityIdentity] = AppActivityCatalog.read,
+    init(catalog: (() -> [AppActivityIdentity])? = nil,
          backend: AppActivityBackend = PublicAppActivityBackend(),
          schedule: @escaping SystemActivityMonitor.Schedule = SystemActivityMonitor.scheduleEverySecond) {
         self.catalog = catalog; self.schedule = schedule; state = WorkerState(backend: backend)
@@ -227,9 +227,24 @@ final class AppActivityMonitor {
         guard isActive, !inFlight else { return }
         inFlight = true; needsRestart = false
         let now = ProcessInfo.processInfo.systemUptime
-        if now - catalogTime >= 5 { lastCatalog = Array(catalog().prefix(256)); catalogTime = now }
-        let apps = lastCatalog, token = generation, state = self.state
+        let resolveCatalog: (() -> [AppActivityIdentity])?
+        if now - catalogTime >= 5 {
+            catalogTime = now
+            if let catalog {
+                // Injected catalogs keep the same main-thread contract.
+                let captured = Array(catalog().prefix(256))
+                resolveCatalog = { captured }
+            } else {
+                // Capture the process list on main, but resolve bundle paths,
+                // localized names and helper metadata on the sampling worker.
+                // NSRunningApplication properties are documented thread-safe.
+                let captured = NSWorkspace.shared.runningApplications
+                resolveCatalog = { Array(AppActivityCatalog.read(captured).prefix(256)) }
+            }
+        } else { resolveCatalog = nil }
+        let previousCatalog = lastCatalog, token = generation, state = self.state
         worker.async { [weak self] in
+            let apps = resolveCatalog?() ?? previousCatalog
             let result = state.read(apps: apps, generation: token)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }; self.inFlight = false
@@ -237,6 +252,7 @@ final class AppActivityMonitor {
                 guard self.generation == token else {
                     if self.needsRestart { self.requestSample() }; return
                 }
+                self.lastCatalog = apps
                 self.publish(result)
             }
         }
@@ -256,7 +272,7 @@ final class AppActivityMonitor {
         let state = self.state; worker.async { state.stop() }
     }
 
-    static func fixture() -> AppActivityMonitor {
+    static func fixture(items suppliedItems: [AppActivityItem]? = nil) -> AppActivityMonitor {
         let monitor = AppActivityMonitor(catalog: { [] }, backend: FixtureBackend(), schedule: { _ in {} })
         monitor.fixedFixture = true
         let items = [("Finder", "com.apple.finder", 2.4, 82_000_000), ("Safari", "com.apple.Safari", 18.6, 720_000_000),
@@ -266,7 +282,7 @@ final class AppActivityMonitor {
                 uploadBytesPerSecond: Double(index * 900), downloadBytesPerSecond: Double(index * 82_000),
                 diskReadBytesPerSecond: Double(index * 200_000), diskWriteBytesPerSecond: Double(index * 15_000), statusNotes: [])
         }
-        monitor.publish(AppActivitySnapshot(timestamp: Date(timeIntervalSince1970: 1_700_000_000), uptime: 1000, items: items, statusNotes: []))
+        monitor.publish(AppActivitySnapshot(timestamp: Date(timeIntervalSince1970: 1_700_000_000), uptime: 1000, items: suppliedItems ?? items, statusNotes: []))
         return monitor
     }
 
@@ -294,12 +310,11 @@ final class AppActivityMonitor {
 }
 
 enum AppActivityCatalog {
-    /// Read AppKit metadata on main, at most once per five seconds. Icon loading
-    /// is left to the view's bundle-URL cache, rather than decoding every tick.
-    static func read() -> [AppActivityIdentity] {
-        precondition(Thread.isMainThread)
+    /// Resolve a captured running-app list on the sampling worker, at most
+    /// once per five seconds. Bundle I/O must not block the Apps tab handoff.
+    static func read(_ runningApplications: [NSRunningApplication]) -> [AppActivityIdentity] {
         var groups: [String: AppActivityIdentity] = [:]
-        for app in NSWorkspace.shared.runningApplications where !app.isTerminated {
+        for app in runningApplications where !app.isTerminated {
             guard let url = app.bundleURL, let root = outerAppURL(url), app.processIdentifier > 0 else { continue }
             let id = root.path
             let prior = groups[id]

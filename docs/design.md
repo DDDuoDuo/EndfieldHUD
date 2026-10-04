@@ -21,7 +21,7 @@ shell and the existing feature controllers.
 | Central modules and confirmations | Native feature planes follow the same source tilt and projection. Quit and layout-preview recovery use the central source projection with safe placement; their visible bounds, pointer hits and accessibility bounds agree. |
 | Pointer and motion | One source playback clock owns shell motion and tilt. Preserve user motion settings and existing editor/drag locks. Opening a dropdown alone does not stop tilt. Desktop rings vary their signed rates per opening, and triangles spin independently; source-reference fixtures retain the authored motion. |
 | HUD cursor | Use the original Endfield cursor throughout opening, the native center and source shell, and closing. Native text editors keep the text-selection cursor; leaving or hiding the HUD restores ownership to AppKit. |
-| Battery notification | Localize the shared popup/HUD title in all four languages: CHARGE MODE while charging, BATTERY MODE otherwise. Both lines follow the live charging state without changing the capsule geometry. |
+| Battery notification | Localize the shared popup/HUD title: CHARGE MODE while charging (超充模式 in both Chinese variants), BATTERY MODE otherwise. Both lines follow the live charging state without changing the capsule geometry. |
 | Right-hand list | Trackpad scrolling follows the gesture, with direct finger tracking, up to 144 source pixels of elastic edge travel (96 for wheel input), capped at 24% of the scroll range, and a stronger finite rebound. Disabled limit arrows remain dim and reject further scrolling. Recycled rows preserve each shortcut's identity, icon and custom name. |
 | Profile artwork | Retain the dark industrial default, readable right-aligned authority/MAX labels, and source decoration. Imported backgrounds stay cropped and darkened within the rounded photo panel. A saved card color remains independent of global theme recoloring. Both the compact card and profile editor use the same selected source avatar frame. |
 | Map | Enlarge the fixed-resolution map plane until the two lower controls overlap it. Preserve the original button silhouettes in front and feather the circular edge. Left-click dismisses coordinates; right-clicking a pin deletes it. |
@@ -68,6 +68,53 @@ where they conflict.
   source and native surfaces, including entrance/exit. Remove render-frame cursor
   polling and avoid unchanged hover/logo style copies. Clear obsolete local
   compiler caches while retaining build dependencies and verification evidence.
+
+- **2026-10-03 — Performance preservation:** Keep the exact released motion,
+  effects, frame cadence and render resolution. Reuse unchanged scene/image and
+  draw preparation, defer hidden fallback artwork, shorten JSON loading, and
+  release replaced portraits and unused allocator pages after close. Retain live
+  caches for reopening and preserve existing saved-data contracts. The
+  [performance investigation](performance-parity.md) records exact GPU comparisons
+  and measured gains; old-native-shell CPU/RAM parity remains an open limitation.
+
+- **2026-10-03 — CPU bottleneck follow-up:** Activity Monitor uses the source
+  Report button's glyph and shadow. Chinese charging banners read 超充模式.
+  Normal motion retains its existing cadence, curves and effects. Low Power
+  limits finite source motion to 30 Hz and stops settled ambient work; Reduce
+  Motion redraws changed controls without a continuous pointer animation clock.
+  Reuse settled pointer geometry and prepared draw state with exact invalidation
+  for content, layout, resource and shader changes. The
+  [follow-up measurements](performance-followup.md) record the tested result.
+
+- **2026-10-03 — Interaction performance regression:** Preserve the exact
+  artwork, projection, motion curves, normal frame cadence and transitions.
+  Remove repeated caption/layout work, prepare accessibility geometry when
+  queried, and keep app metadata/icon lookup out of input handlers. Retain
+  bounded resources and the existing saved-data contract. The
+  [interaction investigation](interaction-performance.md) documents the live
+  Apps workload, underlying changes and measurement limits; old-native
+  performance parity remains unachieved.
+
+
+- **2026-10-03 — Left tabs and opening:** Keep existing presentation and motion.
+  Reuse unchanged Settings rows, move passive login-status IPC off the main
+  thread, and materialize hidden native fallback artwork only on recovery.
+  Prepare bounded immutable pipelines before opening and overlap independent
+  clip/scene decoding with the same numeric decoder. The
+  [opening investigation](tab-opening-performance.md) records measurements and
+  preserves the distinction between prepared and completely cold opening.
+
+- **2026-10-03 — Center icon glow:** Activity Monitor retains the authored Report
+  glyph, shadow, size and tilt plane, with a soft white glow to match Storage.
+  The glow is baked once into a cached 84 × 84 bitmap; it adds no blur pass or
+  animation timer to the frame loop.
+
+- **2026-10-04 — Menu-bar file drops:** The status icon accepts file and folder
+  references into the existing Temporary File Shelf. Successful drops reveal the
+  shelf through the normal HUD entrance or section transition, after native drag
+  delivery finishes. An in-progress entrance/exit finishes before the shelf
+  request is presented. The menu retains native click behavior, and the drop
+  target adds no polling or idle animation.
 
 ## Verification evidence
 

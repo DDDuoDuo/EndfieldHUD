@@ -6,9 +6,10 @@ import CoreImage
 /// The imported image is decoded by the store once.
 enum HUDPortraitArtwork {
     private final class RenderedPortrait {
-        // Retaining the source also prevents an object-identifier cache key
-        // from being reused for another imported image.
-        let source: CGImage
+        // The store owns the current full-resolution avatar. Cropped cache
+        // entries must not keep replaced/reset imports alive. A weak identity
+        // check also rejects a key whose original object's address was reused.
+        weak var source: CGImage?
         let output: CGImage
         init(source: CGImage, output: CGImage) { self.source = source; self.output = output }
     }
@@ -31,7 +32,7 @@ enum HUDPortraitArtwork {
     static func frameImage(accent: NSColor) -> CGImage? {
         guard let sourceFrame, let rgb = accent.usingColorSpace(.sRGB) else { return nil }
         let key = "source-frame-\(rgb.redComponent)-\(rgb.greenComponent)-\(rgb.blueComponent)" as NSString
-        if let existing = renderedCache.object(forKey: key) { return existing.output }
+        if let existing = renderedCache.object(forKey: key), existing.source === sourceFrame { return existing.output }
         guard let context = CGContext(data: nil, width: sourceFrame.width, height: sourceFrame.height,
             bitsPerComponent: 8, bytesPerRow: sourceFrame.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return nil }
@@ -70,7 +71,7 @@ enum HUDPortraitArtwork {
         let width = max(1, min(1024, Int(ceil(targetSize.width * scale * 1.35))))
         let height = max(1, min(1024, Int(ceil(targetSize.height * scale * 1.35))))
         let key = "\(ObjectIdentifier(image))-\(orientation)-\(region)-\(width)x\(height)" as NSString
-        if let existing = renderedCache.object(forKey: key) { return existing.output }
+        if let existing = renderedCache.object(forKey: key), existing.source === image { return existing.output }
         let sx = CGFloat(width) / region.width, sy = CGFloat(height) / region.height
         let selected = source.cropped(to: region).transformed(by: CGAffineTransform(translationX: -region.minX, y: -region.minY))
         let scaled = selected.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: sy, kCIInputAspectRatioKey: sx / sy])
