@@ -18,9 +18,9 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "Tests/Fixtures/stable-integration-contract.json"
 
-# The approved 1.1.0 release changes version metadata, not the stable bundle,
+# The approved 1.1.1 release changes version metadata, not the stable bundle,
 # preferences, permission or signed-update identity recorded in the baseline.
-RELEASE_METADATA = {"CFBundleShortVersionString": "1.1.0", "CFBundleVersion": "12"}
+RELEASE_METADATA = {"CFBundleShortVersionString": "1.1.1", "CFBundleVersion": "13"}
 
 
 # Exact user-requested copy changes; every replacement remains required.
