@@ -350,7 +350,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     /// Batch slots resolve property names once; steady draws use these cells
     /// directly, without rediscovering override membership or cache keys.
     private final class PreparedUniformCell {
-        let plan: UniformPlan
+        var plan: UniformPlan
         let appliesDesktopAccent: Bool
         var data: Data?
         var dataRevision: UInt64 = 0
@@ -387,6 +387,70 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private struct ResolvedTexture {
         let plan: TexturePlan
         let asset: TextureAsset
+    }
+    /// A compiled CPU command list. Only the current presentation is retained:
+    /// mutable geometry and world/time uniforms are refreshed before each draw,
+    /// while shader validation, resource lookup and state-delta discovery are
+    /// performed once per exact structural input. The ordinary encoder remains
+    /// the oracle/fallback for unsupported or incomplete presentations.
+    private final class RenderPacket {
+        struct CameraShape: Equatable {
+            let projection: Bool
+            let inverseView: Bool
+            let uiProjection: Bool
+            init(_ camera: Camera) {
+                projection = camera.projection != nil; inverseView = camera.inverseView != nil
+                uiProjection = camera.uiProjectionParameters != nil
+            }
+        }
+        struct UniformBinding {
+            let cell: PreparedUniformCell
+            let predecessor: PreparedUniformCell?
+            let original: UniformPlan
+            let overrideFields: [(index: Int, name: String)]
+        }
+        struct TextureBinding {
+            let plan: TexturePlan
+            let texture: MTLTexture?
+            let sampler: MTLSamplerState?
+        }
+        struct Draw {
+            let pipeline: MTLRenderPipelineState?
+            let depth: MTLDepthStencilState?
+            let stencil: UInt32?
+            let cull: MTLCullMode?
+            let uniforms: [UniformBinding]
+            let textures: [TextureBinding]
+        }
+        final class Entry {
+            let input: Batch
+            let indexRange: Range<Int>
+            let needsText: Bool
+            let vertexColor: SIMD4<Float>
+            let draws: [Draw]
+            var geometryRevision: UInt64 = .max
+            var sourceVertices: MTLBuffer?
+            var vertexBuffer: MTLBuffer?
+            var indexBuffer: MTLBuffer?
+            init(input: Batch, indexRange: Range<Int>, needsText: Bool,
+                 vertexColor: SIMD4<Float>, draws: [Draw]) {
+                self.input = input; self.indexRange = indexRange; self.needsText = needsText
+                self.vertexColor = vertexColor; self.draws = draws
+            }
+        }
+        var token: BatchStructureToken?
+        weak var mergePlan: AdjacentMergePlan?
+        let cameraShape: CameraShape
+        let entries: [Entry]
+        let passCount: Int
+        let stateChanges: Int
+        let stateSkips: Int
+        init(token: BatchStructureToken?, mergePlan: AdjacentMergePlan?, camera: Camera,
+             entries: [Entry], stateChanges: Int, stateSkips: Int) {
+            self.token = token; self.mergePlan = mergePlan; cameraShape = CameraShape(camera)
+            self.entries = entries; passCount = entries.reduce(0) { $0 + $1.draws.count }
+            self.stateChanges = stateChanges; self.stateSkips = stateSkips
+        }
     }
     /// Metal bindings persist within an encoder, including across pipeline
     /// switches. This cache starts empty for every encoder; it never carries
@@ -928,6 +992,13 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private var preparedUniformBatches: [PreparedBatchUniforms?] = []
     private var sharedPreparedUniforms: [SharedUniformKey: PreparedUniformCell] = [:]
     private var preparedUniformsEnabled = true
+    private var renderPacketsEnabled = true
+    private var renderPacket: RenderPacket?
+    private(set) var renderPacketBuildCount = 0
+    private(set) var renderPacketReuseCount = 0
+    private(set) var renderPacketFallbackCount = 0
+    private(set) var renderPacketDrawCount = 0
+    private(set) var renderPacketUniformUpdateCount = 0
     private(set) var preparedUniformHitCount = 0
     private(set) var preparedUniformResolutionCount = 0
     // Applied only to the packaged desktop selection in draw(in:). The
@@ -970,6 +1041,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 "compiledSourceLibraries": compiledSourceLibraryCount,
                 "uniformCacheHits": uniformCacheHitCount, "uniformEncodes": uniformEncodeCount,
                 "preparedUniformHits": preparedUniformHitCount, "preparedUniformResolutions": preparedUniformResolutionCount,
+                "renderPacketBuilds": renderPacketBuildCount, "renderPacketReuses": renderPacketReuseCount,
+                "renderPacketFallbacks": renderPacketFallbackCount, "renderPacketDraws": renderPacketDrawCount,
+                "renderPacketUniformUpdates": renderPacketUniformUpdateCount,
                 "sourcePassDraws": sourcePassDrawCount, "encodedPassDraws": encodedPassDrawCount,
                 "mergedBatches": mergedBatchCount, "mergedGeometryReuses": mergedGeometryReuseCount,
                 "adjacentMergePlanReuses": adjacentMergePlanReuseCount, "adjacentMergePlanBuilds": adjacentMergePlanBuildCount,
@@ -1181,11 +1255,24 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         clearPreparedUniforms()
     }
 
+    func setRenderPacketsEnabledForVerification(_ enabled: Bool, retainingPacket: Bool = false) {
+        guard ProcessInfo.processInfo.arguments.contains("--ui-test") else { return }
+        renderPacketsEnabled = enabled
+        if !retainingPacket { renderPacket = nil }
+        else if !enabled {
+            // The generic oracle may refill a shared idle tint buffer with
+            // another instance's color. Keep the compiled commands for the
+            // reuse test, but reacquire their geometry after that oracle draw.
+            renderPacket?.entries.forEach { $0.geometryRevision = .max }
+        }
+    }
+
     private func clearPreparedUniforms() {
         preparedUniformBatches.removeAll(keepingCapacity: true)
         sharedPreparedUniforms.removeAll(keepingCapacity: true)
         mergeSafePasses.removeAll(keepingCapacity: true)
         adjacentMergePlan = nil
+        renderPacket = nil
     }
 
     /// Batches retain the original scene draw order. Missing material pipelines
@@ -1324,6 +1411,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         sampler.tAddressMode = Self.addressMode(wrapV)
         guard let state = device.makeSamplerState(descriptor: sampler) else { throw Failure.message("Cannot allocate registered source sampler") }
         textureAssets[name] = TextureAsset(texture: texture, sampler: state)
+        renderPacket = nil
         resourceGeneration &+= 1
     }
 
@@ -1349,6 +1437,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             throw Failure.message("Cannot allocate dynamic source texture sampler")
         }
         textureAssets[name] = TextureAsset(texture: texture, sampler: sampler)
+        renderPacket = nil
         resourceGeneration &+= 1
     }
 
@@ -1580,17 +1669,23 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             let before = plan.inputs[i], next = batches[i]
             guard before.mesh == next.mesh, before.material == next.material,
                   before.indexRange == next.indexRange,
-                  before.uniformOverrides == next.uniformOverrides, before.textureOverrides == next.textureOverrides,
+                  before.textureOverrides == next.textureOverrides,
                   before.stencilOverrides == next.stencilOverrides, before.colorWriteMask == next.colorWriteMask,
                   before.appliesDesktopAccent == next.appliesDesktopAccent else { return false }
             // The prepended desktop backdrop is outside the producer's token.
             // Its fade and transform remain independently checked even when
             // the source scene itself has a settled structural identity.
-            if stable, before.color != next.color || before.world != next.world { return false }
+            if stable, before.color != next.color || before.world != next.world
+                || before.uniformOverrides != next.uniformOverrides { return false }
         }
         for group in plan.groups where group.slot != nil {
-            let world = batches[group.range.lowerBound].world
-            for i in group.range.dropFirst() where batches[i].world != world { return false }
+            let first = batches[group.range.lowerBound]
+            // Uniform payloads may change together (for example a clipping
+            // matrix under gyro). The partition is still exact when every
+            // member agrees now, irrespective of the previous frame's values.
+            for i in group.range.dropFirst() {
+                if batches[i].world != first.world || batches[i].uniformOverrides != first.uniformOverrides { return false }
+            }
         }
         return true
     }
@@ -1750,6 +1845,13 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         guard adjacentMergePlan === plan, repeated.geometry[mergedName]?.vertices === original.vertices else {
             throw Failure.message("Unchanged adjacent plan or geometry was rebuilt")
         }
+        batches[0].uniformOverrides["verification"] = [42]
+        batches[1].uniformOverrides["verification"] = [42]
+        let payload = try adjacentBatches(device: device)
+        guard adjacentMergePlan === plan, payload.batches[0].uniformOverrides["verification"] == [42],
+              payload.geometry[mergedName]?.vertices === original.vertices else {
+            throw Failure.message("Equal changed uniform payloads rebuilt the partition or retained stale values")
+        }
         let mutations: [(inout Batch) -> Void] = [
             { $0.mesh += "/changed" }, { $0.material += "/changed" },
             { $0.indexRange = 0..<3 }, { $0.uniformOverrides["verification"] = [42] },
@@ -1848,6 +1950,232 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
     #endif
 
+    private func packetMatches(_ packet: RenderPacket, batches: [Batch], camera: Camera) -> Bool {
+        guard packet.entries.count == batches.count, packet.cameraShape == RenderPacket.CameraShape(camera) else { return false }
+        // The merge plan independently checks the mutable backdrop prefix and
+        // intra-group worlds. A changed plan or absent token takes the complete
+        // structural comparison; new full frames can still reuse the packet.
+        // Override presence/width select a binding plan; numeric payloads are
+        // refreshed separately and must not turn gyro into pipeline churn.
+        if let token = batchStructureToken, packet.token === token,
+           let plan = adjacentMergePlan, packet.mergePlan === plan { return true }
+        for (entry, next) in zip(packet.entries, batches) {
+            let before = entry.input
+            guard before.mesh == next.mesh, before.material == next.material,
+                  before.color == next.color, before.indexRange == next.indexRange,
+                  before.uniformOverrides.count == next.uniformOverrides.count,
+                  before.uniformOverrides.allSatisfy({ next.uniformOverrides[$0.key]?.count == $0.value.count }),
+                  before.textureOverrides == next.textureOverrides,
+                  before.stencilOverrides == next.stencilOverrides, before.colorWriteMask == next.colorWriteMask,
+                  before.appliesDesktopAccent == next.appliesDesktopAccent else { return false }
+        }
+        packet.token = batchStructureToken; packet.mergePlan = adjacentMergePlan
+        return true
+    }
+
+    private func makeRenderPacket(batches: [Batch], geometry merged: [String: Geometry],
+                                  camera: Camera, device: MTLDevice) throws -> RenderPacket {
+        var entries: [RenderPacket.Entry] = []
+        entries.reserveCapacity(batches.count)
+        var pipeline: ObjectIdentifier?, depth: ObjectIdentifier?, stencil: UInt32?, cull: MTLCullMode?
+        var vertexUniforms: [Int: PreparedUniformCell] = [:], fragmentUniforms: [Int: PreparedUniformCell] = [:]
+        var vertexTextures: [Int: ObjectIdentifier] = [:], fragmentTextures: [Int: ObjectIdentifier] = [:]
+        var vertexSamplers: [Int: ObjectIdentifier] = [:], fragmentSamplers: [Int: ObjectIdentifier] = [:]
+        var changes = 0, skips = 0
+        for batch in batches {
+            guard let geometry = merged[batch.mesh] ?? geometries[batch.mesh], let material = materials[batch.material] else {
+                throw Failure.message("Unprepared source packet mesh/material")
+            }
+            guard !material.needsText || (camera.projection != nil && geometry.hasTextChannels),
+                  !material.needsMap || batch.uniformOverrides["_WatchWorldToLocalMatrix"] != nil,
+                  !material.needsInverseView || camera.inverseView != nil
+                    || (batch.uniformOverrides["unity_MatrixInvV"] != nil && batch.uniformOverrides["_InvViewMatrix"] != nil),
+                  !material.needsUIProjection || camera.uiProjectionParameters != nil
+                    || batch.uniformOverrides["_UIProjectionParams"] != nil else {
+                throw Failure.message("Unprepared source packet shader requirements")
+            }
+            if material.needsSoftMask {
+                guard batch.uniformOverrides["_WorldToSoftMask"]?.count == 16,
+                      batch.uniformOverrides["_SoftMaskTex_ST"]?.count == 4,
+                      let name = batch.textureOverrides["_SoftMaskTex"],
+                      try ensureTexture(named: name, device: device) != nil else {
+                    throw Failure.message("Unprepared source packet soft mask")
+                }
+            }
+            let range = batch.indexRange ?? 0..<geometry.indexCount
+            guard range.lowerBound >= 0, range.upperBound <= geometry.indexCount,
+                  !range.isEmpty, range.lowerBound % 3 == 0, range.count % 3 == 0 else {
+                throw Failure.message("Unprepared source packet index range")
+            }
+            let prepared = PreparedBatchUniforms(batch: batch)
+            var draws: [RenderPacket.Draw] = []
+            for pass in material.passes {
+                var textures: [RenderPacket.TextureBinding] = []
+                for plan in pass.texturePlans {
+                    let name = batch.textureOverrides[plan.name] ?? plan.defaultID
+                    guard let asset = try ensureTexture(named: name, device: device) else {
+                        throw Failure.message("Unprepared source packet texture")
+                    }
+                    let textureID = ObjectIdentifier(asset.texture), samplerID = ObjectIdentifier(asset.sampler)
+                    let textureChanged = (plan.vertex ? vertexTextures[plan.index] : fragmentTextures[plan.index]) != textureID
+                    let samplerChanged = (plan.vertex ? vertexSamplers[plan.samplerIndex] : fragmentSamplers[plan.samplerIndex]) != samplerID
+                    if plan.vertex { vertexTextures[plan.index] = textureID; vertexSamplers[plan.samplerIndex] = samplerID }
+                    else { fragmentTextures[plan.index] = textureID; fragmentSamplers[plan.samplerIndex] = samplerID }
+                    if textureChanged || samplerChanged {
+                        textures.append(.init(plan: plan, texture: textureChanged ? asset.texture : nil,
+                            sampler: samplerChanged ? asset.sampler : nil))
+                    }
+                    changes += (textureChanged ? 1 : 0) + (samplerChanged ? 1 : 0)
+                    skips += (textureChanged ? 0 : 1) + (samplerChanged ? 0 : 1)
+                }
+                try prepare(pass: pass, values: material.values,
+                    propertyTypes: materialPropertyTypes[batch.material] ?? [:], device: device)
+                let nextPipeline = try colorPipeline(pass: pass, mask: batch.colorWriteMask)
+                let nextDepth = try depthState(pass: pass, override: batch.stencilOverrides)
+                let nextStencil = batch.stencilOverrides?.reference ?? pass.stencilReference
+                let pipelineChanged = pipeline != ObjectIdentifier(nextPipeline), depthChanged = depth != ObjectIdentifier(nextDepth)
+                let stencilChanged = stencil != nextStencil, cullChanged = cull != pass.cull
+                pipeline = ObjectIdentifier(nextPipeline); depth = ObjectIdentifier(nextDepth)
+                stencil = nextStencil; cull = pass.cull
+                changes += [pipelineChanged, depthChanged, stencilChanged, cullChanged].filter { $0 }.count
+                skips += [pipelineChanged, depthChanged, stencilChanged, cullChanged].filter { !$0 }.count
+                var uniforms: [RenderPacket.UniformBinding] = []
+                let cells = preparedUniformCells(pass: pass, batch: prepared)
+                for (index, cell) in cells.enumerated() {
+                    // Geometry uses slot 30. Unusual source interfaces retain
+                    // the generic encoder's exact buffer-alias semantics.
+                    guard !(cell.plan.vertex && cell.plan.index == 30) else {
+                        throw Failure.message("Source packet uniform aliases geometry")
+                    }
+                    let predecessor = cell.plan.vertex ? vertexUniforms[cell.plan.index] : fragmentUniforms[cell.plan.index]
+                    if predecessor === cell {
+                        skips += 1; continue
+                    }
+                    if cell.plan.vertex { vertexUniforms[cell.plan.index] = cell }
+                    else { fragmentUniforms[cell.plan.index] = cell }
+                    let original = pass.uniformPlans[index]
+                    let overrideFields = original.fields.indices.compactMap { field -> (index: Int, name: String)? in
+                        let name = original.fields[field].name
+                        return batch.uniformOverrides[name] != nil ? (field, name) : nil
+                    }
+                    uniforms.append(.init(cell: cell, predecessor: predecessor, original: original, overrideFields: overrideFields))
+                }
+                draws.append(.init(pipeline: pipelineChanged ? nextPipeline : nil, depth: depthChanged ? nextDepth : nil,
+                    stencil: stencilChanged ? nextStencil : nil, cull: cullChanged ? pass.cull : nil,
+                    uniforms: uniforms, textures: textures))
+            }
+            entries.append(.init(input: batch, indexRange: range, needsText: material.needsText,
+                vertexColor: vertexColor(for: batch), draws: draws))
+        }
+        renderPacketBuildCount += 1
+        return RenderPacket(token: batchStructureToken, mergePlan: adjacentMergePlan, camera: camera,
+            entries: entries, stateChanges: changes, stateSkips: skips)
+    }
+
+    private func tintedVertexBuffer(geometry: Geometry, mesh: String, color: SIMD4<Float>, device: MTLDevice,
+                                    reusable: Bool, used: Set<ObjectIdentifier>) throws -> MTLBuffer {
+        if color == SIMD4<Float>(repeating: 1) { return geometry.vertices }
+        if let cached = tintedVertices[mesh], cached.color == color, cached.geometryRevision == geometry.revision {
+            return cached.buffer
+        }
+        var vertices = geometry.originalVertices
+        for i in vertices.indices { vertices[i].color *= color }
+        let previous = tintedVertices[mesh]?.buffer
+        let buffer = try geometryBuffer(vertices, previous: previous,
+            reusable: reusable && !(previous.map { used.contains(ObjectIdentifier($0)) } ?? false), device: device)
+        tintedVertices[mesh] = TintedVertices(color: color, buffer: buffer, geometryRevision: geometry.revision)
+        return buffer
+    }
+
+    private func prepareRenderPacketGeometry(_ packet: RenderPacket, geometry merged: [String: Geometry], device: MTLDevice) throws {
+        let reusable = geometryBuffersAreIdle
+        var used = Set<ObjectIdentifier>()
+        for entry in packet.entries {
+            guard let geometry = merged[entry.input.mesh] ?? geometries[entry.input.mesh],
+                  entry.indexRange == (entry.input.indexRange ?? 0..<geometry.indexCount),
+                  entry.indexRange.upperBound <= geometry.indexCount,
+                  !entry.needsText || geometry.hasTextChannels else {
+                throw Failure.message("Changed source packet geometry requirements")
+            }
+            if entry.geometryRevision != geometry.revision || entry.sourceVertices !== geometry.vertices
+                || entry.indexBuffer !== geometry.indices || entry.vertexBuffer == nil {
+                entry.vertexBuffer = try tintedVertexBuffer(geometry: geometry, mesh: entry.input.mesh,
+                    color: entry.vertexColor, device: device, reusable: reusable, used: used)
+                entry.sourceVertices = geometry.vertices; entry.indexBuffer = geometry.indices
+                entry.geometryRevision = geometry.revision
+            }
+            used.insert(ObjectIdentifier(entry.vertexBuffer!))
+        }
+    }
+
+    private func encodeRenderPacket(_ packet: RenderPacket, batches: [Batch], camera: Camera,
+                                    encoder: MTLRenderCommandEncoder) -> Int {
+        var vertexBuffer: MTLBuffer?
+        for (index, entry) in packet.entries.enumerated() {
+            if vertexBuffer !== entry.vertexBuffer {
+                encoder.setVertexBuffer(entry.vertexBuffer, offset: 0, index: 30)
+                vertexBuffer = entry.vertexBuffer; encoderBindingChangeCount += 1
+            } else { encoderBindingSkipCount += 1 }
+            let batch = batches[index]
+            for draw in entry.draws {
+                if let pipeline = draw.pipeline { encoder.setRenderPipelineState(pipeline) }
+                if let depth = draw.depth { encoder.setDepthStencilState(depth) }
+                if let stencil = draw.stencil { encoder.setStencilReferenceValue(stencil) }
+                if let cull = draw.cull { encoder.setCullMode(cull) }
+                for binding in draw.uniforms {
+                    let cell = binding.cell
+                    // Presence and length are part of packet structure; only
+                    // the values vary. Cells with any relevant override are
+                    // private to this batch/pass, so updating their ordered
+                    // fields cannot alter another draw's material or camera.
+                    var changed = false
+                    for field in binding.overrideFields {
+                        let value = batch.uniformOverrides[field.name]!
+                        if cell.plan.fields[field.index].value != value {
+                            cell.plan.fields[field.index].value = value; changed = true
+                        }
+                    }
+                    if changed { cell.data = nil; renderPacketUniformUpdateCount += 1 }
+                    let bytes = preparedUniformData(cell: cell, world: batch.world, camera: camera)
+                    #if HUD_SOURCE_RENDER_PREVIEW
+                    if verifyPreparedUniformBytesForVerification {
+                        let expected = uniformData(plan: binding.original, batch: batch, camera: camera)
+                        if bytes != expected { diagnostics.append("Packet source uniform bytes differ") }
+                        verifiedPreparedUniformByteCount += 1
+                    }
+                    #endif
+                    // Different private world cells often upload the same
+                    // Canvas matrix. Preserve the original byte-equality skip
+                    // through a pre-resolved dependency, without rediscovering
+                    // stage/index dictionaries for every draw. The predecessor
+                    // has already sampled this frame, in original draw order.
+                    if binding.predecessor?.data == bytes { encoderBindingSkipCount += 1; continue }
+                    bytes.withUnsafeBytes { raw in
+                        guard let address = raw.baseAddress else { return }
+                        if cell.plan.vertex { encoder.setVertexBytes(address, length: bytes.count, index: cell.plan.index) }
+                        else { encoder.setFragmentBytes(address, length: bytes.count, index: cell.plan.index) }
+                    }
+                    encoderBindingChangeCount += 1
+                }
+                for texture in draw.textures {
+                    if let value = texture.texture {
+                        if texture.plan.vertex { encoder.setVertexTexture(value, index: texture.plan.index) }
+                        else { encoder.setFragmentTexture(value, index: texture.plan.index) }
+                    }
+                    if let value = texture.sampler {
+                        if texture.plan.vertex { encoder.setVertexSamplerState(value, index: texture.plan.samplerIndex) }
+                        else { encoder.setFragmentSamplerState(value, index: texture.plan.samplerIndex) }
+                    }
+                }
+                encoder.drawIndexedPrimitives(type: .triangle, indexCount: entry.indexRange.count, indexType: .uint32,
+                    indexBuffer: entry.indexBuffer!, indexBufferOffset: entry.indexRange.lowerBound * MemoryLayout<UInt32>.size)
+            }
+        }
+        encoderBindingChangeCount += packet.stateChanges; encoderBindingSkipCount += packet.stateSkips
+        renderPacketDrawCount += packet.passCount
+        return packet.passCount
+    }
+
     func draw(in view: MTKView) {
         // A caller changing the clear value or introducing depth-failure
         // stencil effects leaves the proven desktop subset. Rebuild with the
@@ -1876,6 +2204,22 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 drawBatches = result.batches; mergedGeometry = result.geometry
             } catch { diagnostics.append(String(describing: error)); return }
         } else { drawBatches = batches; mergedGeometry = [:] }
+        var packet: RenderPacket?
+        if runtimeSelection != nil && renderPacketsEnabled && preparedUniformsEnabled {
+            do {
+                if let cached = renderPacket, packetMatches(cached, batches: drawBatches, camera: camera) {
+                    packet = cached; renderPacketReuseCount += 1
+                } else {
+                    packet = try makeRenderPacket(batches: drawBatches, geometry: mergedGeometry, camera: camera, device: device)
+                    renderPacket = packet
+                }
+                try prepareRenderPacketGeometry(packet!, geometry: mergedGeometry, device: device)
+            } catch {
+                // Nothing has been encoded yet. Preserve the original path's
+                // per-draw diagnostics and partial-render behavior verbatim.
+                packet = nil; renderPacket = nil; renderPacketFallbackCount += 1
+            }
+        }
         let descriptor: MTLRenderPassDescriptor
         do { descriptor = try sceneDescriptor(display: display, drawable: drawable, command: command) }
         catch { diagnostics.append(String(describing: error)); return }
@@ -1886,6 +2230,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         // are deliberately absent from this source renderer.
         encoder.setDepthClipMode(.clip)
         var encodedPassCount = 0
+        if let packet {
+            encodedPassCount = encodeRenderPacket(packet, batches: drawBatches, camera: camera, encoder: encoder)
+        } else {
         var bindings = EncoderBindings()
         var resolvedTextures: [ResolvedTexture] = []
         resolvedTextures.reserveCapacity(8)
@@ -1948,28 +2295,10 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             // explicit scene vertex tint, not by the shader material tint.
             let vertexColor = vertexColor(for: batch)
             let vertexBuffer: MTLBuffer
-            if vertexColor == SIMD4<Float>(repeating: 1) {
-                vertexBuffer = geometry.vertices
-            } else if let cached = tintedVertices[batch.mesh], cached.color == vertexColor,
-                      cached.geometryRevision == geometry.revision {
-                vertexBuffer = cached.buffer
-            } else {
-                var vertices = geometry.originalVertices
-                for i in vertices.indices { vertices[i].color *= vertexColor }
-                let previous = tintedVertices[batch.mesh]?.buffer
-                let buffer: MTLBuffer
-                do {
-                    buffer = try geometryBuffer(vertices, previous: previous,
-                        reusable: reusableGeometryBuffers && !(previous.map({ encodedVertexBuffers.contains(ObjectIdentifier($0)) }) ?? false),
-                        device: device)
-                } catch {
-                    diagnostics.append(String(describing: error)); continue
-                }
-                // At most one tint buffer per registered geometry; unchanged
-                // frames reuse it rather than regenerate source artwork.
-                tintedVertices[batch.mesh] = TintedVertices(color: vertexColor, buffer: buffer, geometryRevision: geometry.revision)
-                vertexBuffer = buffer
-            }
+            do {
+                vertexBuffer = try tintedVertexBuffer(geometry: geometry, mesh: batch.mesh, color: vertexColor,
+                    device: device, reusable: reusableGeometryBuffers, used: encodedVertexBuffers)
+            } catch { diagnostics.append(String(describing: error)); continue }
             bindings.bindGeometry(vertexBuffer, encoder: encoder)
             encodedVertexBuffers.insert(ObjectIdentifier(vertexBuffer))
             let preparedBatch: PreparedBatchUniforms?
@@ -2039,6 +2368,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
         encoderBindingChangeCount += bindings.changes
         encoderBindingSkipCount += bindings.skips
+        }
         encodedPassDrawCount += encodedPassCount
         sourcePassDrawCount += adjacentBatchMergingEnabled && runtimeSelection != nil
             ? (adjacentMergePlan?.sourcePassCount ?? 0) : encodedPassCount

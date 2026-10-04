@@ -1232,8 +1232,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { updateHover(event) }
     override func mouseExited(with event: NSEvent) {
-        navigation.hover(nil)
-        identityCard.resetInteraction(animated: true)
+        if !usesSourceShell {
+            navigation.hover(nil)
+            identityCard.resetInteraction(animated: true)
+        }
         chargeBadge.setHovered(false)
         clearControlHighlights()
         if window != nil, interactionEnabled || transitioning, !isModuleInputLocked {
@@ -1275,8 +1277,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         updateControlHighlights(at: location)
         let menuCapturesPointer = profileIsInteractive && profileInteraction?.capturesPointer == true
         let hoveredTarget = menuCapturesPointer ? nil : navigationTargetAtDesignPoint(point, forHover: true)
-        navigation.hoverTarget(hoveredTarget)
-        identityCard.setHovered(menuCapturesPointer ? nil : navigationPoint(point).flatMap { identityCard.target(at: $0) })
+        if !usesSourceShell {
+            navigation.hoverTarget(hoveredTarget)
+            identityCard.setHovered(menuCapturesPointer ? nil : navigationPoint(point).flatMap { identityCard.target(at: $0) })
+        }
         chargeBadge.setHovered(hoveredTarget == .module(.power))
     }
 
@@ -1310,7 +1314,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             clear(moduleContent.layer)
         }
         HUDControlHighlightLayer.update(in: notesCanvas.workspaceLayer, point: nil)
-        HUDControlHighlightLayer.update(in: navigation.layer, point: nil)
+        if !usesSourceShell { HUDControlHighlightLayer.update(in: navigation.layer, point: nil) }
     }
 
     func refreshControlHighlights() {
@@ -1327,8 +1331,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let notesCoverPointer = !menuCapturesPointer && notePoint.map { notesCanvas.containsWorkspacePoint($0) } == true
         HUDControlHighlightLayer.update(in: notesCanvas.workspaceLayer,
                                         point: notesCoverPointer ? notePoint : nil, pressed: pressed)
-        HUDControlHighlightLayer.update(in: navigation.layer,
+        // The source shell owns its own button feedback. Its retained native
+        // fallback is hidden, so traversing that layer tree does no visible work.
+        if !usesSourceShell {
+            HUDControlHighlightLayer.update(in: navigation.layer,
                 point: notesCoverPointer || menuCapturesPointer ? nil : navigationPoint(designPoint(location)), pressed: pressed)
+        }
         if let content = moduleContent.activeContentLayer {
             let root = content === mapCanvas.layer ? mapCanvas.controlHighlightRoot : content
             let point = notesCoverPointer ? nil : centerPoint(designPoint(location))

@@ -63,7 +63,7 @@ def main():
         if mode == "current" and a.optimization == "batches":
             command += ["-D", "HUD_SOURCE_ADJACENT_MERGE_VERIFY"]
         if mode == "current" and a.optimization == "geometry":
-            command += ["-D", "HUD_SOURCE_INDEX_TOPOLOGY_VERIFY"]
+            command += ["-D", "HUD_SOURCE_INDEX_TOPOLOGY_VERIFY", "-D", "HUD_SOURCE_RENDER_PACKET_VERIFY"]
         log = (output / (mode + "-compile.log")).open("w")
         proc = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT)
         jobs.append((mode, exe, log, proc))
