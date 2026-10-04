@@ -496,6 +496,57 @@ enum HUDMotionTests {
               "An invalid surface boundary safely restores the shell's standard projection coverage")
         noteMotion.stop(freezePresentation: false)
         noteMotion.configure(parallax: 1, perspective: 1, ambient: true)
+
+        // Source ownership can span pointer moves, settings changes and a
+        // viewport resize. A renderer failure must resume the latest native
+        // pose without having run a second easing path while source-owned.
+        let fallbackPlane = HUDDepthPlane(name: "source.fallback", depth: 36, travel: 16, lag: 0.27)
+        let fallbackMotion = HUDMotionController(planes: [fallbackPlane])
+        fallbackMotion.startPointerFollowing(reducedMotion: false, initialPoint: initialPointer)
+        fallbackMotion.setParallax(normalizedPoint: settingsPointer)
+        check(fallbackMotion.parallaxAnimationCount == 1,
+              "Native pointer following is active before the source camera takes ownership")
+        let sourceOwnedPose = CATransform3DMakeTranslation(14, -8, 3)
+        fallbackMotion.setExternalProjection(sourceOwnedPose)
+        check(fallbackMotion.parallaxAnimationCount == 0,
+              "Source camera takeover removes the previous native pointer animation")
+        let fallbackPointer = CGPoint(x: -0.8, y: 0.6)
+        let fallbackBounds = CGRect(x: -3200, y: -2070, width: 6400, height: 4200)
+        fallbackMotion.setParallax(normalizedPoint: fallbackPointer)
+        fallbackMotion.configure(parallax: 1.7, perspective: 1.4, ambient: false)
+        fallbackMotion.setProjectionBounds(fallbackBounds, for: fallbackPlane)
+        check(fallbackMotion.targetNormalizedPoint == fallbackPointer
+              && fallbackPlane.projectionBounds == fallbackBounds,
+              "Pointer and viewport state stay current while the source camera owns the visible transform")
+        check(CATransform3DEqualToTransform(fallbackPlane.spatial.transform, sourceOwnedPose)
+              && fallbackMotion.parallaxAnimationCount == 0,
+              "Native pointer, settings and viewport updates preserve the exact source pose without native easing")
+        let nextSourcePose = CATransform3DMakeTranslation(-21, 6, 8)
+        fallbackMotion.setExternalProjection(nextSourcePose)
+        check(CATransform3DEqualToTransform(fallbackPlane.spatial.transform, nextSourcePose),
+              "Subsequent source frames remain authoritative after native settings and pointer changes")
+        fallbackMotion.setExternalProjection(nil)
+        check(CATransform3DEqualToTransform(fallbackPlane.spatial.transform,
+              HUDMotionMath.transform(normalizedPoint: fallbackPointer, depth: 36, travel: 16,
+                  parallaxIntensity: 1.7, perspectiveIntensity: 1.4, projectionBounds: fallbackBounds)),
+              "Fallback restores the latest pointer, settings and viewport together, rather than stale native state")
+        fallbackMotion.setParallax(normalizedPoint: .zero)
+        check(fallbackMotion.parallaxAnimationCount == 1
+              && fallbackPlane.spatial.animation(forKey: "parallax.transform")?.duration == fallbackPlane.pointerResponseDuration,
+              "Returning to native ownership restores the original pointer animation timing")
+        fallbackMotion.setExternalProjection(sourceOwnedPose)
+        fallbackMotion.setParallax(normalizedPoint: fallbackPointer)
+        fallbackMotion.resetParallax()
+        check(fallbackMotion.targetNormalizedPoint == .zero
+              && CATransform3DEqualToTransform(fallbackPlane.spatial.transform, sourceOwnedPose),
+              "Pointer exit resets future fallback state without disturbing the source camera")
+        fallbackMotion.setExternalProjection(nil)
+        check(CATransform3DEqualToTransform(fallbackPlane.spatial.transform,
+              HUDMotionMath.transform(normalizedPoint: .zero, depth: 36, travel: 16,
+                  parallaxIntensity: 1.7, perspectiveIntensity: 1.4, projectionBounds: fallbackBounds)),
+              "Fallback after pointer exit restores the neutral pose with the retained settings")
+        fallbackMotion.stop(freezePresentation: false)
+
         // Native layout may be scaled and moved independently in its layer
         // hierarchy; the resulting pixels must still equal the source camera.
         for viewport in [CGSize(width: 1470, height: 956), CGSize(width: 2560, height: 1440), CGSize(width: 900, height: 1200)] {

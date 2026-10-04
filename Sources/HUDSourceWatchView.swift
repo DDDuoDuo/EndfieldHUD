@@ -82,6 +82,13 @@ final class HUDSourceWatchView: NSView {
     private var desktopLabelButtons: [HUDSourceID: HUDSourceID] = [:]
     private var desktopIcons: [HUDSourceID: (container: CALayer, content: CALayer, vector: CAShapeLayer, image: CALayer, clip: CAShapeLayer)] = [:]
     private var desktopIconIDs: [HUDSourceID: HUDSourceID] = [:]
+    private lazy var desktopRightButtonIDs = Set(desktopButtons.filter { $0.path.contains("/RightBottomNode/") }.map(\.nodeID))
+    private struct DesktopLabelClip {
+        let points: [CGPoint]
+        let path: CGPath?
+    }
+    private var desktopButtonClips: [HUDSourceID: DesktopLabelClip] = [:]
+    private var desktopViewportClip: DesktopLabelClip?
     private var lastDesktopProjection: (root: simd_double4x4, bounds: CGRect, scroll: Double)?
     private var desktopProjectionWasAnimating = true
     private var lastAccessibilityFrames: [HUDSourceID: CGRect] = [:]
@@ -350,8 +357,10 @@ final class HUDSourceWatchView: NSView {
                       let label = document.scene.nodes.first(where: { $0.path.hasPrefix(node.path + "/") && $0.name == "BtnName" }) else { continue }
                 desktopSupplementalButtons.append(HUDSourceWatchButton(nodeID: node.id, path: node.path,
                     labels: [.init(nodeID: label.id, textID: "desktop." + module.rawValue, literal: module.title)]))
-                // The source glyph's shadow also contains a baked game icon.
+                // Storage uses a desktop replacement. The Activity Monitor
+                // keeps the source Report glyph and its authored shadow.
                 for shadow in document.scene.nodes where shadow.path.hasPrefix(node.path + "/") && ["IconShadow", "ForbidIcon", "LockIcon"].contains(shadow.name) {
+                    if module == .activityMonitor && shadow.name == "IconShadow" { continue }
                     frameBuilder.desktopHiddenNodes.insert(shadow.id)
                 }
             }
@@ -723,7 +732,11 @@ final class HUDSourceWatchView: NSView {
         let finite = playback.phase == .opening || playback.phase == .closing || gyro.isAnimating || buttonAnimation.requiresFrames(at: now)
             || frameBuilder.requiresWidgetFrames || selectableColor.requiresFrames(at: now) || desktopScrollMotion.requiresFrames || logoIsAnimating
         guard !HUDRuntimeAppearance.reduceMotion && (finite || HUDRuntimeAppearance.ambientEnabled) else { return }
-        let timer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
+        // The low-power setting must reduce CPU-side scene preparation too,
+        // not only suppress blur and ambient shaders. Normal mode retains its
+        // existing 60 Hz motion / 30 Hz ambient sampling.
+        let interval = desktopMode && HUDRuntimeAppearance.configuration.lowPowerVisualMode ? 1.0 / 30 : 1.0 / 60
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             guard let self else { return }
             guard self.isOnScreen || self.canAdvanceTransition, self.playback.phase != .concealed else { self.stopTimer(); return }
             let time = self.now
@@ -922,15 +935,17 @@ final class HUDSourceWatchView: NSView {
             let tints = selectableColor.colors(at: time, reduceMotion: reduce)
             refreshDesktopHoverStyles(selectableTints: tints)
             refreshIndustryLogo(at: time)
-            let settled = desktopMode && playback.phase == .visible && !reduce && HUDRuntimeAppearance.ambientEnabled
-                && !gyro.isAnimating && !buttonAnimation.requiresFrames(at: time) && !selectableColor.requiresFrames(at: time)
+            let settled = desktopMode && playback.phase == .visible
+                && !buttonAnimation.requiresFrames(at: time) && !selectableColor.requiresFrames(at: time)
+            let usesAmbient = !reduce && HUDRuntimeAppearance.ambientEnabled
+            let ambient = usesAmbient ? playback.sampleAmbient(at: time) : nil
             var wrapperPose: HUDSourceWatchPose?
             var finalPose: HUDSourceWatchPose?
             var frame: HUDSourceWatchFrameBuilder.Frame
             if settled, let packet = settledRenderPacket,
                packet.playback == playback.generation, packet.buttons == buttonAnimation.stateGeneration,
-               let ambient = playback.sampleAmbient(at: time),
-               let current = try frameBuilder.buildSettledAmbient(ambient, expectedRevision: packet.presentation,
+               (!usesAmbient || ambient != nil),
+               let current = try frameBuilder.buildSettledMotion(ambient, expectedRevision: packet.presentation,
                    worldRoot: camera.worldRoot, canvasResolution: camera.layout.canvasSize,
                    verticalNormalizedPosition: verticalNormalizedPosition, desktopNavigation: desktopNavigation, selectableTints: tints) {
                 frame = current
@@ -1291,7 +1306,15 @@ final class HUDSourceWatchView: NSView {
     private func updateHover(_ event: NSEvent, forceRefresh: Bool = false) {
         refreshSourceCursor()
         let next = button(at: point(event))
-        if next != hovered { hovered = next; updateAnimatorStates(at: now); refreshPlaybackScheduling() }
+        if next != hovered {
+            hovered = next; updateAnimatorStates(at: now)
+            // A running low-power clock consumes the newest hover state on
+            // its next tick. Avoid inserting extra immediate renders between
+            // those ticks when a high-rate pointer crosses button boundaries.
+            if !desktopMode || !HUDRuntimeAppearance.configuration.lowPowerVisualMode || timer == nil {
+                refreshPlaybackScheduling()
+            }
+        }
         else if forceRefresh || (timer == nil && !HUDRuntimeAppearance.reduceMotion) { refreshPlaybackScheduling() }
     }
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
@@ -1534,7 +1557,8 @@ final class HUDSourceWatchView: NSView {
             actionsByID[button.nodeID] = ButtonAction(source: button, target: entry.target)
             accessibilityButtons[button.nodeID]?.setAccessibilityLabel(entry.title)
             accessibilityButtons[button.nodeID]?.setAccessibilityHelp(entry.target.module?.title ?? (L10n.text("Open ", "打开 ") + entry.title))
-            if let iconID = desktopIconIDs[button.nodeID] ?? document.scene.nodes.first(where: {
+            if !(button.path.hasSuffix("/ReportBtn") && entry.target == .module(.activityMonitor)),
+               let iconID = desktopIconIDs[button.nodeID] ?? document.scene.nodes.first(where: {
                 $0.path.hasPrefix(button.path + "/") && (entry.target.module?.group == .bottom
                     ? $0.path.contains("/IconShadow/") && $0.name.trimmingCharacters(in: .whitespaces) == "Icon"
                     : ["Icon", "Icon01"].contains($0.name))
@@ -1933,10 +1957,39 @@ final class HUDSourceWatchView: NSView {
         lastDesktopProjection = (camera.worldRoot, bounds, verticalNormalizedPosition)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        let viewportPoints = [CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
+                              CGPoint(x: bounds.maxX, y: bounds.maxY), CGPoint(x: bounds.minX, y: bounds.maxY)]
+        if desktopViewportClip?.points != viewportPoints {
+            desktopViewportClip = DesktopLabelClip(points: viewportPoints, path: Self.polygonPath(viewportPoints))
+        }
+        let viewportClip = desktopViewportClip!
+        let textScale = max(2, window?.backingScaleFactor ?? 2)
+        // Labels and icons share their button's masks. Project that exact mask
+        // chain once per frame, and keep its immutable path when unchanged.
+        var frameClips: [HUDSourceID: DesktopLabelClip] = [:]
+        func clip(for button: HUDSourceID) -> DesktopLabelClip {
+            if let existing = frameClips[button] { return existing }
+            let points = desktopClipPolygon(button: button, frame: frame, camera: camera.camera)
+            let result: DesktopLabelClip
+            if let previous = desktopButtonClips[button], previous.points == points { result = previous }
+            else if points == viewportPoints { result = viewportClip }
+            else { result = DesktopLabelClip(points: points, path: points.isEmpty ? nil : Self.polygonPath(points)) }
+            desktopButtonClips[button] = result
+            frameClips[button] = result
+            return result
+        }
+        func present(_ container: CALayer, mask: CAShapeLayer, clip: DesktopLabelClip, opacity: Float) {
+            if container.frame != bounds { container.frame = bounds }
+            if container.isHidden { container.isHidden = false }
+            if mask.frame != bounds { mask.frame = bounds }
+            if mask.path !== clip.path { mask.path = clip.path }
+            if container.opacity != opacity { container.opacity = opacity }
+        }
         for (id, layers) in desktopLabels {
             guard let node = frame.node(id), node.activeInHierarchy, let rect = node.rect,
                   let button = desktopLabelButtons[id], actionsByID[button] != nil else {
-                layers.container.isHidden = true; continue
+                if !layers.container.isHidden { layers.container.isHidden = true }
+                continue
             }
             let world = simd_mul(camera.worldRoot, node.worldMatrix)
             let area = desktopCaptionSize(CGSize(width: rect.size.x, height: rect.size.y), target: actionsByID[button]?.target)
@@ -1946,37 +1999,46 @@ final class HUDSourceWatchView: NSView {
                            SIMD3(x + width, y, 0), SIMD3(x, y, 0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point
             }
-            guard corners.count == 4, width > 0, height > 0 else { layers.container.isHidden = true; continue }
-            let clip = desktopProfileLabelIDs.contains(id)
-                ? [CGPoint(x: bounds.minX, y: bounds.minY), CGPoint(x: bounds.maxX, y: bounds.minY),
-                   CGPoint(x: bounds.maxX, y: bounds.maxY), CGPoint(x: bounds.minX, y: bounds.maxY)]
-                : desktopClipPolygon(button: button, frame: frame, camera: camera.camera)
-            guard !clip.isEmpty else { layers.container.isHidden = true; continue }
-            layers.container.frame = bounds; layers.container.isHidden = false
-            layers.clip.frame = bounds; layers.clip.path = Self.polygonPath(clip)
-            layers.text.bounds = CGRect(x: 0, y: 0, width: width, height: height)
-            layers.text.contentsScale = max(2, window?.backingScaleFactor ?? 2)
+            guard corners.count == 4, width > 0, height > 0 else {
+                if !layers.container.isHidden { layers.container.isHidden = true }
+                continue
+            }
+            let projectedClip = desktopProfileLabelIDs.contains(id) ? viewportClip : clip(for: button)
+            guard projectedClip.path != nil else {
+                if !layers.container.isHidden { layers.container.isHidden = true }
+                continue
+            }
+            present(layers.container, mask: layers.clip, clip: projectedClip, opacity: Float(frame.inheritedAlpha[id] ?? 1))
+            let textBounds = CGRect(x: 0, y: 0, width: width, height: height)
+            if layers.text.bounds != textBounds { layers.text.bounds = textBounds }
+            if layers.text.contentsScale != textScale { layers.text.contentsScale = textScale }
             layers.text.transform = Self.projectiveTextTransform(corners, size: CGSize(width: width, height: height))
-            layers.container.opacity = Float(frame.inheritedAlpha[id] ?? 1)
         }
         for (buttonID, iconID) in desktopIconIDs {
             guard let layers = desktopIcons[iconID] else { continue }
             guard frame.node(buttonID)?.activeInHierarchy == true, actionsByID[buttonID] != nil,
-                  let node = frame.node(iconID), let rect = node.rect else { layers.container.isHidden = true; continue }
+                  let node = frame.node(iconID), let rect = node.rect else {
+                if !layers.container.isHidden { layers.container.isHidden = true }
+                continue
+            }
             let world = simd_mul(camera.worldRoot, node.worldMatrix)
-            let right = actionsByID[buttonID]?.source.path.contains("/RightBottomNode/") == true
+            let right = desktopRightButtonIDs.contains(buttonID)
             let w = right ? 80.0 : rect.size.x, h = right ? 80.0 : rect.size.y
             let x = rect.origin.x + (rect.size.x - w) / 2, y = rect.origin.y + (rect.size.y - h) / 2
             let corners = [SIMD3(x,y+h,0), SIMD3(x+w,y+h,0), SIMD3(x+w,y,0), SIMD3(x,y,0)].compactMap {
                 camera.camera.project($0, world: world, viewport: bounds)?.point
             }
-            guard corners.count == 4 else { layers.container.isHidden = true; continue }
-            let clip = desktopClipPolygon(button: buttonID, frame: frame, camera: camera.camera)
-            guard !clip.isEmpty else { layers.container.isHidden = true; continue }
-            layers.container.frame = bounds; layers.container.isHidden = false
-            layers.clip.frame = bounds; layers.clip.path = Self.polygonPath(clip)
+            guard corners.count == 4 else {
+                if !layers.container.isHidden { layers.container.isHidden = true }
+                continue
+            }
+            let projectedClip = clip(for: buttonID)
+            guard projectedClip.path != nil else {
+                if !layers.container.isHidden { layers.container.isHidden = true }
+                continue
+            }
+            present(layers.container, mask: layers.clip, clip: projectedClip, opacity: Float(frame.inheritedAlpha[iconID] ?? 1))
             layers.content.transform = Self.projectiveTextTransform(corners, size: CGSize(width: 32, height: 32))
-            layers.container.opacity = Float(frame.inheritedAlpha[iconID] ?? 1)
         }
     }
 

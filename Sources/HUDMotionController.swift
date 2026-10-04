@@ -224,13 +224,16 @@ final class HUDMotionController {
         let next = HUDMotionMath.safeProjectionBounds(bounds)
         guard plane.projectionBounds != next else { return }
         plane.projectionBounds = next
+        guard externalProjection == nil else { return }
         retargetPlanes(to: targetNormalizedPoint, animated: false, targets: [plane])
     }
 
     func configure(parallax: CGFloat, perspective: CGFloat, ambient: Bool) {
         let changed = self.parallaxIntensity != parallax || self.perspectiveIntensity != perspective
         parallaxIntensity = parallax; perspectiveIntensity = perspective
-        if changed { retargetPlanes(to: targetNormalizedPoint, animated: isPointerFollowing && !reducedMotion) }
+        if changed, externalProjection == nil {
+            retargetPlanes(to: targetNormalizedPoint, animated: isPointerFollowing && !reducedMotion)
+        }
         guard ambientEnabled != ambient else { return }
         ambientEnabled = ambient
         if ambient && isRunning && !reducedMotion {
@@ -335,12 +338,16 @@ final class HUDMotionController {
         let point = HUDMotionMath.normalizedPoint(normalizedPoint)
         guard point != targetNormalizedPoint else { return }
         targetNormalizedPoint = point
+        // The source camera will submit the actual transform. Retain pointer
+        // state for fallback without rewriting that pose on every mouse event.
+        guard externalProjection == nil else { return }
         retargetPlanes(to: point, animated: animated)
     }
 
     func resetParallax(animated: Bool = true) {
         precondition(Thread.isMainThread)
         targetNormalizedPoint = .zero
+        guard externalProjection == nil else { return }
         // Reset can prepare an inactive view before its next deployment.
         retargetPlanes(to: .zero, animated: animated && isPointerFollowing && !reducedMotion)
     }

@@ -450,7 +450,7 @@ struct HUDSourceScene: Codable {
 
     /// Keep the original arithmetic and validation in one place. Incremental
     /// resolution skips it only for bit-for-bit identical dependency values.
-    private static func resolveNode(_ node: HUDSourceNode, override: HUDSourceTransformOverride?,
+    static func resolveNode(_ node: HUDSourceNode, override: HUDSourceTransformOverride?,
                                     parentRect: HUDSourceRect?, parentWorld: simd_double4x4,
                                     parentActive: Bool) throws -> HUDSourceResolvedNode {
         let source = node.transform

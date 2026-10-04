@@ -81,6 +81,44 @@ enum HUDSourceWatchLayoutTests {
             check(fittedResult[id(1)]!.rect!.size.x == 200,
                   "ContentSizeFitter uses measured preferred width before child control")
 
+            // Immutable candidates and within-call rect memoization must
+            // preserve the uncached horizontal-before-vertical writer order.
+            // Reuse the same layout across different inputs to ensure sampled
+            // rectangles never leak into a subsequent animation frame.
+            for candidate in [layout, controlled, scaleLayout, fittedLayout] {
+                for width in [70.0, 200.0, 377.5] {
+                    var rootInput = HUDSourceTransformOverride()
+                    rootInput.sizeDelta = HUDSourceVector2(width, 135)
+                    var child = HUDSourceTransformOverride(localScale: HUDSourceVector3(1.7, 0.8, 1))
+                    child.pivot = HUDSourceVector2(0.2, 0.9)
+                    child.localPosition = HUDSourceVector3(40, -20, 7)
+                    var input = HUDSourceWatchPose(transforms: [id(1): rootInput, id(2): child])
+                    if width == 200 { input.transforms[id(3)] = HUDSourceTransformOverride(active: false) }
+                    var cached = input, forced = input
+                    let cachedReport = try candidate.apply(to: &cached)
+                    let forcedReport = try candidate.apply(to: &forced, forceSlantRebuild: true)
+                    check(cached.transforms == forced.transforms && cached.properties == forced.properties,
+                        "Cached layout metadata and rect values must preserve every authored transform channel")
+                    check(cachedReport.missingTextMetrics == forcedReport.missingTextMetrics
+                        && cachedReport.unverifiedCustomComponents == forcedReport.unverifiedCustomComponents,
+                        "Cached layout metadata must preserve diagnostics")
+                }
+            }
+
+            let image = component("UIImage", 111, ["m_Type": .number(1)])
+            let scaler = component("CanvasScaler", 112, ["m_ReferencePixelsPerUnit": .number(200)])
+            let sprite: HUDSourceJSONValue = .object(["raw_sprite": .object([
+                "m_PixelsToUnits": .number(100), "m_Rect": .object(["width": .number(128), "height": .number(64)]),
+                "m_Border": .object(["x": .number(3), "y": .number(5), "z": .number(7), "w": .number(11)])])])
+            let imageLayout = HUDSourceWatchLayout(scene: scene, components: [id(1): [group(true, force: false), fitter, scaler],
+                id(2): [image, element(113, minimum: 8, preferred: 12, flexible: 0)], id(5): [ignore]],
+                spriteByComponent: [image.id: sprite])
+            var cachedImage = HUDSourceWatchPose(transforms: [:]), forcedImage = cachedImage
+            _ = try imageLayout.apply(to: &cachedImage)
+            _ = try imageLayout.apply(to: &forcedImage, forceSlantRebuild: true)
+            check(cachedImage.transforms == forcedImage.transforms,
+                "Image borders, inherited Canvas pixels-per-unit and LayoutElement priority retain exact metric order")
+
             let scrollScene = try HUDSourceScene(rootID: id(1), nodes: [node(1, parent: nil, children: [2], size: SIMD2(100, 100)),
                 node(2, parent: 1, size: SIMD2(100, 300), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1))])
             func pointer(_ number: Int) -> HUDSourceJSONValue { .object(["target_id": .string(id(number).rawValue)]) }

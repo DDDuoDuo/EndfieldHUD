@@ -125,6 +125,7 @@ enum HUDIntegrationPerformance {
                 if CommandLine.arguments.contains("--verify-only") { self.verifyFrameCache() }
                 #endif
                 if CommandLine.arguments.contains("--verify-only") { self.finish(); return }
+                if CommandLine.arguments.contains("--power-modes") { self.measurePowerModes(); return }
                 self.measure("map-idle", seconds: 6) {
                     self.section(.clipboard, name: "clipboard-idle") {
                         self.section(.notes, name: "notes-idle") {
@@ -290,6 +291,131 @@ enum HUDIntegrationPerformance {
                 require(builder.fastAmbientFrameCount > ambientBefore, "Settled ambient presentation must skip static traversal")
                 require(builder.directAmbientFrameCount == directBefore + 43, "Every direct packet must pass the independent GPU geometry comparison")
                 source.buttonAnimation.reset(at: 0, reduceMotion: true)
+                // Compare a run of consecutive sparse pointer packets before
+                // invoking the independent full oracle. This catches stale
+                // slant buffers when returning to the seed root, accumulation
+                // across pointer samples, and pointer-to-idle transitions.
+                typealias PointerSnapshot = (frame: HUDSourceWatchFrameBuilder.Frame, geometry: [String: String],
+                    pose: HUDSourceWatchPose, world: simd_double4x4, label: String)
+                func completePose(at time: Double?, canvas: SIMD2<Double>) throws -> HUDSourceWatchPose {
+                    var pose = try source.document.animation.pose(entranceTime: source.document.animation.entrance.lastKeyTime,
+                        ambientTime: time, exitTime: nil, canvasResolution: canvas)
+                    if let time { source.playback.desktopAmbientMotion?.apply(at: time, to: &pose) }
+                    source.applyDesktopButtons(to: &pose, at: 0, reduceMotion: false, forceRebuild: true)
+                    return pose
+                }
+                func samePointerFrame(_ expected: PointerSnapshot) throws {
+                    let cold = try builder.build(pose: expected.pose, worldRoot: expected.world, forceRebuild: true)
+                    let coldGeometry = try source.renderer.geometryFingerprintForVerification(meshNames: Set(cold.batches.map(\.mesh)))
+                    let warm = expected.frame, label = expected.label
+                    require(expected.geometry == coldGeometry, "Pointer packet GPU bytes differ: \(label)")
+                    require(warm.inheritedAlpha == cold.inheritedAlpha && warm.diagnostics == cold.diagnostics
+                        && warm.batches.count == cold.batches.count && warm.hits.count == cold.hits.count,
+                        "Pointer packet shape/alpha/diagnostics differs: \(label)")
+                    for (a, b) in zip(warm.batches, cold.batches) {
+                        require(a.mesh == b.mesh && a.material == b.material && a.world == b.world
+                            && a.color == b.color && a.appliesDesktopAccent == b.appliesDesktopAccent
+                            && a.uniformOverrides == b.uniformOverrides && a.textureOverrides == b.textureOverrides
+                            && a.indexRange == b.indexRange && a.stencilOverrides == b.stencilOverrides
+                            && a.colorWriteMask == b.colorWriteMask && a.sourceNodeID == b.sourceNodeID,
+                            "Pointer packet changes authored draw state: \(label)")
+                    }
+                    let reference = cold.resolved
+                    require(warm.resolved.count == reference.count, "Pointer packet omits resolved nodes: \(label)")
+                    for (id, node) in warm.resolved {
+                        require(reference[id].map { $0.localMatrix == node.localMatrix && $0.worldMatrix == node.worldMatrix
+                            && $0.rect == node.rect && $0.activeInHierarchy == node.activeInHierarchy } == true,
+                            "Pointer packet changes resolved geometry: \(label), \(node.node.path)")
+                    }
+                    for (a, b) in zip(warm.hits, cold.hits) {
+                        require(a.graphicID == b.graphicID && a.buttonID == b.buttonID && a.world == b.world && a.rect == b.rect
+                            && a.masks.count == b.masks.count && zip(a.masks, b.masks).allSatisfy { $0.rect == $1.rect && $0.world == $1.world },
+                            "Pointer packet changes clipped hit regions: \(label)")
+                    }
+                }
+                for usesAmbient in [true, false] {
+                    let seedCamera = try source.cameraModel.frame(screenSize: size,
+                        localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: .zero))
+                    let seedPose = try completePose(at: usesAmbient ? 1.127 : nil, canvas: seedCamera.layout.canvasSize)
+                    _ = try builder.build(pose: seedPose, worldRoot: seedCamera.worldRoot, forceRebuild: true)
+                    let pointerBefore = builder.directPointerFrameCount
+                    var snapshots: [PointerSnapshot] = []
+                    for (index, angle) in [SIMD3<Double>(7, -5, 0), SIMD3(-11, 9, 0), .zero, .zero].enumerated() {
+                        let camera = try source.cameraModel.frame(screenSize: size,
+                            localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: angle))
+                        let sampleTime = 1.3 + Double(index) * 0.117
+                        var ambient: HUDSourceWatchPose?
+                        if usesAmbient {
+                            var sample = HUDSourceWatchPose(transforms: [:])
+                            source.document.animation.apply(source.document.animation.ambient, time: sampleTime, to: &sample, base: nil)
+                            source.playback.desktopAmbientMotion?.apply(at: sampleTime, to: &sample)
+                            ambient = sample
+                        }
+                        let revision = builder.presentationRevision
+                        guard let frame = try builder.buildSettledMotion(ambient, expectedRevision: revision,
+                            worldRoot: camera.worldRoot, canvasResolution: camera.layout.canvasSize) else {
+                            fatalError("Settled pointer packet rejected unchanged dependencies at sample \(index), ambient=\(usesAmbient)")
+                        }
+                        require(builder.presentationRevision == revision + (index < 3 ? 1 : 0),
+                            "Pointer motion must invalidate hit queries; idle samples keep the same hit revision")
+                        if index < 3 {
+                            require(try builder.buildSettledMotion(ambient, expectedRevision: revision,
+                                worldRoot: camera.worldRoot, canvasResolution: camera.layout.canvasSize) == nil,
+                                "Previous pointer revision cannot be reused")
+                        }
+                        snapshots.append((frame,
+                            try source.renderer.geometryFingerprintForVerification(meshNames: Set(frame.batches.map(\.mesh))),
+                            try completePose(at: usesAmbient ? sampleTime : nil, canvas: camera.layout.canvasSize),
+                            camera.worldRoot, "sample \(index), ambient=\(usesAmbient)"))
+                    }
+                    require(builder.directPointerFrameCount == pointerBefore + 3,
+                        "Every moving sample must activate the sparse pointer path; stationary samples reuse it")
+                    if usesAmbient {
+                        let offPose = try completePose(at: nil, canvas: seedCamera.layout.canvasSize)
+                        let previousRevision = builder.presentationRevision
+                        _ = try builder.build(pose: offPose, worldRoot: seedCamera.worldRoot)
+                        require(try builder.buildSettledMotion(nil, expectedRevision: previousRevision,
+                            worldRoot: seedCamera.worldRoot, canvasResolution: seedCamera.layout.canvasSize) == nil,
+                            "Turning ambient off requires a newly seeded full presentation")
+                        let offCamera = try source.cameraModel.frame(screenSize: size,
+                            localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: SIMD3(3, 4, 0)))
+                        guard let offFrame = try builder.buildSettledMotion(nil, expectedRevision: builder.presentationRevision,
+                            worldRoot: offCamera.worldRoot, canvasResolution: offCamera.layout.canvasSize) else {
+                            fatalError("Ambient-off pointer packet failed after an animated presentation")
+                        }
+                        snapshots.append((offFrame,
+                            try source.renderer.geometryFingerprintForVerification(meshNames: Set(offFrame.batches.map(\.mesh))),
+                            offPose, offCamera.worldRoot, "ambient-to-off reseed"))
+                    }
+                    // A normal build after sparse motion must restore whatever
+                    // local vertices its per-node cache held before movement.
+                    let retainedImages = builder.reusedImagePresentationCount
+                    let restored = try builder.build(pose: seedPose, worldRoot: seedCamera.worldRoot)
+                    require(builder.reusedImagePresentationCount > retainedImages,
+                        "Restoring sparse motion must keep unrelated exact image presentations reusable")
+                    snapshots.append((restored,
+                        try source.renderer.geometryFingerprintForVerification(meshNames: Set(restored.batches.map(\.mesh))),
+                        seedPose, seedCamera.worldRoot, "full-builder restoration, ambient=\(usesAmbient)"))
+                    for snapshot in snapshots { try samePointerFrame(snapshot) }
+                    let token = builder.presentationRevision
+                    func rejectsPointer(canvas: SIMD2<Double>? = nil, scroll: Double = 1,
+                                        tints: [HUDSourceID: SIMD4<Float>] = [:],
+                                        sample: HUDSourceWatchPose? = nil) throws -> Bool {
+                        try builder.buildSettledMotion(sample, expectedRevision: token,
+                            worldRoot: seedCamera.worldRoot, canvasResolution: canvas ?? seedCamera.layout.canvasSize,
+                            verticalNormalizedPosition: scroll, selectableTints: tints) == nil
+                    }
+                    require(try rejectsPointer(canvas: seedCamera.layout.canvasSize + SIMD2(1, 0)), "Pointer packet cannot ignore resizing")
+                    require(try rejectsPointer(scroll: 0.5), "Pointer packet cannot ignore scrolling")
+                    require(try rejectsPointer(tints: [source.document.scene.rootID: .zero]), "Pointer packet cannot ignore selectable changes")
+                    var invalid = HUDSourceWatchPose(transforms: [:])
+                    invalid.properties[source.document.scene.rootID] = ["m_Alpha": 0.3]
+                    require(try rejectsPointer(sample: invalid), "Pointer packet cannot accept dynamic opacity channels")
+                    let oldHidden = builder.desktopHiddenNodes
+                    builder.desktopHiddenNodes.insert(source.document.scene.rootID)
+                    require(try rejectsPointer(), "Pointer packet cannot ignore visibility mutations")
+                    builder.desktopHiddenNodes = oldHidden
+                }
                 // Gyro movement rebuilds world/slant presentation, but not the
                 // products of unchanged CanvasGroup channels. Compare each
                 // cache branch with the original forced traversal, including
@@ -404,6 +530,56 @@ enum HUDIntegrationPerformance {
             }
         }
 
+        private func measurePowerModes() {
+            #if HUD_SOURCE_INTEGRATION
+            let modes: [(String, Bool, Bool)] = [
+                ("normal", false, false), ("low-power", true, false),
+                ("reduce-motion", false, true), ("both", true, true)
+            ]
+            func run(_ index: Int) {
+                guard index < modes.count else {
+                    self.overlay.closeSystemOverlay()
+                    self.later(1) { self.measure("modes-closed", seconds: 5) { self.finish() } }
+                    return
+                }
+                let (name, lowPower, reduce) = modes[index]
+                self.configuration.lowPowerVisualMode = lowPower
+                self.configuration.reduceMotion = reduce
+                self.overlay.update(snapshot: .unavailable, configuration: self.configuration)
+                self.later(2) {
+                    self.measure(name + "-idle", seconds: 5) {
+                        let began = CACurrentMediaTime(), screen = NSScreen.main!.frame
+                        self.pointerTimer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self] _ in
+                            guard let self, let source = self.overlay.systemSourceWatchForVerification,
+                                  let window = source.window else { return }
+                            let t = CACurrentMediaTime() - began
+                            self.pointer = CGPoint(x: screen.midX + sin(t * 1.7) * screen.width * 0.35,
+                                                   y: screen.midY + cos(t * 1.3) * screen.height * 0.325)
+                            // Directly dispatch to this isolated view. Merely
+                            // changing the provider would never wake a paused
+                            // power-saving renderer and would hide event costs.
+                            if let event = NSEvent.mouseEvent(with: .mouseMoved,
+                                location: window.convertPoint(fromScreen: self.pointer), modifierFlags: [],
+                                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                context: nil, eventNumber: 0, clickCount: 0, pressure: 0) {
+                                source.mouseMoved(with: event)
+                                (source.superview as? SystemHUDView)?.mouseMoved(with: event)
+                            }
+                        }
+                        RunLoop.main.add(self.pointerTimer!, forMode: .common)
+                        self.measure(name + "-pointer-events", seconds: 5) {
+                            self.pointerTimer?.invalidate(); self.pointerTimer = nil
+                            run(index + 1)
+                        }
+                    }
+                }
+            }
+            run(0)
+            #else
+            fatalError("Power-mode comparison requires the integrated renderer")
+            #endif
+        }
+
         private func measureClosedAfter() {
             guard CommandLine.arguments.contains("--relieve-closed-heap") else {
                 measure("closed-after", seconds: 8) { self.reopen() }
@@ -448,7 +624,10 @@ enum HUDIntegrationPerformance {
             // Real tracking events must not alter hover, scroll or module state
             // while this fixture supplies its own repeatable pointer stream.
             for panel in NSApp.windows.compactMap({ $0 as? NSPanel }) {
-                panel.ignoresMouseEvents = true
+                // The local event monitor already rejects all physical input.
+                // Mode benchmarks also dispatch to the native host's real
+                // hover path, which intentionally ignores disabled panels.
+                panel.ignoresMouseEvents = !CommandLine.arguments.contains("--power-modes")
                 panel.acceptsMouseMovedEvents = false
             }
             if let screen = NSScreen.main?.frame {
@@ -467,6 +646,7 @@ enum HUDIntegrationPerformance {
             let buildTime = source?.cumulativeFrameBuildSeconds ?? 0
             let cached = source?.frameBuilder.cachedLayoutFrameCount ?? 0
             let rebuilt = source?.frameBuilder.rebuiltLayoutFrameCount ?? 0
+            let pointerFrames = source?.frameBuilder.directPointerFrameCount ?? 0
             #endif
             print("MEASURE \(name)"); fflush(stdout)
             later(seconds) {
@@ -487,7 +667,36 @@ enum HUDIntegrationPerformance {
                 row["rebuiltLayoutFrames"] = (source?.frameBuilder.rebuiltLayoutFrameCount ?? 0) - rebuilt
                 row["fastAmbientFramesTotal"] = source?.frameBuilder.fastAmbientFrameCount ?? 0
                 row["directAmbientFramesTotal"] = source?.frameBuilder.directAmbientFrameCount ?? 0
+                row["directPointerFramesTotal"] = source?.frameBuilder.directPointerFrameCount ?? 0
+                row["directPointerFrames"] = (source?.frameBuilder.directPointerFrameCount ?? 0) - pointerFrames
                 row["gpuResources"] = source?.renderer.resourceStatisticsForVerification ?? [:]
+                if CommandLine.arguments.contains("--verify-power-modes") {
+                    let rendered = (source?.renderedFrameCount ?? 0) - frames
+                    precondition(self.overlay.systemSourceFailureForVerification == nil,
+                                 "Power modes must keep the source renderer available")
+                    if name != "closed-before" && name != "modes-closed" {
+                        precondition(source?.window != nil && source?.isHidden == false,
+                                     "Power-mode checks require a visible source view")
+                    }
+                    if ["normal-pointer-events", "low-power-pointer-events"].contains(name) {
+                        let minimumFPS = name == "normal-pointer-events" ? 50.0 : 25.0
+                        precondition(Double(rendered) / elapsed >= minimumFPS
+                            && (source?.frameBuilder.directPointerFrameCount ?? 0) > pointerFrames,
+                            "Moving workloads must render and use the optimized pointer path")
+                    }
+                    if ["low-power-idle", "reduce-motion-idle", "both-idle", "modes-closed"].contains(name) {
+                        precondition(rendered == 0 && source?.hasDisplayTimerForVerification != true,
+                                     "A settled power-saving view must not keep rendering")
+                    }
+                    if name == "low-power-pointer-events" {
+                        precondition(Double(rendered) / elapsed <= 32,
+                                     "Pointer events must respect the low-power frame budget")
+                    }
+                    if ["reduce-motion-pointer-events", "both-pointer-events"].contains(name) {
+                        precondition(Double(rendered) / elapsed < 20 && source?.hasDisplayTimerForVerification != true,
+                                     "Reduced motion must redraw changed controls instead of following the pointer continuously")
+                    }
+                }
                 #endif
                 self.rows.append(row)
                 print(row); fflush(stdout)
@@ -523,6 +732,9 @@ enum HUDIntegrationPerformance {
             report["startupSourcePreparationMilliseconds"] = sourcePreparationMilliseconds
             report["warmOpenSynchronousMilliseconds"] = warmOpenMilliseconds
             report["closedHeapRelief"] = closedHeapRelief
+            if CommandLine.arguments.contains("--power-modes") {
+                report["pointerEventScope"] = "source and native host; isolated direct dispatch at 60 Hz"
+            }
             #if HUD_SOURCE_INTEGRATION
             report["automaticClosedHeapCleanupRuns"] = overlay.closedHeapCleanupRunsForVerification
             report["automaticClosedHeapCleanupMilliseconds"] = overlay.lastClosedHeapCleanupMillisecondsForVerification

@@ -51,6 +51,19 @@ struct HUDSourceWatchLayout {
     /// Component metadata is immutable. Keep validation failures deferred
     /// until an active effect is used, as in the original layout path.
     private let slants: [HUDSourceID: Result<SlantConfiguration, Error>]
+    let slantRootIDs: Set<HUDSourceID>
+    private let slantEffectIDs: [HUDSourceID]
+    private let enabledComponents: [HUDSourceID: [String: HUDSourceWatchComponent]]
+    private let layoutGroups: [HUDSourceID: HUDSourceWatchComponent]
+    private let layoutChildren: [HUDSourceID: [HUDSourceID]]
+    private typealias MetricCandidate = (priority: Int, value: Metrics)
+    private let fixedMetrics: [HUDSourceID: [[MetricCandidate]]]
+    /// A single apply call owns this cache. Every rect-writing operation clears
+    /// it; no sampled layout values survive into another animation frame.
+    private final class Evaluation {
+        var rects: [HUDSourceID: HUDSourceRect] = [:]
+    }
+    private var evaluation: Evaluation?
 
     init(document: HUDSourceWatchDocument, intrinsicSize: IntrinsicSize? = nil) {
         self.init(scene: document.scene, components: document.components,
@@ -67,6 +80,35 @@ struct HUDSourceWatchLayout {
             }
         }
         self.slants = slants
+        slantEffectIDs = scene.traversalIDs.filter { id in
+            (components[id] ?? []).contains { $0.enabled && $0.kind == "UIScrollCellSlantEffect" }
+        }
+        slantRootIDs = Set(slantEffectIDs.flatMap { id in
+            (components[id]?.first { $0.enabled && $0.kind == "UIScrollCellSlantEffect" })?["_cells"].array.compactMap(\.targetID) ?? []
+        })
+        var enabled: [HUDSourceID: [String: HUDSourceWatchComponent]] = [:]
+        var groups: [HUDSourceID: HUDSourceWatchComponent] = [:]
+        var children: [HUDSourceID: [HUDSourceID]] = [:]
+        var metrics: [HUDSourceID: [[MetricCandidate]]] = [:]
+        for node in scene.nodes {
+            let records = components[node.id] ?? []
+            for record in records where record.enabled {
+                if enabled[node.id]?[record.kind] == nil { enabled[node.id, default: [:]][record.kind] = record }
+                if groups[node.id] == nil && ["HorizontalLayoutGroup", "VerticalLayoutGroup"].contains(record.kind) {
+                    groups[node.id] = record
+                }
+            }
+            children[node.id] = node.childIDs.filter { child in
+                guard scene.node(child)?.transform.rect != nil else { return false }
+                let ignorers = (components[child] ?? []).filter { $0.kind == "LayoutElement" }
+                return ignorers.isEmpty || ignorers.contains { !$0["m_IgnoreLayout"].flag() }
+            }
+            metrics[node.id] = (0...1).map { axis in
+                Self.fixedMetricCandidates(on: node.id, axis: axis, scene: scene,
+                    components: components, sprites: spriteByComponent)
+            }
+        }
+        enabledComponents = enabled; layoutGroups = groups; layoutChildren = children; fixedMetrics = metrics
     }
 
     func apply(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double = 1,
@@ -74,6 +116,18 @@ struct HUDSourceWatchLayout {
                desktopNavigation: HUDSourceDesktopNavigationLayout? = nil,
                beforeSlant: ((HUDSourceWatchPose) -> Void)? = nil,
                forceSlantRebuild: Bool = false) throws -> Report {
+        var evaluator = self
+        evaluator.evaluation = forceSlantRebuild ? nil : Evaluation()
+        return try evaluator.applyEvaluated(to: &pose, verticalNormalizedPosition: verticalNormalizedPosition,
+            slantMapping: slantMapping, worldRoot: worldRoot, desktopNavigation: desktopNavigation,
+            beforeSlant: beforeSlant, forceSlantRebuild: forceSlantRebuild)
+    }
+
+    private func applyEvaluated(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double,
+                                slantMapping: SlantMapping?, worldRoot: simd_double4x4,
+                                desktopNavigation: HUDSourceDesktopNavigationLayout?,
+                                beforeSlant: ((HUDSourceWatchPose) -> Void)?,
+                                forceSlantRebuild: Bool) throws -> Report {
         guard verticalNormalizedPosition.isFinite else { throw HUDSourceError.invalid("Nonfinite Watch scroll position") }
         desktopNavigation?.apply(to: &pose, normalizedPosition: verticalNormalizedPosition)
         let initial = try scene.resolve(overrides: pose.transforms)
@@ -132,7 +186,7 @@ struct HUDSourceWatchLayout {
                     resolvedBeforeSlant: [HUDSourceID: HUDSourceResolvedNode]? = nil,
                     forceRebuild: Bool = false) throws {
         let resolved = try resolvedBeforeSlant ?? scene.resolve(overrides: pose.transforms)
-        for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
+        for id in slantEffectIDs where resolved[id]?.activeInHierarchy == true {
             if let effect = component("UIScrollCellSlantEffect", on: id) {
                 try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose, forceRebuild: forceRebuild)
             }
@@ -158,13 +212,16 @@ struct HUDSourceWatchLayout {
     }
 
     private func component(_ kind: String, on id: HUDSourceID) -> HUDSourceWatchComponent? {
-        components[id]?.first { $0.kind == kind && $0.enabled }
+        if evaluation != nil { return enabledComponents[id]?[kind] }
+        return components[id]?.first { $0.kind == kind && $0.enabled }
     }
     private func group(on id: HUDSourceID) -> HUDSourceWatchComponent? {
-        components[id]?.first { $0.enabled && ($0.kind == "HorizontalLayoutGroup" || $0.kind == "VerticalLayoutGroup") }
+        if evaluation != nil { return layoutGroups[id] }
+        return components[id]?.first { $0.enabled && ($0.kind == "HorizontalLayoutGroup" || $0.kind == "VerticalLayoutGroup") }
     }
     private func children(_ id: HUDSourceID, active: [HUDSourceID: HUDSourceResolvedNode]) -> [HUDSourceID] {
-        (scene.node(id)?.childIDs ?? []).filter { child in
+        if evaluation != nil { return (layoutChildren[id] ?? []).filter { active[$0]?.activeInHierarchy == true } }
+        return (scene.node(id)?.childIDs ?? []).filter { child in
             guard scene.node(child)?.transform.rect != nil, active[child]?.activeInHierarchy == true else { return false }
             // uGUI queries every ILayoutIgnorer, separately from its enabled
             // ILayoutElement measurement filter. At least one false includes it.
@@ -173,10 +230,13 @@ struct HUDSourceWatchLayout {
         }
     }
     private func rect(_ id: HUDSourceID, pose: HUDSourceWatchPose) -> HUDSourceRect? {
+        if let cached = evaluation?.rects[id] { return cached }
         guard let n = scene.node(id), let r = n.transform.rect else { return nil }
         let p = n.parentID.flatMap { rect($0, pose: pose) }, o = pose.transforms[id]
-        return r.layout(parent: p, anchoredPosition3D: o?.anchoredPosition3D, sizeDelta: o?.sizeDelta,
+        let value = r.layout(parent: p, anchoredPosition3D: o?.anchoredPosition3D, sizeDelta: o?.sizeDelta,
             localZ: n.transform.localPosition.z, anchorMin: o?.anchorMin, anchorMax: o?.anchorMax, pivot: o?.pivot).rect
+        evaluation?.rects[id] = value
+        return value
     }
     private func sizeDelta(_ id: HUDSourceID, pose: HUDSourceWatchPose) -> SIMD2<Double> {
         (pose.transforms[id]?.sizeDelta ?? scene.node(id)?.transform.rect?.sizeDelta ?? HUDSourceVector2(0, 0)).simd
@@ -199,12 +259,31 @@ struct HUDSourceWatchLayout {
                 candidates.append((0, Metrics(minimum: 0, preferred: max(0, sizeDelta(id, pose: pose)[axis]), flexible: 0)))
             }
         }
+        if evaluation != nil { candidates.append(contentsOf: fixedMetrics[id]?[axis] ?? []) }
+        else { candidates.append(contentsOf: Self.fixedMetricCandidates(on: id, axis: axis,
+            scene: scene, components: components, sprites: spriteByComponent)) }
+        func property(_ value: (Metrics) -> Double) -> Double {
+            var priority = Int.min, result = 0.0
+            for (p, m) in candidates {
+                let v = value(m)
+                guard v >= 0, p >= priority else { continue }
+                if p > priority { priority = p; result = v } else { result = max(result, v) }
+            }
+            return result
+        }
+        let minimum = property { $0.minimum }
+        return Metrics(minimum: minimum, preferred: max(minimum, property { $0.preferred }), flexible: property { $0.flexible })
+    }
+    private static func fixedMetricCandidates(on id: HUDSourceID, axis: Int, scene: HUDSourceScene,
+                                              components: [HUDSourceID: [HUDSourceWatchComponent]],
+                                              sprites: [HUDSourceID: HUDSourceJSONValue]) -> [MetricCandidate] {
+        var candidates: [MetricCandidate] = []
         for image in components[id] ?? [] where image.enabled && (image.kind == "UIImage" || image.kind == "Image") {
-            guard let sprite = spriteByComponent[image.id] else { continue }
+            guard let sprite = sprites[image.id] else { continue }
             let raw = sprite["raw_sprite"], border = raw["m_Border"]
             var referencePixels = 100.0, ancestor: HUDSourceID? = id
             while let current = ancestor {
-                if let scaler = component("CanvasScaler", on: current) { referencePixels = scaler["m_ReferencePixelsPerUnit"].float(100); break }
+                if let scaler = components[current]?.first(where: { $0.enabled && $0.kind == "CanvasScaler" }) { referencePixels = scaler["m_ReferencePixelsPerUnit"].float(100); break }
                 ancestor = scene.node(current)?.parentID
             }
             let ppu = raw["m_PixelsToUnits"].float(100) / referencePixels
@@ -219,18 +298,9 @@ struct HUDSourceWatchLayout {
                 minimum: element["m_Min" + suffix].float(-1), preferred: element["m_Preferred" + suffix].float(-1),
                 flexible: element["m_Flexible" + suffix].float(-1))))
         }
-        func property(_ value: (Metrics) -> Double) -> Double {
-            var priority = Int.min, result = 0.0
-            for (p, m) in candidates {
-                let v = value(m)
-                guard v >= 0, p >= priority else { continue }
-                if p > priority { priority = p; result = v } else { result = max(result, v) }
-            }
-            return result
-        }
-        let minimum = property { $0.minimum }
-        return Metrics(minimum: minimum, preferred: max(minimum, property { $0.preferred }), flexible: property { $0.flexible })
+        return candidates
     }
+
     private func padding(_ g: HUDSourceWatchComponent, axis: Int) -> (start: Double, total: Double) {
         let p = g["m_Padding"], start = p[axis == 0 ? "m_Left" : "m_Top"].float()
         return (start, start + p[axis == 0 ? "m_Right" : "m_Bottom"].float())
@@ -301,6 +371,7 @@ struct HUDSourceWatchLayout {
         let parentSize = node.parentID.flatMap { rect($0, pose: pose)?.size } ?? .zero
         size[axis] = value - parentSize[axis] * span[axis]
         o.sizeDelta = HUDSourceVector2(size.x, size.y); pose.transforms[id] = o
+        evaluation?.rects.removeAll(keepingCapacity: true)
     }
     private func setAnchoredAxis(_ id: HUDSourceID, axis: Int, value: Double, resetAnchors: Bool,
                                  pose: inout HUDSourceWatchPose) {
@@ -316,6 +387,7 @@ struct HUDSourceWatchLayout {
         o.anchoredPosition3D = HUDSourceVector3(anchored.x, anchored.y, anchored.z)
         if resetAnchors { o.anchorMin = HUDSourceVector2(0, 1); o.anchorMax = HUDSourceVector2(0, 1) }
         pose.transforms[id] = o
+        evaluation?.rects.removeAll(keepingCapacity: true)
     }
     private func applyScroll(to pose: inout HUDSourceWatchPose, position: Double,
                              desktopContentID: HUDSourceID?, report: inout Report) throws {
@@ -381,5 +453,6 @@ struct HUDSourceWatchLayout {
         override.positionComponents.removeValue(forKey: 0); override.positionComponents.removeValue(forKey: 1)
         override.positionComponents[2] = target.z
         pose.transforms[id] = override
+        evaluation?.rects.removeAll(keepingCapacity: true)
     }
 }

@@ -325,7 +325,7 @@ final class ChargeIndicatorView: NSView {
     private func updateContent() {
         withoutActions {
             let englishMode = self.snapshot.isCharging ? "CHARGE MODE" : "BATTERY MODE"
-            let localizedMode = self.snapshot.isCharging ? L10n.text("CHARGE MODE", "充电模式")
+            let localizedMode = self.snapshot.isCharging ? L10n.text("CHARGE MODE", "超充模式")
                 : L10n.text("BATTERY MODE", "电池模式")
             let title = NSAttributedString(string: "// " + englishMode, attributes: [
                 .font: NSFont.systemFont(ofSize: 7.5, weight: .medium),
