@@ -38,7 +38,12 @@ enum ClipboardCanvasTests {
         let dark = HUDModuleContentStyle(dark: true, accent: .systemYellow, contentsScale: 2)
         let light = HUDModuleContentStyle(dark: false, accent: .systemGreen, contentsScale: 2.35)
         let persistent = canvas.makeContent(for: .clipboard, style: dark)
+        let preparedArtwork = persistent.sublayers?.flatMap { $0.sublayers ?? [] } ?? []
+        let preparedChanges = changes
         canvas.activate()
+        check(changes == preparedChanges && !preparedArtwork.isEmpty
+              && preparedArtwork.elementsEqual(persistent.sublayers?.flatMap { $0.sublayers ?? [] } ?? [], by: { $0 === $1 }),
+              "Activating the prepared clipboard keeps its revealed artwork instead of painting it a second time")
         check(canvas.itemCount == 0 && canvas.scrollOffset == 0, "Empty clipboard starts at the top of its history")
         check(!canvas.mouseDown(at: CGPoint(x: -1, y: 60)) && canvas.mouseDown(at: CGPoint(x: 50, y: 10)),
               "Only input within the common content host is consumed")
@@ -49,6 +54,13 @@ enum ClipboardCanvasTests {
         check(!canvas.accessibleActions.contains { $0.id == "clipboard:next" || $0.id == "clipboard:previous" },
               "Continuous history does not expose page navigation controls")
         let first = store.items[0]
+        canvas.deactivate()
+        _ = canvas.makeContent(for: .clipboard, style: dark)
+        capture("Captured during incoming transition")
+        check(canvas.itemCount == 10, "An inactive incoming page defers new clipboard content until input activates")
+        canvas.activate()
+        check(canvas.itemCount == 11, "A capture during the module reveal is shown when input activates")
+        store.remove(id: store.items[0].id)
         for item in store.items.prefix(6) {
             check(canvas.rowRect(for: item.id).map(canvas.layer.bounds.contains) == true,
                   "Every visible clipboard row fits within the projected host")

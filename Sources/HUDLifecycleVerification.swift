@@ -439,6 +439,14 @@ enum HUDLifecycleVerification {
             // immediate motion tracks first so the cursor probe cannot settle
             // the very tracks this timing assertion is measuring.
             checkCursorOwnership(phase.rawValue)
+            if let source = overlay.systemSourceWatchForVerification {
+                do {
+                    check(try source.verifyCurrentAccessibilityGeometryForVerification() > 0,
+                          "Queried accessibility follows pointer projection during \(phase.rawValue)")
+                } catch { fail("Transition accessibility projection: \(error)") }
+                check(source.desktopAccessibilityAvailabilityForVerification.allSatisfy { !$0.enabled },
+                      "Accessibility cannot activate source buttons during deployment/retraction")
+            }
         }
 
         private func checkCursorOwnership(_ phase: String) {

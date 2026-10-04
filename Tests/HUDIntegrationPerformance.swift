@@ -20,6 +20,13 @@ enum HUDIntegrationPerformance {
         private var configuration = AppConfiguration.defaults
         private var rows: [[String: Any]] = []
         private var pointerTimer: Timer?
+        private var interactionTimings: [[String: Any]] = []
+        private var interactionPointerHz: Double {
+            let args = CommandLine.arguments
+            guard let index = args.firstIndex(of: "--interaction-pointer-hz"), index + 1 < args.count,
+                  let value = Double(args[index + 1]), value.isFinite else { return 60 }
+            return min(240, max(30, value))
+        }
         private var physicalMouseMonitor: Any?
         private var ignoredPhysicalMouseEvents = 0
         private var pointer = CGPoint.zero
@@ -126,6 +133,7 @@ enum HUDIntegrationPerformance {
                 #endif
                 if CommandLine.arguments.contains("--verify-only") { self.finish(); return }
                 if CommandLine.arguments.contains("--power-modes") { self.measurePowerModes(); return }
+                if CommandLine.arguments.contains("--interaction-workload") { self.measureInteractions(); return }
                 self.measure("map-idle", seconds: 6) {
                     self.section(.clipboard, name: "clipboard-idle") {
                         self.section(.notes, name: "notes-idle") {
@@ -150,6 +158,7 @@ enum HUDIntegrationPerformance {
                 }
                 let size = SIMD2<Double>(Double(source.bounds.width), Double(source.bounds.height))
                 let builder = source.frameBuilder
+                try source.verifyCurrentAccessibilityGeometryForVerification()
                 let before = builder.cachedLayoutFrameCount
                 let ambientBefore = builder.fastAmbientFrameCount
                 let directBefore = builder.directAmbientFrameCount
@@ -491,7 +500,9 @@ enum HUDIntegrationPerformance {
                 require(changedHiddenAlpha.node(alphaNode)?.activeInHierarchy == false
                     && changedHiddenAlpha.inheritedAlpha != hiddenAlpha.inheritedAlpha,
                     "Changing an inactive CanvasGroup must invalidate the inherited-alpha cache")
-                print("PASS: cached and rebuilt source frames preserve batches, transforms, and hit geometry")
+                source.refreshPointerForVerification()
+                try source.verifyCurrentAccessibilityGeometryForVerification()
+                print("PASS: cached and rebuilt source frames preserve batches, transforms, hit and accessibility geometry")
             } catch { fatalError("Source cache verification: \(error)") }
         }
         #endif
@@ -526,6 +537,96 @@ enum HUDIntegrationPerformance {
                     precondition(self.overlay.systemPhase == .closed && self.overlay.lastClosedAnimationCount == 0,
                                  "Closing must remove hidden presentation and animations")
                     self.measureClosedAfter()
+                }
+            }
+        }
+
+        /// A live, read-only process catalog with isolated HUD stores. This
+        /// exercises the Apps table, actual mouse dispatch, and section changes
+        /// that the steady-state overview benchmark intentionally leaves out.
+        private func measureInteractions() {
+            precondition(CommandLine.arguments.contains("--live-telemetry-benchmark"))
+            let began = CACurrentMediaTime()
+            overlay.selectSystemModule(.activityMonitor)
+            interactionTimings.append(["action": "section:activityMonitor",
+                                       "synchronousMilliseconds": (CACurrentMediaTime() - began) * 1000])
+            later(1) {
+                self.activityAction("activity:apps")
+                self.later(3) {
+                    precondition(self.overlay.appActivity.isActive && !self.overlay.appActivity.snapshot.items.isEmpty,
+                                 "The interaction benchmark must use real app readings")
+                    self.measure("apps-live-idle", seconds: 6) {
+                        self.startInteractionPointer()
+                        self.measure("apps-live-pointer-events", seconds: 8) {
+                            self.pointerTimer?.invalidate(); self.pointerTimer = nil
+                            self.later(1) { self.measureSortInteractions() }
+                        }
+                    }
+                }
+            }
+        }
+
+        private func activityAction(_ id: String) {
+            let began = CACurrentMediaTime()
+            overlay.performActivityActionForVerification(id)
+            interactionTimings.append(["action": id,
+                                       "synchronousMilliseconds": (CACurrentMediaTime() - began) * 1000])
+        }
+
+        private func startInteractionPointer() {
+            #if HUD_SOURCE_INTEGRATION
+            let began = CACurrentMediaTime(), screen = NSScreen.main!.frame
+            pointerTimer = Timer(timeInterval: 1 / interactionPointerHz, repeats: true) { [weak self] _ in
+                guard let self, let source = self.overlay.systemSourceWatchForVerification,
+                      let window = source.window else { return }
+                let t = CACurrentMediaTime() - began
+                self.pointer = CGPoint(x: screen.midX + sin(t * 1.7) * screen.width * 0.35,
+                                       y: screen.midY + cos(t * 1.3) * screen.height * 0.325)
+                if let event = NSEvent.mouseEvent(with: .mouseMoved,
+                    location: window.convertPoint(fromScreen: self.pointer), modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 0, pressure: 0) {
+                    source.mouseMoved(with: event)
+                    (source.superview as? SystemHUDView)?.mouseMoved(with: event)
+                }
+            }
+            RunLoop.main.add(pointerTimer!, forMode: .common)
+            #endif
+        }
+
+        private func measureSortInteractions() {
+            let actions = ["cpu", "memory", "network", "disk", "name", "cpu"]
+            var index = 0
+            pointerTimer = Timer(timeInterval: 0.65, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.activityAction("activity:sort:" + actions[index % actions.count]); index += 1
+            }
+            RunLoop.main.add(pointerTimer!, forMode: .common)
+            measure("apps-live-sort-interactions", seconds: 6) {
+                self.pointerTimer?.invalidate(); self.pointerTimer = nil
+                self.measureSectionInteractions()
+            }
+        }
+
+        private func measureSectionInteractions() {
+            let modules: [HUDModule] = [.clipboard, .notes, .fileShelf, .addApp, .storage,
+                                       .eventLog, .system, .display, .profile, .map, .activityMonitor]
+            var index = 0
+            pointerTimer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                let module = modules[index % modules.count], began = CACurrentMediaTime()
+                self.overlay.selectSystemModule(module)
+                self.interactionTimings.append(["action": "section:" + module.rawValue,
+                    "synchronousMilliseconds": (CACurrentMediaTime() - began) * 1000])
+                index += 1
+            }
+            RunLoop.main.add(pointerTimer!, forMode: .common)
+            measure("section-interactions", seconds: 8) {
+                self.pointerTimer?.invalidate(); self.pointerTimer = nil
+                self.overlay.closeSystemOverlay()
+                self.later(1) {
+                    precondition(!self.overlay.appActivity.isActive && self.overlay.systemPhase == .closed)
+                    self.measure("interactions-closed", seconds: 5) { self.reopen() }
                 }
             }
         }
@@ -628,6 +729,7 @@ enum HUDIntegrationPerformance {
                 // Mode benchmarks also dispatch to the native host's real
                 // hover path, which intentionally ignores disabled panels.
                 panel.ignoresMouseEvents = !CommandLine.arguments.contains("--power-modes")
+                    && !CommandLine.arguments.contains("--interaction-workload")
                 panel.acceptsMouseMovedEvents = false
             }
             if let screen = NSScreen.main?.frame {
@@ -640,6 +742,13 @@ enum HUDIntegrationPerformance {
         private func measure(_ name: String, seconds: Double, completion: @escaping () -> Void) {
             isolatePointerInput()
             let began = CACurrentMediaTime(), start = usage()
+            var gaps: [Double] = [], lastProbe = began
+            let responsivenessProbe = Timer(timeInterval: 0.01, repeats: true) { _ in
+                let now = CACurrentMediaTime()
+                gaps.append((now - lastProbe) * 1000); lastProbe = now
+            }
+            let probesActive = overlay.isSystemOverlayActive
+            if probesActive { RunLoop.main.add(responsivenessProbe, forMode: .common) }
             #if HUD_SOURCE_INTEGRATION
             let source = overlay.systemSourceWatchForVerification
             let frames = source?.renderedFrameCount ?? 0
@@ -650,12 +759,27 @@ enum HUDIntegrationPerformance {
             #endif
             print("MEASURE \(name)"); fflush(stdout)
             later(seconds) {
+                responsivenessProbe.invalidate()
                 let end = self.usage(), elapsed = CACurrentMediaTime() - began
+                gaps.append((CACurrentMediaTime() - lastProbe) * 1000)
+                let sortedGaps = gaps.sorted()
+                func percentile(_ value: Double) -> Double {
+                    sortedGaps[min(sortedGaps.count - 1, Int(Double(sortedGaps.count - 1) * value))]
+                }
                 var row: [String: Any] = ["scenario": name, "seconds": elapsed,
                     "cpuPercentOfOneCore": (end.cpu - start.cpu) / elapsed * 100,
                     "residentMiB": Double(end.resident) / 1048576,
                     "footprintMiB": Double(end.footprint) / 1048576,
                     "animations": self.overlay.systemAnimationCount]
+                row["runLoopProbeIntervalMilliseconds"] = 10
+                row["runLoopProbeActive"] = probesActive
+                if probesActive {
+                    row["runLoopGapP95Milliseconds"] = percentile(0.95)
+                    row["runLoopGapP99Milliseconds"] = percentile(0.99)
+                    row["runLoopGapMaximumMilliseconds"] = sortedGaps.last!
+                    row["runLoopGapsOver50Milliseconds"] = gaps.filter { $0 > 50 }.count
+                }
+                row["liveAppCount"] = self.overlay.appActivity.snapshot.items.count
                 row["ignoredPhysicalMouseEventsTotal"] = self.ignoredPhysicalMouseEvents
                 row["fixturePanelsIgnoreMouse"] = NSApp.windows.compactMap { $0 as? NSPanel }.allSatisfy { $0.ignoresMouseEvents }
                 #if HUD_SOURCE_INTEGRATION
@@ -732,6 +856,8 @@ enum HUDIntegrationPerformance {
             report["startupSourcePreparationMilliseconds"] = sourcePreparationMilliseconds
             report["warmOpenSynchronousMilliseconds"] = warmOpenMilliseconds
             report["closedHeapRelief"] = closedHeapRelief
+            report["interactions"] = interactionTimings
+            report["interactionPointerHz"] = interactionPointerHz
             if CommandLine.arguments.contains("--power-modes") {
                 report["pointerEventScope"] = "source and native host; isolated direct dispatch at 60 Hz"
             }

@@ -62,7 +62,6 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
         layer.allowsGroupOpacity = false
         artwork.frame = layer.bounds; layer.addSublayer(artwork)
         rows.frame = Self.listRect; rows.masksToBounds = true; artwork.addSublayer(rows)
-        repaint()
     }
 
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
@@ -74,7 +73,8 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
     }
     func updateRenderScale(_ value: CGFloat) {
         let next = value.isFinite ? min(8, max(1, value)) : 2
-        guard scale != next else { return }; scale = next; repaint()
+        guard scale != next else { return }; scale = next
+        if presentationPrepared || active { repaint() }
     }
     func activate() {
         active = true

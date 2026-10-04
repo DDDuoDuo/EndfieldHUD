@@ -58,6 +58,11 @@ struct HUDSourceWatchLayout {
     private let layoutChildren: [HUDSourceID: [HUDSourceID]]
     private typealias MetricCandidate = (priority: Int, value: Metrics)
     private let fixedMetrics: [HUDSourceID: [[MetricCandidate]]]
+    /// Scroll bounds read only the scroll owner, viewport, content and their
+    /// ancestors. Their topology is immutable; sampled transforms are not.
+    private let scrollNodeIDs: [HUDSourceID]
+    private let scrollResolutionChains: [HUDSourceID: [HUDSourceNode]]
+    func scrollResolutionNodeCount(for id: HUDSourceID) -> Int? { scrollResolutionChains[id]?.count }
     /// A single apply call owns this cache. Every rect-writing operation clears
     /// it; no sampled layout values survive into another animation frame.
     private final class Evaluation {
@@ -109,6 +114,23 @@ struct HUDSourceWatchLayout {
             }
         }
         enabledComponents = enabled; layoutGroups = groups; layoutChildren = children; fixedMetrics = metrics
+        var scrollIDs: [HUDSourceID] = []
+        var scrollChains: [HUDSourceID: [HUDSourceNode]] = [:]
+        for id in scene.traversalIDs {
+            guard let scroll = enabled[id]?["UIScrollRect"] ?? enabled[id]?["ScrollRect"] else { continue }
+            scrollIDs.append(id)
+            var required = Set<HUDSourceID>()
+            for start in [id, scroll["m_Content"].targetID, scroll["m_Viewport"].targetID].compactMap({ $0 }) {
+                var cursor: HUDSourceID? = start
+                while let current = cursor, required.insert(current).inserted {
+                    cursor = scene.node(current)?.parentID
+                }
+            }
+            // The same parent-first DFS order as the full resolver preserves
+            // every matrix product and its floating-point rounding.
+            scrollChains[id] = scene.traversalIDs.compactMap { required.contains($0) ? scene.node($0) : nil }
+        }
+        scrollNodeIDs = scrollIDs; scrollResolutionChains = scrollChains
     }
 
     func apply(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double = 1,
@@ -391,11 +413,18 @@ struct HUDSourceWatchLayout {
     }
     private func applyScroll(to pose: inout HUDSourceWatchPose, position: Double,
                              desktopContentID: HUDSourceID?, report: inout Report) throws {
-        for id in scene.traversalIDs {
+        for id in evaluation == nil ? scene.traversalIDs : scrollNodeIDs {
             guard let scroll = component("UIScrollRect", on: id) ?? component("ScrollRect", on: id),
                   scroll["m_Vertical"].flag(), !scroll["disableScroll"].flag(),
                   let contentID = scroll["m_Content"].targetID, let viewportID = scroll["m_Viewport"].targetID else { continue }
-            let resolved = try scene.resolve(overrides: pose.transforms)
+            let resolved: [HUDSourceID: HUDSourceResolvedNode]
+            if evaluation != nil, let chain = scrollResolutionChains[id] {
+                resolved = try resolveScrollChain(chain, overrides: pose.transforms)
+            } else {
+                // Forced verification always retains the original full-scene
+                // path, independently of the scoped resolver.
+                resolved = try scene.resolve(overrides: pose.transforms)
+            }
             guard resolved[id]?.activeInHierarchy == true, let viewport = resolved[viewportID], let viewRect = viewport.rect,
                   let inverse = HUDSourceGeometry.inverse(viewport.worldMatrix), let content = resolved[contentID], let contentRect = content.rect else { continue }
             let transform = inverse * content.worldMatrix
@@ -421,6 +450,21 @@ struct HUDSourceWatchLayout {
             report.unverifiedCustomComponents.insert("UIScrollRect.elasticInertiaAndSmoothScrollScheduling")
         }
     }
+    private func resolveScrollChain(_ chain: [HUDSourceNode],
+                                    overrides: [HUDSourceID: HUDSourceTransformOverride]) throws -> [HUDSourceID: HUDSourceResolvedNode] {
+        var resolved: [HUDSourceID: HUDSourceResolvedNode] = [:]
+        resolved.reserveCapacity(chain.count)
+        // Resolve afresh for each scroll writer: a preceding nested/parent
+        // scroll may have changed a shared ancestor in this very layout pass.
+        for node in chain {
+            let parent = node.parentID.flatMap { resolved[$0] }
+            resolved[node.id] = try HUDSourceScene.resolveNode(node, override: overrides[node.id],
+                parentRect: parent?.rect, parentWorld: parent?.worldMatrix ?? matrix_identity_double4x4,
+                parentActive: parent?.activeInHierarchy ?? true)
+        }
+        return resolved
+    }
+
     private func applySlant(_ effect: HUDSourceWatchComponent, on id: HUDSourceID,
                             resolved: [HUDSourceID: HUDSourceResolvedNode], worldRoot: simd_double4x4,
                             pose: inout HUDSourceWatchPose, forceRebuild: Bool) throws {

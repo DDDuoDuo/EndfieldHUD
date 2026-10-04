@@ -112,6 +112,7 @@ final class OverlayController: NSObject {
     var systemWorkModeAnimationCount: Int { systemView?.workModeAnimationCount ?? 0 }
     var systemTelemetryAnimationCount: Int { systemView?.telemetryAnimationCount ?? 0 }
     func performStorageActionForVerification(_ id: String) { systemView?.performStorageActionForVerification(id) }
+    func performActivityActionForVerification(_ id: String) { systemView?.performActivityActionForVerification(id) }
     func addAppShortcutForVerification(_ url: URL) throws -> AppShortcut {
         let store = try appShortcutStore.get()
         return try store.save(candidate: store.inspect(url: url), name: "Launch test", iconPreset: .original)
@@ -203,8 +204,10 @@ final class OverlayController: NSObject {
         audio = diagnostic ? .fixture() : AudioDeviceController()
         perAppAudio = diagnostic ? .fixture() : PerAppAudioController()
         storage = diagnostic ? .fixture() : StorageController()
-        activity = diagnostic ? .fixture() : SystemActivityMonitor()
-        appActivity = diagnostic ? .fixture() : AppActivityMonitor()
+        let liveTelemetry = CommandLine.arguments.contains("--ui-test")
+            && CommandLine.arguments.contains("--live-telemetry-benchmark")
+        activity = diagnostic && !liveTelemetry ? .fixture() : SystemActivityMonitor()
+        appActivity = diagnostic && !liveTelemetry ? .fixture() : AppActivityMonitor()
         let log = SystemEventLog(directory: diagnostic ? nil : SystemEventLog.applicationDirectory())
         eventLog = log
         eventRecorder = SystemEventRecorder(log: log)

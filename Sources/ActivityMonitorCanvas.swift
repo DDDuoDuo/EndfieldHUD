@@ -85,6 +85,12 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
     private var appHeaders: [CATextLayer] = []
     private let appHeaderRule = CALayer()
     private var iconCache: [String: NSImage] = [:]
+    private var pendingIcons: Set<String> = []
+    private let iconWorker = DispatchQueue(label: "EndfieldHUD.activity.icons", qos: .utility)
+    private let loadAppIcon: (URL) -> NSImage
+    private var appliedScale: CGFloat?
+    private(set) var appRowContentUpdateCount = 0
+    private(set) var appRenderCount = 0
     static let appsViewport = CGRect(x: 12, y: 84, width: 376, height: 226)
     private struct AppColumn {
         let key: AppActivitySortKey
@@ -104,6 +110,10 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
         let icon = CALayer()
         let name: CATextLayer, cpu: CATextLayer, memory: CATextLayer
         let upload: CATextLayer, download: CATextLayer, read: CATextLayer, write: CATextLayer
+        var representedItem: AppActivityItem?
+        var language: AppLanguage?
+        var dark: Bool?
+        var accent: NSColor?
         init(_ index: Int, parent: CALayer) {
             plate = TelemetryArtwork.plate(.zero, parent: parent, name: "activity.app.\(index)")
             icon.frame = CGRect(x: 7, y: 13, width: 18, height: 18); icon.contentsGravity = .resizeAspect; plate.addSublayer(icon)
@@ -126,8 +136,17 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
     private var rows: [Row] = []
     private let heading: CATextLayer, subtitle: CATextLayer, footer: CATextLayer
 
-    init(controller: SystemActivityMonitor, apps: AppActivityMonitor = .fixture(), reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    init(controller: SystemActivityMonitor, apps: AppActivityMonitor = .fixture(),
+         reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion },
+         loadAppIcon: @escaping (URL) -> NSImage = { url in
+             // NSWorkspace can share its cached image with another consumer.
+             // Configure only our own copy before handing it to the main queue.
+             let icon = NSWorkspace.shared.icon(forFile: url.path).copy() as! NSImage
+             icon.size = NSSize(width: 32, height: 32)
+             return icon
+         }) {
         self.controller = controller; self.apps = apps; self.reduceMotion = reduceMotion
+        self.loadAppIcon = loadAppIcon
         layer.name = "module.activityMonitor.canvas"; layer.frame = CGRect(x: 0, y: 0, width: 400, height: 334)
         heading = TelemetryArtwork.text("activity.heading", frame: CGRect(x: 12, y: 0, width: 376, height: 20), size: 15, parent: layer, weight: .semibold)
         subtitle = TelemetryArtwork.text("activity.caption", frame: CGRect(x: 12, y: 24, width: 376, height: 13), size: 9, parent: layer)
@@ -165,7 +184,8 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
             self.renderApps(); self.onChange?()
         }
         if isShowingApps { apps.activate() }
-        render(animated: false)
+        // The selected monitor's immediate observer delivery already rendered
+        // the current snapshot before either sampler was activated.
     }
     func deactivate() {
         active = false; hasVisibleSample = false
@@ -176,7 +196,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
     }
     func updateRenderScale(_ value: CGFloat) {
         scale = value.isFinite ? min(8, max(1, value)) : 2
-        TelemetryArtwork.withoutActions { TelemetryArtwork.scale(layer, scale) }
+        TelemetryArtwork.withoutActions { applyRenderScaleIfNeeded() }
         if reduceMotion() {
             TelemetryArtwork.removeAnimations(layer)
             pageTransition.settle(); sortTransition.settle()
@@ -205,7 +225,8 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
             onChange?(); return
         }
         if changedSort {
-            renderApps(); onChange?()
+            // setSort publishes synchronously to our observer, which already
+            // updated the retained rows and accessibility once for this action.
             // A user-requested reordering moves only the rows. Live samples
             // continue updating directly without restarting an action effect.
             pageTransition.settle()
@@ -220,7 +241,10 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
         let next = min(max(0, CGFloat(apps.snapshot.items.count) * 49 - Self.appsViewport.height), max(0, scrollOffset + delta))
         guard next != scrollOffset else { return true }
         scrollOffset = next
-        renderApps(); onChange?(); return true
+        renderAppRows()
+        // Only the clipped rows move. Header actions and the complete accessible
+        // status have not changed, so do not rebuild them for every scroll tick.
+        return true
     }
 
     private func appCPU(_ value: Double?) -> String {
@@ -261,59 +285,147 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
             let selected = action.id == (isShowingApps ? "activity:apps" : "activity:overview")
             pair.0.backgroundColor = (selected ? TelemetryArtwork.yellow : NSColor(white: dark ? 0.23 : 0.85, alpha: 1)).cgColor
             pair.1.foregroundColor = (selected || !dark ? NSColor(white: 0.1, alpha: 1) : TelemetryArtwork.rowText).cgColor
-            pair.1.string = action.label; pair.1.frame = pair.0.bounds.insetBy(dx: 3, dy: 5)
+            Self.setText(action.label, on: pair.1)
+            let frame = pair.0.bounds.insetBy(dx: 3, dy: 5)
+            if pair.1.frame != frame { pair.1.frame = frame }
         }
     }
 
     private func renderApps() {
         guard isShowingApps else { return }
+        appRenderCount += 1
         TelemetryArtwork.withoutActions {
             renderTabs()
             let items = apps.snapshot.items
             let maximum = max(0, CGFloat(items.count) * 49 - Self.appsViewport.height)
             scrollOffset = min(maximum, max(0, scrollOffset))
-            let first = Int(floor(scrollOffset / 49))
             for (column, text) in zip(appColumns, appHeaders) {
                 let selected = column.key == sortKey
-                text.string = column.title + (selected ? (sortDescending ? " ↓" : " ↑") : "")
+                Self.setText(column.title + (selected ? (sortDescending ? " ↓" : " ↑") : ""), on: text)
                 text.foregroundColor = (selected ? TelemetryArtwork.primary(dark) : TelemetryArtwork.muted(dark)).cgColor
             }
             appHeaderRule.backgroundColor = TelemetryArtwork.muted(dark).withAlphaComponent(0.35).cgColor
             appEmpty.isHidden = !items.isEmpty
-            appEmpty.string = L10n.text("No app readings available", "暂无应用读数")
+            Self.setText(L10n.text("No app readings available", "暂无应用读数"), on: appEmpty)
             appEmpty.foregroundColor = TelemetryArtwork.muted(dark).cgColor
+            renderAppRows()
+
+            let livePaths = Set(items.compactMap { $0.bundleURL?.path }); iconCache = iconCache.filter { livePaths.contains($0.key) }
+            appScrollBar.isHidden = maximum == 0
+            if maximum > 0 { appScrollBar.backgroundColor = TelemetryArtwork.yellow.cgColor }
+        }
+    }
+
+    /// Scrolling changes positions every event, but text, colors and icons only
+    /// when a pooled row represents different data. Repeated assignment to
+    /// CATextLayer.string otherwise asks Core Animation to rerasterize it.
+    private func renderAppRows() {
+        guard isShowingApps else { return }
+        TelemetryArtwork.withoutActions {
+            let items = apps.snapshot.items
+            let maximum = max(0, CGFloat(items.count) * 49 - Self.appsViewport.height)
+            scrollOffset = min(maximum, max(0, scrollOffset))
+            let first = Int(floor(scrollOffset / 49))
+            let accent = TelemetryArtwork.yellow
             for (offset, row) in appRowPool.enumerated() {
                 let index = first + offset
                 guard index < items.count else { row.plate.isHidden = true; continue }
-                let item = items[index]; row.plate.isHidden = false
-                row.plate.frame = CGRect(x: 0, y: CGFloat(index) * 49 - scrollOffset, width: 374, height: 45)
-                TelemetryArtwork.stylePlate(row.plate, dark: dark)
-                row.name.string = item.name; row.cpu.string = appCPU(item.cpuPercent)
-                row.memory.string = TelemetryArtwork.bytes(item.memoryBytes.map { Double($0) })
-                row.upload.string = "↑ " + TelemetryArtwork.rate(item.uploadBytesPerSecond)
-                row.download.string = "↓ " + TelemetryArtwork.rate(item.downloadBytesPerSecond)
-                row.read.string = L10n.text("R ", "读 ") + TelemetryArtwork.rate(item.diskReadBytesPerSecond)
-                row.write.string = L10n.text("W ", "写 ") + TelemetryArtwork.rate(item.diskWriteBytesPerSecond)
-                for label in [row.name, row.cpu, row.memory, row.upload, row.download, row.read, row.write] { label.foregroundColor = TelemetryArtwork.rowText.cgColor }
-                for label in [row.cpu, row.upload, row.read] { label.foregroundColor = TelemetryArtwork.yellow.cgColor }
-                for label in [row.memory, row.download, row.write] { label.foregroundColor = TelemetryArtwork.cyan.cgColor }
-                if iconCache[item.id] == nil, let url = item.bundleURL {
-                    let icon = NSWorkspace.shared.icon(forFile: url.path); icon.size = NSSize(width: 32, height: 32); iconCache[item.id] = icon
+                let item = items[index]
+                if row.plate.isHidden { row.plate.isHidden = false }
+                let frame = CGRect(x: 0, y: CGFloat(index) * 49 - scrollOffset, width: 374, height: 45)
+                if row.plate.frame != frame { row.plate.frame = frame }
+                if row.dark != dark || row.accent?.isEqual(accent) != true {
+                    row.dark = dark; row.accent = accent
+                    TelemetryArtwork.stylePlate(row.plate, dark: dark)
+                    row.name.foregroundColor = TelemetryArtwork.rowText.cgColor
+                    for label in [row.cpu, row.upload, row.read] { label.foregroundColor = accent.cgColor }
+                    for label in [row.memory, row.download, row.write] { label.foregroundColor = TelemetryArtwork.cyan.cgColor }
                 }
-                row.icon.contents = iconCache[item.id]
+                if row.representedItem != item || row.language != L10n.language {
+                    appRowContentUpdateCount += 1
+                    let identityChanged = row.representedItem?.bundleURL != item.bundleURL
+                        || row.representedItem?.id != item.id
+                    row.representedItem = item; row.language = L10n.language
+                    Self.setText(item.name, on: row.name)
+                    Self.setText(appCPU(item.cpuPercent), on: row.cpu)
+                    Self.setText(TelemetryArtwork.bytes(item.memoryBytes.map { Double($0) }), on: row.memory)
+                    Self.setText("↑ " + TelemetryArtwork.rate(item.uploadBytesPerSecond), on: row.upload)
+                    Self.setText("↓ " + TelemetryArtwork.rate(item.downloadBytesPerSecond), on: row.download)
+                    Self.setText(L10n.text("R ", "读 ") + TelemetryArtwork.rate(item.diskReadBytesPerSecond), on: row.read)
+                    Self.setText(L10n.text("W ", "写 ") + TelemetryArtwork.rate(item.diskWriteBytesPerSecond), on: row.write)
+                    if identityChanged { row.icon.contents = item.bundleURL.flatMap { iconCache[$0.path] } }
+                }
             }
-            let liveIDs = Set(items.map(\.id)); iconCache = iconCache.filter { liveIDs.contains($0.key) }
-            appScrollBar.isHidden = maximum == 0
             if maximum > 0 {
                 let height = max(20, Self.appsViewport.height * Self.appsViewport.height / (CGFloat(items.count) * 49))
-                appScrollBar.frame = CGRect(x: 374, y: (Self.appsViewport.height - height) * scrollOffset / maximum, width: 2, height: height)
-                appScrollBar.backgroundColor = TelemetryArtwork.yellow.cgColor
+                let frame = CGRect(x: 374, y: (Self.appsViewport.height - height) * scrollOffset / maximum, width: 2, height: height)
+                if appScrollBar.frame != frame { appScrollBar.frame = frame }
             }
-            TelemetryArtwork.scale(appLayer, scale)
+        }
+        requestVisibleIcons()
+    }
+
+    private static func setText(_ value: String, on layer: CATextLayer) {
+        if layer.string as? String != value { layer.string = value }
+    }
+
+    private func applyRenderScaleIfNeeded() {
+        guard appliedScale != scale else { return }
+        appliedScale = scale
+        TelemetryArtwork.scale(layer, scale)
+    }
+
+    /// Launch Services may touch the application bundle when an icon is first
+    /// requested. Its documented thread-safe lookup never runs in a click or
+    /// scroll callback. At most eight pending requests and the current app list
+    /// are retained; completion only touches the row still showing that bundle.
+    private func requestVisibleIcons() {
+        guard active, isShowingApps else { return }
+        for row in appRowPool where !row.plate.isHidden {
+            guard let url = row.representedItem?.bundleURL else { continue }
+            if let cached = iconCache[url.path] {
+                // A request may finish while the panel is hidden. Bind that
+                // result on reentry even if the sampled metrics are unchanged.
+                if row.icon.contents as? NSImage !== cached {
+                    TelemetryArtwork.withoutActions { row.icon.contents = cached }
+                }
+                continue
+            }
+            guard pendingIcons.count < 8, pendingIcons.insert(url.path).inserted else { continue }
+            let path = url.path, loader = loadAppIcon
+            iconWorker.async { [weak self] in
+                let icon = loader(url)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.pendingIcons.remove(path)
+                    guard self.apps.snapshot.items.contains(where: { $0.bundleURL?.path == path }) else {
+                        self.requestVisibleIcons(); return
+                    }
+                    self.iconCache[path] = icon
+                    if self.active, self.isShowingApps {
+                        TelemetryArtwork.withoutActions {
+                            for row in self.appRowPool where row.representedItem?.bundleURL?.path == path {
+                                row.icon.contents = icon
+                            }
+                        }
+                        self.requestVisibleIcons()
+                    }
+                }
+            }
         }
     }
 
     private func render(animated: Bool) {
+        // The hidden overview is refreshed when selected again. Updating all
+        // graph paths while entering Apps only delayed its handoff animation.
+        if isShowingApps {
+            TelemetryArtwork.withoutActions {
+                heading.string = HUDModule.activityMonitor.title
+                heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
+                renderApps(); applyRenderScaleIfNeeded()
+            }
+            return
+        }
         let value = controller.snapshot, history = Array(controller.history.suffix(60))
         func finitePeak(_ values: [Double?]) -> Double { max(1, values.compactMap { $0 }.filter { $0.isFinite && $0 >= 0 }.max().map { $0 * 1.12 } ?? 1) }
         let cpu = history.map(\.cpuPercent)
@@ -356,8 +468,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
             rows[1].graph.update(series: [memory], ceiling: 100, animated: animated, timestamps: history.map(\.uptime))
             rows[2].graph.update(series: [upload, download], ceiling: finitePeak(upload + download), animated: animated, timestamps: history.map(\.uptime))
             rows[3].graph.update(series: [read, write], ceiling: finitePeak(read + write), animated: animated, timestamps: history.map(\.uptime))
-            if isShowingApps { renderApps() }
-            TelemetryArtwork.scale(layer, scale)
+            applyRenderScaleIfNeeded()
         }
     }
 }

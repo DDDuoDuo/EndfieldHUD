@@ -284,6 +284,35 @@ enum HUDSourceTextGeometryTests {
               "The exit retains the original source button rather than a recreated glyph")
         let cached = try HUDSourceDesktopDocumentCache().document(resourceRoot: root)
         check(cached.desktopProfileCard != nil && cached.widgets == nil, "The cached desktop profile includes the immutable card only")
+        let metadata = try cached.renderMetadata()
+        check(try cached.renderMetadata() === metadata, "Repeated builders share one immutable parsed sprite and material catalog")
+        func sameSprite(_ a: HUDSourceImageGeometry.Sprite, _ b: HUDSourceImageGeometry.Sprite) -> Bool {
+            a.size == b.size && a.padding == b.padding && a.border == b.border && a.outer == b.outer
+                && a.inner == b.inner && a.pixelsPerUnit == b.pixelsPerUnit && a.textureID == b.textureID
+        }
+        let originalTextures = Dictionary(uniqueKeysWithValues: cached.sprites["source_textures"].array.map { ($0["id"].string!, $0) })
+        for (component, value) in cached.spriteByComponent {
+            let original = try HUDSourceImageGeometry.Sprite(source: value, texture: originalTextures[value["texture"]["id"].string!]!)
+            check(metadata.sprites[component].map { sameSprite($0, original) } == true,
+                  "Shared component sprite geometry preserves every source coordinate and pixels-per-unit value")
+        }
+        for value in cached.sprites["sprites"].array {
+            let original = try HUDSourceImageGeometry.Sprite(source: value, texture: originalTextures[value["texture"]["id"].string!]!)
+            check(metadata.sourceSprites[value["id"].string!].map { sameSprite($0, original) } == true,
+                  "Shared named sprite geometry preserves the reference decoder output")
+        }
+        let cardData = try HUDSourceResourceData.read(root.appendingPathComponent("desktop-profile-card.json"))
+        let raw = try JSONSerialization.jsonObject(with: cardData) as! [String: Any]
+        let rawScene = try JSONSerialization.data(withJSONObject: raw["scene"]!)
+        let separatelyDecoded = try HUDSourceJSON.decoder().decode(HUDSourceScene.self, from: rawScene)
+        check(card.scene.rootID == separatelyDecoded.rootID && card.scene.traversalIDs == separatelyDecoded.traversalIDs,
+              "One-pass profile decoding retains the original scene traversal and root")
+        for node in separatelyDecoded.nodes {
+            check(card.scene.node(node.id).map { sameTransform($0.transform, node.transform)
+                && $0.name == node.name && $0.path == node.path && $0.parentID == node.parentID
+                && $0.childIDs == node.childIDs && $0.active == node.active } == true,
+                  "One-pass profile decoding retains all graph and transform fields")
+        }
         return count
     }
 

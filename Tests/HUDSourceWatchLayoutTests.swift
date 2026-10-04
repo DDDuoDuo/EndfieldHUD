@@ -132,6 +132,51 @@ enum HUDSourceWatchLayoutTests {
             check(near(scrollLayout.scrolledPosition(0.5, delta: 1, info: topReport.scroll), 0.725),
                   "Wheel scroll uses source sensitivity and measured overflow")
 
+            // The scoped scroll resolver must include every ancestor, observe
+            // prior scroll writes, and ignore only unrelated scene branches.
+            let decorations = Array(100..<132)
+            let nestedScene = try HUDSourceScene(rootID: id(1), nodes: [
+                node(1, parent: nil, children: [2] + decorations, size: SIMD2(800, 600)),
+                node(2, parent: 1, children: [3], size: SIMD2(220, 150), anchored: SIMD2(65, -40)),
+                node(3, parent: 2, children: [4], size: SIMD2(220, 600), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1)),
+                node(4, parent: 3, children: [5], size: SIMD2(160, 110), anchored: SIMD2(12, -170)),
+                node(5, parent: 4, children: [6], size: SIMD2(160, 390), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1)),
+                node(6, parent: 5, size: SIMD2(45, 35))
+            ] + decorations.map { node($0, parent: 1, size: SIMD2(Double($0), 50)) })
+            let parentScroll = component("UIScrollRect", 121, ["m_Vertical": .bool(true), "m_Content": pointer(3),
+                "m_Viewport": pointer(2), "m_ScrollSensitivity": .number(35)])
+            let childScroll = component("ScrollRect", 122, ["m_Vertical": .bool(true), "m_Content": pointer(5),
+                "m_Viewport": pointer(4), "m_ScrollSensitivity": .number(25)])
+            let nestedLayout = HUDSourceWatchLayout(scene: nestedScene, components: [id(2): [parentScroll], id(4): [childScroll]])
+            check(nestedLayout.scrollResolutionNodeCount(for: id(2)) == 3
+                  && nestedLayout.scrollResolutionNodeCount(for: id(4)) == 5,
+                  "Each scroll resolves only its ancestor closure rather than unrelated decorations or content descendants")
+            for variant in 0..<6 {
+                let turn = simd_quatd(angle: Double(variant) * 0.07, axis: SIMD3(1, 0, 0))
+                let rotation = HUDSourceQuaternion(turn.imag.x, turn.imag.y, turn.imag.z, turn.real)
+                var input = HUDSourceWatchPose(transforms: [
+                    id(1): HUDSourceTransformOverride(localRotation: rotation, localScale: HUDSourceVector3(1.2, 0.8, 1)),
+                    id(2): HUDSourceTransformOverride(sizeDelta: HUDSourceVector2(220, 130 + Double(variant) * 9)),
+                    id(3): HUDSourceTransformOverride(positionComponents: [2: Double(variant) * -4]),
+                    id(4): HUDSourceTransformOverride(localScale: HUDSourceVector3(1, variant == 5 ? 0 : 0.9, 1)),
+                    id(5): HUDSourceTransformOverride(sizeDelta: HUDSourceVector2(160, 290 + Double(variant) * 25))
+                ])
+                if variant == 3 { input.transforms[id(3)]?.active = false }
+                if variant == 4 { input.transforms[id(2)]?.active = false }
+                for position in [-0.3, 0, 0.37, 0.82, 1, 1.3] {
+                    var scoped = input, forced = input
+                    let actual = try nestedLayout.apply(to: &scoped, verticalNormalizedPosition: position)
+                    let oracle = try nestedLayout.apply(to: &forced, verticalNormalizedPosition: position, forceSlantRebuild: true)
+                    check(scoped.transforms == forced.transforms && scoped.properties == forced.properties,
+                          "Scoped scroll resolution preserves nested writer order, depth, rotation, scale and active overrides")
+                    check(actual.scroll?.nodeID == oracle.scroll?.nodeID
+                          && actual.scroll?.hiddenLength.bitPattern == oracle.scroll?.hiddenLength.bitPattern
+                          && actual.scroll?.normalizedPosition.bitPattern == oracle.scroll?.normalizedPosition.bitPattern
+                          && actual.unverifiedCustomComponents == oracle.unverifiedCustomComponents,
+                          "Scoped scroll bounds and diagnostics exactly match the independent full-scene oracle")
+                }
+            }
+
             let rotation = simd_quatd(angle: 0.35, axis: SIMD3(1, 0, 0)) * simd_quatd(angle: 0.17, axis: SIMD3(0, 0, 1))
             let q = HUDSourceQuaternion(rotation.imag.x, rotation.imag.y, rotation.imag.z, rotation.real)
             let slantScene = try HUDSourceScene(rootID: id(1), nodes: [node(1, parent: nil, children: [2], size: SIMD2(500, 500),

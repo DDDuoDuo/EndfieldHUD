@@ -46,6 +46,35 @@ enum HUDControlHighlightTests {
         check(opacity(large) > 0, "Mask-visible controls retain feedback")
         HUDControlHighlightLayer.update(in: root, point: nil)
         check(opacity(large) == 0 && opacity(small) == 0, "Pointer exit clears feedback")
+        container.mask = nil
+        // Rich graphs/tables contain many decorative layers between controls.
+        // Their transforms must not be queried as if each were a hit target.
+        let artwork = ConversionCountingLayer()
+        artwork.frame = container.bounds; container.addSublayer(artwork)
+        artwork.transform = CATransform3DMakeTranslation(10, 5, 0)
+        let nested = HUDControlHighlightLayer.add(to: artwork, rect: CGRect(x: 0, y: 0, width: 20, height: 20))
+        HUDControlHighlightLayer.update(in: root, point: CGPoint(x: 45, y: 50))
+        check(opacity(nested) > 0, "A control inside transformed decoration keeps its exact hit region")
+        check(artwork.conversions == 0, "Decorative ancestors perform no redundant point conversion")
+        artwork.masksToBounds = true
+        HUDControlHighlightLayer.update(in: root, point: CGPoint(x: 45, y: 50))
+        check(artwork.conversions == 1 && opacity(nested) > 0, "Clip boundaries still transform and accept visible controls")
+        artwork.bounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+        HUDControlHighlightLayer.update(in: root, point: CGPoint(x: 45, y: 50))
+        check(opacity(nested) == 0, "Ancestor clipping clears a previously highlighted descendant")
+        artwork.isHidden = true
+        let priorConversions = artwork.conversions
+        HUDControlHighlightLayer.update(in: root, point: CGPoint(x: 45, y: 50))
+        check(artwork.conversions == priorConversions && opacity(nested) == 0,
+              "Hidden branches clear feedback without converting invisible geometry")
         return count
+    }
+
+    private final class ConversionCountingLayer: CALayer {
+        var conversions = 0
+        override func convert(_ point: CGPoint, from layer: CALayer?) -> CGPoint {
+            conversions += 1
+            return super.convert(point, from: layer)
+        }
     }
 }
