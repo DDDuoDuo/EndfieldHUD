@@ -126,12 +126,14 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDMechanicalArtworkTests.swift" \
     "$PROJECT_DIR/Tests/HUDWatchArtworkTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceSceneTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSourceJSONValueTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchAnimationTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchWidgetsTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceBannerScrollTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceSelectableColorTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceImageGeometryTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceProfileArtworkTests.swift" \
+    "$PROJECT_DIR/Tests/HUDPortraitArtworkTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceTextGeometryTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceDesktopNavigationLayoutTests.swift" \
     "$PROJECT_DIR/Tests/HUDSourceWatchLayoutTests.swift" \

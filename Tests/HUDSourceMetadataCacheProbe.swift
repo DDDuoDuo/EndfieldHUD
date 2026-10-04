@@ -48,6 +48,8 @@ struct HUDSourceMetadataCacheProbe {
         // This is the reviewed desktop material closure. The verification API
         // compares every cached numeric input/type/texture with a fresh parse.
         try check(values["materials"] == 132, "The reviewed 132-material desktop closure changed")
+        try check((values["retainedMaterialValues"] ?? Int.max) < (values["sourceMaterialValues"] ?? 0) / 5,
+                  "Typed material inputs must release the duplicated authoring tree while retaining exact pass state")
         try check((values["sourceBytes"] ?? Int.max) <= 16 * 1024 * 1024,
                   "The CPU metadata source-byte cap must remain bounded")
 

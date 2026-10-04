@@ -31,7 +31,26 @@ struct HUDSourceWatchLayout {
     let scene: HUDSourceScene
     let components: [HUDSourceID: [HUDSourceWatchComponent]]
     let spriteByComponent: [HUDSourceID: HUDSourceJSONValue]
-    let intrinsicSize: IntrinsicSize?
+    var intrinsicSize: IntrinsicSize?
+    private struct SlantConfiguration {
+        let bottom: Double
+        let range: Double
+        let left: Double
+        let width: Double
+        let cells: [HUDSourceID]
+        let curve: HUDSourceScalarCurve
+        init(_ effect: HUDSourceWatchComponent) throws {
+            bottom = effect["_bottomY"].float()
+            range = effect["_topY"].float() - bottom
+            guard range != 0 else { throw HUDSourceError.invalid("Zero Watch slant Y range") }
+            left = effect["_leftX"].float(); width = effect["_maxWidth"].float()
+            cells = effect["_cells"].array.compactMap(\.targetID)
+            curve = try HUDSourceWatchLayout.slantCurve(effect)
+        }
+    }
+    /// Component metadata is immutable. Keep validation failures deferred
+    /// until an active effect is used, as in the original layout path.
+    private let slants: [HUDSourceID: Result<SlantConfiguration, Error>]
 
     init(document: HUDSourceWatchDocument, intrinsicSize: IntrinsicSize? = nil) {
         self.init(scene: document.scene, components: document.components,
@@ -41,12 +60,20 @@ struct HUDSourceWatchLayout {
          spriteByComponent: [HUDSourceID: HUDSourceJSONValue] = [:], intrinsicSize: IntrinsicSize? = nil) {
         self.scene = scene; self.components = components
         self.spriteByComponent = spriteByComponent; self.intrinsicSize = intrinsicSize
+        var slants: [HUDSourceID: Result<SlantConfiguration, Error>] = [:]
+        for records in components.values {
+            for effect in records where effect.enabled && effect.kind == "UIScrollCellSlantEffect" {
+                slants[effect.id] = Result { try SlantConfiguration(effect) }
+            }
+        }
+        self.slants = slants
     }
 
     func apply(to pose: inout HUDSourceWatchPose, verticalNormalizedPosition: Double = 1,
                slantMapping: SlantMapping? = nil, worldRoot: simd_double4x4 = matrix_identity_double4x4,
                desktopNavigation: HUDSourceDesktopNavigationLayout? = nil,
-               beforeSlant: ((HUDSourceWatchPose) -> Void)? = nil) throws -> Report {
+               beforeSlant: ((HUDSourceWatchPose) -> Void)? = nil,
+               forceSlantRebuild: Bool = false) throws -> Report {
         guard verticalNormalizedPosition.isFinite else { throw HUDSourceError.invalid("Nonfinite Watch scroll position") }
         desktopNavigation?.apply(to: &pose, normalizedPosition: verticalNormalizedPosition)
         let initial = try scene.resolve(overrides: pose.transforms)
@@ -89,7 +116,8 @@ struct HUDSourceWatchLayout {
                             setAnchoredAxis(cell, axis: 0, value: x, resetAnchors: false, pose: &pose)
                         }
                     }
-                } else { try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose) }
+                } else { try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose,
+                    forceRebuild: forceSlantRebuild) }
             }
             for c in components[id] ?? [] where c.enabled && ["UIStepScrollList", "GridLayoutGroup", "NotchAdapter"].contains(c.kind) {
                 report.unverifiedCustomComponents.insert(c.kind)
@@ -101,11 +129,12 @@ struct HUDSourceWatchLayout {
     /// A gyro-only change does not rerun intrinsic sizing, layout groups, or
     /// scrolling. The authored slant writer still uses its new world axes.
     func applySlant(to pose: inout HUDSourceWatchPose, worldRoot: simd_double4x4,
-                    resolvedBeforeSlant: [HUDSourceID: HUDSourceResolvedNode]? = nil) throws {
+                    resolvedBeforeSlant: [HUDSourceID: HUDSourceResolvedNode]? = nil,
+                    forceRebuild: Bool = false) throws {
         let resolved = try resolvedBeforeSlant ?? scene.resolve(overrides: pose.transforms)
         for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
             if let effect = component("UIScrollCellSlantEffect", on: id) {
-                try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose)
+                try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose, forceRebuild: forceRebuild)
             }
         }
     }
@@ -322,19 +351,19 @@ struct HUDSourceWatchLayout {
     }
     private func applySlant(_ effect: HUDSourceWatchComponent, on id: HUDSourceID,
                             resolved: [HUDSourceID: HUDSourceResolvedNode], worldRoot: simd_double4x4,
-                            pose: inout HUDSourceWatchPose) throws {
+                            pose: inout HUDSourceWatchPose, forceRebuild: Bool) throws {
         guard let selfNode = resolved[id], let inverse = HUDSourceGeometry.inverse(simd_mul(worldRoot, selfNode.worldMatrix)) else { return }
-        let bottom = effect["_bottomY"].float(), range = effect["_topY"].float() - bottom
-        guard range != 0 else { throw HUDSourceError.invalid("Zero Watch slant Y range") }
-        let curve = try Self.slantCurve(effect)
-        for cellID in effect["_cells"].array.compactMap({ $0.targetID }) {
+        let configuration: SlantConfiguration
+        if !forceRebuild, let cached = slants[effect.id] { configuration = try cached.get() }
+        else { configuration = try SlantConfiguration(effect) }
+        for cellID in configuration.cells {
             guard let cell = resolved[cellID], let parentID = cell.node.parentID,
                   let parent = resolved[parentID], let parentInverse = HUDSourceGeometry.inverse(simd_mul(worldRoot, parent.worldMatrix)),
                   cell.node.transform.rect != nil else { continue }
             let world = simd_mul(worldRoot, cell.worldMatrix).columns.3, y = simd_mul(inverse, world).y
-            let t = min(1, max(0, (y - bottom) / range))
-            guard let value = curve.sample(at: t) else { continue }
-            let x = effect["_leftX"].float() + value * effect["_maxWidth"].float()
+            let t = min(1, max(0, (y - configuration.bottom) / configuration.range))
+            guard let value = configuration.curve.sample(at: t) else { continue }
+            let x = configuration.left + value * configuration.width
             let desiredWorldX = simd_mul(simd_mul(worldRoot, selfNode.worldMatrix), SIMD4<Double>(x, 0, 0, 1)).x
             let target = simd_mul(parentInverse, SIMD4<Double>(desiredWorldX, world.y, world.z, 1))
             setLocalPosition(cellID, target: target, parentRect: parent.rect, pose: &pose)

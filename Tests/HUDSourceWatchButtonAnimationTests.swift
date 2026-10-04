@@ -83,6 +83,8 @@ enum HUDSourceWatchButtonAnimationTests {
             player.setState(.highlighted, on: id(2), at: 1)
             check(player.requiresFrames(at: 1.1), "The host needs frames while the finite hover clip is running")
             check(!player.requiresFrames(at: 1.2), "Steady hover does not retain a display timer even for a looping wrap flag")
+            check(!player.requiresFrames(at: 1.25), "Settled demand remains false without resampling instances")
+            check(player.requiresFrames(at: 1.1), "A settled-demand cache does not advance the sampler clock or hide an earlier query")
             let white = pose(player, at: 1 + 1.0/30)
             check(white.properties[id(2)]?["m_Color.r"] == 1, "First short source flash reaches white")
             check(white.properties[id(3)]?["m_Color.r"] == gray && white.transforms[id(3)]!.positionComponents[2] == 0,

@@ -35,13 +35,19 @@ enum HUDLifecycleVerification {
             isFullyCharged: false, hasBattery: true)
         precondition(overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration))
         DispatchQueue.main.asyncAfter(deadline: .now() + SystemHUDView.entranceDuration + 0.2) {
-            guard let source = overlay.systemSourceWatchForVerification else {
+            guard let source = overlay.systemSourceWatchForVerification,
+                  let host = source.superview as? SystemHUDView else {
                 preconditionFailure("Source fallback fixture requires a working initial source shell")
             }
             precondition(overlay.systemPhase == .open && overlay.systemReportGeometryMatchesSelectionForVerification)
+            precondition(host.legacyArtworkLayerCountForVerification == 0,
+                         "The source shell must not construct hidden native mechanical artwork")
             // Invoke the renderer's actual failure handoff, without changing
             // bundled assets or the real user's stores and preferences.
             source.onFailure?("Injected source failure for isolated lifecycle verification")
+            let legacyLayerCount = host.legacyArtworkLayerCountForVerification
+            precondition(legacyLayerCount > 0,
+                         "A source failure constructs the complete native mechanical fallback on demand")
             precondition(overlay.systemPhase == .open && source.isHidden && !source.hasDisplayTimerForVerification,
                          "Runtime source failure restores the native shell without closing or a hidden clock")
             precondition(overlay.systemReportGeometryMatchesSelectionForVerification,
@@ -51,6 +57,8 @@ enum HUDLifecycleVerification {
                          && overlay.systemWorkModeDialDiameterForVerification == 430,
                          "Fallback Work Mode retains its full ring and matching input geometry")
             overlay.selectSystemModule(.map, animated: false)
+            precondition(host.legacyArtworkLayerCountForVerification == legacyLayerCount,
+                         "Subsequent fallback navigation reuses its mechanical artwork")
             overlay.closeSystemOverlay()
             DispatchQueue.main.asyncAfter(deadline: .now() + SystemHUDView.exitDuration + 0.3) {
                 precondition(overlay.systemPhase == .closed && overlay.lastClosedAnimationCount == 0
@@ -225,6 +233,8 @@ enum HUDLifecycleVerification {
             }
             check(host.clockIsInStatusPanelForVerification, "Clock/date and Work Mode badge share the source upper-right plane")
             check(host.legacyProgressHiddenForVerification, "Legacy battery arc stays hidden under the source shell")
+            check(host.legacyArtworkLayerCountForVerification == 0,
+                  "The source shell retains no hidden legacy mechanical artwork or texture variants")
             var appearanceChange = configuration
             appearanceChange.applicationIcon = configuration.applicationIcon == .endfield ? .battery : .endfield
             host.set(snapshot: snapshot, configuration: appearanceChange)
@@ -239,6 +249,7 @@ enum HUDLifecycleVerification {
             let corner = CGPoint(x: host.bounds.minX + 8, y: host.bounds.minY + 8)
             check(host.hitTest(host.convert(corner, to: host.superview)) === source,
                   "Blank background input exercises the source view rather than bypassing it")
+            let cleanupsBeforeClose = overlay.closedHeapCleanupRunsForVerification
             clickHUD(at: corner)
             check(overlay.systemPhase == .closing, "Ordinary close starts retraction synchronously")
             if !reduced {
@@ -249,11 +260,26 @@ enum HUDLifecycleVerification {
             }
             later(SystemHUDView.exitDuration + 0.25) { [self] in
                 checkCleanClose("Ordinary retraction")
+                check(overlay.closedHeapCleanupActiveForVerification
+                      || overlay.closedHeapCleanupRunsForVerification > cleanupsBeforeClose,
+                      "Normal retraction schedules or finishes heap cleanup after releasing the source view")
+                // A delayed fixture checkpoint (or reduced-motion close) may
+                // arrive after the original job. Exercise cancellation with a
+                // fresh real deadline, without changing production timing.
+                let cancelledCleanup = overlay.rescheduleClosedHeapCleanupForVerification()
+                check(overlay.closedHeapCleanupPendingForVerification,
+                      "The isolated closed-state cleanup has a pending deadline to cancel")
                 check(normalCloses == 1 && acceptedQuits == 0 && completedQuits == 0,
                       "Ordinary close retains its normal callback without requesting application quit")
                 check(overlay.toggleSystemOverlay(snapshot: snapshot, configuration: configuration),
                       "Ordinary HUD close allows a later summon")
-                later(SystemHUDView.entranceDuration + 0.20) { [self] in checkUnansweredFocusClose() }
+                check(!overlay.closedHeapCleanupPendingForVerification,
+                      "Reopening cancels heap cleanup before deployment begins")
+                later(SystemHUDView.entranceDuration + 0.20) { [self] in
+                    check(overlay.closedHeapCleanupLastRunGenerationForVerification != cancelledCleanup,
+                          "A cancelled delayed cleanup never runs during the reopened HUD")
+                    checkUnansweredFocusClose()
+                }
             }
         }
 
@@ -289,6 +315,8 @@ enum HUDLifecycleVerification {
                 // The view's completion is still on the stack here. Check
                 // logical teardown now and its weak lifetime after it returns.
                 checkCleanClose("Updater handoff", requireReleasedView: false)
+                check(!overlay.closedHeapCleanupPendingForVerification,
+                      "Application update teardown does not schedule background heap work")
             }
             overlay.closeForApplicationUpdate { completions += 100 }
             check(overlay.systemPhase == .closing && completions == 0,

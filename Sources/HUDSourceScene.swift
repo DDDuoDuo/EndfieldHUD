@@ -297,6 +297,10 @@ struct HUDSourceScene: Codable {
     let nodes: [HUDSourceNode]
     private let indices: [HUDSourceID: Int]
     private let evaluationOrder: [Int]
+    /// DFS preserves m_Children order even if the manifest reorders nodes.
+    /// Shared by layout and rendering without per-traversal allocations;
+    /// this derived metadata is not serialized.
+    let traversalIDs: [HUDSourceID]
     private enum CodingKeys: String, CodingKey { case rootID = "root_node_id", nodes }
 
     init(rootID: HUDSourceID, nodes: [HUDSourceNode]) throws {
@@ -336,6 +340,7 @@ struct HUDSourceScene: Codable {
         }
         guard order.count == nodes.count else { throw HUDSourceError.invalid("Disconnected/cyclic source hierarchy") }
         self.rootID = rootID; self.nodes = nodes; indices = index; evaluationOrder = order
+        traversalIDs = order.map { nodes[$0].id }
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -346,47 +351,137 @@ struct HUDSourceScene: Codable {
         try c.encode(rootID, forKey: .rootID); try c.encode(nodes, forKey: .nodes)
     }
     func node(_ id: HUDSourceID) -> HUDSourceNode? { indices[id].map { nodes[$0] } }
-    /// DFS preserves m_Children order even if a compact manifest reordered its
-    /// node array. Render traversal must not use Dictionary iteration order.
-    var traversalIDs: [HUDSourceID] { evaluationOrder.map { nodes[$0].id } }
-
     func resolve(rootParentRect: HUDSourceRect? = nil,
                  overrides: [HUDSourceID: HUDSourceTransformOverride] = [:]) throws -> [HUDSourceID: HUDSourceResolvedNode] {
         var result: [HUDSourceID: HUDSourceResolvedNode] = [:]
         result.reserveCapacity(nodes.count)
         for offset in evaluationOrder {
-            let node = nodes[offset], source = node.transform, override = overrides[node.id]
+            let node = nodes[offset]
             let parent = node.parentID.flatMap { result[$0] }
-            var position = source.localPosition.simd
-            var rect: HUDSourceRect? = nil
-            if let sourceRect = source.rect {
-                let layout = sourceRect.layout(parent: node.parentID == nil ? rootParentRect : parent?.rect,
-                    anchoredPosition3D: override?.anchoredPosition3D, sizeDelta: override?.sizeDelta,
-                    localZ: source.localPosition.z, anchorMin: override?.anchorMin,
-                    anchorMax: override?.anchorMax, pivot: override?.pivot)
-                rect = layout.rect; position = layout.position
-            }
-            if let localPosition = override?.localPosition { position = localPosition.simd }
-            for (axis, value) in override?.positionComponents ?? [:] {
-                guard (0...2).contains(axis), value.isFinite else { throw HUDSourceError.invalid("Invalid local axis override") }
-                position[axis] = value
-            }
-            let rotation = try (override?.localRotation ?? source.localRotation).matrix()
-            let scale = (override?.localScale ?? source.localScale).simd
-            guard position.x.isFinite, position.y.isFinite, position.z.isFinite,
-                  scale.x.isFinite, scale.y.isFinite, scale.z.isFinite,
-                  rect.map({ $0.origin.x.isFinite && $0.origin.y.isFinite && $0.size.x.isFinite && $0.size.y.isFinite }) ?? true else {
-                throw HUDSourceError.invalid("Nonfinite source transform \(node.id)")
-            }
-            // Column vectors: world = parent × T × R × S. Do not transpose until
-            // an explicit renderer adapter (Core Animation uses row vectors).
-            let local = HUDSourceGeometry.translation(position) * rotation * HUDSourceGeometry.scale(scale)
-            let world = (parent?.worldMatrix ?? matrix_identity_double4x4) * local
-            guard HUDSourceGeometry.isFinite(world) else { throw HUDSourceError.invalid("Nonfinite world transform") }
-            result[node.id] = HUDSourceResolvedNode(node: node, localMatrix: local, worldMatrix: world, rect: rect,
-                activeInHierarchy: (parent?.activeInHierarchy ?? true) && (override?.active ?? node.active))
+            result[node.id] = try Self.resolveNode(node, override: overrides[node.id],
+                parentRect: node.parentID == nil ? rootParentRect : parent?.rect,
+                parentWorld: parent?.worldMatrix ?? matrix_identity_double4x4,
+                parentActive: parent?.activeInHierarchy ?? true)
         }
         return result
+    }
+
+    /// One current result per immutable scene node. This cache belongs to its
+    /// FrameBuilder, never to the shared document or a history of poses.
+    /// The ordinary resolve above remains an unconditional full traversal.
+    final class IncrementalResolver {
+        private struct Inputs: Equatable {
+            let override: HUDSourceTransformOverride?
+            let parentRect: HUDSourceRect?
+            let parentWorld: simd_double4x4
+            let parentActive: Bool
+
+            static func == (a: Inputs, b: Inputs) -> Bool {
+                func vector(_ a: HUDSourceVector2, _ b: HUDSourceVector2) -> Bool {
+                    a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern
+                }
+                func vector(_ a: HUDSourceVector3, _ b: HUDSourceVector3) -> Bool {
+                    a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern && a.z.bitPattern == b.z.bitPattern
+                }
+                func optional<T>(_ a: T?, _ b: T?, _ equal: (T, T) -> Bool) -> Bool {
+                    switch (a, b) { case (nil, nil): return true; case let (a?, b?): return equal(a, b); default: return false }
+                }
+                guard a.parentActive == b.parentActive,
+                      optional(a.parentRect, b.parentRect, { a, b in
+                          a.origin.x.bitPattern == b.origin.x.bitPattern && a.origin.y.bitPattern == b.origin.y.bitPattern
+                              && a.size.x.bitPattern == b.size.x.bitPattern && a.size.y.bitPattern == b.size.y.bitPattern
+                      }), optional(a.override, b.override, { a, b in
+                          a.active == b.active && optional(a.localPosition, b.localPosition, vector)
+                              && optional(a.localScale, b.localScale, vector)
+                              && optional(a.anchoredPosition3D, b.anchoredPosition3D, vector)
+                              && optional(a.sizeDelta, b.sizeDelta, vector)
+                              && optional(a.anchorMin, b.anchorMin, vector) && optional(a.anchorMax, b.anchorMax, vector)
+                              && optional(a.pivot, b.pivot, vector)
+                              && optional(a.localRotation, b.localRotation, {
+                                  $0.x.bitPattern == $1.x.bitPattern && $0.y.bitPattern == $1.y.bitPattern
+                                      && $0.z.bitPattern == $1.z.bitPattern && $0.w.bitPattern == $1.w.bitPattern
+                              }) && a.positionComponents.count == b.positionComponents.count
+                              && a.positionComponents.allSatisfy { b.positionComponents[$0.key]?.bitPattern == $0.value.bitPattern }
+                      }) else { return false }
+                // Preserve signed zero as well as Double precision; rounding
+                // dependencies to Float can hide a later vertex difference.
+                for column in 0..<4 {
+                    for row in 0..<4 where a.parentWorld[column][row].bitPattern != b.parentWorld[column][row].bitPattern { return false }
+                }
+                return true
+            }
+        }
+        private let scene: HUDSourceScene
+        private var cachedInputs: [Inputs?]
+        private var cachedNodes: [HUDSourceID: HUDSourceResolvedNode] = [:]
+        private(set) var reusedNodeCount = 0
+        private(set) var rebuiltNodeCount = 0
+
+        init(scene: HUDSourceScene) {
+            self.scene = scene
+            cachedInputs = Array(repeating: nil, count: scene.nodes.count)
+            cachedNodes.reserveCapacity(scene.nodes.count)
+        }
+
+        func resolve(rootParentRect: HUDSourceRect? = nil,
+                     overrides: [HUDSourceID: HUDSourceTransformOverride] = [:]) throws -> [HUDSourceID: HUDSourceResolvedNode] {
+            // Copy-on-write keeps unchanged dictionaries shared. Publish both
+            // snapshots together only after every changed node validates.
+            var result = cachedNodes
+            var changedInputs: [(Int, Inputs)] = []
+            for offset in scene.evaluationOrder {
+                let node = scene.nodes[offset]
+                let parent = node.parentID.flatMap { result[$0] }
+                let next = Inputs(override: overrides[node.id],
+                    parentRect: node.parentID == nil ? rootParentRect : parent?.rect,
+                    parentWorld: parent?.worldMatrix ?? matrix_identity_double4x4,
+                    parentActive: parent?.activeInHierarchy ?? true)
+                if cachedInputs[offset] == next { reusedNodeCount += 1; continue }
+                result[node.id] = try HUDSourceScene.resolveNode(node, override: next.override,
+                    parentRect: next.parentRect, parentWorld: next.parentWorld, parentActive: next.parentActive)
+                changedInputs.append((offset, next))
+                rebuiltNodeCount += 1
+            }
+            for (offset, next) in changedInputs { cachedInputs[offset] = next }
+            cachedNodes = result
+            return result
+        }
+    }
+
+    /// Keep the original arithmetic and validation in one place. Incremental
+    /// resolution skips it only for bit-for-bit identical dependency values.
+    private static func resolveNode(_ node: HUDSourceNode, override: HUDSourceTransformOverride?,
+                                    parentRect: HUDSourceRect?, parentWorld: simd_double4x4,
+                                    parentActive: Bool) throws -> HUDSourceResolvedNode {
+        let source = node.transform
+        var position = source.localPosition.simd
+        var rect: HUDSourceRect? = nil
+        if let sourceRect = source.rect {
+            let layout = sourceRect.layout(parent: parentRect,
+                anchoredPosition3D: override?.anchoredPosition3D, sizeDelta: override?.sizeDelta,
+                localZ: source.localPosition.z, anchorMin: override?.anchorMin,
+                anchorMax: override?.anchorMax, pivot: override?.pivot)
+            rect = layout.rect; position = layout.position
+        }
+        if let localPosition = override?.localPosition { position = localPosition.simd }
+        for (axis, value) in override?.positionComponents ?? [:] {
+            guard (0...2).contains(axis), value.isFinite else { throw HUDSourceError.invalid("Invalid local axis override") }
+            position[axis] = value
+        }
+        let rotation = try (override?.localRotation ?? source.localRotation).matrix()
+        let scale = (override?.localScale ?? source.localScale).simd
+        guard position.x.isFinite, position.y.isFinite, position.z.isFinite,
+              scale.x.isFinite, scale.y.isFinite, scale.z.isFinite,
+              rect.map({ $0.origin.x.isFinite && $0.origin.y.isFinite && $0.size.x.isFinite && $0.size.y.isFinite }) ?? true else {
+            throw HUDSourceError.invalid("Nonfinite source transform \(node.id)")
+        }
+        // Column vectors: world = parent × T × R × S. Do not transpose until
+        // an explicit renderer adapter (Core Animation uses row vectors).
+        let local = HUDSourceGeometry.translation(position) * rotation * HUDSourceGeometry.scale(scale)
+        let world = parentWorld * local
+        guard HUDSourceGeometry.isFinite(world) else { throw HUDSourceError.invalid("Nonfinite world transform") }
+        return HUDSourceResolvedNode(node: node, localMatrix: local, worldMatrix: world, rect: rect,
+            activeInHierarchy: parentActive && (override?.active ?? node.active))
     }
 }
 
