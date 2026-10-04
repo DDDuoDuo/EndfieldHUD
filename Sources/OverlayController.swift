@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 /// One shared panel. The charging HUD rests idle; the summonable Power HUD
 /// owns ambient Core Animation tracks only while fully open.
@@ -18,9 +19,32 @@ final class OverlayController: NSObject {
     private var presentationCompleted = false
     private var requestedDuration: Double = 5
     private var systemView: SystemHUDView?
+    private final class ClosedHeapCleanupTicket {
+        private let lock = NSLock()
+        private var cancelled = false
+        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+        func begin() -> Bool { lock.lock(); defer { lock.unlock() }; return !cancelled }
+    }
+    private var closedHeapCleanup: DispatchWorkItem?
+    private var closedHeapCleanupTicket: ClosedHeapCleanupTicket?
+    private var closedHeapCleanupGeneration: UInt64 = 0
+    private var closedHeapCleanupInFlight = false
+    private(set) var closedHeapCleanupRunsForVerification = 0
+    private(set) var closedHeapCleanupLastRunGenerationForVerification: UInt64?
+    private(set) var lastClosedHeapCleanupMillisecondsForVerification = 0.0
+    var closedHeapCleanupPendingForVerification: Bool { closedHeapCleanup != nil }
+    var closedHeapCleanupActiveForVerification: Bool { closedHeapCleanup != nil || closedHeapCleanupInFlight }
+    func rescheduleClosedHeapCleanupForVerification() -> UInt64 {
+        precondition(CommandLine.arguments.contains("--ui-test") && Thread.isMainThread
+            && systemPhase == .closed && systemView == nil)
+        cancelClosedHeapCleanup()
+        scheduleClosedHeapCleanup()
+        return closedHeapCleanupGeneration
+    }
     private lazy var mapStore: Result<WorldMapStore, Error> = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }
     private lazy var notesStore: Result<NotesStore, Error> = Result { try NotesStore(directory: NotesStore.applicationDirectory()) }
     private lazy var shelfStore: Result<FileShelfStore, Error> = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
+    private var pendingShelfDropPresentation: (snapshot: BatterySnapshot, configuration: AppConfiguration, addedIDs: Set<UUID>)?
     private lazy var appShortcutStore: Result<AppShortcutStore, Error> = Result { try AppShortcutStore(directory: AppShortcutStore.applicationDirectory()) }
     private var pendingAppLaunch: (name: String, url: URL)?
     private var pendingShelfReveal: ShelfFileAccess?
@@ -47,7 +71,8 @@ final class OverlayController: NSObject {
     var onSystemActivityChange: (() -> Void)?
     var isIdleForUpdate: Bool {
         systemPhase == .closed && !isEditingPosition && !appLaunchInFlight
-            && !shelfDragPresentation.isActive && applicationUpdateCompletion == nil && !quitRequested
+            && !shelfDragPresentation.isActive && pendingShelfDropPresentation == nil
+            && applicationUpdateCompletion == nil && !quitRequested
     }
     var onQuitAccepted: (() -> Void)?
     var onQuitAfterSystemClose: (() -> Void)?
@@ -89,6 +114,7 @@ final class OverlayController: NSObject {
     var systemWorkModeAnimationCount: Int { systemView?.workModeAnimationCount ?? 0 }
     var systemTelemetryAnimationCount: Int { systemView?.telemetryAnimationCount ?? 0 }
     func performStorageActionForVerification(_ id: String) { systemView?.performStorageActionForVerification(id) }
+    func performActivityActionForVerification(_ id: String) { systemView?.performActivityActionForVerification(id) }
     func addAppShortcutForVerification(_ url: URL) throws -> AppShortcut {
         let store = try appShortcutStore.get()
         return try store.save(candidate: store.inspect(url: url), name: "Launch test", iconPreset: .original)
@@ -139,6 +165,59 @@ final class OverlayController: NSObject {
     func selectSystemModule(_ module: HUDModule, animated: Bool = true) {
         systemView?.selectModule(module, animated: animated)
     }
+
+    /// Menu-bar drops share the shelf's bookmark store even when no HUD exists.
+    /// Finish AppKit's drop callback before showing or switching the overlay.
+    @discardableResult
+    func receiveStatusItemFiles(_ urls: [URL], snapshot: BatterySnapshot,
+                                configuration: AppConfiguration) -> Bool {
+        guard !urls.isEmpty, urls.allSatisfy(\.isFileURL), canPresentShelfDrop else { return false }
+        if systemView == nil, case .failure = shelfStore {
+            shelfStore = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
+        }
+        let previousIDs = Set((try? shelfStore.get().items.map(\.id)) ?? [])
+        if let systemView {
+            guard systemView.importShelfFiles(urls) else { return false }
+        } else {
+            do {
+                let store = try shelfStore.get()
+                try store.add(urls: urls)
+                for item in store.items where !previousIDs.contains(item.id) {
+                    eventLog.record(kind: .shelfAdded, metadata: ["filename": item.name])
+                }
+            } catch { return false }
+        }
+        let addedIDs = Set((try? shelfStore.get().items.map(\.id)) ?? []).subtracting(previousIDs)
+            .union(pendingShelfDropPresentation?.addedIDs ?? [])
+        pendingShelfDropPresentation = (snapshot, configuration, addedIDs)
+        DispatchQueue.main.async { [weak self] in self?.presentPendingShelfDrop() }
+        return true
+    }
+
+    private func presentPendingShelfDrop() {
+        guard let request = pendingShelfDropPresentation else { return }
+        guard canPresentShelfDrop else { pendingShelfDropPresentation = nil; return }
+        switch systemPhase {
+        case .closed:
+            pendingShelfDropPresentation = nil
+            initialModuleRequest = .fileShelf
+            _ = toggleSystemOverlay(snapshot: request.snapshot, configuration: request.configuration)
+            systemView?.revealShelfItems(request.addedIDs)
+        case .open:
+            pendingShelfDropPresentation = nil
+            systemView?.revealShelfItems(request.addedIDs)
+            selectSystemModule(.fileShelf)
+        case .opening, .closing:
+            break // The transition completion consumes the request once.
+        }
+    }
+
+    private var canPresentShelfDrop: Bool {
+        !quitRequested && !isEditingPosition && !appLaunchInFlight
+            && pendingAppLaunch == nil && pendingShelfReveal == nil
+            && !openStorageAfterClose && afterSystemClose == nil
+            && !shelfDragPresentation.isActive && systemView?.isDraggingShelfItem != true
+    }
     var visibleNotesForVerification: Set<UUID> { systemView?.visibleNotesForVerification ?? [] }
     var notesForVerification: [CanvasNote] { (try? notesStore.get().notes) ?? [] }
     func projectNotesPointForVerification(_ point: CGPoint) -> CGPoint {
@@ -153,6 +232,8 @@ final class OverlayController: NSObject {
     var notesFollowRetractionForVerification: Bool { systemView?.notesFollowRetractionForVerification ?? false }
     var notesDeploymentRestoredForVerification: Bool { systemView?.notesDeploymentRestoredForVerification ?? false }
     var shelfCountForVerification: Int { (try? shelfStore.get().items.count) ?? 0 }
+    var shelfPageForVerification: Int? { systemView?.shelfPageForVerification }
+    var shelfSelectedCountForVerification: Int { systemView?.shelfSelectedCountForVerification ?? 0 }
     var shelfDragPhaseForVerification: ShelfDragPresentationState.Phase { shelfDragPresentation.phase }
     var systemWindowVisibleForVerification: Bool { panel.isVisible }
     func performNoteActionForVerification(_ action: String) { systemView?.performNoteActionForVerification(action) }
@@ -180,8 +261,10 @@ final class OverlayController: NSObject {
         audio = diagnostic ? .fixture() : AudioDeviceController()
         perAppAudio = diagnostic ? .fixture() : PerAppAudioController()
         storage = diagnostic ? .fixture() : StorageController()
-        activity = diagnostic ? .fixture() : SystemActivityMonitor()
-        appActivity = diagnostic ? .fixture() : AppActivityMonitor()
+        let liveTelemetry = CommandLine.arguments.contains("--ui-test")
+            && CommandLine.arguments.contains("--live-telemetry-benchmark")
+        activity = diagnostic && !liveTelemetry ? .fixture() : SystemActivityMonitor()
+        appActivity = diagnostic && !liveTelemetry ? .fixture() : AppActivityMonitor()
         let log = SystemEventLog(directory: diagnostic ? nil : SystemEventLog.applicationDirectory())
         eventLog = log
         eventRecorder = SystemEventRecorder(log: log)
@@ -247,6 +330,8 @@ final class OverlayController: NSObject {
             self.confirmButton.dark = self.isDark
         }
     }
+
+    deinit { cancelClosedHeapCleanup() }
 
     func update(snapshot: BatterySnapshot, configuration: AppConfiguration, preview: Bool = false) {
         let displayChanged = self.configuration.hudDisplayUUID != configuration.hudDisplayUUID
@@ -436,6 +521,7 @@ final class OverlayController: NSObject {
     /// closing animation, discard unrelated handoffs, then return to Sparkle.
     func closeForApplicationUpdate(completion: @escaping () -> Void) {
         guard applicationUpdateCompletion == nil else { return }
+        cancelClosedHeapCleanup()
         quitRequested = true
         pendingAppLaunch = nil
         pendingShelfReveal?.close(); pendingShelfReveal = nil
@@ -473,6 +559,8 @@ final class OverlayController: NSObject {
 
     /// Sleep/session shutdown and termination cannot wait for visible animations.
     func forceCloseSystemOverlay() {
+        pendingShelfDropPresentation = nil
+        cancelClosedHeapCleanup()
         pendingAppLaunch = nil
         pendingShelfReveal?.close(); pendingShelfReveal = nil
         appLaunchGeneration &+= 1
@@ -501,6 +589,8 @@ final class OverlayController: NSObject {
         switch action {
         case .none: return
         case .open(let token):
+            var startup = HUDStartupTrace.begin()
+            cancelClosedHeapCleanup()
             logSystemPhase()
             if case .failure = mapStore {
                 mapStore = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }
@@ -520,6 +610,7 @@ final class OverlayController: NSObject {
             }
             previousApplication = NSWorkspace.shared.frontmostApplication
             systemScreenID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+            HUDStartupTrace.end("open.preparation", since: &startup)
             let view = SystemHUDView(frame: NSRect(origin: .zero, size: screen.frame.size),
                                      notesStore: notesStore, shelfStore: shelfStore, clipboard: clipboard,
                                      audio: audio, perAppAudio: perAppAudio, workMode: workMode, eventLog: eventLog,
@@ -527,6 +618,7 @@ final class OverlayController: NSObject {
                                      settings: settingsController, profile: profileStore, mapStore: mapStore,
                                      initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
                                      initialModule: initialModuleRequest ?? lastSystemModule)
+            HUDStartupTrace.end("open.fullNativeView", since: &startup)
             systemView = view
             view.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
             if let pointerLocationProvider = systemPointerLocationProviderForVerification {
@@ -578,6 +670,7 @@ final class OverlayController: NSObject {
                 self.pendingShelfReveal = access
                 self.closeSystemOverlay()
             }
+            HUDStartupTrace.end("open.callbacks", since: &startup)
             panel.alphaValue = 1
             panel.contentView = view
             panel.setFrame(screen.frame, display: false)
@@ -587,6 +680,7 @@ final class OverlayController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(view)
+            HUDStartupTrace.end("open.attachAndActivate", since: &startup)
             // Preparation has its own bounded fallback. The finite source
             // entrance deadline starts only when the real/fallback input is ready.
             armTransitionDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2) { [weak self] in
@@ -599,6 +693,7 @@ final class OverlayController: NSObject {
                     self?.finishSystemOpening(token)
                 }
             }) { [weak self] in self?.finishSystemOpening(token) }
+            HUDStartupTrace.end("open.beginEntrance", since: &startup)
         case .close(let token):
             logSystemPhase()
             systemView?.interactionEnabled = false
@@ -735,6 +830,7 @@ final class OverlayController: NSObject {
         logSystemPhase()
         systemView?.interactionEnabled = systemState.phase == .open
         performSystemAction(action)
+        presentPendingShelfDrop()
     }
 
     private func finishSystemClosing(_ token: Int) {
@@ -742,7 +838,11 @@ final class OverlayController: NSObject {
         logSystemPhase()
         transitionDeadline?.cancel()
         transitionDeadline = nil
+        // A later explicit handoff takes priority over a pending shelf reveal.
+        // Teardown clears these handoff fields, so test before consuming them.
+        if !canPresentShelfDrop { pendingShelfDropPresentation = nil }
         tearDownSystemPresentation(restoreFocus: true, notify: true)
+        presentPendingShelfDrop()
     }
 
     private func logSystemPhase() {
@@ -753,6 +853,7 @@ final class OverlayController: NSObject {
     }
 
     private func tearDownSystemPresentation(restoreFocus: Bool, notify: Bool) {
+        cancelClosedHeapCleanup()
         let shouldQuit = quitAfterSystemClose
         let updateCompletion = applicationUpdateCompletion
         applicationUpdateCompletion = nil
@@ -802,11 +903,57 @@ final class OverlayController: NSObject {
             onQuitAfterSystemClose?()
             return
         }
+        if notify { scheduleClosedHeapCleanup() }
         if let action, notify { DispatchQueue.main.async(execute: action) }
         if notify { onSystemClosed?() }
         if openStorage && notify { _ = openSystemStorage() }
         if let shelfReveal, notify { revealShelfFile(shelfReveal.url) }
         if let appLaunch { completeAppShortcutHandoff(appLaunch) }
+    }
+
+    private func cancelClosedHeapCleanup() {
+        closedHeapCleanupGeneration &+= 1
+        closedHeapCleanup?.cancel(); closedHeapCleanup = nil
+        closedHeapCleanupTicket?.cancel(); closedHeapCleanupTicket = nil
+    }
+
+    private func scheduleClosedHeapCleanup() {
+        let generation = closedHeapCleanupGeneration
+        let ticket = ClosedHeapCleanupTicket()
+        closedHeapCleanupTicket = ticket
+        let work = DispatchWorkItem { [weak self, ticket] in
+            guard let self, self.closedHeapCleanupGeneration == generation,
+                  self.systemPhase == .closed, self.systemView == nil else { return }
+            self.closedHeapCleanup = nil
+            guard !self.closedHeapCleanupInFlight else {
+                self.closedHeapCleanupTicket = nil
+                return
+            }
+            self.closedHeapCleanupInFlight = true
+            // Frame construction leaves reusable malloc pages after the views
+            // are released. Return only free pages once, off the main thread;
+            // live shader/document/image caches remain ready for the next open.
+            DispatchQueue.global(qos: .utility).async { [weak self, ticket] in
+                let elapsed: Double?
+                if ticket.begin() {
+                    let began = CACurrentMediaTime()
+                    _ = malloc_zone_pressure_relief(nil, 0)
+                    elapsed = (CACurrentMediaTime() - began) * 1000
+                } else { elapsed = nil }
+                DispatchQueue.main.async { [weak self, ticket] in
+                    guard let self else { return }
+                    self.closedHeapCleanupInFlight = false
+                    if self.closedHeapCleanupTicket === ticket { self.closedHeapCleanupTicket = nil }
+                    if let elapsed {
+                        self.closedHeapCleanupRunsForVerification += 1
+                        self.closedHeapCleanupLastRunGenerationForVerification = generation
+                        self.lastClosedHeapCleanupMillisecondsForVerification = elapsed
+                    }
+                }
+            }
+        }
+        closedHeapCleanup = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
     @objc private func discardPosition() { finishPositionEditing(position: nil) }

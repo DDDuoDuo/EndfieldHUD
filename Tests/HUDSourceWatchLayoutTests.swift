@@ -81,6 +81,44 @@ enum HUDSourceWatchLayoutTests {
             check(fittedResult[id(1)]!.rect!.size.x == 200,
                   "ContentSizeFitter uses measured preferred width before child control")
 
+            // Immutable candidates and within-call rect memoization must
+            // preserve the uncached horizontal-before-vertical writer order.
+            // Reuse the same layout across different inputs to ensure sampled
+            // rectangles never leak into a subsequent animation frame.
+            for candidate in [layout, controlled, scaleLayout, fittedLayout] {
+                for width in [70.0, 200.0, 377.5] {
+                    var rootInput = HUDSourceTransformOverride()
+                    rootInput.sizeDelta = HUDSourceVector2(width, 135)
+                    var child = HUDSourceTransformOverride(localScale: HUDSourceVector3(1.7, 0.8, 1))
+                    child.pivot = HUDSourceVector2(0.2, 0.9)
+                    child.localPosition = HUDSourceVector3(40, -20, 7)
+                    var input = HUDSourceWatchPose(transforms: [id(1): rootInput, id(2): child])
+                    if width == 200 { input.transforms[id(3)] = HUDSourceTransformOverride(active: false) }
+                    var cached = input, forced = input
+                    let cachedReport = try candidate.apply(to: &cached)
+                    let forcedReport = try candidate.apply(to: &forced, forceSlantRebuild: true)
+                    check(cached.transforms == forced.transforms && cached.properties == forced.properties,
+                        "Cached layout metadata and rect values must preserve every authored transform channel")
+                    check(cachedReport.missingTextMetrics == forcedReport.missingTextMetrics
+                        && cachedReport.unverifiedCustomComponents == forcedReport.unverifiedCustomComponents,
+                        "Cached layout metadata must preserve diagnostics")
+                }
+            }
+
+            let image = component("UIImage", 111, ["m_Type": .number(1)])
+            let scaler = component("CanvasScaler", 112, ["m_ReferencePixelsPerUnit": .number(200)])
+            let sprite: HUDSourceJSONValue = .object(["raw_sprite": .object([
+                "m_PixelsToUnits": .number(100), "m_Rect": .object(["width": .number(128), "height": .number(64)]),
+                "m_Border": .object(["x": .number(3), "y": .number(5), "z": .number(7), "w": .number(11)])])])
+            let imageLayout = HUDSourceWatchLayout(scene: scene, components: [id(1): [group(true, force: false), fitter, scaler],
+                id(2): [image, element(113, minimum: 8, preferred: 12, flexible: 0)], id(5): [ignore]],
+                spriteByComponent: [image.id: sprite])
+            var cachedImage = HUDSourceWatchPose(transforms: [:]), forcedImage = cachedImage
+            _ = try imageLayout.apply(to: &cachedImage)
+            _ = try imageLayout.apply(to: &forcedImage, forceSlantRebuild: true)
+            check(cachedImage.transforms == forcedImage.transforms,
+                "Image borders, inherited Canvas pixels-per-unit and LayoutElement priority retain exact metric order")
+
             let scrollScene = try HUDSourceScene(rootID: id(1), nodes: [node(1, parent: nil, children: [2], size: SIMD2(100, 100)),
                 node(2, parent: 1, size: SIMD2(100, 300), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1))])
             func pointer(_ number: Int) -> HUDSourceJSONValue { .object(["target_id": .string(id(number).rawValue)]) }
@@ -93,6 +131,51 @@ enum HUDSourceWatchLayoutTests {
             check(near(bottom.transforms[id(2)]!.anchoredPosition3D!.y, 200), "Normalized 0 aligns the content bottom to the view bottom")
             check(near(scrollLayout.scrolledPosition(0.5, delta: 1, info: topReport.scroll), 0.725),
                   "Wheel scroll uses source sensitivity and measured overflow")
+
+            // The scoped scroll resolver must include every ancestor, observe
+            // prior scroll writes, and ignore only unrelated scene branches.
+            let decorations = Array(100..<132)
+            let nestedScene = try HUDSourceScene(rootID: id(1), nodes: [
+                node(1, parent: nil, children: [2] + decorations, size: SIMD2(800, 600)),
+                node(2, parent: 1, children: [3], size: SIMD2(220, 150), anchored: SIMD2(65, -40)),
+                node(3, parent: 2, children: [4], size: SIMD2(220, 600), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1)),
+                node(4, parent: 3, children: [5], size: SIMD2(160, 110), anchored: SIMD2(12, -170)),
+                node(5, parent: 4, children: [6], size: SIMD2(160, 390), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1)),
+                node(6, parent: 5, size: SIMD2(45, 35))
+            ] + decorations.map { node($0, parent: 1, size: SIMD2(Double($0), 50)) })
+            let parentScroll = component("UIScrollRect", 121, ["m_Vertical": .bool(true), "m_Content": pointer(3),
+                "m_Viewport": pointer(2), "m_ScrollSensitivity": .number(35)])
+            let childScroll = component("ScrollRect", 122, ["m_Vertical": .bool(true), "m_Content": pointer(5),
+                "m_Viewport": pointer(4), "m_ScrollSensitivity": .number(25)])
+            let nestedLayout = HUDSourceWatchLayout(scene: nestedScene, components: [id(2): [parentScroll], id(4): [childScroll]])
+            check(nestedLayout.scrollResolutionNodeCount(for: id(2)) == 3
+                  && nestedLayout.scrollResolutionNodeCount(for: id(4)) == 5,
+                  "Each scroll resolves only its ancestor closure rather than unrelated decorations or content descendants")
+            for variant in 0..<6 {
+                let turn = simd_quatd(angle: Double(variant) * 0.07, axis: SIMD3(1, 0, 0))
+                let rotation = HUDSourceQuaternion(turn.imag.x, turn.imag.y, turn.imag.z, turn.real)
+                var input = HUDSourceWatchPose(transforms: [
+                    id(1): HUDSourceTransformOverride(localRotation: rotation, localScale: HUDSourceVector3(1.2, 0.8, 1)),
+                    id(2): HUDSourceTransformOverride(sizeDelta: HUDSourceVector2(220, 130 + Double(variant) * 9)),
+                    id(3): HUDSourceTransformOverride(positionComponents: [2: Double(variant) * -4]),
+                    id(4): HUDSourceTransformOverride(localScale: HUDSourceVector3(1, variant == 5 ? 0 : 0.9, 1)),
+                    id(5): HUDSourceTransformOverride(sizeDelta: HUDSourceVector2(160, 290 + Double(variant) * 25))
+                ])
+                if variant == 3 { input.transforms[id(3)]?.active = false }
+                if variant == 4 { input.transforms[id(2)]?.active = false }
+                for position in [-0.3, 0, 0.37, 0.82, 1, 1.3] {
+                    var scoped = input, forced = input
+                    let actual = try nestedLayout.apply(to: &scoped, verticalNormalizedPosition: position)
+                    let oracle = try nestedLayout.apply(to: &forced, verticalNormalizedPosition: position, forceSlantRebuild: true)
+                    check(scoped.transforms == forced.transforms && scoped.properties == forced.properties,
+                          "Scoped scroll resolution preserves nested writer order, depth, rotation, scale and active overrides")
+                    check(actual.scroll?.nodeID == oracle.scroll?.nodeID
+                          && actual.scroll?.hiddenLength.bitPattern == oracle.scroll?.hiddenLength.bitPattern
+                          && actual.scroll?.normalizedPosition.bitPattern == oracle.scroll?.normalizedPosition.bitPattern
+                          && actual.unverifiedCustomComponents == oracle.unverifiedCustomComponents,
+                          "Scoped scroll bounds and diagnostics exactly match the independent full-scene oracle")
+                }
+            }
 
             let rotation = simd_quatd(angle: 0.35, axis: SIMD3(1, 0, 0)) * simd_quatd(angle: 0.17, axis: SIMD3(0, 0, 1))
             let q = HUDSourceQuaternion(rotation.imag.x, rotation.imag.y, rotation.imag.z, rotation.real)

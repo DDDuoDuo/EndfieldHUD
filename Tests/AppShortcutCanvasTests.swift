@@ -29,6 +29,11 @@ enum AppShortcutCanvasTests {
             let store = try AppShortcutStore(directory: root.appendingPathComponent("saved", isDirectory: true))
             let app = try fixture(0)
             let canvas = AppShortcutCanvas(store: store, reduceMotion: { true })
+            check(canvas.layer.sublayers?.first?.sublayers?.contains { $0 is CATextLayer } == false,
+                  "A launcher that has never been presented does not create hidden heading or button artwork")
+            canvas.updateRenderScale(2.5)
+            check(canvas.layer.sublayers?.first?.sublayers?.contains { $0 is CATextLayer } == false,
+                  "Preparing the display scale alone does not paint the hidden launcher")
             let originalLayer = canvas.makeContent(for: .addApp, style: HUDModuleContentStyle(dark: true, accent: .systemYellow, contentsScale: 2))
             var launches: [UUID] = []; var saves: [UUID] = []; var removals: [String] = []
             var chooserRequests = 0; var renameRequests = 0

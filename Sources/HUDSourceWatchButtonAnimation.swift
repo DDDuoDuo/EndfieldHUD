@@ -26,6 +26,10 @@ final class HUDSourceWatchButtonAnimation {
     private var instances: [HUDSourceID: Instance]
     private var clock: Double?
     private(set) var stateGeneration: UInt64 = 0
+    // A settled finite animation stays settled until its state changes. Keep
+    // the sampled time too: demand queries deliberately do not advance clock,
+    // and a verification caller may query an earlier point in the same clip.
+    private var settledDemand: (generation: UInt64, time: Double)?
     private struct CachedSample { let localTime: Double; let samples: Samples }
     private var sampleCache: [HUDSourceID: [State: CachedSample]] = [:]
 
@@ -99,6 +103,8 @@ final class HUDSourceWatchButtonAnimation {
     func requiresFrames(at value: Double) -> Bool {
         guard value.isFinite else { return false }
         let time = max(clock ?? value, value)
+        if let settledDemand, settledDemand.generation == stateGeneration,
+           time >= settledDemand.time { return false }
         for id in order {
             guard let instance = instances[id], let config = configurations[id] else { continue }
             if let blend = instance.blend, time - blend.started < blend.duration { return true }
@@ -109,6 +115,7 @@ final class HUDSourceWatchButtonAnimation {
             if template.speed > 0 && local < template.clip.lastKeyTime { return true }
             if template.speed < 0 && local > 0 { return true }
         }
+        settledDemand = (stateGeneration, time)
         return false
     }
 

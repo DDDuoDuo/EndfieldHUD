@@ -45,7 +45,10 @@ final class HUDIdentityCard {
         let closeBounds: CGRect
     }
 
-    init() {
+    private(set) var isArtworkPrepared: Bool
+
+    init(prepareArtwork: Bool = true) {
+        isArtworkPrepared = prepareArtwork
         withoutActions {
             layer.name = "hud.identity"
             layer.frame = CGRect(x: 0, y: 0, width: 1000, height: 640)
@@ -67,8 +70,16 @@ final class HUDIdentityCard {
 
     deinit { cleanup?.cancel() }
 
+    func prepareArtwork() {
+        guard !isArtworkPrepared else { return }
+        isArtworkPrepared = true
+        update(dark: dark, accent: accent, contentsScale: contentsScale)
+    }
+
     func update(dark: Bool, accent: NSColor, contentsScale: CGFloat) {
         let scale = contentsScale.isFinite ? min(8, max(1, contentsScale)) : 2
+        self.dark = dark; self.accent = accent; self.contentsScale = scale
+        guard isArtworkPrepared else { return }
         let nextState = RenderedState(dark: dark,
             accent: (accent.usingColorSpace(.sRGB) ?? accent).cgColor,
             contentsScale: scale, language: L10n.resolvedLanguage, profileRevision: profileRevision,

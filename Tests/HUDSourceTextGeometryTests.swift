@@ -240,10 +240,45 @@ enum HUDSourceTextGeometryTests {
 
     private static func verifyDesktopProfileSubset(root: URL) throws -> Int {
         let desktop = try HUDSourceWatchDocument(resourceRoot: root, includeWidgets: false, includeSourceText: false, includeDesktopProfile: true)
+        let serial = try HUDSourceWatchDocument(resourceRoot: root, includeWidgets: false, includeSourceText: false,
+            includeDesktopProfile: true, serialAnimationDecodingForVerification: true)
         let original = try HUDSourceDesktopProfileCard(data: Data(contentsOf: root.appendingPathComponent("Widgets/widget.json")))
         guard let card = desktop.desktopProfileCard else { fatalError("Desktop identity uses the source prefab") }
         var count = 0
         func check(_ value: Bool, _ message: String) { count += 1; precondition(value, message) }
+        func bits(_ value: HUDSourceCurveValue) -> [UInt64] {
+            switch value {
+            case .scalar(let x): return [x.bitPattern]
+            case .vector3(let x): return [x.x.bitPattern, x.y.bitPattern, x.z.bitPattern]
+            case .quaternion(let x): return [x.x.bitPattern, x.y.bitPattern, x.z.bitPattern, x.w.bitPattern]
+            }
+        }
+        check(desktop.library.clips.count == serial.library.clips.count, "Parallel desktop decoding retains every clip")
+        for (a, b) in zip(desktop.library.clips, serial.library.clips) {
+            check(a.binding == b.binding && a.id == b.id && a.name == b.name && a.wrapMode == b.wrapMode
+                && a.sampleRate.bitPattern == b.sampleRate.bitPattern && a.lastKeyTime.bitPattern == b.lastKeyTime.bitPattern
+                && a.curves.count == b.curves.count, "Parallel clip headers retain exact ordering and numeric bits")
+            for (x, y) in zip(a.curves, b.curves) {
+                check(x.group == y.group && x.path == y.path && x.attribute == y.attribute && x.classID == y.classID
+                    && x.nodeIDs == y.nodeIDs && x.body.preInfinity == y.body.preInfinity && x.body.postInfinity == y.body.postInfinity
+                    && x.body.keys.count == y.body.keys.count, "Parallel curves retain authored bindings and wrap metadata")
+                for (m, n) in zip(x.body.keys, y.body.keys) {
+                    check(m.time.bitPattern == n.time.bitPattern && m.weightedMode == n.weightedMode
+                        && zip([m.value, m.inSlope, m.outSlope, m.inWeight, m.outWeight],
+                            [n.value, n.inSlope, n.outSlope, n.inWeight, n.outWeight]).allSatisfy {
+                            bits($0) == bits($1)
+                        }, "Parallel decoding preserves every value, tangent and weight including signed zero and infinity")
+                }
+                for time in [0, a.lastKeyTime * 0.5, a.lastKeyTime] {
+                    check(x.sample(at: time).map(bits) == y.sample(at: time).map(bits),
+                          "Parallel construction retains exact evaluated animation channels")
+                }
+            }
+        }
+        check(desktop.animators.count == serial.animators.count && zip(desktop.animators, serial.animators).allSatisfy {
+            $0.rootID == $1.rootID && $0.controllerName == $1.controllerName && $0.states.count == $1.states.count
+                && zip($0.states, $1.states).allSatisfy { $0.name == $1.name && $0.clipID == $1.clipID }
+        }, "Parallel decoding preserves controller instance bindings")
         check(desktop.widgets == nil && desktop.fonts.object.isEmpty && desktop.labels.object.isEmpty,
               "The selected card does not load mutable banner playback, game fonts or labels")
         check(card.scene.nodes.count == 45 && card.sprites["sprites"].array.count == 21,
@@ -284,6 +319,59 @@ enum HUDSourceTextGeometryTests {
               "The exit retains the original source button rather than a recreated glyph")
         let cached = try HUDSourceDesktopDocumentCache().document(resourceRoot: root)
         check(cached.desktopProfileCard != nil && cached.widgets == nil, "The cached desktop profile includes the immutable card only")
+        let metadata = try cached.renderMetadata()
+        check(try cached.renderMetadata() === metadata, "Repeated builders share one immutable parsed sprite and material catalog")
+        func sameSprite(_ a: HUDSourceImageGeometry.Sprite, _ b: HUDSourceImageGeometry.Sprite) -> Bool {
+            a.size == b.size && a.padding == b.padding && a.border == b.border && a.outer == b.outer
+                && a.inner == b.inner && a.pixelsPerUnit == b.pixelsPerUnit && a.textureID == b.textureID
+        }
+        let originalTextures = Dictionary(uniqueKeysWithValues: cached.sprites["source_textures"].array.map { ($0["id"].string!, $0) })
+        for (component, value) in cached.spriteByComponent {
+            let original = try HUDSourceImageGeometry.Sprite(source: value, texture: originalTextures[value["texture"]["id"].string!]!)
+            check(metadata.sprites[component].map { sameSprite($0, original) } == true,
+                  "Shared component sprite geometry preserves every source coordinate and pixels-per-unit value")
+        }
+        for value in cached.sprites["sprites"].array {
+            let original = try HUDSourceImageGeometry.Sprite(source: value, texture: originalTextures[value["texture"]["id"].string!]!)
+            check(metadata.sourceSprites[value["id"].string!].map { sameSprite($0, original) } == true,
+                  "Shared named sprite geometry preserves the reference decoder output")
+        }
+        let cardData = try HUDSourceResourceData.read(root.appendingPathComponent("desktop-profile-card.json"))
+        let raw = try JSONSerialization.jsonObject(with: cardData) as! [String: Any]
+        let rawScene = try JSONSerialization.data(withJSONObject: raw["scene"]!)
+        let separatelyDecoded = try HUDSourceJSON.decoder().decode(HUDSourceScene.self, from: rawScene)
+        check(card.scene.rootID == separatelyDecoded.rootID && card.scene.traversalIDs == separatelyDecoded.traversalIDs,
+              "One-pass profile decoding retains the original scene traversal and root")
+        for node in separatelyDecoded.nodes {
+            check(card.scene.node(node.id).map { sameTransform($0.transform, node.transform)
+                && $0.name == node.name && $0.path == node.path && $0.parentID == node.parentID
+                && $0.childIDs == node.childIDs && $0.active == node.active } == true,
+                  "One-pass profile decoding retains all graph and transform fields")
+        }
+        let invalidRoot = FileManager.default.temporaryDirectory.appendingPathComponent("endfield-parallel-clips-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: invalidRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: invalidRoot) }
+        for name in ["scene", "runtime-root-camera", "controller-transitions", "desktop-profile-card"] {
+            try FileManager.default.copyItem(at: root.appendingPathComponent(name + ".json"),
+                to: invalidRoot.appendingPathComponent(name + ".json"))
+        }
+        try Data("{\"clips\":[".utf8).write(to: invalidRoot.appendingPathComponent("clips.json"))
+        func failure(serial: Bool) -> String {
+            do {
+                _ = try HUDSourceWatchDocument(resourceRoot: invalidRoot, includeWidgets: false, includeSourceText: false,
+                    includeDesktopProfile: true, serialAnimationDecodingForVerification: serial)
+                return "unexpected success"
+            } catch DecodingError.dataCorrupted(let context) {
+                return "corrupt:" + context.codingPath.map(\.stringValue).joined(separator: "/") + ":" + context.debugDescription
+            } catch { let error = error as NSError; return error.domain + "/" + String(error.code) }
+        }
+        let serialFailure = failure(serial: true)
+        check(serialFailure.hasPrefix("corrupt:") && failure(serial: false) == serialFailure,
+              "Parallel clip decoding reports the original JSONDecoder failure without wrapping or dropping it")
+        try FileManager.default.removeItem(at: invalidRoot.appendingPathComponent("runtime-root-camera.json"))
+        let earlierFailure = failure(serial: true)
+        check(earlierFailure != serialFailure && failure(serial: false) == earlierFailure,
+              "Scene/runtime failures retain precedence even when the clip worker fails first")
         return count
     }
 

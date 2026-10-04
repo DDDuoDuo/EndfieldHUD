@@ -1,10 +1,112 @@
 import AppKit
 import ServiceManagement
 
-/// Login settings are read from the operating system, never inferred from a saved toggle.
-/// Construction and status reads have no side effects. Registration follows the application’s saved launch-at-login preference.
+struct LoginItemStatusSnapshot: Equatable {
+    let isEnabled: Bool
+    let requiresApproval: Bool
+}
+
+/// Service Management can block on IPC. A serial owner confines its objects and
+/// legacy file operations; UI consumers read only a main-thread value snapshot.
+/// Passive refreshes never register anything or wait for that owner queue.
 final class LoginItemManager {
-    private let fileManager = FileManager.default
+    private let queue: DispatchQueue
+    private let readStatus: () -> LoginItemStatusSnapshot
+    private let changeEnabled: (Bool) throws -> Void
+    private var generation: UInt64 = 0
+    private var readInFlight = false
+    private var refreshPending = false
+    private(set) var snapshot: LoginItemStatusSnapshot?
+    var onStatusChange: (() -> Void)?
+
+    init(bundle: Bundle = .main,
+         queue: DispatchQueue = DispatchQueue(label: "EndfieldHUD.login-status", qos: .utility),
+         readStatus: (() -> LoginItemStatusSnapshot)? = nil,
+         changeEnabled: ((Bool) throws -> Void)? = nil) {
+        let backend = LoginItemBackend(bundle: bundle)
+        self.queue = queue
+        self.readStatus = readStatus ?? { backend.readStatus() }
+        self.changeEnabled = changeEnabled ?? { try backend.setEnabled($0) }
+    }
+
+    var isEnabled: Bool { snapshot?.isEnabled ?? false }
+    var requiresApproval: Bool { snapshot?.requiresApproval ?? false }
+    var statusDescription: String {
+        precondition(Thread.isMainThread)
+        guard let snapshot else { return "" }
+        if snapshot.requiresApproval {
+            return L10n.text("Approval needed in System Settings → Login Items.",
+                             "请在系统设置 → 登录项中允许启动。")
+        }
+        return snapshot.isEnabled ? L10n.text("Enabled", "已启用") : L10n.text("Disabled", "已停用")
+    }
+
+    /// Preserve launch-at-login initialization without holding up first paint.
+    /// Only the saved enabled preference can initiate registration here.
+    func start(ensureEnabled: Bool, completion: @escaping (Error?) -> Void) {
+        precondition(Thread.isMainThread && !readInFlight)
+        enqueueRead(ensureEnabled: ensureEnabled, completion: completion)
+    }
+
+    func refreshStatus() {
+        precondition(Thread.isMainThread)
+        guard !readInFlight else { refreshPending = true; return }
+        enqueueRead(ensureEnabled: false, completion: nil)
+    }
+
+    private func enqueueRead(ensureEnabled: Bool, completion: ((Error?) -> Void)?) {
+        readInFlight = true
+        let token = generation, reader = readStatus, change = changeEnabled
+        queue.async { [weak self] in
+            let result: (LoginItemStatusSnapshot, Error?) = autoreleasepool {
+                let initial = reader()
+                guard ensureEnabled && !initial.isEnabled else { return (initial, nil) }
+                do { try change(true); return (reader(), nil) }
+                catch { return (reader(), error) }
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.readInFlight = false
+                if self.generation == token {
+                    let changed = self.snapshot != result.0
+                    self.snapshot = result.0
+                    completion?(result.1)
+                    if changed { self.onStatusChange?() }
+                }
+                if self.refreshPending {
+                    self.refreshPending = false
+                    self.refreshStatus()
+                }
+            }
+        }
+    }
+
+    /// Explicit edits keep the existing immediate error/rollback contract.
+    /// Serialize with an in-flight read and invalidate its queued main callback.
+    func setEnabled(_ enabled: Bool) throws {
+        precondition(Thread.isMainThread)
+        generation &+= 1
+        let result: (LoginItemStatusSnapshot, Error?) = queue.sync {
+            autoreleasepool {
+                do { try changeEnabled(enabled); return (readStatus(), nil) }
+                catch { return (readStatus(), error) }
+            }
+        }
+        snapshot = result.0
+        // The settings transaction publishes this new value after committing or
+        // rolling back its preference; do not reenter it midway through mutation.
+        if let error = result.1 { throw error }
+    }
+
+    func openLoginSettings() {
+        if #available(macOS 13.0, *) { SMAppService.openSystemSettingsLoginItems() }
+    }
+}
+
+/// All methods run exclusively on LoginItemManager's utility queue. No AppKit,
+/// localization, observer, or mutable application state crosses that boundary.
+private final class LoginItemBackend {
+    private let fileManager = FileManager()
     private let bundle: Bundle
 
     init(bundle: Bundle = .main) {
@@ -32,33 +134,14 @@ final class LoginItemManager {
         return executable == bundle.executableURL?.path && fileManager.isExecutableFile(atPath: executable)
     }
 
-    var isEnabled: Bool {
+    func readStatus() -> LoginItemStatusSnapshot {
         if #available(macOS 13.0, *) {
-            return SMAppService.mainApp.status == .enabled || hasLegacyItem
+            let status = SMAppService.mainApp.status
+            return LoginItemStatusSnapshot(isEnabled: status == .enabled || hasLegacyItem,
+                                           requiresApproval: status == .requiresApproval)
         }
-        return hasLegacyItem
+        return LoginItemStatusSnapshot(isEnabled: hasLegacyItem, requiresApproval: false)
     }
-
-    var requiresApproval: Bool {
-        if #available(macOS 13.0, *) {
-            return SMAppService.mainApp.status == .requiresApproval
-        }
-        return false
-    }
-
-    var statusDescription: String {
-        if requiresApproval {
-            return L10n.text("Approval needed in System Settings → Login Items.",
-                             "请在系统设置 → 登录项中允许启动。")
-        }
-        if isEnabled {
-            return L10n.text("Enabled", "已启用")
-        }
-        return L10n.text("Disabled", "已停用")
-    }
-
-    // The properties read live OS state; provided as a semantic refresh hook for callers.
-    func refreshStatus() {}
 
     func setEnabled(_ enabled: Bool) throws {
         if enabled { try validateInstallation() }
@@ -102,12 +185,6 @@ final class LoginItemManager {
             try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: legacyURL.path)
         } else {
             try removeLegacyItem()
-        }
-    }
-
-    func openLoginSettings() {
-        if #available(macOS 13.0, *) {
-            SMAppService.openSystemSettingsLoginItems()
         }
     }
 
