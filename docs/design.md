@@ -104,6 +104,11 @@ where they conflict.
   [opening investigation](tab-opening-performance.md) records measurements and
   preserves the distinction between prepared and completely cold opening.
 
+- **2026-10-03 — Center icon glow:** Activity Monitor retains the authored Report
+  glyph, shadow, size and tilt plane, with a soft white glow to match Storage.
+  The glow is baked once into a cached 84 × 84 bitmap; it adds no blur pass or
+  animation timer to the frame loop.
+
 ## Verification evidence
 
 The integration document records the current
