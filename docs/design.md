@@ -109,6 +109,13 @@ where they conflict.
   The glow is baked once into a cached 84 × 84 bitmap; it adds no blur pass or
   animation timer to the frame loop.
 
+- **2026-10-04 — Menu-bar file drops:** The status icon accepts file and folder
+  references into the existing Temporary File Shelf. Successful drops reveal the
+  shelf through the normal HUD entrance or section transition, after native drag
+  delivery finishes. An in-progress entrance/exit finishes before the shelf
+  request is presented. The menu retains native click behavior, and the drop
+  target adds no polling or idle animation.
+
 ## Verification evidence
 
 The integration document records the current

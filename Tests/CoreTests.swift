@@ -85,6 +85,7 @@ enum CoreTests {
         assertionCount += HUDApplicationIconTests.run()
         assertionCount += HUDQuitConfirmationTests.run()
         assertionCount += HUDScaleSafetyTests.run()
+        assertionCount += StatusItemFileDropViewTests.run()
         print("Passed \(assertionCount) EndfieldCharge core assertions.")
     }
 
