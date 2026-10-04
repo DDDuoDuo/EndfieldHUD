@@ -31,6 +31,9 @@ struct VerifyDesktopRenderer {
         let viewport = CGRect(x: 0, y: 0, width: size.x, height: size.y)
         let document = try HUDSourceWatchDocument(resourceRoot: root.appendingPathComponent("Scene"), includeWidgets: false,
             includeSourceText: false, includeDesktopProfile: true)
+        if CommandLine.arguments.contains("--prewarm-programs") {
+            _ = try HUDSourceMetalRenderer.prepareDesktopProgramsIfNeeded(resourceRoot: root)
+        }
         let renderer = try HUDSourceMetalRenderer(frame: viewport, resourceRoot: root)
         // The desktop default may evolve; this executable's baseline must
         // always exercise original draws, with only the merge variant opting in.

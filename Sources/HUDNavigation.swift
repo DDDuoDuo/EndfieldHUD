@@ -50,7 +50,10 @@ final class HUDNavigation {
     private var rightEntries: [HUDNavigationEntry] { entries.filter { $0.group == .right } }
     private static let rightModules: [HUDModule] = [.notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .addApp]
 
-    init(selected: HUDModule = .power) {
+    private(set) var isArtworkPrepared: Bool
+
+    init(selected: HUDModule = .power, prepareArtwork: Bool = true) {
+        isArtworkPrepared = prepareArtwork
         selectedModule = selected
         var items: [(HUDModule, CGRect)] = []
         let left: [HUDModule] = [.system, .display, .hotkeys, .about]
@@ -65,7 +68,7 @@ final class HUDNavigation {
         items.append((.activityMonitor, CGRect(x: 506, y: 463, width: 144, height: 65)))
         items.append((.power, HUDChargeBadge.compactHitRect))
         items.append((.profile, CGRect(x: 78, y: 564, width: 240, height: 82)))
-        entries = items.map { HUDNavigationEntry(module: $0.0, rect: $0.1) }
+        entries = items.map { HUDNavigationEntry(module: $0.0, rect: $0.1, prepareArtwork: prepareArtwork) }
         layer.name = "hud.navigation"
         layer.frame = CGRect(x: 0, y: 0, width: 1000, height: 640)
         layer.masksToBounds = false
@@ -138,6 +141,16 @@ final class HUDNavigation {
         notifyLayoutChange()
     }
 
+    /// Native fallback artwork is unnecessary while the Metal shell is healthy.
+    /// Keep navigation state immediately available and materialize its paint once
+    /// if recovery actually needs it.
+    func prepareArtwork() {
+        guard !isArtworkPrepared else { return }
+        isArtworkPrepared = true
+        for entry in entries { entry.prepareArtwork() }
+        update(dark: dark, accent: accent, contentsScale: contentsScale)
+    }
+
     func select(_ module: HUDModule, animated: Bool = true) {
         reveal(module, animated: animated)
         guard module != selectedModule || entries.contains(where: { $0.module == nil && $0.isSelected }) else { return }
@@ -188,7 +201,8 @@ final class HUDNavigation {
         let appEntries = shortcuts.enumerated().map { index, shortcut -> HUDNavigationEntry in
             let target = HUDNavigationTarget.appShortcut(shortcut.id)
             let entry = previousByTarget[target] ?? HUDNavigationEntry(target: target,
-                rect: Self.rightRect(index: Self.rightModules.count - 1 + index, offset: rightScrollOffset))
+                rect: Self.rightRect(index: Self.rightModules.count - 1 + index, offset: rightScrollOffset),
+                prepareArtwork: isArtworkPrepared)
             entry.clipRect = rightViewport
             entry.updateShortcut(shortcut)
             entry.update(dark: dark, accent: accent, contentsScale: contentsScale)
@@ -566,11 +580,14 @@ final class HUDNavigationEntry {
         backingCleanup?.cancel()
     }
 
-    fileprivate convenience init(module: HUDModule, rect: CGRect) {
-        self.init(target: .module(module), rect: rect)
+    private var isArtworkPrepared = false
+    private var contentsScale: CGFloat = 2
+
+    fileprivate convenience init(module: HUDModule, rect: CGRect, prepareArtwork: Bool = true) {
+        self.init(target: .module(module), rect: rect, prepareArtwork: prepareArtwork)
     }
 
-    fileprivate init(target: HUDNavigationTarget, rect: CGRect) {
+    fileprivate init(target: HUDNavigationTarget, rect: CGRect, prepareArtwork: Bool = true) {
         self.target = target
         let module = target.module
         let group = target.group
@@ -601,7 +618,24 @@ final class HUDNavigationEntry {
         faceLayer.allowsGroupOpacity = false
         faceLayer.shouldRasterize = false
 
-        side.frame = layer.bounds.offsetBy(dx: group == .right ? -8 : 8, dy: 10)
+        if prepareArtwork { buildArtwork() }
+    }
+
+    fileprivate func prepareArtwork() {
+        guard !isArtworkPrepared else { return }
+        buildArtwork()
+        if let shortcut { updateShortcut(shortcut) }
+        update(dark: dark, accent: accent, contentsScale: contentsScale)
+        updatePose(animated: false, duration: 0)
+    }
+
+    private func buildArtwork() {
+        isArtworkPrepared = true
+        let slant = Self.slant(for: module ?? .addApp)
+        // Deferred geometry may already carry the saved selection transform.
+        // Setting frame through that transform would shrink the backing bounds.
+        side.bounds = layer.bounds
+        side.position = CGPoint(x: layer.bounds.midX + (group == .right ? -8 : 8), y: layer.bounds.midY + 10)
         side.isHidden = group == .bottom
         side.name = "navigation.backingPlate"
         side.path = outline
@@ -773,6 +807,7 @@ final class HUDNavigationEntry {
         guard target == .appShortcut(presentation.id) else { return }
         let imageChanged = shortcut?.icon !== presentation.icon || shortcut?.iconPreset != presentation.iconPreset
         shortcut = presentation
+        guard isArtworkPrepared else { return }
         withoutActions {
             icon.path = AppShortcutArtwork.path(for: presentation.iconPreset, in: icon.bounds)
             icon.lineWidth = 32 / 17; icon.lineCap = .round; icon.lineJoin = .round
@@ -796,6 +831,7 @@ final class HUDNavigationEntry {
     /// Retarget every layer from its rendered pose. Hover separates the planes
     /// without enlarging them, and selection never adds a spring or overshoot.
     private func updatePose(animated: Bool, duration: TimeInterval, activatingHover: Bool = false) {
+        guard isArtworkPrepared else { return }
         let previousFace = faceLayer.presentation()?.transform ?? faceLayer.transform
         let previousContent = contentLayer.presentation()?.transform ?? contentLayer.transform
         let colorLayers = [plate, inset] + (group == .bottom ? [bottomStripe] : [side])
@@ -978,6 +1014,8 @@ final class HUDNavigationEntry {
         let appearanceChanged = self.dark != dark || !self.accent.isEqual(accent)
         self.dark = dark
         self.accent = accent
+        self.contentsScale = contentsScale
+        guard isArtworkPrepared else { return }
         if HUDRuntimeAppearance.reduceMotion { cancelAnimations() }
         else if appearanceChanged { removeAppearanceAnimations() }
         let scale = contentsScale.isFinite && contentsScale > 0 ? max(1, min(8, contentsScale)) : 2

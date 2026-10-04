@@ -54,7 +54,28 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     private var selectedSlider: String?
     private var restoreConfirmation = false
     private var localStatus: String?
-    private enum Page { case main, battery, icons, screens, languages }
+    private enum Page: Equatable { case main, battery, icons, screens, languages }
+    /// These canvases survive navigation. Reuse their already-rasterized text
+    /// and controls unless something they display actually changed; activation
+    /// and unchanged platform-status notifications are not paint requests.
+    private struct RenderState: Equatable {
+        let configuration: AppConfiguration
+        let language: AppLanguage
+        let page: Page
+        let dark: Bool
+        let scale: CGFloat
+        let scroll: CGFloat
+        let stagedScale: Double?
+        let stagedX: Double?
+        let stagedY: Double?
+        let restoring: Bool
+        let capturing: Bool
+        let status: String
+        let loginStatus: String?
+        let updates: HUDUpdateState
+        let displays: [HUDDisplayDescriptor]
+    }
+    private var renderedState: RenderState?
     private enum Kind {
         case toggle(Bool), choice(String), slider(Double, Double, Double), palette, icons([HUDApplicationIcon]), info(String), link(String, URL?), heading
         case selectionOption(selected: Bool, detail: String, available: Bool)
@@ -118,7 +139,13 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         return layer
     }
     func activate() {
-        active = true; if module == .system { displays = displayProvider() }; controller.refreshExternalStatus(); refresh()
+        // The application coordinator refreshes OS status at launch, activation
+        // and after settings changes. Screens are observed even while hidden.
+        // Tab navigation only consumes those caches, avoiding login-service IPC
+        // and screen enumeration at the end of every section transition.
+        active = true
+        // Reused artwork still needs to reveal its native accessibility controls.
+        if !refresh() { onChange?() }
     }
     func deactivate() {
         // An interrupted gesture must not create a fresh preview after the
@@ -131,10 +158,19 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         guard next != renderScale else { return }
         renderScale = next; if active { refresh() }
     }
-    func refresh() {
+    @discardableResult func refresh() -> Bool {
         if shouldReduceMotion(), isTransitioning { settleTransition() }
         scrollOffset = min(scrollOffset, maximumScroll)
+        let next = RenderState(configuration: config, language: L10n.resolvedLanguage,
+            page: page, dark: dark, scale: renderScale, scroll: scrollOffset,
+            stagedScale: stagedScale, stagedX: stagedPosition?.x, stagedY: stagedPosition?.y,
+            restoring: restoreConfirmation, capturing: isCapturingShortcut,
+            status: accessibilityStatus, loginStatus: controller.loginStatus,
+            updates: controller.updateState, displays: displays)
+        guard renderedState != next else { return false }
+        renderedState = next
         withoutActions { repaint() }; onChange?()
+        return true
     }
 
     private var rows: [Row] {
@@ -534,6 +570,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     private func iconRect(index: Int, row: CGRect) -> CGRect { CGRect(x: 23 + CGFloat(index) * 90, y: row.minY + 5, width: 82, height: 66) }
     private func paletteRect(index: Int, row: CGRect) -> CGRect { CGRect(x: 198 + CGFloat(index) * 30, y: row.minY + 17, width: 25, height: 25) }
     private func installPageLayers() {
+        renderedState = nil
         pageContent.frame = layer.bounds; pageContent.allowsGroupOpacity = false
         pageContent.name = "settings.page"
         rowsLayer.frame = layer.bounds; rowsLayer.allowsGroupOpacity = false

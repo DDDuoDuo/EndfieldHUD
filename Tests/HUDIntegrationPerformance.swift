@@ -18,6 +18,11 @@ enum HUDIntegrationPerformance {
     private final class Session: NSObject, NSApplicationDelegate {
         private let overlay = OverlayController()
         private var configuration = AppConfiguration.defaults
+        private let settingsSuite = "EndfieldHUD.PerformanceSettings.\(UUID().uuidString)"
+        private var settingsDefaults: UserDefaults?
+        private var settingsStore: ConfigurationStore?
+        private var settingsController: HUDSettingsController?
+        private let loginStatus = LoginItemManager()
         private var rows: [[String: Any]] = []
         private var pointerTimer: Timer?
         private var interactionTimings: [[String: Any]] = []
@@ -46,7 +51,8 @@ enum HUDIntegrationPerformance {
         }()
 
         func applicationDidFinishLaunching(_ notification: Notification) {
-            // The benchmark uses direct verification hooks, never NSEvents.
+            // The benchmark dispatches only synthetic events directly to its
+            // isolated source view; physical input never changes the workload.
             // Filtering only this fixture process keeps tracking/gesture events
             // from retargeting hover even if a window lifecycle resets its flags.
             physicalMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [
@@ -63,6 +69,28 @@ enum HUDIntegrationPerformance {
             configuration.reduceMotion = false
             configuration.lowPowerVisualMode = false
             configuration.ambientAnimation = true
+            if CommandLine.arguments.contains("--left-tab-workload") {
+                // Supply the real settings factories, never the placeholder
+                // pages used when OverlayController has no coordinator. Only
+                // the defaults suite is synthetic. OS status reads are the
+                // same read-only calls used by the application coordinator.
+                let defaults = UserDefaults(suiteName: settingsSuite)!
+                defaults.removePersistentDomain(forName: settingsSuite)
+                let store = ConfigurationStore(defaults: defaults)
+                store.update(configuration)
+                let settings = HUDSettingsController(store: store)
+                settings.loginStatusProvider = { [weak self] in self?.loginStatus.statusDescription ?? "" }
+                settings.shortcutRegistrationStatusProvider = { nil }
+                settings.onConfigurationChange = { [weak self] next in
+                    guard let self else { return }
+                    self.configuration = next
+                    self.overlay.update(snapshot: .unavailable, configuration: next)
+                }
+                loginStatus.refreshStatus()
+                settings.refreshExternalStatus()
+                settingsDefaults = defaults; settingsStore = store; settingsController = settings
+                overlay.settingsController = settings
+            }
             guard let screen = NSScreen.main else { fatalError("An attached display is required") }
             pointer = CGPoint(x: screen.frame.midX, y: screen.frame.midY)
             overlay.systemPointerLocationProviderForVerification = { [weak self] in self?.pointer ?? .zero }
@@ -85,7 +113,9 @@ enum HUDIntegrationPerformance {
                             let first = try HUDSourceMetalRenderer.prepareDesktopProgramsIfNeeded()
                             precondition(first["prewarmCompleted"] == 1 && (first["prewarmShaders"] ?? 0) > 0
                                 && (first["prewarmShaders"] ?? 0) <= 8 && (first["libraries"] ?? 0) <= 16
-                                && first["pipelines"] == 0, "Program preparation exceeded its bounded scope")
+                                && (0...16).contains(first["pipelines"] ?? -1)
+                                && (0...16).contains(first["prewarmPipelineCompilations"] ?? 0),
+                                "Program preparation exceeded its bounded scope")
                             if CommandLine.arguments.contains("--verify-only") {
                                 let repeated = try HUDSourceMetalRenderer.prepareDesktopProgramsIfNeeded()
                                 precondition(first == repeated, "Repeated program preparation changed its cache")
@@ -104,16 +134,28 @@ enum HUDIntegrationPerformance {
                         self.sourceProgramPreparationMilliseconds = programMilliseconds
                         self.sourceProgramPreparationStatistics = programStatistics
                         self.sourceProgramPreparationFailure = programFailure
-                        self.measure("closed-before", seconds: 5) { self.open() }
+                        self.settingsController?.refreshExternalStatus()
+                        self.measure("closed-before", seconds: self.initialClosedSeconds) { self.open() }
                     }
                 }
                 return
             }
             #endif
-            measure("closed-before", seconds: 5) { self.open() }
+            settingsController?.refreshExternalStatus()
+            measure("closed-before", seconds: initialClosedSeconds) { self.open() }
+        }
+
+        private var initialClosedSeconds: Double {
+            CommandLine.arguments.contains("--left-tab-workload") ? 1 : 5
         }
 
         private func open() {
+            // Cold-source runs also need the async status result published after
+            // the initial closed settling interval, before timing any input.
+            settingsController?.refreshExternalStatus()
+            if CommandLine.arguments.contains("--left-tab-workload") {
+                openLeftTabWorkload(); return
+            }
             overlay.initialModuleRequest = .map
             let began = CACurrentMediaTime()
             _ = overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: configuration)
@@ -512,6 +554,108 @@ enum HUDIntegrationPerformance {
             later(1) { self.measure(name, seconds: 6, completion: completion) }
         }
 
+        /// A short click-to-settings workload. Three rounds distinguish first
+        /// construction from retained-page switches; both cold and warm opening
+        /// are included in the run-loop probe instead of measuring only idle.
+        private func openLeftTabWorkload() {
+            var began: TimeInterval = 0
+            measure("left-tabs-first-opening", seconds: 2.4, probeWhileClosed: true, operation: {
+                self.overlay.initialModuleRequest = .map
+                began = CACurrentMediaTime()
+                _ = self.overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: self.configuration)
+                self.firstOpenMilliseconds = (CACurrentMediaTime() - began) * 1000
+                self.isolatePointerInput()
+            }) {
+                #if HUD_SOURCE_INTEGRATION
+                guard let renderer = self.overlay.systemSourceWatchForVerification?.renderer else {
+                    fatalError("Left-tab workload requires a working source HUD")
+                }
+                self.firstCompletedMilliseconds = renderer.firstCompletedFrameTimestampForVerification.map { ($0 - began) * 1000 }
+                self.firstPresentedMilliseconds = renderer.firstPresentedFrameTimestampForVerification.map { ($0 - began) * 1000 }
+                #endif
+                self.measureLeftTabRound(0)
+            }
+        }
+
+        private func measureLeftTabRound(_ round: Int) {
+            let modules: [HUDModule] = [.system, .display, .hotkeys, .about]
+            var index = 0
+            pointerTimer = Timer(timeInterval: 0.8, repeats: true) { [weak self] _ in
+                guard let self, index < modules.count else { return }
+                self.clickLeftTab(modules[index], round: round)
+                index += 1
+            }
+            RunLoop.main.add(pointerTimer!, forMode: .common)
+            measure("left-tabs-" + (round == 0 ? "first-visit" : "warm-\(round)"), seconds: 3.8) {
+                self.pointerTimer?.invalidate(); self.pointerTimer = nil
+                precondition(index == modules.count, "All left-side tabs must receive a real click")
+                if round < 2 { self.measureLeftTabRound(round + 1); return }
+                self.measure("left-tabs-closing", seconds: 1, operation: {
+                    self.overlay.closeSystemOverlay()
+                }) {
+                    precondition(self.overlay.systemPhase == .closed)
+                    self.measure("left-tabs-closed", seconds: 1) {
+                        self.measure("left-tabs-warm-opening", seconds: 2.4, probeWhileClosed: true, operation: {
+                            self.overlay.initialModuleRequest = .system
+                            let began = CACurrentMediaTime()
+                            _ = self.overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: self.configuration)
+                            self.warmOpenMilliseconds = (CACurrentMediaTime() - began) * 1000
+                            self.isolatePointerInput()
+                        }) {
+                            precondition(self.overlay.systemSelectedModule == .system)
+                            self.overlay.closeSystemOverlay()
+                            self.later(1) { self.finish() }
+                        }
+                    }
+                }
+            }
+        }
+
+        private func clickLeftTab(_ module: HUDModule, round: Int) {
+            #if HUD_SOURCE_INTEGRATION
+            guard let source = overlay.systemSourceWatchForVerification, let window = source.window,
+                  let point = source.desktopPointForVerification(target: .module(module)) else {
+                fatalError("The visible source button is missing: \(module)")
+            }
+            let location = source.convert(point, to: nil)
+            func event(_ type: NSEvent.EventType) -> NSEvent {
+                NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)!
+            }
+            let began = CACurrentMediaTime()
+            source.mouseDown(with: event(.leftMouseDown))
+            let downMilliseconds = (CACurrentMediaTime() - began) * 1000
+            later(0.04) {
+                let release = CACurrentMediaTime()
+                source.mouseUp(with: event(.leftMouseUp))
+                let upMilliseconds = (CACurrentMediaTime() - release) * 1000
+                precondition(self.overlay.systemSelectedModule == module,
+                             "The real source click did not select \(module)")
+                self.interactionTimings.append(["action": "left:" + module.rawValue, "round": round,
+                    "mouseDownMilliseconds": downMilliseconds, "mouseUpMilliseconds": upMilliseconds,
+                    "synchronousMilliseconds": downMilliseconds + upMilliseconds,
+                    "pressToReleaseMilliseconds": (CACurrentMediaTime() - began) * 1000])
+                self.later(HUDModuleContent.transitionDuration + 0.1) {
+                    guard let host = source.superview as? SystemHUDView else {
+                        fatalError("Missing settings host")
+                    }
+                    func containsSettings(_ layer: CALayer) -> Bool {
+                        layer.name == "module.settings." + module.rawValue
+                            || (layer.sublayers ?? []).contains(where: containsSettings)
+                    }
+                    precondition(host.layer.map(containsSettings) == true,
+                        "Measured \(module) must be the real settings canvas, never a placeholder")
+                    precondition(host.subviews.contains { !$0.isHidden
+                        && String(describing: type(of: $0)).hasPrefix("HUDSettings") },
+                        "Real settings accessibility controls must be active after \(module) transition")
+                }
+            }
+            #else
+            fatalError("Left-tab workload requires the integrated source renderer")
+            #endif
+        }
+
         private func motion() {
             overlay.selectSystemModule(.clipboard, animated: false)
             let screen = NSScreen.main!.frame, began = CACurrentMediaTime()
@@ -730,6 +874,7 @@ enum HUDIntegrationPerformance {
                 // hover path, which intentionally ignores disabled panels.
                 panel.ignoresMouseEvents = !CommandLine.arguments.contains("--power-modes")
                     && !CommandLine.arguments.contains("--interaction-workload")
+                    && !CommandLine.arguments.contains("--left-tab-workload")
                 panel.acceptsMouseMovedEvents = false
             }
             if let screen = NSScreen.main?.frame {
@@ -739,7 +884,8 @@ enum HUDIntegrationPerformance {
             }
         }
 
-        private func measure(_ name: String, seconds: Double, completion: @escaping () -> Void) {
+        private func measure(_ name: String, seconds: Double, probeWhileClosed: Bool = false,
+                             operation: (() -> Void)? = nil, completion: @escaping () -> Void) {
             isolatePointerInput()
             let began = CACurrentMediaTime(), start = usage()
             var gaps: [Double] = [], lastProbe = began
@@ -747,7 +893,7 @@ enum HUDIntegrationPerformance {
                 let now = CACurrentMediaTime()
                 gaps.append((now - lastProbe) * 1000); lastProbe = now
             }
-            let probesActive = overlay.isSystemOverlayActive
+            let probesActive = overlay.isSystemOverlayActive || probeWhileClosed
             if probesActive { RunLoop.main.add(responsivenessProbe, forMode: .common) }
             #if HUD_SOURCE_INTEGRATION
             let source = overlay.systemSourceWatchForVerification
@@ -758,6 +904,7 @@ enum HUDIntegrationPerformance {
             let pointerFrames = source?.frameBuilder.directPointerFrameCount ?? 0
             #endif
             print("MEASURE \(name)"); fflush(stdout)
+            operation?()
             later(seconds) {
                 responsivenessProbe.invalidate()
                 let end = self.usage(), elapsed = CACurrentMediaTime() - began
@@ -783,17 +930,20 @@ enum HUDIntegrationPerformance {
                 row["ignoredPhysicalMouseEventsTotal"] = self.ignoredPhysicalMouseEvents
                 row["fixturePanelsIgnoreMouse"] = NSApp.windows.compactMap { $0 as? NSPanel }.allSatisfy { $0.ignoresMouseEvents }
                 #if HUD_SOURCE_INTEGRATION
-                row["sourceFramesPerSecond"] = Double((source?.renderedFrameCount ?? 0) - frames) / elapsed
-                row["sourceTimerActive"] = source?.hasDisplayTimerForVerification ?? false
+                // The first opening starts without a source view. Include the
+                // view created by the measured operation in its final counters.
+                let measuredSource = source ?? self.overlay.systemSourceWatchForVerification
+                row["sourceFramesPerSecond"] = Double((measuredSource?.renderedFrameCount ?? 0) - frames) / elapsed
+                row["sourceTimerActive"] = measuredSource?.hasDisplayTimerForVerification ?? false
                 row["sourceFailure"] = self.overlay.systemSourceFailureForVerification ?? ""
-                row["sourceBuildMillisecondsPerSecond"] = ((source?.cumulativeFrameBuildSeconds ?? 0) - buildTime) * 1000 / elapsed
-                row["cachedLayoutFrames"] = (source?.frameBuilder.cachedLayoutFrameCount ?? 0) - cached
-                row["rebuiltLayoutFrames"] = (source?.frameBuilder.rebuiltLayoutFrameCount ?? 0) - rebuilt
-                row["fastAmbientFramesTotal"] = source?.frameBuilder.fastAmbientFrameCount ?? 0
-                row["directAmbientFramesTotal"] = source?.frameBuilder.directAmbientFrameCount ?? 0
-                row["directPointerFramesTotal"] = source?.frameBuilder.directPointerFrameCount ?? 0
-                row["directPointerFrames"] = (source?.frameBuilder.directPointerFrameCount ?? 0) - pointerFrames
-                row["gpuResources"] = source?.renderer.resourceStatisticsForVerification ?? [:]
+                row["sourceBuildMillisecondsPerSecond"] = ((measuredSource?.cumulativeFrameBuildSeconds ?? 0) - buildTime) * 1000 / elapsed
+                row["cachedLayoutFrames"] = (measuredSource?.frameBuilder.cachedLayoutFrameCount ?? 0) - cached
+                row["rebuiltLayoutFrames"] = (measuredSource?.frameBuilder.rebuiltLayoutFrameCount ?? 0) - rebuilt
+                row["fastAmbientFramesTotal"] = measuredSource?.frameBuilder.fastAmbientFrameCount ?? 0
+                row["directAmbientFramesTotal"] = measuredSource?.frameBuilder.directAmbientFrameCount ?? 0
+                row["directPointerFramesTotal"] = measuredSource?.frameBuilder.directPointerFrameCount ?? 0
+                row["directPointerFrames"] = (measuredSource?.frameBuilder.directPointerFrameCount ?? 0) - pointerFrames
+                row["gpuResources"] = measuredSource?.renderer.resourceStatisticsForVerification ?? [:]
                 if CommandLine.arguments.contains("--verify-power-modes") {
                     let rendered = (source?.renderedFrameCount ?? 0) - frames
                     precondition(self.overlay.systemSourceFailureForVerification == nil,
@@ -858,6 +1008,11 @@ enum HUDIntegrationPerformance {
             report["closedHeapRelief"] = closedHeapRelief
             report["interactions"] = interactionTimings
             report["interactionPointerHz"] = interactionPointerHz
+            if CommandLine.arguments.contains("--left-tab-workload") {
+                report["pointerEventScope"] = "source mouseDown/mouseUp with a 40 ms press; three complete left-tab rounds"
+                report["openingProbeScope"] = "10 ms main-run-loop probe includes synchronous opening and the following 2.4 seconds"
+                report["settingsScope"] = "real HUDSettingsController/canvases, isolated defaults suite, read-only macOS login status"
+            }
             if CommandLine.arguments.contains("--power-modes") {
                 report["pointerEventScope"] = "source and native host; isolated direct dispatch at 60 Hz"
             }
@@ -880,6 +1035,8 @@ enum HUDIntegrationPerformance {
                 print("Performance report: \(output.path)")
             } catch { fatalError("Could not save performance report: \(error)") }
             overlay.activity.shutdown(); overlay.clipboard.stop(); overlay.forceCloseSystemOverlay()
+            settingsController?.close()
+            settingsDefaults?.removePersistentDomain(forName: settingsSuite)
             if let physicalMouseMonitor { NSEvent.removeMonitor(physicalMouseMonitor) }
             physicalMouseMonitor = nil
             NSApp.terminate(nil)

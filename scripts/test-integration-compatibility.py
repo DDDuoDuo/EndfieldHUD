@@ -45,7 +45,8 @@ def check(root, baseline):
     # Persistence files cannot be exempted by these explicit behavior changes.
     allowed_updates = {"Sources/WorkModeFocusController.swift", "Sources/WorldMapGeometry.swift",
                        "Sources/AppActivityMonitor.swift", "Sources/SystemActivityMonitor.swift",
-                       "Sources/Localization.swift"}
+                       "Sources/Localization.swift", "Sources/HUDSettingsController.swift",
+                       "Sources/LoginItemManager.swift"}
     for name, update in updates.items():
         if name not in allowed_updates or update.get("baselineSha256") != baseline["files"].get(name) or not update.get("reason"):
             failures.append(f"Invalid reviewed behavior update: {name}")

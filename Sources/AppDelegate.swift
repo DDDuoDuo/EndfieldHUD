@@ -115,6 +115,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.openSettingsModule(.display)
         }
         configureSystemOverlay()
+        // Queue initialization before installing activation observers, so an
+        // activation cannot race a passive read ahead of startup registration.
+        if diagnosticDomain == nil {
+            loginManager.start(ensureEnabled: store.configuration.launchAtLogin) { [weak self] error in
+                guard let self else { return }
+                self.loginRegistrationError = error?.localizedDescription
+                self.hudSettings.refreshExternalStatus()
+            }
+        }
         makeMenu()
         if diagnosticDomain == nil { configureUpdater() }
         if diagnosticDomain == nil {
@@ -161,10 +170,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             EventLogHUDVerification.seed(overlay.eventLog)
         }
         shortcut.start(shortcut: store.configuration.summonShortcut)
-        if diagnosticDomain == nil && store.configuration.launchAtLogin && !loginManager.isEnabled {
-            do { try loginManager.setEnabled(true) }
-            catch { loginRegistrationError = error.localizedDescription }
-        }
         hudSettings.refreshExternalStatus()
         let firstRun = !UserDefaults.standard.bool(forKey: "hasLaunched")
         if !args.contains("--login") && !args.contains("--no-onboarding") && (firstRun || args.contains("--settings")) {
@@ -564,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return "" }
             return self.loginRegistrationError ?? self.loginManager.statusDescription
         }
+        loginManager.onStatusChange = { [weak self] in self?.hudSettings.refreshExternalStatus() }
         hudSettings.onEditBatteryPosition = { [weak self] in
             guard let self else { return }
             self.overlay.afterSystemClose = { [weak self] in self?.editPosition() }
@@ -615,6 +621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                                    object: nil, queue: .main) { [weak self] _ in
             self?.workFocus?.refreshAuthorization()
             self?.shortcut.refreshRegistration()
+            if self?.diagnosticDomain == nil { self?.loginManager.refreshStatus() }
             self?.hudSettings.refreshExternalStatus()
         }
         observers.append((NotificationCenter.default, ownActivation))

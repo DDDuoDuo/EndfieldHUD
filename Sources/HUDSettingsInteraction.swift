@@ -29,7 +29,7 @@ final class HUDSettingsInteraction: NSObject {
     }
     func setActive(_ value: Bool) {
         guard value != active else { return }
-        if value { active = true; canvas.activate(); layoutAccessibility() }
+        if value { active = true; canvas.activate() }
         else { deactivate() }
     }
     func deactivate() {

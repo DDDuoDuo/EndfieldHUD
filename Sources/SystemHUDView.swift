@@ -121,9 +121,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private(set) var clickFeedbackCountForVerification = 0
     private var motionPreferenceObserver: NSObjectProtocol?
     private let core = CALayer()
-    private let navigation = HUDNavigation()
+    private let navigation = HUDNavigation(prepareArtwork: false)
     private let chargeBadge = HUDChargeBadge()
-    private let identityCard = HUDIdentityCard()
+    private let identityCard = HUDIdentityCard(prepareArtwork: false)
     private let closeHUDButton = HUDIdentityCloseButton(frame: .zero)
     private var moduleContent: HUDModuleContent!
     private let notesCanvas: NotesCanvas
@@ -1558,7 +1558,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     private func configureSourceWatch() {
         do {
-            let view = try HUDSourceWatchView(frame: bounds, desktopMode: true)
+            let items = appNavigationPresentations()
+            let view = try HUDSourceWatchView(frame: bounds, desktopMode: true,
+                desktopNavigationEntries: HUDDesktopWatchNavigation.entries(shortcuts: items))
             view.isHidden = true
             view.pointerLocationProvider = { [weak self] in self?.pointerLocationProvider() ?? NSEvent.mouseLocation }
             view.onAction = { [weak self] action in
@@ -1589,8 +1591,8 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             backdrop.zPosition = -1500
             sourceWatch = view
             refreshIdentityProfile()
-            refreshAppNavigation(animated: false)
-            addSubview(view, positioned: .below, relativeTo: closeHUDButton)
+            refreshAppNavigation(animated: false, presentations: items)
+            addSubview(view, positioned: .below, relativeTo: nil)
         } catch { presentSourceFailure(String(describing: error)) }
     }
 
@@ -1710,6 +1712,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let ready = sourceEntranceReady
         transitionCompletion = nil; sourceEntranceReady = nil
         sourceWatchFailureReason = reason
+        installLegacyNavigationControlsIfNeeded()
         installLegacyArtworkIfNeeded()
         sourceCenterProjection = nil
         motion.setExternalProjection(nil)
@@ -2081,6 +2084,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self?.updateButtonStates()
         }
         synchronizeNavigationButtons()
+    }
+
+    private func installLegacyNavigationControlsIfNeeded() {
+        guard closeHUDButton.superview == nil else { return }
+        navigation.prepareArtwork()
+        identityCard.prepareArtwork()
         closeHUDButton.title = ""; closeHUDButton.isBordered = false
         closeHUDButton.target = self; closeHUDButton.action = #selector(closeFromIdentity)
         closeHUDButton.acceptsPoint = { [weak self] point in
@@ -2110,11 +2119,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
     }
 
-    private func refreshAppNavigation(animated: Bool) {
-        let items = (appShortcutStore?.items ?? []).map { item in
+    private func appNavigationPresentations() -> [HUDAppShortcutPresentation] {
+        (appShortcutStore?.items ?? []).map { item in
             HUDAppShortcutPresentation(id: item.id, name: item.name, iconPreset: item.iconPreset,
                 icon: item.iconPreset == .original ? appShortcutStore?.icon(for: item.id) : nil)
         }
+    }
+
+    private func refreshAppNavigation(animated: Bool, presentations: [HUDAppShortcutPresentation]? = nil) {
+        let items = presentations ?? appNavigationPresentations()
         // The source row pool owns live app navigation. Populate the retained
         // fallback's native cards only when that shell is actually in use.
         navigation.updateAppShortcuts(usesSourceShell ? [] : items, animated: animated && !usesSourceShell)
@@ -2125,11 +2138,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func synchronizeNavigationButtons() {
-        let targets = Set(navigation.entries.map(\.target))
+        let entries = navigation.entries.filter { sourceWatchFailureReason != nil || $0.module == .power }
+        let targets = Set(entries.map(\.target))
         for target in Array(navigationButtons.keys) where !targets.contains(target) {
             navigationButtons.removeValue(forKey: target)?.removeFromSuperview()
         }
-        for entry in navigation.entries where navigationButtons[entry.target] == nil {
+        for entry in entries where navigationButtons[entry.target] == nil {
             let button = HUDNavigationHitButton(navigationTarget: entry.target)
             button.title = ""
             button.isBordered = false
@@ -2298,7 +2312,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             let frame = viewRect(envelope)
             if button.frame != frame { button.frame = frame }
         }
-        closeHUDButton.frame = viewRect(projectedBounds(identityCard.closeRect.insetBy(dx: -10, dy: -10), through: transforms))
+        if closeHUDButton.superview != nil {
+            closeHUDButton.frame = viewRect(projectedBounds(identityCard.closeRect.insetBy(dx: -10, dy: -10), through: transforms))
+        }
         for (direction, button) in navigationScrollButtons {
             let rect = direction < 0 ? navigation.scrollUpRect : navigation.scrollDownRect
             button.frame = viewRect(projectedBounds(rect, through: transforms))

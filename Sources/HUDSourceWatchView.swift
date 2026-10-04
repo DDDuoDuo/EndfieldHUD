@@ -300,7 +300,8 @@ final class HUDSourceWatchView: NSView {
         return true
     }
 
-    init(frame: CGRect, document: HUDSourceWatchDocument? = nil, desktopMode: Bool = false) throws {
+    init(frame: CGRect, document: HUDSourceWatchDocument? = nil, desktopMode: Bool = false,
+         desktopNavigationEntries: [HUDDesktopWatchNavigation.Entry]? = nil) throws {
         var startup = HUDStartupTrace.begin()
         self.desktopMode = desktopMode
         let document = try document ?? (desktopMode ? HUDSourceWatchDocument.desktop() : HUDSourceWatchDocument())
@@ -447,7 +448,15 @@ final class HUDSourceWatchView: NSView {
         }
         setAccessibilityChildren(accessibilityButtons.values.map { $0 })
         if desktopMode {
-            setDesktopNavigation(HUDDesktopWatchNavigation.entries(shortcuts: []))
+            setDesktopNavigation(desktopNavigationEntries ?? HUDDesktopWatchNavigation.entries(shortcuts: []))
+            // Binding already applies selection/glow styles, and the renderer
+            // already owns the current accent. Do not remeasure every caption
+            // again when the owner starts the first visible motion clock.
+            playback.ambientMotionEnabled = HUDRuntimeAppearance.ambientEnabled
+            if HUDRuntimeAppearance.reduceMotion {
+                _ = try gyro.retarget(eulerDegrees: .zero, at: now, duration: cameraModel.gyro.duration, reduceMotion: true)
+            }
+            lastMotionConfiguration = HUDRuntimeAppearance.configuration
             for direction in [-1, 1] {
                 let element = HUDSourceWatchAccessibilityButton()
                 element.setAccessibilityRole(.button)

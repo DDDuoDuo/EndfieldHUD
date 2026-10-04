@@ -531,6 +531,7 @@ final class OverlayController: NSObject {
         switch action {
         case .none: return
         case .open(let token):
+            var startup = HUDStartupTrace.begin()
             cancelClosedHeapCleanup()
             logSystemPhase()
             if case .failure = mapStore {
@@ -551,6 +552,7 @@ final class OverlayController: NSObject {
             }
             previousApplication = NSWorkspace.shared.frontmostApplication
             systemScreenID = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+            HUDStartupTrace.end("open.preparation", since: &startup)
             let view = SystemHUDView(frame: NSRect(origin: .zero, size: screen.frame.size),
                                      notesStore: notesStore, shelfStore: shelfStore, clipboard: clipboard,
                                      audio: audio, perAppAudio: perAppAudio, workMode: workMode, eventLog: eventLog,
@@ -558,6 +560,7 @@ final class OverlayController: NSObject {
                                      settings: settingsController, profile: profileStore, mapStore: mapStore,
                                      initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
                                      initialModule: initialModuleRequest ?? lastSystemModule)
+            HUDStartupTrace.end("open.fullNativeView", since: &startup)
             systemView = view
             view.sourceWatchForVerification?.backdropPreparationForVerification = systemBackdropPreparationForVerification
             if let pointerLocationProvider = systemPointerLocationProviderForVerification {
@@ -609,6 +612,7 @@ final class OverlayController: NSObject {
                 self.pendingShelfReveal = access
                 self.closeSystemOverlay()
             }
+            HUDStartupTrace.end("open.callbacks", since: &startup)
             panel.alphaValue = 1
             panel.contentView = view
             panel.setFrame(screen.frame, display: false)
@@ -618,6 +622,7 @@ final class OverlayController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(view)
+            HUDStartupTrace.end("open.attachAndActivate", since: &startup)
             // Preparation has its own bounded fallback. The finite source
             // entrance deadline starts only when the real/fallback input is ready.
             armTransitionDeadline(after: HUDSourceWatchView.backdropPreparationTimeout + SystemHUDView.entranceDuration + 0.2) { [weak self] in
@@ -630,6 +635,7 @@ final class OverlayController: NSObject {
                     self?.finishSystemOpening(token)
                 }
             }) { [weak self] in self?.finishSystemOpening(token) }
+            HUDStartupTrace.end("open.beginEntrance", since: &startup)
         case .close(let token):
             logSystemPhase()
             systemView?.interactionEnabled = false
