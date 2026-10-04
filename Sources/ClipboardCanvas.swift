@@ -130,7 +130,12 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
         return layer
     }
 
-    func activate() { active = true; refresh() }
+    func activate() {
+        active = true
+        // makeContent prepares the incoming page before its reveal. Rebuild
+        // only if a capture arrived during that transition.
+        if dirty { refresh() }
+    }
 
     func deactivate() {
         active = false

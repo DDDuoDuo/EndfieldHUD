@@ -86,6 +86,15 @@ where they conflict.
   for content, layout, resource and shader changes. The
   [follow-up measurements](performance-followup.md) record the tested result.
 
+- **2026-10-03 — Interaction performance regression:** Preserve the exact
+  artwork, projection, motion curves, normal frame cadence and transitions.
+  Remove repeated caption/layout work, prepare accessibility geometry when
+  queried, and keep app metadata/icon lookup out of input handlers. Retain
+  bounded resources and the existing saved-data contract. The
+  [interaction investigation](interaction-performance.md) documents the live
+  Apps workload, underlying changes and measurement limits; old-native
+  performance parity remains unachieved.
+
 ## Verification evidence
 
 The integration document records the current

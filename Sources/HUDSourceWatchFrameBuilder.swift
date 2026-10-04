@@ -6,11 +6,6 @@ import simd
 /// UI vertices are baked into their nearest Canvas space, as CanvasRenderer
 /// batches them; this also keeps RectMask2D clipping in the shader's space.
 final class HUDSourceWatchFrameBuilder {
-    private struct MeshIdentity: Decodable {
-        let cab: String
-        let pathID: String
-        enum CodingKeys: String, CodingKey { case cab; case pathID = "path_id" }
-    }
     struct Hit {
         let graphicID: HUDSourceID
         let buttonID: HUDSourceID
@@ -403,9 +398,8 @@ final class HUDSourceWatchFrameBuilder {
         text = includeSourceText || sourceDomain != nil
             ? try HUDSourceTextGeometry(document: document, additionalComponents: sourceDomain?.components ?? [:],
                 additionalLabels: sourceDomain?.labels ?? .null, additionalMaterials: sourceDomain?.materials ?? [:]) : nil
-        materials = Dictionary(uniqueKeysWithValues: document.materials["materials"].array.compactMap { record in
-            record["id"].string.map { (HUDSourceID(rawValue: $0), record) }
-        }).merging(sourceDomain?.materials ?? [:]) { watch, _ in watch }
+        let metadata = try document.renderMetadata()
+        materials = metadata.materials.merging(sourceDomain?.materials ?? [:]) { watch, _ in watch }
         buttonIDs = Set(document.components.compactMap { id, records in
             records.contains(where: { $0.kind == "UIButton" && $0.enabled }) ? id : nil
         })
@@ -439,35 +433,14 @@ final class HUDSourceWatchFrameBuilder {
             return components.contains { ["UIImage", "Image", "UIRawImage", "RawImage", "NonDrawingGraphic"].contains($0.kind) && $0.enabled }
                 && !components.contains { ["UIText", "MeshFilter", "UISoftMask", "UISoftMaskable"].contains($0.kind) }
         })
-        var textures: [String: HUDSourceJSONValue] = [:]
-        for texture in document.sprites["source_textures"].array {
-            guard let id = texture["id"].string, let file = texture["png"]["file"].string else {
-                throw HUDSourceError.invalid("Source Sprite texture metadata missing")
+        for texture in metadata.textures {
+            guard renderer.containsTexture(named: texture.id) else {
+                throw HUDSourceError.invalid("Original Sprite mip chain missing from renderer: \(texture.id), \(texture.file)")
             }
-            textures[id] = texture
-            // Unity ColorSpace.Gamma=0 marks sRGB texture sampling; the
-            // exporter supplies this original field, not a guessed preset.
-            guard let space = texture["color_space"].number else {
-                throw HUDSourceError.invalid("Unverified source Sprite texture color space: \(id)")
-            }
-            guard space == 0 || space == 1, renderer.containsTexture(named: id) else {
-                throw HUDSourceError.invalid("Original Sprite mip chain missing from renderer: \(id), \(file)")
-            }
-            textureSizes[id] = SIMD2(Float(texture["width"].float()), Float(texture["height"].float()))
         }
-        for sprite in document.sprites["sprites"].array {
-            guard let id = sprite["id"].string, let textureID = sprite["texture"]["id"].string,
-                  let texture = textures[textureID] else {
-                throw HUDSourceError.invalid("Unresolved original named Sprite texture")
-            }
-            sourceSprites[id] = try HUDSourceImageGeometry.Sprite(source: sprite, texture: texture)
-        }
-        for (component, sprite) in document.spriteByComponent {
-            guard let id = sprite["texture"]["id"].string, let texture = textures[id] else {
-                throw HUDSourceError.invalid("Unresolved original Sprite texture: \(component)")
-            }
-            sprites[component] = try HUDSourceImageGeometry.Sprite(source: sprite, texture: texture)
-        }
+        textureSizes = metadata.textureSizes
+        sourceSprites = metadata.sourceSprites
+        sprites = metadata.sprites
         var domainTextures: [String: HUDSourceJSONValue] = [:]
         for record in sourceDomain?.textures["textures"].array ?? [] {
             guard let id = record["texture_id"].string, renderer.containsTexture(named: id) else {
@@ -483,12 +456,7 @@ final class HUDSourceWatchFrameBuilder {
             }
             sprites[component] = try HUDSourceImageGeometry.Sprite(source: sprite, texture: texture)
         }
-        let root = document.root.deletingLastPathComponent()
-        for name in ["Equipring", "watchline", "Plane", "Cylinder"] {
-            let value = try HUDSourceJSON.decoder().decode(MeshIdentity.self,
-                from: Data(contentsOf: root.appendingPathComponent("Meshes/\(name).json")))
-            sourceMeshNames[HUDSourceID(rawValue: value.cab + ":" + value.pathID)] = name
-        }
+        sourceMeshNames = renderer.sourceMeshNames
     }
 
     func build(pose input: HUDSourceWatchPose, worldRoot: simd_double4x4,

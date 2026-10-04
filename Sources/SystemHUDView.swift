@@ -355,7 +355,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         buildRing()
         buildPanels()
         buildNavigation()
-        refreshAppNavigation(animated: false)
         notesWorkspace.name = "hud.notesWorkspace"
         // Keep screen placement/scale outside the deployment transform, just
         // as canvas does for the other planes. Retraction must not replace the
@@ -385,7 +384,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         configureTelemetryInteractions()
         configureAppShortcutInteraction()
         configureProfileInteraction()
-        refreshIdentityProfile()
         profileObserver = profileStore?.observe { [weak self] in self?.refreshIdentityProfile() }
         configureSettingsInteraction()
         workObserver = workMode.observe { [weak self] in self?.updateWorkPresentation() }
@@ -1023,6 +1021,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     func performStorageActionForVerification(_ id: String) {
         guard storageIsInteractive else { return }
         storageCanvas.perform(actionID: id)
+    }
+    func performActivityActionForVerification(_ id: String) {
+        guard activityIsInteractive else { return }
+        activityCanvas.perform(actionID: id)
     }
 
     func performAppShortcutActionForVerification(_ id: String) {
@@ -1712,6 +1714,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         sourceCenterProjection = nil
         motion.setExternalProjection(nil)
         sourceWatch?.conceal()
+        refreshIdentityProfile()
         refreshAppNavigation(animated: false)
         let field = sourceWatchFailure ?? NSTextField(wrappingLabelWithString: "")
         NSLog("Source Watch render failure: %@", reason)
@@ -2378,7 +2381,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             self.identityCard.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.notesCanvas.updateAppearance(style: HUDModuleContentStyle(dark: dark, accent: yellow,
                 contentsScale: self.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2))
-            self.moduleContent?.update(dark: dark, accent: yellow, contentsScale: contentScale)
             self.updateButtonStates()
             self.progress.strokeColor = (self.selectedModule == .power ? tone : yellow).cgColor
             self.progress.isHidden = self.usesSourceShell || self.selectedModule == .workMode
@@ -2707,11 +2709,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         input.onToggle = { [weak self] in self?.onToggle?() }
         input.isDark = { [weak self] in self?.currentDark ?? true }
         profileCanvas.onGeometryPreview = { [weak self] profile in
-            guard let self, let store = self.profileStore else { return }
-            self.identityCard.setProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                         avatarOrientation: store.imageOrientation(for: .avatar))
-            self.sourceWatch?.setDesktopProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                                avatarOrientation: store.imageOrientation(for: .avatar))
+            self?.applyIdentityProfile(profile)
         }
         profileInteraction = input
     }
@@ -2725,10 +2723,18 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     private func refreshIdentityProfile() {
         guard let store = profileStore else { return }
-        identityCard.setProfile(store.profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                avatarOrientation: store.imageOrientation(for: .avatar))
-        sourceWatch?.setDesktopProfile(store.profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
-                                      avatarOrientation: store.imageOrientation(for: .avatar))
+        applyIdentityProfile(store.profile)
+    }
+
+    private func applyIdentityProfile(_ profile: UserProfile) {
+        guard let store = profileStore else { return }
+        if usesSourceShell {
+            sourceWatch?.setDesktopProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
+                                          avatarOrientation: store.imageOrientation(for: .avatar))
+        } else {
+            identityCard.setProfile(profile, avatar: store.image(for: .avatar), background: store.image(for: .background),
+                                    avatarOrientation: store.imageOrientation(for: .avatar))
+        }
     }
 
     private func configureTelemetryInteractions() {

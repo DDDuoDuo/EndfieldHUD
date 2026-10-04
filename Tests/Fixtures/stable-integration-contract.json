@@ -671,8 +671,8 @@
     },
     "Sources/AppActivityMonitor.swift": {
       "baselineSha256": "cbc4676306e0485d45adffb8907d4a308bebcd3c56330a1e8f1486f66cfec7b2",
-      "sha256": "af190c1bac054f3e4a11d0674ffabc6aced59182b8651b9915ba7ad904c3e1ee",
-      "reason": "User requested RAM wording throughout telemetry. Changes only the visible fallback note from Memory unavailable to RAM unavailable; sampling, metrics, aggregation, availability conditions and persistence are unchanged."
+      "sha256": "48c7fd4b94a6fe0756334c43c54a07f0f2c8c92024f8c6c2f30b4e52c36d5af2",
+      "reason": "Retains the reviewed RAM wording and moves production app bundle/name/helper metadata resolution to the existing serial sampling worker after capturing the running-app list on main. The 1 Hz sampling cadence, five-second catalog interval, 256-app bound, aggregation, sort semantics, activation generation checks, injected-catalog main-thread contract and saved data are unchanged. Optional supplied fixture items support isolated row/scroll tests only. Independently reviewed for cancellation, restart, observer publication and bounded retention; the core suite passed 51,170 assertions."
     },
     "Sources/SystemActivityMonitor.swift": {
       "baselineSha256": "7462e31c918f24c7e2f686883e19474be8c7c4a2ec459beee6f0dcf95888f2d3",

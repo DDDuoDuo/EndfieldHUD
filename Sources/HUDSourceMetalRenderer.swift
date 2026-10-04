@@ -1034,6 +1034,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private(set) var compiledSourceLibraryCount = 0
     private(set) var encoderBindingChangeCount = 0
     private(set) var encoderBindingSkipCount = 0
+    private(set) var drawableAcquisitionCount = 0
+    private(set) var cumulativeDrawableAcquisitionSeconds = 0.0
+    private(set) var maximumDrawableAcquisitionSeconds = 0.0
     var resourceStatisticsForVerification: [String: Int] {
         var textures: [ObjectIdentifier: MTLTexture] = [:]
         for asset in textureAssets.values { textures[ObjectIdentifier(asset.texture)] = asset.texture }
@@ -1056,6 +1059,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 "stencilOnly": depthStencilPixelFormat == .stencil8 ? 1 : 0,
                 "sourceTextureLoads": sourceTextureLoadCount,
                 "encoderBindingChanges": encoderBindingChangeCount, "encoderBindingSkips": encoderBindingSkipCount,
+                "drawableAcquisitions": drawableAcquisitionCount,
+                "drawableAcquisitionMicroseconds": Int(cumulativeDrawableAcquisitionSeconds * 1_000_000),
+                "maximumDrawableAcquisitionMicroseconds": Int(maximumDrawableAcquisitionSeconds * 1_000_000),
                 "deferredSourceTextures": Set(pendingTextures.values.map(\.id)).count,
                 "textureCount": textures.count,
                 "textureBytes": textures.values.reduce(0) { $0 + $1.allocatedSize }]
@@ -1083,6 +1089,9 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         return result
     }
     private var geometries: [String: Geometry] = [:]
+    /// Identities validated while loading the four original mesh buffers.
+    /// Scene builders reuse these instead of reopening the same JSON files.
+    private(set) var sourceMeshNames: [HUDSourceID: String] = [:]
     private var materials: [String: Material] = [:]
     private var clipMaterialKeys: [String: [String: String]] = [:]
     private var materialPropertyTypes: [String: [String: (type: Int, flags: Int)]] = [:]
@@ -2177,6 +2186,13 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        // Metal/Core Animation may return autoreleased drawable helpers. Give
+        // every submission a bounded lifetime rather than the entire AppKit
+        // event iteration, which can contain several input-triggered redraws.
+        autoreleasepool { drawSourceFrame(in: view) }
+    }
+
+    private func drawSourceFrame(in view: MTKView) {
         // A caller changing the clear value or introducing depth-failure
         // stencil effects leaves the proven desktop subset. Rebuild with the
         // original attachment before obtaining this frame's render pass.
@@ -2192,8 +2208,20 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 try loadMaterials(device: device)
             } catch { diagnostics = [String(describing: error)]; return }
         }
-        guard let camera, let device, let display = currentRenderPassDescriptor,
-              let drawable = currentDrawable, let command = queue.makeCommandBuffer() else { return }
+        guard let camera, let device else { return }
+        // Diagnostic readback only needs the most recently submitted frame
+        // until the next draw begins. Release it before requesting another
+        // drawable: retaining it across nextDrawable unnecessarily occupies
+        // one slot in the bounded two-drawable desktop pool.
+        lastDrawable = nil
+        let acquisitionStarted = CACurrentMediaTime()
+        let display = currentRenderPassDescriptor
+        let drawable = currentDrawable
+        let acquisitionSeconds = CACurrentMediaTime() - acquisitionStarted
+        drawableAcquisitionCount += 1
+        cumulativeDrawableAcquisitionSeconds += acquisitionSeconds
+        maximumDrawableAcquisitionSeconds = max(maximumDrawableAcquisitionSeconds, acquisitionSeconds)
+        guard let display, let drawable, let command = queue.makeCommandBuffer() else { return }
         diagnostics.removeAll(keepingCapacity: true)
         updateUniformCamera(camera)
         let drawBatches: [Batch]
@@ -2497,7 +2525,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
                 camera.timeSeconds = Float(step) / 3
                 var world = matrix_identity_float4x4; world.columns.3.x = Float(step)
                 updateUniformCamera(camera)
-                let expected = encodeUniformFields(plan: plan, overrides: overrides, world: world, camera: camera)
+                let expected = encodeUniformFieldsReference(plan: plan, overrides: overrides, world: world, camera: camera)
                 let actual = preparedUniformData(cell: cell, world: world, camera: camera)
                 let repeated = preparedUniformData(cell: cell, world: world, camera: camera)
                 guard expected == actual, actual == repeated else {
@@ -2556,6 +2584,73 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     private func encodeUniformFields(plan: UniformPlan, overrides: [String: [Float]]?,
                                      world: simd_float4x4, camera: Camera, appliesDesktopAccent: Bool = true) -> Data {
+        // One contiguous write retains the original zero initialization and
+        // field order, including partial/overlapping overrides. Re-entering
+        // Data.replaceSubrange for every field repeats COW and range bookkeeping
+        // hundreds of times per frame; scalar/vector writes need no arrays.
+        var bytes = Data(repeating: 0, count: plan.byteCount)
+        bytes.withUnsafeMutableBytes { raw in
+            for field in plan.fields {
+                if let value = overrides?[field.name] ?? field.value {
+                    Self.put(HUDSourceDesktopAccent.materialValue(value, isColor: field.isColor,
+                        accent: appliesDesktopAccent ? desktopAccentLinear : nil), into: raw, at: field.offset)
+                    continue
+                }
+                switch field.dynamic {
+                case .world: Self.put(world, into: raw, at: field.offset)
+                case .viewProjection: Self.put(camera.viewProjection, into: raw, at: field.offset)
+                case .viewNoTranslation: Self.put(camera.viewNoTranslationProjection, into: raw, at: field.offset)
+                case .projection:
+                    if let value = camera.projection { Self.put(value, into: raw, at: field.offset) }
+                case .inverseView:
+                    if let value = camera.inverseView { Self.put(value, into: raw, at: field.offset) }
+                case .uiProjection:
+                    if let value = camera.uiProjectionParameters { Self.put(value, into: raw, at: field.offset) }
+                case .cameraPosition: Self.put(SIMD4(camera.worldSpacePosition.x, camera.worldSpacePosition.y, camera.worldSpacePosition.z, 0), into: raw, at: field.offset)
+                case .uiTime: Self.put(SIMD4(camera.timeSeconds * 0.05, camera.timeSeconds, camera.timeSeconds * 2, 0), into: raw, at: field.offset)
+                case .time: Self.put(SIMD4(camera.timeSeconds / 20, camera.timeSeconds, camera.timeSeconds * 2, camera.timeSeconds * 3), into: raw, at: field.offset)
+                case .screen:
+                    let width = Float(drawableSize.width), height = Float(drawableSize.height)
+                    if width > 0, height > 0 { Self.put(SIMD4(width, height, 1 / width, 1 / height), into: raw, at: field.offset) }
+                case .renderPath: Self.put(camera.renderPathInjected, into: raw, at: field.offset)
+                case .flipX: Self.put(camera.flipX, into: raw, at: field.offset)
+                case .flipY: Self.put(camera.flipY, into: raw, at: field.offset)
+                case .none: break
+                }
+            }
+        }
+        #if HUD_SOURCE_RENDER_PREVIEW
+        if verifyPreparedUniformBytesForVerification {
+            let reference = encodeUniformFieldsReference(plan: plan, overrides: overrides,
+                world: world, camera: camera, appliesDesktopAccent: appliesDesktopAccent)
+            if bytes != reference { diagnostics.append("Contiguous source uniform writer differs from field-order oracle") }
+            verifiedPreparedUniformByteCount += 1
+        }
+        #endif
+        uniformEncodeCount += 1
+        return bytes
+    }
+
+    private static func put<T>(_ value: T, into destination: UnsafeMutableRawBufferPointer, at offset: Int) {
+        withUnsafeBytes(of: value) { source in
+            guard offset >= 0, offset <= destination.count, source.count <= destination.count - offset,
+                  let output = destination.baseAddress, let input = source.baseAddress else { return }
+            output.advanced(by: offset).copyMemory(from: input, byteCount: source.count)
+        }
+    }
+
+    private static func put(_ values: [Float], into destination: UnsafeMutableRawBufferPointer, at offset: Int) {
+        values.withUnsafeBytes { source in
+            guard offset >= 0, offset <= destination.count, source.count <= destination.count - offset,
+                  let output = destination.baseAddress, let input = source.baseAddress else { return }
+            output.advanced(by: offset).copyMemory(from: input, byteCount: source.count)
+        }
+    }
+
+    #if HUD_SOURCE_RENDER_PREVIEW
+    // Independent pre-optimization writer, compiled only into GPU fixtures.
+    private func encodeUniformFieldsReference(plan: UniformPlan, overrides: [String: [Float]]?,
+                                     world: simd_float4x4, camera: Camera, appliesDesktopAccent: Bool = true) -> Data {
         // Start from zero and retain field order, including partial overrides
         // and overlapping fields. Prepared cells only resolve value lookup;
         // they never patch a previous buffer in a different write order.
@@ -2588,7 +2683,6 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             case .none: break
             }
         }
-        uniformEncodeCount += 1
         return bytes
     }
 
@@ -2599,6 +2693,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             data.replaceSubrange(offset..<(offset + bytes.count), with: bytes)
         }
     }
+
+    #endif
 
     private func colorPipeline(pass: Pass, mask: UInt8?) throws -> MTLRenderPipelineState {
         guard let pipeline = pass.pipeline else { throw Failure.message("Unprepared source pipeline") }
@@ -2649,6 +2745,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         return mask
     }
 
+    #if HUD_SOURCE_RENDER_PREVIEW
     private static func put(_ matrix: simd_float4x4, into data: inout Data, at offset: Int) {
         // The generated MSL consumes native column vectors (including its
         // explicit VP transpose access). Write logical Swift matrix columns;
@@ -2660,6 +2757,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
         }
     }
 
+    #endif
+
     private func object(_ name: String) throws -> Any {
         if let cached = metadata?.objects[name] { return cached }
         return try JSONSerialization.jsonObject(with: HUDSourceResourceData.read(root.appendingPathComponent(name)))
@@ -2668,6 +2767,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
     private func loadGeometries(device: MTLDevice) throws {
         for name in ["Equipring", "watchline", "Plane", "Cylinder"] {
             guard let mesh = try object("Meshes/\(name).json") as? [String: Any],
+                  let cab = mesh["cab"] as? String, let pathID = mesh["path_id"] as? String,
                   let positions = mesh["positions"] as? [[NSNumber]],
                   let uv = mesh["uv0"] as? [[NSNumber]], let indices = mesh["indices"] as? [NSNumber],
                   positions.count == uv.count else { throw Failure.message("Invalid source geometry: \(name)") }
@@ -2691,6 +2791,7 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
             }
             geometries[name] = Geometry(vertices: vertexBuffer, indices: indexBuffer, indexCount: indexWords.count,
                 originalVertices: vertices, originalIndices: indexWords)
+            sourceMeshNames[HUDSourceID(rawValue: cab + ":" + pathID)] = name
         }
     }
 

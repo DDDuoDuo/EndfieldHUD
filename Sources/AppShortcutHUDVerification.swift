@@ -84,6 +84,10 @@ enum AppShortcutHUDVerification {
             for shortcut in shortcuts {
                 let target = HUDNavigationTarget.appShortcut(shortcut.id)
                 reveal(target)
+                do {
+                    check(try source.verifyCurrentAccessibilityGeometryForVerification() > 0,
+                          "Queried accessibility geometry matches every recycled shortcut after scrolling")
+                } catch { check(false, "Accessibility projection after scrolling: \(error)") }
                 guard let shown = source.desktopPresentationForVerification(target: target) else {
                     check(false, "A reached shortcut must have rendered artwork and a caption"); continue
                 }
@@ -99,6 +103,14 @@ enum AppShortcutHUDVerification {
                           "Displayed shortcut pixels match the selected artwork, including original app colors")
                 }
             }
+            source.isHidden = true
+            check(source.desktopAccessibilityAvailabilityForVerification.allSatisfy { $0.hidden && !$0.enabled },
+                  "Hiding the source shell immediately hides and disables all accessibility buttons")
+            source.isHidden = false
+            do {
+                check(try source.verifyCurrentAccessibilityGeometryForVerification() > 0,
+                      "Showing the source shell restores current accessibility geometry without another frame")
+            } catch { check(false, "Accessibility projection after visibility change: \(error)") }
             let selected = source.selectedDesktopModule
             for language in [AppLanguage.english, .simplifiedChinese, .traditionalChinese, .japanese, .korean] {
                 L10n.language = language

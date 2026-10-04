@@ -78,7 +78,7 @@ final class HUDSourceWatchDocument {
         let id: HUDSourceID
         let components: [HUDSourceWatchComponent]
     }
-    private struct ScenePayload: Decodable {
+    fileprivate struct SceneGraphPayload: Decodable {
         private struct NodePayload: Decodable {
             let node: HUDSourceNode
             let components: [HUDSourceWatchComponent]
@@ -91,8 +91,7 @@ final class HUDSourceWatchDocument {
         }
         let scene: HUDSourceScene
         let nodes: [NodeComponents]
-        let buttons: [HUDSourceWatchButton]
-        private enum CodingKeys: String, CodingKey { case rootID = "root_node_id", nodes, buttons = "main_buttons" }
+        private enum CodingKeys: String, CodingKey { case rootID = "root_node_id", nodes }
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let decoded = try container.decode([NodePayload].self, forKey: .nodes)
@@ -100,7 +99,17 @@ final class HUDSourceWatchDocument {
             // validation; only the second parse of the same JSON is removed.
             scene = try HUDSourceScene(rootID: container.decode(HUDSourceID.self, forKey: .rootID), nodes: decoded.map(\.node))
             nodes = decoded.map { NodeComponents(id: $0.node.id, components: $0.components) }
-            buttons = try container.decode([HUDSourceWatchButton].self, forKey: .buttons)
+        }
+    }
+    private struct ScenePayload: Decodable {
+        let scene: HUDSourceScene
+        let nodes: [NodeComponents]
+        let buttons: [HUDSourceWatchButton]
+        private enum CodingKeys: String, CodingKey { case buttons = "main_buttons" }
+        init(from decoder: Decoder) throws {
+            let graph = try SceneGraphPayload(from: decoder)
+            scene = graph.scene; nodes = graph.nodes
+            buttons = try decoder.container(keyedBy: CodingKeys.self).decode([HUDSourceWatchButton].self, forKey: .buttons)
         }
     }
     struct Animator: Decodable {
@@ -143,6 +152,68 @@ final class HUDSourceWatchDocument {
     let desktopProfileCard: HUDSourceDesktopProfileCard?
     private let desktopButtonIDs: [HUDSourceID]
     private let desktopHiddenDecorationIDs: [HUDSourceID]
+    private let renderMetadataLock = NSLock()
+    private var retainedRenderMetadata: RenderMetadata?
+
+    /// Parsed source values are shared with each renderer of this immutable
+    /// document. The renderer still validates its own uploaded textures.
+    final class RenderMetadata {
+        let materials: [HUDSourceID: HUDSourceJSONValue]
+        let textures: [(id: String, file: String)]
+        let textureSizes: [String: SIMD2<Float>]
+        let sourceSprites: [String: HUDSourceImageGeometry.Sprite]
+        let sprites: [HUDSourceID: HUDSourceImageGeometry.Sprite]
+        init(materials: [HUDSourceID: HUDSourceJSONValue], textures: [(id: String, file: String)],
+             textureSizes: [String: SIMD2<Float>], sourceSprites: [String: HUDSourceImageGeometry.Sprite],
+             sprites: [HUDSourceID: HUDSourceImageGeometry.Sprite]) {
+            self.materials = materials; self.textures = textures; self.textureSizes = textureSizes
+            self.sourceSprites = sourceSprites; self.sprites = sprites
+        }
+    }
+
+    func renderMetadata() throws -> RenderMetadata {
+        renderMetadataLock.lock(); defer { renderMetadataLock.unlock() }
+        if let retainedRenderMetadata { return retainedRenderMetadata }
+        let materials = Dictionary(uniqueKeysWithValues: self.materials["materials"].array.compactMap { record in
+            record["id"].string.map { (HUDSourceID(rawValue: $0), record) }
+        })
+        var textures: [String: HUDSourceJSONValue] = [:]
+        var requiredTextures: [(id: String, file: String)] = []
+        var sizes: [String: SIMD2<Float>] = ["__white": SIMD2(1, 1)]
+        for texture in self.sprites["source_textures"].array {
+            guard let id = texture["id"].string, let file = texture["png"]["file"].string else {
+                throw HUDSourceError.invalid("Source Sprite texture metadata missing")
+            }
+            textures[id] = texture
+            guard let space = texture["color_space"].number else {
+                throw HUDSourceError.invalid("Unverified source Sprite texture color space: \(id)")
+            }
+            guard space == 0 || space == 1 else {
+                throw HUDSourceError.invalid("Original Sprite mip chain missing from renderer: \(id), \(file)")
+            }
+            requiredTextures.append((id, file))
+            sizes[id] = SIMD2(Float(texture["width"].float()), Float(texture["height"].float()))
+        }
+        var sourceSprites: [String: HUDSourceImageGeometry.Sprite] = [:]
+        for sprite in self.sprites["sprites"].array {
+            guard let id = sprite["id"].string, let textureID = sprite["texture"]["id"].string,
+                  let texture = textures[textureID] else {
+                throw HUDSourceError.invalid("Unresolved original named Sprite texture")
+            }
+            sourceSprites[id] = try HUDSourceImageGeometry.Sprite(source: sprite, texture: texture)
+        }
+        var sprites: [HUDSourceID: HUDSourceImageGeometry.Sprite] = [:]
+        for (component, sprite) in spriteByComponent {
+            guard let id = sprite["texture"]["id"].string, let texture = textures[id] else {
+                throw HUDSourceError.invalid("Unresolved original Sprite texture: \(component)")
+            }
+            sprites[component] = try HUDSourceImageGeometry.Sprite(source: sprite, texture: texture)
+        }
+        let result = RenderMetadata(materials: materials, textures: requiredTextures, textureSizes: sizes,
+                                    sourceSprites: sourceSprites, sprites: sprites)
+        retainedRenderMetadata = result
+        return result
+    }
 
     init(resourceRoot: URL? = nil, includeWidgets: Bool = true, includeSourceText: Bool = true, includeDesktopProfile: Bool = false) throws {
         guard let root = resourceRoot ?? HUDResources.url(for: "WatchSource/Scene") else {
@@ -274,9 +345,8 @@ struct HUDSourceDesktopProfileCard: Decodable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         parentID = try c.decode(HUDSourceID.self, forKey: .parentID)
-        scene = try c.decode(HUDSourceScene.self, forKey: .scene)
-        struct Records: Decodable { let nodes: [HUDSourceWatchDocument.NodeComponents] }
-        let records = try c.decode(Records.self, forKey: .scene)
+        let records = try c.decode(HUDSourceWatchDocument.SceneGraphPayload.self, forKey: .scene)
+        scene = records.scene
         components = Dictionary(uniqueKeysWithValues: records.nodes.map { ($0.id, $0.components) })
         bindings = try c.decode(HUDSourceJSONValue.self, forKey: .bindings)
         sprites = try c.decode(HUDSourceJSONValue.self, forKey: .sprites)
@@ -401,6 +471,7 @@ final class HUDSourceDesktopDocumentCache {
                 guard document.widgets == nil, case .null = document.fonts, case .null = document.labels else {
                     throw HUDSourceError.invalid("Only the immutable desktop Watch profile can be cached")
                 }
+                _ = try document.renderMetadata()
                 guard try Identity(root: root) == identity else {
                     throw HUDSourceError.invalid("Watch source resources changed during loading")
                 }
