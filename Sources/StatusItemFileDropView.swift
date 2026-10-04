@@ -83,15 +83,19 @@ final class StatusItemFileDropView: NSView {
 
     private func fileURLs(_ sender: NSDraggingInfo) -> [URL] {
         let pasteboard = sender.draggingPasteboard
-        if let items = pasteboard.pasteboardItems, !items.isEmpty {
-            let parsed = items.compactMap { item -> URL? in
-                guard let value = item.string(forType: .fileURL),
-                      let url = URL(string: value), url.isFileURL, !url.path.isEmpty else { return nil }
-                return url
-            }
-            return parsed.count == items.count ? parsed : []
+        guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return [] }
+        let parsed = items.compactMap { item -> URL? in
+            guard let value = item.string(forType: .fileURL),
+                  let url = URL(string: value), url.isFileURL, !url.path.isEmpty else { return nil }
+            return url
         }
-        return []
+        guard parsed.count == items.count,
+              let files = pasteboard.readObjects(forClasses: [NSURL.self],
+                  options: [.urlReadingFileURLsOnly: true]) as? [URL],
+              files.count == items.count, files.allSatisfy(\.isFileURL) else { return [] }
+        // Keep AppKit's URL objects, including any drag-granted access metadata.
+        // The strings above validate types; they are not the imported references.
+        return files
     }
 
     private func setDropTarget(_ value: Bool) {
