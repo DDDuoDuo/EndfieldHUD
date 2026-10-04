@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var loginRegistrationError: String?
     private let audioTopology = AudioTopologyWatcher()
     private var statusItem: NSStatusItem?
+    private var statusFileDropView: StatusItemFileDropView?
     private let batteryMenuItem = NSMenuItem(title: "Reading battery…", action: nil, keyEquivalent: "")
     private let workMenuItem = NSMenuItem(title: "Work Mode", action: nil, keyEquivalent: "")
     private var workObserver: UUID?
@@ -61,6 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if args.contains("--ui-test") && args.contains("--notes-shelf-smoke-test") {
             NotesShelfHUDVerification.run(overlay: overlay)
+            return
+        }
+        if args.contains("--ui-test") && args.contains("--status-item-shelf-smoke-test") {
+            makeMenu()
+            StatusItemShelfVerification.run(overlay: overlay)
             return
         }
         if args.contains("--ui-test") && args.contains("--charge-badge-smoke-test") {
@@ -339,6 +345,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeMenu() {
         let item = statusItem ?? NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem = item
+        if statusFileDropView == nil, let button = item.button {
+            let dropView = StatusItemFileDropView(statusButton: button)
+            dropView.onDropFiles = { [weak self] urls in
+                guard let self, !self.suspended, !self.terminating else { return false }
+                return self.overlay.receiveStatusItemFiles(urls, snapshot: self.snapshot ?? .unavailable,
+                                                           configuration: self.hudSettings.configuration)
+            }
+            button.addSubview(dropView)
+            statusFileDropView = dropView
+        }
         updateApplicationIcon()
         item.button?.setAccessibilityLabel("EndfieldHUD")
         let menu = NSMenu()

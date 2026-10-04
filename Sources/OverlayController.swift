@@ -44,6 +44,7 @@ final class OverlayController: NSObject {
     private lazy var mapStore: Result<WorldMapStore, Error> = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }
     private lazy var notesStore: Result<NotesStore, Error> = Result { try NotesStore(directory: NotesStore.applicationDirectory()) }
     private lazy var shelfStore: Result<FileShelfStore, Error> = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
+    private var pendingShelfDropPresentation: (snapshot: BatterySnapshot, configuration: AppConfiguration, addedIDs: Set<UUID>)?
     private lazy var appShortcutStore: Result<AppShortcutStore, Error> = Result { try AppShortcutStore(directory: AppShortcutStore.applicationDirectory()) }
     private var pendingAppLaunch: (name: String, url: URL)?
     private var pendingShelfReveal: ShelfFileAccess?
@@ -70,7 +71,8 @@ final class OverlayController: NSObject {
     var onSystemActivityChange: (() -> Void)?
     var isIdleForUpdate: Bool {
         systemPhase == .closed && !isEditingPosition && !appLaunchInFlight
-            && !shelfDragPresentation.isActive && applicationUpdateCompletion == nil && !quitRequested
+            && !shelfDragPresentation.isActive && pendingShelfDropPresentation == nil
+            && applicationUpdateCompletion == nil && !quitRequested
     }
     var onQuitAccepted: (() -> Void)?
     var onQuitAfterSystemClose: (() -> Void)?
@@ -163,6 +165,59 @@ final class OverlayController: NSObject {
     func selectSystemModule(_ module: HUDModule, animated: Bool = true) {
         systemView?.selectModule(module, animated: animated)
     }
+
+    /// Menu-bar drops share the shelf's bookmark store even when no HUD exists.
+    /// Finish AppKit's drop callback before showing or switching the overlay.
+    @discardableResult
+    func receiveStatusItemFiles(_ urls: [URL], snapshot: BatterySnapshot,
+                                configuration: AppConfiguration) -> Bool {
+        guard !urls.isEmpty, urls.allSatisfy(\.isFileURL), canPresentShelfDrop else { return false }
+        let previousIDs = Set((try? shelfStore.get().items.map(\.id)) ?? [])
+        if let systemView {
+            guard systemView.importShelfFiles(urls) else { return false }
+        } else {
+            if case .failure = shelfStore {
+                shelfStore = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
+            }
+            do {
+                let store = try shelfStore.get()
+                try store.add(urls: urls)
+                for item in store.items where !previousIDs.contains(item.id) {
+                    eventLog.record(kind: .shelfAdded, metadata: ["filename": item.name])
+                }
+            } catch { return false }
+        }
+        let addedIDs = Set((try? shelfStore.get().items.map(\.id)) ?? []).subtracting(previousIDs)
+            .union(pendingShelfDropPresentation?.addedIDs ?? [])
+        pendingShelfDropPresentation = (snapshot, configuration, addedIDs)
+        DispatchQueue.main.async { [weak self] in self?.presentPendingShelfDrop() }
+        return true
+    }
+
+    private func presentPendingShelfDrop() {
+        guard let request = pendingShelfDropPresentation else { return }
+        guard canPresentShelfDrop else { pendingShelfDropPresentation = nil; return }
+        switch systemPhase {
+        case .closed:
+            pendingShelfDropPresentation = nil
+            initialModuleRequest = .fileShelf
+            _ = toggleSystemOverlay(snapshot: request.snapshot, configuration: request.configuration)
+            systemView?.revealShelfItems(request.addedIDs)
+        case .open:
+            pendingShelfDropPresentation = nil
+            systemView?.revealShelfItems(request.addedIDs)
+            selectSystemModule(.fileShelf)
+        case .opening, .closing:
+            break // The transition completion consumes the request once.
+        }
+    }
+
+    private var canPresentShelfDrop: Bool {
+        !quitRequested && !isEditingPosition && !appLaunchInFlight
+            && pendingAppLaunch == nil && pendingShelfReveal == nil
+            && !openStorageAfterClose && afterSystemClose == nil
+            && !shelfDragPresentation.isActive && systemView?.isDraggingShelfItem != true
+    }
     var visibleNotesForVerification: Set<UUID> { systemView?.visibleNotesForVerification ?? [] }
     var notesForVerification: [CanvasNote] { (try? notesStore.get().notes) ?? [] }
     func projectNotesPointForVerification(_ point: CGPoint) -> CGPoint {
@@ -177,6 +232,8 @@ final class OverlayController: NSObject {
     var notesFollowRetractionForVerification: Bool { systemView?.notesFollowRetractionForVerification ?? false }
     var notesDeploymentRestoredForVerification: Bool { systemView?.notesDeploymentRestoredForVerification ?? false }
     var shelfCountForVerification: Int { (try? shelfStore.get().items.count) ?? 0 }
+    var shelfPageForVerification: Int? { systemView?.shelfPageForVerification }
+    var shelfSelectedCountForVerification: Int { systemView?.shelfSelectedCountForVerification ?? 0 }
     var shelfDragPhaseForVerification: ShelfDragPresentationState.Phase { shelfDragPresentation.phase }
     var systemWindowVisibleForVerification: Bool { panel.isVisible }
     func performNoteActionForVerification(_ action: String) { systemView?.performNoteActionForVerification(action) }
@@ -502,6 +559,7 @@ final class OverlayController: NSObject {
 
     /// Sleep/session shutdown and termination cannot wait for visible animations.
     func forceCloseSystemOverlay() {
+        pendingShelfDropPresentation = nil
         cancelClosedHeapCleanup()
         pendingAppLaunch = nil
         pendingShelfReveal?.close(); pendingShelfReveal = nil
@@ -772,6 +830,7 @@ final class OverlayController: NSObject {
         logSystemPhase()
         systemView?.interactionEnabled = systemState.phase == .open
         performSystemAction(action)
+        presentPendingShelfDrop()
     }
 
     private func finishSystemClosing(_ token: Int) {
@@ -779,7 +838,11 @@ final class OverlayController: NSObject {
         logSystemPhase()
         transitionDeadline?.cancel()
         transitionDeadline = nil
+        // A later explicit handoff takes priority over a pending shelf reveal.
+        // Teardown clears these handoff fields, so test before consuming them.
+        if !canPresentShelfDrop { pendingShelfDropPresentation = nil }
         tearDownSystemPresentation(restoreFocus: true, notify: true)
+        presentPendingShelfDrop()
     }
 
     private func logSystemPhase() {

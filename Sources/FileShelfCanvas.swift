@@ -203,6 +203,22 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         }
     }
 
+    /// Restore the just-added selection when a menu-bar drop creates a new HUD.
+    /// The store already owns the references; this only reveals their page.
+    func revealItems(_ ids: Set<UUID>) {
+        let selected = Set(items.filter { ids.contains($0.id) }.map(\.id))
+        guard !selected.isEmpty, let last = items.lastIndex(where: { selected.contains($0.id) }) else { return }
+        let page = last / Self.pageCapacity
+        guard selectedIDs != selected || pageIndex != page else { return }
+        selectedIDs = selected
+        selectedID = items[last].id
+        selectionAnchorID = selectedID
+        pendingSingleSelection = nil
+        pageIndex = page
+        withoutActions { repaint() }
+        onChange?()
+    }
+
     @discardableResult
     func mouseDown(at point: CGPoint, clickCount: Int, modifiers: NSEvent.ModifierFlags = []) -> Bool {
         guard point.x.isFinite, point.y.isFinite, layer.bounds.contains(point) else { return false }

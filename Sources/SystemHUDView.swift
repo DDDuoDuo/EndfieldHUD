@@ -3032,6 +3032,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return imported
     }
 
+    @discardableResult
+    func importShelfFiles(_ urls: [URL]) -> Bool {
+        shelfCanvas.importURLs(urls)
+    }
+
+    func revealShelfItems(_ ids: Set<UUID>) { shelfCanvas.revealItems(ids) }
+    var shelfPageForVerification: Int { shelfCanvas.pageIndex }
+    var shelfSelectedCountForVerification: Int { shelfCanvas.selectedIDs.count }
+
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
         shelfInteraction?.acceptsPreviewPanelControl() ?? false
     }

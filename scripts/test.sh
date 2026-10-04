@@ -53,6 +53,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/DeviceBatteryProvider.swift" \
     "$PROJECT_DIR/Sources/SystemOverlayState.swift" \
     "$PROJECT_DIR/Sources/ShelfDragPresentationState.swift" \
+    "$PROJECT_DIR/Sources/StatusItemFileDropView.swift" \
     "$PROJECT_DIR/Sources/SummonShortcut.swift" \
     "$PROJECT_DIR/Sources/ShortcutPolicy.swift" \
     "$PROJECT_DIR/Sources/HUDMotionController.swift" \
@@ -189,6 +190,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/PowerDataTests.swift" \
     "$PROJECT_DIR/Tests/SystemOverlayStateTests.swift" \
     "$PROJECT_DIR/Tests/ShelfDragPresentationStateTests.swift" \
+    "$PROJECT_DIR/Tests/StatusItemFileDropViewTests.swift" \
     "$PROJECT_DIR/Tests/ShortcutPolicyTests.swift" \
     "$PROJECT_DIR/Tests/SummonShortcutTests.swift" \
     "$PROJECT_DIR/Tests/SettingsTests.swift" \
