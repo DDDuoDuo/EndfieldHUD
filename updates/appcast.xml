@@ -7,6 +7,18 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Signed EndfieldHUD updates</description>
         <language>en</language>
         <item>
+            <title>1.1.1</title>
+            <pubDate>Sun, 04 Oct 2026 00:37:48 -0700</pubDate>
+            <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>10.15.4</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text">Improved HUD opening, tab switching and Activity Monitor responsiveness, with less repeated rendering work and memory retained after closing.
+Drag files onto the menu bar icon to add them to Temporary File Shelf. Improved Low Power behavior and matched Activity Monitor’s icon glow to Storage.
+</description>
+            <enclosure url="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.1.1/EndfieldHUD-1.1.1-build13-macOS.zip" length="22426805" type="application/octet-stream" sparkle:edSignature="D7FnemeXUtRSpfaTiFMftomL4+yi4npLWerLqqT8ELIQW26EiDyjn67JuTMLyQ1JZhbdjUiM0963F1YljgtGBA=="></enclosure>
+        </item>
+        <item>
             <title>1.1.0</title>
             <pubDate>Fri, 02 Oct 2026 15:22:35 -0700</pubDate>
             <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
@@ -174,6 +186,6 @@ Original code: MIT. Game artwork belongs to its respective owners; see [credits]
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: fAIwdHbw3maNlp0YRcbXX+lrjdwBqpzlg6ucfuzvhwjBQl4E2DH2A4TsfJh7BrwcrEYbakvLUP3xNsoSBlbWAA==
-length: 15886
+edSignature: edFwJqEhjd+BxstsIYlxKmgV+dOvFJgbOPoUwtjeZ3uYIydw5YrgVe462lVg0AW1rGuFgGy95I4lwLzah0AoBg==
+length: 16952
 -->
