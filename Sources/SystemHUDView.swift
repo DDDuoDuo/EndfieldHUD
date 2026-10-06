@@ -2541,7 +2541,9 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let bitmap = configuration.centerLogo.image(revision: configuration.centerLogoRevision).flatMap(HUDCenterLogoPresentation.image)
         withoutActions {
             self.industryWordmark.contents = bitmap
-            self.industryWordmark.contentsGravity = .resizeAspect
+            // Presentation already normalizes the visible logo. Fill the
+            // fallback's authored slot just as the source shell does.
+            self.industryWordmark.contentsGravity = .resize
             self.industryWordmark.mask = bitmap == nil ? self.legacyWordmarkMask : nil
             self.industryWordmark.backgroundColor = bitmap == nil ? NSColor.white.cgColor : NSColor.clear.cgColor
         }
