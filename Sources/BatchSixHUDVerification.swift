@@ -56,20 +56,27 @@ enum BatchSixHUDVerification {
             check(view.readerInteractionForVerification!.capturesPointer, "Reading settings captures pointer")
             let menu = view.readerInteractionForVerification!.secondaryMenu!
             check(menu.artwork.superlayer === canvas.layer, "Reader secondary menu shares its tilted plane")
-            check((menu.artwork.animationKeys()?.count ?? 0) > 0, "Reader secondary menu opens with animation")
+            check((menu.artwork.animation(forKey: "reader.menu") != nil) == !HUDRuntimeAppearance.reduceMotion,
+                  "Reader secondary menu animates only when motion is enabled")
             menu.onCancel?()
             let interaction = view.readerInteractionForVerification!
             let point = CGPoint(x: canvas.viewport.midX, y: canvas.viewport.midY)
             var preferences = canvas.controller.preferences; preferences.vertical = false
             canvas.controller.setPreferences(preferences)
             let original = canvas.controller.current!.location
+            let turnsBefore = canvas.pageTurnSequence
             _ = interaction.scroll(at: point, deltaX: 0, deltaY: 300)
             check(canvas.controller.current!.location == original, "Vertical scrolling cannot turn horizontal pages")
             let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
                 windowNumber: view.window!.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 124)!
             check(interaction.keyDown(key), "Right arrow is routed to the reader")
-            wait("Animated reader page turn", until: { canvas.controller.current?.location != original }) { [self] in
-                check(canvas.pageTurnSequence > 0 && canvas.isTurningPage, "Attached page receives horizontal turn animation")
+            wait("Reader page turn", until: { canvas.controller.current?.location != original }) { [self] in
+                // The counter records installation even if the 0.26-second
+                // track completed before this asynchronous observation.
+                check(HUDRuntimeAppearance.reduceMotion
+                        ? canvas.pageTurnSequence == turnsBefore && !canvas.isTurningPage
+                        : canvas.pageTurnSequence == turnsBefore + 1,
+                      "Horizontal navigation installs one page turn only when motion is enabled")
                 preferences.vertical = true; canvas.controller.setPreferences(preferences)
                 check(!canvas.isTurningPage, "Vertical reading removes the flip animation")
                 beginArchive()

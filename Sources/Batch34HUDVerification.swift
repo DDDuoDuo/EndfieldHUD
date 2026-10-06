@@ -67,6 +67,7 @@ enum Batch34HUDVerification {
                   let sourceAction = sourceMenu.items.first(where: { $0.id == "finder" }) else {
                 fail("Add media opens the retained source chooser")
             }
+            let menuReveal = sourceMenu.artwork.animation(forKey: "notes.controls.reveal")
             let sourceTransform = sourceMenu.artwork.affineTransform()
             let menuPoint = CGPoint(x: sourceMenu.artwork.position.x + sourceAction.rect.midX * sourceTransform.a,
                                     y: sourceMenu.artwork.position.y + sourceAction.rect.midY * sourceTransform.d)
@@ -84,8 +85,8 @@ enum Batch34HUDVerification {
             check(view.bounds.contains(projectedMenuPoint)
                   && view.hitTest(view.convert(projectedMenuPoint, to: view.superview)) === sourceMenu,
                   "Native projected hit testing resolves the menu before the overlapping checklist")
-            check(sourceMenu.artwork.animation(forKey: "notes.controls.reveal") != nil,
-                  "The native media chooser reveals with a finite retained animation")
+            check((menuReveal != nil) == !HUDRuntimeAppearance.reduceMotion,
+                  "The native media chooser uses a finite reveal only when motion is enabled")
             if let i = CommandLine.arguments.firstIndex(of: "--preview-directory"), CommandLine.arguments.indices.contains(i + 1) {
                 let directory = URL(fileURLWithPath: CommandLine.arguments[i + 1], isDirectory: true)
                 do {
