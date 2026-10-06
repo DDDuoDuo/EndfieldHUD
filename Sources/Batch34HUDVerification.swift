@@ -111,7 +111,16 @@ enum Batch34HUDVerification {
                       && sourceMenu.artwork.animationKeys() == nil,
                       "Leaving Notes completely retires media-menu input, artwork and finite animations")
                 check(view.visibleNotesForVerification == [pinnedNote], "Pinned drawing persists across module transition")
-                testPlayback()
+                // The persistence check is complete. Notes use screen points
+                // while music uses a scaled HUD plane, so a retained pin can
+                // cover a native transport target on a smaller test display.
+                view.performNoteActionForVerification("note:\(pinnedNote.uuidString):pin")
+                wait("independent music controls", until: { self.view.visibleNotesForVerification.isEmpty }) { [self] in
+                    check(view.visibleNotesForVerification.isEmpty
+                          && overlay.notesForVerification.first { $0.id == pinnedNote }?.isPinned == false,
+                          "Drawing remains saved and no note pin occludes the independent music controls")
+                    testPlayback()
+                }
             }
         }
         func testProjectedEditor(label: String, then completion: @escaping () -> Void) {
@@ -212,7 +221,8 @@ enum Batch34HUDVerification {
             check(overlay.perAppAudio.sessions.isEmpty, "Opening Now Playing creates no audio tap")
             let action = canvas.accessibleActions.first { $0.id == "playPause" }!
             sendModule(.leftMouseDown, point: CGPoint(x: action.rect.midX, y: action.rect.midY)); view.mouseUp(with: dummyUp())
-            check(overlay.nowPlaying.snapshot.track?.isPlaying == true && canvas.progressClockActiveForVerification, "Native play starts visible progress")
+            check(overlay.nowPlaying.snapshot.track?.isPlaying == true && canvas.progressClockActiveForVerification,
+                  "Native play starts visible progress (playing=\(overlay.nowPlaying.snapshot.track?.isPlaying == true), clock=\(canvas.progressClockActiveForVerification), input=\(view.nowPlayingInputEnabledForVerification), pins=\(view.visibleNotesForVerification.count))")
             let seek = canvas.accessibleSliders.first { $0.id == "seek" }!
             let start = CGPoint(x: seek.rect.minX + 2, y: seek.rect.midY), end = CGPoint(x: seek.rect.midX, y: seek.rect.midY)
             let before = overlay.eventLog.events.filter { $0.kind == .playbackAction && $0.metadata["action"] == "seek" }.count
