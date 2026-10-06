@@ -102,8 +102,9 @@ enum Batch34HUDVerification {
         }
         func leaveNotes(sourceMenu: NotesMediaSourceChooser, pinnedNote: UUID) {
             overlay.selectSystemModule(.nowPlaying)
-            check(view.nowPlayingPresentationPreparedForVerification && !view.nowPlayingInputEnabledForVerification,
-                  "Incoming music starts its bounded presentation before navigation enables input")
+            check(view.nowPlayingPresentationPreparedForVerification
+                  && view.nowPlayingInputEnabledForVerification == HUDRuntimeAppearance.reduceMotion,
+                  "Incoming music prepares before animated navigation, or enables input immediately when motion is reduced")
             wait("Now Playing", until: { self.overlay.systemSelectedModule == .nowPlaying && !self.overlay.isSwitchingSystemModule }) { [self] in
                 check(!view.subviews.contains { $0 is NotesFormattingControls }, "Leaving Notes retires formatting controls")
                 check(sourceMenu.superview == nil && sourceMenu.artwork.superlayer == nil
@@ -128,17 +129,32 @@ enum Batch34HUDVerification {
             editor.resizeDocument(); editor.captureVisibleArtwork()
             var actual = NSRange()
             let before = text.firstRect(forCharacterRange: marked, actualRange: &actual)
+            let reduced = HUDRuntimeAppearance.reduceMotion
+            let probeStarted = ProcessInfo.processInfo.systemUptime
             let screen = view.window!.screen!.frame
             overlay.systemPointerLocationProviderForVerification = { CGPoint(x: screen.minX + screen.width * 0.78,
                                                                              y: screen.minY + screen.height * 0.7) }
             view.setPointerForVerification(CGPoint(x: 0.56, y: -0.4))
-            wait(label + " editing tilt", until: {
+            wait(label + " editing projection", until: {
+                // Reduced motion intentionally holds the projection still.
+                // Observe it through a short pointer-update interval instead
+                // of waiting for movement that accessibility suppresses.
+                if reduced { return ProcessInfo.processInfo.systemUptime - probeStarted >= 0.25 }
                 var range = NSRange()
                 let after = text.firstRect(forCharacterRange: marked, actualRange: &range)
                 return abs(after.midX - before.midX) + abs(after.midY - before.midY) > 1
             }) { [self] in
-                check(text.hasMarkedText() && text.markedRange() == marked && text.selectedRange() == selected && text.string == draft,
-                      "The " + label + " marked text and selection survive actual source-shell motion")
+                var range = NSRange()
+                let after = text.firstRect(forCharacterRange: marked, actualRange: &range)
+                let stable = abs(after.minX - before.minX) < 0.1 && abs(after.minY - before.minY) < 0.1
+                    && abs(after.width - before.width) < 0.1 && abs(after.height - before.height) < 0.1
+                let valid = after.minX.isFinite && after.minY.isFinite
+                    && after.width.isFinite && after.height.isFinite && after.width > 0 && after.height > 0
+                check(valid && (reduced ? stable : abs(after.midX - before.midX) + abs(after.midY - before.midY) > 1),
+                      "The " + label + " candidate rectangle follows pointer tilt, or remains stable with reduced motion")
+                check(view.window?.firstResponder === text && text.hasMarkedText() && text.markedRange() == marked
+                      && text.selectedRange() == selected && text.string == draft,
+                      "The " + label + " composition, selection and focus survive pointer updates")
                 check(editor.artwork.frame == editor.logicalRect && editor.scrollView.frame.size == editor.logicalRect.size,
                       "The " + label + " glyphs inherit HUD perspective without changing native layout dimensions")
                 let local = CGPoint(x: editor.logicalRect.midX, y: editor.logicalRect.midY)
@@ -155,7 +171,7 @@ enum Batch34HUDVerification {
                     } catch { fail("Projected editor preview: \(error)") }
                 }
                 text.insertText("中文", replacementRange: marked)
-                check(!text.hasMarkedText(), "The " + label + " native composition commits after its candidate rect moves")
+                check(!text.hasMarkedText(), "The " + label + " native composition commits after the projection check")
                 overlay.systemPointerLocationProviderForVerification = { CGPoint(x: screen.midX, y: screen.midY) }
                 view.setPointerForVerification(.zero)
                 completion()
@@ -212,9 +228,10 @@ enum Batch34HUDVerification {
                 check(!canvas.albumCoverAvailableForVerification, "Leaving Now Playing releases the displayed cover")
                 check(overlay.audio.isRunning && !canvas.progressClockActiveForVerification, "Volume retains shared observation while playback clock stops")
                 overlay.selectSystemModule(.nowPlaying)
-                check(view.nowPlayingPresentationPreparedForVerification && !view.nowPlayingInputEnabledForVerification
+                check(view.nowPlayingPresentationPreparedForVerification
+                      && view.nowPlayingInputEnabledForVerification == HUDRuntimeAppearance.reduceMotion
                       && canvas.albumCoverAvailableForVerification,
-                      "Returning restores cached music during navigation rather than waiting for input activation")
+                      "Returning restores cached music before animated input activation, or immediately with reduced motion")
                 wait("reverse audio handoff", until: { self.overlay.systemSelectedModule == .nowPlaying && !self.overlay.isSwitchingSystemModule }) { [self] in
                     check(canvas.albumCoverAvailableForVerification, "Returning restores the cached album cover")
                     check(overlay.audio.isRunning && canvas.progressClockActiveForVerification, "Reverse handoff keeps audio and restores progress")
