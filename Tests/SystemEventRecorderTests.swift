@@ -100,6 +100,74 @@ enum SystemEventRecorderTests {
         check(malformedLog.events.first?.metadata == ["kind": "countdown"],
               "An invalid diagnostic duration cannot crash metadata conversion or persist nonfinite seconds")
 
+        let settingsLog = SystemEventLog(), settings = SystemEventRecorder(log: SystemEventLog())
+        let settingsRecorder = SystemEventRecorder(log: settingsLog)
+        var configuration = AppConfiguration.defaults
+        configuration.clockStyle = .dial; configuration.alertMetric = .ram
+        settingsRecorder.receiveConfiguration(configuration)
+        settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.isEmpty, "Saved display settings establish a quiet startup baseline")
+        configuration.hudDisplayName = "PRIVATE DISPLAY NAME"
+        configuration.displayDuration = 11
+        settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.isEmpty, "Unrelated preferences and user-entered display names are never recorded")
+        configuration.clockStyle = .rail
+        settingsRecorder.receiveConfiguration(configuration); settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.count == 1 && settingsLog.events[0].metadata == ["field": "clockStyle", "value": "rail"],
+              "A changed clock style records once despite repeated configuration publications")
+        let privateRevision = UUID().uuidString
+        configuration.centerLogo = .custom; configuration.centerLogoRevision = privateRevision
+        settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.count == 2 && settingsLog.events[0].metadata == ["field": "centerLogo", "value": "customImported"],
+              "Selecting and importing custom artwork in one commit records one import without its revision ID")
+        configuration.centerLogoRevision = UUID().uuidString
+        settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.count == 3 && settingsLog.events[0].detail == "Center logo · Custom artwork imported",
+              "Replacing an already selected custom logo records the committed import")
+        configuration.centerLogo = .babel
+        settingsRecorder.receiveConfiguration(configuration)
+        configuration.centerLogoRevision = UUID().uuidString
+        settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.count == 4 && settingsLog.events[0].metadata == ["field": "centerLogo", "value": "babel"],
+              "Preset changes record once; an inactive custom-image revision creates no visible-change event")
+        configuration.alertMetric = .network
+        settingsRecorder.receiveConfiguration(configuration); settingsRecorder.receiveConfiguration(configuration)
+        check(settingsLog.events.count == 5 && settingsLog.events[0].metadata == ["field": "alertMetric", "value": "network"],
+              "A charge-metric selection records its enum value once")
+        check(settingsLog.events.allSatisfy { !$0.metadata.values.contains(privateRevision)
+            && !$0.metadata.values.contains("PRIVATE DISPLAY NAME") && $0.metadata.keys.sorted() == ["field", "value"] },
+              "Settings history never retains artwork IDs, user profile content or unrelated fields")
+        settings.receiveProfileCrop(backgroundZoom: 1, thumbnailZoom: 1)
+        settings.receiveProfileCrop(backgroundZoom: .nan, thumbnailZoom: .infinity)
+        check(settings.log.events.isEmpty, "Initial crop state and equivalent invalid-value fallbacks remain quiet")
+        settings.receiveProfileCrop(backgroundZoom: 2.75, thumbnailZoom: 1)
+        settings.receiveProfileCrop(backgroundZoom: 2.75, thumbnailZoom: 1)
+        check(settings.log.events.count == 1 && settings.log.events[0].metadata == ["target": "background"],
+              "A committed background zoom change records once without its numeric crop")
+        settings.receiveProfileCrop(backgroundZoom: 2.75, thumbnailZoom: 4.25)
+        check(settings.log.events.count == 2 && settings.log.events[0].metadata == ["target": "thumbnail"],
+              "Thumbnail zoom changes retain their independent target")
+        settings.receiveProfileCrop(backgroundZoom: 1, thumbnailZoom: 1)
+        check(settings.log.events.count == 3 && settings.log.events[0].metadata == ["target": "both"],
+              "One successful commit changing both crops creates one event")
+
+        let suite = "EndfieldHUD-EventSettingsTests-\(UUID().uuidString)"
+        let previousLanguage = L10n.language
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite); L10n.language = previousLanguage }
+        let store = ConfigurationStore(defaults: defaults), committedLog = SystemEventLog()
+        let committed = SystemEventRecorder(log: committedLog)
+        committed.receiveConfiguration(store.configuration)
+        let settingsToken = store.addObserver { committed.receiveConfiguration($0) }
+        defer { store.removeObserver(settingsToken) }
+        var discardedDraft = store.configuration
+        discardedDraft.clockStyle = .stacked
+        check(discardedDraft.clockStyle == .stacked && committedLog.events.isEmpty, "An uncommitted settings draft creates no history")
+        store.update(discardedDraft)
+        store.update(discardedDraft)
+        check(committedLog.events.count == 1 && defaults.string(forKey: "clockStyle") == "stacked",
+              "Real ConfigurationStore commit publication logs once and no-op saves remain silent")
+
         let topologyLog = SystemEventLog()
         let topology = SystemEventRecorder(log: topologyLog)
         topology.receiveAudioDevices(["private-uid-a": "Built-in Speakers"])

@@ -9,12 +9,14 @@ SWIFT_DEFINES=()
 if [ -f "$SOURCE_DIR/WorldMapRasterController.swift" ]; then SWIFT_DEFINES+=("-D" "MAP_RASTER_PIPELINE"); fi
 RESOURCE_SOURCES=()
 if [ -f "$SOURCE_DIR/HUDResources.swift" ]; then RESOURCE_SOURCES+=("$SOURCE_DIR/HUDResources.swift"); fi
+LOCALIZATION_SOURCES=("$SOURCE_DIR/Localization.swift")
+if [ -f "$SOURCE_DIR/LocalizationCatalog.swift" ]; then LOCALIZATION_SOURCES+=("$SOURCE_DIR/LocalizationCatalog.swift"); fi
 xcrun swiftc -swift-version 5 -O -whole-module-optimization -parse-as-library \
     ${SWIFT_DEFINES[@]+"${SWIFT_DEFINES[@]}"} \
     -sdk "$SELECTED_SDK" -module-cache-path "$PROJECT_DIR/build/dev/module-cache" \
     -framework AppKit -framework QuartzCore \
     ${RESOURCE_SOURCES[@]+"${RESOURCE_SOURCES[@]}"} \
-    "$SOURCE_DIR/Localization.swift" \
+    "${LOCALIZATION_SOURCES[@]}" \
     "$SOURCE_DIR/HUDModule.swift" \
     "$SOURCE_DIR/HUDControlHighlightLayer.swift" \
     "$SOURCE_DIR/HUDRenderScale.swift" \

@@ -27,6 +27,16 @@ enum WorldMapStoreTests {
             let first = try store.addPin(x: 0.24, y: 0.63)
             check(first.x == 0.24 && first.y == 0.63 && store.pins == [first], "Pin coordinates and identity are retained")
             check(abs(first.createdAt.timeIntervalSinceNow) < 5, "New pins record their creation time")
+            check(first.style == .yellow && MapPinStyle.allCases == [.yellow, .green, .player],
+                  "New pins start yellow and the three persisted style IDs have a stable order")
+            for style in [MapPinStyle.green, .player, .yellow] {
+                let changed = try store.cyclePinStyle(id: first.id)!
+                check(changed.style == style && changed.id == first.id && changed.x == first.x
+                      && changed.y == first.y && changed.createdAt == first.createdAt,
+                      "Cycling pin style preserves identity, location and creation time")
+                check(try WorldMapStore(directory: directory).pins == [changed],
+                      "Each successful style change survives reopening the store")
+            }
             let wrapped = try store.addPin(x: -1.25, y: 1.1)
             check(wrapped.x == 0.75 && wrapped.y == 1, "Panning across the seam wraps pin X and bounds Y")
             let seam = try store.addPin(x: 2, y: -0.3)
@@ -41,6 +51,7 @@ enum WorldMapStoreTests {
             let modificationDate = try fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date
             try store.setViewport(store.viewport)
             try store.removePin(id: UUID())
+            check(try store.cyclePinStyle(id: UUID()) == nil, "Cycling a missing pin is a no-op")
             check(try Data(contentsOf: file) == saved && fm.attributesOfItem(atPath: file.path)[.modificationDate] as? Date == modificationDate,
                   "No-op viewport and unknown pin removal leave archive bytes and modification time unchanged")
             for invalid in [Double.nan, .infinity, -.infinity] {
@@ -94,11 +105,16 @@ enum WorldMapStoreTests {
                 pin["id"] = UUID().uuidString
                 return pin
             }
+            var unknownStyle = canonical
+            var unknownPins = canonical["pins"] as! [[String: Any]]
+            unknownPins[0]["style"] = "future-player-shape"
+            unknownStyle["pins"] = unknownPins
             let badArchives = [Data("not JSON".utf8), Data("{\"version\":99}".utf8), Data("{\"version\":0}".utf8),
                                Data("{\"version\":1,\"pins\":[]}".utf8),
                                try JSONSerialization.data(withJSONObject: duplicate), try JSONSerialization.data(withJSONObject: outside),
                                try JSONSerialization.data(withJSONObject: invalidZoom), try JSONSerialization.data(withJSONObject: oldZoomInNewArchive),
                                try JSONSerialization.data(withJSONObject: tooMany),
+                               try JSONSerialization.data(withJSONObject: unknownStyle),
                                Data(repeating: 32, count: WorldMapStore.maximumArchiveBytes + 1)]
             for bad in badArchives {
                 try bad.write(to: corruptFile)
@@ -109,6 +125,17 @@ enum WorldMapStoreTests {
             let legacyDirectory = root.appendingPathComponent("legacy", isDirectory: true)
             try fm.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
             let legacyFile = legacyDirectory.appendingPathComponent("map.json")
+            var withoutStyles = canonical
+            withoutStyles["pins"] = (canonical["pins"] as! [[String: Any]]).map { value in
+                var value = value; value.removeValue(forKey: "style"); return value
+            }
+            let withoutStyleBytes = try JSONSerialization.data(withJSONObject: withoutStyles)
+            try withoutStyleBytes.write(to: legacyFile)
+            let additive = try WorldMapStore(directory: legacyDirectory)
+            check(additive.pins == store.pins && additive.pins.allSatisfy { $0.style == .yellow },
+                  "Missing style fields in existing schema-four archives default to yellow without losing pin data")
+            check(try Data(contentsOf: legacyFile) == withoutStyleBytes,
+                  "Reading legacy style defaults never rewrites an existing archive")
             var legacy = canonical
             legacy["version"] = 1
             for legacyCamera in [["centerX": 0.5, "centerY": 0.5, "zoom": 1.0],
@@ -177,6 +204,7 @@ enum WorldMapStoreTests {
             let externalBytes = Data("External change".utf8)
             try externalBytes.write(to: file)
             check(rejected { try store.removePin(id: first.id) }, "Stale stores cannot overwrite external changes")
+            check(rejected { _ = try store.cyclePinStyle(id: first.id) }, "Pin cycling cannot overwrite external changes")
             check(try store.pins == beforeConflict && store.viewport == beforeViewport && Data(contentsOf: file) == externalBytes,
                   "Conflict rejection preserves both memory and external data")
 
@@ -187,8 +215,9 @@ enum WorldMapStoreTests {
             let blockedBytes = try Data(contentsOf: blockedFile)
             try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: blockedDirectory.path)
             let failedWrite = rejected { try blocked.setViewport(WorldMapViewport(zoom: 2)) }
+            let failedStyleWrite = rejected { _ = try blocked.cyclePinStyle(id: kept.id) }
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: blockedDirectory.path)
-            check(failedWrite, "Atomic replacement failures are reported")
+            check(failedWrite && failedStyleWrite, "Atomic camera/style replacement failures are reported")
             check(try blocked.pins == [kept] && blocked.viewport == WorldMapViewport() && Data(contentsOf: blockedFile) == blockedBytes,
                   "A failed write rolls back memory and preserves the previous valid archive")
         } catch { fatalError("Map store fixture failed: \(error)") }

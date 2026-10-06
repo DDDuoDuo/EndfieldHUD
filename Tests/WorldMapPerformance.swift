@@ -3,8 +3,9 @@
 import AppKit
 import QuartzCore
 import ImageIO
+import Darwin
 
-enum AppLanguage { case system, english, simplifiedChinese }
+enum AppLanguage { case system, english, simplifiedChinese, traditionalChinese, japanese, korean }
 enum HUDRuntimeAppearance {
     static var accent = NSColor(srgbRed: 0.98, green: 0.87, blue: 0.13, alpha: 1)
     static var reduceMotion = true
@@ -37,6 +38,11 @@ enum WorldMapPerformance {
         let finalPaintSettleMilliseconds: Double?
         let finalZoom: Double
         let layerCount: Int
+        let measuredWindowSeconds: Double
+        let processCPUSeconds: Double
+        let processCPUPercentOfOneCore: Double
+        let rasterLayerCount: Int?
+        let retainedRasterImageCount: Int?
     }
     struct Report: Codable {
         let label: String
@@ -45,6 +51,8 @@ enum WorldMapPerformance {
         let countryCount: Int
         let renderPixels: Int
         let renderComponent: String
+        let operatingSystem: String
+        let logicalProcessorCount: Int
         let metrics: [Metric]
         let limitations: [String]
     }
@@ -148,10 +156,13 @@ enum WorldMapPerformance {
                 if render, !imageDirectory.isEmpty {
                     try writePNG(context, directory: imageDirectory, name: name + "-start")
                 }
-                guard canvas.mouseDown(at: CGPoint(x: 305, y: 286)) else { fatalError("Cannot start benchmark drag") }
+                if case .pan = gesture {
+                    guard canvas.mouseDown(at: CGPoint(x: 305, y: 286)) else { fatalError("Cannot start benchmark drag") }
+                }
                 let count = render ? renderCount : frameCount
                 var times: [Double] = []
                 var paintSettles: [Double] = [], cgRenders: [Double] = []
+                let cpuStarted = processCPUSeconds(), measurementStarted = CACurrentMediaTime()
                 for index in 0..<count {
                     let phase = Double(index) / Double(count - 1)
                     let start = CACurrentMediaTime()
@@ -176,8 +187,19 @@ enum WorldMapPerformance {
                     }
                     times.append((CACurrentMediaTime() - start) * 1000)
                 }
-                canvas.mouseUp()
+                switch gesture {
+                case .pan: canvas.mouseUp()
+                case .zoom: canvas.endGesture()
+                }
                 let finalPaintSettle = awaitExactPaint()
+                let measurementElapsed = CACurrentMediaTime() - measurementStarted
+                let cpuElapsed = max(0, processCPUSeconds() - cpuStarted)
+                let raster = canvas.layer.sublayers?.first { $0.name == "map.raster" }
+                let retainedImages = raster.map { value in
+                    Set((value.sublayers ?? []).compactMap { child in
+                        child.contents.map { ObjectIdentifier($0 as AnyObject) }
+                    }).count
+                }
                 let ordered = times.sorted()
                 let metric = Metric(caseName: name, mode: render ? "camera+exact-paint+cg-render" : "camera-update",
                     frames: count, meanMilliseconds: times.reduce(0, +) / Double(count),
@@ -188,7 +210,9 @@ enum WorldMapPerformance {
                     meanPaintSettleMilliseconds: render ? paintSettles.reduce(0,+)/Double(count) : nil,
                     meanCGRenderMilliseconds: render ? cgRenders.reduce(0,+)/Double(count) : nil,
                     finalPaintSettleMilliseconds: finalPaintSettle, finalZoom: canvas.viewport.zoom,
-                    layerCount: layerCount(canvas.layer))
+                    layerCount: layerCount(canvas.layer), measuredWindowSeconds: measurementElapsed,
+                    processCPUSeconds: cpuElapsed, processCPUPercentOfOneCore: cpuElapsed / measurementElapsed * 100,
+                    rasterLayerCount: raster.map { layerCount($0) }, retainedRasterImageCount: retainedImages)
                 metrics.append(metric)
                 if render, !imageDirectory.isEmpty {
                     try writePNG(context, directory: imageDirectory, name: name + "-end")
@@ -204,18 +228,29 @@ enum WorldMapPerformance {
         }
         guard !metrics.isEmpty else { fatalError("Unknown --scenario \(selectedCase)") }
         let report = Report(label: label, terrainVertices: terrain.vertexCount, countryVertices: countries.vertexCount,
-            countryCount: countries.countries.count, renderPixels: 880, renderComponent: renderComponent, metrics: metrics, limitations: [
+            countryCount: countries.countries.count, renderPixels: 880, renderComponent: renderComponent,
+            operatingSystem: ProcessInfo.processInfo.operatingSystemVersionString,
+            logicalProcessorCount: ProcessInfo.processInfo.processorCount, metrics: metrics, limitations: [
                 "Optimized Swift; actual map canvas, country artwork, controls and bundled geometry; six pins; fixed dark theme.",
                 "Camera-update measurements include model/layer mutations while a background paint may be running; initial/final asynchronous paint settlement is reported separately.",
                 "Forced-render mode waits for an exact camera frame before synchronously drawing an 880x880 bitmap; background paint settlement and CG drawing are separately reported. It does not measure native GPU presentation or frame pacing.",
                 "No full HUD perspective, blur, accessibility projection, input coalescing, display refresh pacing or animated pin pulses.",
-                "Forced-render combined timings include gesture-end persistence in a temporary directory; camera-only samples exclude those writes. Resource loading is outside samples, setup is separate. This is not an idle CPU, memory or native-compositor benchmark."
+                "Forced-render combined timings include gesture-end persistence in a temporary directory; camera-only samples exclude those writes. Resource loading is outside samples, setup is separate. This is not an idle CPU, memory or native-compositor benchmark.",
+                "Process CPU deltas include all threads from the first gesture sample through final exact-paint settlement and temporary gesture-end persistence, excluding setup/warmup. 100 percent equals one core. This is an unpaced offscreen workload, not a prediction of visible-app CPU.",
+                "Retained raster images count distinct layer contents at final settlement; raster layer count includes its root. These observations do not measure painter working-cache allocation or process memory."
             ])
         let url = URL(fileURLWithPath: output)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(report).write(to: url, options: .atomic)
         print("Report: \(url.path)")
+    }
+
+    private static func processCPUSeconds() -> Double {
+        var usage = rusage()
+        precondition(getrusage(RUSAGE_SELF, &usage) == 0, "Unable to measure benchmark process CPU")
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+            + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
     }
 
     private static func layerCount(_ layer: CALayer) -> Int {

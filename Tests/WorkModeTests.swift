@@ -443,7 +443,45 @@ enum WorkModeTests {
         layoutCanvas.perform(actionID: "work:start")
         check(nativeHost.subviews.compactMap { $0 as? NSButton }.filter { !$0.isHidden }.count == 2,
               "Starting immediately removes hidden configuration buttons from the accessibility tree")
+        layoutCanvas.perform(actionID: "work:reset")
+        _ = NSApplication.shared
+        let nativeWindow = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 440, height: 440),
+                                    styleMask: .borderless, backing: .buffered, defer: false)
+        nativeWindow.isReleasedWhenClosed = false; nativeWindow.contentView = nativeHost
+        layoutCanvas.perform(actionID: "work:custom")
+        let durationSurface = nativeHost.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+        let durationText = durationSurface.textView
+        check(nativeWindow.firstResponder === durationText && !nativeInteraction.isInputLocked
+              && durationSurface.artwork.superlayer === layoutCanvas.layer,
+              "Custom countdown uses native TextKit in the HUD plane while allowing pointer tilt")
+        let oldDuration = layoutController.snapshot.duration
+        durationText.string = "invalid"
+        check(!nativeInteraction.finishEditing() && durationSurface.superview != nil
+              && nativeWindow.firstResponder === durationText && layoutController.snapshot.duration == oldDuration,
+              "Invalid duration retains the same focused editor without replacing the configured timer")
+        durationText.string = "12:34"
+        check(nativeInteraction.textView(durationText, doCommandBy: #selector(NSResponder.insertTab(_:)))
+              && layoutController.snapshot.duration == 754 && durationSurface.superview == nil,
+              "Tab commits the custom duration through native text command routing")
+        layoutCanvas.perform(actionID: "work:custom")
+        let cancelledDuration = nativeHost.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+        cancelledDuration.textView.string = "5"
+        check(nativeInteraction.textView(cancelledDuration.textView, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+              && layoutController.snapshot.duration == 754 && cancelledDuration.superview == nil,
+              "Escape cancels duration text and preserves the prior timer")
+        layoutCanvas.perform(actionID: "work:custom")
+        let focusDuration = nativeHost.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+        focusDuration.textView.string = "7:08"
+        nativeWindow.makeFirstResponder(nil)
+        nativeInteraction.textDidEndEditing(Notification(name: NSText.didEndEditingNotification, object: focusDuration.textView))
+        let commitDeadline = Date().addingTimeInterval(0.75)
+        while focusDuration.superview != nil && Date() < commitDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        check(focusDuration.superview == nil && layoutController.snapshot.duration == 428,
+              "A valid custom duration commits after native focus leaves the editor")
         nativeInteraction.deactivate()
+        nativeWindow.close()
         check(nativeHost.subviews.allSatisfy(\.isHidden), "Closing the interaction hides every native control")
         layoutCanvas.deactivate(); layoutController.shutdown()
 

@@ -420,7 +420,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
         // graph paths while entering Apps only delayed its handoff animation.
         if isShowingApps {
             TelemetryArtwork.withoutActions {
-                heading.string = HUDModule.activityMonitor.title
+                heading.string = HUDSectionHeading.text(HUDModule.activityMonitor.title)
                 heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
                 renderApps(); applyRenderScaleIfNeeded()
             }
@@ -436,7 +436,7 @@ final class ActivityMonitorCanvas: NSObject, HUDModuleContentFactory {
         let upload = history.map(\.uploadBytesPerSecond), download = history.map(\.downloadBytesPerSecond)
         let read = history.map(\.diskReadBytesPerSecond), write = history.map(\.diskWriteBytesPerSecond)
         TelemetryArtwork.withoutActions {
-            heading.string = HUDModule.activityMonitor.title; heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
+            heading.string = HUDSectionHeading.text(HUDModule.activityMonitor.title); heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
             subtitle.string = ""; subtitle.isHidden = true; footer.string = ""; footer.isHidden = true
             renderTabs()
             subtitle.foregroundColor = TelemetryArtwork.muted(dark).cgColor

@@ -1,1 +1,2 @@
 "NSAudioCaptureUsageDescription" = "EndfieldHUD는 사용자가 활성화한 앱의 음량을 조절하기 위해 해당 앱의 오디오를 캡처합니다. 오디오는 메모리에서 처리되며 저장되지 않습니다.";
+"NSAppleEventsUsageDescription" = "Music 또는 Spotify에 연결하면 EndfieldHUD가 해당 플레이어의 곡 정보를 읽고 재생을 제어합니다.";

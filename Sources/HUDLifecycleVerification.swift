@@ -177,12 +177,12 @@ enum HUDLifecycleVerification {
                 let image = try source.renderedImageForVerification()
                 check(image.width > 0 && image.height > 0, "The displayed original menu produces an actual Metal drawable")
             } catch { fail("Source drawable verification failed: \(error)") }
-            guard let point = source.desktopPointForVerification(target: .module(.power)),
+            guard let point = source.desktopPointForVerification(target: .module(.notes)),
                   let host = source.superview as? SystemHUDView else {
-                fail("A visible projected Power button is required for input verification")
+                fail("A visible projected Notes button is required for input verification")
             }
             clickHUD(at: host.convert(point, from: source))
-            check(overlay.systemPhase == .open && overlay.systemSelectedModule == .power
+            check(overlay.systemPhase == .open && overlay.systemSelectedModule == .notes
                   && !overlay.systemQuitConfirmationVisibleForVerification,
                   "An active source card routes to its module without being treated as an outside click")
             guard let profilePoint = source.desktopProfilePointForVerification else {
@@ -504,6 +504,14 @@ enum HUDLifecycleVerification {
             window.resetCursorRects()
             check(probe.cursorResetCount > resets && source.sourceCursorOwnedForVerification,
                   "A native cursor-region rebuild restores Endfield after AppKit finishes resetting views")
+            // NSApplication can overwrite the visible cursor after the window
+            // dispatch/reset method has already returned. This deliberately
+            // happens after all synchronous reconciliation above.
+            NSCursor.arrow.set()
+            DispatchQueue.main.async { [self] in
+                check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
+                      "Deferred event-driven reconciliation repairs a late AppKit cursor reset")
+            }
             // Let pending layout and tracking updates settle before measuring
             // idle ownership. No source cursor handler is called by this probe.
             later(0.25) { [self] in

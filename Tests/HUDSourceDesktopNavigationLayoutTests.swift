@@ -113,6 +113,50 @@ enum HUDSourceDesktopNavigationLayoutTests {
             let sourceLayout = HUDSourceWatchLayout(document: document)
             let stablePose = try document.animation.pose(entranceTime: document.animation.entrance.lastKeyTime,
                 ambientTime: nil, exitTime: nil, canvasResolution: SIMD2(2400, 1350))
+            // Regression: adding a second app first crosses the eighteen-slot
+            // source pool. Its old Group9 -> Group1 X wrap altered Y/Z through
+            // the world-space slant writer; an odd final row also changed
+            // columns depending on the physical group's alignment setting.
+            let cameraModel = try HUDSourceWatchCamera(runtimeRoot: document.runtimeRoot)
+            let screenSize = SIMD2<Double>(1728, 1080)
+            for pointer in [screenSize / 2, .zero, screenSize] {
+                let rotation = try HUDSourceWatchCamera.quaternion(eulerDegrees:
+                    cameraModel.gyro.targetEuler(mouseUnity: pointer, screenSize: screenSize))
+                let camera = try cameraModel.frame(screenSize: screenSize, localRotation: rotation)
+                var reference: [Int: SIMD4<Double>] = [:]
+                var viewportReference: HUDSourceRect?
+                for count in [18, 17, 19, 20, 21, 22, 35, 36, 37, 1000] {
+                    let navigation = try HUDSourceDesktopNavigationLayout(document: document, entryCount: count)
+                    var pose = stablePose
+                    let report = try sourceLayout.apply(to: &pose, verticalNormalizedPosition: 0,
+                        worldRoot: camera.worldRoot, desktopNavigation: navigation)
+                    let nodes = try document.scene.resolve(overrides: pose.transforms)
+                    let viewport = nodes[report.scroll!.viewportID]!
+                    let inverse = simd_inverse(viewport.worldMatrix)
+                    if viewportReference == nil { viewportReference = viewport.rect }
+                    check(viewport.rect == viewportReference,
+                          "Extra shortcuts extend content without enlarging the clipping and scroll viewport")
+                    let sample = navigation.sample(normalizedPosition: 0)
+                    let lastRow = (count - 1) / 2
+                    for (button, entry) in sample.assignments where entry % 2 == 0 && entry / 2 >= lastRow - 3 {
+                        let node = nodes[button]!, rect = node.rect!, center = rect.origin + rect.size / 2
+                        let point = simd_mul(simd_mul(inverse, node.worldMatrix), SIMD4<Double>(center.x, center.y, 0, 1))
+                        let distanceFromEnd = lastRow - entry / 2
+                        if count == 18 { reference[distanceFromEnd] = point }
+                        check(simd_length(point - reference[distanceFromEnd]!) < 0.02,
+                              "Visible trailing rows share the same curved geometry across every pool wrap and odd/even count")
+                        check(viewport.rect!.contains(SIMD2(point.x, point.y)),
+                              "The final app rows and Add App remain inside the unchanged authored viewport")
+                        var ancestor = node.node.parentID
+                        var foundMask = false
+                        while let id = ancestor {
+                            if id == report.scroll!.viewportID && document.component("RectMask2D", on: id) != nil { foundMask = true }
+                            ancestor = document.scene.node(id)?.parentID
+                        }
+                        check(foundMask, "Every recycled slot keeps the original mask ancestry for drawing and raycasts")
+                    }
+                }
+            }
             for count in [8, 18, 1000] {
                 let navigation = try HUDSourceDesktopNavigationLayout(document: document, entryCount: count)
                 for endpoint in [0.0, 1.0] {

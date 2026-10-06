@@ -16,6 +16,18 @@ enum EventLogCanvasTests {
         check(empty.bounds == CGRect(x: 0, y: 0, width: 400, height: 334) && canvas.itemCount == 0, "Event Log uses the compact common content frame")
         check(canvas.accessibleActions.count == 8 && !canvas.accessibleActions.contains { $0.id == "eventLog:clear" }, "Empty log offers categories without a clear action")
         check(!canvas.mouseDown(at: CGPoint(x: -1, y: 100)) && !canvas.mouseDown(at: CGPoint(x: CGFloat.nan, y: 100)), "Invalid and external clicks are ignored")
+        let legacyStore = SystemEventLog()
+        legacyStore.record(kind: .overlayOpened)
+        legacyStore.record(kind: .moduleOpened, metadata: ["module": "notes"])
+        legacyStore.record(kind: .appShortcutOpened, metadata: ["app": "Notes"])
+        let legacyCanvas = EventLogCanvas(store: legacyStore, reduceMotion: { true })
+        legacyCanvas.activate()
+        check(legacyCanvas.itemCount == 1 && legacyCanvas.filteredCount == 1 && legacyStore.events.count == 3,
+              "Legacy navigation is hidden without deleting saved records or hiding app launches")
+        legacyCanvas.perform(actionID: "eventLog:category:navigation")
+        check(legacyCanvas.filteredCount == 1 && legacyCanvas.accessibleActions.contains { $0.label.contains("App shortcut opened") },
+              "Navigation filter and accessibility omit routine opens but preserve app launches")
+        legacyCanvas.deactivate()
         let view = EventLogCanvas(store: store, reduceMotion: { true })
         var changes = 0
         view.onChange = { changes += 1 }
@@ -34,7 +46,7 @@ enum EventLogCanvasTests {
         check(!view.scroll(at: CGPoint(x: 25, y: 20), delta: 50) && !view.scroll(at: CGPoint(x: 25, y: 120), delta: .nan), "Header and invalid deltas do not scroll")
         view.scrollBy(125)
         let anchor = rowActions()[0].id, offset = view.scrollOffset
-        store.record(kind: .overlayOpened)
+        store.record(kind: .appShortcutOpened)
         check(rowActions()[0].id == anchor && view.scrollOffset == offset + 55, "New arrivals preserve the currently viewed row")
         view.scrollBy(CGFloat.greatestFiniteMagnitude)
         check(rowActions().last?.id.hasSuffix(store.events.last!.id.uuidString) == true, "Scrolling reaches the oldest event")
@@ -61,7 +73,7 @@ enum EventLogCanvasTests {
         view.updateRenderScale(3)
         check(light === persistent && view.itemCount == 21, "Theme, language and scale keep the retained canvas and data")
         check(view.accessibleActions.contains { $0.id == "eventLog:category:clipboard" && $0.label == "Clipboard" }, "Category controls stay English in Chinese app mode")
-        check(rowActions().first?.label.contains("Overlay opened") == true, "Event accessibility labels remain English")
+        check(rowActions().first?.label.contains("App shortcut opened") == true, "Event accessibility labels remain English")
         func animations(_ layer: CALayer) -> Int { (layer.animationKeys()?.count ?? 0) + (layer.sublayers ?? []).reduce(0) { $0 + animations($1) } }
         check(animations(view.layer) == 0, "The log adds no idle animation or polling")
         let activeChanges = changes
@@ -82,7 +94,7 @@ enum EventLogCanvasTests {
         var locks = 0
         interaction.onLock = { locks += 1 }
         interaction.project = { $0.offsetBy(dx: 10, dy: 20) }
-        for _ in 0..<12 { interactionStore.record(kind: .moduleOpened, metadata: ["module": "notes"]) }
+        for _ in 0..<12 { interactionStore.record(kind: .appShortcutOpened, metadata: ["app": "Notes"]) }
         interaction.setActive(true)
         check(host.subviews.filter { !$0.isHidden }.count == interactionCanvas.accessibleActions.count, "Every visible control receives a native accessibility button")
         check(host.subviews.allSatisfy { $0.frame.minX >= 22 }, "Native controls use projected coordinates")
@@ -105,7 +117,7 @@ enum EventLogCanvasTests {
         interaction.deactivate()
         var reducedFeedback = false
         let feedbackStore = SystemEventLog()
-        feedbackStore.record(kind: .overlayOpened)
+        feedbackStore.record(kind: .appShortcutOpened)
         let feedbackCanvas = EventLogCanvas(store: feedbackStore, reduceMotion: { reducedFeedback })
         feedbackCanvas.activate()
         func feedbackLayers(_ root: CALayer) -> [CALayer] {
@@ -130,7 +142,7 @@ enum EventLogCanvasTests {
             && ($0 as? CAPropertyAnimation)?.keyPath != "opacity" }, "Event action effects are finite and never blink or crossfade")
         reducedFeedback = true; feedbackCanvas.updateRenderScale(2)
         check(feedbackTracks().isEmpty, "Reduce Motion settles clear and row effects even without a scale change")
-        feedbackStore.record(kind: .overlayOpened); feedbackCanvas.perform(actionID: "eventLog:clear")
+        feedbackStore.record(kind: .appShortcutOpened); feedbackCanvas.perform(actionID: "eventLog:clear")
         check(feedbackTracks().isEmpty, "Reduced Motion keeps clear confirmation immediate")
         reducedFeedback = false; _ = feedbackCanvas.cancelConfirmation(); feedbackCanvas.deactivate()
         check(feedbackTracks().isEmpty, "Hiding Event Log cancels every clear and selection effect")

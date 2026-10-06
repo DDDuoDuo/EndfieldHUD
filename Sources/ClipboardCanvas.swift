@@ -377,7 +377,7 @@ final class ClipboardCanvas: NSObject, HUDModuleContentFactory {
     }
 
     private func repaint() {
-        heading.string = HUDModule.clipboard.title
+        heading.string = HUDSectionHeading.text(HUDModule.clipboard.title)
         heading.foregroundColor = primary.cgColor
         heading.contentsScale = HUDRenderScale.contentScale(for: heading, baseScale: scale)
         status.string = accessibilityStatus

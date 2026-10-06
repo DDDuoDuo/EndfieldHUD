@@ -21,13 +21,13 @@ shell and the existing feature controllers.
 | Central modules and confirmations | Native feature planes follow the same source tilt and projection. Quit and layout-preview recovery use the central source projection with safe placement; their visible bounds, pointer hits and accessibility bounds agree. |
 | Pointer and motion | One source playback clock owns shell motion and tilt. Preserve user motion settings and existing editor/drag locks. Opening a dropdown alone does not stop tilt. Desktop rings vary their signed rates per opening, and triangles spin independently; source-reference fixtures retain the authored motion. |
 | HUD cursor | Use the original Endfield cursor throughout opening, the native center and source shell, and closing. Native text editors keep the text-selection cursor; leaving or hiding the HUD restores ownership to AppKit. |
-| Battery notification | Localize the shared popup/HUD title: CHARGE MODE while charging (超充模式 in both Chinese variants), BATTERY MODE otherwise. Both lines follow the live charging state without changing the capsule geometry. |
+| Battery notification | Localize the shared popup/HUD title: CHARGE MODE / 超充模式 when external power is connected, POWER MODE / 电源模式 otherwise. Plug/unplug state drives the title; actual charging remains a separate diagnostic value. Preserve the capsule geometry. |
 | Right-hand list | Trackpad scrolling follows the gesture, with direct finger tracking, up to 144 source pixels of elastic edge travel (96 for wheel input), capped at 24% of the scroll range, and a stronger finite rebound. Disabled limit arrows remain dim and reject further scrolling. Recycled rows preserve each shortcut's identity, icon and custom name. |
 | Profile artwork | Retain the dark industrial default, readable right-aligned authority/MAX labels, and source decoration. Imported backgrounds stay cropped and darkened within the rounded photo panel. A saved card color remains independent of global theme recoloring. Both the compact card and profile editor use the same selected source avatar frame. |
 | Map | Enlarge the fixed-resolution map plane until the two lower controls overlap it. Preserve the original button silhouettes in front and feather the circular edge. Left-click dismisses coordinates; right-clicking a pin deletes it. |
 | Section changes | Use one monotonic 300 ms transition without registration jitter. Notes workspace follows the actual section swap; pinned notes remain visible. Prepared File Shelf and Add App contents are reused on activation. |
 | Bottom wordmark | Clicking ENDFIELD INDUSTRIES triggers a brief, local flicker on the existing render clock. Reduce Motion leaves it steady. |
-| Terminology | Use RAM for user-facing memory labels in all four languages; preserve stored identifiers and metric sampling. |
+| Terminology | Use RAM for user-facing memory labels in all five languages; preserve stored identifiers and metric sampling. |
 | Feature scope | Preserve desktop actions, module identities and saved data. Only explicitly requested interaction/copy refinements and the wordmark Easter egg extend the existing contract; no migration is required. |
 
 Saved scale and position apply once. Native editors, notes, confirmations and
@@ -125,3 +125,38 @@ samples and input fingerprints. These results apply to their measured build,
 not automatically to later visual changes. Source frame submissions are not
 measured display FPS. This design contract makes no unverified performance
 claim.
+
+## v1.2.0 account and module contract — 2026-10-05
+
+The Chinese requirements remain verbatim in [the roadmap](implementation-roadmap.txt).
+New modules share the retained shell, source tilt, bounded secondary menus,
+control feedback and existing clocks. Archive, Reader, Media Assembly, Projection,
+Calendar, Now Playing and OrbiPom preserve their documented lifecycle limits.
+Menus consume an outside click before a control behind them can activate.
+
+The right navigation is row-major: Notes / Temporary File Shelf; Clipboard /
+Archive; Media Assembly / Minigame; Now Playing / Volume; Projection / Reader;
+Work Mode / Calendar; Map / Event Log; Personal ID / Account binding; Battery /
+Add shortcut. Saved app shortcuts follow Battery, with Add App always last.
+Projection uses the original 塔晶集换 icon, Event Log uses 问卷, and Personal ID
+uses 好友 from the original game resources.
+
+The sanity wallet mirrors the ENDFIELDHUD heading and retains the original
+HarmonyOS Sans SC Medium numerals. Hover gives neutral grey feedback. Clicking
+opens the dark two-row recovery menu shown in the supplied 13.09.24.02 reference:
+下次回复 and 全部回复, with an explicit refresh action. It shares the wallet's tilt
+and has a finite reveal/dismiss animation; Escape and outside click dismiss it.
+Native accessibility actions expose the same values and refresh availability.
+
+Recovery advances locally from timestamped snapshots: 432 seconds per Endfield
+point and 360 seconds per Arknights point. The existing visible HUD clock checks
+for an API refresh every ten minutes while account/sanity content is relevant;
+fresh data is reused when reopening. Manual refresh is bounded, closing cancels
+reads, and no account timer runs in the background. In-game spending and bonuses
+become visible at the next API refresh. Missing recovery timestamps stay unknown.
+See [account linking](account-linking.md) for regional support and verification.
+
+Unopened media/minigame/reader/calendar panels defer artwork, and Media Assembly
+creates its video layer only for an actual player. These construction changes do
+not alter the authored motion or animation cadence. Performance claims require
+measurements from the current build, separately from older baselines.

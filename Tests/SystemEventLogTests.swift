@@ -9,6 +9,13 @@ enum SystemEventLogTests {
         let oldLanguage = L10n.language
         L10n.language = .english
         defer { L10n.language = oldLanguage }
+        let accounts = SystemEventLog(capacity: 8)
+        for action in ["linked", "unlinked", "synced", "settings"] {
+            accounts.record(kind: .accountAction, metadata: ["action": action, "cred": "PRIVATE-CREDENTIAL", "uid": "PRIVATE-UID", "name": "PRIVATE-NAME", "url": "https://private.example"])
+            check(accounts.events.first?.metadata == ["action": action], "Account events retain only a closed action name")
+        }
+        accounts.record(kind: .accountAction, metadata: ["action": "PRIVATE-CREDENTIAL"])
+        check(accounts.events.first?.metadata.isEmpty == true, "Unrecognized account action strings cannot enter the log")
         let store = SystemEventLog(capacity: 3)
         var notifications = 0
         let observer = store.observe { notifications += 1 }
@@ -45,6 +52,35 @@ enum SystemEventLogTests {
         check(store.events[0].detail == "On battery · 55%", "Power details preserve normalized state and percentage")
         store.record(kind: .shelfCleared, metadata: ["count": "12"])
         check(store.events[0].detail == "12 items", "Shelf clear records only count")
+        let actions = SystemEventLog()
+        actions.record(kind: .noteAction, metadata: ["action": "formattedText", "text": "private", "path": "/secret", "color": "private"])
+        check(actions.events[0].metadata == ["action": "formattedText"], "Note events exclude contents and file references")
+        actions.record(kind: .playbackAction, metadata: ["action": "seek", "source": "spotify", "title": "private", "artist": "private", "position": "50"])
+        check(actions.events[0].metadata == ["action": "seek", "source": "spotify"], "Playback events exclude listening history and position")
+        actions.record(kind: .playbackAction, metadata: ["action": "private", "source": "private.app"])
+        check(actions.events[0].metadata.isEmpty, "Playback actions and sources use closed vocabularies")
+        actions.record(kind: .noteAction, metadata: ["action": "private"])
+        check(actions.events[0].metadata.isEmpty, "Note actions use a closed vocabulary")
+        for action in ["drawingEdited", "erased", "brushChanged", "backgroundChanged", "mediaAdded", "mediaRemoved", "cleared"] {
+            actions.record(kind: .projectionAction, metadata: ["action": action, "path": "/private/file", "text": "private", "points": "private"])
+            check(actions.events[0].metadata == ["action": action] && actions.events[0].category == .display
+                  && !actions.events[0].detail.isEmpty, "Projection events keep only the approved action")
+        }
+        actions.record(kind: .projectionAction, metadata: ["action": "private", "source": "private"])
+        check(actions.events[0].metadata.isEmpty, "Projection rejects unknown actions and media metadata")
+        for (kind, allowed) in [(SystemEventKind.archiveAction, ["created", "edited", "deleted", "mediaAdded", "mediaRemoved", "categoryCreated", "categoryChanged", "categoryDeleted"]),
+                                 (.readerAction, ["imported", "deleted", "bookmarked", "progress", "settings"]),
+                                 (.mediaAssemblyAction, ["imported", "edited", "exported"]),
+                                 (.calendarAction, ["created", "edited", "deleted"])] {
+            for action in allowed {
+                actions.record(kind: kind, metadata: ["action": action, "body": "secret", "filename": "diary.txt", "path": "/private/book", "progress": "0.9", "category": "private category", "categoryID": UUID().uuidString])
+                check(actions.events[0].metadata == ["action": action] && actions.events[0].category == (kind == .calendarAction ? .work : .files),
+                      "Document actions never log text, reading position or source filenames")
+                check(!actions.events[0].detail.isEmpty, "Document action has a readable description")
+            }
+            actions.record(kind: kind, metadata: ["action": "opened", "text": "secret"])
+            check(actions.events[0].metadata.isEmpty, "Document events reject navigation and arbitrary content")
+        }
         let ids = store.events.map(\.id)
         L10n.language = .simplifiedChinese
         check(store.events[0].title == "File shelf cleared" && store.events[0].detail == "12 items" && store.events[0].category.title == "Files", "Log entries remain English in Chinese app mode")
@@ -67,7 +103,51 @@ enum SystemEventLogTests {
         shortcutLog.record(kind: .appShortcutOpened, metadata: ["app": "/private/TextEdit.app"])
         check(shortcutLog.events[0].metadata.isEmpty, "App shortcut log does not retain paths as display names")
 
+        let settingsLog = SystemEventLog()
+        for (field, values) in [("clockStyle", HUDClockStyle.allCases.map(\.rawValue)),
+                                 ("centerLogo", HUDCenterLogo.allCases.map(\.rawValue) + ["customImported"]),
+                                 ("alertMetric", HUDChargeMetric.allCases.map(\.rawValue))] {
+            for value in values {
+                settingsLog.record(kind: .displaySettingsChanged, metadata: ["field": field, "value": value,
+                    "revision": UUID().uuidString, "filename": "/private/image.png", "name": "Private Profile"])
+                check(settingsLog.events[0].metadata == ["field": field, "value": value]
+                    && !settingsLog.events[0].detail.isEmpty && settingsLog.events[0].category == .display,
+                      "Settings log retains only a recognized field and its allowed English value")
+            }
+        }
+        for metadata in [["field": "centerLogoRevision", "value": UUID().uuidString],
+                         ["field": "centerLogo", "value": "/private/image.png"],
+                         ["field": "clockStyle", "value": "customImported"],
+                         ["field": "alertMetric", "value": "User secret"], ["value": "cpu"]] {
+            settingsLog.record(kind: .displaySettingsChanged, metadata: metadata)
+            check(settingsLog.events[0].metadata.isEmpty && settingsLog.events[0].detail.isEmpty,
+                  "Unknown keys, cross-field values, paths and content cannot enter settings metadata")
+        }
+        for target in ["background", "thumbnail", "both"] {
+            settingsLog.record(kind: .profileCropChanged, metadata: ["target": target, "zoom": "12.5", "name": "Private"])
+            check(settingsLog.events[0].metadata == ["target": target] && !settingsLog.events[0].detail.isEmpty,
+                  "Profile crop events identify the committed target without user content or zoom coordinates")
+        }
+        settingsLog.record(kind: .profileCropChanged, metadata: ["target": "Private Profile", "path": "/private"])
+        check(settingsLog.events[0].metadata.isEmpty, "Profile crop target is a closed vocabulary")
+        L10n.language = .simplifiedChinese
+        settingsLog.record(kind: .displaySettingsChanged, metadata: ["field": "alertMetric", "value": "ram"])
+        check(settingsLog.events[0].title == "Display setting changed" && settingsLog.events[0].detail == "Charge metric · RAM",
+              "New settings entries remain English under Chinese app localization")
+        L10n.language = .english
+
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("EndfieldEventLogTests-\(UUID().uuidString)", isDirectory: true)
+        for style in ["yellow", "green", "player"] {
+            settingsLog.record(kind: .mapPinStyleChanged, metadata: ["style": style, "x": "114", "y": "22", "id": UUID().uuidString])
+            check(settingsLog.events[0].metadata == ["style": style] && !settingsLog.events[0].detail.isEmpty,
+                  "Map style records retain a closed style name without pin identity or location")
+        }
+        settingsLog.record(kind: .mapPinStyleChanged, metadata: ["style": "/private/map.json"])
+        check(settingsLog.events[0].metadata.isEmpty && settingsLog.events[0].detail.isEmpty,
+              "Unknown map style strings cannot leak user content")
+        settingsLog.record(kind: .mapRecentered, metadata: ["x": "114", "y": "22", "zoom": "3"])
+        check(settingsLog.events[0].metadata.isEmpty && settingsLog.events[0].detail.isEmpty,
+              "Recentering logs only the action, never camera or location data")
         defer { try? FileManager.default.removeItem(at: root) }
         do {
             let directory = root.appendingPathComponent("persisted", isDirectory: true)
@@ -75,6 +155,10 @@ enum SystemEventLogTests {
             let persisted = SystemEventLog(directory: directory, capacity: 10)
             persisted.record(kind: .moduleOpened, metadata: ["module": "eventLog"])
             persisted.record(kind: .workCompleted, metadata: ["kind": "stopwatch", "seconds": "123"])
+            persisted.record(kind: .displaySettingsChanged, metadata: ["field": "centerLogo", "value": "customImported"])
+            persisted.record(kind: .profileCropChanged, metadata: ["target": "both"])
+            persisted.record(kind: .mapPinStyleChanged, metadata: ["style": "player"])
+            persisted.record(kind: .mapRecentered)
             let savedIDs = persisted.events.map(\.id)
             check(persisted.flushSynchronously(), "Synchronous termination flush saves an atomic document")
             let savedDate = Date(timeIntervalSince1970: 1_600_000_000)

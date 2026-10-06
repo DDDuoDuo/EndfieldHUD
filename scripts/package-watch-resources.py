@@ -180,6 +180,19 @@ def runtime_files(root, profile):
     for name in ("NOTICE.txt", "render-color-policy.json",
                  "Cursor/player-default-icon_mouse.png", "Cursor/player-default.json"):
         add(name)
+    # The native map uses only these original player-marker images. Retain
+    # their exact bytes without packaging the game's Domain scene or atlases.
+    for name in ("sprites/icon_char---2308601083109874541.png",
+                 "sprites/deco_readio_mask--2444265073359569955.png",
+                 "textures/T_fx_mask_02_M--4275033587688225551.png"):
+        add("Scene/Domain/" + name)
+    # Native account gauge reuses three tiny original MoneyCell textures.
+    for name in ("item_ap--2524b69d--8210737671276829403.png",
+                 "bg_walletbar_1--cfe92272--8572312840272182184.png",
+                 "bg_walletbar_2--cfe92272--7683125525266349835.png"):
+        add("Scene/sprites/source-textures/" + name)
+    # Thirteen exact wallet glyphs retain the game font without a full atlas.
+    add("Scene/account-numerals.json")
     if profile == "reference":
         add("materials.json")
     # These are the complete shader families used by the runtime's variant

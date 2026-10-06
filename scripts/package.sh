@@ -53,7 +53,7 @@ GENERATED_FILES=("$(basename "$ARCHIVE")")
 # cannot accidentally enter the source download.
 SOURCE_ROOT="$PACKAGE_STAGE/EndfieldHUD"
 mkdir -p "$SOURCE_ROOT"
-SOURCE_PATHS=(Sources Tests Resources scripts .github README.md README.zh-CN.md README.zh-TW.md README.ja.md CREDITS.md LICENSE DEVELOPMENT.md TESTING.md .gitignore)
+SOURCE_PATHS=(Sources Tests Resources ThirdParty scripts .github README.md README.zh-CN.md README.zh-TW.md README.ja.md CREDITS.md LICENSE DEVELOPMENT.md TESTING.md .gitignore)
 if [ -d "$PROJECT_DIR/docs" ]; then SOURCE_PATHS+=(docs); fi
 if [ -d "$PROJECT_DIR/updates" ]; then SOURCE_PATHS+=(updates); fi
 COPYFILE_DISABLE=1 tar -C "$PROJECT_DIR" \

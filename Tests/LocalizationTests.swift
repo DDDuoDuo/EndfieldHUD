@@ -106,6 +106,16 @@ enum LocalizationTests {
         check(textLayers(shelf.layer).contains { ($0.string as? String) == "檔案暫存架" && !$0.isWrapped },
               "Switching back to Chinese restores its compact single-line layout")
 
+        // The supplied official OrbiPom locales use SP / 技力 / 스킬 게이지.
+        let gameSkillTerms: [(AppLanguage, String)] = [(.english, "SP"), (.simplifiedChinese, "技力"),
+            (.traditionalChinese, "技力"), (.japanese, "SP"), (.korean, "스킬 게이지")]
+        for (language, expected) in gameSkillTerms {
+            check(L10n.text("SP", "技力", language: language) == expected,
+                  "OrbiPom uses the original game's skill resource term in \(language)")
+            check(!L10n.text("Rules", "游戏规则", language: language).isEmpty,
+                  "OrbiPom rules header is localized in \(language)")
+        }
+
         let count = 37, total = 128
         check(L10n.text("\(count) / \(total) items · Click to copy", "\(count) / \(total) 项 · 点击复制", language: .japanese)
               == "37 / 128件 · クリックでコピー", "Multiple interpolated values do not change the translation key")

@@ -439,7 +439,7 @@ private struct HUDPlaceholderContentFactory: HUDModuleContentFactory {
         func rect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) { p.addRect(CGRect(x: x, y: y, width: w, height: h)) }
         func circle(_ x: CGFloat, _ y: CGFloat, _ r: CGFloat) { p.addEllipse(in: CGRect(x: x-r, y: y-r, width: r*2, height: r*2)) }
         switch module {
-        case .notes:
+        case .notes, .reader, .archive, .mediaAssembly, .calendar:
             line([CGPoint(x: 45,y: 5), CGPoint(x: 116,y: 5), CGPoint(x: 139,y: 28), CGPoint(x: 139,y: 130), CGPoint(x: 45,y: 130), CGPoint(x: 45,y: 5)])
             line([CGPoint(x: 116,y: 5), CGPoint(x: 116,y: 28), CGPoint(x: 139,y: 28)])
             for y: CGFloat in [54, 75, 96] { line([CGPoint(x: 63,y: y), CGPoint(x: 118,y: y)]) }
@@ -452,6 +452,9 @@ private struct HUDPlaceholderContentFactory: HUDModuleContentFactory {
         case .volume:
             line([CGPoint(x: 20,y: 51), CGPoint(x: 49,y: 51), CGPoint(x: 81,y: 24), CGPoint(x: 81,y: 114), CGPoint(x: 49,y: 87), CGPoint(x: 20,y: 87), CGPoint(x: 20,y: 51)])
             for r: CGFloat in [30, 53, 76] { p.addArc(center: CGPoint(x: 80,y:69), radius: r, startAngle: -.pi/3, endAngle: .pi/3, clockwise: false) }
+        case .nowPlaying:
+            line([CGPoint(x: 60,y: 112), CGPoint(x: 60,y: 30), CGPoint(x: 135,y: 12), CGPoint(x: 135,y: 94)])
+            circle(48,112,12); circle(123,94,12)
         case .workMode:
             rect(19, 42, 142, 83); rect(63, 18, 54, 24)
             line([CGPoint(x: 19,y:70), CGPoint(x:75,y:85), CGPoint(x:105,y:85), CGPoint(x:161,y:70)])
@@ -470,7 +473,7 @@ private struct HUDPlaceholderContentFactory: HUDModuleContentFactory {
             rect(49, 29, 82, 80); rect(65,45,50,48)
             for x: CGFloat in [62, 90, 118] { line([CGPoint(x:x,y:12),CGPoint(x:x,y:29)]); line([CGPoint(x:x,y:109),CGPoint(x:x,y:126)]) }
             for y: CGFloat in [41, 69, 97] { line([CGPoint(x:32,y:y),CGPoint(x:49,y:y)]); line([CGPoint(x:131,y:y),CGPoint(x:148,y:y)]) }
-        case .display:
+        case .display, .projection:
             rect(13, 15, 154, 95); rect(22,24,136,71)
             line([CGPoint(x:90,y:110), CGPoint(x:90,y:130)]); line([CGPoint(x:56,y:130), CGPoint(x:124,y:130)])
         case .hotkeys:
@@ -491,6 +494,10 @@ private struct HUDPlaceholderContentFactory: HUDModuleContentFactory {
         case .activityMonitor:
             rect(9, 19, 162, 107)
             line([CGPoint(x:24,y:78),CGPoint(x:49,y:78),CGPoint(x:64,y:48),CGPoint(x:84,y:105),CGPoint(x:107,y:35),CGPoint(x:129,y:78),CGPoint(x:157,y:78)])
+        case .account:
+            circle(90, 40, 24); rect(48, 82, 84, 44)
+        case .minigame:
+            circle(65,65,35); circle(110,95,25); circle(120,35,18)
         case .profile:
             circle(90, 40, 24); rect(48, 82, 84, 44)
         case .power: break // The real battery screen is injected, never fabricated.

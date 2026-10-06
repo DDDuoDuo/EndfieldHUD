@@ -182,6 +182,70 @@
       "sourcePage": "https://endfield.wiki.gg/wiki/File:STR.png",
       "originalURL": "https://endfield.wiki.gg/images/STR.png?6062bd&format=original",
       "sha256": "9ab5df33dee05e593471c960b0a6923ce2edd3d1b1b98dc726f1d2a0d9e5581f"
+    },
+    {
+      "file": "Database_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/wiki_icon--c133dc49---5805975195923905418.png",
+      "sha256": "031d7b08cfff002960b6e0b0a9423a6ad6d4c9bbf3471edec94c70b7504dea66",
+      "usage": "Clipboard; original Database / 百科 icon"
+    },
+    {
+      "file": "Reader_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/adventurebook_icon--bca567c2--8657026731571248504.png",
+      "sha256": "e9fe4b14c8559918a203f3632e5ed475b484839f1e1ff2cfe764f818936288ac",
+      "usage": "E-Reader; original AdventureBook icon"
+    },
+    {
+      "file": "MediaAssembly_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/icon_equipmake--f8fe5561---8647726240077447638.png",
+      "sha256": "1a7804039a4fb7a94bae9dc141ee82bf910b67b438e57d67f6f48e4d15f8e2d5",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07"
+    },
+    {
+      "file": "Calendar_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/ui_main_menu_date_btn--4381ca14---7360937759304452715.png",
+      "sha256": "f51584c31ae684bf6b79ab811ce678b6c15927ccda85ab9c2af6c4ef76f70efb",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07"
+    },
+    {
+      "file": "Minigame_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/game_tool_icon--0125d718--435199242781199616.png",
+      "sha256": "2be87ff8d044b66e162fea51ab002442c227b32a2dcc3c732ada76521f775fbd"
+    },
+    {
+      "file": "Projection_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/shop_star_icon--374e04ec---2980215276493406813.png",
+      "sourceSpriteID": "CAB-374e04ec5b6d9bf57a3de56b532909ad:-9101546358120055389",
+      "sha256": "d21e566f8b8b445f986081744c102428d3dc284f12ba1985cfdb91b6c50c3602",
+      "usage": "Projection; original 塔晶集换 / StarShop icon"
+    },
+    {
+      "file": "Questionnaire_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/questionnaire_icon--d6748f2c---8845912290742062386.png",
+      "sourceSpriteID": "CAB-d6748f2cd9e8c7861aa3cc644b9b7883:4659663519583613646",
+      "sha256": "262f16f035f7a03f00f79668b9c09175e65112f9c8763167c09ef29024ecb2c4",
+      "usage": "Event Log; original 问卷 / Questionnaire icon"
+    },
+    {
+      "file": "Friends_Icon.png",
+      "sourceBranch": "codex/endfield-watch-motion",
+      "sourceCommit": "90e3a09bdd3103caebe6acb060398d394555ea07",
+      "sourcePath": "Resources/WatchSource/Scene/sprites/source-textures/ui_main_menu_friend_btn--d3365c46---5453960262138283391.png",
+      "sourceSpriteID": "CAB-d3365c4685034d1d715b497746f5d7f1:-2418269045600896383",
+      "sha256": "71b19707afac7fca8e0e2838cfcddb90ba106279761075297aadd43269e29cd9",
+      "usage": "Personal Profile; original 好友 / Friends icon"
     }
   ]
 }

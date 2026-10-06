@@ -95,6 +95,33 @@ final class HUDFileShelfInteraction: NSObject, NSDraggingSource, QLPreviewPanelD
     func keyDown(_ event: NSEvent) -> Bool {
         guard active, !isDraggingOut, chooser == nil else { return false }
         let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if modifiers.isEmpty || modifiers == [.shift] {
+            let movement: Int?
+            switch event.keyCode {
+            case 123: movement = -1
+            case 124: movement = 1
+            case 125: movement = 2
+            case 126: movement = -2
+            default: movement = nil
+            }
+            if let movement {
+                dragCandidate = nil; onLock?()
+                canvas.selectNext(movement, extending: modifiers.contains(.shift)); return true
+            }
+        }
+        if modifiers.isEmpty {
+            let distance: CGFloat?
+            switch event.keyCode {
+            case 121: distance = FileShelfCanvas.contentRect.height - 40
+            case 116: distance = -FileShelfCanvas.contentRect.height + 40
+            case 115: distance = -CGFloat.greatestFiniteMagnitude
+            case 119: distance = CGFloat.greatestFiniteMagnitude
+            default: distance = nil
+            }
+            if let distance {
+                dragCandidate = nil; onLock?(); canvas.scrollBy(distance); return true
+            }
+        }
         if modifiers.isEmpty && event.keyCode == 49 { canvas.previewSelection(); return true }
         if modifiers.isEmpty && (event.keyCode == 51 || event.keyCode == 117) {
             closePreview(restoreFocus: false)
@@ -381,8 +408,8 @@ final class HUDFileShelfInteraction: NSObject, NSDraggingSource, QLPreviewPanelD
         defer { HUDControlHighlightLayer.requestRefresh(on: host) }
         let actions = canvas.accessibleActions
         let help = canvas.accessibilityStatus ?? L10n.text(
-            "Shift-click selects a range to drag together. Space previews the selected file. Command-R reveals it in Finder. Delete removes only selected shelf references.",
-            "Shift 点击多选并一同拖出。空格键预览所选文件，Command-R 在访达中显示，Delete 仅移除所选暂存架引用。")
+            "Scroll to browse. Arrow keys select; Shift-click or Shift-arrow extends the selection. Space previews. Command-R reveals in Finder. Delete removes only shelf references.",
+            "滚动浏览，方向键选择，Shift 点击或 Shift 加方向键多选。空格键预览，Command-R 在访达中显示，Delete 仅移除暂存架引用。")
         let wanted = Set(actions.map(\.id))
         for id in Array(buttons.keys) where !wanted.contains(id) {
             buttons.removeValue(forKey: id)?.removeFromSuperview()

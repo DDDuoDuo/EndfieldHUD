@@ -20,7 +20,17 @@ def main():
         manifest = package.stage(source, packed)
         package.verify(source, packed)
         assert manifest["runtime_bytes"] < manifest["source_tree_bytes"] / 4
-        assert not (packed / "Scene/Domain").exists()
+        # The native map needs three original marker images, not the full
+        # extracted Domain scene, mesh/atlas collection or scene metadata.
+        marker_files = {
+            "sprites/icon_char---2308601083109874541.png",
+            "sprites/deco_readio_mask--2444265073359569955.png",
+            "textures/T_fx_mask_02_M--4275033587688225551.png",
+        }
+        domain = packed / "Scene/Domain"
+        assert {p.relative_to(domain).as_posix() for p in domain.rglob("*") if p.is_file()} == marker_files
+        for relative in marker_files:
+            assert (domain / relative).read_bytes() == (source / "Scene/Domain" / relative).read_bytes()
         assert not (packed / "Scene/Widgets").exists()
         assert not (packed / "Scene/fonts.json").exists()
         assert not (packed / "Scene/labels.json").exists()

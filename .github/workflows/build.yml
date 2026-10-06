@@ -63,6 +63,15 @@ jobs:
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --app-shortcut-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --work-smoke-test
           build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --event-log-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --batch-two-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --batch34-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --batch34-smoke-test --compact-viewport-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --projection-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --batch6-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --batch-seven-eight-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --minigame-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --account-smoke-test
+          build/EndfieldHUD.app/Contents/MacOS/EndfieldHUD --ui-test --map-interaction-smoke-test
       - name: Verify cached desktop source geometry
         env:
           HUD_BENCHMARK_RESOURCE_APP: build/EndfieldHUD.app

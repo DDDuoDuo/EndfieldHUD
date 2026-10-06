@@ -100,6 +100,17 @@ enum HUDFileShelfInteractionTests {
             check(outgoingGroup.map { $0.standardizedFileURL.resolvingSymlinksInPath() } == urls.map { $0.standardizedFileURL.resolvingSymlinksInPath() },
                   "A receiving app reads the complete ordered selection, including the folder, without copied source contents")
             check(!bridge.isInputLocked, "Mouse-up releases both plain-click and Shift-click pending drag locks")
+            func key(_ code: UInt16, modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+                NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+                    windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
+            }
+            canvas.perform(actionID: "shelf:\(store.items[0].id.uuidString):select")
+            check(bridge.keyDown(key(125, modifiers: [.shift])) && canvas.selectedIDs == Set(store.items.map(\.id)),
+                  "Shift-Down extends the native keyboard selection by one two-column row")
+            check(bridge.keyDown(key(126)) && canvas.selectedID == store.items[0].id && canvas.selectedIDs.count == 1,
+                  "Up returns keyboard selection to the earlier grid row")
+            check(bridge.keyDown(key(121)) && bridge.keyDown(key(115)) && canvas.scrollOffset == 0,
+                  "Page Down and Home are bounded scroll commands even for a short shelf")
 
             var revealAccess: ShelfFileAccess?
             bridge.onRevealRequested = { revealAccess = $0 }
@@ -149,6 +160,27 @@ enum HUDFileShelfInteractionTests {
                   "Windowless imports leave no drag, modal panel or interaction lock behind")
             check(try Data(contentsOf: first) == firstBytes && Data(contentsOf: second) == secondBytes && Data(contentsOf: nested) == nestedBytes,
                   "Pasteboard validation, readback and deactivation preserve every original byte")
+
+            let scrollURLs = try (0..<8).map { index -> URL in
+                let url = originals.appendingPathComponent("Scroll \(index).txt")
+                try Data("scroll fixture".utf8).write(to: url); return url
+            }
+            try store.add(urls: scrollURLs)
+            bridge.project = { $0.offsetBy(dx: 10, dy: 20) }
+            bridge.setActive(true)
+            canvas.scrollBy(20.5)
+            let visible = canvas.cardRect(for: store.items[0].id)!
+            let nativeCard = host.subviews.compactMap { $0 as? NSButton }.first {
+                $0.accessibilityLabel()?.hasPrefix(store.items[0].name + ",") == true
+            }!
+            check(visible.minY == FileShelfCanvas.contentRect.minY && nativeCard.frame == visible.offsetBy(dx: 10, dy: 20),
+                  "A partial card's native accessibility target follows the clipped projected scroll geometry")
+            canvas.scrollBy(0.5)
+            check(host.subviews.contains { $0 === nativeCard } && nativeCard.frame == canvas.cardRect(for: store.items[0].id)!.offsetBy(dx: 10, dy: 20),
+                  "Fractional scrolling updates existing accessibility controls without recreating the native target")
+            check(bridge.keyDown(key(119)) && canvas.cardRect(for: store.items.last!.id)?.height == 74,
+                  "End reveals the last shelf row through the native keyboard bridge")
+            bridge.deactivate()
         } catch { fatalError("File shelf interaction test failed: \(error)") }
         return count
     }

@@ -18,7 +18,68 @@ final class OverlayController: NSObject {
     private var dragMouseOrigin: NSPoint?
     private var presentationCompleted = false
     private var requestedDuration: Double = 5
+    private var documentTerminationInProgress = false
+    private var archiveDocuments: ArchiveController?
+    private var readerDocuments: ReaderController?
+    private var mediaAssemblyDocuments: MediaAssemblyController?
+    private var calendarDocuments: HUDCalendarController?
+    private lazy var accountController: HypergryphAccountController = {
+        let isolated = CommandLine.arguments.contains(where: { $0 == "--ui-test" || $0.hasSuffix("smoke-test") || $0.hasPrefix("--render-") })
+        let controller = HypergryphAccountController(profile: try? profileStore.get(), fileURL: HypergryphAccountController.applicationFile(),
+            vault: isolated ? HypergryphMemoryCredentialVault() : HypergryphAccountKeychain())
+        controller.onEvent = { [weak self] action in self?.eventLog.record(kind: .accountAction, metadata: ["action": action]) }
+        return controller
+    }()
+    private lazy var minigameSession: OrbiPomSession = {
+        let value = OrbiPomSession(defaults: CommandLine.arguments.contains("--ui-test") ? nil : .standard)
+        value.onEvent = { [weak self] action in self?.eventLog.record(kind:.minigameAction, metadata:["action":action]) }
+        return value
+    }()
+    private var mediaAssemblyController: MediaAssemblyController {
+        if let mediaAssemblyDocuments { return mediaAssemblyDocuments }
+        let value = MediaAssemblyController()
+        value.onEvent = { [weak self] action in self?.eventLog.record(kind: .mediaAssemblyAction, metadata: ["action": action]) }
+        mediaAssemblyDocuments = value; return value
+    }
+    private var calendarController: HUDCalendarController {
+        if let calendarDocuments { return calendarDocuments }
+        let value = HUDCalendarController()
+        value.onEvent = { [weak self] action in self?.eventLog.record(kind: .calendarAction, metadata: ["action": action]) }
+        calendarDocuments = value; return value
+    }
+    func startCalendarReminders() { calendarController.startIfExisting() }
+    private var archiveController: ArchiveController {
+        if let archiveDocuments { return archiveDocuments }
+        let value = ArchiveController(store: ArchiveStore(directory: ArchiveStore.applicationDirectory()))
+        archiveDocuments = value; return value
+    }
+    private var readerController: ReaderController {
+        if let readerDocuments { return readerDocuments }
+        let value = ReaderController(loadStore: { try ReaderStore(directory: ReaderStore.applicationDirectory()) })
+        readerDocuments = value; return value
+    }
+    /// The view is released after each close; document writers outlive its
+    /// animation and remain available for failed-write recovery and quit drain.
+    func drainDocumentWrites(completion: @escaping (Bool) -> Void) {
+        mediaAssemblyDocuments?.cancelExport()
+        systemView?.prepareDocumentWriteDrain()
+        var pending = 3, succeeded = true
+        func finished(_ value: Bool) { succeeded = succeeded && value; pending -= 1; if pending == 0 { completion(succeeded) } }
+        if let archiveDocuments { archiveDocuments.drainPendingWrites(timeout: 3, completion: finished) } else { finished(true) }
+        if let readerDocuments { readerDocuments.drainPendingWrites(timeout: 3, completion: finished) } else { finished(true) }
+        if let calendarDocuments { calendarDocuments.drainPendingWrites(timeout: 3, completion: finished) } else { finished(true) }
+    }
     private var systemView: SystemHUDView?
+    private var latestBatterySnapshot: BatterySnapshot = .unavailable
+    private var projection: ProjectionController?
+    private var projectionHandoff = false
+    private var projectionGeneration = 0
+    private var projectionScreenID: CGDirectDisplayID?
+    private var returningProjectionScreenID: CGDirectDisplayID?
+    private var projectionPreviousApplication: NSRunningApplication?
+    private var projectionExternalAction: (() -> Void)?
+    var isProjectionActive: Bool { projectionHandoff || projection?.isPresented == true }
+    var projectionForVerification: ProjectionController? { projection }
     private final class ClosedHeapCleanupTicket {
         private let lock = NSLock()
         private var cancelled = false
@@ -44,7 +105,7 @@ final class OverlayController: NSObject {
     private lazy var mapStore: Result<WorldMapStore, Error> = Result { try WorldMapStore(directory: WorldMapStore.applicationDirectory()) }
     private lazy var notesStore: Result<NotesStore, Error> = Result { try NotesStore(directory: NotesStore.applicationDirectory()) }
     private lazy var shelfStore: Result<FileShelfStore, Error> = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
-    private var pendingShelfDropPresentation: (snapshot: BatterySnapshot, configuration: AppConfiguration, addedIDs: Set<UUID>)?
+    private var pendingShelfDropPresentation: Set<UUID>?
     private lazy var appShortcutStore: Result<AppShortcutStore, Error> = Result { try AppShortcutStore(directory: AppShortcutStore.applicationDirectory()) }
     private var pendingAppLaunch: (name: String, url: URL)?
     private var pendingShelfReveal: ShelfFileAccess?
@@ -58,9 +119,11 @@ final class OverlayController: NSObject {
     let clipboard: ClipboardWatcher
     let audio: AudioDeviceController
     let perAppAudio: PerAppAudioController
+    let nowPlaying: NowPlayingController
     let storage: StorageController
     let activity: SystemActivityMonitor
     let appActivity: AppActivityMonitor
+    private var chargeMetricObserver: UUID?
     private var openStorageAfterClose = false
     var openSystemStorage: () -> Bool = { SystemStorageSettings.open() }
     var settingsController: HUDSettingsController?
@@ -72,7 +135,7 @@ final class OverlayController: NSObject {
     var isIdleForUpdate: Bool {
         systemPhase == .closed && !isEditingPosition && !appLaunchInFlight
             && !shelfDragPresentation.isActive && pendingShelfDropPresentation == nil
-            && applicationUpdateCompletion == nil && !quitRequested
+            && applicationUpdateCompletion == nil && !quitRequested && !isProjectionActive
     }
     var onQuitAccepted: (() -> Void)?
     var onQuitAfterSystemClose: (() -> Void)?
@@ -167,10 +230,9 @@ final class OverlayController: NSObject {
     }
 
     /// Menu-bar drops share the shelf's bookmark store even when no HUD exists.
-    /// Finish AppKit's drop callback before showing or switching the overlay.
+    /// A drop never summons the HUD; only an already open/opening HUD reveals the shelf.
     @discardableResult
-    func receiveStatusItemFiles(_ urls: [URL], snapshot: BatterySnapshot,
-                                configuration: AppConfiguration) -> Bool {
+    func receiveStatusItemFiles(_ urls: [URL]) -> Bool {
         guard !urls.isEmpty, urls.allSatisfy(\.isFileURL), canPresentShelfDrop else { return false }
         if systemView == nil, case .failure = shelfStore {
             shelfStore = Result { try FileShelfStore(directory: FileShelfStore.applicationDirectory()) }
@@ -188,27 +250,27 @@ final class OverlayController: NSObject {
             } catch { return false }
         }
         let addedIDs = Set((try? shelfStore.get().items.map(\.id)) ?? []).subtracting(previousIDs)
-            .union(pendingShelfDropPresentation?.addedIDs ?? [])
-        pendingShelfDropPresentation = (snapshot, configuration, addedIDs)
-        DispatchQueue.main.async { [weak self] in self?.presentPendingShelfDrop() }
+            .union(pendingShelfDropPresentation ?? [])
+        if systemPhase == .open || systemPhase == .opening {
+            pendingShelfDropPresentation = addedIDs
+            DispatchQueue.main.async { [weak self] in self?.presentPendingShelfDrop() }
+        }
         return true
     }
 
     private func presentPendingShelfDrop() {
-        guard let request = pendingShelfDropPresentation else { return }
+        guard let addedIDs = pendingShelfDropPresentation else { return }
         guard canPresentShelfDrop else { pendingShelfDropPresentation = nil; return }
         switch systemPhase {
-        case .closed:
+        case .closed, .closing:
+            // A user dismissal wins over a deferred drop callback.
             pendingShelfDropPresentation = nil
-            initialModuleRequest = .fileShelf
-            _ = toggleSystemOverlay(snapshot: request.snapshot, configuration: request.configuration)
-            systemView?.revealShelfItems(request.addedIDs)
         case .open:
             pendingShelfDropPresentation = nil
-            systemView?.revealShelfItems(request.addedIDs)
+            systemView?.revealShelfItems(addedIDs)
             selectSystemModule(.fileShelf)
-        case .opening, .closing:
-            break // The transition completion consumes the request once.
+        case .opening:
+            break // The existing entrance completion consumes the request once.
         }
     }
 
@@ -232,7 +294,7 @@ final class OverlayController: NSObject {
     var notesFollowRetractionForVerification: Bool { systemView?.notesFollowRetractionForVerification ?? false }
     var notesDeploymentRestoredForVerification: Bool { systemView?.notesDeploymentRestoredForVerification ?? false }
     var shelfCountForVerification: Int { (try? shelfStore.get().items.count) ?? 0 }
-    var shelfPageForVerification: Int? { systemView?.shelfPageForVerification }
+    var shelfScrollOffsetForVerification: CGFloat? { systemView?.shelfScrollOffsetForVerification }
     var shelfSelectedCountForVerification: Int { systemView?.shelfSelectedCountForVerification ?? 0 }
     var shelfDragPhaseForVerification: ShelfDragPresentationState.Phase { shelfDragPresentation.phase }
     var systemWindowVisibleForVerification: Bool { panel.isVisible }
@@ -260,6 +322,7 @@ final class OverlayController: NSObject {
                                      pasteboard: diagnostic ? .withUniqueName() : .general)
         audio = diagnostic ? .fixture() : AudioDeviceController()
         perAppAudio = diagnostic ? .fixture() : PerAppAudioController()
+        nowPlaying = diagnostic ? .fixture() : NowPlayingController()
         storage = diagnostic ? .fixture() : StorageController()
         let liveTelemetry = CommandLine.arguments.contains("--ui-test")
             && CommandLine.arguments.contains("--live-telemetry-benchmark")
@@ -331,17 +394,25 @@ final class OverlayController: NSObject {
         }
     }
 
-    deinit { cancelClosedHeapCleanup() }
+    deinit {
+        projection?.forceClose()
+        if let chargeMetricObserver { activity.removeObserver(chargeMetricObserver) }
+        activity.setAlertActive(false)
+        cancelClosedHeapCleanup()
+    }
 
     func update(snapshot: BatterySnapshot, configuration: AppConfiguration, preview: Bool = false) {
+        latestBatterySnapshot = snapshot
         let displayChanged = self.configuration.hudDisplayUUID != configuration.hudDisplayUUID
             || self.configuration.openOnActiveDisplay != configuration.openOnActiveDisplay
         let geometryChanged = self.configuration.scale != configuration.scale
             || self.configuration.placement != configuration.placement
             || self.configuration.customPosition != configuration.customPosition
         self.configuration = configuration.normalized
+        projection?.update(configuration: self.configuration)
         indicator.set(snapshot: snapshot, configuration: self.configuration, preview: preview)
         systemView?.set(snapshot: snapshot, configuration: self.configuration)
+        reconcileChargeMetricTelemetry()
         cancelButton.dark = isDark
         confirmButton.dark = isDark
         cancelButton.setAccessibilityLabel(L10n.text("Discard position", "取消位置更改"))
@@ -358,7 +429,7 @@ final class OverlayController: NSObject {
 
     /// Explicit previews replay the entrance even if an always-visible HUD is already on screen.
     func show(persistent: Bool, duration: Double, replay: Bool = false) {
-        guard !isEditingPosition, !isSystemOverlayActive else { return }
+        guard !isEditingPosition, !isSystemOverlayActive, !isProjectionActive else { return }
         dismissal?.cancel()
         dismissal = nil
         generation += 1
@@ -378,6 +449,36 @@ final class OverlayController: NSObject {
         } else {
             scheduleDismissal(token: token)
         }
+        reconcileChargeMetricTelemetry()
+    }
+
+    private var chargeMetricNeedsTelemetry: Bool {
+        configuration.alertMetric.requiresTelemetry && panel.isVisible && panel.alphaValue > 0
+            && (isVisible || systemView != nil)
+    }
+
+    /// Attach only while this shared panel displays the selected metric. The
+    /// sampler's separate Activity Monitor demand remains independently owned.
+    private func reconcileChargeMetricTelemetry() {
+        let needed = chargeMetricNeedsTelemetry
+        activity.setAlertActive(needed)
+        if needed {
+            if chargeMetricObserver == nil {
+                chargeMetricObserver = activity.observe { [weak self] snapshot in
+                    guard let self, self.chargeMetricNeedsTelemetry else { return }
+                    self.presentChargeMetric(snapshot)
+                }
+            } else { presentChargeMetric(activity.snapshot) }
+        } else {
+            if let observer = chargeMetricObserver { activity.removeObserver(observer); chargeMetricObserver = nil }
+            indicator.setMetric(configuration.alertMetric, telemetry: nil)
+            systemView?.setChargeMetric(configuration.alertMetric, telemetry: nil)
+        }
+    }
+
+    private func presentChargeMetric(_ snapshot: SystemActivitySnapshot) {
+        if isVisible { indicator.setMetric(configuration.alertMetric, telemetry: snapshot) }
+        systemView?.setChargeMetric(configuration.alertMetric, telemetry: snapshot)
     }
 
     private func scheduleDismissal(token: Int) {
@@ -404,16 +505,26 @@ final class OverlayController: NSObject {
             indicator.setStage(.hidden, animated: false)
             panel.orderOut(nil)
             isVisible = false
+            reconcileChargeMetricTelemetry()
             return
         }
         indicator.animateExit { [weak self] in
             guard let self = self, self.generation == token else { return }
             self.panel.orderOut(nil)
             self.isVisible = false
+            self.reconcileChargeMetricTelemetry()
         }
     }
 
     func reposition() {
+        if isProjectionActive, !isSystemOverlayActive {
+            if let screen = NSScreen.screens.first(where: { HUDDisplayPolicy.displayID(for: $0) == projectionScreenID })
+                ?? HUDDisplayPolicy.targetScreen(configuration: configuration) {
+                projectionScreenID = HUDDisplayPolicy.displayID(for: screen)
+                projection?.reposition(on: screen)
+            } else { forceCloseSystemOverlay() }
+            return
+        }
         if isSystemOverlayActive {
             let screens = NSScreen.screens
             let current = screens.first { HUDDisplayPolicy.displayID(for: $0) == systemScreenID }
@@ -441,6 +552,7 @@ final class OverlayController: NSObject {
     }
 
     func beginPositionEditing(snapshot: BatterySnapshot, configuration: AppConfiguration) {
+        guard !isProjectionActive else { returnFromProjection(); return }
         guard !isSystemOverlayActive else { closeSystemOverlay(); return }
         guard !isEditingPosition else { panel.makeKeyAndOrderFront(nil); return }
         update(snapshot: snapshot, configuration: configuration, preview: true)
@@ -465,6 +577,7 @@ final class OverlayController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(root)
+        reconcileChargeMetricTelemetry()
         if CommandLine.arguments.contains("--ui-test"), let anchor = draftAnchor {
             let desktopTop = NSScreen.screens.first?.frame.maxY ?? 0
             print("Position editor center: \(anchor.x), \(desktopTop - anchor.y) from desktop top-left")
@@ -478,9 +591,114 @@ final class OverlayController: NSObject {
 
     func confirmEditedPosition() { confirmPosition() }
 
+    /// One serialized handoff. Neither surface is retained visibly behind the
+    /// other, and the existing HUD entrance/exit remains the source of timing.
+    func openProjection() {
+        guard systemPhase == .open, !isProjectionActive, !quitRequested,
+              afterSystemClose == nil, !shelfDragPresentation.isActive else { return }
+        projectionGeneration &+= 1
+        let token = projectionGeneration
+        projectionHandoff = true
+        projectionScreenID = systemScreenID
+        projectionPreviousApplication = previousApplication
+        afterSystemClose = { [weak self] in
+            guard let self, self.projectionGeneration == token, self.projectionHandoff,
+                  !self.quitRequested, self.systemPhase == .closed else { return }
+            guard let screen = NSScreen.screens.first(where: { HUDDisplayPolicy.displayID(for: $0) == self.projectionScreenID })
+                    ?? HUDDisplayPolicy.targetScreen(configuration: self.configuration) else {
+                self.cancelProjection(); return
+            }
+            self.cancelClosedHeapCleanup()
+            if self.finishProjectionExternalAction() { return }
+            if self.projection == nil {
+                self.projection = ProjectionController(configuration: self.configuration, shelfChoices: { [weak self] in
+                    let extensions = Set(NotesMediaFactory.supportedFileExtensions)
+                    return ((try? self?.shelfStore.get().items) ?? []).map { item in
+                        NotesShelfMediaChoice(id: item.id, title: item.name, detail: item.typeDescription,
+                            isSupported: !item.isDirectory && extensions.contains(URL(fileURLWithPath: item.lastKnownPath).pathExtension.lowercased()),
+                            isAvailable: item.availabilityError == nil)
+                    }
+                }, shelfAccess: { [weak self] id in
+                    guard let self else { throw CocoaError(.userCancelled) }
+                    return try self.shelfStore.get().access(id: id)
+                })
+                self.projection?.onClose = { [weak self] in self?.returnFromProjection() }
+                self.projection?.onEvent = { [weak self] event in self?.recordProjectionEvent(event) }
+            }
+            self.projectionScreenID = HUDDisplayPolicy.displayID(for: screen)
+            self.projection?.update(configuration: self.configuration)
+            self.projection?.present(on: screen)
+            self.projectionHandoff = false
+            self.onSystemActivityChange?()
+        }
+        closeSystemOverlay()
+    }
+
+    private func returnFromProjection() {
+        guard !projectionHandoff, let projection, projection.isPresented, !quitRequested else { return }
+        projectionHandoff = true
+        let token = projectionGeneration
+        projection.dismiss { [weak self] in
+            guard let self, self.projectionGeneration == token, self.projectionHandoff, !self.quitRequested else { return }
+            if self.finishProjectionExternalAction() { return }
+            self.returningProjectionScreenID = self.projectionScreenID
+            self.projectionHandoff = false
+            self.performSystemAction(self.systemState.toggle(), snapshot: self.latestBatterySnapshot)
+            if let previous = self.projectionPreviousApplication { self.previousApplication = previous }
+            self.projectionPreviousApplication = nil
+            self.projectionScreenID = nil
+        }
+    }
+
+    private func cancelProjection() {
+        if projectionHandoff { afterSystemClose = nil }
+        projectionGeneration &+= 1
+        projectionHandoff = false
+        projection?.forceClose()
+        projectionExternalAction = nil
+        projectionScreenID = nil; returningProjectionScreenID = nil; projectionPreviousApplication = nil
+    }
+
+    /// Updater UI must not appear behind a screen-wide projection. A request
+    /// during either handoff is consumed by that handoff's existing completion.
+    func closeForExternalPresentation(_ action: @escaping () -> Void) {
+        if isProjectionActive {
+            projectionExternalAction = action
+            if !projectionHandoff { returnFromProjection() }
+        } else if systemPhase == .closed { action() }
+        else { afterSystemClose = action; closeSystemOverlay() }
+    }
+
+    @discardableResult private func finishProjectionExternalAction() -> Bool {
+        guard let action = projectionExternalAction else { return false }
+        projectionExternalAction = nil; projectionHandoff = false
+        projectionScreenID = nil; returningProjectionScreenID = nil; projectionPreviousApplication = nil
+        action(); onSystemActivityChange?()
+        return true
+    }
+
+    private func recordProjectionEvent(_ event: ProjectionEvent) {
+        let action: String
+        switch event {
+        case .strokeCompleted: action = "drawingEdited"
+        case .erased: action = "erased"
+        case .brushChanged: action = "brushChanged"
+        case .backgroundChanged: action = "backgroundChanged"
+        case .cleared: action = "cleared"
+        case .mediaAdded: action = "mediaAdded"
+        case .mediaRemoved: action = "mediaRemoved"
+        }
+        eventLog.record(kind: .projectionAction, metadata: ["action": action])
+    }
+
     /// Both presentations share this controller's one NSPanel and battery stream.
     @discardableResult func toggleSystemOverlay(snapshot: BatterySnapshot, configuration: AppConfiguration) -> Bool {
         guard !quitRequested, !isEditingPosition, !appLaunchInFlight else { return false }
+        if isProjectionActive {
+            update(snapshot: snapshot, configuration: configuration)
+            returnFromProjection()
+            return true
+        }
         if systemView?.isDraggingShelfItem == true || shelfDragPresentation.isActive { closeAfterShelfDrag = true; return true }
         if !isSystemOverlayActive {
             hide(animated: false)
@@ -526,6 +744,7 @@ final class OverlayController: NSObject {
         pendingAppLaunch = nil
         pendingShelfReveal?.close(); pendingShelfReveal = nil
         openStorageAfterClose = false; afterSystemClose = nil
+        cancelProjection()
         cancelPositionEditing()
         if systemPhase == .closed {
             hide(animated: false)
@@ -536,12 +755,23 @@ final class OverlayController: NSObject {
         }
     }
 
+    func prepareForDocumentTermination() {
+        documentTerminationInProgress = true
+        systemView?.interactionEnabled = false
+    }
+    func cancelTerminationAfterDocumentFailure() {
+        documentTerminationInProgress = false
+        applicationUpdateCompletion = nil; quitRequested = false; quitAfterSystemClose = false
+        if systemPhase == .open { systemView?.interactionEnabled = true }
+    }
+
     func cancelApplicationUpdate() {
         applicationUpdateCompletion = nil
         if !quitAfterSystemClose { quitRequested = false }
     }
 
     func closeSystemOverlayForFocusLoss(activatedApplication: NSRunningApplication? = nil) {
+        guard !isProjectionActive else { return }
         guard configuration.closeOnFocusLost else { return }
         // The public Focus adapter briefly opens Control Center. Other app
         // activations keep their normal dismissal policy even during that task.
@@ -559,6 +789,7 @@ final class OverlayController: NSObject {
 
     /// Sleep/session shutdown and termination cannot wait for visible animations.
     func forceCloseSystemOverlay() {
+        cancelProjection()
         pendingShelfDropPresentation = nil
         cancelClosedHeapCleanup()
         pendingAppLaunch = nil
@@ -573,6 +804,7 @@ final class OverlayController: NSObject {
             systemView?.cancelAnimations()
             panel.alphaValue = 0
             panel.ignoresMouseEvents = true
+            reconcileChargeMetricTelemetry()
             return
         }
         systemState.forceClose()
@@ -604,7 +836,10 @@ final class OverlayController: NSObject {
             if case .failure = appShortcutStore {
                 appShortcutStore = Result { try AppShortcutStore(directory: AppShortcutStore.applicationDirectory()) }
             }
-            let requestedScreen = HUDDisplayPolicy.targetScreen(configuration: configuration)
+            let requestedScreen = returningProjectionScreenID.flatMap { id in
+                NSScreen.screens.first { HUDDisplayPolicy.displayID(for: $0) == id }
+            } ?? HUDDisplayPolicy.targetScreen(configuration: configuration)
+            returningProjectionScreenID = nil
             guard let screen = requestedScreen else {
                 systemState.forceClose(); return
             }
@@ -613,9 +848,11 @@ final class OverlayController: NSObject {
             HUDStartupTrace.end("open.preparation", since: &startup)
             let view = SystemHUDView(frame: NSRect(origin: .zero, size: screen.frame.size),
                                      notesStore: notesStore, shelfStore: shelfStore, clipboard: clipboard,
-                                     audio: audio, perAppAudio: perAppAudio, workMode: workMode, eventLog: eventLog,
+                                     audio: audio, perAppAudio: perAppAudio, workMode: workMode, eventLog: eventLog, nowPlaying: nowPlaying,
                                      storage: storage, activity: activity, appActivity: appActivity, appShortcuts: appShortcutStore,
                                      settings: settingsController, profile: profileStore, mapStore: mapStore,
+                                     archive: archiveController, reader: readerController,
+                                     mediaAssembly: mediaAssemblyController, calendar: calendarController, minigame: minigameSession, account: accountController,
                                      initialConfiguration: configuration, initialSnapshot: snapshot ?? .unavailable,
                                      initialModule: initialModuleRequest ?? lastSystemModule)
             HUDStartupTrace.end("open.fullNativeView", since: &startup)
@@ -640,6 +877,7 @@ final class OverlayController: NSObject {
             view.onLaunchAppShortcut = { [weak self] id in self?.requestAppShortcutLaunch(id) }
             view.onClose = { [weak self] in self?.closeSystemOverlay() }
             view.onQuitConfirmed = { [weak self] in self?.requestQuit() }
+            view.onOpenProjection = { [weak self] in self?.openProjection() }
             view.onOpenSystemStorage = { [weak self] in
                 guard let self, self.systemPhase == .open else { return }
                 self.openStorageAfterClose = true
@@ -680,6 +918,7 @@ final class OverlayController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(view)
+            reconcileChargeMetricTelemetry()
             HUDStartupTrace.end("open.attachAndActivate", since: &startup)
             // Preparation has its own bounded fallback. The finite source
             // entrance deadline starts only when the real/fallback input is ready.
@@ -759,6 +998,7 @@ final class OverlayController: NSObject {
             shelfDragDeadline?.cancel(); shelfDragDeadline = nil
             view.stopMotionForConcealment()
             panel.orderOut(nil)
+            reconcileChargeMetricTelemetry()
         case .restore(let token):
             shelfDragDeadline?.cancel(); shelfDragDeadline = nil
             if closeAfterShelfDrag || forceCloseAfterShelfDrag { finishConcealedShelfClose(); return }
@@ -767,6 +1007,7 @@ final class OverlayController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             panel.makeKeyAndOrderFront(nil)
             panel.makeFirstResponder(view)
+            reconcileChargeMetricTelemetry()
             let completion = { [weak self] in
                 guard let self, self.shelfDragPresentation.didRestore(token) else { return }
                 self.shelfDragDeadline?.cancel(); self.shelfDragDeadline = nil
@@ -824,11 +1065,11 @@ final class OverlayController: NSObject {
         guard systemState.phase == .opening, systemState.generation == token else { return }
         transitionDeadline?.cancel()
         transitionDeadline = nil
-        systemView?.showStable(preservingChargeAnimation: true, preservingPointerMotion: true)
+        systemView?.showStable(preservingChargeAnimation: true, preservingPointerMotion: true,
+                               preservingNowPlayingPresentation: true)
         let action = systemState.didOpen(token)
-        eventLog.record(kind: .overlayOpened)
         logSystemPhase()
-        systemView?.interactionEnabled = systemState.phase == .open
+        systemView?.interactionEnabled = systemState.phase == .open && !documentTerminationInProgress
         performSystemAction(action)
         presentPendingShelfDrop()
     }
@@ -878,6 +1119,7 @@ final class OverlayController: NSObject {
         shelfDragPresentation.reset()
         panel.contentView = root
         systemView = nil // Release the full-display layer backing while idle.
+        reconcileChargeMetricTelemetry()
         settingsController?.close()
         panel.allowsKey = false
         panel.ignoresMouseEvents = true
@@ -1040,12 +1282,13 @@ final class OverlayController: NSObject {
 private final class PositionPanel: NSPanel {
     var allowsKey = false
     var onResignKey: (() -> Void)?
+    private var cursorReconciliationQueued = false
     override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
     override func resignKey() { super.resignKey(); onResignKey?() }
     override func resetCursorRects() {
         super.resetCursorRects()
-        (contentView as? SystemHUDView)?.reconcileCursorAfterNativeDispatch()
+        reconcileCursorAfterNativeDispatch()
     }
     override func sendEvent(_ event: NSEvent) {
         super.sendEvent(event)
@@ -1055,8 +1298,24 @@ private final class PositionPanel: NSPanel {
         switch event.type {
         case .mouseMoved, .mouseEntered, .mouseExited, .cursorUpdate,
              .leftMouseUp, .rightMouseUp, .otherMouseUp, .scrollWheel:
-            (contentView as? SystemHUDView)?.reconcileCursorAfterNativeDispatch()
+            reconcileCursorAfterNativeDispatch()
         default: break
+        }
+    }
+
+    private func reconcileCursorAfterNativeDispatch() {
+        guard isVisible, let host = contentView as? SystemHUDView else { return }
+        host.reconcileCursorAfterNativeDispatch()
+        guard !cursorReconciliationQueued else { return }
+        cursorReconciliationQueued = true
+        // NSApplication can finish cursor-region work after NSWindow.sendEvent
+        // returns. Reconcile once at the next turn, coalescing all events and
+        // resets in this turn without a polling timer or a retained HUD.
+        DispatchQueue.main.async { [weak self, weak host] in
+            guard let self else { return }
+            self.cursorReconciliationQueued = false
+            guard self.isVisible, let host, self.contentView === host else { return }
+            host.reconcileCursorAfterNativeDispatch()
         }
     }
 }

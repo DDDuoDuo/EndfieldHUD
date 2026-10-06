@@ -140,6 +140,8 @@ final class SystemActivityMonitor {
     private(set) var history: [SystemActivitySnapshot] = []
     private(set) var isActive = false
     private(set) var isRunning = false
+    private var activityVisible = false
+    private(set) var isAlertActive = false
     var samplingInterval: TimeInterval { isActive ? 1 : 5 }
     static let historyLimit = 60
     private var observers: [UUID: (SystemActivitySnapshot) -> Void] = [:]
@@ -180,22 +182,41 @@ final class SystemActivityMonitor {
 
     func activate() {
         precondition(Thread.isMainThread)
-        guard !isActive else { return }
-        isActive = true
-        if !isRunning { start() } else { reschedule() }
+        guard !activityVisible else { return }
+        activityVisible = true
+        updateVisibleDemand()
     }
 
     func deactivate() {
         precondition(Thread.isMainThread)
-        guard isActive else { return }
-        isActive = false
-        if isRunning { reschedule() }
+        guard activityVisible else { return }
+        activityVisible = false
+        updateVisibleDemand()
+    }
+
+    /// The charge alert and Activity Monitor share one worker and one timer.
+    /// Either visible consumer keeps 1 Hz sampling alive; neither owns the
+    /// other consumer's demand or the session's background history.
+    func setAlertActive(_ value: Bool) {
+        precondition(Thread.isMainThread)
+        guard isAlertActive != value else { return }
+        isAlertActive = value
+        updateVisibleDemand()
+    }
+
+    private func updateVisibleDemand() {
+        let visible = activityVisible || isAlertActive
+        guard isActive != visible else { return }
+        isActive = visible
+        if !isRunning, visible { start() }
+        else if isRunning { reschedule() }
     }
 
     func shutdown() {
         precondition(Thread.isMainThread)
         guard isRunning else { return }
-        isRunning = false; isActive = false; generation += 1; timerGeneration += 1; needsFreshSample = false
+        isRunning = false; isActive = false; activityVisible = false; isAlertActive = false
+        generation += 1; timerGeneration += 1; needsFreshSample = false
         cancelTimer?(); cancelTimer = nil
     }
 

@@ -1,0 +1,549 @@
+{
+  "copyright": "HYPERGRYPH. Original game artwork/code remains owned by its rights holders. Matter.js © Liam Brummitt et al., MIT. Native adapter follows repository license.",
+  "source": "https://web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/821.67c1cf.js",
+  "sourceSHA256": "0f504a83f9ce05ffa7f7e07fe8f4915b87dc40c30ba05b5e643f037ee456dfc9",
+  "matterSHA256": "928d059868201b2c4c270818fda44e5d26c099e4df407043f018f9bbe2c598cf",
+  "declarations": [
+    {
+      "name": "X",
+      "startLine": 1851,
+      "endLine": 1868,
+      "sha256": "f045fb0108905e9fe49dd9036ee6d787792b52f17fc61116bdb4103667fcc197"
+    },
+    {
+      "name": "W",
+      "startLine": 1870,
+      "endLine": 1876,
+      "sha256": "380b5200104a8d8dde33b6d368f0fc1f0e874c4eb44a35eef12dd32290bd73ee"
+    },
+    {
+      "name": "U",
+      "startLine": 1878,
+      "endLine": 1891,
+      "sha256": "7e5d640288989a458c5b02d02feb4ec815b6726474020c5bcd36299d50e6c874"
+    },
+    {
+      "name": "K",
+      "startLine": 1893,
+      "endLine": 1916,
+      "sha256": "bfc059204b768dd623592ad190393f86bd776f6ad578fbc24549e98c27ea4e77"
+    },
+    {
+      "name": "q",
+      "startLine": 1918,
+      "endLine": 1923,
+      "sha256": "fd2f244089893b70cb5022e35bc8003057a5e226ebf04d7b418d8c08df66454e"
+    },
+    {
+      "name": "Z",
+      "startLine": 1925,
+      "endLine": 1933,
+      "sha256": "e0e719ec502f453535bcd32400446879b501ea77fcf9fa4948649f22755e7b9d"
+    },
+    {
+      "name": "J",
+      "startLine": 1935,
+      "endLine": 1965,
+      "sha256": "f8300499fdb3f5057b0f74c07e3f3f961995bf2cc851fa664166c2cebd5a7fe9"
+    },
+    {
+      "name": "Q",
+      "startLine": 1967,
+      "endLine": 2035,
+      "sha256": "039309277570b35d462be55f8e83a021a83985423528e809bf3cadf45d63d510"
+    },
+    {
+      "name": "$",
+      "startLine": 2037,
+      "endLine": 2039,
+      "sha256": "2bceba72ea56a34389683ee7f8552d56a462352a53ab8fc9a00607eca183bd75"
+    },
+    {
+      "name": "ee",
+      "startLine": 2041,
+      "endLine": 2073,
+      "sha256": "9f23ee29a3d4c7511f99e17dac0b51c52958cc170aa463ba298ccb7f9459f0ac"
+    },
+    {
+      "name": "ey",
+      "startLine": 2166,
+      "endLine": 2265,
+      "sha256": "599f8973fe0066a56e2510b603734da94dc0981833d438d806e2486a9e20336c"
+    },
+    {
+      "name": "eb",
+      "startLine": 2267,
+      "endLine": 2267,
+      "sha256": "c6ccb91cb5da1cd62b63efb600e1383dbe343f0e0080ca022f77459ebf0d5675"
+    },
+    {
+      "name": "ex",
+      "startLine": 2268,
+      "endLine": 2763,
+      "sha256": "876b0321862b98c8a7b5a8a84b88b5402ddb6d53356eedd59b39f7adbf6eb218"
+    },
+    {
+      "name": "ew",
+      "startLine": 2764,
+      "endLine": 2764,
+      "sha256": "bf67e3b0914ef513ec3d756ee773983276d57c2bcd7c811c081e440378d042ab"
+    },
+    {
+      "name": "eS",
+      "startLine": 2765,
+      "endLine": 2765,
+      "sha256": "20a9fddc84fe1bee634b359cc1a956f2c1d14b47fdf67fce0b604d3013a5580d"
+    },
+    {
+      "name": "eO",
+      "startLine": 2767,
+      "endLine": 2782,
+      "sha256": "6737a255bc663ba77795ba7eef803c6976006d8317a5d0d33d2e02b5733594a8"
+    },
+    {
+      "name": "e_",
+      "startLine": 2783,
+      "endLine": 2783,
+      "sha256": "071bb836d221862257cbf54584893ced55339bdc9bb4d697817da073c7640673"
+    },
+    {
+      "name": "ek",
+      "startLine": 2784,
+      "endLine": 2784,
+      "sha256": "57c0662102ef531f3f3f7fce16d431e61c6bbfe5ffc1ae98bc2fc80e3b76431a"
+    },
+    {
+      "name": "eA",
+      "startLine": 2785,
+      "endLine": 2785,
+      "sha256": "1d84810e362e7b6e250652ef923e4d542619250668d5340b759dadd6b1c319c1"
+    },
+    {
+      "name": "ej",
+      "startLine": 2786,
+      "endLine": 2786,
+      "sha256": "b4baddf090d211fa7419a2248b34667935d0d371da8a5ae1b7df93d7d7dfa941"
+    },
+    {
+      "name": "eE",
+      "startLine": 2787,
+      "endLine": 2787,
+      "sha256": "54e14ed3932f6c6fb3538f7dbe69faa59aa7195515dddbd6e5d80a2a9d23bc12"
+    },
+    {
+      "name": "eM",
+      "startLine": 2814,
+      "endLine": 2858,
+      "sha256": "b34ecad7db47e2c80c92fc8516167e8ea0dcfd1744e01c9065a8a3bacef8be49"
+    },
+    {
+      "name": "eD",
+      "startLine": 2860,
+      "endLine": 2873,
+      "sha256": "332e2b9fdbde30f2db9a492a29fd0c4be4d4ea870e51c06f9f6cb32c21259021"
+    },
+    {
+      "name": "e0",
+      "startLine": 3205,
+      "endLine": 3218,
+      "sha256": "936523519ee4d10f31d24b9831dc850de14e76fdce83983ec9077362b2f77480"
+    },
+    {
+      "name": "e1",
+      "startLine": 3219,
+      "endLine": 3219,
+      "sha256": "a7f10ab33d4897ceb6a0efb0a4ac04c77fa989c62bd0c32c1efbd7123bd17ddd"
+    },
+    {
+      "name": "e2",
+      "startLine": 3220,
+      "endLine": 3225,
+      "sha256": "e27d3683043c68f6410be9503b2a7d9d1d14edc7c4067b17ef54053bee8d6cb7"
+    },
+    {
+      "name": "e3",
+      "startLine": 3226,
+      "endLine": 3375,
+      "sha256": "f7b0846c9ba64ae8b9b66c4a2437c340208bbe7b1325617313b36045e72a4d9d"
+    },
+    {
+      "name": "e5",
+      "startLine": 3376,
+      "endLine": 3376,
+      "sha256": "f5d4221285c6678d4ecd31e86b584a268195872ba0428ac81aabfc7fcae6c5a7"
+    },
+    {
+      "name": "aZ",
+      "startLine": 10122,
+      "endLine": 10122,
+      "sha256": "c1feba8490c4d449d09d841971fdac234ee7ab136a0eb45b71640e6f8c1a72f7"
+    },
+    {
+      "name": "aJ",
+      "startLine": 10123,
+      "endLine": 10123,
+      "sha256": "fea8cb3dc227fe2b3638051a5110205d1eadb9ea27b0c53b8b5cd34e3b197184"
+    },
+    {
+      "name": "a$",
+      "startLine": 10125,
+      "endLine": 10125,
+      "sha256": "d288fa33483419d01c03a7dd37f8f0d4bc31e24c8328d9432d6848d2cf33b002"
+    },
+    {
+      "name": "sL",
+      "startLine": 11115,
+      "endLine": 11122,
+      "sha256": "5e237f2ec721745f2f233bf35b23321a985cca02e0ef144bf10703ffce01a933"
+    },
+    {
+      "name": "sI",
+      "startLine": 11124,
+      "endLine": 11128,
+      "sha256": "cc1bc23539075a84cf5d9bcfec09531de69f8232d52d588b5a83082a17060c7b"
+    },
+    {
+      "name": "sF",
+      "startLine": 11129,
+      "endLine": 11157,
+      "sha256": "9d4ef7f88e0ecef6f15017488d7e5e56a812a4452aa6c58c1bbedfba6462e7e0"
+    },
+    {
+      "name": "sV",
+      "startLine": 11159,
+      "endLine": 11171,
+      "sha256": "da3fb9e27ebd30291d3c445fa7a3233ac352afac74e2291e209fc549acd93b0a"
+    },
+    {
+      "name": "sz",
+      "startLine": 11172,
+      "endLine": 11172,
+      "sha256": "17a9352b3226a297b256cf235dc00fa7057f760408cb3b9628c78a333b3270fa"
+    },
+    {
+      "name": "sY",
+      "startLine": 11173,
+      "endLine": 11196,
+      "sha256": "6ed781e90faf3f69c1f5d8c377500b20721cd53669126e85440b2d2b337ac174"
+    },
+    {
+      "name": "sH",
+      "startLine": 11198,
+      "endLine": 11205,
+      "sha256": "07870a227304ff7380b9fdd299406e50d6aed02820122c02365b63308809deb9"
+    },
+    {
+      "name": "sX",
+      "startLine": 11206,
+      "endLine": 11220,
+      "sha256": "49bbfea5868897646b9de89000d7b0f1ea63ad04d9fa6ecb3ff8f6a7bf900458"
+    },
+    {
+      "name": "sW",
+      "startLine": 11222,
+      "endLine": 11224,
+      "sha256": "b3a54417cb6e0d87f105f583e0380560854b32aaabec269f272f429fe0de9ea3"
+    },
+    {
+      "name": "sU",
+      "startLine": 11226,
+      "endLine": 11233,
+      "sha256": "022833edf7e3c436aa46cea296ca20440d1b341d0a8a44b19e5f47b87713ee05"
+    },
+    {
+      "name": "sK",
+      "startLine": 11235,
+      "endLine": 11246,
+      "sha256": "9e6a8b6f5af3153c6fbf599bf414eb35a30bafbac9d5432fdd87f88f31510db9"
+    },
+    {
+      "name": "sq",
+      "startLine": 11247,
+      "endLine": 11461,
+      "sha256": "19f90f735fcce0b2e6284ad77da7238388bd092ba96a52bcc2c504f08c8ae2ba"
+    },
+    {
+      "name": "sZ",
+      "startLine": 11463,
+      "endLine": 11466,
+      "sha256": "1dccb5c60aca26b33220625db3bf42976cfa7efb15e7d7fa967e9a79b19713b2"
+    },
+    {
+      "name": "sJ",
+      "startLine": 11468,
+      "endLine": 11470,
+      "sha256": "7a155bde5875763873fa19962fb93129dcef9c529694ea86d9fb4540e1af9607"
+    },
+    {
+      "name": "sQ",
+      "startLine": 11472,
+      "endLine": 11479,
+      "sha256": "1e85cc2229803e6a0baed51c6c6a342ef72770e60a03d4813696665042f95216"
+    },
+    {
+      "name": "s$",
+      "startLine": 11481,
+      "endLine": 11489,
+      "sha256": "e27f78cce6cee63ef5a81332645ac5733a1886d587a3e5245a57c92f597ea8af"
+    },
+    {
+      "name": "s0",
+      "startLine": 11491,
+      "endLine": 11497,
+      "sha256": "493c8b9a6b6814e63694c096c5691fcfe331da9e71d4713343439014aef46445"
+    },
+    {
+      "name": "s1",
+      "startLine": 11499,
+      "endLine": 11501,
+      "sha256": "e9abb0fa9da879bbaf736b7d1ed86a1f10fe1a03e1e4048b633d6bf93d388bd6"
+    },
+    {
+      "name": "s3",
+      "startLine": 11503,
+      "endLine": 11503,
+      "sha256": "3e7772c527c4a38df8e053e7fd80c50ba212b338527aab8421ba386db45bd986"
+    },
+    {
+      "name": "s5",
+      "startLine": 11505,
+      "endLine": 11520,
+      "sha256": "fad42461265a34bad0d13a0abd4514699673b036a1c38eef265ed4da7c275dbb"
+    },
+    {
+      "name": "om",
+      "startLine": 11618,
+      "endLine": 11618,
+      "sha256": "0e262d1c3f65b58b1335941f3182a233d4ec3c7695c3e1fa52d6acfb618cf5fc"
+    },
+    {
+      "name": "op",
+      "startLine": 11619,
+      "endLine": 11619,
+      "sha256": "dccf2acca445cd288aa3a2e425bcf4accdc32819d8edcb1bd75969c26121a957"
+    },
+    {
+      "name": "of",
+      "startLine": 11625,
+      "endLine": 11642,
+      "sha256": "6bec1e5e1cc5534d263fc9104c587f839b9a354d18eee14a032602b55c8e1372"
+    },
+    {
+      "name": "ov",
+      "startLine": 11643,
+      "endLine": 11643,
+      "sha256": "36ba36ad0c64744850f7514be3eb49c27b319aff46c02754a70e846b0eb549ea"
+    },
+    {
+      "name": "oy",
+      "startLine": 11644,
+      "endLine": 11644,
+      "sha256": "f496db05c909131b9cdc1c9bc52f2f03d5e7ad9bc988df15d64de2192a2753d4"
+    },
+    {
+      "name": "ob",
+      "startLine": 11646,
+      "endLine": 11648,
+      "sha256": "98deab281c253dbb426cb65d4fea5c1c561e5b607b8fea3bb9850a9ad6f07c8e"
+    },
+    {
+      "name": "ox",
+      "startLine": 11650,
+      "endLine": 11653,
+      "sha256": "bf59e64a09ce21fc542c7270ff81ec06ffbb96fe8916e323b0411b2c05fa6325"
+    },
+    {
+      "name": "ow",
+      "startLine": 11655,
+      "endLine": 11667,
+      "sha256": "b6df87b6ab7b0f13fddbe6dbae7323d161efe1881e922a24eaf9f56cf502e7a2"
+    },
+    {
+      "name": "oS",
+      "startLine": 11669,
+      "endLine": 11671,
+      "sha256": "40a5bac27a4fbbaa1791ebb4bb9c4bd104110bc197ea99f99c6fac58fb97ab3f"
+    },
+    {
+      "name": "oO",
+      "startLine": 11673,
+      "endLine": 11681,
+      "sha256": "8acfce3ff785c2733bebae7fd6f38fa939d61223d22de38e9c4078cef632906c"
+    },
+    {
+      "name": "oW",
+      "startLine": 12320,
+      "endLine": 12384,
+      "sha256": "b2ac72452823b6107173be61103b865601e949f2f72813710613d7585f803cb7"
+    },
+    {
+      "name": "oU",
+      "startLine": 12386,
+      "endLine": 12393,
+      "sha256": "53bc2c1d67b509a10790f248d182dfefca612a1e348befc8f44afe5837989aee"
+    },
+    {
+      "name": "oK",
+      "startLine": 12395,
+      "endLine": 12571,
+      "sha256": "70af78a9cb46c0178847a64ecb1f782bed1b525c710f5c590c619a9239f2f3fd"
+    },
+    {
+      "name": "oq",
+      "startLine": 12573,
+      "endLine": 12580,
+      "sha256": "686f9a8b0efa5f819a537dcffa53e4574804c909e1af6e98efb936c6811ed7d3"
+    },
+    {
+      "name": "oZ",
+      "startLine": 12582,
+      "endLine": 12593,
+      "sha256": "4238e59606d4852de7f59380570631eb995421bcda5b9c0f3ef4e6a51a826e93"
+    },
+    {
+      "name": "oJ",
+      "startLine": 12595,
+      "endLine": 12606,
+      "sha256": "5fa7b5a584b10e7e9066d7cf35e1f609addcdb7e7ddc2b563f2ce1357299a8d4"
+    },
+    {
+      "name": "oQ",
+      "startLine": 12607,
+      "endLine": 12611,
+      "sha256": "de42b7e7f271ad43fc5411c327f89b3a63979772d80b1770588914d2624a2ed2"
+    },
+    {
+      "name": "o$",
+      "startLine": 12613,
+      "endLine": 12626,
+      "sha256": "d05451f60e4d2ed545c86068cd3082f285b816a2dbfce079f8387bebf2a66238"
+    },
+    {
+      "name": "o0",
+      "startLine": 12627,
+      "endLine": 12851,
+      "sha256": "298a1b9377f8be3b1604b66cf2f1bcd214c7bdb5785657c5617d418207b3a9b5"
+    },
+    {
+      "name": "o1",
+      "startLine": 12853,
+      "endLine": 12860,
+      "sha256": "910fec4e6057caf000e957dcab621e38f2987c28aabe004629982972f35e404f"
+    },
+    {
+      "name": "o2",
+      "startLine": 12861,
+      "endLine": 13189,
+      "sha256": "d7cf63b1e10bdda7e3ae6e15e40638e628a4f39657831a20c16464c0fb0d8873"
+    },
+    {
+      "name": "o3",
+      "startLine": 13191,
+      "endLine": 13210,
+      "sha256": "15781a295288ab58fb795ef93a62ed71ba9efc90b42f44cb184efe26d48a41e0"
+    },
+    {
+      "name": "o5",
+      "startLine": 13212,
+      "endLine": 13214,
+      "sha256": "d3ea65dfa8c6603375c82d2673572097232f1c521bbe3575f9815c8cedb85811"
+    }
+  ],
+  "assets": [
+    {
+      "file": "level-1.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/01.830775.png",
+      "bytes": 14592,
+      "sha256": "c6e40bf723a0ff63e247616ff608128b9926320a33004d133351c81792afe099"
+    },
+    {
+      "file": "level-2.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/02.764822.png",
+      "bytes": 17418,
+      "sha256": "c427f5d98af01154b8502711ab12a2ea850bd54cd75bad174bab835a4c660181"
+    },
+    {
+      "file": "level-3.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/03.054c69.png",
+      "bytes": 23919,
+      "sha256": "54682200e3325aa8bcddb1cd8fca3e95375c990d4c05a8012aaceb919981006f"
+    },
+    {
+      "file": "level-4.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/04.4dace9.png",
+      "bytes": 24665,
+      "sha256": "5cb064a3cecdda942700b3f7c433840fc8e7c38cfd463999a5821e158e9b50e0"
+    },
+    {
+      "file": "level-5.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/05.b40fa7.png",
+      "bytes": 30058,
+      "sha256": "75de0721acd15569123808db245849d46802fc899b1c7af1c24b596ac2531677"
+    },
+    {
+      "file": "level-6.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/06.d5cdeb.png",
+      "bytes": 25926,
+      "sha256": "b32c6540d485ddf6627233c88be2baa0f5fa40be1f020dc014c0eb0833d7443f"
+    },
+    {
+      "file": "level-7.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/07.b78949.png",
+      "bytes": 25342,
+      "sha256": "b865cdf42d87da05e8a211d03d93c63bb525dc47c3a2cc5defb680e5335283c2"
+    },
+    {
+      "file": "level-8.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/08.b3e19b.png",
+      "bytes": 29537,
+      "sha256": "2192bee10c754ecb9b17391336aa8b28e0cd9dc75076ac362dce572e2b7937b6"
+    },
+    {
+      "file": "level-9.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/09.7112d8.png",
+      "bytes": 41943,
+      "sha256": "06571247101c34956052dee0215d1598b34865dc1996d914950d0f03fbef887f"
+    },
+    {
+      "file": "level-10.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/10.9d5c21.png",
+      "bytes": 38929,
+      "sha256": "b7f56f809f2e2df18648fbe69b26b674ae707b66716bd5949e9c1b42960cae17"
+    },
+    {
+      "file": "level-11.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/11.3df86f.png",
+      "bytes": 61057,
+      "sha256": "3f44a0dad2c7318f5d90c28493434fab7f7b58e558c8fe9026fe9c0aa0e39db4"
+    },
+    {
+      "file": "skill-clear.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/clear.221334.png",
+      "bytes": 7494,
+      "sha256": "eced5a3bbfbe94e2a819ce4e2ce95d1fd3ad4e928dba8bd69cd589389fb24474"
+    },
+    {
+      "file": "skill-wind.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/wind.92bf25.png",
+      "bytes": 8268,
+      "sha256": "23321a1657ab729b813af7b469fe554f71cc44628dfbe3610b3296e1bc569196"
+    },
+    {
+      "file": "skill-shake.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/shake.d8b409.png",
+      "bytes": 8004,
+      "sha256": "1a20d4ec832c78946615d916454e35ca89a58dd5f838f54613d16b8d24589c5b"
+    },
+    {
+      "file": "skill-swap.png",
+      "source": "web-evidence/public-web/site/web.hycdn.cn/endfield/webview/unn3irGqmsvyaKnFbTug/act/orbipom-merge-XaVa5Tz/assets/imgs/swap.bc5f84.png",
+      "bytes": 6098,
+      "sha256": "741a23bb6f0716ef33eacf22ddcb32c5f775589c8cd1012a7571c2a3fbcb6985"
+    }
+  ],
+  "adaptation": "Original74 gameplay declarations and original Matter0.20.0, JavaScriptCore/native retained rendering. Native-driven virtual clock only. No network/account/telemetry/audio/React/webview. Original developer collision overrides disabled. Pure renderer replaced; merge and clear source easing retained.",
+  "runtimeSHA256": "1c68da4d2165f3d6d45e8842ab4d7d6e766bb3d738e3ff19f32ca2dce64e4054",
+  "matterLicenseSHA256": "ed182087be5b26734aa6d4789743de3a97417950e8c1e3ff2e3d19c6462720d3",
+  "declarationCount": 74,
+  "runtimeSources": "74 original declarations with CRLF normalized to LF; adapted browser renderer/clock/state-container/vendor-bezier bridge is separately documented."
+}

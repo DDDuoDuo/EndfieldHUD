@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focusTerminationPending = false
     private var focusTerminationFinished = false
     private var focusTerminationDeadline: Timer?
+    private var documentTerminationFinished = false
+    private var documentTerminationSucceeded = true
+    private var terminationReplyPending = false
     private var snapshot: BatterySnapshot?
     private var presentedSnapshot: BatterySnapshot?
     private var previewSnapshot: BatterySnapshot?
@@ -44,11 +47,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let defaults = diagnosticDomain.flatMap(UserDefaults.init(suiteName:)) ?? .standard
         store = ConfigurationStore(defaults: defaults)
         super.init()
+        overlay.eventRecorder.receiveConfiguration(store.configuration)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         let args = CommandLine.arguments
+        if args.contains("--ui-test") && args.contains("--account-smoke-test") {
+            configureSystemOverlay()
+            HUDAccountHUDVerification.run(overlay: overlay); return
+        }
+        if args.contains("--ui-test") && args.contains("--minigame-smoke-test") {
+            configureSystemOverlay()
+            OrbiPomHUDVerification.run(overlay:overlay); return
+        }
+        if args.contains("--ui-test") && args.contains("--batch-seven-eight-smoke-test") {
+            configureSystemOverlay()
+            BatchSevenEightHUDVerification.run(overlay: overlay); return
+        }
+        if args.contains("--ui-test") && args.contains("--now-playing-live-probe") {
+            NowPlayingLiveVerification.run()
+            return
+        }
+        if args.contains("--ui-test") && args.contains("--batch6-smoke-test") {
+            configureSystemOverlay()
+            BatchSixHUDVerification.run(overlay: overlay)
+            return
+        }
+        if args.contains("--ui-test") && args.contains("--projection-smoke-test") {
+            configureSystemOverlay()
+            ProjectionHUDVerification.run(overlay: overlay)
+            return
+        }
+        if args.contains("--ui-test") && args.contains("--batch34-smoke-test") {
+            configureSystemOverlay()
+            Batch34HUDVerification.run(overlay: overlay)
+            return
+        }
+        if args.contains("--ui-test") && args.contains("--batch-two-smoke-test") {
+            configureSystemOverlay()
+            BatchTwoHUDVerification.run(overlay: overlay)
+            return
+        }
+        if args.contains("--ui-test") && args.contains("--map-interaction-smoke-test") {
+            configureSystemOverlay()
+            MapInteractionHUDVerification.run(overlay: overlay)
+            return
+        }
         if args.contains("--smoke-test") { runSmokeTest(); return }
         if args.contains("--system-smoke-test") { runSystemSmokeTest(); return }
         if args.contains("--navigation-smoke-test") { runNavigationSmokeTest(); return }
@@ -105,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         completedNormalStartup = true
         if diagnosticDomain == nil && !args.contains("--ui-test") {
+            overlay.startCalendarReminders()
             HUDSourceWatchDocument.prewarmDesktop()
             HUDSourceMetalRenderer.prewarmDesktopResources()
         }
@@ -207,27 +253,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        terminating = true
-        guard !focusTerminationFinished, let workFocus else { return .terminateNow }
-        if focusTerminationPending { return .terminateLater }
-        focusTerminationPending = true
-        // Let the public automation finish its End action before exiting. A
-        // stalled external shortcut cannot hold the application open forever.
-        workFocus.shutdown { [weak self] _ in
-            RunLoop.main.perform(inModes: [.common, .modalPanel]) { self?.finishFocusTermination() }
+        if terminationReplyPending { return .terminateLater }
+        if focusTerminationFinished && documentTerminationFinished && documentTerminationSucceeded { return .terminateNow }
+        terminating = true; terminationReplyPending = true
+        documentTerminationFinished = false; documentTerminationSucceeded = true
+        overlay.prepareForDocumentTermination()
+        overlay.drainDocumentWrites { [weak self] success in
+            RunLoop.main.perform(inModes: [.common, .modalPanel]) {
+                guard let self else { return }
+                self.documentTerminationFinished = true; self.documentTerminationSucceeded = success
+                if success { self.beginFocusTermination() }
+                else { self.cancelPendingTerminationAfterSaveFailure() }
+            }
         }
-        let deadline = Timer(timeInterval: 8, repeats: false) { [weak self] _ in self?.finishFocusTermination() }
-        focusTerminationDeadline = deadline
-        RunLoop.main.add(deadline, forMode: .common)
-        RunLoop.main.add(deadline, forMode: .modalPanel)
         return .terminateLater
+    }
+    private func beginFocusTermination() {
+        focusTerminationPending = true
+        if let workFocus {
+            workFocus.shutdown { [weak self] _ in
+                RunLoop.main.perform(inModes: [.common, .modalPanel]) { self?.finishFocusTermination() }
+            }
+            let deadline = Timer(timeInterval: 8, repeats: false) { [weak self] _ in self?.finishFocusTermination() }
+            focusTerminationDeadline = deadline
+            RunLoop.main.add(deadline, forMode: .common)
+            RunLoop.main.add(deadline, forMode: .modalPanel)
+        } else {
+            RunLoop.main.perform(inModes: [.common, .modalPanel]) { [weak self] in self?.finishFocusTermination() }
+        }
     }
 
     private func finishFocusTermination() {
         guard focusTerminationPending else { return }
         focusTerminationDeadline?.invalidate(); focusTerminationDeadline = nil
         focusTerminationPending = false; focusTerminationFinished = true
+        finishPendingTerminationIfReady()
+    }
+    private func finishPendingTerminationIfReady() {
+        guard terminationReplyPending, focusTerminationFinished, documentTerminationFinished else { return }
+        terminationReplyPending = false
         NSApp.reply(toApplicationShouldTerminate: true)
+    }
+    private func cancelPendingTerminationAfterSaveFailure() {
+        guard terminationReplyPending else { return }
+        // Focus shutdown has not started yet. Preserve drafts and restore the
+        // ordinary hotkey/reopen path so the save can be retried in the HUD.
+        terminationReplyPending = false; terminating = false
+        documentTerminationFinished = false; updateRestartInProgress = false
+        overlay.cancelTerminationAfterDocumentFailure()
+        if diagnosticDomain == nil { shortcut.start(shortcut: store.configuration.summonShortcut) }
+        NSApp.reply(toApplicationShouldTerminate: false)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -276,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let next = snapshot, !terminating, !suspended, !overlay.isEditingPosition else { return }
         let previous = presentedSnapshot
         presentedSnapshot = next
-        if overlay.isSystemOverlayActive {
+        if overlay.isSystemOverlayActive || overlay.isProjectionActive {
             previewSnapshot = nil
             overlay.update(snapshot: next, configuration: hudSettings.configuration)
             return
@@ -309,6 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configurationChanged(_ configuration: AppConfiguration) {
+        overlay.eventRecorder.receiveConfiguration(configuration)
         let previous = appliedConfiguration
         appliedConfiguration = configuration
         if previous.language != configuration.language || previous.summonShortcut != configuration.summonShortcut {
@@ -349,8 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let dropView = StatusItemFileDropView(statusButton: button)
             dropView.onDropFiles = { [weak self] urls in
                 guard let self, !self.suspended, !self.terminating else { return false }
-                return self.overlay.receiveStatusItemFiles(urls, snapshot: self.snapshot ?? .unavailable,
-                                                           configuration: self.hudSettings.configuration)
+                return self.overlay.receiveStatusItemFiles(urls)
             }
             button.addSubview(dropView)
             statusFileDropView = dropView
@@ -442,18 +517,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.overlay.closeForApplicationUpdate(completion: continuation)
         }
         updater.onRestartCancelled = { [weak self] in
-            guard let self, self.updateRestartInProgress, !self.focusTerminationPending, !self.focusTerminationFinished else { return }
+            guard let self, self.updateRestartInProgress, !self.terminationReplyPending, !self.focusTerminationPending, !self.focusTerminationFinished else { return }
             self.updateRestartInProgress = false; self.terminating = false
             self.overlay.cancelApplicationUpdate()
             self.shortcut.start(shortcut: self.store.configuration.summonShortcut)
         }
         updater.presentUpdateUI = { [weak self] show in
             guard let self, !self.terminating else { return }
-            if self.overlay.systemPhase == .closed { show() }
-            else {
-                self.overlay.afterSystemClose = show
-                self.overlay.closeSystemOverlay()
-            }
+            self.overlay.closeForExternalPresentation(show)
         }
         hudSettings.onCheckForUpdates = { [weak updater] in updater?.checkForUpdates() }
         hudSettings.onAutomaticUpdatesChange = { [weak updater] in updater?.setAutomaticallyInstalls($0) }
@@ -1099,7 +1170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     check(overlay.systemPhase == .closed && overlay.systemAnimationCount == 0
                                           && overlay.lastClosedAnimationCount == 0,
                                           "Stale callbacks must not revive hidden content or animations")
-                                    print("PASS: \(assertionCount) navigation assertions; all \(HUDModule.allCases.count) sections; retained panel, shell, source scene and center host; one source display clock; one settled center and at most two during swaps; latest request wins; stationary-pointer opening and refreshed reopening poses; close-during-swap cleanup; safe immediate reopen; zero hidden animations")
+                                    print("PASS: \(assertionCount) navigation assertions; all \(HUDModule.allCases.filter { $0 != .projection }.count) center sections; retained panel, shell, source scene and center host; one source display clock; one settled center and at most two during swaps; latest request wins; stationary-pointer opening and refreshed reopening poses; close-during-swap cleanup; safe immediate reopen; zero hidden animations")
                                     NSApp.terminate(nil)
                                 }
                             }
@@ -1121,12 +1192,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             func visit(_ index: Int) {
-                guard index < HUDModule.allCases.count else { verifyRapidRequests(); return }
-                let module = HUDModule.allCases[index]
+                let centerModules = HUDModule.allCases.filter { $0 != .projection }
+                guard index < centerModules.count else { verifyRapidRequests(); return }
+                let module = centerModules[index]
                 overlay.selectSystemModule(module)
                 checkSharedPresentation(stable: reduced)
                 later(0.12) { checkSharedPresentation(stable: reduced) }
-                later(max(HUDModuleContent.transitionDuration, HUDNavigation.selectionTransitionDuration) + 0.25) { [self] in
+                // Lyrics may resolve when the incoming controller activates at
+                // the end of the section swap. Allow its finite 0.24s layout
+                // transition to finish before asserting zero settled tracks.
+                let contentSettle: TimeInterval = module == .nowPlaying ? 0.5 : 0.25
+                later(max(HUDModuleContent.transitionDuration, HUDNavigation.selectionTransitionDuration) + contentSettle) { [self] in
                     checkSharedPresentation(stable: true)
                     check(overlay.systemSelectedModule == module, "Each requested section must become the selected screen")
                     visit(index + 1)

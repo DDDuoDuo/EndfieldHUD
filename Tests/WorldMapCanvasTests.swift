@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import QuartzCore
 
 enum WorldMapCanvasTests {
@@ -124,7 +125,7 @@ enum WorldMapCanvasTests {
                   "Adding a pin displays its coordinates")
             check(nearPoint(marker(canvas, pin.id)?.position, placedAt), "The new marker is drawn where the user clicked")
             let dot = marker(canvas, pin.id)!.sublayers!.compactMap { $0 as? CAShapeLayer }.first { $0.name == "map.pin.dot" }!
-            check(dot.fillColor == cyan.cgColor, "Marker dots use the selected HUD theme color")
+            check(dot.fillColor == WorldMapPinArtwork.yellow.cgColor, "New pins use the requested yellow marker color")
             check(try WorldMapStore(directory: root.appendingPathComponent("navigation")).pins == [pin], "Placing a pin saves it immediately for relaunch")
 
             check(canvas.mouseDown(at: CGPoint(x: 303, y: 264)) && canvas.isDragging, "Dragging empty terrain begins a pan")
@@ -158,9 +159,11 @@ enum WorldMapCanvasTests {
             check(canvas.selectedPinID == nil && !canvas.keyDown(keyCode: 51), "Escape clears selection and Delete without selection preserves pins")
             let pinScreen = WorldMapGeometry.screen(x: pin.x, y: pin.y, viewport: canvas.viewport)
             canvas.perform(actionID: "map:pin:" + pin.id.uuidString)
-            check(canvas.showsPinCoordinates, "Selecting a pin through its accessible action exposes coordinates")
+            check(canvas.showsPinCoordinates && canvas.pins[0].style == .green,
+                  "The accessible pin action advances its style while exposing its coordinates")
             check(canvas.mouseDown(at: pinScreen) && canvas.selectedPinID == pin.id && !canvas.isDragging && !canvas.showsPinCoordinates,
-                  "Left-clicking an existing marker dismisses coordinates and retains selection without dragging")
+                  "Left-clicking an existing marker cycles style and retains selection without dragging")
+            check(canvas.pins[0].style == .player, "Pointer and accessibility pin actions use the same style cycle")
             check(canvas.rightMouseDown(at: pinScreen) && canvas.pins.isEmpty && canvas.selectedPinID == nil,
                   "Right-clicking an existing pin removes it directly even while coordinates are hidden")
             check(try WorldMapStore(directory: root.appendingPathComponent("navigation")).pins.isEmpty, "Pin removal persists across relaunch")
@@ -179,8 +182,100 @@ enum WorldMapCanvasTests {
             check(sameLayer === retained && sameLayer.mask === edgeMask && marker(canvas, canvas.pins[0].id) != nil,
                   "Theme changes keep the same canvas, feather mask and saved markers")
             let pinkDot = marker(canvas, canvas.pins[0].id)!.sublayers!.compactMap { $0 as? CAShapeLayer }.first { $0.name == "map.pin.dot" }!
-            check(pinkDot.fillColor == NSColor.systemPink.cgColor, "Existing markers update to a new theme color")
+            check(pinkDot.fillColor == WorldMapPinArtwork.yellow.cgColor, "Explicit yellow/green marker styles stay distinct across HUD themes")
             check(changes > 0, "Map interactions notify the HUD to refresh projected controls")
+
+            let clickDirectory = root.appendingPathComponent("clicks")
+            let clickStore = try WorldMapStore(directory: clickDirectory)
+            let clicks = WorldMapCanvas(store: clickStore, terrain: terrain, loadsTerrain: false,
+                                        reduceMotion: { true }, ambient: { false })
+            _ = clicks.makeContent(for: .map, style: style)
+            var recenterEvents = 0, styleEvents: [MapPinStyle] = []
+            clicks.onRecenter = { recenterEvents += 1 }
+            clicks.onPinStyleChanged = { styleEvents.append($0) }
+            let clickPoint = CGPoint(x: 301, y: 260), beforeClick = clicks.viewport
+            check(clicks.mouseDown(at: clickPoint) && clicks.viewport == beforeClick,
+                  "An empty-map press waits for release before deciding between click and drag")
+            clicks.mouseDragged(to: CGPoint(x: clickPoint.x + 1, y: clickPoint.y + 1))
+            check(clicks.viewport == beforeClick, "Small pointer jitter cannot begin a pan")
+            clicks.mouseUp()
+            let afterClick = WorldMapGeometry.recentered(beforeClick, at: clickPoint)
+            check(clicks.viewport == afterClick && clickStore.viewport == afterClick && recenterEvents == 1,
+                  "A click recenters and emits one event only after saving the unchanged zoom")
+            _ = clicks.mouseDown(at: WorldMapGeometry.center); clicks.mouseUp()
+            check(recenterEvents == 1, "Clicking the current map center does not emit a no-op event")
+            _ = clicks.mouseDown(at: clickPoint)
+            clicks.mouseDragged(to: CGPoint(x: clickPoint.x + 20, y: clickPoint.y - 10))
+            let dragged = clicks.viewport
+            clicks.mouseUp()
+            check(clicks.viewport == dragged && clickStore.viewport == dragged && recenterEvents == 1,
+                  "A completed drag saves the pan without additionally recentring its initial press")
+            _ = clicks.mouseDown(at: clickPoint); clicks.deactivate()
+            check(clicks.viewport == dragged && recenterEvents == 1 && !clicks.isDragging,
+                  "Deactivation cancels a pending click instead of navigating while hidden")
+            _ = clicks.rightMouseDown(at: WorldMapGeometry.center)
+            let cyclingPin = clicks.pins[0], cyclingLayer = marker(clicks, clicks.pins[0].id)!
+            check(WorldMapPinArtwork.playerGlyph?.width == 90 && WorldMapPinArtwork.playerGlyph?.height == 92
+                  && WorldMapPinArtwork.playerHalo?.width == 191 && WorldMapPinArtwork.playerBeam?.width == 256,
+                  "Player artwork resolves the original bounded arrow, halo and beam resources")
+            let playerAssetPaths = ["sprites/icon_char---2308601083109874541.png",
+                "sprites/deco_readio_mask--2444265073359569955.png",
+                "textures/T_fx_mask_02_M--4275033587688225551.png"]
+            let playerAssetURLs = playerAssetPaths.compactMap { HUDResources.url(for: "WatchSource/Scene/Domain/" + $0) }
+            let playerAssetBytes = try playerAssetURLs.reduce(0) { total, url in
+                total + (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+            }
+            check(playerAssetURLs.count == 3 && playerAssetBytes == 39_766,
+                  "Player materials still use the three unchanged source PNGs without a generated asset")
+            let beamSource = CGImageSourceCreateWithURL(playerAssetURLs[2] as CFURL, nil)!
+            let rawBeam = CGImageSourceCreateImageAtIndex(beamSource, 0, nil)!
+            let rawContext = CGContext(data: nil, width: rawBeam.width, height: rawBeam.height,
+                bitsPerComponent: 8, bytesPerRow: rawBeam.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)!
+            rawContext.draw(rawBeam, in: CGRect(x: 0, y: 0, width: rawBeam.width, height: rawBeam.height))
+            let sourcePixels = rawContext.data!.assumingMemoryBound(to: UInt8.self)
+            let tintedBeam = WorldMapPinArtwork.playerBeam!
+            let tintedPixels = tintedBeam.dataProvider!.data! as Data
+            var matchesMaterial = true, darkPixels = 0, gradientPixels = 0, brightPixels = 0
+            for y in 0..<rawBeam.height {
+                for x in 0..<rawBeam.width {
+                    let sourceOffset = (y * rawBeam.width + x) * 4, targetOffset = y * tintedBeam.bytesPerRow + x * 4
+                    let intensity = sourcePixels[sourceOffset]
+                    let expected = [intensity, UInt8((Double(intensity) * 0.9898965359).rounded()),
+                                    UInt8((Double(intensity) * 0.3056603670).rounded()), intensity]
+                    matchesMaterial = matchesMaterial && Array(tintedPixels[targetOffset..<targetOffset + 4]) == expected
+                    if intensity == 0 { darkPixels += 1 }
+                    else if intensity == 255 { brightPixels += 1 }
+                    else { gradientPixels += 1 }
+                }
+            }
+            check(matchesMaterial && darkPixels > 0 && gradientPixels > 0 && brightPixels > 0,
+                  "The cached beam multiplies the source gradient by the authored yellow tint with transparent black pixels")
+            for selected in [MapPinStyle.green, .player, .yellow] {
+                _ = clicks.mouseDown(at: WorldMapGeometry.center)
+                check(clicks.pins[0].style == selected && clicks.viewport == dragged && marker(clicks, cyclingPin.id) === cyclingLayer,
+                      "Each pin click cycles the saved style without moving the camera or replacing its layer")
+                let player = cyclingLayer.sublayers?.first { $0.name == "map.pin.player" }
+                if selected == .player {
+                    let beam = cyclingLayer.sublayers?.first { $0.name == "map.pin.playerBeam" }
+                    check(player?.contents != nil && player?.isHidden == false && beam?.contents != nil
+                          && beam!.frame.maxY < 0 && beam!.frame.height > player!.frame.height,
+                          "The player glyph and source beam are attached above the same geographic anchor")
+                    check(clicks.accessibleActions.first { $0.id == "map:pin:" + cyclingPin.id.uuidString }?.label.hasPrefix("Player marker") == true,
+                          "The native pin accessibility label announces its new visual style")
+                } else if let player {
+                    check(player.isHidden, "Returning to a dot hides the retained player artwork")
+                }
+            }
+            check(styleEvents == [.green, .player, .yellow] && cyclingLayer.sublayers?.count == 7,
+                  "Style events occur once per committed change and all three styles use a bounded retained layer set")
+            let externalBytes = Data("external map edit".utf8)
+            try externalBytes.write(to: clickDirectory.appendingPathComponent("map.json"))
+            _ = clicks.mouseDown(at: WorldMapGeometry.center)
+            _ = clicks.mouseDown(at: clickPoint); clicks.mouseUp()
+            check(clicks.pins == [cyclingPin] && clicks.viewport == dragged && recenterEvents == 1
+                  && styleEvents.count == 3,
+                  "Failed pin/recenter commits preserve visible state and produce no successful-action events")
 
             let busyStore = try WorldMapStore(directory: root.appendingPathComponent("lifecycle"))
             for index in 0..<24 {
@@ -248,8 +343,8 @@ enum WorldMapCanvasTests {
             _ = countryOnly.makeContent(for: .map, style: style)
             countryOnly.activate(); waitForRaster(countryOnly)
             check(descendants(countryOnly.layer).contains { $0.name == "map.raster.detail" && $0.contents != nil }
-                  && !descendants(countryOnly.layer).contains { $0.name == "map.country.face" },
-                  "Country-only fallback paints one bounded image rather than attaching geographic vector layers")
+                  && !descendants(countryOnly.layer).contains { $0.name?.hasPrefix("map.highlight") == true },
+                  "Country-only terrain bakes center feedback into one image with no extra highlight plates or bitmap cache")
             check(!descendants(countryOnly.layer).contains { $0.name == "map.shenzhen.label" },
                   "Map does not add place-name text over the country faces")
             countryOnly.zoom(at: WorldMapGeometry.center, factor: 0.001)
@@ -368,7 +463,11 @@ enum WorldMapCanvasTests {
             input.setActive(true)
             check(proxy(for: "map:zoomIn") === zoomProxy && !zoomProxy.isHidden,
                   "Reopening reuses map accessibility controls and makes them available again")
+            let beforeCancelledClick = inputCanvas.viewport
+            _ = input.mouseDown(at: CGPoint(x: 320, y: 300), event: down)
             input.deactivate()
+            check(inputCanvas.viewport == beforeCancelledClick && !inputCanvas.isDragging,
+                  "The native interaction bridge cancels a pending click during deactivation")
         } catch { fatalError("World map canvas fixture failed: \(error)") }
         return count
     }

@@ -6,9 +6,11 @@ BUILD_DIR="${BUILD_DIR:-$PROJECT_DIR/build}"
 SELECTED_SDK="$("$PROJECT_DIR/scripts/build.sh" --print-sdk)"
 mkdir -p "$BUILD_DIR/tests" "$BUILD_DIR/module-cache"
 
-xcrun swiftc -swift-version 5 -parse-as-library \
+# One unoptimized module avoids reparsing hundreds of files per primary file.
+# Assertions and runtime checks retain the same debug compilation semantics.
+xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-library \
     -sdk "$SELECTED_SDK" -module-cache-path "$BUILD_DIR/module-cache" \
-    -framework Cocoa -framework IOKit -framework CoreAudio -framework Quartz -framework Carbon -framework ServiceManagement -lsqlite3 \
+    -framework Cocoa -framework IOKit -framework CoreAudio -framework Quartz -framework Carbon -framework ServiceManagement -lsqlite3 -lz -framework WebKit -framework Security -framework PDFKit -framework JavaScriptCore \
     "$PROJECT_DIR/Sources/Models.swift" \
     "$PROJECT_DIR/Sources/HUDResources.swift" \
     "$PROJECT_DIR/Sources/HUDWatchArtwork.swift" \
@@ -34,6 +36,10 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/HUDUpdateState.swift" \
     "$PROJECT_DIR/Sources/HUDDisplayPolicy.swift" \
     "$PROJECT_DIR/Sources/HUDClock.swift" \
+    "$PROJECT_DIR/Sources/HUDClockStyle.swift" \
+    "$PROJECT_DIR/Sources/HUDCenterLogo.swift" \
+    "$PROJECT_DIR/Sources/HUDCenterLogoPresentation.swift" \
+    "$PROJECT_DIR/Sources/HUDChargeMetric.swift" \
     "$PROJECT_DIR/Sources/HUDApplicationIcon.swift" \
     "$PROJECT_DIR/Sources/EndfieldGameIcon.swift" \
     "$PROJECT_DIR/Sources/HUDSettingsController.swift" \
@@ -67,13 +73,70 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/PersonalProfileCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDPersonalProfileInteraction.swift" \
     "$PROJECT_DIR/Sources/HUDRenderScale.swift" \
+    "$PROJECT_DIR/Sources/HypergryphAccountModels.swift" \
+    "$PROJECT_DIR/Sources/HypergryphAccountAPI.swift" \
+    "$PROJECT_DIR/Sources/HypergryphAccountKeychain.swift" \
+    "$PROJECT_DIR/Sources/HypergryphAccountLogin.swift" \
+    "$PROJECT_DIR/Sources/HypergryphAvatarLoader.swift" \
+    "$PROJECT_DIR/Sources/HypergryphAccountController.swift" \
+    "$PROJECT_DIR/Sources/HUDAccountCanvas.swift" \
+    "$PROJECT_DIR/Sources/HUDAccountInteraction.swift" \
+    "$PROJECT_DIR/Sources/HUDAccountGauge.swift" \
     "$PROJECT_DIR/Sources/HUDModule.swift" \
+    "$PROJECT_DIR/Sources/HUDSectionHeading.swift" \
     "$PROJECT_DIR/Sources/HUDSubsectionTransition.swift" \
     "$PROJECT_DIR/Sources/HUDModuleContent.swift" \
     "$PROJECT_DIR/Sources/HUDNavigationTarget.swift" \
     "$PROJECT_DIR/Sources/HUDNavigation.swift" \
     "$PROJECT_DIR/Sources/NotesStore.swift" \
+    "$PROJECT_DIR/Sources/NotesRichText.swift" \
+    "$PROJECT_DIR/Sources/NotesDrawing.swift" \
+    "$PROJECT_DIR/Sources/NotesMedia.swift" \
+    "$PROJECT_DIR/Sources/NotesFormattingControls.swift" \
+    "$PROJECT_DIR/Sources/NotesShelfMediaPicker.swift" \
+    "$PROJECT_DIR/Sources/ProjectionModel.swift" \
+    "$PROJECT_DIR/Sources/ArchiveStore.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyModel.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyAssetCatalog.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyViewport.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyEngine.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyController.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyCanvas.swift" \
+    "$PROJECT_DIR/Sources/MediaAssemblyControls.swift" \
+    "$PROJECT_DIR/Sources/HUDMediaAssemblyInteraction.swift" \
+    "$PROJECT_DIR/Sources/OrbiPomRuntime.swift" \
+    "$PROJECT_DIR/Sources/OrbiPomArtwork.swift" \
+    "$PROJECT_DIR/Sources/OrbiPomSession.swift" \
+    "$PROJECT_DIR/Sources/OrbiPomCanvas.swift" \
+    "$PROJECT_DIR/Sources/HUDOrbiPomInteraction.swift" \
+    "$PROJECT_DIR/Sources/HUDCalendarStore.swift" \
+    "$PROJECT_DIR/Sources/HUDCalendarController.swift" \
+    "$PROJECT_DIR/Sources/HUDCalendarCanvas.swift" \
+    "$PROJECT_DIR/Sources/HUDCalendarInteraction.swift" \
+    "$PROJECT_DIR/Sources/ReaderStore.swift" \
+    "$PROJECT_DIR/Sources/ReaderZIP.swift" \
+    "$PROJECT_DIR/Sources/ReaderEPUB.swift" \
+    "$PROJECT_DIR/Sources/ReaderDocument.swift" \
+    "$PROJECT_DIR/Sources/ReaderController.swift" \
+    "$PROJECT_DIR/Sources/ReaderCanvas.swift" \
+    "$PROJECT_DIR/Sources/ReaderInteraction.swift" \
+    "$PROJECT_DIR/Sources/ArchiveCanvas.swift" \
+    "$PROJECT_DIR/Sources/HUDArchiveInteraction.swift" \
+    "$PROJECT_DIR/Sources/ProjectionControls.swift" \
+    "$PROJECT_DIR/Sources/ProjectionWorkspaceView.swift" \
+    "$PROJECT_DIR/Sources/ProjectionController.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingController.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingArtwork.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingAppleEvents.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingLyrics.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingCatalog.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingMediaRemote.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingAccessibility.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingAdapter.swift" \
+    "$PROJECT_DIR/Sources/NowPlayingCanvas.swift" \
+    "$PROJECT_DIR/Sources/HUDNowPlayingInteraction.swift" \
     "$PROJECT_DIR/Sources/NotesCanvas.swift" \
+    "$PROJECT_DIR/Sources/HUDProjectedTextEditor.swift" \
     "$PROJECT_DIR/Sources/HUDNotesInteraction.swift" \
     "$PROJECT_DIR/Sources/FileShelfStore.swift" \
     "$PROJECT_DIR/Sources/FileShelfCanvas.swift" \
@@ -111,6 +174,7 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Sources/EventLogCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDEventLogInteraction.swift" \
     "$PROJECT_DIR/Sources/WorldMapStore.swift" \
+    "$PROJECT_DIR/Sources/WorldMapPinArtwork.swift" \
     "$PROJECT_DIR/Sources/WorldMapGeometry.swift" \
     "$PROJECT_DIR/Sources/WorldMapTerrain.swift" \
     "$PROJECT_DIR/Sources/WorldMapCountries.swift" \
@@ -148,9 +212,11 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/HUDSourceDrawableReadbackTests.swift" \
     "$PROJECT_DIR/Tests/HUDChargeBadgeTests.swift" \
     "$PROJECT_DIR/Tests/HUDModuleTests.swift" \
+    "$PROJECT_DIR/Tests/HUDSectionAppearanceTests.swift" \
     "$PROJECT_DIR/Tests/HUDNavigationTests.swift" \
     "$PROJECT_DIR/Tests/NotesStoreTests.swift" \
     "$PROJECT_DIR/Tests/NotesCanvasTests.swift" \
+    "$PROJECT_DIR/Tests/HUDProjectedTextEditorTests.swift" \
     "$PROJECT_DIR/Tests/HUDNotesInteractionTests.swift" \
     "$PROJECT_DIR/Tests/FileShelfStoreTests.swift" \
     "$PROJECT_DIR/Tests/FileShelfCanvasTests.swift" \
@@ -197,12 +263,39 @@ xcrun swiftc -swift-version 5 -parse-as-library \
     "$PROJECT_DIR/Tests/LoginItemManagerTests.swift" \
     "$PROJECT_DIR/Tests/HUDDisplayPolicyTests.swift" \
     "$PROJECT_DIR/Tests/HUDClockTests.swift" \
+    "$PROJECT_DIR/Tests/HUDClockStyleTests.swift" \
+    "$PROJECT_DIR/Tests/HUDBatchTwoConfigurationTests.swift" \
+    "$PROJECT_DIR/Tests/HUDChargeMetricTests.swift" \
+    "$PROJECT_DIR/Tests/HUDCenterLogoTests.swift" \
     "$PROJECT_DIR/Tests/HUDSettingsCanvasTests.swift" \
     "$PROJECT_DIR/Tests/HUDQuitConfirmationTests.swift" \
     "$PROJECT_DIR/Tests/HUDScaleSafetyTests.swift" \
     "$PROJECT_DIR/Tests/HUDGitHubReleaseTests.swift" \
     "$PROJECT_DIR/Tests/HUDUpdateStateTests.swift" \
     "$PROJECT_DIR/Tests/LocalizationTests.swift" \
+    "$PROJECT_DIR/Tests/NotesRichTextTests.swift" \
+    "$PROJECT_DIR/Tests/NotesDrawingTests.swift" \
+    "$PROJECT_DIR/Tests/ProjectionTests.swift" \
+    "$PROJECT_DIR/Tests/ArchiveStoreTests.swift" \
+    "$PROJECT_DIR/Tests/MediaAssemblyTests.swift" \
+    "$PROJECT_DIR/Tests/MediaAssemblyCanvasTests.swift" \
+    "$PROJECT_DIR/Tests/OrbiPomRuntimeTests.swift" \
+    "$PROJECT_DIR/Tests/OrbiPomCanvasTests.swift" \
+    "$PROJECT_DIR/Tests/HUDCalendarTests.swift" \
+    "$PROJECT_DIR/Tests/ReaderTests.swift" \
+    "$PROJECT_DIR/Tests/ArchiveCanvasTests.swift" \
+    "$PROJECT_DIR/Tests/NotesMediaTests.swift" \
+    "$PROJECT_DIR/Tests/NotesExtendedStoreTests.swift" \
+    "$PROJECT_DIR/Tests/NowPlayingTests.swift" \
+    "$PROJECT_DIR/Tests/NowPlayingArtworkTests.swift" \
+    "$PROJECT_DIR/Tests/NowPlayingLyricsTests.swift" \
+    "$PROJECT_DIR/Tests/NowPlayingCatalogTests.swift" \
+    "$PROJECT_DIR/Tests/NowPlayingAutomaticTests.swift" \
+    "$PROJECT_DIR/Tests/HypergryphAccountAPITests.swift" \
+    "$PROJECT_DIR/Tests/HypergryphAccountLoginTests.swift" \
+    "$PROJECT_DIR/Tests/HypergryphAvatarLoaderTests.swift" \
+    "$PROJECT_DIR/Tests/HypergryphAccountControllerTests.swift" \
+    "$PROJECT_DIR/Tests/HUDAccountCanvasTests.swift" \
     "$PROJECT_DIR/Tests/CoreTests.swift" \
     -o "$BUILD_DIR/tests/CoreTests"
 "$BUILD_DIR/tests/CoreTests"

@@ -4,7 +4,7 @@ import ImageIO
 import SQLite3
 
 enum NoteKind: String, Codable {
-    case text, todo, image
+    case text, todo, image, drawing
 }
 
 struct NoteChecklistItem: Codable, Equatable {
@@ -26,13 +26,18 @@ struct CanvasNote: Identifiable, Equatable {
     var zIndex: Int
     var createdAt: Date
     var isPinned: Bool
+    var richText: NotesRichText?
+    var media: NotesMediaReference?
+    var drawing: NotesDrawing?
 
     init(id: UUID = UUID(), kind: NoteKind, text: String = "", items: [NoteChecklistItem] = [],
          imageName: String? = nil, x: Double = 24, y: Double = 50, width: Double = 160,
-         height: Double = 110, zIndex: Int = 0, createdAt: Date = Date(), isPinned: Bool = false) {
+         height: Double = 110, zIndex: Int = 0, createdAt: Date = Date(), isPinned: Bool = false,
+         richText: NotesRichText? = nil, media: NotesMediaReference? = nil, drawing: NotesDrawing? = nil) {
         self.id = id; self.kind = kind; self.text = text; self.items = items; self.imageName = imageName
         self.x = x; self.y = y; self.width = width; self.height = height
         self.zIndex = zIndex; self.createdAt = createdAt; self.isPinned = isPinned
+        self.richText = richText; self.media = media; self.drawing = drawing
     }
 }
 
@@ -133,7 +138,7 @@ final class NotesStore {
                 guard sqlite3_step(statement) == SQLITE_ROW else { throw databaseError() }
                 version = sqlite3_column_int(statement, 0)
             }
-            guard version <= 1 else { throw NotesStoreError.newerDatabase }
+            guard version <= 2 else { throw NotesStoreError.newerDatabase }
             try transaction {
                 try execute("""
                     CREATE TABLE IF NOT EXISTS notes (
@@ -149,7 +154,14 @@ final class NotesStore {
                         is_pinned INTEGER NOT NULL CHECK(is_pinned IN (0,1))
                     )
                     """)
-                if version == 0 { try execute("PRAGMA user_version = 1") }
+                if version < 2 {
+                    // Verify every original row before any migration commits.
+                    _ = try readNotes(includePayloads: false)
+                    try execute("ALTER TABLE notes ADD COLUMN rich_text TEXT")
+                    try execute("ALTER TABLE notes ADD COLUMN media TEXT")
+                    try execute("ALTER TABLE notes ADD COLUMN drawing TEXT")
+                    try execute("PRAGMA user_version = 2")
+                }
                 notes = try readNotes()
             }
             try fileManager.createDirectory(at: imagesDirectory, withIntermediateDirectories: true)
@@ -165,24 +177,35 @@ final class NotesStore {
     func upsert(_ note: CanvasNote) throws {
         let note = NotesGeometry.constrained(note)
         guard note.createdAt.timeIntervalSinceReferenceDate.isFinite,
-              Set(note.items.map(\.id)).count == note.items.count else { throw NotesStoreError.invalidRecord }
+              Set(note.items.map(\.id)).count == note.items.count,
+              note.richText.map({ note.kind == .text && $0.isValid(for: note.text) }) ?? true,
+              note.media.map({ note.kind == .image && $0.isValid }) ?? true,
+              note.drawing.map({ note.kind == .drawing && $0.isValid }) ?? (note.kind != .drawing)
+        else { throw NotesStoreError.invalidRecord }
         if let name = note.imageName {
             guard validImageName(name), fileManager.fileExists(atPath: imagesDirectory.appendingPathComponent(name).path) else {
                 throw NotesStoreError.invalidImageName
             }
         }
-        guard note.kind != .image || note.imageName != nil else { throw NotesStoreError.invalidImageName }
+        guard note.kind != .image || note.imageName != nil || note.media != nil else { throw NotesStoreError.invalidImageName }
         let checklist = String(decoding: try JSONEncoder().encode(note.items), as: UTF8.self)
+        func payload<T: Encodable>(_ value: T?) throws -> String? {
+            try value.map { String(decoding: try JSONEncoder().encode($0), as: UTF8.self) }
+        }
+        let richText = try payload(note.richText), media = try payload(note.media), drawing = try payload(note.drawing)
         try transaction {
             try withStatement("""
-                INSERT INTO notes (id,kind,text,checklist,image_name,x,y,width,height,z_index,created_at,is_pinned)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO notes (id,kind,text,checklist,image_name,x,y,width,height,z_index,created_at,is_pinned,rich_text,media,drawing)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,text=excluded.text,checklist=excluded.checklist,
                     image_name=excluded.image_name,x=excluded.x,y=excluded.y,width=excluded.width,height=excluded.height,
-                    z_index=excluded.z_index,created_at=excluded.created_at,is_pinned=excluded.is_pinned
+                    z_index=excluded.z_index,created_at=excluded.created_at,is_pinned=excluded.is_pinned,
+                    rich_text=excluded.rich_text,media=excluded.media,drawing=excluded.drawing
                 """) { statement in
                 try bind(note.id.uuidString, at: 1, to: statement)
-                try bind(note.kind.rawValue, at: 2, to: statement)
+                // Existing kind identifiers/check constraint remain byte-for-byte.
+                // Drawing is identified by its versioned payload on the text base.
+                try bind(note.kind == .drawing ? "text" : note.kind.rawValue, at: 2, to: statement)
                 try bind(note.text, at: 3, to: statement)
                 try bind(checklist, at: 4, to: statement)
                 try bind(note.imageName, at: 5, to: statement)
@@ -195,6 +218,9 @@ final class NotesStore {
                 // converting through Unix time loses low bits on recent dates.
                 try checked(sqlite3_bind_double(statement, 11, note.createdAt.timeIntervalSinceReferenceDate))
                 try checked(sqlite3_bind_int(statement, 12, note.isPinned ? 1 : 0))
+                try bind(richText, at: 13, to: statement)
+                try bind(media, at: 14, to: statement)
+                try bind(drawing, at: 15, to: statement)
                 guard sqlite3_step(statement) == SQLITE_DONE else { throw databaseError() }
             }
         }
@@ -221,6 +247,20 @@ final class NotesStore {
         guard let name = note.imageName, validImageName(name) else { return nil }
         let url = imagesDirectory.appendingPathComponent(name)
         return fileManager.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Descriptor preparation happens on the import worker; this commits only
+    /// the small validated reference and never copies the source media file.
+    func importMedia(reference: NotesMediaReference, at point: CGPoint, bounds: CGRect? = nil) throws -> CanvasNote {
+        guard reference.isValid else { throw NotesStoreError.invalidRecord }
+        let ratio = Double(reference.pixelHeight) / Double(max(1, reference.pixelWidth))
+        let width = min(300.0, 210 / max(0.2, ratio))
+        let nextZ = notes.map(\.zIndex).max() ?? -1
+        let note = NotesGeometry.constrained(CanvasNote(kind: .image, x: Double(point.x), y: Double(point.y),
+            width: max(162, width), height: max(110, width * ratio + 50),
+            zIndex: nextZ < Int.max ? nextZ + 1 : nextZ, media: reference), in: bounds)
+        try upsert(note)
+        return note
     }
 
     func importImage(from url: URL, at point: CGPoint, bounds: CGRect? = nil) throws -> CanvasNote {
@@ -296,9 +336,10 @@ final class NotesStore {
         try? fileManager.removeItem(at: imagesDirectory.appendingPathComponent(name))
     }
 
-    private func readNotes() throws -> [CanvasNote] {
+    private func readNotes(includePayloads: Bool = true) throws -> [CanvasNote] {
         var result: [CanvasNote] = []
-        try withStatement("SELECT id,kind,text,checklist,image_name,x,y,width,height,z_index,created_at,is_pinned FROM notes ORDER BY z_index,created_at,id") { statement in
+        let extras = includePayloads ? ",rich_text,media,drawing" : ""
+        try withStatement("SELECT id,kind,text,checklist,image_name,x,y,width,height,z_index,created_at,is_pinned\(extras) FROM notes ORDER BY z_index,created_at,id") { statement in
             while true {
                 let status = sqlite3_step(statement)
                 if status == SQLITE_DONE { break }
@@ -311,19 +352,31 @@ final class NotesStore {
                       Set(items.map(\.id)).count == items.count else { throw NotesStoreError.invalidRecord }
                 let imageName = string(statement, 4)
                 if let imageName, !validImageName(imageName) { throw NotesStoreError.invalidImageName }
-                guard kind != .image || imageName != nil,
+                func payload<T: Decodable>(_ type: T.Type, at index: Int32) throws -> T? {
+                    guard includePayloads, sqlite3_column_type(statement, index) != SQLITE_NULL else { return nil }
+                    guard let raw = string(statement, index), let data = raw.data(using: .utf8),
+                          let value = try? JSONDecoder().decode(type, from: data) else { throw NotesStoreError.invalidRecord }
+                    return value
+                }
+                let rich = try payload(NotesRichText.self, at: 12)
+                let media = try payload(NotesMediaReference.self, at: 13)
+                let drawing = try payload(NotesDrawing.self, at: 14)
+                guard rich.map({ kind == .text && $0.isValid(for: text) }) ?? true,
+                      media.map({ kind == .image && $0.isValid }) ?? true,
+                      drawing.map({ kind == .text && rich == nil && $0.isValid }) ?? true,
+                      kind != .image || imageName != nil || media != nil,
                       (5...10).allSatisfy({ sqlite3_column_type(statement, Int32($0)) == SQLITE_FLOAT || sqlite3_column_type(statement, Int32($0)) == SQLITE_INTEGER }),
                       (5...8).allSatisfy({ sqlite3_column_double(statement, Int32($0)).isFinite }),
                       sqlite3_column_double(statement, 10).isFinite,
                       sqlite3_column_type(statement, 9) == SQLITE_INTEGER,
                       sqlite3_column_type(statement, 11) == SQLITE_INTEGER,
                       [0, 1].contains(sqlite3_column_int(statement, 11)) else { throw NotesStoreError.invalidRecord }
-                result.append(NotesGeometry.constrained(CanvasNote(id: id, kind: kind, text: text, items: items,
+                result.append(NotesGeometry.constrained(CanvasNote(id: id, kind: drawing == nil ? kind : .drawing, text: text, items: items,
                     imageName: imageName, x: sqlite3_column_double(statement, 5), y: sqlite3_column_double(statement, 6),
                     width: sqlite3_column_double(statement, 7), height: sqlite3_column_double(statement, 8),
                     zIndex: Int(sqlite3_column_int64(statement, 9)),
                     createdAt: Date(timeIntervalSinceReferenceDate: sqlite3_column_double(statement, 10)),
-                    isPinned: sqlite3_column_int(statement, 11) == 1)))
+                    isPinned: sqlite3_column_int(statement, 11) == 1, richText: rich, media: media, drawing: drawing)))
             }
         }
         return result

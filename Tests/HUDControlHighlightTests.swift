@@ -67,6 +67,14 @@ enum HUDControlHighlightTests {
         HUDControlHighlightLayer.update(in: root, point: CGPoint(x: 45, y: 50))
         check(artwork.conversions == priorConversions && opacity(nested) == 0,
               "Hidden branches clear feedback without converting invisible geometry")
+        let decorative = HUDDecorativeContentLayer()
+        decorative.frame = root.bounds
+        root.addSublayer(decorative)
+        let ignored = ConversionCountingLayer(); ignored.frame = root.bounds; ignored.masksToBounds = true
+        decorative.addSublayer(ignored)
+        HUDControlHighlightLayer.update(in: root, point: CGPoint(x: 10, y: 10))
+        HUDControlHighlightLayer.update(in: root, point: nil)
+        check(ignored.conversions == 0, "Explicit drawing/media subtrees are excluded from pointer feedback traversal")
         return count
     }
 
