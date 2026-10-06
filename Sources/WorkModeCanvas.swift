@@ -320,7 +320,7 @@ final class WorkModeCanvas: NSObject, HUDModuleContentFactory {
             self.stateLabel.string = self.error ?? self.phaseTitle(value.phase)
             if force || self.renderedRevision != self.controller.revision {
                 self.renderedRevision = self.controller.revision
-                self.heading.string = HUDModule.workMode.title
+                self.heading.string = HUDSectionHeading.text(HUDModule.workMode.title)
                 self.heading.foregroundColor = self.primary.cgColor
                 self.digits.foregroundColor = self.primary.cgColor
                 self.stateLabel.foregroundColor = self.muted.cgColor

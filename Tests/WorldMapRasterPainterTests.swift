@@ -60,6 +60,14 @@ enum WorldMapRasterPainterTests {
             let southernSea=pixel(frame,local(CGPoint(x:512,y:300),camera))
             check(Int(northernLand[2])>Int(northernLand[0])+25,
                   "The focused country's face uses the requested theme color")
+            let offshore=WorldMapViewport(centerX:0.4,centerY:0.5,zoom:2.1)
+            let offshoreFrame=painter.render(WorldMapRasterRequest(viewport:offshore,dark:true,accent:blue,contentsScale:2))!
+            let offCenterLand=pixel(offshoreFrame,local(CGPoint(x:512,y:212),offshore))
+            check(abs(Int(offCenterLand[2])-Int(offCenterLand[0]))<15,
+                  "A visible off-center country stays neutral when the map center is over ocean")
+            let returned=painter.render(request)!
+            check(returned.image.dataProvider!.data! as Data == frame.image.dataProvider!.data! as Data,
+                  "Returning the center restores exactly the original baked highlight without retained hover state")
             check(southernSea[0]<70 && southernSea[1]<70 && southernSea[2]<70,
                   "The raster's north/south orientation matches geographic map coordinates")
             check(pixel(frame,local(CGPoint(x:492,y:244),camera))[2]<northernLand[2],

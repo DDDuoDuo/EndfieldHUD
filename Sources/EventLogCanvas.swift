@@ -236,7 +236,9 @@ final class EventLogCanvas: NSObject, HUDModuleContentFactory {
         let anchorIndex = Int(floor(scrollOffset / Self.rowHeight))
         let anchor = scrollOffset > 0 && filtered.indices.contains(anchorIndex) ? filtered[anchorIndex].id : nil
         let remainder = scrollOffset.truncatingRemainder(dividingBy: Self.rowHeight)
-        events = store.events
+        // Keep legacy records decodable and on disk, but omit routine navigation
+        // from every visible category and its count.
+        events = store.events.filter { $0.kind != .overlayOpened && $0.kind != .moduleOpened }
         filtered = events.filter { selectedCategory == nil || $0.category == selectedCategory }
         if let anchor, let index = filtered.firstIndex(where: { $0.id == anchor }) { scrollOffset = CGFloat(index) * Self.rowHeight + remainder }
         scrollOffset = min(maximumOffset, max(0, scrollOffset))
@@ -275,7 +277,7 @@ final class EventLogCanvas: NSObject, HUDModuleContentFactory {
     private func repaint() {
         header.sublayers?.forEach { $0.removeFromSuperlayer() }
         toolbar.sublayers?.forEach { $0.removeFromSuperlayer() }
-        text(HUDModule.eventLog.title, CGRect(x: 12, y: 0, width: 376, height: 20), size: 15, color: primary, parent: header, weight: .semibold)
+        text(HUDSectionHeading.text(HUDModule.eventLog.title), CGRect(x: 12, y: 0, width: 376, height: 20), size: 15, color: primary, parent: header, weight: .semibold)
         text(accessibilityStatus, CGRect(x: 12, y: 22, width: 376, height: 14), size: 9.5, color: muted, parent: header)
         for action in controls() {
             let selected = action.id == "eventLog:category:" + (selectedCategory?.rawValue ?? "all") || action.id == "eventLog:confirmClear"

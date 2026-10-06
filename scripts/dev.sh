@@ -9,7 +9,7 @@ fi
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd -P)"
 DEV_BUILD_DIR="${DEV_BUILD_DIR:-$PROJECT_DIR/build/dev}"
 APP_NAME="EndfieldHUD"
-DEV_OPTIMIZATION="${DEV_OPTIMIZATION:--Onone}"
+DEV_OPTIMIZATION="${DEV_OPTIMIZATION:--O}"
 case "$DEV_OPTIMIZATION" in
     -Onone|-O|-Osize) ;;
     *) printf 'DEV_OPTIMIZATION must be -Onone, -O, or -Osize.\n' >&2; exit 2 ;;
@@ -65,14 +65,15 @@ if [ ! -f "${SOURCES[0]}" ]; then
     exit 1
 fi
 
-printf 'Building native development app for %s…\n' "$TARGET"
-# Development stays unoptimized by default; opt in to native performance builds.
+printf 'Building native development app for %s (%s)…\n' "$TARGET" "$DEV_OPTIMIZATION"
+# Review builds use the release optimizer. Opt into -Onone only for debugging;
+# unoptimized scene evaluation is not representative of shipping performance.
 "$SWIFTC" -swift-version 5 "$DEV_OPTIMIZATION" -whole-module-optimization \
     -sdk "$SELECTED_SDK" -target "$TARGET" \
     -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -module-cache-path "$DEV_BUILD_DIR/module-cache" \
     -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit \
-    "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 \
+    "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 -lz -framework WebKit -framework Security -framework PDFKit \
     "${SOURCES[@]}" -o "$DEV_STAGE/$APP_NAME"
 
 # Refresh the generated default icon only when its script or source changes.
@@ -105,13 +106,17 @@ if [ ! -d "$DEV_APP" ]; then
     # Prepared cells replace the full atlas in the running app. Keep the original in source.
     if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
+    rm -rf "$STAGED_APP/Contents/Resources/MediaAssembly"
+    ditto "$PROJECT_DIR/Resources/MediaAssembly" "$STAGED_APP/Contents/Resources/MediaAssembly"
+    ditto "$PROJECT_DIR/Resources/OrbiPom" "$STAGED_APP/Contents/Resources/OrbiPom"
     ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
     python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
         "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
     cp "$PROJECT_DIR/CREDITS.md" "$STAGED_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$STAGED_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
-    codesign --force --sign - "$STAGED_APP"
+    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-now-playing.sh" "$STAGED_APP" "$SELECTED_SDK" "$HOST_ARCH"
+    codesign --force --sign - --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$STAGED_APP"
     mv "$STAGED_APP" "$DEV_APP"
 else
     # The temporary binary is on the same volume, so rename replaces the
@@ -128,13 +133,17 @@ else
     # Prepared cells replace the full atlas in the running app. Keep the original in source.
     if [ -d "$DEV_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$DEV_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
     ditto "$PROJECT_DIR/Resources/WorldMap" "$DEV_APP/Contents/Resources/WorldMap"
+    rm -rf "$DEV_APP/Contents/Resources/MediaAssembly"
+    ditto "$PROJECT_DIR/Resources/MediaAssembly" "$DEV_APP/Contents/Resources/MediaAssembly"
+    ditto "$PROJECT_DIR/Resources/OrbiPom" "$DEV_APP/Contents/Resources/OrbiPom"
     ditto "$PROJECT_DIR/Resources/Watch" "$DEV_APP/Contents/Resources/Watch"
     python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
         "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
     cp "$PROJECT_DIR/CREDITS.md" "$DEV_APP/Contents/Resources/CREDITS.md"
     preserve_legacy_executable "$DEV_APP"
     CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-sparkle.sh" "$DEV_APP" "$SPARKLE_DIR"
-    codesign --force --sign - "$DEV_APP"
+    CODE_SIGN_IDENTITY=- "$PROJECT_DIR/scripts/embed-now-playing.sh" "$DEV_APP" "$SELECTED_SDK" "$HOST_ARCH"
+    codesign --force --sign - --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$DEV_APP"
 fi
 
 # Use the bundle verifier's native architecture, signature, weak-link and
@@ -157,6 +166,22 @@ if ! otool -arch "$HOST_ARCH" -l "$DEV_BINARY" | awk '
 fi
 python3 "$PROJECT_DIR/scripts/package-watch-resources.py" verify \
     "$PROJECT_DIR/Resources/WatchSource" "$DEV_APP/Contents/Resources/WatchSource"
+
+python3 - "$DEV_BINARY" "$DEV_OPTIMIZATION" "$TARGET" "$DEV_BUILD_DIR/build-info.json" <<'PY'
+import hashlib
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+
+binary, optimization, target, output = sys.argv[1:]
+Path(output).write_text(json.dumps({
+    "builtAt": datetime.now(timezone.utc).isoformat(),
+    "optimization": optimization,
+    "target": target,
+    "binarySHA256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
+}, indent=2) + "\n")
+PY
 
 printf '\nBuilt: %s\n' "$DEV_APP"
 printf 'Launch after quitting any running copy:\n  open %q\n' "$DEV_APP"

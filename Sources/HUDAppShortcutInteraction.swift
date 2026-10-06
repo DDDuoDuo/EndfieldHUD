@@ -3,10 +3,11 @@ import UniformTypeIdentifiers
 
 /// The application chooser and temporary name field are the only native
 /// controls; cards, icon choices and the saved state stay inside the HUD.
-final class HUDAppShortcutInteraction: NSObject, NSTextFieldDelegate {
+final class HUDAppShortcutInteraction: NSObject, NSTextViewDelegate {
     private let canvas: AppShortcutCanvas
     private weak var host: NSView?
     var project: ((CGRect) -> CGRect)?
+    var unproject: ((CGPoint) -> CGPoint?)?
     var onLock: (() -> Void)?
     var onToggle: (() -> Void)?
     var isDark: (() -> Bool)?
@@ -16,11 +17,11 @@ final class HUDAppShortcutInteraction: NSObject, NSTextFieldDelegate {
     private var chooser: NSOpenPanel?
     private var dialogGeneration = 0
     private var editor: HUDShortcutNameField?
-    private var editorRect: CGRect?
+    private var projectedEditor: HUDProjectedTextEditor?
     private var beginningEdit = false
     private var finishingEdit = false
     private var buttons: [String: HUDShortcutActionButton] = [:]
-    var isInputLocked: Bool { pressed || externalDrag || editor != nil || chooser != nil }
+    var isInputLocked: Bool { pressed || externalDrag || chooser != nil }
     var isPresentingPanel: Bool { chooser != nil }
 
     init(canvas: AppShortcutCanvas, host: NSView) {
@@ -31,6 +32,7 @@ final class HUDAppShortcutInteraction: NSObject, NSTextFieldDelegate {
         canvas.onWillTransition = { [weak self] in self?.finishEditing() }
         canvas.onChange = { [weak self] in self?.layoutAccessibility() }
     }
+    deinit { editor?.delegate = nil; projectedEditor?.dispose() }
     func setActive(_ value: Bool) {
         guard active != value else { return }
         if value { active = true; canvas.activate(); layoutAccessibility() }
@@ -53,6 +55,7 @@ final class HUDAppShortcutInteraction: NSObject, NSTextFieldDelegate {
     func mouseDragged(to point: CGPoint, event: NSEvent) {}
     func keyDown(_ event: NSEvent) -> Bool {
         guard active, chooser == nil else { return false }
+        if editor?.hasMarkedText() == true { return false }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         if flags.isEmpty && event.keyCode == 53 {
             if editor != nil { finishEditing(commit: false); return true }
@@ -115,52 +118,67 @@ final class HUDAppShortcutInteraction: NSObject, NSTextFieldDelegate {
         guard active, !canvas.isTransitioning, let host, host.window != nil else { return }
         finishEditing(); onLock?(); beginningEdit = true
         defer { beginningEdit = false }
-        let field = HUDShortcutNameField(frame: project?(rect) ?? rect)
-        field.stringValue = name; field.placeholderString = L10n.text("Shortcut name", "快捷方式名称")
-        field.isEditable = true; field.isSelectable = true; field.isBezeled = false
-        field.drawsBackground = true; field.focusRingType = .none
-        field.backgroundColor = NSColor(white: isDark?() == true ? 0.17 : 0.91, alpha: 1)
-        field.textColor = isDark?() == true ? .white : .black
-        field.wantsLayer = true; field.layer?.cornerRadius = 3
-        field.layer?.borderWidth = 1; field.layer?.borderColor = HUDRuntimeAppearance.accent.cgColor
+        let field = HUDShortcutNameField(frame: .zero)
+        field.string = name; field.isEditable = true; field.isSelectable = true
+        field.isRichText = false; field.importsGraphics = false; field.allowsUndo = true
+        field.font = .systemFont(ofSize: 11, weight: .semibold)
+        field.textColor = isDark?() == true ? .white : .black; field.insertionPointColor = field.textColor ?? .black
+        field.textContainer?.maximumNumberOfLines = 1; field.textContainer?.lineBreakMode = .byClipping
         field.delegate = self
         field.setAccessibilityLabel(L10n.text("Shortcut name", "快捷方式名称"))
         field.setAccessibilityHelp(L10n.text("Return applies the name. Save shortcut stores your changes.", "回车应用名称，点击保存快捷方式以保存修改。"))
         field.onToggle = { [weak self] in self?.onToggle?() }
-        editorRect = rect; editor = field; host.addSubview(field)
-        layoutAccessibility(); field.selectText(nil)
+        editor = field
+        let surface = HUDProjectedTextEditor(textView: field, rect: rect, host: host, parent: canvas.layer)
+        surface.configureSingleLine()
+        surface.project = { [weak self] in self?.project?($0) ?? $0 }
+        surface.unproject = { [weak self] point in
+            guard let self else { return nil }; return self.unproject?(point) ?? (self.unproject == nil ? point : nil)
+        }
+        surface.setAppearance(background: NSColor(white: isDark?() == true ? 0.17 : 0.91, alpha: 1), border: HUDRuntimeAppearance.accent)
+        projectedEditor = surface; surface.resizeDocument(); layoutAccessibility()
+        host.window?.makeFirstResponder(field); field.selectAll(nil)
     }
     func finishEditing(commit: Bool = true) {
         guard !finishingEdit, let editor else { return }
         finishingEdit = true
         defer { finishingEdit = false }
-        self.editor = nil; editorRect = nil; editor.delegate = nil
-        if commit { canvas.setDraftName(editor.stringValue) }
-        host?.window?.makeFirstResponder(host); editor.removeFromSuperview(); layoutAccessibility()
+        if commit { editor.unmarkText(); normalizeName() }
+        self.editor = nil; editor.delegate = nil
+        let surface = projectedEditor; projectedEditor = nil
+        if commit { canvas.setDraftName(editor.string) }
+        host?.window?.makeFirstResponder(host); surface?.dispose(); layoutAccessibility()
     }
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) { finishEditing(commit: false); return true }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) || commandSelector == #selector(NSResponder.insertTab(_:)) { finishEditing(); return true }
         return false
     }
-    func controlTextDidEndEditing(_ notification: Notification) {
-        guard !beginningEdit, !finishingEdit, let field = editor, notification.object as? NSTextField === field else { return }
+    func textDidEndEditing(_ notification: Notification) {
+        guard !beginningEdit, !finishingEdit, let field = editor, notification.object as? NSTextView === field else { return }
         DispatchQueue.main.async { [weak self, weak field] in
             guard let self, let field, self.active, self.editor === field, !self.beginningEdit, !self.finishingEdit else { return }
-            if let text = field.currentEditor(), field.window?.firstResponder === text { return }
+            if field.window?.firstResponder === field { return }
             self.finishEditing()
         }
+    }
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === editor else { return }
+        normalizeName(); projectedEditor?.resizeDocument()
+    }
+    private func normalizeName() {
+        guard let editor, !editor.hasMarkedText() else { return }
+        let bounded = String(editor.string.components(separatedBy: .newlines).joined(separator: " ").prefix(128))
+        guard editor.string != bounded else { return }
+        let selection = editor.selectedRange()
+        editor.string = bounded
+        editor.setSelectedRange(NSRange(location: min(selection.location, bounded.utf16.count), length: 0))
     }
     func layoutAccessibility() {
         guard active, let host else { return }
         defer { HUDControlHighlightLayer.requestRefresh(on: host) }
-        if let editor, let rect = editorRect {
-            let frame = project?(rect) ?? rect
-            if editor.frame != frame { editor.frame = frame }
-            let fontSize = max(10, 11 * frame.height / rect.height)
-            if editor.font?.pointSize != fontSize { editor.font = .systemFont(ofSize: fontSize, weight: .semibold) }
-            editor.layer?.borderColor = HUDRuntimeAppearance.accent.cgColor
-        }
+        projectedEditor?.refreshProjection()
         let actions = canvas.accessibleActions.filter { !(editor != nil && $0.id == "apps:name") }
         let help = canvas.accessibilityStatus
         let wanted = Set(actions.map(\.id))
@@ -199,7 +217,7 @@ private final class HUDShortcutActionButton: NSButton {
     override func accessibilityFrame() -> NSRect { projectedFrame?() ?? super.accessibilityFrame() }
 }
 
-private final class HUDShortcutNameField: NSTextField {
+private final class HUDShortcutNameField: HUDProjectedTextView {
     var onToggle: (() -> Void)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if SummonShortcut.active.matches(event: event) { onToggle?(); return true }

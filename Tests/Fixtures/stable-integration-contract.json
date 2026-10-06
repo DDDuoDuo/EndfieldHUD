@@ -666,8 +666,8 @@
     },
     "Sources/WorldMapGeometry.swift": {
       "baselineSha256": "3b36229be2230a2eb211371c8a580b5f5e38d2f684eb828ca90d1a2a3771ce37",
-      "sha256": "d50681c2b132cb4a0d5ad9951c7d18d5bad9c6be551fa667df00526b26e1295e",
-      "reason": "User requested a soft circular map edge. Adds only the 9-point edge feather width used by the canvas mask; projection, viewport constraints, hit geometry, pin data and persistence remain unchanged."
+      "sha256": "7d96a7e07c3886e812eab52528bb802dba7295ad0d77e45c1097d4d07c891d50",
+      "reason": "User requested a soft circular map edge. Adds only the 9-point edge feather width used by the canvas mask; projection, viewport constraints, hit geometry, pin data and persistence remain unchanged. Add recentered(viewport:at:) using the same screen-to-world projection and constraints while preserving zoom; invalid/outside-circle input is a no-op. Existing geometry algorithms remain unchanged."
     },
     "Sources/AppActivityMonitor.swift": {
       "baselineSha256": "cbc4676306e0485d45adffb8907d4a308bebcd3c56330a1e8f1486f66cfec7b2",
@@ -676,8 +676,8 @@
     },
     "Sources/SystemActivityMonitor.swift": {
       "baselineSha256": "7462e31c918f24c7e2f686883e19474be8c7c4a2ec459beee6f0dcf95888f2d3",
-      "sha256": "173f75faf8be8c1a73062e8300b07ee7fd03078ab8f7b0244751d4fefc6edc8f",
-      "reason": "User requested RAM wording throughout telemetry. Changes only the visible fallback note from Memory unavailable to RAM unavailable; sampling, metrics, aggregation, availability conditions and persistence are unchanged."
+      "sha256": "f11650b37ede18cf8528d25a8d3082d913fe642f8ec426a03ed81b16789b71ea",
+      "reason": "Retains the reviewed RAM wording and adds an independent visible-alert demand combined with Activity visibility using OR. Both use the existing single timer and serial worker: 1 Hz while either consumer is visible and the existing 5-second cadence otherwise. Either consumer can release demand without stopping the other or deleting background history; shutdown releases both. Native metric calculations, aggregation, availability and persistence are unchanged. Independently reviewed lifecycle and stale-callback protection; SystemActivityMonitorTests passed 135 isolated assertions including demand order, unchanged-demand scheduling, background continuation, shutdown and restart."
     },
     "Sources/Localization.swift": {
       "baselineSha256": "ca4266f41e69557bbe8d959c192795a8354805f847114a1e6fd7c84e999e87e6",
@@ -693,6 +693,21 @@
       "baselineSha256": "ffd6de0dc4b9afd68a35a7fc29f17183c233b0e9b5de857316ada9030fe8bac9",
       "sha256": "f353a6d68ca3ca1384b57dcf8527402c50210e49b67e2fb62818d9b22f37109a",
       "reason": "User requested eliminating measured opening/tab stalls. Confines raw ServiceManagement status, registration and legacy-file operations to one serial utility queue. Passive status refresh is bounded and coalesced; main reads a localized value snapshot, and generation checks discard results predating explicit edits. Startup applies the same saved launch-at-login preference asynchronously before activation observation; explicit edits retain synchronous error/rollback behavior and refresh their verified snapshot. Installation validation, legacy LaunchAgent format/migration, service registration semantics, permission status precedence and persistent settings are unchanged. Fake-reader regressions cover a blocked read while main stays responsive, coalescing, main publication, stale-read rejection after edits, external status changes, errors, startup preference handling and relocalization."
+    },
+    "Sources/BatteryMonitor.swift": {
+      "baselineSha256": "6ff0e6d9844289acb08f2456ae2ba08b755577230679dfe74b9a9eb7f338e586",
+      "sha256": "cda4c34ea3f010e3e45b434c8aa5b81d374ef105a2d6fbbd4f1d81f95f4274e4",
+      "reason": "User reported delayed CHARGE MODE at plug-in. The original Chinese specification defines the mode by external power connection, so isChargeMode now follows hasBattery and isPluggedIn immediately while actual OS isCharging diagnostics remain unchanged. Replace percent/time-only IOKit notifications with the public any-power-source attribute notification. Registry reads are event-driven, capped at 4 Hz with one cancellable trailing read; manual refresh stays immediate. Reviewed weak main-queue callbacks, paired cancellation, generation/sequence rejection, registration retry and deduplication. PowerDataTests covers connected negotiation, actual charging, paused/full charging, unplug, redundant bursts, stop/restart and canceled trailing work; HUDChargeBadgeTests checks both charge renderers. Battery parsing and stored data remain unchanged."
+    },
+    "Sources/SystemEventRecorder.swift": {
+      "baselineSha256": "11198f61555d010181a89243b75f4d7a326a34d8b02aa857fef774daf590764a",
+      "sha256": "4d5851f6767c463a5eda7ed1b44d29a6793e05313a7149a45230bc020f77b672",
+      "reason": "Add quiet-baseline, commit-publication observation of clock style, selected center logo/import revision, charge metric and profile zoom. Retain only required in-memory comparison values; persist closed enum metadata and never artwork IDs, profile text, paths or numeric crop coordinates. Identical or unrelated configuration publications remain silent, custom select-and-import coalesces to one event, and simultaneous background/thumbnail changes become one crop event. Existing power/work/topology transition logic is unchanged. SystemEventRecorderTests covers baseline, duplicate publications, independent changes, privacy and the real disposable ConfigurationStore commit path."
+    },
+    "Sources/DisplayPolicy.swift": {
+      "baselineSha256": "2aeda830ca80fce682589caaf85d9fbdfa08a8fc7667091a648e31b6630d6bc8",
+      "sha256": "13145948f98f06a9645fe07667c5b4c4a3ab1094defeafe025091c96d49e5968",
+      "reason": "Original Chinese specification ties the charging alert to plugging and unplugging. Trigger transient alerts only on an actual external-power connection change, preventing a duplicate late alert when charger negotiation, optimized charging or full battery toggles the separate OS isCharging flag. Battery diagnostics still update in place. Startup, unavailable-data recovery, always mode, saved whenChargingStarts raw value, percentage-only updates and wake baselines are unchanged. CoreTests tests the complete plug/negotiation/pause/full/unplug sequence and preserves the prior baseline and deadline regressions."
     }
   },
   "reviewedTranslationUpdates": {
@@ -705,8 +720,169 @@
       "reason": "User requested the RAM label in app/overview telemetry and accessibility text, in every supported language."
     },
     "Entry(\". Drag to pan. Scroll or pinch to zoom. Right-click to place a pin. Arrow keys move the map.\", \"。拖动平移，滚动或捏合缩放，右键放置标记，方向键移动地图。\", \"。拖動平移，滾動或捏合縮放，右鍵放置標記，方向鍵移動地圖。\", \"。ドラッグで移動、スクロールまたはピンチで拡大縮小、右クリックでピンを配置、矢印キーでマップを移動します。\")": {
-      "entry": "Entry(\". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Left-click to hide coordinates. Arrow keys move the map.\", \"。拖动平移，滚动或捏合缩放，右键放置或移除标记，左键隐藏坐标，方向键移动地图。\", \"。拖動平移，滾動或捏合縮放，右鍵放置或移除標記，左鍵隱藏座標，方向鍵移動地圖。\", \"。ドラッグで移動、スクロールまたはピンチで拡大縮小、右クリックでピンを配置または削除、左クリックで座標を非表示、矢印キーでマップを移動します。\")",
-      "reason": "User requested direct right-click pin deletion and left-click coordinate-card dismissal. Accessibility instructions now describe those map controls in all four languages."
+      "entry": "Entry(\". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Click a pin to cycle yellow, green and player markers. Click terrain to recenter without changing zoom. Arrow keys move the map.\", \"。拖动平移，滚动或捏合缩放，右键放置或移除标记，点击标记切换黄色、绿色和玩家样式，点击地形居中并保持缩放，方向键移动地图。\", \"。拖動平移，滾動或捏合縮放，右鍵放置或移除標記，點擊標記切換黃色、綠色和玩家樣式，點擊地形置中並保持縮放，方向鍵移動地圖。\", \"。ドラッグで移動、スクロールまたはピンチで拡大縮小、右クリックでピンを配置または削除します。ピンをクリックすると黄色、緑色、プレイヤーの順に切り替わります。地形をクリックすると倍率を変えずに中央へ移動します。矢印キーでも移動できます。\")",
+      "reason": "Map controls now cycle yellow/green/player markers and recenter terrain without changing zoom; retains drag, zoom, right-click and arrow-key instructions in all shipped languages."
+    }
+  },
+  "reviewedSchemaExtensions": {
+    "Sources/Models.swift": {
+      "baselineSha256": "e6c243330a76f2c349e11e215a578263419350f54f5f1cc4ffb8a14d103778cf",
+      "sha256": "87618252b3c05766284ff5f2636924c4b7d0025b29f47247f9fe01ce0b903acf",
+      "fields": [
+        "clockStyle",
+        "centerLogo",
+        "centerLogoRevision",
+        "alertMetric"
+      ],
+      "tests": [
+        "Tests/HUDBatchTwoConfigurationTests.swift"
+      ],
+      "reason": "User-requested clock styles, center logo and charge metric add four preferences with digital/endfield/nil/battery defaults. Existing keys, enum values, defaults and normalization remain byte-for-byte preserved after reversing these exact additions. Revision accepts canonical UUID only; nil removes its new key. HUDBatchTwoConfigurationTests passed 30 isolated assertions covering older preferences, absent/invalid fields, all new enum choices, canonical revision save/reload/removal, unchanged unrelated settings and no-op publication."
+    },
+    "Sources/UserProfileStore.swift": {
+      "baselineSha256": "654883a9bf1b9a2903619e3af5618adf8443e00962ff7fdf39c780bf95c9af06",
+      "sha256": "daa81d366bb42fc8be41cef65539b6236afebb13829a9932f05b8b2f6935f367",
+      "fields": [
+        "backgroundZoom",
+        "thumbnailZoom",
+        "gamePlayerID",
+        "playerIDOverride",
+        "hasManualAwakeningDate"
+      ],
+      "tests": [
+        "Tests/UserProfileStoreTests.swift",
+        "Tests/HypergryphAccountControllerTests.swift"
+      ],
+      "reason": "User-requested independent background and thumbnail zoom add two optional version-1 JSON fields defaulting to 1, constrained to finite 1...20 values, saved by existing Codable/atomic commit and reset only on background removal. Every pre-existing field, crop setting, archive version, support path, asset identity, changed-on-disk check and corrupt/future-record protection remains byte-for-byte preserved after reversing the exact additions. UserProfileStoreTests covers missing fields in older records without rewriting their bytes, preservation of existing crop values, finite bounds, fractional save/reload, independent avatar removal and background-only reset. Account sync adds an optional game ID, explicit local Player ID override and explicit awakening-date override flag. Original local UID, schema version, file path and all existing field behavior remain byte-identical after reversing these additions. Isolated fixtures cover sparse synchronization, manual overrides and credential-free profile storage."
+    },
+    "Sources/SystemEventLog.swift": {
+      "baselineSha256": "ba7f5bee6c607aa4326bdffad0ed1e62d2373233a3cd4cddb9d40b677293ac84",
+      "sha256": "10085570f86bca00eaa011f1dda4c3436b41c2252d0d18ff3c6650d3bff64b9e",
+      "fields": [
+        "displaySettingsChanged",
+        "profileCropChanged",
+        "mapPinStyleChanged",
+        "mapRecentered",
+        "noteAction",
+        "playbackAction",
+        "projectionAction",
+        "archiveAction",
+        "readerAction",
+        "projectionAction.cleared",
+        "archiveAction.categoryCreated",
+        "archiveAction.categoryChanged",
+        "mediaAssemblyAction",
+        "calendarAction",
+        "archiveAction.categoryDeleted",
+        "minigameAction",
+        "accountAction"
+      ],
+      "tests": [
+        "Tests/SystemEventLogTests.swift",
+        "Tests/SystemEventRecorderTests.swift"
+      ],
+      "reason": "Add two Display-category event kinds for committed clock/logo/metric and profile-crop changes. Metadata is restricted to per-setting enum pairs or a background/thumbnail/both target, omitting revision IDs, user text, image paths and crop coordinates. The guard reverses the exact additive enum, English presentation and allowlist additions to reconstruct the original file. Existing event identifiers, all earlier metadata rules, version-1 document shape, 500-event bound, location, atomic writer and corrupt/future-file preservation stay byte-for-byte identical. SystemEventLogTests and SystemEventRecorderTests cover allowlists, startup baselines, no-op deduplication, custom-import privacy, real configuration commits and mixed old/new event reload. Batch 3 additionally records committed map pin-style changes with a yellow/green/player allowlist and recenter actions without metadata. Exact reversal also covers these two event kinds; no coordinates or pin identifiers are recorded. Notes and Now Playing add closed action enums and a fixed Music/Spotify/NetEase Music/QQ Music/Kugou/generic-system source vocabulary only; no note content, filenames, paths, track titles, seeking position or implicit navigation metadata. The old event vocabulary, metadata rules, version, capacity, file path and atomic writer reconstruct unchanged. Projection adds six allowlisted action names only, with no drawing points, media paths, names, references, or background values. Exact reversals still reconstruct the unchanged original schema and persistence. Batch6 adds Reader and Archive with separate storage, leaves existing data unchanged, and adds closed action metadata including explicit Projection clear. Original contracts still reconstruct byte-for-byte. Archive category creation and document moves add only categoryCreated/categoryChanged action names. Category titles, IDs, document content, and file references remain excluded; exact reversal preserves every original persistence byte. Batches7/8 add Media Assembly and Calendar identities plus closed imported/edited/exported and created/edited/deleted action metadata. Archive deletion adds categoryDeleted. New tools use separate/session storage. Exact reversals reconstruct the unchanged baseline; event titles, dates, media paths, edit values and user contents are excluded. Minigame adds only a Work-category minigameAction with started/restarted/finished allowlisted action metadata and fixed English descriptions. Scores, game state, keys, pointer positions and arbitrary payloads are not recorded. Removing the five exact additions recovers the immediately prior reviewed event-log hash, and the original persistence contract still reconstructs byte-for-byte. Account actions add only linked/unlinked/synced/settings closed names. No UID, nickname, region role, credential, response or URL is accepted; silent periodic refresh does not add events."
+    },
+    "Sources/WorldMapStore.swift": {
+      "baselineSha256": "bfbeab7663d37cf695c0de08a77dd8ca547251732d20ec91f64ad9e6174e83ee",
+      "sha256": "70a79efe0f1b321919e2633ca8d37fa9272e59afbd5793a2f2888cfb9640e7b3",
+      "reason": "Add optional yellow/green/player style to existing map pins with missing-field yellow default, preserving ID/coordinates/timestamps and version-4 archive without a load-time rewrite. Cycle commits once through the existing atomic, changed-on-disk protected path. Exact addition reversal reconstructs the original map store including all previous migrations, limits, file paths, coordinate validation and corruption/future-version handling. Tests cover old fixture bytes, three-style cycles, no-op IDs, failure rollback and reload.",
+      "fields": [
+        "MapPin.style",
+        "MapPinStyle"
+      ],
+      "tests": [
+        "Tests/WorldMapStoreTests.swift"
+      ]
+    },
+    "Sources/NotesStore.swift": {
+      "baselineSha256": "e9a64d0f66e32a796ec2c0c103953dcb517ba0669dffbfd48aad130d726f6d5f",
+      "sha256": "39ec227fca1d0ffa9e81ded60c3ba44d783f77b9c6857838aac3522a49d45094",
+      "reason": "Transactional v1-to-v2 migration validates original rows before adding nullable rich_text/media/drawing columns. Canonical old fields, raw storage kinds, UUIDs, geometry, time, pins, managed PNG ownership, Application Support path, atomic updates and corrupt/future protection reconstruct exactly. Drawing uses text base kind plus versioned payload; media stores validated bookmarks rather than copying files. New helper validation dependencies are individually hash-guarded. Reviewed subsequent NotesRichText font-trait rendering and NotesMedia visible-only playback/progress lifecycle changes: Codable payload versions, field names/types, validation limits, reference ownership and stored-data paths remain unchanged. Focused tests cover rich-text round trips, system font traits, media references, playback/seek teardown and unchanged database bytes during scrubbing.",
+      "fields": [
+        "CanvasNote.richText",
+        "CanvasNote.media",
+        "CanvasNote.drawing",
+        "NoteKind.drawing",
+        "SQLite.user_version=2"
+      ],
+      "tests": [
+        "Tests/NotesStoreTests.swift",
+        "Tests/NotesExtendedStoreTests.swift",
+        "Tests/NotesRichTextTests.swift",
+        "Tests/NotesDrawingTests.swift",
+        "Tests/NotesMediaTests.swift"
+      ],
+      "dependencies": {
+        "Sources/NotesRichText.swift": "a1fdd3dc9bb55f47fd138746cb4c5e0c3de1387dd7bb08e24eeb5f00a98efbfa",
+        "Sources/NotesDrawing.swift": "c6f8e84a3950ee3191976d7b73d8f56f2f5b4a4965287fd76b91eb85d890870c",
+        "Sources/NotesMedia.swift": "9dc45b5f47a8e293b45e0dbab3e69016f7869e8c8878e9280b84cae81aee937f"
+      }
+    },
+    "Sources/HUDModule.swift": {
+      "baselineSha256": "1b03e8a90fca3d8c35a0ebab351e866de4e945baf2365c3b87566b0a21b83296",
+      "sha256": "4f73cc01ad6efa38579eb07a7c65fefc9113b41667f1a22de30978317982e2c1",
+      "reason": "Add nowPlaying with a 440x440 music canvas at (280,100), and the Projection launch target. Exact reversal removes only these additive raw identities/labels/right-side membership and restores all 16 original module identifiers, titles, groups, symbols and content frames. Projection launches a separate session-only workspace after HUD closing; it adds no persistent data schema or default changes. Batch6 adds Reader and Archive with separate storage, leaves existing data unchanged, and adds closed action metadata including explicit Projection clear. Original contracts still reconstruct byte-for-byte. Batches7/8 add Media Assembly and Calendar identities plus closed imported/edited/exported and created/edited/deleted action metadata. Archive deletion adds categoryDeleted. New tools use separate/session storage. Exact reversals reconstruct the unchanged baseline; event titles, dates, media paths, edit values and user contents are excluded. Minigame adds only the minigame raw identity, localized/English labels, right-side membership and a 440x440 canvas at (280,100). Removing the five exact additions recovers the immediately prior reviewed module hash and then all original module contracts unchanged. Final roadmap module adds Account Linking; all existing identities and frames remain unchanged. The account has separate cache and Keychain credential ownership; no credentials enter the profile.",
+      "fields": [
+        "HUDModule.nowPlaying",
+        "HUDModule.projection",
+        "HUDModule.reader",
+        "HUDModule.archive",
+        "HUDModule.mediaAssembly",
+        "HUDModule.calendar",
+        "HUDModule.minigame",
+        "HUDModule.account"
+      ],
+      "tests": [
+        "Tests/HUDModuleTests.swift",
+        "Tests/NowPlayingTests.swift",
+        "Tests/HUDAccountCanvasTests.swift",
+        "Tests/HypergryphAccountControllerTests.swift"
+      ]
+    }
+  },
+  "reviewedPermissionAdditions": {
+    "reason": "User-authorized, opt-in Music/Spotify integration requires public Apple Events permission. Add one localized usage key and the hardened-runtime Apple Events entitlement; do not change audio permission, bundle/update identity, helper signing or any existing localized permission text. The user-requested original offline OrbiPom game additionally authorizes com.apple.security.cs.allow-jit=true for JavaScriptCore performance under hardened runtime. Exactly these two true-valued entitlements are permitted; no unsigned-executable-memory, library-validation bypass, debugger, network or other entitlement is added.",
+    "tests": [
+      "Tests/NowPlayingTests.swift"
+    ],
+    "infoPlist": {
+      "NSAppleEventsUsageDescription": "EndfieldHUD reads track information and controls playback in Music or Spotify when you connect that player."
+    },
+    "localized": {
+      "Resources/en.lproj/InfoPlist.strings": {
+        "addition": "\"NSAppleEventsUsageDescription\" = \"EndfieldHUD reads track information and controls playback in Music or Spotify when you connect that player.\";\n",
+        "baselineSha256": "d3aaa7a86d709411107130ef8800253d60ede165b815c5a9c0e4c93f02ac52a0",
+        "sha256": "f966b4c864af99009a29e89175fb0e9aaf6531f5c4503450f29ebbae9afe744e"
+      },
+      "Resources/zh-Hans.lproj/InfoPlist.strings": {
+        "addition": "\"NSAppleEventsUsageDescription\" = \"当您连接 Music 或 Spotify 时，EndfieldHUD 会读取该播放器的曲目信息并控制播放。\";\n",
+        "baselineSha256": "5a04b4cdc9b8df673df63f49dd1493c5d96b13b223f32edb611bc9eafe57f99b",
+        "sha256": "48197ee181d26b77511c24cfe047094c527c06cdd0f19f69c6cd6de8ba70e0ca"
+      },
+      "Resources/zh-Hant.lproj/InfoPlist.strings": {
+        "addition": "\"NSAppleEventsUsageDescription\" = \"當您連線至 Music 或 Spotify 時，EndfieldHUD 會讀取該播放器的曲目資訊並控制播放。\";\n",
+        "baselineSha256": "3002f2eebc30063733f12116ca3843dc7265150f7aee01aaacd441668bddda70",
+        "sha256": "b5123c3fc8ba5a79b328f0b0f2245fbf98ff26a00372fac5aca447c608bdce16"
+      },
+      "Resources/ja.lproj/InfoPlist.strings": {
+        "addition": "\"NSAppleEventsUsageDescription\" = \"MusicまたはSpotifyに接続すると、EndfieldHUDがそのプレーヤーの曲情報を読み取り、再生を操作します。\";\n",
+        "baselineSha256": "eb85071d1762a0d7f9948661afee0c3c198b80c746d9b1f41bf3445abffac7fd",
+        "sha256": "8c78c7096f3be329fa598a412624e8a8e8025ab03dedb2685c998df3bead11c4"
+      },
+      "Resources/ko.lproj/InfoPlist.strings": {
+        "addition": "\"NSAppleEventsUsageDescription\" = \"Music 또는 Spotify에 연결하면 EndfieldHUD가 해당 플레이어의 곡 정보를 읽고 재생을 제어합니다.\";\n",
+        "baselineSha256": "322f67a99daccaa21c48ddc1669a2c053cca628b5725a8763cc1778bd9da0d7b",
+        "sha256": "804bc32ef0c797c03ab8f7a3d7645d6c856168f7c6ba8b5387605fa74e8c6cf8"
+      }
+    },
+    "entitlements": {
+      "path": "Resources/EndfieldHUD.entitlements",
+      "values": {
+        "com.apple.security.automation.apple-events": true,
+        "com.apple.security.cs.allow-jit": true
+      },
+      "sha256": "8fc55fd515eb5f69bc63d5c0f16c07f6fdbeab5ff2d5d9f17fe4e8cf5612fa6e"
     }
   }
 }

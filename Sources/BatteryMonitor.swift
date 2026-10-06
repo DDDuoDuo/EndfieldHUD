@@ -1,6 +1,7 @@
 import Foundation
 import IOKit
 import IOKit.ps
+import notify
 
 struct BatterySnapshot: Equatable {
     let percentage: Int?
@@ -13,6 +14,10 @@ struct BatterySnapshot: Equatable {
     let healthCategory: String?
 
     var levelTone: BatteryLevelTone? { BatteryLevelTone.forPercentage(percentage) }
+    /// The user-facing alert denotes connection to external power immediately,
+    /// including charger negotiation, optimized-charging pauses and full charge.
+    /// isCharging remains the OS's separate, actual charging-state diagnostic.
+    var isChargeMode: Bool { hasBattery && isPluggedIn }
 
     init(percentage: Int?, isPluggedIn: Bool, isCharging: Bool,
          isFullyCharged: Bool, hasBattery: Bool, capacity: BatteryCapacityReading? = nil,
@@ -89,27 +94,56 @@ struct BatterySnapshot: Equatable {
     }
 }
 
-/// Main-thread owner of one IOKit notification source. There is no timer,
-/// subprocess, background queue, or periodic battery polling.
+/// Main-thread owner of one public power-source notification subscription.
+/// Changes are coalesced before reading IOKit; there is no periodic polling.
 final class BatteryMonitor {
+    /// Subscribers deliver on the main thread and return their cancellation.
+    typealias Subscribe = (_ name: String, _ handler: @escaping () -> Void) -> (() -> Void)?
+    typealias ScheduleRefresh = (_ delay: TimeInterval, _ action: @escaping () -> Void) -> (() -> Void)
+
     var onChange: ((BatterySnapshot) -> Void)?
 
-    private var notificationSource: CFRunLoopSource?
+    private let readSnapshot: () -> BatterySnapshot
+    private let subscribe: Subscribe
+    private let scheduleRefresh: ScheduleRefresh
+    private let uptime: () -> TimeInterval
+    private var cancelNotifications: (() -> Void)?
+    private var cancelScheduledRefresh: (() -> Void)?
     private var lastSnapshot: BatterySnapshot?
+    private var lastReadTime: TimeInterval?
+    private var isStarted = false
+    private var generation: UInt64 = 0
+    private var refreshSequence: UInt64 = 0
+    private static let minimumRefreshInterval: TimeInterval = 0.25
 
-    init() {}
+    init(readSnapshot: (() -> BatterySnapshot)? = nil,
+         subscribe: Subscribe? = nil, scheduleRefresh: ScheduleRefresh? = nil,
+         uptime: (() -> TimeInterval)? = nil) {
+        self.readSnapshot = readSnapshot ?? Self.readSystemSnapshot
+        self.subscribe = subscribe ?? Self.subscribeToPowerChanges
+        self.scheduleRefresh = scheduleRefresh ?? { delay, action in
+            let work = DispatchWorkItem(block: action)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return { work.cancel() }
+        }
+        self.uptime = uptime ?? { ProcessInfo.processInfo.systemUptime }
+    }
 
     func start() {
         precondition(Thread.isMainThread)
-        guard notificationSource == nil else { return }
+        guard !isStarted else { return }
+        isStarted = true
+        generation &+= 1
+        let activeGeneration = generation
 
-        if let source = IOPSNotificationCreateRunLoopSource({ context in
-            guard let context = context else { return }
-            Unmanaged<BatteryMonitor>.fromOpaque(context).takeUnretainedValue().refresh()
-        }, Unmanaged.passUnretained(self).toOpaque())?.takeRetainedValue() {
-            notificationSource = source
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        } else {
+        // IOPSNotificationCreateRunLoopSource follows percent/time-remaining
+        // changes. Charging can start after AC connects while both stay the
+        // same, so observe all source attributes, including Is Charging.
+        cancelNotifications = subscribe(kIOPSNotifyAnyPowerSource) { [weak self] in
+            self?.enqueueRefresh(generation: activeGeneration)
+        }
+        if cancelNotifications == nil {
+            isStarted = false // Permit a later start() to retry registration.
             NSLog("EndfieldCharge: Could not subscribe to power-source notifications.")
         }
 
@@ -118,6 +152,8 @@ final class BatteryMonitor {
 
     func refresh() {
         precondition(Thread.isMainThread)
+        cancelPendingRefresh()
+        lastReadTime = uptime()
         let snapshot = readSnapshot()
         guard snapshot != lastSnapshot else { return }
         lastSnapshot = snapshot
@@ -126,24 +162,57 @@ final class BatteryMonitor {
 
     func stop() {
         precondition(Thread.isMainThread)
-        removeNotificationSource()
+        isStarted = false
+        generation &+= 1
+        cancelPendingRefresh()
+        lastReadTime = nil
+        let cancel = cancelNotifications
+        cancelNotifications = nil
+        cancel?()
         lastSnapshot = nil
     }
 
     deinit {
-        // The context is unretained. Invalidate the source before this object
-        // disappears so there can never be a callback to a stale pointer.
-        removeNotificationSource()
+        cancelScheduledRefresh?()
+        cancelNotifications?()
     }
 
-    private func removeNotificationSource() {
-        guard let source = notificationSource else { return }
-        CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-        CFRunLoopSourceInvalidate(source)
-        notificationSource = nil
+    private func enqueueRefresh(generation activeGeneration: UInt64) {
+        precondition(Thread.isMainThread)
+        guard isStarted, generation == activeGeneration, cancelScheduledRefresh == nil else { return }
+        let elapsed = lastReadTime.map { max(0, uptime() - $0) } ?? Self.minimumRefreshInterval
+        let delay = max(0, Self.minimumRefreshInterval - elapsed)
+        guard delay > 0 else { refresh(); return }
+
+        // This notification also covers attributes we don't display. Bound
+        // registry work to 4 Hz, with one trailing read of the newest state.
+        // Once events stop, no more work is scheduled.
+        refreshSequence &+= 1
+        let sequence = refreshSequence
+        cancelScheduledRefresh = scheduleRefresh(delay) { [weak self] in
+            guard let self = self, self.isStarted, self.generation == activeGeneration,
+                  self.refreshSequence == sequence else { return }
+            self.cancelScheduledRefresh = nil
+            self.refresh()
+        }
     }
 
-    private func readSnapshot() -> BatterySnapshot {
+    private func cancelPendingRefresh() {
+        refreshSequence &+= 1
+        let cancel = cancelScheduledRefresh
+        cancelScheduledRefresh = nil
+        cancel?()
+    }
+
+    private static func subscribeToPowerChanges(name: String, handler: @escaping () -> Void) -> (() -> Void)? {
+        var token = Int32(NOTIFY_TOKEN_INVALID)
+        guard notify_register_dispatch(name, &token, DispatchQueue.main, { _ in handler() }) == NOTIFY_STATUS_OK else {
+            return nil
+        }
+        return { _ = notify_cancel(token) }
+    }
+
+    private static func readSystemSnapshot() -> BatterySnapshot {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
               let sources = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else {
             return .unavailable
@@ -165,7 +234,7 @@ final class BatteryMonitor {
         )
     }
 
-    private func readCapacityProperties() -> [String: Any] {
+    private static func readCapacityProperties() -> [String: Any] {
         // Zero is the default IOKit main port on all supported macOS versions.
         // The public registry API reads only four numeric properties, without
         // collecting battery identifiers or loading the full registry payload.

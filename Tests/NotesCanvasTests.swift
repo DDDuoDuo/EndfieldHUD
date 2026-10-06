@@ -47,6 +47,16 @@ enum NotesCanvasTests {
               "A new text note requests an inline multiline editor")
         textCanvas.finishEditing(editRequests[0], text: "Plan\n中文便笺 📝")
         check(textStore.notes[0].text == "Plan\n中文便笺 📝", "Editing preserves newlines and Unicode in the database")
+        let readingViewport = textCanvas.contentViewport(for: textNote.id)!
+        check(readingViewport.maxY == textNote.y + textNote.height - 8
+              && readingViewport.height == editRequests[0].rect.height + 21,
+              "Settled text uses the unused formatting footer and leaves only an eight-point bottom inset")
+        textCanvas.setEditing(editRequests[0])
+        check(textCanvas.contentViewport(for: textNote.id) == editRequests[0].rect,
+              "Only an active editor reserves the exact footer used by its formatting controls")
+        textCanvas.setEditing(nil)
+        check(textCanvas.contentViewport(for: textNote.id) == readingViewport,
+              "Leaving text editing restores the full reading area without changing the note's saved size")
         _ = textCanvas.mouseDownInWorkspace(at: bodyPoint(textNote), clickCount: 1)
         check(textCanvas.isDragging && editRequests.count == 1, "A single text-body click can drag without opening an editor")
         textCanvas.mouseUp()
@@ -162,6 +172,11 @@ enum NotesCanvasTests {
         check(textCanvas.accessibleActions.contains { $0.id == action(textNote, "confirmDelete") }
               && textCanvas.accessibleActions.contains { $0.id == action(textNote, "cancelDelete") },
               "The pending note exposes a compact cancel and confirm pair")
+        let deleteButton = textCanvas.accessibleActions.first { $0.id == action(textNote, "delete") }!.rect
+        let confirmButton = textCanvas.accessibleActions.first { $0.id == action(textNote, "confirmDelete") }!.rect
+        check(confirmButton.minY > deleteButton.maxY && confirmButton.minY - deleteButton.maxY <= 8
+              && abs(confirmButton.maxX - deleteButton.maxX) < 1,
+              "Delete confirmation is anchored immediately beneath the header cross")
         textCanvas.perform(actionID: action(textNote, "cancelDelete"))
         check(textStore.notes.count == 1 && textCanvas.pendingDeletionID == nil, "Cancel preserves the note")
         textCanvas.deleteSelection()
@@ -229,7 +244,7 @@ enum NotesCanvasTests {
         check(todoCanvas.workspaceBounds.contains(latestEdit.rect) && latestEdit.itemID == latest,
               "Adding beyond the visible rows scrolls the new item's editor into the canvas")
         let visibleBeforeScroll = Set(todoCanvas.accessibleActions.map(\.id))
-        check(todoCanvas.scroll(at: bodyPoint(todo), delta: -1), "An overflowing checklist consumes row scrolling")
+        check(todoCanvas.scroll(at: bodyPoint(todo), delta: -30), "An overflowing checklist consumes continuous scrolling")
         check(Set(todoCanvas.accessibleActions.map(\.id)) != visibleBeforeScroll,
               "Scrolling exposes a different set of real checklist controls")
         todoCanvas.perform(actionID: action(todo, "editItem", item: third))
@@ -237,6 +252,143 @@ enum NotesCanvasTests {
               "Editing an offscreen item reveals the correct row")
         let todoReload = try! NotesStore(directory: directory.appendingPathComponent("todo"))
         check(todoReload.notes[0].items == todoStore.notes[0].items, "Checklist text, order and completion survive reopening")
+
+        func descendants(_ root: CALayer) -> [CALayer] {
+            [root] + (root.sublayers ?? []).flatMap(descendants)
+        }
+        func contentLines(_ root: CALayer) -> [CATextLayer] {
+            descendants(root).compactMap { $0 as? CATextLayer }.filter { $0.name?.hasPrefix("notes.content.line.") == true }
+        }
+        let smoothStore = store("smooth-scroll")
+        let longText = (0..<100).map { "Line \($0): 中文便笺 👩🏽‍💻 wraps without ellipsis." }.joined(separator: "\n")
+        let longNote = CanvasNote(kind: .text, text: longText, x: 25, y: 35, width: 190, height: 135, isPinned: true)
+        try! smoothStore.upsert(longNote)
+        let smooth = NotesCanvas(store: smoothStore, reduceMotion: { true })
+        let initialLayers = noteLayers(smooth)
+        let longCard = initialLayers[0]
+        let viewportLayer = descendants(longCard).first { $0.name == "notes.content.viewport" }!
+        let scrollingLayer = descendants(longCard).first { $0.name == "notes.content.scroll" }!
+        let firstLine = contentLines(longCard).first!
+        let measuredBefore = smooth.textLayoutBuildCount
+        let database = directory.appendingPathComponent("smooth-scroll/notes.sqlite3")
+        let bytesBeforeScroll = try! Data(contentsOf: database)
+        let dateBeforeScroll = try! FileManager.default.attributesOfItem(atPath: database.path)[.modificationDate] as! Date
+        check(viewportLayer.masksToBounds && contentLines(longCard).count < 12,
+              "A long text note clips a bounded set of visible line layers instead of allocating a full-document bitmap")
+        for _ in 0..<4 { check(smooth.scroll(at: bodyPoint(longNote), delta: 0.375), "Every fractional text delta is consumed") }
+        check(smooth.scrollOffset(for: longNote.id) == 1.5 && scrollingLayer.bounds.minY == 1.5,
+              "Subpoint trackpad deltas accumulate continuously in the retained content origin")
+        check(contentLines(longCard).contains { $0 === firstLine } && noteLayers(smooth)[0] === longCard
+              && smooth.textLayoutBuildCount == measuredBefore,
+              "Steady scrolling retains the card and visible lines without remeasuring document text")
+        check(!smooth.scroll(at: bodyPoint(longNote), delta: .nan) && !smooth.scroll(at: bodyPoint(longNote), delta: .infinity),
+              "Invalid scroll deltas cannot corrupt content geometry")
+        _ = smooth.scroll(at: bodyPoint(longNote), delta: 100_000)
+        let lastText = contentLines(longCard).compactMap { ($0.string as? NSAttributedString)?.string }.joined()
+        check(lastText.contains("Line 99") && contentLines(longCard).allSatisfy { $0.truncationMode == .none },
+              "Continuous scrolling reaches the final wrapped text without substituting ellipses")
+        let bottomOffset = smooth.scrollOffset(for: longNote.id)
+        _ = smooth.scroll(at: bodyPoint(longNote), delta: 100)
+        check(smooth.scrollOffset(for: longNote.id) == bottomOffset, "Scrolling past the text end clamps without an idle animation")
+        smooth.setPresentation(notesSelected: false, animated: false)
+        _ = smooth.scroll(at: bodyPoint(longNote), delta: -0.25)
+        check(smooth.scrollOffset(for: longNote.id) == bottomOffset - 0.25,
+              "Pinned text scrolls continuously while another module is selected")
+        let bytesAfterScroll = try! Data(contentsOf: database)
+        let dateAfterScroll = try! FileManager.default.attributesOfItem(atPath: database.path)[.modificationDate] as! Date
+        check(bytesAfterScroll == bytesBeforeScroll && dateAfterScroll == dateBeforeScroll
+              && smoothStore.notes == [longNote], "Scrolling and pin presentation never write note content, geometry or view offsets")
+        check(smooth.activeAnimationCount == 0, "Continuous scrolling adds no animation clock")
+
+        let buildsBeforeResize = smooth.textLayoutBuildCount
+        for index in 0..<70 {
+            smooth.setWorkspaceBounds(CGRect(x: 0, y: 0, width: 110 + CGFloat(index) / 2, height: 300))
+            check(smooth.cachedTextLayoutCount == 1,
+                  "Resizing one long note evicts its obsolete width layout instead of retaining historical line ranges")
+        }
+        check(smooth.textLayoutBuildCount >= buildsBeforeResize + 70
+              && smoothStore.notes == [longNote],
+              "More than 64 distinct reflows retain a single current layout without changing saved text or geometry")
+
+        let budgetStore = store("layout-byte-budget")
+        let budgetText = (0..<65).map { "Line \($0)" }.joined(separator: "\n")
+        try! budgetStore.upsert(CanvasNote(kind: .text, text: budgetText + "\nDocument 0",
+            x: 12, y: 12, width: 190, height: 135, zIndex: 0))
+        // Rich line layout retains origins/heights as well as NSRange values.
+        // Size the fixture for two real documents; Swift array capacity differs
+        // across toolchains, so a fixed 4 KB may now describe one oversized item.
+        let oneDocumentBytes = NotesCanvas(store: budgetStore, reduceMotion: { true }).cachedTextLayoutRangeBytes
+        let twoDocumentBudget = oneDocumentBytes * 2
+        for index in 1..<6 {
+            try! budgetStore.upsert(CanvasNote(kind: .text, text: budgetText + "\nDocument \(index)",
+                x: 12, y: 12, width: 190, height: 135, zIndex: index))
+        }
+        let budgetCanvas = NotesCanvas(store: budgetStore, textLayoutRangeBudget: twoDocumentBudget, reduceMotion: { true })
+        check(oneDocumentBytes > 0 && budgetCanvas.cachedTextLayoutRangeBytes <= twoDocumentBudget
+                && budgetCanvas.cachedTextLayoutCount > 0 && budgetCanvas.cachedTextLayoutCount < 6,
+              "The range-byte budget evicts older distinct documents before reaching the entry-count limit")
+        let oversized = NotesCanvas(store: smoothStore, textLayoutRangeBudget: 64, reduceMotion: { true })
+        let oversizedBuilds = oversized.textLayoutBuildCount
+        check(oversized.cachedTextLayoutCount == 1 && oversized.cachedTextLayoutRangeBytes > 64,
+              "One oversized current document retains all line ranges rather than truncating text to the cache budget")
+        _ = oversized.scroll(at: bodyPoint(longNote), delta: 0.375)
+        check(oversized.cachedTextLayoutCount == 1 && oversized.textLayoutBuildCount == oversizedBuilds,
+              "An oversized current layout is retained across fractional scrolling instead of repeatedly typesetting it")
+
+        let wrappedStore = store("wrapped-todo")
+        let wrappedTitle = "跨行任务 👨‍👩‍👧‍👦: a long checklist task must wrap onto several lines without truncating its content."
+        let wrappedItem = NoteChecklistItem(text: wrappedTitle, isChecked: true)
+        let shortItem = NoteChecklistItem(text: "Second row")
+        let wrappedNote = CanvasNote(kind: .todo, items: [wrappedItem, shortItem]
+            + (0..<90).map { NoteChecklistItem(text: "Task \($0)") }, x: 20, y: 25, width: 230, height: 210)
+        try! wrappedStore.upsert(wrappedNote)
+        let wrapped = NotesCanvas(store: wrappedStore, reduceMotion: { true })
+        let wrappedCard = noteLayers(wrapped)[0]
+        let firstRow = descendants(wrappedCard).first { $0.name == "notes.todo.row." + wrappedItem.id.uuidString }!
+        let firstRowLines = contentLines(firstRow)
+        check(firstRowLines.count > 1 && firstRow.frame.height > 25,
+              "Long Chinese and emoji tasks occupy measured multiline rows")
+        check(firstRowLines.allSatisfy { line in
+            guard let text = line.string as? NSAttributedString, text.length > 0 else { return false }
+            return text.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue
+        }, "Every visible line of a completed task has a real text strikethrough")
+        let rowEditID = action(wrappedNote, "editItem", item: wrappedItem.id)
+        let secondEditID = action(wrappedNote, "editItem", item: shortItem.id)
+        let firstRect = wrapped.accessibleActions.first { $0.id == rowEditID }!.rect
+        let secondRect = wrapped.accessibleActions.first { $0.id == secondEditID }!.rect
+        check(firstRect.height > 22 && secondRect.minY >= firstRect.maxY,
+              "Variable row heights keep multiline editing and neighbouring task hit regions disjoint")
+        let wrappedBuilds = wrapped.textLayoutBuildCount
+        let rowIdentity = firstRow
+        _ = wrapped.scroll(at: bodyPoint(wrappedNote), delta: 8.25)
+        let clippedFirst = wrapped.accessibleActions.first { $0.id == rowEditID }!.rect
+        let body = wrapped.contentViewport(for: wrappedNote.id)!
+        check(body.contains(clippedFirst) && abs(clippedFirst.minY - body.minY) < 0.001,
+              "Partially visible task editing and accessibility rectangles clip to the same body viewport")
+        check(descendants(wrappedCard).contains { $0 === rowIdentity } && wrapped.textLayoutBuildCount == wrappedBuilds,
+              "Fractional checklist scrolling retains visible row layers and their measured text")
+        check(wrapped.cachedTextLayoutCount <= NotesCanvas.textLayoutCacheLimit
+              && descendants(wrappedCard).filter { $0.name?.hasPrefix("notes.todo.row.") == true }.count < 10,
+              "Large checklists keep both the line-layout cache and visible row layer count bounded")
+        wrapped.perform(actionID: action(wrappedNote, "check", item: wrappedItem.id))
+        let unchecked = descendants(wrappedCard).first { $0.name == "notes.todo.row." + wrappedItem.id.uuidString }!
+        check(contentLines(unchecked).allSatisfy { ($0.string as? NSAttributedString)?.attribute(.strikethroughStyle, at: 0, effectiveRange: nil) == nil },
+              "Unchecking removes strikethrough without changing task content")
+        var wrappedEdit: NotesEditRequest?
+        wrapped.onEdit = { wrappedEdit = $0 }
+        let lastItem = wrappedNote.items.last!
+        wrapped.perform(actionID: action(wrappedNote, "editItem", item: lastItem.id))
+        check(wrappedEdit?.itemID == lastItem.id && body.contains(wrappedEdit!.rect),
+              "Editing an offscreen variable row reveals the exact clipped editor region")
+        check(wrappedEdit!.rect == wrapped.accessibleActions.first { $0.id == action(wrappedNote, "editItem", item: lastItem.id) }!.rect,
+              "Task drawing geometry, native editor requests and accessibility share the same measured row rectangle")
+        wrapped.perform(actionID: action(wrappedNote, "shrink"))
+        let resizedBody = wrapped.contentViewport(for: wrappedNote.id)!
+        check(wrapped.accessibleActions.filter { $0.id.split(separator: ":").count == 4 }.allSatisfy { resizedBody.contains($0.rect) },
+              "Resize reflow clamps scrolling and clips every task action to the resized content area")
+        let finalWrapped = try! NotesStore(directory: directory.appendingPathComponent("wrapped-todo"))
+        check(finalWrapped.notes[0].items[0].text == wrappedTitle && finalWrapped.notes[0].items.count == 92,
+              "Wrapping, scroll offsets and completion styling preserve all original checklist records")
 
         // Both image entry paths end in the same movable/resizable persistent object.
         let imageStore = store("image")
@@ -334,6 +486,43 @@ enum NotesCanvasTests {
         let unavailable = NotesCanvas(store: nil, error: "Read-only storage")
         _ = unavailable.mouseDown(at: CGPoint(x: 80, y: 80), clickCount: 1)
         check(unavailable.noteCount == 0, "Unavailable persistence cannot create a note that appears saved")
+
+        let drawingStore = store("drawing")
+        let drawingCanvas = NotesCanvas(store: drawingStore, reduceMotion: { true })
+        drawingCanvas.setWorkspaceBounds(CGRect(x: 0, y: 0, width: 800, height: 600), creationPoint: CGPoint(x: 40, y: 60))
+        var drawingEvents: [NotesCanvasEvent] = []
+        drawingCanvas.onAction = { drawingEvents.append($0) }
+        drawingCanvas.perform(actionID: "tool:drawing")
+        let drawingNote = drawingStore.notes[0]
+        check(drawingNote.kind == .drawing && drawingNote.drawing == NotesDrawing(),
+              "Drawing toolbar creates a persistent spatial drawing note")
+        let drawingDatabase = directory.appendingPathComponent("drawing/notes.sqlite3")
+        let drawingBytes = try! Data(contentsOf: drawingDatabase)
+        let drawingStart = CGPoint(x: drawingNote.x + 35, y: drawingNote.y + 55)
+        drawingCanvas.mouseMoved(at: drawingStart)
+        _ = drawingCanvas.scroll(at: drawingStart, delta: 8)
+        _ = drawingCanvas.mouseDownInWorkspace(at: drawingStart, clickCount: 1)
+        for step in 1...12 { drawingCanvas.mouseDragged(to: CGPoint(x: drawingStart.x + Double(step) * 5, y: drawingStart.y + Double(step) * 2)) }
+        check(try! Data(contentsOf: drawingDatabase) == drawingBytes && drawingStore.notes[0].drawing?.strokes.isEmpty == true,
+              "Brush preview, thickness scrolling and live stroke samples never write to SQLite")
+        drawingCanvas.mouseUp()
+        check(drawingStore.notes[0].drawing?.strokes.count == 1
+              && drawingStore.notes[0].drawing?.strokes[0].width == 10,
+              "Mouse-up commits one vector stroke with the wheel-adjusted brush size")
+        check(drawingEvents == [.createdDrawing, .drawingEdited], "Drawing logs successful commits rather than pointer or progress samples")
+        let drawingCard = drawingCanvas.workspaceLayer.sublayers!.flatMap { $0.sublayers ?? [] }
+            .first { $0.name == "notes.note.\(drawingNote.id.uuidString)" }!
+        let retainedDrawingHeader = drawingCard.sublayers!.first!
+        let savedDrawing = drawingStore.notes[0]
+        for index in 0..<20 { drawingCanvas.setDrawingColor(NSColor(calibratedHue: Double(index) / 20, saturation: 1, brightness: 1, alpha: 1)) }
+        check(drawingCard.sublayers?.first === retainedDrawingHeader && drawingStore.notes[0] == savedDrawing,
+              "Color-wheel dragging changes only the retained swatch and never rebuilds stored stroke geometry or saves the note")
+        check(drawingCanvas.rightMouseDown(at: drawingStart), "Right-click inside a drawing switches to the eraser")
+        _ = drawingCanvas.mouseDownInWorkspace(at: drawingStart, clickCount: 1); drawingCanvas.mouseUp()
+        check(drawingStore.notes[0].drawing?.strokes.isEmpty == true,
+              "The eraser removes intersecting strokes and commits at gesture end")
+        drawingCanvas.setVisible(false)
+        check(drawingCanvas.activeAnimationCount == 0, "Hiding a drawing introduces no animation or sampler lifetime")
         return count
     }
 

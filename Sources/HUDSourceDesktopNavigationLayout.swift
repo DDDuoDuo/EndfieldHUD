@@ -221,6 +221,7 @@ struct HUDSourceDesktopNavigationLayout {
         let id: HUDSourceID
         let buttons: [HUDSourceID]
         let anchored: HUDSourceVector2
+        let size: HUDSourceVector2
     }
     struct Sample {
         let assignments: [HUDSourceID: Int]
@@ -233,7 +234,7 @@ struct HUDSourceDesktopNavigationLayout {
     let entryCount: Int
     let viewportHeight: Double
     private let originalContentSize: HUDSourceVector2
-    private let cycleHeight: Double
+    private let rowStep: Double
     private let rowScale: Double
     private let columns: Int
     private let captionIDs: [HUDSourceID: HUDSourceID]
@@ -253,7 +254,7 @@ struct HUDSourceDesktopNavigationLayout {
         }
         let rows = rowIDs.compactMap { id -> Row? in
             guard let rect = scene.node(id)?.transform.rect else { return nil }
-            return Row(id: id, buttons: byRow[id] ?? [], anchored: rect.anchoredPosition)
+            return Row(id: id, buttons: byRow[id] ?? [], anchored: rect.anchoredPosition, size: rect.sizeDelta)
         }
         // A shortcut can itself contain a nested source scroll control. Bind
         // the scroll rect whose content actually owns the shared row pool.
@@ -275,30 +276,31 @@ struct HUDSourceDesktopNavigationLayout {
               let parent = scene.node(rowParent) else {
             throw HUDSourceError.invalid("Missing desktop source navigation row pool")
         }
-        let differences = zip(rows, rows.dropFirst()).map { $0.anchored.y - $1.anchored.y }.sorted()
-        let step = differences[differences.count / 2]
+        // One logical grid, independent of the recycled physical slot. The
+        // authored X offsets are a finite preview of the curve, not a pattern
+        // to repeat every nine rows: wrapping from -139 back to 214 leaks into
+        // Y/Z when the source slant writer replaces world X under a tilted HUD.
+        // Keep the source's average pitch; the live slant still supplies its
+        // complete curved X placement at the current scroll/gyro position.
+        let step = (first.anchored.y - last.anchored.y) / Double(rows.count - 1)
         guard step > 0, parent.transform.localScale.y > 0, viewport.y > 0 else {
             throw HUDSourceError.invalid("Invalid desktop source navigation extent")
         }
         self.rows = rows; self.contentID = contentID; self.entryCount = max(0, entryCount)
         self.originalContentSize = size; self.viewportHeight = viewport.y
-        self.cycleHeight = first.anchored.y - last.anchored.y + step
+        self.rowStep = step
         self.rowScale = parent.transform.localScale.y
         self.columns = first.buttons.count
     }
 
     func sample(normalizedPosition: Double) -> Sample {
         let count = entryCount / columns + (entryCount % columns == 0 ? 0 : 1)
-        let lastRowY = count > 0 ? rows[(count - 1) % rows.count].anchored.y
-            - Double((count - 1) / rows.count) * cycleHeight : rows[0].anchored.y
+        let lastRowY = rows[0].anchored.y - Double(max(0, count - 1)) * rowStep
         let contentHeight = max(viewportHeight,
             originalContentSize.y + (rows.last!.anchored.y - lastRowY) * rowScale)
         let normalized = normalizedPosition.isFinite ? min(1, max(0, normalizedPosition)) : 1
         let offset = (1 - normalized) * max(0, contentHeight - viewportHeight)
-        let cycle = Int(offset / (cycleHeight * rowScale))
-        let withinCycle = offset - Double(cycle) * cycleHeight * rowScale
-        let localRow = rows.lastIndex(where: { (rows[0].anchored.y - $0.anchored.y) * rowScale <= withinCycle }) ?? 0
-        let firstRow = min(max(0, count - rows.count), max(0, cycle * rows.count + localRow - 1))
+        let firstRow = min(max(0, count - rows.count), max(0, Int(offset / (rowStep * rowScale)) - 1))
         var assignments: [HUDSourceID: Int] = [:], logicalRows: [HUDSourceID: Int] = [:]
         assignments.reserveCapacity(min(entryCount, rows.count * columns))
         logicalRows.reserveCapacity(min(count, rows.count))
@@ -323,12 +325,23 @@ struct HUDSourceDesktopNavigationLayout {
             let logical = sample.logicalRows[row.id]
             transform.active = logical != nil
             if let logical {
-                // Preserve the source row's X/Y placement pattern and its
-                // separately animated Z/depth, including deployment motion.
-                let cycle = logical / rows.count
-                let existing = transform.anchoredPosition3D
-                transform.anchoredPosition3D = HUDSourceVector3(existing?.x ?? row.anchored.x,
-                    row.anchored.y - Double(cycle) * cycleHeight, existing?.z ?? 0)
+                // Position every logical row from the same pre-slant origin.
+                // Preserve authored/deployment depth, not a previous layout's
+                // stronger local X/Y overrides.
+                let depth = transform.positionComponents[2] ?? transform.localPosition?.z
+                    ?? transform.anchoredPosition3D?.z ?? 0
+                transform.anchoredPosition3D = HUDSourceVector3(rows[0].anchored.x,
+                    rows[0].anchored.y - Double(logical) * rowStep, depth)
+                transform.localPosition = nil
+                transform.positionComponents.removeValue(forKey: 0)
+                transform.positionComponents.removeValue(forKey: 1)
+                // A lone Add App keeps column one. Otherwise the source's
+                // center-aligned HorizontalLayoutGroup centers it across both
+                // columns in slots 1–8, but left-aligns it in slot 9.
+                let occupied = min(columns, entryCount - logical * columns)
+                let width = row.size.x * Double(occupied) / Double(columns)
+                transform.sizeDelta = HUDSourceVector2(width, row.size.y)
+                transform.pivot = HUDSourceVector2(row.size.x / (2 * width), 0.5)
             }
             pose.transforms[row.id] = transform
             for button in row.buttons {

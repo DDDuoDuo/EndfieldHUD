@@ -1,6 +1,27 @@
 import AppKit
 import QuartzCore
 
+/// The same retained pencil is used by drawing and shortcut-edit controls.
+enum HUDPencilArtwork {
+    private static let path: CGPath = {
+        let pencil = CGMutablePath()
+        pencil.addLines(between: [CGPoint(x: 2, y: 10), CGPoint(x: 12, y: 0),
+            CGPoint(x: 15, y: 3), CGPoint(x: 5, y: 13), CGPoint(x: 1, y: 14)])
+        pencil.closeSubpath()
+        pencil.move(to: CGPoint(x: 0, y: 16)); pencil.addLine(to: CGPoint(x: 16, y: 16))
+        return pencil
+    }()
+
+    static func makeLayer(in rect: CGRect, color: NSColor, contentsScale: CGFloat) -> CAShapeLayer {
+        let layer = CAShapeLayer(); layer.name = "hud.pencil"; layer.frame = rect
+        var fit = CGAffineTransform(scaleX: rect.width / 16, y: rect.height / 16)
+        layer.path = path.copy(using: &fit)
+        layer.strokeColor = color.cgColor; layer.fillColor = nil; layer.lineWidth = 1.1
+        layer.contentsScale = contentsScale
+        return layer
+    }
+}
+
 /// Shared game artwork for matching presets, with functional vector glyphs
 /// retained for actions which have no corresponding asset in the wiki.
 enum AppShortcutArtwork {

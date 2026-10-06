@@ -1,4 +1,5 @@
 import AppKit
+import simd
 
 /// Run explicitly with --ui-test --app-shortcut-smoke-test. LaunchServices is
 /// injected: this harness never launches a target app or changes real shortcuts.
@@ -67,6 +68,51 @@ enum AppShortcutHUDVerification {
                 bytesPerRow: 48, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
             bitmap.setFillColor(NSColor.systemRed.cgColor); bitmap.fill(CGRect(x: 2, y: 1, width: 8, height: 6))
             let originalIcon = NSImage(cgImage: bitmap.makeImage()!, size: CGSize(width: 12, height: 8))
+            // The user's two-app example is the first nine-row pool overflow.
+            // Keep these presentations in memory; never save/launch fixture apps.
+            let pair = ["Codex", "WeChat"].map {
+                HUDAppShortcutPresentation(id: UUID(), name: $0, iconPreset: .original, icon: originalIcon)
+            }
+            for count in [0, 1, 2, 3] {
+                let fixtures = count <= 2 ? Array(pair.prefix(count)) : pair + [
+                    HUDAppShortcutPresentation(id: UUID(), name: "Third app", iconPreset: .original, icon: originalIcon)]
+                source.setDesktopNavigation(HUDDesktopWatchNavigation.entries(shortcuts: fixtures))
+                for _ in 0..<200 { if !source.scrollDesktopNavigation(1) { break } }
+                check(source.desktopPointForVerification(target: .module(.addApp)) != nil,
+                      "Add App remains reachable after zero, one, two or three custom shortcuts")
+                check(fixtures.allSatisfy { source.desktopPointForVerification(target: .appShortcut($0.id)) != nil },
+                      "Every trailing custom app has a visible, correctly clipped hit region")
+                if let frame = source.currentFrameForVerification, let camera = source.currentCameraForVerification,
+                   let scroll = frame.layoutReport.scroll, let viewport = frame.node(scroll.viewportID), let rect = viewport.rect {
+                    let rightIDs = Set(frame.hits.filter {
+                        frame.node($0.buttonID)?.node.path.contains("/RightBottomNode/") == true
+                    }.map(\.buttonID))
+                    check(!rightIDs.isEmpty && frame.hits.filter { rightIDs.contains($0.buttonID) }.allSatisfy { !$0.masks.isEmpty },
+                          "Recycled faces retain the viewport mask for draw and input")
+                    for edge in [rect.origin.y - 3, rect.origin.y + rect.size.y + 3] {
+                        for column in 1..<10 {
+                            let local = SIMD3(rect.origin.x + rect.size.x * Double(column) / 10, edge, 0)
+                            if let point = camera.camera.project(local, world: camera.worldRoot * viewport.worldMatrix,
+                                                                 viewport: source.bounds)?.point {
+                                let hit = frame.button(at: point, camera: camera.camera, viewport: source.bounds)
+                                check(hit.map { !rightIDs.contains($0) } ?? true,
+                                      "No shortcut accepts clicks beyond either projected scroll edge")
+                            }
+                        }
+                    }
+                } else { check(false, "Shortcut edge checks require the actual source viewport") }
+                do {
+                    check(try source.verifyCurrentAccessibilityGeometryForVerification() > 0,
+                          "Odd and overflowing rows expose their current clipped accessibility geometry")
+                    if count == 2, let output = ProcessInfo.processInfo.environment["HUD_APP_SHORTCUT_PREVIEW_DIR"],
+                       let view = source.window?.contentView as? SystemHUDView {
+                        let directory = URL(fileURLWithPath: output, isDirectory: true)
+                        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                        try view.writePNG(to: directory.appendingPathComponent("two-shortcuts-bottom.png"), scale: 1,
+                                          background: NSColor(white: 0.08, alpha: 1).cgColor)
+                    }
+                } catch { check(false, "Shortcut layout/preview: \(error)") }
+            }
             let shortcuts = AppShortcutIcon.allCases.enumerated().map { index, preset in
                 HUDAppShortcutPresentation(id: UUID(), name: index == 1 ? "微信 WeChat" : "Saved application \(index)",
                     iconPreset: preset, icon: originalIcon)

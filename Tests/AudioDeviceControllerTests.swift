@@ -450,7 +450,17 @@ enum AudioDeviceControllerTests {
     private static func buffers(_ channels: UInt32) -> Data {
         bytes(AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: channels, mDataByteSize: 0, mData: nil)))
     }
-    private static func drainMainQueue() { RunLoop.main.run(until: Date().addingTimeInterval(0.015)) }
+    private static func drainMainQueue() {
+        // Wait for the queued callbacks, not a 15 ms scheduling assumption.
+        // The read-count assertion still enforces a single coalesced refresh.
+        var drained = false
+        DispatchQueue.main.async { drained = true }
+        let deadline = Date().addingTimeInterval(2)
+        while !drained && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.002))
+        }
+        precondition(drained, "Main queue did not drain within the fixture deadline")
+    }
 
     private final class LockedFlag {
         private let lock = NSLock()

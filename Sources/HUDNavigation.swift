@@ -48,7 +48,9 @@ final class HUDNavigation {
     private var accent = NSColor(srgbRed: 0.98, green: 0.83, blue: 0.12, alpha: 1)
     private var contentsScale: CGFloat = 2
     private var rightEntries: [HUDNavigationEntry] { entries.filter { $0.group == .right } }
-    private static let rightModules: [HUDModule] = [.notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .addApp]
+    // Native recovery keeps the battery capsule and identity card at their
+    // dedicated hit regions, with the same order for the right-hand modules.
+    private static let rightModules = HUDDesktopWatchNavigation.rightModules.filter { $0.group == .right }
 
     private(set) var isArtworkPrepared: Bool
 
@@ -1149,8 +1151,16 @@ final class HUDNavigationEntry {
         switch module {
         case .notes: return .mission
         case .fileShelf: return .depot
-        case .clipboard: return .archive
-        case .eventLog: return .story
+        case .clipboard: return .database
+        case .archive: return .archive
+        case .reader: return .readerBook
+        case .mediaAssembly: return .mediaAssembly
+        case .calendar: return .calendar
+        case .account: return .operatorProfile
+        case .minigame: return .minigame
+        case .eventLog: return .questionnaire
+        case .projection: return .projectionCrystal
+        case .profile: return .friends
         case .storage: return .factory
         case .workMode: return .strength
         case .map: return .region
@@ -1339,6 +1349,21 @@ final class HUDNavigationEntry {
             polygon(p(3, 5), p(13, 5), p(17, 9), p(28, 9), p(28, 12), p(3, 12))
             polygon(p(2, 15), p(30, 15), p(26, 28), p(5, 28))
             box(12, 18, 10, 3)
+        case .reader:
+            polygon(p(2, 5), p(14, 7), p(14, 29), p(2, 27))
+            polygon(p(18, 7), p(30, 5), p(30, 27), p(18, 29))
+            box(6, 11, 5, 2); box(6, 17, 5, 2); box(21, 11, 5, 2); box(21, 17, 5, 2)
+        case .mediaAssembly:
+            box(3, 6, 26, 22); polygon(p(8, 23), p(15, 14), p(20, 20), p(25, 12), p(28, 25))
+        case .calendar:
+            box(3, 6, 26, 4); box(3, 12, 26, 16); box(8, 2, 3, 7); box(21, 2, 3, 7)
+        case .account:
+            path.addEllipse(in: CGRect(x: 10, y: 2, width: 12, height: 12)); box(4, 18, 24, 12)
+        case .minigame:
+            path.addEllipse(in: CGRect(x: 5, y: 5, width: 22, height: 22))
+            box(8, 14, 8, 3); box(11, 11, 3, 9); box(21, 12, 3, 3); box(23, 18, 3, 3)
+        case .archive:
+            box(3, 6, 26, 5); box(5, 13, 22, 16); box(12, 17, 8, 3)
         case .clipboard:
             polygon(p(5, 7), p(10, 7), p(10, 11), p(23, 11), p(23, 7), p(28, 7), p(28, 30), p(5, 30))
             box(11, 3, 11, 6); box(9, 15, 15, 3); box(9, 22, 12, 3)
@@ -1349,6 +1374,10 @@ final class HUDNavigationEntry {
                 wave.addArc(center: p(17, 16), radius: radius, startAngle: -.pi / 4, endAngle: .pi / 4, clockwise: false)
                 stroke(wave, width: 3)
             }
+        case .nowPlaying:
+            path.addEllipse(in: CGRect(x: 2, y: 2, width: 28, height: 28))
+            path.addEllipse(in: CGRect(x: 5, y: 5, width: 22, height: 22))
+            polygon(p(12, 9), p(24, 16), p(12, 23))
         case .workMode:
             polygon(p(2, 3), p(12, 3), p(12, 7), p(6, 7), p(6, 13), p(2, 13))
             polygon(p(20, 3), p(30, 3), p(30, 13), p(26, 13), p(26, 7), p(20, 7))
@@ -1373,7 +1402,7 @@ final class HUDNavigationEntry {
                 box(v, 1, 4, 5); box(v, 26, 4, 5)
                 box(1, v, 5, 4); box(26, v, 5, 4)
             }
-        case .display:
+        case .display, .projection:
             path.addRoundedRect(in: CGRect(x: 2, y: 4, width: 28, height: 20), cornerWidth: 2, cornerHeight: 2)
             box(6, 8, 20, 12); box(13, 25, 6, 2); box(8, 28, 16, 3)
         case .hotkeys:

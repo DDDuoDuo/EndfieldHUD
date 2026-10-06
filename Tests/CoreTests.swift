@@ -17,6 +17,10 @@ enum CoreTests {
         assertionCount += HUDGitHubReleaseTests.run()
         assertionCount += HUDUpdateStateTests.run()
         assertionCount += HUDClockTests.run()
+        assertionCount += HUDClockStyleTests.run()
+        assertionCount += HUDBatchTwoConfigurationTests.run()
+        assertionCount += HUDChargeMetricTests.run()
+        assertionCount += HUDCenterLogoTests.run()
         assertionCount += PowerDataTests.run()
         assertionCount += ShortcutPolicyTests.run()
         assertionCount += SummonShortcutTests.run()
@@ -43,9 +47,29 @@ enum CoreTests {
         assertionCount += HUDSourceWatchCameraTests.run()
         assertionCount += HUDSourceDrawableReadbackTests.run()
         assertionCount += HUDChargeBadgeTests.run()
-        assertionCount += HUDModuleTests.run()
+        assertionCount += HUDModuleTests.run() + HUDSectionAppearanceTests.run()
         assertionCount += HUDNavigationTests.run()
         assertionCount += NotesStoreTests.run()
+        assertionCount += NotesRichTextTests.run()
+        assertionCount += NotesDrawingTests.run()
+        assertionCount += ProjectionTests.run()
+        assertionCount += ArchiveStoreTests.run()
+        assertionCount += MediaAssemblyTests.run()
+        assertionCount += MediaAssemblyCanvasTests.run()
+        assertionCount += OrbiPomRuntimeTests.run()
+        assertionCount += OrbiPomCanvasTests.run()
+        assertionCount += HUDCalendarTests.run()
+        assertionCount += ReaderTests.run()
+        assertionCount += ArchiveCanvasTests.run()
+        assertionCount += HUDProjectedTextEditorTests.run()
+        assertionCount += NotesMediaTests.run()
+        assertionCount += NotesExtendedStoreTests.run()
+        assertionCount += NowPlayingTests.run()
+        assertionCount += NowPlayingArtworkTests.run()
+        assertionCount += NowPlayingLyricsTests.run()
+        assertionCount += NowPlayingCatalogTests.run()
+        assertionCount += NowPlayingAutomaticTests.run()
+
         assertionCount += NotesCanvasTests.run()
         assertionCount += FileShelfStoreTests.run()
         assertionCount += FileShelfCanvasTests.run()
@@ -82,6 +106,11 @@ enum CoreTests {
         assertionCount += HUDNotesInteractionTests.run()
         assertionCount += AppShortcutCanvasTests.run()
         assertionCount += PersonalProfileCanvasTests.run()
+        assertionCount += HypergryphAccountAPITests.run()
+        assertionCount += HypergryphAccountLoginTests.run()
+        assertionCount += HypergryphAvatarLoaderTests.run()
+        assertionCount += HypergryphAccountControllerTests.run()
+        assertionCount += HUDAccountCanvasTests.run()
         assertionCount += HUDApplicationIconTests.run()
         assertionCount += HUDQuitConfirmationTests.run()
         assertionCount += HUDScaleSafetyTests.run()
@@ -219,16 +248,16 @@ enum CoreTests {
                "Connecting and charging shows once")
         expect(DisplayPolicy.action(for: paused, previous: disconnected, mode: .whenChargingStarts), .showTransient,
                "Connecting still shows when optimized charging is paused")
-        expect(DisplayPolicy.action(for: connected, previous: paused, mode: .whenChargingStarts), .showTransient,
-               "Charging resumption shows once")
+        expect(DisplayPolicy.action(for: connected, previous: paused, mode: .whenChargingStarts), .keepCurrent,
+               "Charger negotiation or charging resumption cannot replay the connection alert")
         expect(DisplayPolicy.action(for: updated, previous: connected, mode: .whenChargingStarts), .keepCurrent,
                "Percentage updates do not extend the display deadline")
         expect(DisplayPolicy.action(for: connected, previous: connected, mode: .whenChargingStarts), .keepCurrent,
                "Identical reports and unchanged wake do not redisplay")
-        expect(DisplayPolicy.action(for: paused, previous: connected, mode: .whenChargingStarts), .showTransient,
-               "Charging pause shows a charging-stop popup")
-        expect(DisplayPolicy.action(for: fullyCharged, previous: connected, mode: .whenChargingStarts), .showTransient,
-               "Reaching full charge and stopping charging shows a popup")
+        expect(DisplayPolicy.action(for: paused, previous: connected, mode: .whenChargingStarts), .keepCurrent,
+               "Optimized charging pause leaves the existing connection alert deadline alone")
+        expect(DisplayPolicy.action(for: fullyCharged, previous: connected, mode: .whenChargingStarts), .keepCurrent,
+               "Reaching full charge updates live diagnostics without another connection popup")
         expect(DisplayPolicy.action(for: disconnected, previous: connected, mode: .whenChargingStarts), .showTransient,
                "Unplugging while charging shows one stop popup")
         expect(DisplayPolicy.action(for: disconnected, previous: paused, mode: .whenChargingStarts), .showTransient,
@@ -252,6 +281,12 @@ enum CoreTests {
                "Raw capacity updates on battery power do not extend the stop popup")
         expect(DisplayMode.whenChargingStarts.rawValue, "whenChargingStarts",
                "Expanded charging-change mode preserves the saved mode key")
+        let sequence = [disconnected, paused, connected, updated, paused, fullyCharged, disconnected, dischargedUpdate]
+        let actions = zip(sequence, sequence.dropFirst()).map {
+            DisplayPolicy.action(for: $0.1, previous: $0.0, mode: .whenChargingStarts)
+        }
+        expect(actions, [.showTransient, .keepCurrent, .keepCurrent, .keepCurrent, .keepCurrent, .showTransient, .keepCurrent],
+               "One plug/negotiation/pause/full/unplug sequence has exactly the two physical connection alerts")
     }
 
     private static func testCapacityReadings() {

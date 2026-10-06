@@ -7,6 +7,11 @@ struct UserProfile: Codable, Equatable {
     var introduction = ""
     let uid: String
     var awakeningDate: Date
+    // The original local UID remains stable; game identity and explicit edits are additive.
+    var gamePlayerID: String?
+    var playerIDOverride: String?
+    var hasManualAwakeningDate = false
+    var displayedUID: String { playerIDOverride ?? gamePlayerID ?? uid }
     var showsBirthday = false
     var birthdayMonth: Int
     var birthdayDay: Int
@@ -23,8 +28,10 @@ struct UserProfile: Codable, Equatable {
     var themeColorHex: String?
     var backgroundFilename: String?
     var backgroundWidth: Double = 600
+    var backgroundZoom: Double = 1
     var backgroundOffsetX: Double = 0
     var backgroundOffsetY: Double = 0
+    var thumbnailZoom: Double = 1
     var thumbnailOffsetX: Double = 0
     var thumbnailOffsetY: Double = 0
     var accumulatedWorkSeconds: TimeInterval = 0
@@ -42,8 +49,9 @@ struct UserProfile: Codable, Equatable {
         case permissionLevel, explorationLevel
         case operatorsCount, weaponsCount, archivesCount, avatarFilename, backgroundFilename
         case avatarZoom, avatarOffsetX, avatarOffsetY, themeColorHex
-        case backgroundWidth, backgroundOffsetX, backgroundOffsetY, thumbnailOffsetX, thumbnailOffsetY
+        case backgroundWidth, backgroundZoom, backgroundOffsetX, backgroundOffsetY, thumbnailZoom, thumbnailOffsetX, thumbnailOffsetY
         case accumulatedWorkSeconds
+        case gamePlayerID, playerIDOverride, hasManualAwakeningDate
     }
 
     init(from decoder: Decoder) throws {
@@ -51,6 +59,9 @@ struct UserProfile: Codable, Equatable {
         name = try values.decode(String.self, forKey: .name)
         tag = try values.decode(String.self, forKey: .tag)
         uid = try values.decode(String.self, forKey: .uid)
+        gamePlayerID = try values.decodeIfPresent(String.self, forKey: .gamePlayerID)
+        playerIDOverride = try values.decodeIfPresent(String.self, forKey: .playerIDOverride)
+        hasManualAwakeningDate = try values.decodeIfPresent(Bool.self, forKey: .hasManualAwakeningDate) ?? false
         awakeningDate = try values.decode(Date.self, forKey: .awakeningDate)
         showsBirthday = try values.decodeIfPresent(Bool.self, forKey: .showsBirthday) ?? false
         let birthday = Self.defaultBirthday(for: awakeningDate)
@@ -72,14 +83,20 @@ struct UserProfile: Codable, Equatable {
         avatarOffsetX = try values.decodeIfPresent(Double.self, forKey: .avatarOffsetX) ?? 0
         avatarOffsetY = try values.decodeIfPresent(Double.self, forKey: .avatarOffsetY) ?? 0
         backgroundWidth = try values.decodeIfPresent(Double.self, forKey: .backgroundWidth) ?? 600
+        backgroundZoom = try values.decodeIfPresent(Double.self, forKey: .backgroundZoom) ?? 1
         backgroundOffsetX = try values.decodeIfPresent(Double.self, forKey: .backgroundOffsetX) ?? 0
         backgroundOffsetY = try values.decodeIfPresent(Double.self, forKey: .backgroundOffsetY) ?? 0
+        thumbnailZoom = try values.decodeIfPresent(Double.self, forKey: .thumbnailZoom) ?? 1
         thumbnailOffsetX = try values.decodeIfPresent(Double.self, forKey: .thumbnailOffsetX) ?? 0
         thumbnailOffsetY = try values.decodeIfPresent(Double.self, forKey: .thumbnailOffsetY) ?? 0
     }
 
     fileprivate func normalizedEditableValues() -> UserProfile {
         var value = self
+        value.playerIDOverride = playerIDOverride.flatMap { raw in
+            let clean = String(raw.filter { !$0.isNewline }.trimmingCharacters(in: .whitespaces).prefix(64))
+            return clean.isEmpty ? nil : clean
+        }
         value.name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(20))
         value.tag = String(tag.trimmingCharacters(in: .whitespacesAndNewlines).prefix(10))
         value.introduction = String(introduction.prefix(150))
@@ -92,8 +109,10 @@ struct UserProfile: Codable, Equatable {
         value.avatarOffsetX = avatarOffsetX.isFinite ? min(1, max(-1, avatarOffsetX)) : 0
         value.avatarOffsetY = avatarOffsetY.isFinite ? min(1, max(-1, avatarOffsetY)) : 0
         value.backgroundWidth = backgroundWidth.isFinite ? min(900, max(400, backgroundWidth)) : 600
+        value.backgroundZoom = backgroundZoom.isFinite ? min(20, max(1, backgroundZoom)) : 1
         value.backgroundOffsetX = backgroundOffsetX.isFinite ? min(400, max(-400, backgroundOffsetX)) : 0
         value.backgroundOffsetY = backgroundOffsetY.isFinite ? min(250, max(-250, backgroundOffsetY)) : 0
+        value.thumbnailZoom = thumbnailZoom.isFinite ? min(20, max(1, thumbnailZoom)) : 1
         value.thumbnailOffsetX = thumbnailOffsetX.isFinite ? min(1, max(-1, thumbnailOffsetX)) : 0
         value.thumbnailOffsetY = thumbnailOffsetY.isFinite ? min(1, max(-1, thumbnailOffsetY)) : 0
         return value
@@ -300,8 +319,10 @@ final class UserProfileStore {
             } else {
                 $0.backgroundFilename = nil
                 $0.backgroundWidth = 600
+                $0.backgroundZoom = 1
                 $0.backgroundOffsetX = 0
                 $0.backgroundOffsetY = 0
+                $0.thumbnailZoom = 1
                 $0.thumbnailOffsetX = 0
                 $0.thumbnailOffsetY = 0
             }
@@ -397,6 +418,7 @@ final class UserProfileStore {
               (1...20).contains(profile.avatarZoom),
               (-1...1).contains(profile.avatarOffsetX), (-1...1).contains(profile.avatarOffsetY),
               (400...900).contains(profile.backgroundWidth),
+              (1...20).contains(profile.backgroundZoom), (1...20).contains(profile.thumbnailZoom),
               (-400...400).contains(profile.backgroundOffsetX), (-250...250).contains(profile.backgroundOffsetY),
               (-1...1).contains(profile.thumbnailOffsetX), (-1...1).contains(profile.thumbnailOffsetY),
               profile.operatorsCount >= 0, profile.weaponsCount >= 0, profile.archivesCount >= 0,

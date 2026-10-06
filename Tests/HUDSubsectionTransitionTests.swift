@@ -137,8 +137,10 @@ enum HUDSubsectionTransitionTests {
             try! Data("Fixture".utf8).write(to: url); return url
         }
         _ = shelf.importURLs(files); _ = shelf.makeContent(for: .fileShelf, style: style); shelf.activate()
-        shelf.perform(actionID: "shelf:previous")
-        check(shelf.pageIndex == 0 && tracks(shelf.layer).count == 2, "Shelf pages reveal only their collection without changing the shared HUD")
+        let selectedShelfItems = shelf.selectedIDs
+        _ = shelf.scroll(at: CGPoint(x: 40, y: 100), delta: -0.5)
+        check(shelf.scrollOffset == 71.5 && tracks(shelf.layer).isEmpty && shelf.selectedIDs == selectedShelfItems,
+              "Shelf wheel movement uses a continuous offset and preserves selection without a page shutter")
         shelf.deactivate()
         check(tracks(shelf.layer).isEmpty, "Hiding Shelf cancels page motion even when no clear dialog or drop is active")
         return count

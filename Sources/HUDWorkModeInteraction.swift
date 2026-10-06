@@ -2,20 +2,21 @@ import AppKit
 
 /// Native text input is limited to the temporary custom-duration field. Timer
 /// controls and all settled content remain inside the shared projected HUD.
-final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
+final class HUDWorkModeInteraction: NSObject, NSTextViewDelegate {
     private let canvas: WorkModeCanvas
     private weak var host: NSView?
     var project: ((CGRect) -> CGRect)?
+    var unproject: ((CGPoint) -> CGPoint?)?
     var onLock: (() -> Void)?
     var onToggle: (() -> Void)?
     private var active = false
     private var pressed = false
     private var editor: HUDWorkDurationField?
-    private var editorRect: CGRect?
+    private var projectedEditor: HUDProjectedTextEditor?
     private var finishingEdit = false
     private var beginningEdit = false
     private var buttons: [String: HUDWorkActionButton] = [:]
-    var isInputLocked: Bool { pressed || editor != nil }
+    var isInputLocked: Bool { pressed }
     var isPresentingPanel: Bool { false }
 
     init(canvas: WorkModeCanvas, host: NSView) {
@@ -24,6 +25,8 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
         canvas.onChange = { [weak self] in self?.layoutAccessibility() }
         canvas.onEditDuration = { [weak self] in self?.beginEditing(rect: $0) }
     }
+
+    deinit { editor?.delegate = nil; projectedEditor?.dispose() }
 
     func setActive(_ value: Bool) {
         guard active != value else { return }
@@ -51,6 +54,7 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
 
     func keyDown(_ event: NSEvent) -> Bool {
         guard active else { return false }
+        if editor?.hasMarkedText() == true { return false }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         guard flags.isEmpty else { return false }
         if editor != nil {
@@ -76,29 +80,29 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
         beginningEdit = true
         defer { beginningEdit = false }
         onLock?()
-        let field = HUDWorkDurationField(frame: project?(rect) ?? rect)
-        field.stringValue = WorkModeDuration.editText(canvas.controller.snapshot.duration)
-        field.placeholderString = "30:00"
-        field.alignment = .center
-        field.isEditable = true; field.isSelectable = true
-        field.isBezeled = false; field.drawsBackground = true
-        field.backgroundColor = NSColor(white: 0.86, alpha: 1)
-        field.textColor = NSColor(white: 0.1, alpha: 1)
-        field.focusRingType = .none
-        field.wantsLayer = true; field.layer?.cornerRadius = 4
-        field.layer?.borderWidth = 1.5; field.layer?.borderColor = NSColor.systemYellow.cgColor
+        let field = HUDWorkDurationField(frame: .zero)
+        field.string = WorkModeDuration.editText(canvas.controller.snapshot.duration)
+        field.alignment = .center; field.isEditable = true; field.isSelectable = true
+        field.isRichText = false; field.importsGraphics = false; field.allowsUndo = true
+        field.font = .monospacedDigitSystemFont(ofSize: 46, weight: .medium)
+        field.textColor = NSColor(white: 0.1, alpha: 1); field.insertionPointColor = .black
+        field.textContainer?.maximumNumberOfLines = 1
+        field.textContainer?.lineBreakMode = .byClipping
         field.delegate = self
         field.setAccessibilityLabel(L10n.text("Custom countdown: minutes and seconds", "自定义倒计时：分和秒"))
         field.setAccessibilityHelp(L10n.text("Enter minutes or min:sec, between 0:01 and 1440:00. Return saves; Escape cancels.", "输入分钟数或分:秒，范围为 0:01 至 1440:00。回车保存，Esc 取消。"))
         field.onToggle = { [weak self] in self?.onToggle?() }
-        editorRect = rect; editor = field
-        host.addSubview(field)
-        layoutAccessibility()
-        // selectText acquires the window's shared field editor itself. Sending
-        // makeFirstResponder first can end that first editing session while
-        // selectText starts another, before the opening click has returned.
-        field.selectText(nil)
-        trace("editor opened; focused=\(window.firstResponder === field.currentEditor())")
+        editor = field
+        let surface = HUDProjectedTextEditor(textView: field, rect: rect, host: host, parent: canvas.layer)
+        surface.configureSingleLine()
+        surface.project = { [weak self] in self?.project?($0) ?? $0 }
+        surface.unproject = { [weak self] point in
+            guard let self else { return nil }; return self.unproject?(point) ?? (self.unproject == nil ? point : nil)
+        }
+        surface.setAppearance(background: NSColor(white: 0.86, alpha: 1), border: .systemYellow, radius: 4)
+        projectedEditor = surface; surface.resizeDocument(); layoutAccessibility()
+        window.makeFirstResponder(field); field.selectAll(nil)
+        trace("editor opened; focused=\(window.firstResponder === field)")
     }
 
     /// Invalid committed input stays editable. Cancellation always removes the
@@ -108,21 +112,23 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
         trace("editor finish; commit=\(commit)")
         finishingEdit = true
         defer { finishingEdit = false }
-        if commit && !canvas.setCustomDuration(editor.stringValue) {
+        if commit && !canvas.setCustomDuration(editor.string) {
             host?.window?.makeFirstResponder(editor)
-            editor.selectText(nil)
+            editor.selectAll(nil)
             return false
         }
-        self.editor = nil; editorRect = nil
+        self.editor = nil
+        let surface = projectedEditor; projectedEditor = nil
         editor.delegate = nil
         if !commit { canvas.cancelCustomEditing() }
         host?.window?.makeFirstResponder(host)
-        editor.removeFromSuperview()
+        surface?.dispose()
         layoutAccessibility()
         return true
     }
 
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        guard !textView.hasMarkedText() else { return false }
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             _ = finishEditing(commit: false); return true
         }
@@ -133,18 +139,23 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
         return false
     }
 
-    func controlTextDidEndEditing(_ notification: Notification) {
+    func textDidEndEditing(_ notification: Notification) {
         trace("editor end notification; beginning=\(beginningEdit), finishing=\(finishingEdit)")
         guard !finishingEdit, !beginningEdit, let field = editor,
-              notification.object as? NSTextField === field else { return }
-        // AppKit can hand the shared field editor back to the same control
-        // synchronously. Commit only after that responder transition settles.
+              notification.object as? NSTextView === field else { return }
+        // Commit after the responder transition settles; a refocused editor
+        // must keep its text and composition intact.
         DispatchQueue.main.async { [weak self, weak field] in
             guard let self, let field, self.active, self.editor === field,
                   !self.finishingEdit, !self.beginningEdit else { return }
-            if let text = field.currentEditor(), field.window?.firstResponder === text { return }
+            if field.window?.firstResponder === field { return }
             _ = self.finishEditing()
         }
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard notification.object as? NSTextView === editor else { return }
+        projectedEditor?.resizeDocument()
     }
 
     func layoutAccessibility() {
@@ -153,11 +164,7 @@ final class HUDWorkModeInteraction: NSObject, NSTextFieldDelegate {
         if editor != nil && canvas.controller.snapshot.isActive {
             _ = finishEditing(commit: false)
         }
-        if let editor, let rect = editorRect {
-            let frame = project?(rect) ?? rect
-            if editor.frame != frame { editor.frame = frame }
-            editor.font = .monospacedDigitSystemFont(ofSize: max(18, min(60, 46 * frame.height / rect.height)), weight: .medium)
-        }
+        projectedEditor?.refreshProjection()
         let actions = canvas.accessibleActions
         let expected = Set(actions.map(\.id))
         for id in Array(buttons.keys) where !expected.contains(id) { buttons.removeValue(forKey: id)?.removeFromSuperview() }
@@ -201,7 +208,7 @@ private final class HUDWorkActionButton: NSButton {
     override func accessibilityFrame() -> NSRect { projectedFrame?() ?? super.accessibilityFrame() }
 }
 
-private final class HUDWorkDurationField: NSTextField {
+private final class HUDWorkDurationField: HUDProjectedTextView {
     var onToggle: (() -> Void)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if SummonShortcut.active.matches(event: event) {

@@ -44,7 +44,7 @@ enum StatusItemShelfVerification {
         let absent = directory.appendingPathComponent("missing.txt")
         let remote = URL(string: "https://example.invalid/not-a-file")!
         func drop(_ urls: [URL]) -> Bool {
-            overlay.receiveStatusItemFiles(urls, snapshot: .unavailable, configuration: configuration)
+            overlay.receiveStatusItemFiles(urls)
         }
         func checkClosed(_ message: String) {
             check(overlay.systemPhase == .closed && overlay.systemShellIdentity == nil
@@ -67,148 +67,66 @@ enum StatusItemShelfVerification {
             }
         }
         func finish() {
-            checkClosed("All drop scenarios finish with a fully closed HUD")
-            check(overlay.shelfCountForVerification == 8,
-                  "Cancelling presentation preserves all accepted files without adding rejected ones")
+            checkClosed("Drops never reopen the dismissed HUD")
+            check(overlay.shelfCountForVerification == 6, "Every accepted unique file remains in the shelf")
             check(files.allSatisfy { (try? Data(contentsOf: $0)) == payload },
-                  "Shelf drops never modify, move or delete the original files")
+                  "Shelf drops never modify, move or delete originals")
+            check(overlay.eventLog.events.filter { $0.kind == .shelfAdded }.count == 6,
+                  "Each added reference logs once; duplicate and rejected drops do not")
             overlay.onSystemClosed = nil
             overlay.systemPointerLocationProviderForVerification = nil
-            do { try FileManager.default.removeItem(at: directory) }
-            catch { preconditionFailure("Could not remove owned drop fixtures: \(error)") }
-            print("PASS: \(assertions) status-item shelf HUD assertions; atomic drops, duplicate references, deferred opening, retained shell, opening/closing handoff, explicit handoff priority, newest page/selection, forced cancellation, clean idle")
+            try! FileManager.default.removeItem(at: directory)
+            print("PASS: \(assertions) status-item shelf assertions; quiet closed/closing drops, retained open shell, atomic validation, deduplication, originals, clean idle")
             NSApp.terminate(nil)
         }
-        func verifyNewestClosedDrop() {
-            checkClosed("Forced cancellation stays closed after queued entrance callbacks settle")
-            check(overlay.shelfCountForVerification == 7,
-                  "Cancelled presentations retain the seven already accepted references")
-            check(drop([files[7]]), "A closed shelf with more than one page accepts its newest file")
-            check(overlay.systemPhase == .closed && overlay.shelfCountForVerification == 8,
-                  "The newest closed drop is persisted before deferred presentation")
-            awaitState("newest shelf page after closed drop", until: {
-                overlay.systemPhase == .open && overlay.systemSelectedModule == .fileShelf
-            }) {
-                check(overlay.shelfPageForVerification == 1 && overlay.shelfSelectedCountForVerification == 1,
-                      "A closed drop opens the newest page and selects its one imported item")
-                checkSingleShell()
-                overlay.closeSystemOverlay()
-                awaitState("last multi-page shelf close", until: { overlay.systemPhase == .closed }, then: finish)
-            }
-        }
-        func verifyForcedCancellation() {
-            overlay.closeSystemOverlay()
-            awaitState("clean close before forced cancellation", until: { overlay.systemPhase == .closed }) {
-                checkClosed("The final ordinary close completes before cancellation tests")
-                check(drop([files[5]]), "A closed HUD accepts a file before its deferred presentation")
-                check(overlay.systemPhase == .closed, "Closed drop callback returns before any new HUD opens")
-                overlay.forceCloseSystemOverlay()
-                later(0.15) {
-                    checkClosed("Force-close cancels a drop queued while already closed")
-                    overlay.initialModuleRequest = .map
-                    check(overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: configuration),
-                          "An ordinary open still works after cancelling a queued drop")
-                    check(drop([files[6]]), "Opening HUD accepts one last file")
-                    overlay.forceCloseSystemOverlay()
-                    checkClosed("Force-close releases the opening shell immediately")
-                    later(SystemHUDView.entranceDuration + SystemHUDView.exitDuration + 0.4, verifyNewestClosedDrop)
-                }
-            }
-        }
-        func verifyExplicitClosingHandoff() {
-            var handoffs = 0
-            overlay.closeSystemOverlay()
-            guard overlay.systemPhase == .closing else {
-                check(HUDRuntimeAppearance.reduceMotion && overlay.systemPhase == .closed,
-                      "Only reduced motion can omit the closing interval needed for the handoff race")
-                verifyForcedCancellation()
-                return
-            }
-            check(drop([files[0]]), "A duplicate drop is accepted while a normal close is pending")
-            overlay.afterSystemClose = {
-                handoffs += 1
-                checkClosed("An explicit application handoff runs after a complete close")
-            }
-            awaitState("explicit close handoff", until: { handoffs == 1 }) {
-                later(SystemHUDView.entranceDuration + 0.3) {
-                    check(handoffs == 1, "The explicit close handoff runs exactly once")
-                    checkClosed("A queued shelf presentation cannot reopen over an explicit close handoff")
-                    check(overlay.shelfCountForVerification == 5,
-                          "Explicit handoff priority preserves accepted references without duplicating them")
-                    verifyForcedCancellation()
-                }
-            }
-        }
-        func verifyClosingHandoff() {
-            let originalShell = overlay.systemShellIdentity
+        func verifyClosingDrop() {
             overlay.selectSystemModule(.map, animated: false)
-            var closedNotifications = 0
-            overlay.onSystemClosed = {
-                closedNotifications += 1
-                checkClosed("A drop during closing waits for full teardown before reopening")
-            }
             overlay.closeSystemOverlay()
-            let phase = overlay.systemPhase
-            check(phase == .closing || HUDRuntimeAppearance.reduceMotion && phase == .closed,
-                  "Ordinary close enters its animation before a new drop is handled")
-            check(drop([files[4]]), "Closing HUD accepts a file for its next presentation")
-            if phase == .closing {
-                check(overlay.systemPhase == .closing && overlay.systemShellIdentity == originalShell
-                      && overlay.systemWindowVisibleForVerification,
-                      "A drop does not tear down or interrupt the active closing animation")
-            } else {
-                check(overlay.systemPhase == .closed, "Reduced-motion close still defers the new opening")
-            }
-            awaitState("closing drop to reopen the shelf", until: {
-                overlay.systemPhase == .open && overlay.systemSelectedModule == .fileShelf
-            }) {
-                check(closedNotifications == 1 && overlay.shelfCountForVerification == 5,
-                      "Closing handoff completes once and imports its file once")
-                checkSingleShell()
-                overlay.onSystemClosed = nil
-                verifyExplicitClosingHandoff()
+            let phase = overlay.systemPhase, shell = overlay.systemShellIdentity
+            check(drop([files[4]]), "A closing HUD still accepts a shelf reference")
+            check(overlay.systemPhase == phase && overlay.systemShellIdentity == shell,
+                  "Drop preserves the in-flight closing animation")
+            awaitState("ordinary close", until: { overlay.systemPhase == .closed }) {
+                later(0.25) {
+                    checkClosed("Closing drop does not queue a new entrance")
+                    check(drop([files[5]]), "Another closed drop succeeds")
+                    later(0.25, finish)
+                }
             }
         }
-        func verifyOpeningHandoff() {
+        func verifyOpeningDrop() {
             overlay.closeSystemOverlay()
-            awaitState("ordinary close before opening-drop test", until: { overlay.systemPhase == .closed }) {
-                checkClosed("Open-HUD drops can still close normally")
+            awaitState("close before entrance test", until: { overlay.systemPhase == .closed }) {
                 overlay.initialModuleRequest = .map
-                check(overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: configuration),
-                      "A fresh ordinary HUD opening starts")
-                let originalShell = overlay.systemShellIdentity, phase = overlay.systemPhase
-                check(originalShell != nil && (phase == .opening || HUDRuntimeAppearance.reduceMotion && phase == .open),
-                      "The opening-drop fixture has a live shell")
-                check(drop([files[3]]), "A drop is accepted while the HUD entrance is in progress")
-                check(overlay.systemShellIdentity == originalShell && overlay.systemPhase == phase,
-                      "Opening drop neither replaces the shell nor interrupts its entrance")
-                check(overlay.systemSelectedModule == .map, "Drop callback does not switch tabs synchronously during entrance")
-                awaitState("opening drop to reveal the shelf", until: {
+                check(overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: configuration), "Explicit opening works")
+                let shell = overlay.systemShellIdentity, phase = overlay.systemPhase
+                check(drop([files[3]]), "Entrance accepts a drop")
+                check(overlay.systemShellIdentity == shell && overlay.systemPhase == phase,
+                      "Drop preserves the existing entrance and shell")
+                awaitState("entrance shelf reveal", until: {
                     overlay.systemPhase == .open && overlay.systemSelectedModule == .fileShelf
                 }) {
-                    check(overlay.systemShellIdentity == originalShell && overlay.shelfCountForVerification == 4,
-                          "Entrance completion reveals the shelf in the same shell with one new reference")
-                    checkSingleShell()
-                    verifyClosingHandoff()
+                    check(overlay.shelfCountForVerification == 4, "Opening drop is stored once")
+                    // A drop queued while open must not win over immediate dismissal.
+                    check(drop([files[0]]), "A duplicate open drop succeeds")
+                    verifyClosingDrop()
                 }
             }
         }
-        func verifyOpenHandoff() {
-            let originalShell = overlay.systemShellIdentity
+        func verifyOpenDrop() {
+            checkSingleShell()
             overlay.selectSystemModule(.map, animated: false)
             rejectInvalidBatches(expectedCount: 2)
-            check(drop([files[2]]), "An open HUD accepts a new file")
-            check(overlay.systemPhase == .open && overlay.systemShellIdentity == originalShell
-                  && overlay.systemSelectedModule == .map,
-                  "Open drop callback returns without closing or synchronously switching the HUD")
-            awaitState("open drop to select the shelf", until: { overlay.systemSelectedModule == .fileShelf }) {
-                check(overlay.systemPhase == .open && overlay.systemShellIdentity == originalShell
-                      && overlay.shelfCountForVerification == 3,
-                      "An open drop switches only the section and retains the original shell")
-                checkSingleShell()
-                check(drop([files[0], files[2]]), "Previously cached files are accepted as successful drops")
-                check(overlay.shelfCountForVerification == 3, "Existing file references are not duplicated")
-                later(HUDModuleContent.transitionDuration + 0.15, verifyOpeningHandoff)
+            let shell = overlay.systemShellIdentity
+            check(drop([files[2]]), "Open HUD accepts a new file")
+            check(overlay.systemSelectedModule == .map && overlay.systemShellIdentity == shell,
+                  "Drop callback does not synchronously navigate or replace the shell")
+            awaitState("open shelf reveal", until: { overlay.systemSelectedModule == .fileShelf }) {
+                check(overlay.systemShellIdentity == shell && overlay.shelfCountForVerification == 3,
+                      "Already open HUD reveals the shelf in its retained shell")
+                check(drop([files[0], files[2]]), "Duplicate references are accepted")
+                check(overlay.shelfCountForVerification == 3, "Duplicates do not create more records")
+                later(HUDModuleContent.transitionDuration + 0.15, verifyOpeningDrop)
             }
         }
 
@@ -223,11 +141,12 @@ enum StatusItemShelfVerification {
         check(overlay.shelfCountForVerification == 2, "One batch saves only unique file references")
         check(overlay.systemPhase == .closed && overlay.systemShellIdentity == nil,
               "The AppKit drop callback completes before the HUD is created")
-        awaitState("closed drop to open the file shelf", until: {
-            overlay.systemPhase == .open && overlay.systemSelectedModule == .fileShelf
-        }) {
-            checkSingleShell()
-            verifyOpenHandoff()
+        later(0.25) {
+            checkClosed("A successful menu-bar drop keeps the HUD closed after callbacks settle")
+            overlay.initialModuleRequest = .map
+            check(overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: configuration),
+                  "User can explicitly open the HUD after a quiet drop")
+            awaitState("explicit HUD open", until: { overlay.systemPhase == .open }, then: verifyOpenDrop)
         }
     }
 }

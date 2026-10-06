@@ -1,10 +1,35 @@
 import Foundation
 
+enum MapPinStyle: String, Codable, CaseIterable {
+    case yellow, green, player
+    var next: Self {
+        switch self {
+        case .yellow: return .green
+        case .green: return .player
+        case .player: return .yellow
+        }
+    }
+}
+
 struct MapPin: Codable, Equatable, Identifiable {
     let id: UUID
     let x: Double
     let y: Double
     let createdAt: Date
+    let style: MapPinStyle
+
+    init(id: UUID, x: Double, y: Double, createdAt: Date, style: MapPinStyle = .yellow) {
+        self.id = id; self.x = x; self.y = y; self.createdAt = createdAt; self.style = style
+    }
+    private enum CodingKeys: String, CodingKey { case id, x, y, createdAt, style }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        x = try values.decode(Double.self, forKey: .x); y = try values.decode(Double.self, forKey: .y)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        // The additive field leaves all earlier version-1...4 pins readable.
+        style = try values.decodeIfPresent(MapPinStyle.self, forKey: .style) ?? .yellow
+    }
 }
 
 struct WorldMapViewport: Codable, Equatable {
@@ -104,6 +129,19 @@ final class WorldMapStore {
     func removePin(id: UUID) throws {
         guard pins.contains(where: { $0.id == id }) else { return }
         try commit(pins: pins.filter { $0.id != id }, viewport: viewport)
+    }
+
+    /// A style change is one explicit metadata edit. Preserve placement and
+    /// identity, and publish it only after the same atomic archive write succeeds.
+    @discardableResult
+    func cyclePinStyle(id: UUID) throws -> MapPin? {
+        guard let index = pins.firstIndex(where: { $0.id == id }) else { return nil }
+        let original = pins[index]
+        let updated = MapPin(id: original.id, x: original.x, y: original.y,
+                             createdAt: original.createdAt, style: original.style.next)
+        var next = pins; next[index] = updated
+        try commit(pins: next, viewport: viewport)
+        return updated
     }
 
     /// Call once at the end of a drag/zoom gesture rather than for each frame.

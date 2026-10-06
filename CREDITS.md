@@ -55,3 +55,38 @@ Country outlines are made with [Natural Earth](https://www.naturalearthdata.com/
 ## Update framework
 
 Signed self-updates use [Sparkle 2.9.6](https://github.com/sparkle-project/Sparkle/releases/tag/2.9.6), from the Sparkle Project, under its MIT license and included third-party notices. The complete license is included as `Sparkle-LICENSE.txt` in the application bundle. The official binary archive is pinned by SHA-256 in `scripts/sparkle-config.sh`; the dependency is fetched at build time and is not vendored into this source repository.
+
+## Now Playing adapter
+
+The optional, module-scoped playback stream uses [MediaRemote Adapter](https://github.com/ungive/mediaremote-adapter), copyright Jonas van den Berg and contributors, under the BSD 3-Clause License. Source is pinned at commit `29718252613a5b0e210bdc64de0bd944ab379706`; local compatibility changes are documented in `ThirdParty/MediaRemoteAdapter/NOTICE.md`. The complete license ships as `MediaRemoteAdapter-LICENSE.txt`. Timed lyrics use [LRCLIB](https://lrclib.net/) when the player supplies no timed lyrics.
+
+Batch6 uses the original Database (`wiki_icon`) and Adventure Book artwork from
+`codex/endfield-watch-motion` for Clipboard and E-Reader. Archive retains the
+previous Archive icon. Exact source paths, commit and SHA256 are recorded in
+`Resources/AppIconSources/EndfieldWiki/SOURCES.json`. The two user-provided
+October4 videos guide the Archive gallery/reading layout; they are not bundled.
+
+Batches 7/8 reuse the equipment-processing (`icon_equipmake`) and calendar
+(`ui_main_menu_date_btn`) glyphs from the same original-game branch at commit
+`90e3a09bdd3103caebe6acb060398d394555ea07`. Only the two small PNGs are added;
+the source paths and hashes are recorded in the icon provenance file above.
+Media Assembly uses 24 original sticker PNGs, 14 original filter icons and 14
+losslessly compacted LUT components from the user-supplied
+`Endfield-PhotoMode-Assets-20261004` package. The Photo Mode screenshot references
+guide its editing layout. These are unofficial fan-use game resources owned by
+their respective rights holders; the project's MIT license does not relicense
+them. Relative source paths, package version and checksums are in
+`Resources/MediaAssembly/provenance.json`. Source scripts, scenes, videos and
+reference screenshots are excluded from the app.
+
+Closure's Minigame uses the original **Merge! OrbiPom! / 融合！山团团！**
+public frontend rules and artwork from the user-supplied
+`Endfield-OrbiPom-Merge-20261005` package. HYPERGRYPH and the respective rights
+holders retain ownership of the game code and artwork; the application's MIT
+license does not relicense them. Selected source hashes and exact declaration
+ranges are in `Resources/OrbiPom/provenance.json`. Its original Matter.js 0.20.0
+physics engine is by Liam Brummitt and contributors under the included MIT
+license, `Resources/OrbiPom/Matter-LICENSE.txt`. Audio, account APIs, archived
+web pages, Unity bundles and reference galleries are not included.
+The minigame navigation icon is the unchanged `game_tool_icon` from
+`codex/endfield-watch-motion`, recorded in the icon provenance file.

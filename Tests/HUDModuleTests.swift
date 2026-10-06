@@ -28,11 +28,11 @@ enum HUDModuleTests {
         let priorLanguage = L10n.language
         defer { L10n.language = priorLanguage }
         L10n.language = .english
-        check(HUDModule.allCases.count == 16, "The module registry includes Power, Profile and fourteen utility/settings sections")
-        check(Set(HUDModule.allCases.map(\.rawValue)).count == 16, "Every module has a unique stable identity")
-        check(Set(HUDModule.allCases.map(\.title)).count == 16, "Every English navigation title is distinct")
-        check(HUDModule.allCases.filter { $0.group == .right } == [.notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .addApp],
-              "The eight utility modules stay on the requested right side")
+        check(HUDModule.allCases.count == 24, "The module registry includes the sixteen preserved identities plus Now Playing, Projection, Reader, Archive, Media Assembly, Calendar Closure's Minigame and Account Linking")
+        check(Set(HUDModule.allCases.map(\.rawValue)).count == 24, "Every module has a unique stable identity")
+        check(Set(HUDModule.allCases.map(\.title)).count == 24, "Every English navigation title is distinct")
+        check(HUDModule.allCases.filter { $0.group == .right } == [.notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .addApp, .nowPlaying, .account, .projection, .reader, .archive, .mediaAssembly, .calendar, .minigame],
+              "The sixteen utility modules stay on the requested right side")
         check(HUDModule.allCases.filter { $0.group == .left } == [.system, .display, .hotkeys, .about],
               "The four settings modules stay on the requested left side")
         check(HUDModule.allCases.filter { $0.group == .bottom } == [.storage, .activityMonitor],
@@ -40,7 +40,7 @@ enum HUDModuleTests {
         check(HUDModule.power.group == .power && HUDModule.profile.group == .power,
               "Battery and identity entry points keep their independent lower-shell navigation group")
         L10n.language = .simplifiedChinese
-        check(Set(HUDModule.allCases.map(\.title)).count == 16 && HUDModule.power.title == "电源",
+        check(Set(HUDModule.allCases.map(\.title)).count == 24 && HUDModule.power.title == "电源",
               "All modules also have distinct Chinese titles")
         L10n.language = .english
 
@@ -104,7 +104,7 @@ enum HUDModuleTests {
         check(HUDModule.notes.contentFrame == CGRect(x: 300, y: 152, width: 400, height: 334)
               && HUDModule.fileShelf.contentFrame == HUDModule.notes.contentFrame,
               "Existing canvas modules retain saved object coordinates within the larger center")
-        check(content.selectedModule == .power && content.contentLayerCount == 1 && content.registeredModuleCount == 16,
+        check(content.selectedModule == .power && content.contentLayerCount == 1 && content.registeredModuleCount == HUDModule.allCases.count,
               "A persistent host starts with the adopted live Power content")
         check(power.superlayer != nil && power.sublayers?.first === batteryValue,
               "Adopting Power preserves its real-data layers")
@@ -117,7 +117,7 @@ enum HUDModuleTests {
                   "Immediate selection does not animate or replace the center host")
         }
         check(content.register(TestFactory(), for: .about), "A future implementation can register its own screen factory")
-        check(!content.register(TestFactory(), for: .power) && content.registeredModuleCount == 16,
+        check(!content.register(TestFactory(), for: .power) && content.registeredModuleCount == HUDModule.allCases.count,
               "The live Power screen cannot be accidentally replaced by a placeholder factory")
         content.select(module: .about, animated: false)
         check(content.layer.sublayers?.first?.sublayers?.first?.name == "test.custom.module",

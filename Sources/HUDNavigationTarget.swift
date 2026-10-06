@@ -43,9 +43,21 @@ enum HUDDesktopWatchNavigation {
         "GemEnhanceBtnShadow", "MissionBtnShadow", "MapBtnShadow", "SNSBtnShadow",
         "QuestionnaireBtnShadow", "GameToolShadow"
     ]
-    static let modules: [HUDModule] = [.system, .display, .hotkeys, .about,
-        .notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .storage,
-        .activityMonitor, .power, .profile]
+    /// Row-major desktop order; saved apps retain their own order between
+    /// Power and the always-last Add App action.
+    static let rightModules: [HUDModule] = [
+        .notes, .fileShelf,
+        .clipboard, .archive,
+        .mediaAssembly, .minigame,
+        .nowPlaying, .volume,
+        .projection, .reader,
+        .workMode, .calendar,
+        .map, .eventLog,
+        .profile, .account,
+        .power, .addApp
+    ]
+    static let modules: [HUDModule] = [.system, .display, .hotkeys, .about, .storage, .activityMonitor]
+        + rightModules.filter { $0 != .addApp }
 
     static func entries(shortcuts: [HUDAppShortcutPresentation]) -> [Entry] {
         var seen: Set<UUID> = []

@@ -4,6 +4,8 @@ enum HUDModuleGroup: String { case left, right, bottom, power }
 
 enum HUDModule: String, CaseIterable {
     case notes, fileShelf, clipboard, volume, workMode, eventLog, map, addApp
+    case nowPlaying, account
+    case projection, reader, archive, mediaAssembly, calendar, minigame
     case system, display, hotkeys, about, storage, activityMonitor, power, profile
 
     var title: String {
@@ -12,6 +14,14 @@ enum HUDModule: String, CaseIterable {
         case .fileShelf: return L10n.text("Temporary File Shelf", "文件暂存架")
         case .clipboard: return L10n.text("Clipboard Cache", "剪贴板")
         case .volume: return L10n.text("Volume", "音量")
+        case .account: return L10n.text("Account Linking", "账户绑定")
+        case .nowPlaying: return L10n.text("Now Playing", "当前播放")
+        case .projection: return L10n.text("Projection", "投影")
+        case .reader: return L10n.text("E-Reader", "阅读器")
+        case .archive: return L10n.text("Archive", "档案库")
+        case .mediaAssembly: return L10n.text("Media Assembly", "影像加工")
+        case .calendar: return L10n.text("Calendar", "日历")
+        case .minigame: return L10n.text("Closure's Minigame", "可露希尔的小游戏")
         case .workMode: return L10n.text("Work Mode", "工作模式")
         case .eventLog: return L10n.text("Event Log", "事件日志")
         case .map: return L10n.text("Map", "地图")
@@ -33,6 +43,14 @@ enum HUDModule: String, CaseIterable {
         case .fileShelf: return "Temporary File Shelf"
         case .clipboard: return "Clipboard Cache"
         case .volume: return "Volume"
+        case .account: return "Account Linking"
+        case .nowPlaying: return "Now Playing"
+        case .projection: return "Projection"
+        case .reader: return "E-Reader"
+        case .archive: return "Archive"
+        case .mediaAssembly: return "Media Assembly"
+        case .calendar: return "Calendar"
+        case .minigame: return "Closure's Minigame"
         case .workMode: return "Work Mode"
         case .eventLog: return "Event Log"
         case .map: return "Map"
@@ -52,7 +70,9 @@ enum HUDModule: String, CaseIterable {
     /// Canvas geometry is independent of the retained shell. Large instruments
     /// can occupy the complete dial without stretching note/file coordinates.
     var contentFrame: CGRect {
-        self == .workMode || self == .map ? CGRect(x: 280, y: 100, width: 440, height: 440)
+        if self == .reader || self == .archive || self == .calendar { return CGRect(x: 300, y: 100, width: 400, height: 440) }
+        if self == .nowPlaying || self == .mediaAssembly || self == .minigame { return CGRect(x: 280, y: 100, width: 440, height: 440) }
+        return self == .workMode || self == .map ? CGRect(x: 280, y: 100, width: 440, height: 440)
             : CGRect(x: 300, y: 152, width: 400, height: 334)
     }
     var navigationTitle: String {
@@ -61,7 +81,7 @@ enum HUDModule: String, CaseIterable {
 
     var group: HUDModuleGroup {
         switch self {
-        case .notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .addApp: return .right
+        case .notes, .fileShelf, .clipboard, .volume, .workMode, .eventLog, .map, .nowPlaying, .projection, .reader, .archive, .mediaAssembly, .calendar, .minigame, .account, .addApp: return .right
         case .system, .display, .hotkeys, .about: return .left
         case .storage, .activityMonitor: return .bottom
         case .power, .profile: return .power

@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// Keeps pointer input in projected canvas coordinates, and provides native
 /// accessibility controls without adding a separate preferences window.
@@ -12,8 +13,11 @@ final class HUDSettingsInteraction: NSObject {
     private var sliders: [String: HUDSettingsAccessibilitySlider] = [:]
     private var colorPanel: NSColorPanel?
     private var colorCloseObserver: NSObjectProtocol?
-    var isInputLocked: Bool { canvas.isDragging || canvas.isCapturingShortcut || colorPanel != nil }
-    var isPresentingPanel: Bool { colorPanel != nil }
+    private var logoPanel: NSOpenPanel?
+    private var logoImportGeneration = 0
+    private static let logoImportQueue = DispatchQueue(label: "EndfieldHUD.logo-import", qos: .utility)
+    var isInputLocked: Bool { canvas.isDragging || canvas.isCapturingShortcut || isPresentingPanel }
+    var isPresentingPanel: Bool { colorPanel != nil || logoPanel != nil }
     var isCapturingShortcut: Bool { active && canvas.isCapturingShortcut }
 
     init(canvas: HUDSettingsCanvas, host: NSView) {
@@ -21,6 +25,8 @@ final class HUDSettingsInteraction: NSObject {
         super.init()
         canvas.onChange = { [weak self] in self?.layoutAccessibility() }
         canvas.onChooseColor = { [weak self] in self?.chooseColor($0) }
+        canvas.onChooseLogo = { [weak self] in self?.chooseLogo() }
+        canvas.onLogoSelection = { [weak self] in self?.logoImportGeneration += 1 }
         canvas.onCaptureChanged = { [weak self] _ in self?.host?.window?.makeFirstResponder(self?.host) }
     }
     deinit {
@@ -33,12 +39,14 @@ final class HUDSettingsInteraction: NSObject {
         else { deactivate() }
     }
     func deactivate() {
-        active = false; dismissColorPanel(); canvas.deactivate()
+        active = false; logoImportGeneration += 1
+        logoPanel?.cancel(nil); logoPanel = nil
+        dismissColorPanel(); canvas.deactivate()
         buttons.values.forEach { $0.isHidden = true }
         sliders.values.forEach { $0.isHidden = true }
     }
     @discardableResult func mouseDown(at point: CGPoint, event: NSEvent) -> Bool {
-        guard active, canvas.layer.bounds.contains(point), colorPanel == nil else { return false }
+        guard active, canvas.layer.bounds.contains(point), !isPresentingPanel else { return false }
         onLock?(); _ = canvas.mouseDown(at: point)
         host?.window?.makeFirstResponder(host)
         return true
@@ -46,11 +54,11 @@ final class HUDSettingsInteraction: NSObject {
     func mouseDragged(to point: CGPoint) { if active { canvas.mouseDragged(to: point) } }
     func mouseUp() { if active { canvas.mouseUp() } }
     @discardableResult func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
-        guard active, colorPanel == nil else { return false }
+        guard active, !isPresentingPanel else { return false }
         return canvas.scroll(at: point, delta: delta)
     }
     func keyDown(_ event: NSEvent) -> Bool {
-        guard active, colorPanel == nil else { return false }
+        guard active, !isPresentingPanel else { return false }
         if canvas.isCapturingShortcut { return canvas.capture(event) }
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
         guard flags.isEmpty else { return false }
@@ -80,6 +88,38 @@ final class HUDSettingsInteraction: NSObject {
             if self.active { self.host?.window?.makeKeyAndOrderFront(nil); self.host?.window?.makeFirstResponder(self.host) }
         }
         panel.makeKeyAndOrderFront(nil)
+    }
+    private func chooseLogo() {
+        guard active, !isPresentingPanel, let window = host?.window else { return }
+        onLock?()
+        let panel = NSOpenPanel(); logoPanel = panel
+        if #available(macOS 11.0, *) { panel.allowedContentTypes = [.image] }
+        else { panel.allowedFileTypes = ["public.image"] }
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false; panel.canChooseFiles = true
+        panel.title = L10n.text("Center logo", "中心标志")
+        panel.level = NSWindow.Level(rawValue: window.level.rawValue + 1)
+        logoImportGeneration += 1
+        let generation = logoImportGeneration, previous = canvas.customLogoRevision
+        let selection = canvas.selectedLogo
+        panel.beginSheetModal(for: window) { [weak self, weak panel] response in
+            guard let self, self.logoPanel === panel else { return }
+            let url = response == .OK ? panel?.url : nil
+            self.logoPanel = nil
+            self.host?.window?.makeFirstResponder(self.host)
+            guard let url, self.active else { return }
+            Self.logoImportQueue.async { [weak self] in
+                let result = Result { try HUDCenterLogoStore.shared.importImage(from: url, replacing: previous) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.active, self.logoImportGeneration == generation,
+                          self.canvas.selectedLogo == selection, self.canvas.customLogoRevision == previous else { return }
+                    switch result {
+                    case .success(let revision): self.canvas.setCustomLogo(revision: revision)
+                    case .failure(let error): self.canvas.showImportError(error.localizedDescription)
+                    }
+                }
+            }
+        }
     }
     @objc private func colorChanged(_ sender: NSColorPanel) {
         guard active, sender === colorPanel else { return }

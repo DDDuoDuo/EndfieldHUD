@@ -76,15 +76,15 @@ enum HUDChargeBadgeTests {
         notification.setStage(.supercharge)
         let notificationTexts = notification.embeddedContentLayer.sublayers?.compactMap { $0 as? CATextLayer } ?? []
         let languages: [(AppLanguage, String, String)] = [
-            (.english, "CHARGE MODE", "BATTERY MODE"),
-            (.simplifiedChinese, "超充模式", "电池模式"),
-            (.traditionalChinese, "超充模式", "電池模式"),
-            (.japanese, "充電モード", "バッテリーモード"),
-            (.korean, "충전 모드", "배터리 모드")
+            (.english, "CHARGE MODE", "POWER MODE"),
+            (.simplifiedChinese, "超充模式", "电源模式"),
+            (.traditionalChinese, "超充模式", "電源模式"),
+            (.japanese, "充電モード", "電源モード"),
+            (.korean, "충전 모드", "전원 모드")
         ]
         for (language, chargingTitle, batteryTitle) in languages {
             L10n.language = language
-            for (plugged, charging, full) in [(true, true, false), (false, false, false), (true, false, true)] {
+            for (plugged, charging, full) in [(true, false, false), (true, true, false), (false, false, false), (true, false, true)] {
                 let value = BatterySnapshot(percentage: full ? 100 : 50, isPluggedIn: plugged,
                                             isCharging: charging, isFullyCharged: full, hasBattery: true, capacity: capacity)
                 notification.set(snapshot: value, configuration: config)
@@ -92,14 +92,73 @@ enum HUDChargeBadgeTests {
                 for layers in [notificationTexts, textLayers] {
                     let subtitle = layers[0].string as! NSAttributedString
                     let title = layers[1].string as! NSAttributedString
-                    check(subtitle.string == "// " + (charging ? "CHARGE MODE" : "BATTERY MODE")
-                          && title.string == (charging ? chargingTitle : batteryTitle),
-                          "Notification and HUD use the current charging state and selected language: \(language)")
+                    check(subtitle.string == "// " + (plugged ? "CHARGE MODE" : "POWER MODE")
+                          && title.string == (plugged ? chargingTitle : batteryTitle),
+                          "Notification and HUD immediately use the power connection and selected language: \(language)")
                     check(title.size().width <= layers[1].bounds.width && title.size().height <= layers[1].bounds.height,
                           "Localized mode title fits the existing banner in \(language)")
                 }
             }
         }
+
+        // Exercise delivery through the monitor into both retained renderers:
+        // plugging in can precede Is Charging while the capacity stays fixed.
+        L10n.language = .simplifiedChinese
+        let transitionClock = ManualClock()
+        var sourceChanged: (() -> Void)?
+        var liveSnapshot = BatterySnapshot(percentage: 50, isPluggedIn: false, isCharging: false,
+                                          isFullyCharged: false, hasBattery: true, capacity: capacity)
+        let monitor = BatteryMonitor(readSnapshot: { liveSnapshot }, subscribe: { _, handler in
+            sourceChanged = handler
+            return { sourceChanged = nil }
+        }, scheduleRefresh: transitionClock.schedule, uptime: { transitionClock.time })
+        monitor.onChange = { value in
+            notification.set(snapshot: value, configuration: config)
+            badge.update(snapshot: value, configuration: config, dark: true, contentsScale: 2)
+        }
+        monitor.start()
+        for (plugged, charging) in [(true, false), (true, true), (true, false), (true, true), (false, false)] {
+            liveSnapshot = BatterySnapshot(percentage: 50, isPluggedIn: plugged, isCharging: charging,
+                                           isFullyCharged: false, hasBattery: true, capacity: capacity)
+            sourceChanged?()
+            transitionClock.advance(0.25)
+            for layers in [notificationTexts, textLayers] {
+                check((layers[0].string as? NSAttributedString)?.string == "// " + (plugged ? "CHARGE MODE" : "POWER MODE")
+                      && (layers[1].string as? NSAttributedString)?.string == (plugged ? "超充模式" : "电源模式"),
+                      "The connected banner is immediate and does not flip when actual charging starts or pauses")
+            }
+            check(ObjectIdentifier(badge.layer.sublayers!.first!) == retainedCanvas,
+                  "Power transitions update the retained badge instead of replacing its renderer")
+        }
+        monitor.stop()
+
+        let telemetry = SystemActivityMonitor.fixture().snapshot
+        let waitingForCharge = BatterySnapshot(percentage: 50, isPluggedIn: true, isCharging: false,
+            isFullyCharged: false, hasBattery: true, capacity: capacity)
+        for metric in HUDChargeMetric.allCases {
+            var metricConfig = config; metricConfig.alertMetric = metric
+            notification.set(snapshot: waitingForCharge, configuration: metricConfig)
+            badge.update(snapshot: waitingForCharge, configuration: metricConfig, dark: true, contentsScale: 2)
+            let stage = notification.stage, badgeStage = badge.stage
+            notification.setMetric(metric, telemetry: telemetry)
+            badge.setMetric(metric, telemetry: telemetry)
+            let reading = HUDChargeMetricReading.resolve(metric: metric, battery: waitingForCharge, telemetry: telemetry)
+            for layers in [notificationTexts, textLayers] {
+                let compactText = layers[2].string as! NSAttributedString
+                let rightText = layers[3].string as! NSAttributedString
+                check(compactText.string == reading.primary + reading.secondary + (reading.unit.isEmpty ? "" : " " + reading.unit)
+                      && rightText.string == reading.trailing, "Both retained renderers display the selected metric and its units")
+                check(compactText.size().width <= 143 && rightText.size().width <= 40,
+                      "Telemetry text fits the existing compact capsule without changing its geometry")
+                check((layers[1].string as? NSAttributedString)?.string == "超充模式",
+                      "Metric selection never substitutes a metric name for the connected mode title")
+            }
+            check(notification.stage == stage && badge.stage == badgeStage
+                  && ObjectIdentifier(badge.layer.sublayers!.first!) == retainedCanvas,
+                  "Telemetry updates retain the renderer and current animation stage")
+        }
+        notification.set(snapshot: snapshot, configuration: config)
+        badge.update(snapshot: snapshot, configuration: config, dark: true, contentsScale: 2)
         L10n.language = previousLanguage
 
         var reduced = config; reduced.reduceMotion = true

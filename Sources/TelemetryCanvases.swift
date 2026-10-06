@@ -322,7 +322,7 @@ final class StorageCanvas: NSObject, HUDModuleContentFactory {
 
     private func render() {
         TelemetryArtwork.withoutActions {
-            heading.string = HUDModule.storage.title; heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
+            heading.string = HUDSectionHeading.text(HUDModule.storage.title); heading.foregroundColor = TelemetryArtwork.primary(dark).cgColor
             // The volume label stays quiet during routine refreshes; only a
             // genuine query failure replaces it with an actionable status.
             subtitle.string = !controller.snapshot.isLoading ? localizedError(controller.snapshot.error)

@@ -1,1 +1,2 @@
 "NSAudioCaptureUsageDescription" = "EndfieldHUDは、音量を調整するために、有効にしたアプリの音声のみを取得します。音声はメモリ上で処理し、保存しません。";
+"NSAppleEventsUsageDescription" = "MusicまたはSpotifyに接続すると、EndfieldHUDがそのプレーヤーの曲情報を読み取り、再生を操作します。";

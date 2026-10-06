@@ -120,6 +120,13 @@ final class HUDSourceWatchView: NSView {
     private var pressedScrollDirection: Int?
     private var pressedIndustryLogo = false
     private var logoFlickerStarted: TimeInterval?
+    private var centerLogoKey: String?
+    var desktopCenterLogoStateForVerification: (nodeID: HUDSourceID?, overridden: Bool, glowHidden: Bool, key: String?) {
+        let id = logoNodeIDs.first { document.scene.node($0)?.name == "EndfieldText" }
+        let glow = logoNodeIDs.first { document.scene.node($0)?.name == "EndfieldTextGlow" }
+        return (id, id.map { frameBuilder.desktopImages[$0] != nil } ?? false,
+                glow.map { frameBuilder.desktopHiddenNodes.contains($0) } ?? false, centerLogoKey)
+    }
     private let logoAccessibility = HUDSourceWatchAccessibilityButton()
     private lazy var logoNodeIDs = document.scene.nodes.filter {
         $0.path.contains("/MiddleDecoNode/") && ["EndfieldText", "EndfieldTextGlow"].contains($0.name)
@@ -370,8 +377,8 @@ final class HUDSourceWatchView: NSView {
                       let label = document.scene.nodes.first(where: { $0.path.hasPrefix(node.path + "/") && $0.name == "BtnName" }) else { continue }
                 desktopSupplementalButtons.append(HUDSourceWatchButton(nodeID: node.id, path: node.path,
                     labels: [.init(nodeID: label.id, textID: "desktop." + module.rawValue, literal: module.title)]))
-                // Keep the Report's authored black shadow beneath its matching
-                // source glyph; the desktop layer adds only the soft white glow.
+                // Keep Report's source glyph available until its desktop
+                // replacement loads; IconShadow is also the glyph's parent.
                 for shadow in document.scene.nodes where shadow.path.hasPrefix(node.path + "/") && ["IconShadow", "ForbidIcon", "LockIcon"].contains(shadow.name) {
                     if module == .activityMonitor && shadow.name == "IconShadow" { continue }
                     frameBuilder.desktopHiddenNodes.insert(shadow.id)
@@ -1281,6 +1288,11 @@ final class HUDSourceWatchView: NSView {
     var desktopProfileCaptionsForVerification: [String] {
         desktopProfileLabelIDs.compactMap { desktopLabels[$0]?.text.string as? String }
     }
+    func desktopCaptionColorForVerification(target: HUDNavigationTarget) -> NSColor? {
+        guard let button = desktopButtons.first(where: { actionsByID[$0.nodeID]?.target == target }),
+              let label = button.label, let color = desktopLabels[label.nodeID]?.text.foregroundColor else { return nil }
+        return NSColor(cgColor: color)?.usingColorSpace(.deviceRGB)
+    }
     func desktopPresentationForVerification(target: HUDNavigationTarget)
         -> (caption: String, captionVisible: Bool, wrapped: Bool, fontSize: CGFloat, captionSize: CGSize,
             image: CGImage?, vectorVisible: Bool)? {
@@ -1368,7 +1380,7 @@ final class HUDSourceWatchView: NSView {
     }
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
     override func mouseMoved(with event: NSEvent) { onPointerMove?(); updateHover(event) }
-    override func mouseExited(with event: NSEvent) { restoreSourceCursor(); hovered = nil; updateAnimatorStates(at: now); refreshInteractionScheduling() }
+    override func mouseExited(with event: NSEvent) { refreshSourceCursor(force: true); hovered = nil; updateAnimatorStates(at: now); refreshInteractionScheduling() }
     override func cursorUpdate(with event: NSEvent) { refreshSourceCursor() }
     override func mouseDown(with event: NSEvent) {
         forwardingBackgroundPress = false
@@ -1486,6 +1498,29 @@ final class HUDSourceWatchView: NSView {
             verticalNormalizedPosition = HUDSourceWatchLayout(document: document).scrolledPosition(verticalNormalizedPosition, delta: delta, info: scroll)
             render(at: now)
         }
+    }
+
+    func setDesktopCenterLogo(_ choice: HUDCenterLogo, revision: String?) {
+        guard desktopMode else { return }
+        let key = choice.rawValue + ":" + (revision ?? "")
+        guard centerLogoKey != key else { return }
+        let mainID = logoNodeIDs.first { document.scene.node($0)?.name == "EndfieldText" }
+        let glowID = logoNodeIDs.first { document.scene.node($0)?.name == "EndfieldTextGlow" }
+        do {
+            if let mainID, let source = choice.image(revision: revision),
+               let bitmap = HUDCenterLogoPresentation.image(source), let device = renderer.device {
+                let texture = try HUDSourceProfileArtwork.makeTexture(bitmap, device: device)
+                try renderer.registerTexture(named: "desktop.center-logo", texture: texture, filterMode: 1, wrapU: 1, wrapV: 1)
+                frameBuilder.desktopImages[mainID] = .init(texture: "desktop.center-logo", size: SIMD2(Float(bitmap.width), Float(bitmap.height)))
+                frameBuilder.desktopNormalMaterialNodes.insert(mainID)
+                if let glowID { frameBuilder.desktopHiddenNodes.insert(glowID) }
+            } else {
+                if let mainID { frameBuilder.desktopImages.removeValue(forKey: mainID); frameBuilder.desktopNormalMaterialNodes.remove(mainID) }
+                if let glowID { frameBuilder.desktopHiddenNodes.remove(glowID) }
+            }
+            centerLogoKey = key
+            settledRenderPacket = nil; refreshPlaybackScheduling()
+        } catch { diagnostics.append("Center logo: " + String(describing: error)) }
     }
 
     private func industryLogoPolygon() -> [CGPoint] {
@@ -1616,6 +1651,13 @@ final class HUDSourceWatchView: NSView {
             })?.id {
                 desktopIconIDs[button.nodeID] = iconID
                 frameBuilder.desktopHiddenNodes.insert(iconID)
+                if isReport, let shadow = document.scene.nodes.first(where: {
+                    $0.path.hasPrefix(button.path + "/") && $0.name == "IconShadow"
+                }) {
+                    // Suppress the black source shadow only after the cached
+                    // white-tinted artwork is available; extraction failure keeps the glyph.
+                    frameBuilder.desktopHiddenNodes.insert(shadow.id)
+                }
                 let iconLayers: (container: CALayer, content: CALayer, vector: CAShapeLayer, image: CALayer, clip: CAShapeLayer)
                 if let existing = desktopIcons[iconID] { iconLayers = existing }
                 else {
@@ -1654,8 +1696,14 @@ final class HUDSourceWatchView: NSView {
                 // Report retains its full authored canvas, size and padding.
                 iconLayers.image.contents = isReport ? sourceImage : sourceImage.map(HUDSourceDesktopIconLayout.image)
                 iconLayers.image.transform = CATransform3DIdentity
-                iconLayers.image.frame = isReport ? iconLayers.content.bounds : iconLayers.content.bounds.insetBy(dx: 3, dy: 3)
-                let artworkScale: CGFloat = entry.target.module == .workMode ? 0.9 : 1
+                // Keep the cached Report bitmap's transparent margin around
+                // its original 84px canvas without changing the glyph size or
+                // the authored button/hit geometry.
+                let artworkInset: CGFloat = 32 * 12 / 84
+                iconLayers.image.frame = isReport
+                    ? iconLayers.content.bounds.insetBy(dx: -artworkInset, dy: -artworkInset)
+                    : iconLayers.content.bounds.insetBy(dx: 3, dy: 3)
+                let artworkScale: CGFloat = (entry.target.module == .workMode || entry.target.module == .storage) ? 0.9 : 1
                 iconLayers.vector.transform = CATransform3DMakeScale(artworkScale, artworkScale, 1)
                 iconLayers.image.transform = CATransform3DMakeScale(artworkScale, artworkScale, 1)
                 iconLayers.image.isHidden = iconLayers.image.contents == nil
@@ -1705,7 +1753,7 @@ final class HUDSourceWatchView: NSView {
         let accent = profile.resolvedAccent(fallback: HUDRuntimeAppearance.accent).usingColorSpace(.sRGB) ?? .white
         let key = ProfileKey(strings: [profile.name, profile.tag, profile.uid, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
             values: [Double(profile.permissionLevel), profile.avatarZoom, profile.avatarOffsetX, profile.avatarOffsetY,
-                profile.thumbnailOffsetX, profile.thumbnailOffsetY, Double(avatarOrientation),
+                profile.thumbnailOffsetX, profile.thumbnailOffsetY, profile.thumbnailZoom, Double(avatarOrientation),
                 Double(accent.redComponent), Double(accent.greenComponent), Double(accent.blueComponent)],
             avatar: avatar.map(ObjectIdentifier.init), background: background.map(ObjectIdentifier.init))
         guard desktopProfileKey != key else { return }
@@ -1752,7 +1800,7 @@ final class HUDSourceWatchView: NSView {
         do {
             for (kind, image, size, offset, zoom, orientation) in [
                 ("avatar", avatar, CGSize(width: 136, height: 136), CGPoint(x: profile.avatarOffsetX, y: profile.avatarOffsetY), profile.avatarZoom, avatarOrientation),
-                ("background", background, CGSize(width: 412, height: 158), CGPoint(x: profile.thumbnailOffsetX, y: profile.thumbnailOffsetY), 1.0, Int32(1))] {
+                ("background", background, CGSize(width: 412, height: 158), CGPoint(x: profile.thumbnailOffsetX, y: profile.thumbnailOffsetY), profile.thumbnailZoom, Int32(1))] {
                 let id = kind == "avatar" ? card.node("playerHead") : card.backgroundNodeID
                 guard let id else { continue }
                 let imageKey = ProfileKey(strings: [], values: [Double(size.width), Double(size.height), Double(offset.x), Double(offset.y), zoom, Double(orientation)]
@@ -1836,15 +1884,21 @@ final class HUDSourceWatchView: NSView {
                 textureWidth: Int(texture["width"].float()), textureHeight: Int(texture["height"].float()),
                 spriteRect: CGRect(x: rect["x"].float(), y: rect["y"].float(),
                     width: rect["width"].float(), height: rect["height"].float()))
-            guard let context = CGContext(data: nil, width: original.width, height: original.height,
-                bitsPerComponent: 8, bytesPerRow: original.width * 4,
+            let padding = 12
+            let width = original.width + padding * 2, height = original.height + padding * 2
+            guard let context = CGContext(data: nil, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4,
                 space: CGColorSpace(name: CGColorSpace.sRGB)!,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-            // Bake once into this tiny bitmap. Projection and inherited opacity
-            // follow the existing icon plane, without a live blur or new timer.
-            context.setShadow(offset: .zero, blur: 3,
-                color: NSColor.white.withAlphaComponent(0.65).cgColor)
-            context.draw(original, in: CGRect(x: 0, y: 0, width: original.width, height: original.height))
+            // Match Storage's single-draw white tint. The source already has
+            // a translucent perimeter: additional blurred copies amplified
+            // both that edge and the glyph alpha into a much brighter halo.
+            // Keep the original alpha and canvas padding; cache the result once.
+            let glyphRect = CGRect(x: padding, y: padding, width: original.width, height: original.height)
+            context.draw(original, in: glyphRect)
+            context.setBlendMode(.sourceIn)
+            context.setFillColor(NSColor.white.cgColor)
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
             Self.desktopReportIconArtwork = context.makeImage()
             return Self.desktopReportIconArtwork
         } catch {
@@ -1859,6 +1913,8 @@ final class HUDSourceWatchView: NSView {
         // Japanese/Korean shelf name into a single narrow source line.
         return CGSize(width: max(original.width, 124), height: max(original.height, 56))
     }
+
+    var desktopDark = true { didSet { if desktopDark != oldValue { updateDesktopSelection() } } }
 
     private func updateDesktopSelection(previousModule: HUDModule? = nil) {
         // Base glow geometry depends on the document/preferences, not module
@@ -1902,7 +1958,7 @@ final class HUDSourceWatchView: NSView {
             }
             layers.text.font = NSFont.systemFont(ofSize: size, weight: weight)
             layers.text.fontSize = size
-            layers.text.foregroundColor = (bottom ? NSColor.white : selected
+            layers.text.foregroundColor = (bottom ? (desktopDark ? NSColor.white : NSColor(white: 0.12, alpha: 1)) : selected
                 ? HUDRuntimeAppearance.accent.blended(withFraction: 0.5, of: .black) ?? .black
                 : NSColor(white: 0.12, alpha: 1)).cgColor
         }

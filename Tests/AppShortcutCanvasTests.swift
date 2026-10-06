@@ -125,21 +125,49 @@ enum AppShortcutCanvasTests {
             bridge.project = { $0.offsetBy(dx: 10, dy: 15) }
             bridge.setActive(true)
             check(bridge.importPasteboard(pasteboard), "A window-backed drop presents the in-HUD editor")
-            let field = host.subviews.compactMap { $0 as? NSTextField }.first!
-            check(field.frame == AppShortcutCanvas.nameRect.offsetBy(dx: 10, dy: 15) && bridge.isInputLocked,
-                  "The temporary native name field follows HUD projection and freezes parallax")
-            bridge.project = { $0.offsetBy(dx: 20, dy: 25) }; bridge.layoutAccessibility()
-            check(field.frame == AppShortcutCanvas.nameRect.offsetBy(dx: 20, dy: 25), "Changing HUD projection repositions a live editor")
-            field.stringValue = "Cancelled edit"
+            let surface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            let field = surface.textView
+            check(surface.logicalRect == AppShortcutCanvas.nameRect && surface.artwork.superlayer === canvas.layer
+                  && !bridge.isInputLocked && window.firstResponder === field,
+                  "The native TextKit name editor belongs to the HUD plane without freezing parallax")
+            let logicalFrame = field.frame, logicalFont = field.font
+            surface.captureVisibleArtwork(); let captures = surface.captureCount
+            bridge.project = { $0.offsetBy(dx: 20, dy: 25) }
+            bridge.unproject = { CGPoint(x: $0.x - 20, y: $0.y - 25) }
+            for _ in 0..<120 { bridge.layoutAccessibility() }
+            check(field.frame == logicalFrame && field.font == logicalFont && surface.captureCount == captures
+                  && surface.textPoint(host: CGPoint(x: AppShortcutCanvas.nameRect.minX + 24, y: AppShortcutCanvas.nameRect.minY + 30)) == CGPoint(x: 4, y: 5),
+                  "Projection updates preserve native layout and reuse the existing glyph bitmap")
+            field.string = "Cancelled edit"
             let cancelEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53)!
-            check(bridge.keyDown(cancelEvent) && canvas.draftName == "Fixture 0" && field.superview == nil,
-                  "Escape cancels only the temporary name edit")
+            check(bridge.keyDown(cancelEvent) && canvas.draftName == "Fixture 0" && surface.superview == nil && surface.artwork.superlayer == nil,
+                  "Escape cancels only the temporary name edit and releases its projected artwork")
             canvas.perform(actionID: "apps:name")
-            let secondField = host.subviews.compactMap { $0 as? NSTextField }.first!
-            secondField.stringValue = "Native name"
+            let secondSurface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            let secondField = secondSurface.textView
+            secondField.string = String(repeating: "界", count: 140)
+            secondField.setSelectedRange(NSRange(location: 140, length: 0))
+            secondField.setMarkedText("输入", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            bridge.textDidChange(Notification(name: NSText.didChangeNotification, object: secondField))
+            check(secondField.hasMarkedText() && secondField.string.count == 142,
+                  "Shortcut names never truncate an active Chinese composition")
+            secondField.unmarkText(); bridge.textDidChange(Notification(name: NSText.didChangeNotification, object: secondField))
+            check(secondField.string.count == 128, "Committed shortcut names respect the stored Unicode length bound")
+            secondField.string = "Native name"
             let returnEvent = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!
-            check(bridge.keyDown(returnEvent) && canvas.draftName == "Native name" && secondField.superview == nil,
+            check(bridge.keyDown(returnEvent) && canvas.draftName == "Native name" && secondSurface.superview == nil,
                   "Return commits the native name while keeping it an unsaved draft")
+            canvas.perform(actionID: "apps:name")
+            let unfocused = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            unfocused.textView.string = "Focus loss"
+            window.makeFirstResponder(nil)
+            bridge.textDidEndEditing(Notification(name: NSText.didEndEditingNotification, object: unfocused.textView))
+            let commitDeadline = Date().addingTimeInterval(0.75)
+            while unfocused.superview != nil && Date() < commitDeadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            check(unfocused.superview == nil && canvas.draftName == "Focus loss", "Losing native text focus applies the current shortcut draft once")
+            canvas.setDraftName("Native name")
             canvas.perform(actionID: "apps:save")
             check(store.items.last?.name == "Native name" && launches.count == 1, "Saving a native rename does not launch the application")
             bridge.deactivate()

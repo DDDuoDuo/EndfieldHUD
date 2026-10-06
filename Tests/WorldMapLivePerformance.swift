@@ -5,7 +5,7 @@ import AppKit
 import QuartzCore
 import Darwin
 
-enum AppLanguage { case system, english, simplifiedChinese }
+enum AppLanguage { case system, english, simplifiedChinese, traditionalChinese, japanese, korean }
 enum HUDRuntimeAppearance {
     static var accent = NSColor(srgbRed: 0.98, green: 0.87, blue: 0.13, alpha: 1)
     static var reduceMotion = false
@@ -242,7 +242,9 @@ private final class LiveMapHarness: NSObject, NSApplicationDelegate {
 
     private func startCase() {
         guard let canvas else { return }
-        guard canvas.mouseDown(at: CGPoint(x: 305, y: 286)) else { fatalError("Cannot start synthetic drag") }
+        if cases[caseIndex].name != "continuous-zoom" {
+            guard canvas.mouseDown(at: CGPoint(x: 305, y: 286)) else { fatalError("Cannot start synthetic drag") }
+        }
         cameraTimes = []; flushTimes = []; latenesses = []; intervals = []
         previousInputAt = nil; expectedSlot = 0; missedSlots = 0
         visibleThroughout = panel.isVisible && panel.occlusionState.contains(.visible)
@@ -333,7 +335,8 @@ private final class LiveMapHarness: NSObject, NSApplicationDelegate {
             metric.windowVisibleThroughout ? "yes" : "NO"))
         fflush(stdout)
         if let updates = metric.rasterUpdatesDuringMotion { print("Detail textures received during motion: \(updates)"); fflush(stdout) }
-        canvas.mouseUp()
+        if test.name == "continuous-zoom" { canvas.endGesture() }
+        else { canvas.mouseUp() }
         // Let the exact final camera texture finish; this is deliberately
         // outside the measured interaction interval and process CPU delta.
         let settlementStarted = CACurrentMediaTime()

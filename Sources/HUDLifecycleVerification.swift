@@ -504,6 +504,14 @@ enum HUDLifecycleVerification {
             window.resetCursorRects()
             check(probe.cursorResetCount > resets && source.sourceCursorOwnedForVerification,
                   "A native cursor-region rebuild restores Endfield after AppKit finishes resetting views")
+            // NSApplication can overwrite the visible cursor after the window
+            // dispatch/reset method has already returned. This deliberately
+            // happens after all synchronous reconciliation above.
+            NSCursor.arrow.set()
+            DispatchQueue.main.async { [self] in
+                check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
+                      "Deferred event-driven reconciliation repairs a late AppKit cursor reset")
+            }
             // Let pending layout and tracking updates settle before measuring
             // idle ownership. No source cursor handler is called by this probe.
             later(0.25) { [self] in

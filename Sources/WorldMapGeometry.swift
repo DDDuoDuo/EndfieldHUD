@@ -39,6 +39,11 @@ enum WorldMapGeometry {
         next.centerY = anchor.y - Double(point.y - center.y) / (220 * next.zoom)
         return constrained(next)
     }
+    static func recentered(_ viewport: WorldMapViewport, at point: CGPoint) -> WorldMapViewport {
+        guard contains(point) else { return viewport }
+        let target = world(at: point, viewport: viewport)
+        return constrained(WorldMapViewport(centerX: target.x, centerY: target.y, zoom: viewport.zoom))
+    }
     static func contains(_ point: CGPoint) -> Bool {
         point.x.isFinite && point.y.isFinite && hypot(point.x - center.x, point.y - center.y) <= radius
     }

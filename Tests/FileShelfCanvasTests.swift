@@ -39,7 +39,7 @@ enum FileShelfCanvasTests {
         canvas.onChooseFiles = { chooses += 1 }
         canvas.onPreview = { previews.append($0) }
         canvas.onReveal = { reveals.append($0) }
-        check(canvas.itemCount == 0 && canvas.pageCount == 1 && canvas.pageIndex == 0, "An empty shelf has one valid page")
+        check(canvas.itemCount == 0 && canvas.scrollOffset == 0, "An empty shelf rests at the beginning of its collection")
         check(!canvas.mouseDown(at: CGPoint(x: -1, y: 45), clickCount: 1), "Input outside the shelf is not consumed")
         check(canvas.mouseDown(at: CGPoint(x: 100, y: 10), clickCount: 1) && canvas.itemCount == 0, "Heading input cannot add an object")
         canvas.perform(actionID: "shelf:add")
@@ -56,8 +56,8 @@ enum FileShelfCanvasTests {
         }
         check(canvas.importURLs(urls), "Normal Finder file URLs import into the shelf")
         check(addedNames == urls.map(\.lastPathComponent), "Successful import reports only basenames for the action log")
-        check(canvas.itemCount == 13 && store.items.count == 13 && canvas.pageCount == 3,
-              "Thirteen references paginate without dropping an item")
+        check(canvas.itemCount == 13 && store.items.count == 13,
+              "Thirteen references remain available in one continuous collection")
         let deferred = FileShelfCanvas(store: store, reduceMotion: { true })
         func deferredCards() -> [CALayer] { descendants(deferred.layer).filter { $0.name?.hasPrefix("shelf.card.") == true } }
         check(deferred.itemCount == 13 && deferredCards().isEmpty,
@@ -68,8 +68,8 @@ enum FileShelfCanvasTests {
         _ = deferred.makeContent(for: .fileShelf, style: HUDModuleContentStyle(dark: true, accent: .cyan, contentsScale: 3))
         let firstPreparedCard = deferredCards().first!
         let preparedLabel = descendants(firstPreparedCard).compactMap { $0 as? CATextLayer }.first!
-        check(deferredCards().count == 6 && preparedLabel.contentsScale == HUDRenderScale.contentScale(for: preparedLabel, baseScale: 3),
-              "First shelf presentation prepares only the visible page at the selected backing scale")
+        check(deferredCards().count <= 8 && preparedLabel.contentsScale == HUDRenderScale.contentScale(for: preparedLabel, baseScale: 3),
+              "First shelf presentation prepares only intersecting rows at the selected backing scale")
         deferred.activate()
         check(deferredCards().first === firstPreparedCard,
               "Enabling shelf input after its reveal keeps the prepared card artwork intact")
@@ -77,32 +77,36 @@ enum FileShelfCanvasTests {
         check(deferredCards().first === firstPreparedCard,
               "Hiding and updating the shelf does not rebuild its retained cards")
         deferred.activate()
-        check(deferredCards().count == 6 && deferredCards().first !== firstPreparedCard,
+        check(deferredCards().count <= 8 && deferredCards().first !== firstPreparedCard,
               "Shelf activation refreshes its displayed cards after deferred state updates")
         deferred.deactivate()
-        check(canvas.pageIndex == 2 && canvas.selectedID == store.items.last?.id,
+        check(canvas.scrollOffset == 312 && canvas.selectedID == store.items.last?.id,
               "Import reveals and selects the last added reference")
-        check(actions("select").count == 1 && canvas.cardRect(for: store.items[0].id) == nil,
-              "Only the final page exposes cards or drag rectangles")
+        check(actions("select").count == 7 && canvas.cardRect(for: store.items[0].id) == nil
+              && canvas.cardRect(for: store.items.last!.id)?.height == 74,
+              "The bottom shows only intersecting cards and fully reveals the final reference")
         check(canvas.importURLs([urls[0]]) && store.items.count == 13,
               "Dropping an already referenced URL succeeds without duplicating cards")
         check(addedNames.count == 13, "Duplicate drops do not fabricate added-file events")
-        canvas.perform(actionID: "shelf:previous")
-        check(canvas.pageIndex == 1 && actions("select").count == 6 && canvas.selectedID == nil,
-              "Previous page shows exactly six objects and clears hidden selection")
-        canvas.perform(actionID: "shelf:previous")
-        canvas.perform(actionID: "shelf:previous")
-        check(canvas.pageIndex == 0 && !canvas.accessibleActions.contains { $0.id == "shelf:previous" },
-              "Page navigation stops at the first page and hides its unavailable action")
-        check(actions("select").count == 6, "The first page exposes six distinct selectable cards")
+        let importedSelection = canvas.selectedIDs
+        canvas.scrollBy(-CGFloat.greatestFiniteMagnitude)
+        check(canvas.scrollOffset == 0 && canvas.selectedIDs == importedSelection,
+              "Scrolling to the beginning preserves the selected references, including offscreen members")
+        check(!canvas.accessibleActions.contains { $0.id == "shelf:previous" || $0.id == "shelf:next" },
+              "The shelf exposes no previous or next page controls")
+        canvas.perform(actionID: "shelf:previous"); canvas.perform(actionID: "shelf:next")
+        check(canvas.scrollOffset == 0 && canvas.selectedIDs == importedSelection,
+              "Obsolete page actions cannot jump the viewport or clear a selection")
+        check(actions("select").count == 8, "The first viewport exposes six full cards and the clipped edge of the following row")
         let first = store.items[0]
         for item in store.items.prefix(6) {
             let rect = canvas.cardRect(for: item.id)!
-            check(canvas.layer.bounds.contains(rect), "Every visible card fits inside the common content host")
+            check(FileShelfCanvas.contentRect.contains(rect), "Every visible hit rectangle is clipped to the collection viewport")
             check(canvas.itemAt(point: CGPoint(x: rect.minX + 18, y: rect.minY + 22)) == item.id,
                   "Each card body resolves to its native drag candidate")
         }
         let firstRect = canvas.cardRect(for: first.id)!
+        canvas.perform(actionID: action(first.id, "select"))
         check(canvas.accessibleActions.first { $0.id == action(first.id, "select") }?.label.contains(first.name) == true,
               "Accessibility preserves a filename that is visually truncated")
         for control in canvas.accessibleActions.filter({ $0.id.hasPrefix("shelf:\(first.id.uuidString):") && !$0.id.hasSuffix(":select") }) {
@@ -162,26 +166,53 @@ enum FileShelfCanvasTests {
         check(animationCount(canvas.layer) == 0, "The shelf adds no idle animation or per-card transition tracks")
         L10n.language = .english
 
-        check(!canvas.scroll(at: CGPoint(x: 20, y: 12), delta: 1), "Scrolling the heading does not move pages")
-        check(!canvas.scroll(at: CGPoint(x: 20, y: 50), delta: .nan), "Nonfinite scroll input cannot corrupt pagination")
+        check(!canvas.scroll(at: CGPoint(x: 20, y: 12), delta: 1), "Scrolling the heading does not move the collection")
+        check(!canvas.scroll(at: CGPoint(x: 20, y: 50), delta: .nan), "Nonfinite scroll input cannot corrupt the offset")
+        let retainedCard = descendants(canvas.layer).first { $0.name == "shelf.card.\(first.id.uuidString)" }!
+        let cardY = retainedCard.position.y
         for _ in 0..<30 { _ = canvas.scroll(at: CGPoint(x: 20, y: 50), delta: 0.5) }
-        check(canvas.pageIndex == 0, "Small trackpad samples accumulate instead of skipping a page for every event")
+        check(canvas.scrollOffset == 15 && retainedCard.position.y == cardY - 15
+              && descendants(canvas.layer).contains { $0 === retainedCard },
+              "Fractional trackpad movement continuously repositions retained card artwork")
         _ = canvas.scroll(at: CGPoint(x: 20, y: 50), delta: -10)
-        check(canvas.scroll(at: CGPoint(x: 20, y: 50), delta: 30) && canvas.pageIndex == 0,
-              "Reversing scroll direction discards previous movement")
-        check(canvas.scroll(at: CGPoint(x: 20, y: 50), delta: 12) && canvas.pageIndex == 1,
-              "Sufficient native scrolling advances exactly one shelf page")
-        canvas.perform(actionID: "shelf:next")
-        canvas.perform(actionID: "shelf:next")
-        check(canvas.pageIndex == 2 && !canvas.accessibleActions.contains { $0.id == "shelf:next" }, "Pagination remains bounded at the last page")
+        check(canvas.scrollOffset == 5 && canvas.scroll(at: CGPoint(x: 20, y: 50), delta: 30) && canvas.scrollOffset == 35,
+              "Reversing direction applies the exact delta without an accumulated page threshold")
+        check(canvas.scroll(at: CGPoint(x: 20, y: 50), delta: 12) && canvas.scrollOffset == 47,
+              "Successive wheel events remain a continuous distance")
+        canvas.scrollBy(13)
+        let partial = canvas.cardRect(for: first.id)!
+        let clippedPreview = canvas.accessibleActions.first { $0.id == action(first.id, "preview") }!
+        check(partial.minY == FileShelfCanvas.contentRect.minY && partial.height == 18
+              && clippedPreview.rect.minY == 40 && clippedPreview.rect.maxY == 53,
+              "Partly clipped cards keep controls attached to the full card geometry instead of shifting them below its visible edge")
+        check(canvas.itemAt(point: center(clippedPreview.rect)) == nil
+              && canvas.itemAt(point: CGPoint(x: 30, y: 38)) == nil,
+              "Clipped command slots and artwork outside the viewport cannot begin a native drag")
+        check(canvas.accessibleActions.filter { $0.id.hasPrefix("shelf:") && $0.id.split(separator: ":").count == 3 }
+              .allSatisfy { FileShelfCanvas.contentRect.contains($0.rect) },
+              "Every visible card and inline accessibility control stays inside the collection mask")
+        check(animationCount(canvas.layer) == 0, "Wheel movement adds no page transitions or idle animation")
+        canvas.scrollBy(CGFloat.greatestFiniteMagnitude)
+        check(canvas.scrollOffset == 312 && canvas.cardRect(for: store.items.last!.id)?.height == 74,
+              "Continuous scrolling clamps at the bottom with the last object fully reachable")
+        let last = store.items.last!
+        let lastRect = canvas.cardRect(for: last.id)!
+        _ = canvas.mouseDown(at: CGPoint(x: lastRect.minX + 30, y: lastRect.minY + 20), clickCount: 1, modifiers: [.shift])
+        check(canvas.selectedIDs == Set(store.items.map(\.id)) && canvas.dragSelection(primaryID: last.id) == store.items.map(\.id),
+              "Shift-click spans offscreen rows and dragging exports every selected reference in shelf order")
+        canvas.revealItems([first.id, store.items[4].id])
+        check(canvas.selectedIDs == [first.id, store.items[4].id] && canvas.cardRect(for: store.items[4].id)?.height == 74,
+              "A menu-bar drop can reveal its selected references without page navigation")
         canvas.perform(actionID: action(first.id, "select"))
-        check(canvas.pageIndex == 0 && canvas.selectedID == first.id && canvas.cardRect(for: first.id) != nil,
-              "Selecting an off-page object reveals that object's page")
+        check(canvas.scrollOffset == 0 && canvas.selectedID == first.id && canvas.cardRect(for: first.id)?.height == 74,
+              "Selecting an offscreen object scrolls its whole row into view")
+        canvas.scrollBy(50); canvas.perform(actionID: action(first.id, "select"))
+        check(canvas.scrollOffset == 0, "Reselecting an already selected offscreen object also restores its visible row")
         let originalBytes = try! Data(contentsOf: urls[0])
         canvas.deleteSelection()
         check(removedNames == [first.name], "A successful removal reports the removed basename once")
-        check(store.items.count == 12 && canvas.itemCount == 12 && canvas.pageCount == 2 && canvas.selectedID == nil,
-              "Delete removes a reference and recomputes page bounds")
+        check(store.items.count == 12 && canvas.itemCount == 12 && canvas.scrollOffset == 0 && canvas.selectedID == nil,
+              "Delete removes a reference and clamps the remaining collection")
         check((try! Data(contentsOf: urls[0])) == originalBytes,
               "Removing a shelf reference never deletes or edits the original file")
 
@@ -219,8 +250,8 @@ enum FileShelfCanvasTests {
               "Leaving the module cancels its temporary clear confirmation")
         canvas.perform(actionID: "shelf:clear")
         canvas.perform(actionID: "shelf:confirmClear")
-        check(store.items.isEmpty && canvas.itemCount == 0 && canvas.pageCount == 1 && canvas.pageIndex == 0,
-              "Confirmed clear removes all references and restores empty pagination")
+        check(store.items.isEmpty && canvas.itemCount == 0 && canvas.scrollOffset == 0,
+              "Confirmed clear removes all references and resets the empty collection offset")
         check(clearedCounts == [11], "Confirmed clear reports the actual removed count once")
         check(urls.dropFirst(2).allSatisfy { FileManager.default.fileExists(atPath: $0.path) },
               "Clear all leaves every existing source file in Finder")
@@ -255,12 +286,37 @@ enum FileShelfCanvasTests {
               "Opening inline clear confirmation uses a short toolbar depth reveal")
         animated.deactivate()
         check(animationCount(animated.layer) == 0 && animated.layer.sublayers?.allSatisfy { ($0.mask?.animationKeys() ?? []).isEmpty } == true,
-              "Deactivation removes every new action and page animation")
+              "Deactivation removes every finite action and collection animation")
         let reduced = FileShelfCanvas(store: groupStore, reduceMotion: { true })
         reduced.activate(); reduced.perform(actionID: action(groupStore.items[0].id, "select")); reduced.setDropTarget(true)
         reduced.perform(actionID: "shelf:clear")
         check(animationCount(reduced.layer) == 0, "Reduced Motion applies selections and confirmations immediately without tracks")
         reduced.deactivate()
+
+        let cacheStore = try! FileShelfStore(directory: directory.appendingPathComponent("cache-metadata"))
+        let cacheCanvas = FileShelfCanvas(store: cacheStore, reduceMotion: { true })
+        let cacheURLs = (0..<30).map { index -> URL in
+            let url = directory.appendingPathComponent("Cache \(index).txt")
+            try! Data("\(index)".utf8).write(to: url); return url
+        }
+        check(cacheCanvas.importURLs(cacheURLs) && cacheCanvas.cachedIconCount == 0,
+              "An unopened long shelf stores references without resolving icons for hidden cards")
+        _ = cacheCanvas.makeContent(for: .fileShelf, style: dark); cacheCanvas.activate()
+        cacheCanvas.scrollBy(-CGFloat.greatestFiniteMagnitude)
+        for _ in 0..<16 {
+            cacheCanvas.scrollBy(79.5)
+            check(descendants(cacheCanvas.layer).filter { $0.name?.hasPrefix("shelf.card.") == true }.count <= 8
+                  && cacheCanvas.cachedIconCount <= 24,
+                  "Scrolling a long shelf retains only visible card layers and a bounded icon cache")
+        }
+        for item in cacheStore.items { _ = cacheCanvas.icon(for: item.id) }
+        check(cacheCanvas.cachedIconCount == 24,
+              "Exporting a large selected group cannot grow the shared Finder icon cache indefinitely")
+        let rememberedOffset = cacheCanvas.scrollOffset
+        cacheCanvas.deactivate(); cacheCanvas.activate()
+        check(cacheCanvas.scrollOffset == rememberedOffset && animationCount(cacheCanvas.layer) == 0,
+              "Closing and reopening preserves the scroll position without restarting a page effect")
+        cacheCanvas.deactivate()
         return count
     }
 }

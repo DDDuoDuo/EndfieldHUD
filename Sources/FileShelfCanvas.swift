@@ -8,7 +8,7 @@ struct ShelfCanvasAction {
     let rect: CGRect
 }
 
-/// A retained, paged collection inside the projected HUD. Only bookmarks and
+/// A retained, continuously scrolling collection inside the projected HUD. Only bookmarks and
 /// metadata belong to the shelf; card commands never move or delete Finder items.
 final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     let layer = CALayer()
@@ -23,10 +23,10 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     private(set) var selectedIDs: Set<UUID> = []
     private var selectionAnchorID: UUID?
     private var pendingSingleSelection: UUID?
-    private(set) var pageIndex = 0
+    private(set) var scrollOffset: CGFloat = 0
     var itemCount: Int { items.count }
     var accessibilityStatus: String? { errorMessage }
-    var pageCount: Int { max(1, (items.count + Self.pageCapacity - 1) / Self.pageCapacity) }
+    var cachedIconCount: Int { icons.count }
     var selectedRow: ShelfItem? { selectedID.flatMap { id in items.first { $0.id == id } } }
     var accessibleActions: [ShelfCanvasAction] {
         var result = toolbarActions()
@@ -45,21 +45,25 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         let image: NSImage
         let cgImage: CGImage?
     }
-    private static let pageCapacity = 6
-    private static let contentRect = CGRect(x: 9, y: 40, width: 382, height: 248)
+    private static let rowHeight: CGFloat = 80
+    private static let iconCacheCapacity = 24
+    static let contentRect = CGRect(x: 9, y: 40, width: 382, height: 248)
     private let store: FileShelfStore?
     private var items: [ShelfItem]
+    private var itemIndices: [UUID: Int]
     private var icons: [UUID: IconEntry] = [:]
+    private var iconOrder: [UUID] = []
+    private var cardLayers: [UUID: CALayer] = [:]
     private var errorMessage: String?
     private var confirmingClear = false
     private var dropTarget = false
-    private var scrollAccumulation: CGFloat = 0
     private var dark = true
     private var scale: CGFloat = 2
     private var yellow: NSColor { HUDRuntimeAppearance.accent }
     private let heading = CATextLayer()
     private let status = CATextLayer()
     private let collection = CALayer()
+    private let scrollIndicator = CALayer()
     private let dropOutline = CAShapeLayer()
     private let toolbar = CALayer()
     private let reduceMotion: () -> Bool
@@ -68,13 +72,16 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     // Keep its semantic state available before the first presentation.
     private var artworkEnabled = false
     private var presentationPrepared = false
-    private var pageTransition: HUDSubsectionTransition!
+    private var collectionTransition: HUDSubsectionTransition!
     private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.11, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.68 : 0.38, alpha: 1) }
     private var cardInk: NSColor { NSColor(white: 0.14, alpha: 1) }
+    private var contentHeight: CGFloat { CGFloat((items.count + 1) / 2) * Self.rowHeight }
+    private var maximumOffset: CGFloat { max(0, contentHeight - Self.contentRect.height) }
     private var visibleItems: ArraySlice<ShelfItem> {
-        let start = min(items.count, pageIndex * Self.pageCapacity)
-        return items[start..<min(items.count, start + Self.pageCapacity)]
+        let start = min(items.count, max(0, Int(floor(scrollOffset / Self.rowHeight))) * 2)
+        let end = min(items.count, Int(ceil((scrollOffset + Self.contentRect.height) / Self.rowHeight)) * 2)
+        return items[start..<max(start, end)]
     }
 
     init(store: FileShelfStore?, error: String? = nil,
@@ -82,6 +89,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         self.store = store
         self.reduceMotion = reduceMotion
         items = store?.items ?? []
+        itemIndices = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($0.element.id, $0.offset) })
         errorMessage = error
         super.init()
         withoutActions {
@@ -89,8 +97,11 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
             layer.frame = CGRect(x: 0, y: 0, width: 400, height: 334)
             layer.allowsGroupOpacity = false
             collection.frame = layer.bounds
+            collection.name = "shelf.collection"
             collection.allowsGroupOpacity = false
             layer.addSublayer(collection)
+            scrollIndicator.name = "shelf.scrollIndicator"; scrollIndicator.cornerRadius = 1
+            layer.addSublayer(scrollIndicator)
             dropOutline.frame = Self.contentRect
             dropOutline.fillColor = nil
             dropOutline.lineWidth = 1.5
@@ -108,7 +119,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
             toolbar.frame = layer.bounds
             layer.addSublayer(toolbar)
         }
-        pageTransition = HUDSubsectionTransition(content: collection, viewport: Self.contentRect)
+        collectionTransition = HUDSubsectionTransition(content: collection, viewport: Self.contentRect)
     }
 
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
@@ -121,7 +132,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     }
 
     func updateRenderScale(_ value: CGFloat) {
-        if reduceMotion() { pageTransition.settle(); settleAnimations(in: layer) }
+        if reduceMotion() { collectionTransition.settle(); settleAnimations(in: layer) }
         let next = value.isFinite ? min(8, max(1, value)) : 2
         guard next != scale else { return }
         scale = next
@@ -149,25 +160,33 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     }
 
     func deactivate() {
-        active = false; artworkEnabled = false; pageTransition.settle(); settleAnimations(in: layer)
+        active = false; artworkEnabled = false; collectionTransition.settle(); settleAnimations(in: layer)
         presentationPrepared = false
         pendingSingleSelection = nil
-        scrollAccumulation = 0
         guard confirmingClear || dropTarget else { return }
         confirmingClear = false
         dropTarget = false
     }
 
-    func refreshFromStore() {
+    func refreshFromStore(revealing id: UUID? = nil) {
+        let anchorIndex = Int(floor(scrollOffset / Self.rowHeight)) * 2
+        let anchor = scrollOffset > 0 && items.indices.contains(anchorIndex) ? items[anchorIndex].id : nil
+        let remainder = scrollOffset.truncatingRemainder(dividingBy: Self.rowHeight)
         items = store?.items ?? []
+        itemIndices = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($0.element.id, $0.offset) })
         let retained = Set(items.map(\.id))
         icons = icons.filter { retained.contains($0.key) }
+        iconOrder.removeAll { !retained.contains($0) }
         selectedIDs.formIntersection(retained)
         if let id = selectedID, !retained.contains(id) { selectedID = nil }
         if selectedID == nil { selectedID = items.first { selectedIDs.contains($0.id) }?.id }
         if let anchor = selectionAnchorID, !retained.contains(anchor) { selectionAnchorID = selectedID }
         pendingSingleSelection = nil
-        pageIndex = min(pageIndex, pageCount - 1)
+        if let anchor, let index = items.firstIndex(where: { $0.id == anchor }) {
+            scrollOffset = CGFloat(index / 2) * Self.rowHeight + remainder
+        }
+        scrollOffset = min(maximumOffset, max(0, scrollOffset))
+        if let id, let index = items.firstIndex(where: { $0.id == id }) { _ = revealRow(at: index) }
         if items.isEmpty { confirmingClear = false }
         withoutActions { repaint() }
         onChange?()
@@ -177,7 +196,6 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     func importURLs(_ urls: [URL]) -> Bool {
         guard let store = store else { reportUnavailable(); return false }
         guard !urls.isEmpty else { return false }
-        scrollAccumulation = 0
         do {
             let previousIDs = Set(store.items.map(\.id))
             let count = try store.add(urls: urls)
@@ -187,12 +205,11 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
                 selectedID = store.items.last?.id
                 selectedIDs = Set(store.items.filter { !previousIDs.contains($0.id) }.map(\.id))
                 selectionAnchorID = selectedID
-                pageIndex = max(0, (store.items.count - 1) / Self.pageCapacity)
             }
-            refreshFromStore()
+            refreshFromStore(revealing: count > 0 ? selectedID : nil)
             let addedNames = store.items.filter { !previousIDs.contains($0.id) }.map(\.name)
             if !addedNames.isEmpty {
-                pageTransition.reveal(direction: 1, animated: active && !reduceMotion())
+                collectionTransition.reveal(direction: 1, animated: active && !reduceMotion())
                 onItemsAdded?(addedNames)
             }
             return true // Existing references are valid drops, too.
@@ -204,17 +221,16 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     }
 
     /// Restore the just-added selection when a menu-bar drop creates a new HUD.
-    /// The store already owns the references; this only reveals their page.
+    /// The store already owns the references; this only scrolls them into view.
     func revealItems(_ ids: Set<UUID>) {
         let selected = Set(items.filter { ids.contains($0.id) }.map(\.id))
         guard !selected.isEmpty, let last = items.lastIndex(where: { selected.contains($0.id) }) else { return }
-        let page = last / Self.pageCapacity
-        guard selectedIDs != selected || pageIndex != page else { return }
+        let moved = revealRow(at: last)
+        guard selectedIDs != selected || selectedID != items[last].id || moved else { return }
         selectedIDs = selected
         selectedID = items[last].id
         selectionAnchorID = selectedID
         pendingSingleSelection = nil
-        pageIndex = page
         withoutActions { repaint() }
         onChange?()
     }
@@ -245,20 +261,39 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     /// Only card bodies initiate native drags. Inline controls and unavailable
     /// references are deliberately excluded, including disabled control slots.
     func itemAt(point: CGPoint) -> UUID? {
-        guard point.x.isFinite, point.y.isFinite else { return nil }
+        guard point.x.isFinite, point.y.isFinite, Self.contentRect.contains(point) else { return nil }
         for item in visibleItems where item.availabilityError == nil {
             guard let rect = cardRect(for: item.id), rect.contains(point),
-                  !controlStrip(in: rect).contains(point) else { continue }
+                  let full = fullCardRect(for: item.id), !controlStrip(in: full).contains(point) else { continue }
             return item.id
         }
         return nil
     }
 
     func cardRect(for id: UUID) -> CGRect? {
-        guard let index = items.firstIndex(where: { $0.id == id }),
-              index / Self.pageCapacity == pageIndex else { return nil }
-        let local = index % Self.pageCapacity
-        return CGRect(x: 12 + CGFloat(local % 2) * 192, y: 44 + CGFloat(local / 2) * 80, width: 184, height: 74)
+        guard let rect = fullCardRect(for: id) else { return nil }
+        return clipped(rect)
+    }
+
+    private func fullCardRect(for id: UUID) -> CGRect? {
+        guard let index = itemIndices[id] else { return nil }
+        return CGRect(x: 12 + CGFloat(index % 2) * 192,
+                      y: 44 + CGFloat(index / 2) * Self.rowHeight - scrollOffset, width: 184, height: 74)
+    }
+
+    private func clipped(_ rect: CGRect) -> CGRect? {
+        let visible = rect.intersection(Self.contentRect)
+        return visible.isNull || visible.height < 2 ? nil : visible
+    }
+
+    @discardableResult private func revealRow(at index: Int) -> Bool {
+        let previous = scrollOffset, top = CGFloat(index / 2) * Self.rowHeight
+        if top < scrollOffset { scrollOffset = top }
+        else if top + Self.rowHeight > scrollOffset + Self.contentRect.height {
+            scrollOffset = top + Self.rowHeight - Self.contentRect.height
+        }
+        scrollOffset = min(maximumOffset, max(0, scrollOffset))
+        return previous != scrollOffset
     }
 
     func icon(for id: UUID) -> NSImage? {
@@ -285,14 +320,37 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
 
     @discardableResult
     func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
-        guard Self.contentRect.contains(point), delta.isFinite, abs(delta) > 0.01 else { return false }
-        if (delta > 0) != (scrollAccumulation > 0) { scrollAccumulation = 0 }
-        scrollAccumulation += delta
-        if abs(scrollAccumulation) >= 40 {
-            changePage(by: scrollAccumulation > 0 ? 1 : -1)
-            scrollAccumulation = 0
-        }
+        guard Self.contentRect.contains(point), delta.isFinite else { return false }
+        setScrollOffset(scrollOffset + delta)
         return true
+    }
+
+    func scrollBy(_ delta: CGFloat) {
+        guard delta.isFinite else { return }
+        setScrollOffset(scrollOffset + delta)
+    }
+
+    func selectNext(_ direction: Int, extending: Bool = false) {
+        guard !items.isEmpty else { return }
+        pendingSingleSelection = nil
+        let current = selectedID.flatMap { id in items.firstIndex { $0.id == id } }
+        let index = min(items.count - 1, max(0, current.map { $0 + direction } ?? (direction < 0 ? items.count - 1 : 0)))
+        select(items[index].id, modifiers: extending ? [.shift] : [], revealing: true)
+    }
+
+    private func setScrollOffset(_ value: CGFloat) {
+        let next = min(maximumOffset, max(0, value))
+        guard next != scrollOffset else { return }
+        collectionTransition.settle()
+        settleAnimations(in: collection)
+        scrollOffset = next
+        pendingSingleSelection = nil
+        let toolbarChanged = confirmingClear
+        confirmingClear = false
+        withoutActions {
+            if artworkEnabled { layoutCards(); updateStatus(); if toolbarChanged { renderToolbar() } }
+        }
+        onChange?()
     }
 
     func setDropTarget(_ value: Bool) {
@@ -352,20 +410,17 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
                 let count = store.items.count
                 try store.clear(); errorMessage = nil; selectedID = nil; selectedIDs = []; selectionAnchorID = nil
                 confirmingClear = false; refreshFromStore()
-                pageTransition.reveal(direction: -1, animated: active && !reduceMotion())
+                collectionTransition.reveal(direction: -1, animated: active && !reduceMotion())
                 if count > 0 { onShelfCleared?(count) }
             }
             catch { showError(error.localizedDescription) }
-        case "shelf:previous": changePage(by: -1)
-        case "shelf:next": changePage(by: 1)
         default:
             let parts = value.split(separator: ":")
             guard parts.count == 3, parts[0] == "shelf", let id = UUID(uuidString: String(parts[1])),
                   let item = items.first(where: { $0.id == id }) else { return }
             switch parts[2] {
             case "select":
-                if let index = items.firstIndex(where: { $0.id == id }) { pageIndex = index / Self.pageCapacity }
-                select(id)
+                select(id, revealing: true)
             case "preview":
                 guard item.availabilityError == nil else { return }
                 select(id); onPreview?(id)
@@ -378,10 +433,11 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         }
     }
 
-    private func select(_ id: UUID?, modifiers: NSEvent.ModifierFlags = [], preserveForDrag: Bool = false) {
+    private func select(_ id: UUID?, modifiers: NSEvent.ModifierFlags = [], preserveForDrag: Bool = false, revealing: Bool = false) {
         let previous = selectedIDs
         let previousPrimary = selectedID
         let wasConfirmingClear = confirmingClear
+        let moved = revealing && id.flatMap { id in items.firstIndex { $0.id == id } }.map { revealRow(at: $0) } == true
         if let id {
             if modifiers.contains(.shift), let anchor = selectionAnchorID,
                let start = items.firstIndex(where: { $0.id == anchor }),
@@ -403,21 +459,9 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
             selectedIDs = []; selectedID = nil; selectionAnchorID = nil
         }
         confirmingClear = false
-        guard previous != selectedIDs || previousPrimary != selectedID || wasConfirmingClear else { return }
+        guard previous != selectedIDs || previousPrimary != selectedID || wasConfirmingClear || moved else { return }
         withoutActions { repaint() }
         animateSelection(previous: previous)
-        onChange?()
-    }
-
-    private func changePage(by direction: Int) {
-        scrollAccumulation = 0
-        let next = min(pageCount - 1, max(0, pageIndex + direction))
-        guard pageIndex != next else { return }
-        pageIndex = next
-        selectedID = nil; selectedIDs = []; selectionAnchorID = nil; pendingSingleSelection = nil
-        confirmingClear = false
-        withoutActions { repaint() }
-        pageTransition.reveal(direction: CGFloat(direction), animated: active && !reduceMotion())
         onChange?()
     }
 
@@ -434,7 +478,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
                 if let name { onItemRemoved?(name) }
             }
             errorMessage = nil; refreshFromStore()
-            pageTransition.reveal(direction: -1, animated: active && !reduceMotion())
+            collectionTransition.reveal(direction: -1, animated: active && !reduceMotion())
         }
         catch { refreshFromStore(); showError(error.localizedDescription) }
     }
@@ -446,13 +490,11 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         }
         var result = [ShelfCanvasAction(id: "shelf:add", label: L10n.text("Add files", "添加文件"), rect: CGRect(x: 12, y: 299, width: 84, height: 27))]
         if !items.isEmpty { result.append(ShelfCanvasAction(id: "shelf:clear", label: L10n.text("Clear all", "清空"), rect: CGRect(x: 104, y: 299, width: 74, height: 27))) }
-        if pageIndex > 0 { result.append(ShelfCanvasAction(id: "shelf:previous", label: L10n.text("Previous page", "上一页"), rect: CGRect(x: 265, y: 299, width: 29, height: 27))) }
-        if pageIndex + 1 < pageCount { result.append(ShelfCanvasAction(id: "shelf:next", label: L10n.text("Next page", "下一页"), rect: CGRect(x: 359, y: 299, width: 29, height: 27))) }
         return result
     }
 
-    private func cardActions(_ item: ShelfItem) -> [ShelfCanvasAction] {
-        guard let card = cardRect(for: item.id) else { return [] }
+    private func cardActions(_ item: ShelfItem, clippedToViewport: Bool = true) -> [ShelfCanvasAction] {
+        guard let card = fullCardRect(for: item.id) else { return [] }
         var result: [ShelfCanvasAction] = []
         if item.availabilityError == nil {
             result.append(ShelfCanvasAction(id: actionID(item.id, "preview"), label: L10n.text("Quick Look: ", "快速查看：") + item.name,
@@ -462,7 +504,11 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         }
         result.append(ShelfCanvasAction(id: actionID(item.id, "remove"), label: L10n.text("Remove from shelf: ", "从暂存架移除：") + item.name,
                                        rect: CGRect(x: card.minX + 159, y: card.minY + 49, width: 20, height: 20)))
-        return result
+        guard clippedToViewport else { return result }
+        return result.compactMap { action in
+            guard let rect = clipped(action.rect) else { return nil }
+            return ShelfCanvasAction(id: action.id, label: action.label, rect: rect)
+        }
     }
 
     private func controlStrip(in rect: CGRect) -> CGRect { CGRect(x: rect.minX + 111, y: rect.minY + 47, width: 71, height: 26) }
@@ -491,7 +537,9 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
 
     private func cachedIcon(_ item: ShelfItem) -> IconEntry {
         let unavailable = item.availabilityError != nil
-        if let existing = icons[item.id], existing.path == item.lastKnownPath, existing.unavailable == unavailable { return existing }
+        if let existing = icons[item.id], existing.path == item.lastKnownPath, existing.unavailable == unavailable {
+            rememberIcon(existing, for: item.id); return existing
+        }
         let image: NSImage
         if !unavailable, let access = try? store?.access(id: item.id) {
             image = NSWorkspace.shared.icon(forFile: access.url.path)
@@ -499,7 +547,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
             let cgImage = image.cgImage(forProposedRect: &proposed, context: nil, hints: nil)
             access.close()
             let result = IconEntry(path: item.lastKnownPath, unavailable: unavailable, image: image, cgImage: cgImage)
-            icons[item.id] = result
+            rememberIcon(result, for: item.id)
             return result
         }
         if #available(macOS 11.0, *) {
@@ -511,17 +559,26 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         var proposed = CGRect(x: 0, y: 0, width: 64, height: 64)
         let result = IconEntry(path: item.lastKnownPath, unavailable: unavailable, image: image,
                                cgImage: image.cgImage(forProposedRect: &proposed, context: nil, hints: nil))
-        icons[item.id] = result
+        rememberIcon(result, for: item.id)
         return result
+    }
+
+    private func rememberIcon(_ entry: IconEntry, for id: UUID) {
+        icons[id] = entry
+        iconOrder.removeAll { $0 == id }; iconOrder.append(id)
+        while iconOrder.count > Self.iconCacheCapacity {
+            icons.removeValue(forKey: iconOrder.removeFirst())
+        }
     }
 
     private func repaint() {
         guard artworkEnabled else { return }
-        heading.string = HUDModule.fileShelf.title
+        heading.string = HUDSectionHeading.text(HUDModule.fileShelf.title)
         heading.foregroundColor = primary.cgColor
         heading.contentsScale = HUDRenderScale.contentScale(for: heading, baseScale: scale)
         status.contentsScale = HUDRenderScale.contentScale(for: status, baseScale: scale)
         collection.sublayers?.forEach { $0.removeFromSuperlayer() }
+        cardLayers.removeAll()
         if items.isEmpty {
             let symbol = CALayer()
             symbol.frame = CGRect(x: 165, y: 88, width: 70, height: 56)
@@ -532,11 +589,33 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
             }
             addText(L10n.text("Drop files or folders here", "将文件或文件夹拖放到此处"), rect: CGRect(x: 28, y: 164, width: 344, height: 22), size: 14, color: primary, parent: collection, weight: .medium, alignment: .center)
             addText(L10n.text("Keep references. Drag them out whenever you need.", "仅保留引用，可随时拖出使用。"), rect: CGRect(x: 24, y: 194, width: 352, height: 38), size: 10.5, color: muted, parent: collection, alignment: .center, wrapped: true)
-        } else {
-            for item in visibleItems { render(item) }
         }
+        layoutCards()
         updateStatus()
         renderToolbar()
+    }
+
+    private func layoutCards() {
+        let visible = visibleItems.filter { cardRect(for: $0.id) != nil }
+        let expected = Set(visible.map(\.id))
+        for id in Array(cardLayers.keys) where !expected.contains(id) {
+            cardLayers.removeValue(forKey: id)?.removeFromSuperlayer()
+        }
+        for item in visible {
+            if let node = cardLayers[item.id], let rect = fullCardRect(for: item.id) {
+                // Updating position preserves the selected card's depth pose.
+                // Wheel/momentum events retain all other visible artwork.
+                node.position = CGPoint(x: rect.midX, y: rect.midY)
+            } else { render(item) }
+        }
+        scrollIndicator.isHidden = maximumOffset == 0
+        if maximumOffset > 0 {
+            let height = max(24, Self.contentRect.height * Self.contentRect.height / contentHeight)
+            scrollIndicator.frame = CGRect(x: Self.contentRect.maxX + 3,
+                y: Self.contentRect.minY + (Self.contentRect.height - height) * scrollOffset / maximumOffset,
+                width: 2, height: height)
+            scrollIndicator.backgroundColor = muted.withAlphaComponent(0.6).cgColor
+        }
     }
 
     private func prepareArtworkForInteraction() {
@@ -563,12 +642,13 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
     }
 
     private func render(_ item: ShelfItem) {
-        guard let rect = cardRect(for: item.id) else { return }
+        guard let rect = fullCardRect(for: item.id) else { return }
         let node = CALayer()
         node.name = "shelf.card.\(item.id.uuidString)"
         node.frame = rect
         node.allowsGroupOpacity = false
         collection.addSublayer(node)
+        cardLayers[item.id] = node
         let selected = selectedIDs.contains(item.id)
         node.transform = selectionTransform(selected)
         let unavailable = item.availabilityError != nil
@@ -592,7 +672,7 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
         addText(sizeLabel(item), rect: CGRect(x: 10, y: 54, width: 97, height: 13), size: 9, color: cardInk.withAlphaComponent(0.72), parent: node)
         let line = CGMutablePath(); line.move(to: CGPoint(x: 8, y: 46)); line.addLine(to: CGPoint(x: 176, y: 46))
         stroke(line, color: cardInk.withAlphaComponent(0.17), parent: node, lineWidth: 0.6)
-        for action in cardActions(item) {
+        for action in cardActions(item, clippedToViewport: false) {
             HUDControlHighlightLayer.add(to: node, rect: action.rect.offsetBy(dx: -rect.minX, dy: -rect.minY))
         }
         let activeColor = cardInk.withAlphaComponent(unavailable ? 0.22 : 0.82)
@@ -622,17 +702,12 @@ final class FileShelfCanvas: NSObject, HUDModuleContentFactory {
             let title: String
             switch action.id {
             case "shelf:add": title = hasDepotIcon ? action.label : "+ " + action.label
-            case "shelf:previous": title = "‹"
-            case "shelf:next": title = "›"
             default: title = action.label
             }
             let titleInset: CGFloat = hasDepotIcon ? 28 : 4
             addText(title, rect: CGRect(x: action.rect.minX + titleInset, y: action.rect.minY + 6,
                                        width: action.rect.width - titleInset - 4, height: 17),
                     size: 11, color: cardInk, parent: toolbar, weight: .semibold, alignment: .center)
-        }
-        if !confirmingClear {
-            addText("\(pageIndex + 1) / \(pageCount)", rect: CGRect(x: 299, y: 306, width: 54, height: 15), size: 10, color: muted, parent: toolbar, alignment: .center)
         }
     }
 

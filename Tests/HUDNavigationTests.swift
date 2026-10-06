@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import CryptoKit
 
 /// Windowless checks for the planar tile rendering used below the common 3D
 /// panel plane. Native control integration is exercised by the graphical smoke.
@@ -26,6 +27,29 @@ enum HUDNavigationTests {
         let previousLanguage = L10n.language
         defer { L10n.language = previousLanguage }
         L10n.language = .english
+        let requestedRows: [[HUDModule]] = [
+            [.notes, .fileShelf], [.clipboard, .archive], [.mediaAssembly, .minigame],
+            [.nowPlaying, .volume], [.projection, .reader], [.workMode, .calendar],
+            [.map, .eventLog], [.profile, .account], [.power, .addApp]
+        ]
+        let requestedRightOrder = requestedRows.flatMap { $0 }
+        check(HUDDesktopWatchNavigation.rightModules == requestedRightOrder,
+              "Every requested right-navigation pair is preserved in row-major order")
+        for (module, icon, digest) in [
+            (HUDModule.projection, EndfieldGameIcon.projectionCrystal, "d21e566f8b8b445f986081744c102428d3dc284f12ba1985cfdb91b6c50c3602"),
+            (.eventLog, .questionnaire, "262f16f035f7a03f00f79668b9c09175e65112f9c8763167c09ef29024ecb2c4"),
+            (.profile, .friends, "71b19707afac7fca8e0e2838cfcddb90ba106279761075297aadd43269e29cd9")
+        ] {
+            check(HUDNavigationEntry.gameIcon(for: module) == icon,
+                  "Projection, Event Log and Personal Profile use their named original-game icons")
+            let url = HUDResources.url(for: "AppIconSources/EndfieldWiki/\(icon.rawValue).png")!
+            let bytes = try! Data(contentsOf: url)
+            check(SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() == digest,
+                  "Navigation icons retain the exact watch-motion source texture bytes")
+            let image = icon.sourceImage()
+            check(image?.width == 84 && image?.height == 84 && icon.sourceImage() === image,
+                  "Original compact icons decode once and reuse the cached image")
+        }
         // The new shell may recycle a finite number of authored plates, but
         // its logical desktop actions must not truncate or change saved data.
         do {
@@ -46,6 +70,10 @@ enum HUDNavigationTests {
                 check(entries.last?.target == .module(.addApp)
                       && entries.last?.title == HUDModule.addApp.title,
                       "Add App remains the final logical navigation action after any number of shortcuts")
+                let rightTargets = entries.dropFirst(4).filter { $0.target.module?.group != .bottom }.map(\.target)
+                check(rightTargets == requestedRightOrder.dropLast().map { .module($0) }
+                        + saved.map { .appShortcut($0.id) } + [.module(.addApp)],
+                      "Custom shortcuts follow Power without reordering base modules and Add App always remains last")
                 let apps = entries.filter { $0.target.module == nil }
                 check(apps.map(\.target) == saved.map { .appShortcut($0.id) }
                       && apps.map(\.title) == saved.map(\.name),
@@ -370,14 +398,14 @@ enum HUDNavigationTests {
         identity.setProfile(identityProfile, avatar: nil, background: nil)
         check(labels(in: identity.layer).contains("Authority") && !labels(in: identity.layer).contains("MAX"),
               "Lower authority levels keep their title but omit the max-level status")
-        check(navigation.entries.count == 16 && Set(navigation.entries.compactMap(\.module)) == Set(HUDModule.allCases),
-              "The rendered navigation keeps all sixteen stable module identities")
+        check(navigation.entries.count == 24 && Set(navigation.entries.compactMap(\.module)) == Set(HUDModule.allCases),
+              "The rendered navigation keeps all sixteen stable module identities plus Now Playing, Projection, Reader and Archive")
         check(navigation.entries.filter { $0.module == .power || $0.module == .profile }.allSatisfy { $0.layer.isHidden },
               "Power and Profile retain navigation metadata while dedicated shell renderers draw their controls")
         let layerIdentities = navigation.entries.map { ObjectIdentifier($0.layer) }
         let addApp = navigation.entries.first { $0.module == .addApp }!
         check(navigation.rightViewport.height > 350 && navigation.visibleEntries.filter { $0.group == .right }.count == 8
-              && navigation.clippedRect(for: addApp) != nil,
+              && navigation.clippedRect(for: navigation.entries.first { $0.module == .nowPlaying }!) != nil,
               "A taller viewport exposes all four compact rows with a feathered lower edge")
         check(!navigation.canScrollUp && navigation.canScrollDown,
               "Scroll indicators describe the first viewport's available direction")
@@ -485,6 +513,9 @@ enum HUDNavigationTests {
 
         let depth = HUDNavigation()
         for entry in depth.entries where entry.group == .left || entry.group == .right {
+            // The added Now Playing row makes the final action initially
+            // offscreen. Reveal each card before testing pointer feedback.
+            depth.select(entry.module!, animated: false)
             depth.select(.power, animated: false)
             let before = entry.faceLayer.transform
             guard let contentClip = entry.faceLayer.sublayers?.first(where: { $0.name == "navigation.contentClip" }),
@@ -547,6 +578,8 @@ enum HUDNavigationTests {
                   "Leaving follows the controller's 0.1 second Normal blend, respecting Reduce Motion")
             depth.cancelAnimations()
         }
+        depth.select(.notes, animated: false)
+        depth.select(.power, animated: false)
         let stableNote = depth.entries.first { $0.module == .notes }!
         let edge = CGPoint(x: stableNote.rect.midX, y: stableNote.rect.maxY - 2.5)
         check(depth.hitTest(point: edge) == .notes, "The lower face edge accepts the pointer before lift")
@@ -607,10 +640,12 @@ enum HUDNavigationTests {
 
         navigation.scrollPixels(-10_000, animated: false)
         let right = navigation.entries.filter { $0.group == .right }
+        check(right.compactMap(\.module) == requestedRightOrder.filter { $0.group == .right },
+              "Native recovery navigation shares the source-shell order while preserving dedicated battery/profile hit regions")
         check(right.allSatisfy { $0.rect.size == CGSize(width: 78, height: 74) && near($0.faceLayer.transform.m12, 0) },
               "Right cards use an upright near-square face while their positions follow the arc")
         check(near(right[2].rect.minY - right[0].rect.minY, 90)
-              && near(navigation.maxRightScrollOffset, 16),
+              && near(navigation.maxRightScrollOffset, 376),
               "Smaller right cards have closer spacing and retain bounded continuous scroll travel")
         check(right.compactMap { navigation.clippedRect(for: $0) }.allSatisfy(navigation.rightViewport.contains),
               "Native control geometry is clipped to the taller visual viewport")
@@ -758,9 +793,10 @@ enum HUDNavigationTests {
               "Hovering the already-selected center sector adds a stronger visible gold highlight without lifting or scaling")
         navigation.cancelAnimations()
         navigation.select(.power, animated: false)
-        let partial = navigation.clippedRect(for: addApp)!
-        check(navigation.hitTest(point: CGPoint(x: partial.midX, y: partial.midY)) == .addApp
-              && navigation.hitTest(point: CGPoint(x: addApp.rect.midX, y: navigation.rightViewport.maxY + 4)) != .addApp,
+        let edgeCard = navigation.entries.first { $0.module == .nowPlaying }!
+        let partial = navigation.clippedRect(for: edgeCard)!
+        check(navigation.hitTest(point: CGPoint(x: partial.midX, y: partial.midY)) == .nowPlaying
+              && navigation.hitTest(point: CGPoint(x: edgeCard.rect.midX, y: navigation.rightViewport.maxY + 4)) != .nowPlaying,
               "A partial card is clickable only in the portion shown by the mask")
         let reservedFrames = right.map { navigation.nativeHitRect(for: $0) }
         for selected in right {
@@ -790,8 +826,8 @@ enum HUDNavigationTests {
         let originalY = right[0].rect.minY
         let leftRects = left.map(\.rect)
         for _ in 0..<30 { _ = navigation.scroll(at: scrollPoint, delta: 0.5) }
-        check(near(navigation.rightScrollOffset, 15) && near(right[0].rect.minY, originalY - 15) && layouts == 1,
-              "Tiny wheel samples move by exact pixels while native relayout occurs only when arrow availability changes")
+        check(near(navigation.rightScrollOffset, 15) && near(right[0].rect.minY, originalY - 15) && layouts == 2,
+              "Tiny wheel samples move by exact pixels; native relayout occurs only for arrow availability and the last card entering the viewport")
         check(left.map(\.rect) == leftRects && animationCount(navigation.layer) == 0,
               "Continuous scroll moves only right-side cards and adds no per-sample animations")
         _ = navigation.scroll(at: scrollPoint, delta: -10)
@@ -821,8 +857,8 @@ enum HUDNavigationTests {
         _ = navigation.scroll(at: scrollPoint, delta: -70, phase: .changed)
         check(smallPull < 0 && navigation.rightScrollOffset < smallPull && navigation.rightScrollOffset > -58,
               "Dragging beyond the top produces bounded elastic resistance instead of a hard clamp")
-        check(navigation.clippedRect(for: addApp)!.height < partial.height
-              && navigation.hitTest(point: CGPoint(x: addApp.rect.midX, y: navigation.rightViewport.maxY + 4)) != .addApp,
+        check(navigation.clippedRect(for: edgeCard)!.height < partial.height
+              && navigation.hitTest(point: CGPoint(x: edgeCard.rect.midX, y: navigation.rightViewport.maxY + 4)) != .nowPlaying,
               "Elastic pulling clips more of the final card without making its hidden portion clickable")
         check(navigation.scroll(at: outside, delta: 0, phase: .ended) && near(navigation.rightScrollOffset, 0),
               "A zero-delta finger-up outside the viewport commits the legal top boundary")
@@ -889,10 +925,10 @@ enum HUDNavigationTests {
               "A new outside gesture clears old momentum ownership before another module scrolls")
         navigation.scrollPixels(-10_000, animated: false)
         navigation.scrollRows(1, animated: false)
-        check(near(navigation.rightScrollOffset, min(32, navigation.maxRightScrollOffset)) && navigation.canScrollUp && !navigation.canScrollDown,
-              "An accessible arrow nudges by pixels and clamps to the compact strip’s nearby lower bound")
-        navigation.scrollRows(1, animated: false)
-        check(near(navigation.rightScrollOffset, navigation.maxRightScrollOffset),
+        check(near(navigation.rightScrollOffset, min(32, navigation.maxRightScrollOffset)) && navigation.canScrollUp && navigation.canScrollDown,
+              "An accessible arrow nudges by pixels and retains the remaining Now Playing/Add App scroll range")
+        for _ in 0...Int(ceil(navigation.maxRightScrollOffset / 32)) { navigation.scrollRows(1, animated: false) }
+        check(near(navigation.rightScrollOffset, navigation.maxRightScrollOffset) && !navigation.canScrollDown,
               "Repeated arrows stop at the continuous lower bound without snapping to a page")
         let up = navigation.scrollUpRect
         check(navigation.handleScrollClick(at: CGPoint(x: up.midX, y: up.midY)) && near(navigation.rightScrollOffset, max(0, navigation.maxRightScrollOffset - 32)),
@@ -988,7 +1024,8 @@ enum HUDNavigationTests {
         launchers.onLayoutChange = { layoutNotifications += 1 }
         launchers.updateAppShortcuts(presentations, animated: false)
         let rightLaunchers = launchers.entries.filter { $0.group == .right }
-        check(launchers.entries.count == 28 && rightLaunchers.count == 20,
+        check(launchers.entries.count == HUDModule.allCases.count + presentations.count
+              && rightLaunchers.count == HUDModule.allCases.filter { $0.group == .right }.count + presentations.count,
               "Saved application shortcuts add actual right-side navigation entries")
         check(rightLaunchers.suffix(13).map(\.target) == presentations.map { .appShortcut($0.id) } + [.module(.addApp)],
               "Saved applications retain insertion order directly before the final Add App tile")
@@ -998,7 +1035,7 @@ enum HUDNavigationTests {
         check(launchers.maxRightScrollOffset > originalScrollRange && launchers.selectedModule == .activityMonitor,
               "Adding apps extends native scrolling without changing the selected central module")
         check(launchers.entries.filter { $0.module != nil }.allSatisfy { moduleLayers[$0.target] == ObjectIdentifier($0.layer) },
-              "All sixteen module layers survive app insertion without shell reconstruction")
+              "All existing module layers survive app insertion without shell reconstruction")
         check(layoutNotifications > 0, "Manifest changes notify native accessibility and hit geometry")
         func namedLayer(_ name: String, within layer: CALayer) -> CALayer? {
             if layer.name == name { return layer }
@@ -1032,6 +1069,7 @@ enum HUDNavigationTests {
               && appGlyph.isHidden && !appImage.isHidden && appImage.contents != nil
               && appLabel.string as? String == "My App 0",
               "A saved matching preset renders its bundled game artwork and custom label directly on the navigation tile")
+        launchers.scrollPixels(max(0, firstApp.rect.maxY - launchers.rightViewport.maxY + 18), animated: false)
         let appCenter = CGPoint(x: firstApp.rect.midX, y: min(firstApp.rect.midY, launchers.rightViewport.maxY - 3))
         check(launchers.hitTarget(point: appCenter) == firstApp.target && launchers.hitTest(point: appCenter) == nil,
               "Exact input returns the app UUID and never selects the Add App configuration module")
@@ -1098,7 +1136,7 @@ enum HUDNavigationTests {
         }
         launchers.hoverTarget(firstApp.target)
         launchers.updateAppShortcuts([], animated: false)
-        check(launchers.entries.count == 16 && firstApp.layer.superlayer == nil
+        check(launchers.entries.count == HUDModule.allCases.count && firstApp.layer.superlayer == nil
               && launchers.maxRightScrollOffset == originalScrollRange,
               "Removing all shortcuts detaches their layers and restores the original scroll range")
         check(launchers.rightScrollOffset <= launchers.maxRightScrollOffset && !launchers.canScrollDown,
@@ -1107,7 +1145,7 @@ enum HUDNavigationTests {
               && animationCount(firstApp.layer) == 0,
               "Removal preserves module identities and cancels detached app animations")
         launchers.updateAppShortcuts([presentations[0], presentations[0]], animated: false)
-        check(launchers.entries.count == 17 && launchers.entries.filter { $0.module == nil }.count == 1,
+        check(launchers.entries.count == HUDModule.allCases.count + 1 && launchers.entries.filter { $0.module == nil }.count == 1,
               "A repeated presentation UUID cannot install duplicate buttons or accessibility actions")
         launchers.updateAppShortcuts(presentations, animated: true)
         check(launchers.selectedModule == .addApp && launchers.rightViewport.contains(factoryEntry.projectedRect)

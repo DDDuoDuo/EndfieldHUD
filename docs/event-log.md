@@ -16,7 +16,7 @@ Rows expose their timestamp, category, title and details to accessibility. When 
 
 | Category | Events | Saved details |
 | --- | --- | --- |
-| Navigation | HUD opened; selected module opened; saved app shortcut successfully opened or activated | Module identifier for module selections; display name only for app shortcuts |
+| Navigation | Saved app shortcut successfully opened or activated | Display name only for app shortcuts |
 | Clipboard | An item successfully copied back from Clipboard Cache | Item type only: text, link, image or files |
 | Files | Added to or removed from Temporary File Shelf; shelf cleared | File basename, or count for Clear |
 | Work | Timer started, paused, resumed, reset or completed | Countdown/stopwatch kind; configured countdown seconds |
@@ -24,7 +24,7 @@ Rows expose their timestamp, category, title and details to accessibility. When 
 | Audio | Observed physical audio device connected/disconnected | Short device name |
 | Display | Observed display connected/disconnected | Short display name |
 
-Initial power, timer, audio-device and display snapshots establish baselines. They do not invent startup connection or timer events. Ordinary battery percentage updates and timer ticks do not create rows. Opening the HUD or a module remains a real action and can create an entry, including opening Event Log itself.
+Initial power, timer, audio-device and display snapshots establish baselines. They do not invent startup connection or timer events. Ordinary battery percentage updates and timer ticks do not create rows. Opening the HUD or a module creates no entry. Historical opening records remain readable in storage but are hidden from the page and category counts.
 
 [Add App](app-shortcuts.md) records **App shortcut opened** only after a successful application handoff. The detail is the saved display name; no application path, bookmark or bundle identifier is logged. Choosing, saving, editing or removing a shortcut does not create a launch event, and failed launch requests do not claim success.
 
@@ -54,7 +54,7 @@ Diagnostic fixtures use an in-memory log and do not seed synthetic events into t
 
 分类筛选按钮为 **All、Navigation、Clipboard、Files、Work、Power、Audio、Display**。筛选不删除记录；列表内容通过有限的方向遮罩和深度过渡切换，分类控件保持原位。“清空日志”会先显示内联确认；点击 **Clear** 清空所有分类，包括当前筛选隐藏的记录；**Cancel** 或 Esc 保留记录，清空操作不会再生成一条新日志。
 
-记录范围包括打开 HUD／模块、通过已保存快捷方式成功打开或激活应用、成功复制剪贴板项目、添加／移除／清空文件暂存架、计时开始／暂停／继续／重置／完成，以及观察到的电源、电池状态、音频设备和显示器变化。初始快照仅建立基线，不虚构启动时的连接或计时事件；每秒计时更新和普通电量百分比变化不会逐条记录。
+记录范围包括通过已保存快捷方式成功打开或激活应用、成功复制剪贴板项目、添加／移除／清空文件暂存架、计时开始／暂停／继续／重置／完成，以及观察到的电源、电池状态、音频设备和显示器变化。初始快照仅建立基线，不虚构启动时的连接或计时事件；每秒计时更新和普通电量百分比变化不会逐条记录。
 
 应用快捷方式成功交接后才记录 **App shortcut opened**，详情只保存用户设置的显示名。选择、保存、编辑、移除快捷方式和失败的打开请求不会生成这条成功记录；应用路径、书签和 Bundle ID 不写入事件日志。
 
@@ -63,3 +63,16 @@ Diagnostic fixtures use an in-memory log and do not seed synthetic events into t
 数据保存在上述 `events.json`，正常退出后仍可在下次启动读取。后台队列合并写入并原子替换文件，退出时保存待写入内容；强制终止可能丢失尚未写入的最新事件。文件是本机普通 JSON，不上传或同步。读取失败、超过 2 MiB 或格式较新时，应用保留原文件并提示问题；本次新事件暂存内存，清空也不会覆盖受保护的原文件。正常情况下清空会保存空日志。
 
 隐藏日志页面后停止绘制观察；真实事件记录继续运行。音频设备变化由独立设备列表监听获取，排除本应用的私有路由及已知虚拟／聚合设备，不捕获音频。诊断使用内存日志，不向用户历史写入虚构事件。
+
+打开 HUD／模块不再记录；旧的打开记录保留在存储中，但不显示在列表或分类计数中。
+
+Batch 2 adds committed clock-style, center-logo and alert-reading changes to the
+Display category. Metadata accepts only fixed field/value identifiers; custom
+imports record `customImported`, never a file path, revision, image or user text.
+Background/thumbnail zoom changes record which crop changed, once on commit.
+Opening, previews, canceled drafts, unchanged snapshots and clock/telemetry ticks
+remain quiet. Existing log records are retained unchanged.
+
+Map pin-style changes retain only Yellow, Green, or Player. Click-to-recenter records
+the successful action without coordinates, camera state, or pin identifiers. Hover
+previews, drag frames and scrolling do not generate log entries.
