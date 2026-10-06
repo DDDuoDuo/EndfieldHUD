@@ -24,9 +24,18 @@ enum Batch34HUDVerification {
             check(overlay.toggleSystemOverlay(snapshot: .unavailable, configuration: config), "Isolated HUD opens")
             wait("deployment", until: { self.overlay.systemPhase == .open }) { [self] in
                 view = NSApp.windows.compactMap { $0.contentView as? SystemHUDView }.first!
+                if CommandLine.arguments.contains("--compact-viewport-smoke-test") {
+                    view.window?.setContentSize(NSSize(width: 1024, height: 768))
+                    view.frame.size = NSSize(width: 1024, height: 768)
+                    view.layoutSubtreeIfNeeded()
+                }
                 check(view.sourceWatchForVerification != nil, "Original source shell renders")
                 check(overlay.notesForVerification.isEmpty, "No real Notes loaded")
-                testDrawing()
+                if CommandLine.arguments.contains("--compact-viewport-smoke-test") {
+                    // Give AppKit's window-size notification and retained
+                    // projection one turn to settle before testing the editor.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in testDrawing() }
+                } else { testDrawing() }
             }
         }
         func testDrawing() {
@@ -220,9 +229,19 @@ enum Batch34HUDVerification {
             check(overlay.audio.isRunning && !canvas.progressClockActiveForVerification, "Shared audio starts; paused media has no clock")
             check(overlay.perAppAudio.sessions.isEmpty, "Opening Now Playing creates no audio tap")
             let action = canvas.accessibleActions.first { $0.id == "playPause" }!
+            let playPoint = view.modulePointForVerification(CGPoint(x: action.rect.midX, y: action.rect.midY))
+            let navigationHit = String(describing: view.sourceWatchForVerification?.navigationTarget(at: playPoint))
+            let inputBefore = view.nowPlayingInputEnabledForVerification
+            check(view.hitTest(view.convert(playPoint, to: view.superview)) === view,
+                  "Foreground music control owns native hit testing above source navigation")
+            if let index = CommandLine.arguments.firstIndex(of: "--preview-directory"), CommandLine.arguments.indices.contains(index + 1) {
+                let directory = URL(fileURLWithPath: CommandLine.arguments[index + 1], isDirectory: true)
+                do { try view.writePNG(to: directory.appendingPathComponent("music-controls.png"), scale: 1, presentation: false, background: .black) }
+                catch { fail("Music control preview: \(error)") }
+            }
             sendModule(.leftMouseDown, point: CGPoint(x: action.rect.midX, y: action.rect.midY)); view.mouseUp(with: dummyUp())
-            check(overlay.nowPlaying.snapshot.track?.isPlaying == true && canvas.progressClockActiveForVerification,
-                  "Native play starts visible progress (playing=\(overlay.nowPlaying.snapshot.track?.isPlaying == true), clock=\(canvas.progressClockActiveForVerification), input=\(view.nowPlayingInputEnabledForVerification), pins=\(view.visibleNotesForVerification.count))")
+            check(view.selectedModule == .nowPlaying && overlay.nowPlaying.snapshot.track?.isPlaying == true && canvas.progressClockActiveForVerification,
+                  "Native play starts visible progress (playing=\(overlay.nowPlaying.snapshot.track?.isPlaying == true), clock=\(canvas.progressClockActiveForVerification), inputBefore=\(inputBefore), input=\(view.nowPlayingInputEnabledForVerification), module=\(view.selectedModule), navigation=\(navigationHit), viewport=\(view.bounds.size), pins=\(view.visibleNotesForVerification.count))")
             let seek = canvas.accessibleSliders.first { $0.id == "seek" }!
             let start = CGPoint(x: seek.rect.minX + 2, y: seek.rect.midY), end = CGPoint(x: seek.rect.midX, y: seek.rect.midY)
             let before = overlay.eventLog.events.filter { $0.kind == .playbackAction && $0.metadata["action"] == "seek" }.count

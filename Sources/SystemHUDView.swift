@@ -1657,6 +1657,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         // Pinned cards are painted above the map and source controls.
         if notesWorkspaceIsInteractive, let note = notesWorkspacePoint(local), notesCanvas.containsWorkspacePoint(note) { return self }
         if clockPoint(local) != nil { return self }
+        if nowPlayingIsInteractive, let point = centerPoint(design), nowPlayingCanvas.containsControl(at: point) { return self }
         if sourceWatch?.bottomButtonContains(local) == true { return sourceWatch }
         if let center = centerPoint(design), CGRect(origin: .zero, size: selectedModule.contentFrame.size).contains(center) { return self }
         if !usesSourceShell, let identity = navigationPoint(design), identityCard.target(at: identity) != nil { return self }
@@ -1741,6 +1742,12 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             if let index = HUDClockStyleArtwork.indicator(at: clock) { selectClockStyle(HUDClockStyle.allCases[index]) }
             else { selectModule(.workMode) }
             return
+        }
+        // Transport controls are foreground artwork. On compact displays they
+        // can cover the source profile card; route their visible faces first,
+        // while keeping navigation reachable through the transparent panel.
+        if nowPlayingIsInteractive, let local = centerPoint(p), nowPlayingCanvas.containsControl(at: local) {
+            _ = nowPlayingInteraction?.mouseDown(at: local, event: event); return
         }
         if !usesSourceShell, allowsModuleInput, let local = navigationPoint(p),
            identityCard.target(at: local) == .close { presentQuitConfirmation(); return }

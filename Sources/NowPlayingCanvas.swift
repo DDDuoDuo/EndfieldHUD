@@ -213,6 +213,13 @@ final class NowPlayingCanvas: NSObject, HUDModuleContentFactory {
         return L10n.text("No single adjustable audio process. Use Volume controls.", "未找到单一可调整音频进程，请使用音量控制。")
     }
 
+    /// These retained controls are painted above the source shell. Only their
+    /// actual faces claim input; transparent space still exposes navigation.
+    func containsControl(at point: CGPoint) -> Bool {
+        active && (accessibleActions.contains { $0.rect.contains(point) }
+                   || accessibleSliders.contains { $0.rect.contains(point) })
+    }
+
     @discardableResult func mouseDown(at point: CGPoint) -> Bool {
         guard active, point.x.isFinite, point.y.isFinite, layer.bounds.contains(point) else { return false }
         if showVolume, !volumeBounds.contains(point), !accessibleActions.contains(where: { $0.id == "volume" && $0.rect.contains(point) }) {
