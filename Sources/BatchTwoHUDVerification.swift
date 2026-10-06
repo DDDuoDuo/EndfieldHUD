@@ -84,10 +84,14 @@ enum BatchTwoHUDVerification {
             check(button != nil && button!.frame.contains(point) && !button!.isHidden && button!.isEnabled,
                   "Projected clock pointer and native accessibility geometry agree")
             click(at: point)
+            // Sample the finite track before the asynchronous state wait: it
+            // can legitimately finish before a busy runner gets its next turn.
+            let horizontalTransition = view.clockTransitionIsHorizontalForVerification
             waitUntil("clock style \(style.rawValue)", condition: { [self] in
                 view.clockStyleForVerification == style && overlay.settingsController?.configuration.clockStyle == style
             }) { [self] in
-                check(view.clockTransitionIsHorizontalForVerification, "Clock pages slide horizontally inside their retained clipped viewport")
+                check(horizontalTransition == !HUDRuntimeAppearance.reduceMotion,
+                      "Clock pages use a contained horizontal transition only when motion is enabled")
                 check(view.clockTransitionKeepsFrameStationaryForVerification,
                       "The frame, indicator bars and Work Mode badge stay outside the moving clock page")
                 check(overlay.systemSelectedModule == .power, "Indicator selection keeps the current center module")
