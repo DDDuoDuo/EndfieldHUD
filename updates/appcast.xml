@@ -7,6 +7,25 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <description>Signed EndfieldHUD updates</description>
         <language>en</language>
         <item>
+            <title>1.2.0</title>
+            <pubDate>Mon, 05 Oct 2026 20:34:33 -0700</pubDate>
+            <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>10.15.4</sparkle:minimumSystemVersion>
+            <description sparkle:format="plain-text"># EndfieldHUD 1.2.0
+
+- Added Archive, Reader, Media Assembly, Projection, Calendar, Now Playing and the OrbiPom minigame, with richer notes and updated HUD controls.
+- Added Mainland China and Global account linking, profile sync, and sanity countdowns with manual and automatic refresh.
+- Reorganized navigation and reduced resource loading for unopened sections.
+
+For Apple silicon and Intel Macs. Install using the **PKG** or **DMG** below.
+
+This release is not notarized; macOS may require **System Settings → Privacy &amp; Security → Open Anyway**.
+</description>
+            <enclosure url="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build14-macOS.zip" length="28727616" type="application/octet-stream" sparkle:edSignature="3o6u14SIFgDGlqyTiAPh5GPGq2gAo+p6bIYU6JzwmJ2JxlBWjfLSE0dzJyVCMkVetVelzh9zQwkQXV9IdBhCAw=="></enclosure>
+        </item>
+        <item>
             <title>1.1.1</title>
             <pubDate>Sun, 04 Oct 2026 00:37:48 -0700</pubDate>
             <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
@@ -186,6 +205,6 @@ Original code: MIT. Game artwork belongs to its respective owners; see [credits]
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: edFwJqEhjd+BxstsIYlxKmgV+dOvFJgbOPoUwtjeZ3uYIydw5YrgVe462lVg0AW1rGuFgGy95I4lwLzah0AoBg==
-length: 16952
+edSignature: HMVHhuyG92SuSs6zQrIWsHAjBsebiUVSMuATGLOFv1YNPZ4dDYUKQ7MYPh7ISKfh3aQ8iTt/vK1wjxtu6oh7Bw==
+length: 18280
 -->
