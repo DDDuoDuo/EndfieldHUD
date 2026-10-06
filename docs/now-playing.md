@@ -229,3 +229,18 @@ No reader, cache, polling interval or audio ownership changed in this layout pas
 The native source-HUD check also verifies that every playback action remains clear
 of the expanded battery bar. Synthetic editor/music tests use the existing isolated
 stores and media fixtures; no real music player command is sent.
+
+## Foreground input routing (2026-10-05)
+
+On a compact display, the retained music controls can overlap the original
+profile card. The controls are drawn above that card, but its navigation hit
+region previously received the click first. Native hit testing and mouse
+dispatch now give only the visible music control rectangles priority; the
+profile card remains reachable through transparent space. Popovers, pinned
+notes and the clock retain their existing priority. Artwork, layout, animation,
+timers and media observation are unchanged.
+
+The failure was reproduced at 1024×768: clicking Play selected Profile instead.
+Four isolated regular/compact and normal/reduced-motion runs passed 92
+assertions each after the fix. CI also runs the compact fixture. These checks
+use synthetic music and disposable Notes stores, not a real player or user data.
