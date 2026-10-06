@@ -555,3 +555,31 @@ verification pass. Evidence and final source hashes are in
 from this build and its Arknights helper were removed; runnable apps and
 verification evidence remain. No version, release, remote push or installation
 was performed.
+
+## v1.2.0 build 15 maintenance (2026-10-06)
+
+App shortcut metadata now supports native, flat, and wrapped iOS-on-Mac app
+bundles. The selected outer app remains the launch/bookmark/icon identity;
+wrapped metadata is accepted only inside that app's immediate Wrapper directory.
+The installed 云·终末地 bundle was inspected and exercised through an isolated
+shortcut store without launching it. Existing bookmark storage and migration
+contracts remain unchanged. The shortcut suite passes 81 assertions and the
+compatibility guard passes 112 mutation checks.
+
+Sanity hover fill uses the existing bar artwork's nine-slice alpha silhouette.
+Display now groups Ambient Motion, Reduce Motion, and Low-Power Visual Mode in
+that order. Their saved settings and translations are unchanged. The replacement
+Rhodes Island, Babel, and Rhine Lab center logos use the supplied transparent
+wordmarks; built-in and custom center artwork is normalized once to the default
+300×65 display footprint. The three replacement assets occupy about 199 KB.
+
+Pointer rendering retains stable draw grouping and avoids repeating immutable
+layout work. Clock and sanity accessibility controls update their geometry as
+the interface tilts, while equal labels and state no longer trigger repeated
+AppKit setters. Animation cadence, shaders, resolution, and tilt calculations
+remain unchanged. Measurements, renderer comparisons, and limitations are
+recorded in `docs/cursor-performance-1.2.0.md`.
+
+The public version remains 1.2.0; build 15 allows the signed updater to recognize
+the replacement. Release-description text is preserved. Tests use temporary
+stores and do not replace the owner's running app or modify personal data.
