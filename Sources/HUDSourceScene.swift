@@ -370,82 +370,93 @@ struct HUDSourceScene: Codable {
     /// FrameBuilder, never to the shared document or a history of poses.
     /// The ordinary resolve above remains an unconditional full traversal.
     final class IncrementalResolver {
-        private struct Inputs: Equatable {
-            let override: HUDSourceTransformOverride?
-            let parentRect: HUDSourceRect?
-            let parentWorld: simd_double4x4
-            let parentActive: Bool
-
-            static func == (a: Inputs, b: Inputs) -> Bool {
-                func vector(_ a: HUDSourceVector2, _ b: HUDSourceVector2) -> Bool {
-                    a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern
-                }
-                func vector(_ a: HUDSourceVector3, _ b: HUDSourceVector3) -> Bool {
-                    a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern && a.z.bitPattern == b.z.bitPattern
-                }
-                func optional<T>(_ a: T?, _ b: T?, _ equal: (T, T) -> Bool) -> Bool {
-                    switch (a, b) { case (nil, nil): return true; case let (a?, b?): return equal(a, b); default: return false }
-                }
-                guard a.parentActive == b.parentActive,
-                      optional(a.parentRect, b.parentRect, { a, b in
-                          a.origin.x.bitPattern == b.origin.x.bitPattern && a.origin.y.bitPattern == b.origin.y.bitPattern
-                              && a.size.x.bitPattern == b.size.x.bitPattern && a.size.y.bitPattern == b.size.y.bitPattern
-                      }), optional(a.override, b.override, { a, b in
-                          a.active == b.active && optional(a.localPosition, b.localPosition, vector)
-                              && optional(a.localScale, b.localScale, vector)
-                              && optional(a.anchoredPosition3D, b.anchoredPosition3D, vector)
-                              && optional(a.sizeDelta, b.sizeDelta, vector)
-                              && optional(a.anchorMin, b.anchorMin, vector) && optional(a.anchorMax, b.anchorMax, vector)
-                              && optional(a.pivot, b.pivot, vector)
-                              && optional(a.localRotation, b.localRotation, {
-                                  $0.x.bitPattern == $1.x.bitPattern && $0.y.bitPattern == $1.y.bitPattern
-                                      && $0.z.bitPattern == $1.z.bitPattern && $0.w.bitPattern == $1.w.bitPattern
-                              }) && a.positionComponents.count == b.positionComponents.count
-                              && a.positionComponents.allSatisfy { b.positionComponents[$0.key]?.bitPattern == $0.value.bitPattern }
-                      }) else { return false }
-                // Preserve signed zero as well as Double precision; rounding
-                // dependencies to Float can hide a later vertex difference.
-                for column in 0..<4 {
-                    for row in 0..<4 where a.parentWorld[column][row].bitPattern != b.parentWorld[column][row].bitPattern { return false }
-                }
-                return true
+        private static func optional<T>(_ a: T?, _ b: T?, _ equal: (T, T) -> Bool) -> Bool {
+            switch (a, b) { case (nil, nil): return true; case let (a?, b?): return equal(a, b); default: return false }
+        }
+        private static func vector(_ a: HUDSourceVector2, _ b: HUDSourceVector2) -> Bool {
+            a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern
+        }
+        private static func vector(_ a: HUDSourceVector3, _ b: HUDSourceVector3) -> Bool {
+            a.x.bitPattern == b.x.bitPattern && a.y.bitPattern == b.y.bitPattern && a.z.bitPattern == b.z.bitPattern
+        }
+        private static func sameRect(_ a: HUDSourceRect?, _ b: HUDSourceRect?) -> Bool {
+            optional(a, b) { a, b in
+                a.origin.x.bitPattern == b.origin.x.bitPattern && a.origin.y.bitPattern == b.origin.y.bitPattern
+                    && a.size.x.bitPattern == b.size.x.bitPattern && a.size.y.bitPattern == b.size.y.bitPattern
+            }
+        }
+        private static func sameOverride(_ a: HUDSourceTransformOverride?, _ b: HUDSourceTransformOverride?) -> Bool {
+            optional(a, b) { a, b in
+                a.active == b.active && optional(a.localPosition, b.localPosition, vector)
+                    && optional(a.localScale, b.localScale, vector)
+                    && optional(a.anchoredPosition3D, b.anchoredPosition3D, vector)
+                    && optional(a.sizeDelta, b.sizeDelta, vector)
+                    && optional(a.anchorMin, b.anchorMin, vector) && optional(a.anchorMax, b.anchorMax, vector)
+                    && optional(a.pivot, b.pivot, vector)
+                    && optional(a.localRotation, b.localRotation, {
+                        $0.x.bitPattern == $1.x.bitPattern && $0.y.bitPattern == $1.y.bitPattern
+                            && $0.z.bitPattern == $1.z.bitPattern && $0.w.bitPattern == $1.w.bitPattern
+                    }) && a.positionComponents.count == b.positionComponents.count
+                    && a.positionComponents.allSatisfy { b.positionComponents[$0.key]?.bitPattern == $0.value.bitPattern }
             }
         }
         private let scene: HUDSourceScene
-        private var cachedInputs: [Inputs?]
+        private let children: [[Int]]
+        private var previousOverrides: [HUDSourceID: HUDSourceTransformOverride] = [:]
+        private var previousRootParentRect: HUDSourceRect?
         private var cachedNodes: [HUDSourceID: HUDSourceResolvedNode] = [:]
         private(set) var reusedNodeCount = 0
         private(set) var rebuiltNodeCount = 0
 
         init(scene: HUDSourceScene) {
             self.scene = scene
-            cachedInputs = Array(repeating: nil, count: scene.nodes.count)
+            children = scene.nodes.map { $0.childIDs.compactMap { scene.indices[$0] } }
             cachedNodes.reserveCapacity(scene.nodes.count)
         }
 
         func resolve(rootParentRect: HUDSourceRect? = nil,
                      overrides: [HUDSourceID: HUDSourceTransformOverride] = [:]) throws -> [HUDSourceID: HUDSourceResolvedNode] {
-            // Copy-on-write keeps unchanged dictionaries shared. Publish both
-            // snapshots together only after every changed node validates.
-            var result = cachedNodes
-            var changedInputs: [(Int, Inputs)] = []
-            for offset in scene.evaluationOrder {
+            var dirty = Array(repeating: cachedNodes.isEmpty, count: scene.nodes.count)
+            if !cachedNodes.isEmpty {
+                var pending: [Int] = []
+                for (id, value) in overrides where !Self.sameOverride(previousOverrides[id], value) {
+                    if let index = scene.indices[id] { pending.append(index) }
+                }
+                for id in previousOverrides.keys where overrides[id] == nil {
+                    if let index = scene.indices[id] { pending.append(index) }
+                }
+                if !Self.sameRect(previousRootParentRect, rootParentRect), let root = scene.indices[scene.rootID] {
+                    pending.append(root)
+                }
+                // The scene topology is immutable. An unchanged branch with
+                // unchanged ancestors has exactly the same rect/world/active
+                // dependencies; it needs neither matrix math nor input scans.
+                // Dirty descendants still use the full original node routine,
+                // preserving validation and signed-zero arithmetic throughout.
+                while let index = pending.popLast() {
+                    guard !dirty[index] else { continue }
+                    dirty[index] = true
+                    pending.append(contentsOf: children[index])
+                }
+            }
+            var result = cachedNodes, rebuilt = 0
+            for offset in scene.evaluationOrder where dirty[offset] {
                 let node = scene.nodes[offset]
                 let parent = node.parentID.flatMap { result[$0] }
-                let next = Inputs(override: overrides[node.id],
+                result[node.id] = try HUDSourceScene.resolveNode(node, override: overrides[node.id],
                     parentRect: node.parentID == nil ? rootParentRect : parent?.rect,
                     parentWorld: parent?.worldMatrix ?? matrix_identity_double4x4,
                     parentActive: parent?.activeInHierarchy ?? true)
-                if cachedInputs[offset] == next { reusedNodeCount += 1; continue }
-                result[node.id] = try HUDSourceScene.resolveNode(node, override: next.override,
-                    parentRect: next.parentRect, parentWorld: next.parentWorld, parentActive: next.parentActive)
-                changedInputs.append((offset, next))
-                rebuiltNodeCount += 1
+                rebuilt += 1
             }
-            for (offset, next) in changedInputs { cachedInputs[offset] = next }
+            // Commit all dependency snapshots together only after a successful
+            // traversal; invalid input cannot poison the next valid request.
+            previousOverrides = overrides; previousRootParentRect = rootParentRect
             cachedNodes = result
+            rebuiltNodeCount += rebuilt; reusedNodeCount += scene.nodes.count - rebuilt
             return result
         }
+
     }
 
     /// Keep the original arithmetic and validation in one place. Incremental

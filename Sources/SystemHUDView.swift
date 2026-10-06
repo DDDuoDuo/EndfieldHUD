@@ -2064,14 +2064,22 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         else { selectClockStyle(HUDClockStyle.allCases[sender.styleIndex]) }
     }
     private func layoutClockControls() {
+        let interactive = allowsModuleInput
+        let hidden = !usesSourceShell || !interactive
+        let language = L10n.resolvedLanguage
+        let workLabel = L10n.text("Work Mode", "工作模式", language: language)
+        let styleLabel = L10n.text("Clock style", "时钟样式", language: language)
+        let selectedLabel = L10n.text("Selected", "已选择", language: language)
         for button in clockControls {
-            button.isHidden = !usesSourceShell || !allowsModuleInput
-            button.isEnabled = allowsModuleInput
+            if button.isHidden != hidden { button.isHidden = hidden }
+            if button.isEnabled != interactive { button.isEnabled = interactive }
             let rect = button.styleIndex < 0 ? HUDClockStyleArtwork.body : HUDClockStyleArtwork.indicatorRect(button.styleIndex)
-            button.frame = viewRect(HUDClockStyleArtwork.projectedBounds(of: rect, through: statusPanel.transform))
-            button.setAccessibilityLabel(button.styleIndex < 0 ? L10n.text("Work Mode", "工作模式")
-                : L10n.text("Clock style", "时钟样式") + " \(button.styleIndex + 1)")
-            button.setAccessibilityValue(button.styleIndex == configuration.clockStyle.index ? L10n.text("Selected", "已选择") : "")
+            let frame = viewRect(HUDClockStyleArtwork.projectedBounds(of: rect, through: statusPanel.transform))
+            if button.frame != frame { button.frame = frame }
+            let label = button.styleIndex < 0 ? workLabel : styleLabel + " \(button.styleIndex + 1)"
+            if button.accessibilityLabel() != label { button.setAccessibilityLabel(label) }
+            let value = button.styleIndex == configuration.clockStyle.index ? selectedLabel : ""
+            if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
         }
     }
 
@@ -3278,17 +3286,22 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         window?.makeFirstResponder(self)
     }
     private func layoutAccountGaugeControls() {
+        let actions = accountGauge.accessibleActions
+        let interactive = allowsModuleInput
         for button in accountGaugeControls {
-            let action = accountGauge.accessibleActions.first { $0.id == (button.tag == 0 ? "toggle" : "refresh") }
-            button.isHidden = !allowsModuleInput || action == nil
-            button.isEnabled = allowsModuleInput && action?.enabled == true
+            let action = actions.first { $0.id == (button.tag == 0 ? "toggle" : "refresh") }
+            let hidden = !interactive || action == nil
+            let enabled = interactive && action?.enabled == true
+            if button.isHidden != hidden { button.isHidden = hidden }
+            if button.isEnabled != enabled { button.isEnabled = enabled }
             if let action {
                 let rect = accountGaugeRect(action.rect)
                 if button.frame != rect { button.frame = rect }
-                button.setAccessibilityLabel(action.label)
-                button.setAccessibilityValue(action.id == "toggle" && accountGauge.isPopoverOpen
+                if button.accessibilityLabel() != action.label { button.setAccessibilityLabel(action.label) }
+                let value = action.id == "toggle" && accountGauge.isPopoverOpen
                     ? L10n.text("Next recovery", "下次回复") + " " + accountGauge.nextRecoveryText + "; "
-                        + L10n.text("Full recovery", "全部回复") + " " + accountGauge.fullRecoveryText : nil)
+                        + L10n.text("Full recovery", "全部回复") + " " + accountGauge.fullRecoveryText : nil
+                if button.accessibilityValue() as? String != value { button.setAccessibilityValue(value) }
             }
         }
     }

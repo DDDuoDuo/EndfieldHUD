@@ -114,6 +114,47 @@ enum HUDSourceSceneTests {
                 _ = try incremental.resolve(overrides: [childID: .init(positionComponents: [3: 2])])
             }
             try compareIncremental() // A failed partial traversal cannot corrupt retained state.
+            let siblingID = HUDSourceID(rawValue: "CAB-fixture:sibling")
+            let grandchildID = HUDSourceID(rawValue: "CAB-fixture:grandchild")
+            let branches = try HUDSourceScene(rootID: rootID, nodes: [
+                HUDSourceNode(id: rootID, path: "root", name: "root", parentID: nil,
+                    childIDs: [childID, siblingID], transform: scene.node(rootID)!.transform),
+                HUDSourceNode(id: childID, path: "root/child", name: "child", parentID: rootID,
+                    childIDs: [grandchildID], transform: scene.node(childID)!.transform),
+                HUDSourceNode(id: grandchildID, path: "root/child/leaf", name: "leaf", parentID: childID,
+                    childIDs: [], transform: scene.node(childID)!.transform),
+                HUDSourceNode(id: siblingID, path: "root/sibling", name: "sibling", parentID: rootID,
+                    childIDs: [], transform: scene.node(childID)!.transform)
+            ])
+            let branchResolver = HUDSourceScene.IncrementalResolver(scene: branches)
+            func compareBranch(_ overrides: [HUDSourceID: HUDSourceTransformOverride], rebuilt expected: Int) throws {
+                let before = branchResolver.rebuiltNodeCount
+                let actual = try branchResolver.resolve(overrides: overrides)
+                let oracle = try branches.resolve(overrides: overrides)
+                check(branchResolver.rebuiltNodeCount - before == expected,
+                    "Incremental resolution visits only the changed subtree closure")
+                for id in branches.traversalIDs {
+                    let a = actual[id]!, b = oracle[id]!
+                    check(identicalMatrix(a.localMatrix, b.localMatrix) && identicalMatrix(a.worldMatrix, b.worldMatrix)
+                        && a.rect == b.rect && a.activeInHierarchy == b.activeInHierarchy,
+                        "Changed descendants and untouched siblings match the independent full resolver bit for bit")
+                }
+            }
+            try compareBranch([:], rebuilt: 4)
+            var branchOverrides = [grandchildID: HUDSourceTransformOverride(positionComponents: [2: -3])]
+            try compareBranch(branchOverrides, rebuilt: 1)
+            branchOverrides[grandchildID]?.positionComponents[2] = -7
+            try compareBranch(branchOverrides, rebuilt: 1)
+            branchOverrides[childID] = .init(active: false)
+            try compareBranch(branchOverrides, rebuilt: 2)
+            try compareBranch(branchOverrides, rebuilt: 0)
+            branchOverrides.removeValue(forKey: childID)
+            try compareBranch(branchOverrides, rebuilt: 2)
+            branchOverrides[rootID] = .init(localScale: HUDSourceVector3(-2, 0.5, 1))
+            try compareBranch(branchOverrides, rebuilt: 4)
+            branchOverrides[HUDSourceID(rawValue: "CAB-fixture:unknown")] = .init(active: false)
+            try compareBranch(branchOverrides, rebuilt: 0)
+
             let noRectParent = HUDSourceRectTransform(anchorMin: HUDSourceVector2(1, 1), anchorMax: HUDSourceVector2(1, 1),
                 anchoredPosition: HUDSourceVector2(3, 4), sizeDelta: HUDSourceVector2(40, 20), pivot: HUDSourceVector2(0.5, 0.5))
                 .layout(parent: nil, localZ: 5)
