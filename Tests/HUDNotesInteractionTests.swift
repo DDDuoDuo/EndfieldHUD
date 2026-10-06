@@ -32,6 +32,8 @@ enum HUDNotesInteractionTests {
             input.isDark = { true }
             HUDRuntimeAppearance.configuration.accentHex = "26BACC"
             HUDRuntimeAppearance.configuration.reduceMotion = false
+            // macOS accessibility settings remain authoritative on hosted CI.
+            let menuMotionEnabled = !HUDRuntimeAppearance.reduceMotion
             input.setActive(true)
             canvas.perform(actionID: "tool:text")
             let note = store.notes[0]
@@ -150,8 +152,9 @@ enum HUDNotesInteractionTests {
             let sizeButton = canvas.accessibleActions.first { $0.id.hasSuffix(":formatSize") }!
             _ = input.mouseDownInWorkspace(at: CGPoint(x: sizeButton.rect.midX, y: sizeButton.rect.midY), clickCount: 1)
             let sizeControls = host.subviews.compactMap { $0 as? NotesFormattingControls }.first!
-            check((sizeControls.artwork.animation(forKey: "notes.controls.reveal") as? CAAnimationGroup)?.duration == 0.14,
-                  "Formatting menus reveal their retained face with one finite movement and fade")
+            let sizeReveal = sizeControls.artwork.animation(forKey: "notes.controls.reveal")
+            check(menuMotionEnabled ? (sizeReveal as? CAAnimationGroup)?.duration == 0.14 : sizeReveal == nil,
+                  "Formatting uses one finite reveal only when motion is enabled")
             check(sizeControls.selectedValue == "19",
                   "Reopening formatting at the caret shows the pending typing size instead of an adjacent character's size")
             check(sizeControls.artwork.superlayer === canvas.workspaceLayer && sizeControls.layer?.backgroundColor == nil
@@ -164,8 +167,8 @@ enum HUDNotesInteractionTests {
                   "Menu parallax moves the input surface without recapturing mixed runs or changing explicit colors")
             sizeControls.onClose?()
             check(sizeControls.superview == nil && !input.capturesPointer
-                  && sizeControls.artwork.animation(forKey: "notes.controls.dismiss") != nil,
-                  "Closing formatting releases native input immediately while its retained face animates out")
+                  && (sizeControls.artwork.animation(forKey: "notes.controls.dismiss") != nil) == menuMotionEnabled,
+                  "Closing releases formatting input immediately and respects the motion preference")
             check((richEditor.textStorage!.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == 28
                   && (richEditor.textStorage!.attribute(.font, at: 7, effectiveRange: nil) as? NSFont)?.pointSize == 12,
                   "Closing the moving menu leaves every logical rich-text font intact")
@@ -194,7 +197,7 @@ enum HUDNotesInteractionTests {
             check(shelfArtwork.superlayer === canvas.workspaceLayer
                   && canvas.workspaceLayer.sublayers!.filter { $0 !== shelfArtwork && $0.name != "notes.secondaryMenu" }.allSatisfy { $0.zPosition < shelfArtwork.zPosition },
                   "The Shelf submenu occupies the notes plane above every note and deletion control")
-            check(shelfArtwork.animation(forKey: "notes.controls.reveal") != nil
+            check((shelfArtwork.animation(forKey: "notes.controls.reveal") != nil) == menuMotionEnabled
                   && shelfArtwork.bounds.size == CGSize(width: 340, height: 260) && shelfArtwork.affineTransform().a == 1.25,
                   "Menu conversion scales retained geometry without changing logical row and hit-test dimensions")
             let pickerFrame = picker.frame
@@ -210,8 +213,8 @@ enum HUDNotesInteractionTests {
             input.workspaceUnproject = nil
             check(input.dismissMenuIfOutside(at: CGPoint(x: 790, y: 590)) && !input.capturesPointer,
                   "The first outside click dismisses the Notes menu before invoking a control behind it")
-            check(picker.superview == nil && shelfArtwork.animation(forKey: "notes.controls.dismiss") != nil,
-                  "Shelf dismissal preserves a finite exit face without retaining an input target")
+            check(picker.superview == nil && (shelfArtwork.animation(forKey: "notes.controls.dismiss") != nil) == menuMotionEnabled,
+                  "Shelf dismissal releases input and animates only when motion is enabled")
             canvas.perform(actionID: "tool:image")
             let source = host.subviews.first { $0 is NotesMediaSourceChooser }!
             check(!input.isInputLocked && input.capturesPointer, "The media-source submenu also keeps parallax active")
@@ -219,10 +222,10 @@ enum HUDNotesInteractionTests {
             input.workspaceProject = { $0.offsetBy(dx: 34, dy: 46) }; input.layoutAccessibility()
             check(source.frame == sourceFrame.offsetBy(dx: 11, dy: 9), "The media-source menu reprojects without replacing its native controls")
             let sourceArtwork = (source as! NotesMediaSourceChooser).artwork
-            check(sourceArtwork.superlayer === canvas.workspaceLayer && sourceArtwork.animation(forKey: "notes.controls.reveal") != nil,
-                  "The media-source picker shares the same topmost retained reveal as formatting and Shelf")
+            check(sourceArtwork.superlayer === canvas.workspaceLayer && (sourceArtwork.animation(forKey: "notes.controls.reveal") != nil) == menuMotionEnabled,
+                  "The media-source picker shares the retained plane and motion preference of formatting and Shelf")
             (source as! NotesMediaSourceChooser).onCancel?()
-            check(source.superview == nil && sourceArtwork.animation(forKey: "notes.controls.dismiss") != nil
+            check(source.superview == nil && (sourceArtwork.animation(forKey: "notes.controls.dismiss") != nil) == menuMotionEnabled
                   && shelfArtwork.superlayer == nil,
                   "Source cancellation animates out and bounds retirement to a single outgoing menu")
             input.deactivate()

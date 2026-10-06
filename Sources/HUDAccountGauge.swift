@@ -28,7 +28,8 @@ final class HUDAccountGauge {
     private(set) var updateCount = 0
     private var renderScale: CGFloat = 0
     static let size = CGSize(width: 168, height: 42)
-    static let popoverRect = CGRect(x: 0, y: 40, width: 224, height: 65)
+    // Expand left from the wallet's right edge, away from the adjacent clock.
+    static let popoverRect = CGRect(x: size.width - 224, y: 40, width: 224, height: 65)
     static let refreshRect = CGRect(x: 195, y: 19, width: 23, height: 25)
     // Mirror the heading's x=270 inset around the 1,000-point HUD plane.
     static let headerPosition = CGPoint(x: 292, y: 0)

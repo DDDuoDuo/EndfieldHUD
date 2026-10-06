@@ -177,12 +177,12 @@ enum HUDLifecycleVerification {
                 let image = try source.renderedImageForVerification()
                 check(image.width > 0 && image.height > 0, "The displayed original menu produces an actual Metal drawable")
             } catch { fail("Source drawable verification failed: \(error)") }
-            guard let point = source.desktopPointForVerification(target: .module(.power)),
+            guard let point = source.desktopPointForVerification(target: .module(.notes)),
                   let host = source.superview as? SystemHUDView else {
-                fail("A visible projected Power button is required for input verification")
+                fail("A visible projected Notes button is required for input verification")
             }
             clickHUD(at: host.convert(point, from: source))
-            check(overlay.systemPhase == .open && overlay.systemSelectedModule == .power
+            check(overlay.systemPhase == .open && overlay.systemSelectedModule == .notes
                   && !overlay.systemQuitConfirmationVisibleForVerification,
                   "An active source card routes to its module without being treated as an outside click")
             guard let profilePoint = source.desktopProfilePointForVerification else {
