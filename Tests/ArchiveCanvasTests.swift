@@ -191,14 +191,17 @@ enum ArchiveCanvasTests {
         check(canvas.layer.sublayers?.first { $0.name == "archive.face" }.map { descendants($0).contains { $0.frame.height == 52 && $0.isHidden } } == true,
               "An attached image supplies a gallery thumbnail and hides the default archive icon")
         let backdrop = canvas.layer.sublayers!.first { $0.name == "archive.backdrop" }!
-        canvas.perform("category:\(researchCategory)")
+        let categoryTransition = withPausedLayerClock(canvas.layer) {
+            canvas.perform("category:\(researchCategory)")
+            return canvas.layer.sublayers?.first { $0.name == "archive.face" }?.animation(forKey: "archive.transition")
+        }
         check(canvas.actions.filter { $0.id.hasPrefix("entry:") }.isEmpty,
               "Moving a document removes it from the previous category")
         check(canvas.layer.sublayers!.contains { $0 === backdrop } && backdrop.opacity == 1 && (backdrop.animationKeys() ?? []).isEmpty,
               "Category crossfades retain one continuously opaque backdrop")
-        check(canvas.layer.sublayers?.contains { $0.name == "archive.outgoingFace" } == true
-                && canvas.layer.sublayers?.first { $0.name == "archive.face" }?.animation(forKey: "archive.transition") != nil,
-              "Category changes retain the outgoing content during the incoming transition")
+        check((canvas.layer.sublayers?.contains { $0.name == "archive.outgoingFace" } == true) == !HUDRuntimeAppearance.reduceMotion
+                && (categoryTransition != nil) == !HUDRuntimeAppearance.reduceMotion,
+              "Category changes retain an outgoing transition only when motion is enabled")
         canvas.perform("category:\(movedCategory)")
         check(canvas.actions.contains { $0.id == "entry:\(id)" }, "Destination category contains the moved document")
         canvas.perform("entry:\(id)"); wait { controller.selected?.id == id }
@@ -325,9 +328,19 @@ enum ArchiveCanvasTests {
         func bold(at index: Int) -> Bool {
             NSFontManager.shared.traits(of: text.textStorage!.attribute(.font, at: index, effectiveRange: nil) as! NSFont).contains(.boldFontMask)
         }
-        let special = menu("formatSpecial")
-        check(special.artwork.superlayer === canvas.layer && special.artwork.animation(forKey: "archive.menu") != nil,
-              "Formatting uses the tilted and animated existing Notes submenu")
+        let (special, reveal) = withPausedLayerClock(canvas.layer) {
+            let special = menu("formatSpecial")
+            return (special, special.artwork.animation(forKey: "archive.menu") as? CABasicAnimation)
+        }
+        check(special.artwork.superlayer === canvas.layer,
+              "Formatting uses the existing Notes submenu on the tilted archive plane")
+        if HUDRuntimeAppearance.reduceMotion {
+            check(reveal == nil, "Reduced motion opens formatting without a reveal animation")
+        } else {
+            check(reveal?.keyPath == "opacity" && reveal?.duration == 0.16
+                    && reveal?.fromValue as? Int == 0 && reveal?.toValue as? Int == 1,
+                  "Formatting reveals with the finite retained submenu fade")
+        }
         check(special.artwork.frame.maxY < formattingRects.map(\.minY).min()!,
               "Formatting popovers end above the visible formatting row instead of obscuring its buttons")
         text.undoManager!.removeAllActions(); text.undoManager!.beginUndoGrouping()
@@ -385,6 +398,21 @@ enum ArchiveCanvasTests {
         text.textStorage!.setAttributedString(NSAttributedString(string: "", attributes: plain)); text.typingAttributes = plain
         input.textDidChange(Notification(name: NSText.didChangeNotification, object: text))
         return count
+    }
+
+    /// Inspect finite tracks without racing the offscreen window's render server
+    /// on slower CI hosts. Production animation timing is left unchanged.
+    private static func withPausedLayerClock<T>(_ layer: CALayer, _ body: () -> T) -> T {
+        let speed = layer.speed, offset = layer.timeOffset, begin = layer.beginTime
+        let paused = layer.convertTime(CACurrentMediaTime(), from: nil)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.speed = 0; layer.timeOffset = paused; CATransaction.commit()
+        defer {
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            layer.speed = speed; layer.timeOffset = offset; layer.beginTime = begin
+            CATransaction.commit()
+        }
+        return body()
     }
 
     private static func thumbnailChecks(reference: NotesMediaReference, image: CGImage) -> Int {

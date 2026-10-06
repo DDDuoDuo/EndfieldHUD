@@ -58,7 +58,7 @@ enum HUDAccountHUDVerification {
                 view.keyDown(with: escape)
                 check(!gauge.isPopoverOpen && overlay.systemPhase == .open, "ESC dismisses only the recovery menu")
                 click(walletPoint)
-                let outsidePoint = view.accountGaugePointForVerification(CGPoint(x: -20, y: 60))
+                let outsidePoint = view.accountGaugePointForVerification(CGPoint(x: HUDAccountGauge.popoverRect.minX - 20, y: 60))
                 let menuPoint = view.accountGaugePointForVerification(CGPoint(x: 30, y: 70))
                 check(view.hitTest(view.convert(menuPoint, to: view.superview)) === view
                       && view.hitTest(view.convert(outsidePoint, to: view.superview)) === view,

@@ -121,6 +121,9 @@ enum HUDAccountCanvasTests {
         let popover = gauge.layer.sublayers!.first { $0.name == "hud.account.stamina.recovery" }!
         check(popover.frame == HUDAccountGauge.popoverRect && popover.frame.minY >= HUDAccountGauge.size.height - 2,
               "The compact dark menu anchors immediately below the wallet")
+        check(popover.frame.maxX == HUDAccountGauge.size.width
+              && popover.frame.contains(gauge.accessibleActions.last!.rect),
+              "The recovery menu and refresh control stay left of the wallet's right edge, clear of the clock")
         check(popover.animation(forKey: "account.gauge.menu")?.duration == 0.16 || HUDRuntimeAppearance.reduceMotion,
               "Recovery menu has a finite opening animation")
         gauge.hover(at: CGPoint(x: 90, y: 20))
@@ -139,7 +142,9 @@ enum HUDAccountCanvasTests {
         let tooltipRenders = gauge.tooltipRenderCount
         gauge.update(value: "42 / 360", accessibilityLabel: "Sanity 42 of 360", visible: true, accent: .systemYellow, scale: 2, sanity: busy, at: now.addingTimeInterval(1))
         check(gauge.tooltipRenderCount == tooltipRenders, "Unchanged open countdown retains all label rasters")
-        check(gauge.mouseDown(at: CGPoint(x: -20, y: 60)) && !gauge.isPopoverOpen,
+        check(gauge.mouseDown(at: CGPoint(x: -20, y: 60)) && gauge.isPopoverOpen,
+              "The leftward part of the right-aligned menu remains inside its input region")
+        check(gauge.mouseDown(at: CGPoint(x: HUDAccountGauge.popoverRect.minX - 20, y: 60)) && !gauge.isPopoverOpen,
               "Outside clicks dismiss and are consumed without activating controls behind the tooltip")
         check(HUDAccountGauge.countdown(until: nil, at: now, hours: true) == "—"
               && HUDAccountGauge.countdown(until: now.addingTimeInterval(-1), at: now, hours: false) == "00:00",
