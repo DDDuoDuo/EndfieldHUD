@@ -1,0 +1,21 @@
+{
+  "description": "User-supplied horizontal center wordmarks, replacing center presets only. Original artwork belongs to its respective rights holders.",
+  "preparation": "ImageIO via sips: proportional downsample to 768 pixels maximum; transparency retained. Display crops transparent margins once per selection and maps to the authored Endfield logo slot.",
+  "assets": {
+    "babel.png": {
+      "suppliedSHA256": "11bdc1083fbf10b975be77a24f0cb1ade4165920673ac23f974e2b3a2c5f0211",
+      "bundledSHA256": "0adcabe94b68a02216e433e76bb0fe51dbad45f017783bddf8ab2f6a8415cc3a",
+      "bytes": 82056
+    },
+    "rhineLab.png": {
+      "suppliedSHA256": "b4dccca10a05d3bd64525dd5a9c35d22737c2f420a986e9734aa526ee06b11f8",
+      "bundledSHA256": "9d0f2a2e9a457bcbd04c0c36731626b248c6ac50253ff2806b4cc13367fc9397",
+      "bytes": 38057
+    },
+    "rhodesIsland.png": {
+      "suppliedSHA256": "13d0f6416ff6b4b038a794f4c470071825c005b8f2299f3ae5461b5430586302",
+      "bundledSHA256": "d57d81c672acfad13bf297d0d65443cdfdd6d83dd823613ea311fa61db748892",
+      "bytes": 77490
+    }
+  }
+}

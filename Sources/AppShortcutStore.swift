@@ -209,18 +209,21 @@ final class AppShortcutStore {
         do {
             let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])
             guard values.isDirectory == true, values.isReadable == true else { throw AppShortcutStoreError.invalidApplication }
-            let infoURL = url.appendingPathComponent("Contents/Info.plist")
+            let bundleURL = try metadataBundleURL(at: url)
+            let hasContents = FileManager.default.fileExists(atPath: bundleURL.appendingPathComponent("Contents").path)
+            let infoURL = bundleURL.appendingPathComponent(hasContents ? "Contents/Info.plist" : "Info.plist")
             guard let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: infoURL), options: [], format: nil) as? [String: Any],
                   info["CFBundlePackageType"] as? String == "APPL",
                   let executable = info["CFBundleExecutable"] as? String, !executable.isEmpty,
                   executable != ".", executable != "..", !executable.contains("/"), !executable.contains("\0") else {
                 throw AppShortcutStoreError.invalidApplication
             }
-            let executableURL = url.appendingPathComponent("Contents/MacOS").appendingPathComponent(executable)
+            let executableDirectory = hasContents ? bundleURL.appendingPathComponent("Contents/MacOS") : bundleURL
+            let executableURL = executableDirectory.appendingPathComponent(executable)
             let executableValues = try executableURL.resourceValues(forKeys: [.isRegularFileKey])
             guard executableValues.isRegularFile == true,
                   FileManager.default.isExecutableFile(atPath: executableURL.path) else { throw AppShortcutStoreError.invalidApplication }
-            let localized = Bundle(url: url)?.localizedInfoDictionary
+            let localized = Bundle(url: bundleURL)?.localizedInfoDictionary
             let names = [localized?["CFBundleDisplayName"], localized?["CFBundleName"],
                          info["CFBundleDisplayName"], info["CFBundleName"]]
             let name = names.compactMap { $0 as? String }.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -229,6 +232,24 @@ final class AppShortcutStore {
             return (name, bundleID)
         } catch let error as AppShortcutStoreError { throw error }
         catch { throw AppShortcutStoreError.unavailable(error.localizedDescription) }
+    }
+
+    /// App Store iOS apps on Mac keep their flat bundle behind WrappedBundle.
+    /// Read metadata from that bundle, but retain the selected outer .app for
+    /// bookmarks, icons and LaunchServices. Never search for another installed
+    /// app or follow a wrapper link outside this application's own Wrapper.
+    private static func metadataBundleURL(at url: URL) throws -> URL {
+        let url = canonical(url)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.appendingPathComponent("Contents").path)
+            || fm.fileExists(atPath: url.appendingPathComponent("Info.plist").path) { return url }
+        let wrapper = url.appendingPathComponent("Wrapper", isDirectory: true)
+        let wrapped = canonical(url.appendingPathComponent("WrappedBundle"))
+        guard canonical(wrapper) == wrapper, wrapped.deletingLastPathComponent() == wrapper,
+              wrapped.pathExtension.lowercased() == "app" else { throw AppShortcutStoreError.invalidApplication }
+        let values = try wrapped.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])
+        guard values.isDirectory == true, values.isReadable == true else { throw AppShortcutStoreError.invalidApplication }
+        return wrapped
     }
 
     private func createBookmark(at url: URL) throws -> (data: Data, scoped: Bool) {

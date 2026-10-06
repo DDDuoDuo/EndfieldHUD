@@ -58,6 +58,14 @@ struct HUDSourceWatchLayout {
     private let layoutChildren: [HUDSourceID: [HUDSourceID]]
     private typealias MetricCandidate = (priority: Int, value: Metrics)
     private let fixedMetrics: [HUDSourceID: [[MetricCandidate]]]
+    private let fixedMeasured: [[HUDSourceID: Metrics]]
+    private let dynamicMetricIDs: [HUDSourceID]
+    private let layoutWriterIDs: [HUDSourceID]
+    private let customComponentIDs: [HUDSourceID]
+    // Each stage retains just its latest exact input/result. Hover animation
+    // usually changes one subtree; unrelated scene transforms need no new math.
+    private let initialResolver: HUDSourceScene.IncrementalResolver
+    private let slantResolver: HUDSourceScene.IncrementalResolver
     /// Scroll bounds read only the scroll owner, viewport, content and their
     /// ancestors. Their topology is immutable; sampled transforms are not.
     private let scrollNodeIDs: [HUDSourceID]
@@ -114,6 +122,20 @@ struct HUDSourceWatchLayout {
             }
         }
         enabledComponents = enabled; layoutGroups = groups; layoutChildren = children; fixedMetrics = metrics
+        fixedMeasured = (0...1).map { axis in
+            var result: [HUDSourceID: Metrics] = [:]
+            for (id, candidates) in metrics where !candidates[axis].isEmpty {
+                result[id] = Self.selectMetrics(candidates[axis])
+            }
+            return result
+        }
+        dynamicMetricIDs = scene.traversalIDs.reversed().filter { groups[$0] != nil || enabled[$0]?["UIText"] != nil }
+        layoutWriterIDs = scene.traversalIDs.filter { groups[$0] != nil || enabled[$0]?["ContentSizeFitter"] != nil }
+        customComponentIDs = scene.traversalIDs.filter { id in
+            (components[id] ?? []).contains { $0.enabled && ["UIStepScrollList", "GridLayoutGroup", "NotchAdapter"].contains($0.kind) }
+        }
+        initialResolver = HUDSourceScene.IncrementalResolver(scene: scene)
+        slantResolver = HUDSourceScene.IncrementalResolver(scene: scene)
         var scrollIDs: [HUDSourceID] = []
         var scrollChains: [HUDSourceID: [HUDSourceNode]] = [:]
         for id in scene.traversalIDs {
@@ -152,19 +174,22 @@ struct HUDSourceWatchLayout {
                                 forceSlantRebuild: Bool) throws -> Report {
         guard verticalNormalizedPosition.isFinite else { throw HUDSourceError.invalid("Nonfinite Watch scroll position") }
         desktopNavigation?.apply(to: &pose, normalizedPosition: verticalNormalizedPosition)
-        let initial = try scene.resolve(overrides: pose.transforms)
+        let initial = try evaluation == nil ? scene.resolve(overrides: pose.transforms)
+            : initialResolver.resolve(overrides: pose.transforms)
         var report = Report()
         for axis in 0...1 {
-            var measured: [HUDSourceID: Metrics] = [:]
-            for id in scene.traversalIDs.reversed() {
+            var measured: [HUDSourceID: Metrics] = evaluation == nil ? [:] : fixedMeasured[axis]
+            let metricIDs = evaluation == nil ? Array(scene.traversalIDs.reversed()) : dynamicMetricIDs
+            for id in metricIDs {
                 guard initial[id]?.activeInHierarchy == true else { continue }
                 measured[id] = metrics(id, axis: axis, pose: pose, active: initial, measured: measured, report: &report)
             }
-            for id in scene.traversalIDs {
+            for id in evaluation == nil ? scene.traversalIDs : layoutWriterIDs {
                 guard initial[id]?.activeInHierarchy == true, scene.node(id)?.transform.rect != nil else { continue }
                 if let fitter = component("ContentSizeFitter", on: id) {
                     let fit = Int(fitter[axis == 0 ? "m_HorizontalFit" : "m_VerticalFit"].float())
-                    if fit == 1 || fit == 2, let input = measured[id] {
+                    if fit == 1 || fit == 2 {
+                        let input = measured[id] ?? Metrics()
                         setSize(id, axis: axis, value: fit == 1 ? input.minimum : input.preferred, pose: &pose)
                     }
                 }
@@ -178,8 +203,10 @@ struct HUDSourceWatchLayout {
         try applyScroll(to: &pose, position: verticalNormalizedPosition,
                         desktopContentID: desktopNavigation?.contentID, report: &report)
         beforeSlant?(pose)
-        let resolved = try scene.resolve(overrides: pose.transforms)
-        for id in scene.traversalIDs where resolved[id]?.activeInHierarchy == true {
+        let resolved = try evaluation == nil ? scene.resolve(overrides: pose.transforms)
+            : slantResolver.resolve(overrides: pose.transforms)
+        let effectIDs = evaluation == nil ? scene.traversalIDs : slantEffectIDs
+        for id in effectIDs where resolved[id]?.activeInHierarchy == true {
             if let effect = component("UIScrollCellSlantEffect", on: id) {
                 // Static source Tick: InverseTransformPoint(cell.position).y,
                 // Clamp01((y-bottom)/(top-bottom)), curve * width + left,
@@ -195,6 +222,8 @@ struct HUDSourceWatchLayout {
                 } else { try applySlant(effect, on: id, resolved: resolved, worldRoot: worldRoot, pose: &pose,
                     forceRebuild: forceSlantRebuild) }
             }
+        }
+        for id in evaluation == nil ? scene.traversalIDs : customComponentIDs where resolved[id]?.activeInHierarchy == true {
             for c in components[id] ?? [] where c.enabled && ["UIStepScrollList", "GridLayoutGroup", "NotchAdapter"].contains(c.kind) {
                 report.unverifiedCustomComponents.insert(c.kind)
             }
@@ -284,6 +313,9 @@ struct HUDSourceWatchLayout {
         if evaluation != nil { candidates.append(contentsOf: fixedMetrics[id]?[axis] ?? []) }
         else { candidates.append(contentsOf: Self.fixedMetricCandidates(on: id, axis: axis,
             scene: scene, components: components, sprites: spriteByComponent)) }
+        return Self.selectMetrics(candidates)
+    }
+    private static func selectMetrics(_ candidates: [MetricCandidate]) -> Metrics {
         func property(_ value: (Metrics) -> Double) -> Double {
             var priority = Int.min, result = 0.0
             for (p, m) in candidates {

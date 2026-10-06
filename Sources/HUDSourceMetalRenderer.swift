@@ -68,8 +68,8 @@ final class HUDSourceMetalRenderer: MTKView, MTKViewDelegate {
 
     /// Producer-owned identity of one exact batch structure. Only a settled
     /// FrameBuilder presentation may share it across frames: order, meshes,
-    /// materials, tint, indices and overrides remain fixed while world
-    /// matrices and the registered geometry may advance. Generic submissions
+    /// materials, tint, indices and override bindings remain fixed while world
+    /// matrices, numeric override payloads and registered geometry may advance. Generic submissions
     /// omit it and retain full dependency comparisons.
     final class BatchStructureToken {}
 

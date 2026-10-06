@@ -207,7 +207,6 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
                 Row(id: "login", title: L10n.text("Launch at login", "登录时启动"), kind: .toggle(c.launchAtLogin)),
                 Row(id: "focus", title: L10n.text("Close when focus lost", "失去焦点时关闭"), kind: .toggle(c.closeOnFocusLost)),
                 Row(id: "screen", title: L10n.text("Display", "显示器"), kind: .choice(HUDDisplayPolicy.selectionTitle(configuration: c, displays: displays))),
-                Row(id: "ambient", title: L10n.text("Ambient animation", "持续环境动画"), kind: .toggle(c.ambientAnimation)),
                 Row(id: "batteryEnabled", title: L10n.text("Battery alerts", "电池提醒"), kind: .toggle(c.batteryAlertsEnabled)),
                 Row(id: "restore", title: L10n.text("Restore default settings", "恢复默认设置"), kind: .choice("↺"))
             ]
@@ -249,7 +248,6 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
                 Row(id: "perspective", title: L10n.text("Perspective intensity", "透视强度"), kind: .slider(c.perspectiveIntensity, 0, 2)),
                 Row(id: "darkness", title: L10n.text("Background brightness", "背景亮度"), kind: .slider(c.backgroundBrightness, 0, 1)),
                 Row(id: "blur", title: L10n.text("Blur amount", "模糊程度"), kind: .slider(c.blurAmount, 0, 1)),
-                Row(id: "motion", title: L10n.text("Reduce Motion", "减少动态效果"), kind: .toggle(c.reduceMotion)),
                 Row(id: "theme", title: L10n.text("Theme", "主题"), kind: .choice(themeTitle(c.theme))),
                 Row(id: "clockFormat", title: L10n.text("Time format", "时间格式"), kind: .choice(c.clockFormat == .twentyFourHour ? L10n.text("24-hour", "24 小时制") : L10n.text("12-hour AM/PM", "12 小时制 AM/PM"))),
                 Row(id: "clockStyle", title: L10n.text("Clock style", "时钟样式"), kind: .choice("0\(c.clockStyle.index + 1) / 05")),
@@ -257,6 +255,8 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
                 Row(id: "appIcon", title: L10n.text("App / menu bar icon", "应用 / 菜单栏图标"), kind: .choice("›")),
                 Row(id: "palette", title: L10n.text("Theme color", "主题颜色"), kind: .palette, height: 54),
                 Row(id: "battery", title: L10n.text("Battery alert", "电池提醒"), kind: .choice("›")),
+                Row(id: "ambient", title: L10n.text("Ambient animation", "持续环境动画"), kind: .toggle(c.ambientAnimation)),
+                Row(id: "motion", title: L10n.text("Reduce Motion", "减少动态效果"), kind: .toggle(c.reduceMotion)),
                 Row(id: "lowPower", title: L10n.text("Low Power visual mode", "低功耗视觉模式"), kind: .toggle(c.lowPowerVisualMode))
             ]
         }

@@ -20,7 +20,46 @@ MANIFEST = ROOT / "Tests/Fixtures/stable-integration-contract.json"
 
 # The approved 1.2.0 release changes version metadata, not the stable bundle,
 # preferences, permission or signed-update identity recorded in the baseline.
-RELEASE_METADATA = {"CFBundleShortVersionString": "1.2.0", "CFBundleVersion": "14"}
+RELEASE_METADATA = {"CFBundleShortVersionString": "1.2.0", "CFBundleVersion": "15"}
+
+
+# The selected iOS-on-Mac app uses a wrapped flat bundle. Reverse only these
+# exact metadata-reader repairs, then require the original store byte hash.
+# No archive, bookmark, storage-path, identity or writer exemption is allowed;
+# each repair remains required even if someone substitutes a manifest hash.
+ALLOWED_METADATA_REPAIRS = {
+    "Sources/AppShortcutStore.swift": {
+        "baselineSha256": "88e02291fafbd36629ec37b4ccf39f86e66f01c0a053da2f1a63e6084c333506",
+        "reverse": [
+            ('            let bundleURL = try metadataBundleURL(at: url)\n'
+             '            let hasContents = FileManager.default.fileExists(atPath: bundleURL.appendingPathComponent("Contents").path)\n'
+             '            let infoURL = bundleURL.appendingPathComponent(hasContents ? "Contents/Info.plist" : "Info.plist")\n',
+             '            let infoURL = url.appendingPathComponent("Contents/Info.plist")\n'),
+            ('            let executableDirectory = hasContents ? bundleURL.appendingPathComponent("Contents/MacOS") : bundleURL\n'
+             '            let executableURL = executableDirectory.appendingPathComponent(executable)\n',
+             '            let executableURL = url.appendingPathComponent("Contents/MacOS").appendingPathComponent(executable)\n'),
+            ('            let localized = Bundle(url: bundleURL)?.localizedInfoDictionary\n',
+             '            let localized = Bundle(url: url)?.localizedInfoDictionary\n'),
+            ('    /// App Store iOS apps on Mac keep their flat bundle behind WrappedBundle.\n'
+             '    /// Read metadata from that bundle, but retain the selected outer .app for\n'
+             '    /// bookmarks, icons and LaunchServices. Never search for another installed\n'
+             "    /// app or follow a wrapper link outside this application's own Wrapper.\n"
+             '    private static func metadataBundleURL(at url: URL) throws -> URL {\n'
+             '        let url = canonical(url)\n'
+             '        let fm = FileManager.default\n'
+             '        if fm.fileExists(atPath: url.appendingPathComponent("Contents").path)\n'
+             '            || fm.fileExists(atPath: url.appendingPathComponent("Info.plist").path) { return url }\n'
+             '        let wrapper = url.appendingPathComponent("Wrapper", isDirectory: true)\n'
+             '        let wrapped = canonical(url.appendingPathComponent("WrappedBundle"))\n'
+             '        guard canonical(wrapper) == wrapper, wrapped.deletingLastPathComponent() == wrapper,\n'
+             '              wrapped.pathExtension.lowercased() == "app" else { throw AppShortcutStoreError.invalidApplication }\n'
+             '        let values = try wrapped.resourceValues(forKeys: [.isDirectoryKey, .isReadableKey])\n'
+             '        guard values.isDirectory == true, values.isReadable == true else { throw AppShortcutStoreError.invalidApplication }\n'
+             '        return wrapped\n'
+             '    }\n\n', ''),
+        ],
+    },
+}
 
 
 # Exact user-requested copy changes; every replacement remains required.
@@ -392,6 +431,9 @@ def check(root, baseline):
     updates = baseline.get("reviewedBehaviorUpdates", {})
     extensions = baseline.get("reviewedSchemaExtensions", {})
     permissions = baseline.get("reviewedPermissionAdditions", {})
+    for name, repair in ALLOWED_METADATA_REPAIRS.items():
+        if baseline["files"].get(name) != repair["baselineSha256"]:
+            failures.append(f"Original metadata-repair baseline changed: {name}")
     # Persistence files cannot be exempted by these explicit behavior changes.
     allowed_updates = {"Sources/WorkModeFocusController.swift", "Sources/WorldMapGeometry.swift",
                        "Sources/AppActivityMonitor.swift", "Sources/SystemActivityMonitor.swift",
@@ -430,6 +472,12 @@ def check(root, baseline):
             failures.append(f"Missing stable functional file: {name}")
         else:
             data = contract_data(name, source.read_bytes())
+            if name in ALLOWED_METADATA_REPAIRS:
+                for replacement, previous in ALLOWED_METADATA_REPAIRS[name]["reverse"]:
+                    replacement, previous = replacement.encode(), previous.encode()
+                    if data.count(replacement) != 1:
+                        failures.append(f"Reviewed metadata repair missing or duplicated: {name}")
+                    data = data.replace(replacement, previous, 1)
             if hashlib.sha256(data).hexdigest() != expected:
                 failures.append(f"Stable behavior/data contract changed: {name}")
             if name in extensions and name in ALLOWED_SCHEMA_EXTENSIONS:
@@ -512,6 +560,7 @@ def check(root, baseline):
 def self_test(baseline):
     # Mutations stay entirely inside this owned temporary checkout fixture.
     schema_checks = 0
+    metadata_checks = 0
     with tempfile.TemporaryDirectory(prefix="EndfieldHUD-Compatibility-") as temporary:
         root = Path(temporary)
         names = list(baseline["files"]) + ["Resources/Info.plist", "Sources/LocalizationCatalog.swift"]
@@ -523,6 +572,39 @@ def self_test(baseline):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, destination)
         assert not check(root, baseline), "Current repository must pass before mutation checks"
+        for name, repair in ALLOWED_METADATA_REPAIRS.items():
+            source = root / name
+            original = source.read_bytes()
+            for replacement, previous in repair["reverse"]:
+                replacement, previous = replacement.encode(), previous.encode()
+                for altered in (original.replace(replacement, previous, 1),
+                                original.replace(replacement, replacement + replacement, 1)):
+                    source.write_bytes(altered)
+                    assert any("metadata repair missing or duplicated" in failure for failure in check(root, baseline)), "Every exact metadata repair remains required once"
+                    metadata_checks += 1
+                    forged = json.loads(json.dumps(baseline))
+                    forged["files"][name] = hashlib.sha256(altered).hexdigest()
+                    assert any("metadata-repair baseline changed" in failure for failure in check(root, forged)), "A forged file hash cannot hide a removed or duplicated repair"
+                    metadata_checks += 1
+                    source.write_bytes(original)
+            for old, new in ((b"EndfieldCharge/AppShortcuts", b"EndfieldHUD/AppShortcuts"),
+                             (b"Archive(version: 1, items: next)", b"Archive(version: 2, items: next)"),
+                             (b"try data.write(to: fileURL, options: .atomic)", b"try data.write(to: fileURL, options: [])")):
+                assert original.count(old) == 1, "Metadata repair mutation must touch its intended persistence contract"
+                source.write_bytes(original.replace(old, new, 1))
+                assert any(f"Stable behavior/data contract changed: {name}" in failure for failure in check(root, baseline)), "Metadata repair cannot authorize changed storage paths, archive versions or atomic writes"
+                metadata_checks += 1
+                forged = json.loads(json.dumps(baseline))
+                forged["reviewedBehaviorUpdates"][name] = {
+                    "baselineSha256": baseline["files"][name], "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "reason": "Attempted whole-store exemption"}
+                assert any(f"Invalid reviewed behavior update: {name}" in failure for failure in check(root, forged)), "The repaired shortcut store remains ineligible for a whole-file behavior exemption"
+                metadata_checks += 1
+                source.write_bytes(original)
+            forged = json.loads(json.dumps(baseline))
+            forged["files"].pop(name)
+            assert any("metadata-repair baseline changed" in failure for failure in check(root, forged)), "The original shortcut store cannot be removed from the manifest"
+            metadata_checks += 1
         store = root / "Sources/UserProfileStore.swift"
         original = store.read_bytes()
         store.write_bytes(original.replace(b"EndfieldCharge/Profile", b"EndfieldHUD/Profile"))
@@ -674,7 +756,7 @@ def self_test(baseline):
         plist.write_bytes(original)
         schema_checks += 3
     count = 11 + len(baseline.get("reviewedBehaviorUpdates", {})) + len(baseline.get("reviewedTranslationUpdates", {}))
-    print(f"Passed {count + schema_checks} isolated compatibility-guard mutation checks.")
+    print(f"Passed {count + schema_checks + metadata_checks} isolated compatibility-guard mutation checks.")
 
 
 def main():
@@ -692,7 +774,8 @@ def main():
     print(f"Stable {baseline['baselineCommit'][:7]} contract preserved: "
           f"{len(baseline['files'])} guarded functional/localization files "
           f"({len(baseline.get('reviewedBehaviorUpdates', {}))} explicitly reviewed behavior updates, "
-          f"{len(baseline.get('reviewedSchemaExtensions', {}))} additive schema extensions with original-contract reconstruction), "
+          f"{len(baseline.get('reviewedSchemaExtensions', {}))} additive schema extensions and "
+          f"{len(ALLOWED_METADATA_REPAIRS)} exact metadata repairs with original-contract reconstruction), "
           f"{len(baseline['translations'])} translated entries "
           f"({len(baseline.get('reviewedTranslationUpdates', {}))} exact reviewed replacements), and bundle/update identity.")
     if args.self_test:

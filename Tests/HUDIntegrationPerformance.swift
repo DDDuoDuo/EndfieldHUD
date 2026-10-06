@@ -384,11 +384,46 @@ enum HUDIntegrationPerformance {
                             "Pointer packet changes clipped hit regions: \(label)")
                     }
                 }
+                func verifyPointerPixels(_ frame: HUDSourceWatchFrameBuilder.Frame,
+                                         camera view: HUDSourceWatchCamera.Frame, time: Double) throws {
+                    var projection = HUDSourceGeometry.floatMatrix(view.camera.projection)
+                    var vp = HUDSourceGeometry.floatMatrix(view.camera.viewProjection)
+                    for column in 0..<4 { projection[column].y = -projection[column].y; vp[column].y = -vp[column].y }
+                    let p = source.cameraModel.cameraWorld.columns.3
+                    let camera = HUDSourceMetalRenderer.Camera(viewProjection: vp,
+                        viewNoTranslationProjection: try HUDSourceWatchCamera.viewNoTranslationProjection(
+                            gpuProjection: projection, view: view.camera.view),
+                        worldSpacePosition: SIMD3(Float(p.x), Float(p.y), Float(p.z)), timeSeconds: Float(time),
+                        renderPathInjected: 1, flipX: 0, flipY: 0, projection: projection,
+                        inverseView: HUDSourceGeometry.floatMatrix(source.cameraModel.shaderCameraToWorld),
+                        uiProjectionParameters: try HUDSourceWatchCamera.uiProjectionParams(gpuProjection: projection,
+                            near: Float(source.cameraModel.near), far: Float(source.cameraModel.far)))
+                    let renderer = source.renderer
+                    // First draw follows the previous pointer packet directly,
+                    // so its shared token really exercises the retained plan.
+                    renderer.submit(camera: camera, batches: frame.batches, structureToken: frame.batchStructureToken)
+                    renderer.draw(); _ = try renderer.copyDrawableImage()
+                    guard let pixels = renderer.drawableReadbackBGRA, renderer.diagnostics.isEmpty else {
+                        fatalError("Pointer packet failed to produce its actual Metal pixels")
+                    }
+                    renderer.setRenderPacketsEnabledForVerification(false, retainingPacket: true)
+                    renderer.submit(camera: camera, batches: frame.batches)
+                    renderer.draw(); _ = try renderer.copyDrawableImage()
+                    require(renderer.drawableReadbackBGRA == pixels && renderer.diagnostics.isEmpty,
+                        "Retained pointer packet pixels differ from the generic encoder and full batch dependency checks")
+                    // Restore the exact token/plan before the next moving sample.
+                    renderer.setRenderPacketsEnabledForVerification(true, retainingPacket: true)
+                    renderer.submit(camera: camera, batches: frame.batches, structureToken: frame.batchStructureToken)
+                    renderer.draw(); _ = try renderer.copyDrawableImage()
+                    require(renderer.drawableReadbackBGRA == pixels && renderer.diagnostics.isEmpty,
+                        "Restoring a retained pointer packet changes Metal pixels")
+                }
                 for usesAmbient in [true, false] {
                     let seedCamera = try source.cameraModel.frame(screenSize: size,
                         localRotation: HUDSourceWatchCamera.quaternion(eulerDegrees: .zero))
                     let seedPose = try completePose(at: usesAmbient ? 1.127 : nil, canvas: seedCamera.layout.canvasSize)
-                    _ = try builder.build(pose: seedPose, worldRoot: seedCamera.worldRoot, forceRebuild: true)
+                    let pointerSeed = try builder.build(pose: seedPose, worldRoot: seedCamera.worldRoot, forceRebuild: true)
+                    try verifyPointerPixels(pointerSeed, camera: seedCamera, time: usesAmbient ? 1.127 : 0)
                     let pointerBefore = builder.directPointerFrameCount
                     var snapshots: [PointerSnapshot] = []
                     for (index, angle) in [SIMD3<Double>(7, -5, 0), SIMD3(-11, 9, 0), .zero, .zero].enumerated() {
@@ -407,6 +442,8 @@ enum HUDIntegrationPerformance {
                             worldRoot: camera.worldRoot, canvasResolution: camera.layout.canvasSize) else {
                             fatalError("Settled pointer packet rejected unchanged dependencies at sample \(index), ambient=\(usesAmbient)")
                         }
+                        require(frame.batchStructureToken === pointerSeed.batchStructureToken,
+                            "Pointer packets retain exact draw structure while updating geometry and numeric uniforms")
                         require(builder.presentationRevision == revision + (index < 3 ? 1 : 0),
                             "Pointer motion must invalidate hit queries; idle samples keep the same hit revision")
                         if index < 3 {
@@ -414,6 +451,7 @@ enum HUDIntegrationPerformance {
                                 worldRoot: camera.worldRoot, canvasResolution: camera.layout.canvasSize) == nil,
                                 "Previous pointer revision cannot be reused")
                         }
+                        try verifyPointerPixels(frame, camera: camera, time: usesAmbient ? sampleTime : 0)
                         snapshots.append((frame,
                             try source.renderer.geometryFingerprintForVerification(meshNames: Set(frame.batches.map(\.mesh))),
                             try completePose(at: usesAmbient ? sampleTime : nil, canvas: camera.layout.canvasSize),

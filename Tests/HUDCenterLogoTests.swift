@@ -36,7 +36,38 @@ enum HUDCenterLogoTests {
                     }
                 }
                 check(visible, "Preset silhouettes are white artwork ready for the existing logo glow")
+                let presentation = HUDCenterLogoPresentation.image(image)
+                check(presentation?.width == 600 && presentation?.height == 130,
+                      "Each new center wordmark occupies the authored 300 by 65 slot at 2x")
             }
+
+            // File margins and aspect ratio must not shrink a user's center
+            // logo. Generate square, wide and tall fixtures with asymmetric
+            // transparent padding and compare their visible presentation.
+            var referencePixels: Data?
+            for size in [(200, 200), (768, 128), (128, 768)] {
+                let context = CGContext(data: nil, width: size.0, height: size.1,
+                    bitsPerComponent: 8, bytesPerRow: size.0 * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.setFillColor(NSColor(srgbRed: 0.15, green: 0.8, blue: 0.35, alpha: 1).cgColor)
+                context.fill(CGRect(x: 11, y: 23, width: size.0 - 36, height: size.1 - 47))
+                let presentation = HUDCenterLogoPresentation.image(context.makeImage()!)!
+                check(presentation.width == 600 && presentation.height == 130,
+                      "Custom square, wide and tall artwork use the default logo's exact footprint")
+                let pixels = presentation.dataProvider!.data! as Data
+                if let referencePixels {
+                    check(pixels == referencePixels, "Transparent file margins do not change the visible logo size")
+                } else { referencePixels = pixels }
+                let color = NSBitmapImageRep(cgImage: presentation).colorAt(x: 300, y: 65)!.usingColorSpace(.sRGB)!
+                check(color.greenComponent > color.redComponent && color.greenComponent > color.blueComponent,
+                      "Logo normalization retains custom artwork colors")
+            }
+            let transparent = CGContext(data: nil, width: 64, height: 64,
+                bitsPerComponent: 8, bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            check(HUDCenterLogoPresentation.image(transparent.makeImage()!) == nil,
+                  "Empty artwork falls back safely without invalid crop geometry")
 
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             let source = root.appendingPathComponent("source.png")

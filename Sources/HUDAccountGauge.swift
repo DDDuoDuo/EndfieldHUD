@@ -65,6 +65,10 @@ final class HUDAccountGauge {
         number.name = "hud.account.stamina.value"; number.frame = CGRect(x: 39, y: 6, width: 121, height: 30)
         number.contentsGravity = .resize; number.actions = ["contents": NSNull()]; layer.addSublayer(number)
         feedback = HUDControlHighlightLayer.add(to: layer, rect: barRect, shape: .rounded)
+        if let silhouette = Artwork.backgroundMask {
+            feedback.useAlphaSilhouette(silhouette,
+                contentsCenter: CGRect(x: 29.0 / 60, y: 0, width: 2.0 / 60, height: 1))
+        }
         feedback.accentOverride = NSColor(white: 0.75, alpha: 1)
         popover.name = "hud.account.stamina.recovery"; popover.frame = Self.popoverRect
         popover.backgroundColor = NSColor(white: 0.065, alpha: 0.98).cgColor
@@ -277,7 +281,8 @@ final class HUDAccountGauge {
 
     private enum Artwork {
         static let icon = load("item_ap--2524b69d--8210737671276829403.png", crop: CGRect(x: 1, y: 3, width: 80, height: 80))
-        static let background = tinted(load("bg_walletbar_1--cfe92272--8572312840272182184.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50)), white: 0.2666666806, alpha: 0.6980392337)
+        static let backgroundMask = load("bg_walletbar_1--cfe92272--8572312840272182184.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50))
+        static let background = tinted(backgroundMask, white: 0.2666666806, alpha: 0.6980392337)
         static let decoration = tinted(load("bg_walletbar_2--cfe92272--7683125525266349835.png", crop: CGRect(x: 1, y: 1, width: 60, height: 50)), white: 0.2117647082, alpha: 0.1019607857)
         private static func load(_ name: String, crop: CGRect) -> CGImage? {
             guard let url = HUDResources.url(for: "WatchSource/Scene/sprites/source-textures/" + name),

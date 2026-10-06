@@ -25,27 +25,17 @@ enum HUDCenterLogo: String, Codable, CaseIterable {
         if self == .endfield { return nil }
         if self == .custom { return store.image(revision: revision) }
         if let cached = Self.presetImages[self] { return cached }
-        let icon: HUDApplicationIcon
-        switch self {
-        case .rhodesIsland: icon = .rhodesIsland
-        case .babel: icon = .babel
-        case .rhineLab: icon = .rhineLab
-        case .endfield, .custom: return nil
-        }
-        // The existing template rendering removes the supplied black sheet;
-        // application-icon rendering would bake in an unwanted rounded plate.
-        let template = icon.image(size: 256, menuBar: true)
-        guard let source = template.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let context = CGContext(data: nil, width: source.width, height: source.height,
-                bitsPerComponent: 8, bytesPerRow: source.width * 4,
-                space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let bounds = CGRect(x: 0, y: 0, width: source.width, height: source.height)
-        context.draw(source, in: bounds)
-        context.setBlendMode(.sourceIn)
-        context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(bounds)
-        guard let image = context.makeImage() else { return nil }
-        // Exactly three fixed 512px entries; this cannot grow with user input.
+        // Center wordmarks are separate from the square app/menu-bar icons.
+        // The three prepared transparent PNGs never require the faction atlas.
+        guard let url = HUDResources.url(for: "AppIconSources/CenterLogos/" + rawValue + ".png"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: HUDCenterLogoStore.maximumDimension,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else { return nil }
+        // Exactly three bounded entries; this cannot grow with user input.
         Self.presetImages[self] = image
         return image
     }

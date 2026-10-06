@@ -1112,7 +1112,8 @@ final class HUDSourceWatchFrameBuilder {
         presentationRevision &+= 1
         directPointerFrameCount += 1; cachedLayoutFrameCount += 1
         let frame = Frame(resolved: cachedResolved, batches: batches, hits: hits, layoutReport: cached.layoutReport,
-            diagnostics: cached.diagnostics, inheritedAlpha: cached.inheritedAlpha, resolvedMotion: changed)
+            diagnostics: cached.diagnostics, inheritedAlpha: cached.inheritedAlpha, resolvedMotion: changed,
+            batchStructureToken: cached.batchStructureToken)
         pointerPresentation = frame; pointerPresentationRoot = worldRoot
         pointerPresentationNodes = changed; pointerPresentationHasAmbient = ambient != nil
         return frame

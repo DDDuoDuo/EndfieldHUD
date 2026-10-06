@@ -52,6 +52,19 @@ final class HUDControlHighlightLayer: CALayer {
         setHighlighted(false, pressed: false, force: true)
     }
 
+    /// Reuse a control's sliced source alpha when its artwork has an irregular
+    /// silhouette. A retained mask follows every transparent edge without
+    /// rasterizing on pointer movement or adding a rectangular outline.
+    func useAlphaSilhouette(_ image: CGImage, contentsCenter: CGRect) {
+        let silhouette = CALayer()
+        silhouette.name = "hud.control.highlight.silhouette"
+        silhouette.frame = bounds; silhouette.contents = image
+        silhouette.contentsGravity = .resize; silhouette.contentsCenter = contentsCenter
+        mask = silhouette
+        tint.path = CGPath(rect: bounds, transform: nil)
+        rim.isHidden = true
+    }
+
     @discardableResult
     static func add(to parent: CALayer, rect: CGRect, shape: Shape = .rounded,
                     enabled: Bool = true, framed: Bool = false) -> HUDControlHighlightLayer {

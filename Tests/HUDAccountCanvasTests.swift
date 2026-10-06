@@ -128,6 +128,26 @@ enum HUDAccountCanvasTests {
               "Recovery menu has a finite opening animation")
         gauge.hover(at: CGPoint(x: 90, y: 20))
         check(HUDControlHighlightLayer.highlightedCount(in: gauge.layer) == 1, "Wallet hover uses its retained grey feedback")
+        let walletFeedback = gauge.layer.sublayers!.compactMap { $0 as? HUDControlHighlightLayer }.first!
+        let walletBackground = gauge.layer.sublayers!.first { $0.name == "hud.account.stamina.back" }!
+        let silhouette = walletFeedback.mask
+        check(silhouette?.contentsCenter == walletBackground.contentsCenter
+              && silhouette?.bounds == walletFeedback.bounds
+              && silhouette?.contents.map { CFGetTypeID($0 as CFTypeRef) == CGImage.typeID } == true
+              && walletFeedback.sublayers?.last?.isHidden == true,
+              "Wallet feedback reuses the source bar's sliced alpha silhouette without a rectangular rim")
+        let hoverContext = CGContext(data: nil, width: 336, height: 60, bitsPerComponent: 8,
+            bytesPerRow: 336 * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        hoverContext.scaleBy(x: 2, y: 2); walletFeedback.render(in: hoverContext)
+        let hoverPixels = hoverContext.data!.assumingMemoryBound(to: UInt8.self)
+        func hoverAlpha(_ x: Int, _ y: Int) -> UInt8 { hoverPixels[(y * 336 + x) * 4 + 3] }
+        check(hoverAlpha(2, 2) == 0 && hoverAlpha(333, 2) == 0
+              && hoverAlpha(2, 57) == 0 && hoverAlpha(333, 57) == 0
+              && hoverAlpha(168, 30) > 0,
+              "Actual hover pixels cover the wallet center and leave every transparent rounded corner untouched")
+        gauge.hover(at: nil); gauge.hover(at: CGPoint(x: 100, y: 20))
+        check(walletFeedback.mask === silhouette, "Pointer movement reuses the retained silhouette without decoding or replacing its mask")
         var refreshes = 0; gauge.onRefresh = { refreshes += 1 }
         gauge.perform("refresh"); check(refreshes == 1 && gauge.isPopoverOpen, "Manual refresh is explicit and leaves recovery information visible")
         let priorTooltipRasters = gauge.tooltipRasterCount

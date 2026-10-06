@@ -14,18 +14,27 @@ enum AppShortcutStoreTests {
         let root = fm.temporaryDirectory.appendingPathComponent("AppShortcutStoreTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? fm.removeItem(at: root) }
         func fixture(_ name: String, identifier: String? = "test.endfield.fixture", packageType: String = "APPL",
-                     executable: String = "Fixture", executableMode: Int = 0o700) throws -> URL {
+                     executable: String = "Fixture", executableMode: Int = 0o700, flat: Bool = false) throws -> URL {
             let url = root.appendingPathComponent(name, isDirectory: true)
-            let binaryDirectory = url.appendingPathComponent("Contents/MacOS", isDirectory: true)
+            let binaryDirectory = flat ? url : url.appendingPathComponent("Contents/MacOS", isDirectory: true)
             try fm.createDirectory(at: binaryDirectory, withIntermediateDirectories: true)
             var info: [String: Any] = ["CFBundlePackageType": packageType, "CFBundleExecutable": executable,
                                        "CFBundleName": "Internal fixture", "CFBundleDisplayName": "Fixture 应用"]
             if let identifier { info["CFBundleIdentifier"] = identifier }
             try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-                .write(to: url.appendingPathComponent("Contents/Info.plist"))
+                .write(to: url.appendingPathComponent(flat ? "Info.plist" : "Contents/Info.plist"))
             let binary = binaryDirectory.appendingPathComponent("Fixture")
             try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binary)
             try fm.setAttributes([.posixPermissions: executableMode], ofItemAtPath: binary.path)
+            return url
+        }
+        func wrappedFixture(_ name: String, packageType: String = "APPL", executable: String = "Fixture",
+                            executableMode: Int = 0o700) throws -> URL {
+            _ = try fixture("\(name)/Wrapper/Cloud.app", packageType: packageType, executable: executable,
+                            executableMode: executableMode, flat: true)
+            let url = root.appendingPathComponent(name, isDirectory: true)
+            try fm.createSymbolicLink(atPath: url.appendingPathComponent("WrappedBundle").path,
+                                      withDestinationPath: "Wrapper/Cloud.app")
             return url
         }
         do {
@@ -121,6 +130,72 @@ enum AppShortcutStoreTests {
             check(rejected { _ = try store.inspect(url: traversingExecutable) }, "Executable metadata cannot escape the expected bundle layout")
             let missingExecutable = try fixture("MissingExecutable.app", executable: "Gone")
             check(rejected { _ = try store.inspect(url: missingExecutable) }, "Missing executables are rejected")
+
+            let alternateDirectory = root.appendingPathComponent("alternate-store", isDirectory: true)
+            let alternateStore = try AppShortcutStore(directory: alternateDirectory)
+            let flat = try fixture("Flat.app", flat: true)
+            let flatCandidate = try alternateStore.inspect(url: flat)
+            check(flatCandidate.name == "Fixture 应用" && flatCandidate.bundleIdentifier == candidate.bundleIdentifier,
+                  "Flat application bundles read their root metadata and executable")
+            let flatItem = try alternateStore.save(candidate: flatCandidate, name: "Flat app", iconPreset: .original)
+            check(try alternateStore.resolvedURL(for: flatItem.id) == flat.resolvingSymlinksInPath(),
+                  "Flat application bookmarks resolve to the selected application")
+            let wrapped = try wrappedFixture("云·终末地.app")
+            let wrappedCandidate = try alternateStore.inspect(url: wrapped)
+            check(wrappedCandidate.url == wrapped.resolvingSymlinksInPath() && wrappedCandidate.name == "Fixture 应用"
+                  && wrappedCandidate.bundleIdentifier == candidate.bundleIdentifier && wrappedCandidate.icon != nil,
+                  "iOS-on-Mac wrappers expose the inner app metadata while retaining the outer application URL and icon")
+            let wrappedItem = try alternateStore.save(candidate: wrappedCandidate, name: "Cloud app", iconPreset: .original)
+            let alternateReload = try AppShortcutStore(directory: alternateDirectory)
+            check(alternateReload.items == alternateStore.items, "Flat and wrapped applications persist through the existing archive format")
+            check(try alternateReload.resolvedURL(for: wrappedItem.id) == wrapped.resolvingSymlinksInPath(),
+                  "Wrapped app bookmarks give LaunchServices the outer application, never the embedded executable or bundle")
+            let wrappedAlias = root.appendingPathComponent("Cloud link.app")
+            try fm.createSymbolicLink(at: wrappedAlias, withDestinationURL: wrapped)
+            let wrappedAliasCandidate = try alternateStore.inspect(url: wrappedAlias)
+            check(rejected { _ = try alternateStore.save(candidate: wrappedAliasCandidate, name: "Again", iconPreset: .star) },
+                  "Aliases to the same wrapped installation are deduplicated")
+            let movedWrapped = root.appendingPathComponent("Cloud renamed.app", isDirectory: true)
+            try fm.moveItem(at: wrapped, to: movedWrapped)
+            check(try alternateStore.resolvedURL(for: wrappedItem.id) == movedWrapped.resolvingSymlinksInPath(),
+                  "Bookmarks follow moved wrappers and resolve their relative WrappedBundle link")
+            let movedWrappedCandidate = try alternateStore.inspect(url: movedWrapped)
+            let wrappedInfoURL = movedWrapped.appendingPathComponent("Wrapper/Cloud.app/Info.plist")
+            var wrappedInfo = try PropertyListSerialization.propertyList(from: Data(contentsOf: wrappedInfoURL), options: [], format: nil) as! [String: Any]
+            wrappedInfo["CFBundleIdentifier"] = "test.endfield.changed-wrapper"
+            try PropertyListSerialization.data(fromPropertyList: wrappedInfo, format: .xml, options: 0).write(to: wrappedInfoURL)
+            check(rejected { _ = try alternateStore.save(candidate: movedWrappedCandidate, name: "Stale", iconPreset: .original, editingID: wrappedItem.id) },
+                  "A stale wrapped-app draft cannot save changed embedded application identity")
+            check(rejected { _ = try alternateStore.resolvedURL(for: wrappedItem.id) },
+                  "Wrapped bookmarks refuse a replacement inner application")
+            for (label, type, executable, mode) in [("WrongType", "BNDL", "Fixture", 0o700),
+                                                   ("NoPermission", "APPL", "Fixture", 0o600),
+                                                   ("Traversal", "APPL", "../Fixture", 0o700),
+                                                   ("Missing", "APPL", "Gone", 0o700)] {
+                let invalidFlat = try fixture("Flat\(label).app", packageType: type, executable: executable, executableMode: mode, flat: true)
+                let invalidWrapped = try wrappedFixture("Wrapped\(label).app", packageType: type, executable: executable, executableMode: mode)
+                check(rejected { _ = try alternateStore.inspect(url: invalidFlat) }, "Flat layouts retain package and executable validation: \(label)")
+                check(rejected { _ = try alternateStore.inspect(url: invalidWrapped) }, "Wrapped layouts retain package and executable validation: \(label)")
+            }
+            let escapingWrapper = try wrappedFixture("EscapingWrapper.app")
+            try fm.removeItem(at: escapingWrapper.appendingPathComponent("WrappedBundle"))
+            try fm.createSymbolicLink(at: escapingWrapper.appendingPathComponent("WrappedBundle"), withDestinationURL: flat)
+            check(rejected { _ = try alternateStore.inspect(url: escapingWrapper) }, "WrappedBundle cannot substitute an app outside the selected package")
+            let escapingDirectory = root.appendingPathComponent("EscapingDirectory.app", isDirectory: true)
+            try fm.createDirectory(at: escapingDirectory, withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: escapingDirectory.appendingPathComponent("Wrapper"), withDestinationURL: root)
+            try fm.createSymbolicLink(atPath: escapingDirectory.appendingPathComponent("WrappedBundle").path, withDestinationPath: "Wrapper/Flat.app")
+            check(rejected { _ = try alternateStore.inspect(url: escapingDirectory) }, "A symlinked Wrapper directory cannot escape the selected package")
+            let noLink = try wrappedFixture("MissingWrappedLink.app")
+            try fm.removeItem(at: noLink.appendingPathComponent("WrappedBundle"))
+            check(rejected { _ = try alternateStore.inspect(url: noLink) }, "Missing wrapper metadata never triggers a search for an embedded or installed substitute")
+            let brokenLink = try wrappedFixture("BrokenWrappedLink.app")
+            try fm.removeItem(at: brokenLink.appendingPathComponent("Wrapper/Cloud.app"))
+            check(rejected { _ = try alternateStore.inspect(url: brokenLink) }, "A broken WrappedBundle link is rejected")
+            let brokenNative = try fixture("BrokenNative.app")
+            try fm.moveItem(at: brokenNative.appendingPathComponent("Contents/Info.plist"), to: brokenNative.appendingPathComponent("Info.plist"))
+            try fm.moveItem(at: brokenNative.appendingPathComponent("Contents/MacOS/Fixture"), to: brokenNative.appendingPathComponent("Fixture"))
+            check(rejected { _ = try alternateStore.inspect(url: brokenNative) }, "A broken native layout cannot fall through to unrelated root metadata")
             let staleDraft = try store.inspect(url: sameBundleURL)
             var info = try PropertyListSerialization.propertyList(from: Data(contentsOf: sameBundleURL.appendingPathComponent("Contents/Info.plist")), options: [], format: nil) as! [String: Any]
             info["CFBundleIdentifier"] = "test.endfield.replacement"

@@ -119,6 +119,31 @@ enum HUDSourceWatchLayoutTests {
             check(cachedImage.transforms == forcedImage.transforms,
                 "Image borders, inherited Canvas pixels-per-unit and LayoutElement priority retain exact metric order")
 
+            // A node with a fitter but no ILayoutElement still measures zero;
+            // sparse fixed metrics must not preserve its previous dimensions.
+            let blankFit = HUDSourceWatchLayout(scene: scene, components: [id(2): [fitter]])
+            for enabled in [true, false, true] {
+                var input = HUDSourceWatchPose(transforms: [id(2): HUDSourceTransformOverride(active: enabled)])
+                var oracle = input
+                _ = try blankFit.apply(to: &input)
+                _ = try blankFit.apply(to: &oracle, forceSlantRebuild: true)
+                check(input.transforms == oracle.transforms,
+                    "A metric-free fitter preserves zero sizing and activation changes")
+            }
+            let dynamicText = component("UIText", 114, [:])
+            var preferred = SIMD2<Double>(72, 18)
+            let textLayout = HUDSourceWatchLayout(scene: scene,
+                components: [id(1): [group(true, force: false), fitter], id(2): [dynamicText], id(5): [ignore]],
+                intrinsicSize: { _, _ in preferred })
+            for width in [72.0, 119, 0, 72] {
+                preferred.x = width
+                var actual = HUDSourceWatchPose(transforms: [:]), oracle = actual
+                let report = try textLayout.apply(to: &actual)
+                let reference = try textLayout.apply(to: &oracle, forceSlantRebuild: true)
+                check(actual.transforms == oracle.transforms && report.missingTextMetrics == reference.missingTextMetrics,
+                    "Retained layout stages always remeasure changing text before fitter and group writers")
+            }
+
             let scrollScene = try HUDSourceScene(rootID: id(1), nodes: [node(1, parent: nil, children: [2], size: SIMD2(100, 100)),
                 node(2, parent: 1, size: SIMD2(100, 300), pivot: SIMD2(0.5, 1), anchors: SIMD2(0.5, 1))])
             func pointer(_ number: Int) -> HUDSourceJSONValue { .object(["target_id": .string(id(number).rawValue)]) }

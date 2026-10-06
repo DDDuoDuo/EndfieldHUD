@@ -103,9 +103,10 @@ enum HUDSettingsCanvasTests {
         controller.refreshExternalStatus()
         check(systemChanges == 3, "Repeated identical platform status does not republish or repaint the settings page")
         system.onChange = nil
-        for id in ["language", "login", "focus", "screen", "ambient", "batteryEnabled", "restore"] {
+        for id in ["language", "login", "focus", "screen", "batteryEnabled", "restore"] {
             check(reach(id, in: system), "Every system setting remains reachable by continuous scrolling: \(id)")
         }
+        check(!reach("ambient", in: system), "Ambient animation no longer has a duplicate control in System")
         check(reach("language", in: system), "Language chooser is reachable in System settings")
         _ = system.scroll(at: CGPoint(x: 100, y: 100), delta: 12)
         let languageMainScroll = system.scrollOffset
@@ -221,9 +222,21 @@ enum HUDSettingsCanvasTests {
         check(controller.configuration.hudOffsetX == 0.5 && controller.layoutConfirmationRemaining == nil,
               "Closing during a position drag discards staging instead of restarting the safety preview")
         check(!display.setSlider(id: "positionY", value: .infinity), "Nonfinite position values cannot reach preview state")
-        for id in ["positionX", "positionY", "parallax", "perspective", "darkness", "blur", "motion", "theme", "clockFormat", "clockStyle", "centerLogo", "accent:FAD41F", "customColor", "battery", "lowPower"] {
+        for id in ["positionX", "positionY", "parallax", "perspective", "darkness", "blur", "motion", "theme", "clockFormat", "clockStyle", "centerLogo", "accent:FAD41F", "customColor", "battery", "ambient", "lowPower"] {
             check(reach(id, in: display), "Every display setting is scroll-reachable: \(id)")
         }
+        let motionRows = display.accessibleActions.suffix(3)
+        check(motionRows.map(\.id) == ["ambient", "motion", "lowPower"]
+              && zip(motionRows, motionRows.dropFirst()).allSatisfy { $0.1.rect.minY - $0.0.rect.minY == 40 },
+              "Ambient animation, Reduce Motion and Low Power appear in consecutive Display rows in that order")
+        let motionPreferences = controller.configuration
+        for id in ["ambient", "motion", "lowPower"] { display.perform(actionID: id) }
+        let restoredMotion = ConfigurationStore(defaults: defaults).configuration
+        check(restoredMotion.ambientAnimation != motionPreferences.ambientAnimation
+              && restoredMotion.reduceMotion != motionPreferences.reduceMotion
+              && restoredMotion.lowPowerVisualMode != motionPreferences.lowPowerVisualMode,
+              "The relocated controls persist the same three independent preferences across launches")
+        for id in ["ambient", "motion", "lowPower"] { display.perform(actionID: id) }
         check(reach("clockFormat", in: display), "Time format is available in Display")
         display.perform(actionID: "clockFormat")
         check(controller.configuration.clockFormat == .twelveHour && store.configuration.clockFormat == .twelveHour,

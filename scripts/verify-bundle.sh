@@ -92,7 +92,7 @@ from pathlib import Path
 import sys
 
 source_root, bundle_root = map(Path, sys.argv[1:])
-for directory in ('AppIconSources/Factions', 'AppIconSources/EndfieldWiki', 'WorldMap', 'MediaAssembly', 'OrbiPom'):
+for directory in ('AppIconSources/Factions', 'AppIconSources/EndfieldWiki', 'AppIconSources/CenterLogos', 'WorldMap', 'MediaAssembly', 'OrbiPom'):
     source, bundle = source_root / directory, bundle_root / directory
     def files(root):
         if not root.is_dir():
