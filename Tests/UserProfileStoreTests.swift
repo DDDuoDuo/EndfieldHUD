@@ -32,6 +32,8 @@ enum UserProfileStoreTests {
                   "New appearance fields begin with an empty introduction and centered background crops")
             check(original.avatarZoom == 1 && original.avatarOffsetX == 0 && original.avatarOffsetY == 0,
                   "New portraits start at their centered aspect-fill presentation without extra zoom")
+            check(original.backgroundZoom == 1 && original.thumbnailZoom == 1,
+                  "New background and thumbnail zoom preserve the existing aspect-fill crops")
             let initialBirthday = Calendar(identifier: .gregorian).dateComponents([.month, .day], from: date)
             check(!original.showsBirthday && original.birthdayMonth == initialBirthday.month
                   && original.birthdayDay == initialBirthday.day,
@@ -88,6 +90,7 @@ enum UserProfileStoreTests {
                 $0.permissionLevel = 99; $0.explorationLevel = -100
                 $0.avatarZoom = 40; $0.avatarOffsetX = -2; $0.avatarOffsetY = 2
                 $0.backgroundWidth = 1200; $0.backgroundOffsetX = -999; $0.backgroundOffsetY = 999
+                $0.backgroundZoom = 40; $0.thumbnailZoom = 30
                 $0.thumbnailOffsetX = -2; $0.thumbnailOffsetY = 2
             }
             check(store.profile.name == String(longName.prefix(20)) && store.profile.tag == String(longTag.prefix(10))
@@ -101,6 +104,8 @@ enum UserProfileStoreTests {
                   "Levels and both independent background geometries clamp to their supported ranges")
             check(store.profile.avatarZoom == 20 && store.profile.avatarOffsetX == -1 && store.profile.avatarOffsetY == 1,
                   "Portrait zoom and crop offsets clamp before rendering or persistence")
+            check(store.profile.backgroundZoom == 20 && store.profile.thumbnailZoom == 20,
+                  "Both independent background zoom controls retain the portrait's 20x upper bound")
             let croppedReload = try UserProfileStore(directory: directory)
             check(croppedReload.profile == store.profile && croppedReload.profile.uid == original.uid
                   && croppedReload.profile.awakeningDate == original.awakeningDate,
@@ -109,6 +114,7 @@ enum UserProfileStoreTests {
                 $0.permissionLevel = Int.min; $0.explorationLevel = Int.max
                 $0.avatarZoom = -1; $0.avatarOffsetX = 0.25; $0.avatarOffsetY = -0.75
                 $0.backgroundWidth = 1; $0.backgroundOffsetX = 999; $0.backgroundOffsetY = -999
+                $0.backgroundZoom = -1; $0.thumbnailZoom = 0
                 $0.thumbnailOffsetX = 0.75; $0.thumbnailOffsetY = -0.5
             }
             check(store.profile.permissionLevel == 1 && store.profile.explorationLevel == 7
@@ -118,9 +124,12 @@ enum UserProfileStoreTests {
                   "Opposite range boundaries clamp while valid fractional thumbnail crops remain unchanged")
             check(store.profile.avatarZoom == 1 && store.profile.avatarOffsetX == 0.25 && store.profile.avatarOffsetY == -0.75,
                   "Portrait zoom cannot expose outside the image and valid fractional crop offsets remain unchanged")
+            check(store.profile.backgroundZoom == 1 && store.profile.thumbnailZoom == 1,
+                  "Background and thumbnail zoom cannot expose empty image edges below aspect fill")
             try store.update {
                 $0.avatarZoom = .nan; $0.avatarOffsetX = .infinity; $0.avatarOffsetY = -.infinity
                 $0.backgroundWidth = .nan; $0.backgroundOffsetX = .infinity; $0.backgroundOffsetY = -.infinity
+                $0.backgroundZoom = .nan; $0.thumbnailZoom = .infinity
                 $0.thumbnailOffsetX = .nan; $0.thumbnailOffsetY = .infinity
             }
             check(store.profile.backgroundWidth == 600 && store.profile.backgroundOffsetX == 0
@@ -129,13 +138,15 @@ enum UserProfileStoreTests {
                   "Nonfinite appearance inputs restore centered defaults before rendering or serialization")
             check(store.profile.avatarZoom == 1 && store.profile.avatarOffsetX == 0 && store.profile.avatarOffsetY == 0,
                   "Nonfinite portrait geometry restores a finite centered default")
+            check(store.profile.backgroundZoom == 1 && store.profile.thumbnailZoom == 1,
+                  "Nonfinite background zooms normalize before serialization")
 
             let oldDirectory = root.appendingPathComponent("OldProfile")
             try FileManager.default.createDirectory(at: oldDirectory, withIntermediateDirectories: true)
             let oldFile = oldDirectory.appendingPathComponent("profile.json")
             var oldDocument = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("profile.json"))) as! [String: Any]
             var oldProfile = oldDocument["profile"] as! [String: Any]
-            for key in ["introduction", "backgroundWidth", "backgroundOffsetX", "backgroundOffsetY", "thumbnailOffsetX", "thumbnailOffsetY",
+            for key in ["introduction", "backgroundWidth", "backgroundZoom", "backgroundOffsetX", "backgroundOffsetY", "thumbnailZoom", "thumbnailOffsetX", "thumbnailOffsetY",
                         "showsBirthday", "birthdayMonth", "birthdayDay", "avatarZoom", "avatarOffsetX", "avatarOffsetY", "themeColorHex"] {
                 oldProfile.removeValue(forKey: key)
             }
@@ -156,6 +167,8 @@ enum UserProfileStoreTests {
             check(oldReload.profile.themeColorHex == nil, "Legacy cards default to following the current HUD accent")
             check(oldReload.profile.avatarZoom == 1 && oldReload.profile.avatarOffsetX == 0 && oldReload.profile.avatarOffsetY == 0,
                   "Legacy profiles missing portrait geometry retain the original centered presentation")
+            check(oldReload.profile.backgroundZoom == 1 && oldReload.profile.thumbnailZoom == 1,
+                  "Version-one archives missing independent zooms decode without changing legacy presentation")
             check(!oldReload.profile.showsBirthday && oldReload.profile.birthdayMonth == original.birthdayMonth
                   && oldReload.profile.birthdayDay == original.birthdayDay,
                   "Legacy cards retain awakening mode and derive stable birthday defaults from their saved date")
@@ -170,12 +183,43 @@ enum UserProfileStoreTests {
             var cropDocument = oldDocument
             var cropProfile = oldProfile
             cropProfile["avatarZoom"] = 200; cropProfile["avatarOffsetX"] = -9; cropProfile["avatarOffsetY"] = 9
+            cropProfile["backgroundZoom"] = 200; cropProfile["thumbnailZoom"] = -5
             cropDocument["profile"] = cropProfile
             try JSONSerialization.data(withJSONObject: cropDocument).write(to: cropDirectory.appendingPathComponent("profile.json"))
             let cropReload = try UserProfileStore(directory: cropDirectory)
             check(cropReload.profile.avatarZoom == 20 && cropReload.profile.avatarOffsetX == -1
                   && cropReload.profile.avatarOffsetY == 1 && cropReload.profile.uid == original.uid,
                   "Persisted out-of-range portrait geometry normalizes without replacing the saved identity")
+            check(cropReload.profile.backgroundZoom == 20 && cropReload.profile.thumbnailZoom == 1,
+                  "Persisted background zooms normalize at both range boundaries")
+
+            // Upgrade an existing customized card by removing only the new keys.
+            // Opening it must not rewrite its archive or reset established crops.
+            let zoomLegacyDirectory = root.appendingPathComponent("ExistingCrops")
+            try FileManager.default.createDirectory(at: zoomLegacyDirectory, withIntermediateDirectories: true)
+            var zoomLegacyDocument = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("profile.json"))) as! [String: Any]
+            var zoomLegacyProfile = zoomLegacyDocument["profile"] as! [String: Any]
+            zoomLegacyProfile.removeValue(forKey: "backgroundZoom"); zoomLegacyProfile.removeValue(forKey: "thumbnailZoom")
+            zoomLegacyProfile["backgroundWidth"] = 750; zoomLegacyProfile["backgroundOffsetX"] = 42; zoomLegacyProfile["backgroundOffsetY"] = -18
+            zoomLegacyProfile["thumbnailOffsetX"] = 0.45; zoomLegacyProfile["thumbnailOffsetY"] = -0.25
+            zoomLegacyProfile["avatarZoom"] = 12.5; zoomLegacyProfile["avatarOffsetX"] = -0.1; zoomLegacyProfile["avatarOffsetY"] = 0.2
+            zoomLegacyDocument["profile"] = zoomLegacyProfile
+            let zoomLegacyFile = zoomLegacyDirectory.appendingPathComponent("profile.json")
+            let zoomLegacyData = try JSONSerialization.data(withJSONObject: zoomLegacyDocument)
+            try zoomLegacyData.write(to: zoomLegacyFile)
+            let zoomLegacy = try UserProfileStore(directory: zoomLegacyDirectory)
+            check(zoomLegacy.profile.backgroundZoom == 1 && zoomLegacy.profile.thumbnailZoom == 1
+                  && zoomLegacy.profile.backgroundWidth == 750 && zoomLegacy.profile.backgroundOffsetX == 42
+                  && zoomLegacy.profile.backgroundOffsetY == -18 && zoomLegacy.profile.thumbnailOffsetX == 0.45
+                  && zoomLegacy.profile.thumbnailOffsetY == -0.25 && zoomLegacy.profile.avatarZoom == 12.5
+                  && zoomLegacy.profile.avatarOffsetX == -0.1 && zoomLegacy.profile.avatarOffsetY == 0.2,
+                  "Adding zoom preserves every pre-existing portrait, background extent and thumbnail position")
+            check(try Data(contentsOf: zoomLegacyFile) == zoomLegacyData,
+                  "Loading legacy crops never writes a migration or replaces the user's archive")
+            try zoomLegacy.update { $0.backgroundZoom = 2.75; $0.thumbnailZoom = 4.25 }
+            let zoomReload = try UserProfileStore(directory: zoomLegacyDirectory)
+            check(zoomReload.profile == zoomLegacy.profile && zoomReload.profile.backgroundZoom == 2.75
+                  && zoomReload.profile.thumbnailZoom == 4.25, "Independent fractional zooms survive relaunch with all existing geometry")
 
             let dateDirectory = root.appendingPathComponent("DateProfile")
             let dates = try UserProfileStore(directory: dateDirectory, now: date)
@@ -307,6 +351,7 @@ enum UserProfileStoreTests {
                   "An invalid image cannot alter the committed profile")
             try store.update {
                 $0.backgroundWidth = 750; $0.backgroundOffsetX = 150; $0.backgroundOffsetY = -60
+                $0.backgroundZoom = 3.25; $0.thumbnailZoom = 8.5
                 $0.thumbnailOffsetX = 0.4; $0.thumbnailOffsetY = -0.3
             }
             try store.removeImage(kind: .avatar)
@@ -318,14 +363,15 @@ enum UserProfileStoreTests {
                   "Restoring the default portrait clears its crop geometry together with its asset reference")
             check(store.profile.backgroundWidth == 750 && store.profile.backgroundOffsetX == 150
                   && store.profile.backgroundOffsetY == -60 && store.profile.thumbnailOffsetX == 0.4
-                  && store.profile.thumbnailOffsetY == -0.3,
+                  && store.profile.thumbnailOffsetY == -0.3 && store.profile.backgroundZoom == 3.25 && store.profile.thumbnailZoom == 8.5,
                   "Avatar restoration does not change the separate full-card background or identity-card crop")
             try store.update { $0.avatarZoom = 1.5; $0.avatarOffsetX = 0.2; $0.avatarOffsetY = -0.4 }
             try store.removeImage(kind: .background)
             check(store.profile.backgroundFilename == nil && store.image(for: .background) == nil
                   && store.profile.backgroundWidth == 600 && store.profile.backgroundOffsetX == 0
                   && store.profile.backgroundOffsetY == 0 && store.profile.thumbnailOffsetX == 0
-                  && store.profile.thumbnailOffsetY == 0 && !FileManager.default.fileExists(atPath: backgroundURL.path),
+                  && store.profile.thumbnailOffsetY == 0 && store.profile.backgroundZoom == 1 && store.profile.thumbnailZoom == 1
+                  && !FileManager.default.fileExists(atPath: backgroundURL.path),
                   "Restoring the background clears its image and both independent crop positions atomically")
             check(store.profile.avatarZoom == 1.5 && store.profile.avatarOffsetX == 0.2 && store.profile.avatarOffsetY == -0.4,
                   "Restoring the background leaves portrait zoom and position unchanged")

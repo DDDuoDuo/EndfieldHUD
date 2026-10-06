@@ -141,7 +141,8 @@ final class HUDIdentityCard {
         if let backgroundImage {
             let photo = CALayer(); photo.frame = r; photo.contents = backgroundImage
             photo.contentsRect = Self.thumbnailCrop(imageSize: CGSize(width: backgroundImage.width, height: backgroundImage.height),
-                targetSize: r.size, offset: CGPoint(x: details?.thumbnailOffsetX ?? 0, y: details?.thumbnailOffsetY ?? 0))
+                targetSize: r.size, offset: CGPoint(x: details?.thumbnailOffsetX ?? 0, y: details?.thumbnailOffsetY ?? 0),
+                zoom: details?.thumbnailZoom ?? 1)
             photo.contentsGravity = .resize; photo.masksToBounds = true; photo.opacity = 0.62
             let mask = CAShapeLayer(); mask.path = outline; photo.mask = mask
             face.addSublayer(photo)
@@ -209,7 +210,7 @@ final class HUDIdentityCard {
                                     fill: NSColor.black.withAlphaComponent(0.35)))
         var completed = progress; completed.size.width *= CGFloat(level) / 60
         foreground.addSublayer(shape(CGPath(roundedRect: completed, cornerWidth: 1.25, cornerHeight: 1.25, transform: nil), fill: gold))
-        text("UID: " + (details?.uid ?? "—"), in: foreground, rect: CGRect(x: 84, y: 71, width: 120, height: 10), size: 6.7,
+        text("UID: " + (details?.displayedUID ?? "—"), in: foreground, rect: CGRect(x: 84, y: 71, width: 120, height: 10), size: 6.7,
              color: muted.withAlphaComponent(0.77), weight: .medium)
         for index in 0..<4 {
             let mark = CGRect(x: 216 + CGFloat(index) * 3.3, y: 73, width: 1.2, height: index.isMultiple(of: 2) ? 3.1 : 1.7)
@@ -219,19 +220,8 @@ final class HUDIdentityCard {
 
     /// A normalized aspect-fill crop moves only within the available image,
     /// so adjusting the compact card never exposes empty image edges.
-    static func thumbnailCrop(imageSize: CGSize, targetSize: CGSize, offset: CGPoint) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0, targetSize.width > 0, targetSize.height > 0,
-              imageSize.width.isFinite, imageSize.height.isFinite,
-              targetSize.width.isFinite, targetSize.height.isFinite else {
-            return CGRect(x: 0, y: 0, width: 1, height: 1)
-        }
-        let fit = max(targetSize.width / imageSize.width, targetSize.height / imageSize.height)
-        let width = min(1, targetSize.width / (imageSize.width * fit))
-        let height = min(1, targetSize.height / (imageSize.height * fit))
-        let x = offset.x.isFinite ? min(1, max(-1, offset.x)) : 0
-        let y = offset.y.isFinite ? min(1, max(-1, offset.y)) : 0
-        return CGRect(x: (1 - width) * (x + 1) / 2, y: (1 - height) * (y + 1) / 2,
-                      width: width, height: height)
+    static func thumbnailCrop(imageSize: CGSize, targetSize: CGSize, offset: CGPoint, zoom: Double = 1) -> CGRect {
+        HUDPortraitArtwork.crop(imageSize: imageSize, targetSize: targetSize, zoom: zoom, offset: offset)
     }
 
     private func renderAvatar(in host: CALayer, white: NSColor, gold: NSColor) {

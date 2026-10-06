@@ -419,7 +419,7 @@ final class VolumeCanvas: NSObject, HUDModuleContentFactory {
         content.sublayers?.forEach { $0.removeFromSuperlayer() }
         appRowsLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
         let title = chooser == .output ? L10n.text("Output device", "输出设备") : (chooser == .input ? L10n.text("Input device", "输入设备") : HUDModule.volume.title)
-        text(title, rect: CGRect(x: 12, y: 0, width: 310, height: 20), size: 15, color: primary, weight: .semibold)
+        text(HUDSectionHeading.text(title), rect: CGRect(x: 12, y: 0, width: 310, height: 20), size: 15, color: primary, weight: .semibold)
         text(controller.statusMessage ?? (chooser == nil ? L10n.text("Device and app volume", "设备与应用音量") : L10n.text("Choose a connected device", "选择已连接的设备")),
              rect: CGRect(x: 12, y: 23, width: 376, height: 13), size: 9.5, color: muted)
         if chooser != nil { renderChooser() }

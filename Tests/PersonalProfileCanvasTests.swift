@@ -70,7 +70,7 @@ enum PersonalProfileCanvasTests {
             check(initial.contains("Endministrator#0000") && initial.contains("24") && initial.contains("54") && initial.contains("325"), "Profile presents requested initial identity and counters")
             check(initial.contains("2.00") && initial.contains("Work Mode"), "Region construction reads cumulative Work Mode hours")
             check(!initial.contains(where: { $0.contains("Progress") || $0.contains("Chapter") }), "Reference chapter/progress panel remains omitted")
-            check(canvas.accessibleActions.count == 11 && canvas.accessibleActions.allSatisfy { retained.bounds.contains($0.rect) }, "Profile controls including intro and theme toolbar fit the retained surface")
+            check(canvas.accessibleActions.count == 12 && canvas.accessibleActions.allSatisfy { retained.bounds.contains($0.rect) }, "Profile controls including editable Player ID, intro and theme toolbar fit the retained surface")
             let intro = canvas.accessibleActions.first { $0.id == "profile:introduction" }!
             check(intro.rect.contains(CGPoint(x: 382, y: 164)), "The visible pencil is inside the introduction hit region")
             let originalID = store.profile.uid; let originalDate = store.profile.awakeningDate
@@ -155,6 +155,10 @@ enum PersonalProfileCanvasTests {
                   && canvas.accessibleActions.contains { $0.id == "profile:resetBackground" }, "Theme submenu retains restore and independent thumbnail controls")
             check(canvas.popoverBounds!.maxY == PersonalProfileCanvas.backgroundRect.minY - 6,
                   "Background adjustment is anchored immediately above its toolbar button")
+            check(retained.bounds.contains(canvas.popoverBounds!) && canvas.accessibleSliders.count == 7
+                  && canvas.accessibleSliders.allSatisfy { slider in
+                      !canvas.accessibleActions.contains { $0.rect.intersects(slider.rect) }
+                  }, "Two independent zoom rows fit above the existing toolbar without covering other controls")
             let globalAccent = HUDRuntimeAppearance.accent
             canvas.perform(actionID: "profile:themeMenu")
             check(canvas.accessibleSliders.isEmpty, "Color submenu hides geometry slider accessibility")
@@ -190,6 +194,56 @@ enum PersonalProfileCanvasTests {
             check(imageLayer.frame == CGRect(x: -70, y: 40, width: 700, height: 334), "Image extent and position overflow the canvas independently")
             check(imageLayer.mask is CAGradientLayer && imageLayer.mask?.mask is CAGradientLayer, "Background fades both horizontal and vertical edges")
             check(store.profile.thumbnailOffsetX == 0.5 && store.profile.backgroundOffsetX == 80, "Thumbnail offset uses normalized independent coordinates")
+            let source = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 200, pixelsHigh: 100,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            let sourceURL = root.appendingPathComponent("backdrop.png")
+            try source.representation(using: .png, properties: [:])!.write(to: sourceURL)
+            check(canvas.importImage(from: sourceURL, kind: .background), "Background zoom fixture imports through the bounded image store")
+            let originalCrop = imageLayer.contentsRect
+            let originalFrame = imageLayer.frame
+            check(canvas.setSlider(field: .backgroundZoom, value: 2.5) && canvas.setSlider(field: .thumbnailZoom, value: 4.25)
+                  && store.profile.backgroundZoom == 2.5 && store.profile.thumbnailZoom == 4.25,
+                  "Background and thumbnail zoom sliders retain independent fractional values")
+            check(abs(imageLayer.contentsRect.width - originalCrop.width / 2.5) < 0.000001
+                  && abs(imageLayer.contentsRect.height - originalCrop.height / 2.5) < 0.000001
+                  && imageLayer.frame == originalFrame && imageLayer.contentsGravity == .resize,
+                  "Background zoom crops photo contents without changing custom width, translation or image aspect")
+            let savedGeometry = store.profile
+            for field in [PersonalProfileField.backgroundZoom, .thumbnailZoom] {
+                let zoom = canvas.accessibleSliders.first { $0.field == field }!
+                let savedBytes = try Data(contentsOf: root.appendingPathComponent("profile.json"))
+                var commits = 0
+                let observer = store.observe { commits += 1 }
+                _ = canvas.mouseDown(at: CGPoint(x: zoom.rect.midX, y: zoom.rect.midY))
+                canvas.mouseDragged(to: CGPoint(x: zoom.rect.maxX + 500, y: zoom.rect.midY))
+                check(commits == 0 && (try? Data(contentsOf: root.appendingPathComponent("profile.json"))) == savedBytes
+                      && previews.last == canvas.profileValue,
+                      "Zoom drag previews both cards while leaving the archive and observers untouched")
+                check(field == .backgroundZoom ? canvas.profileValue.backgroundZoom == 20 : canvas.profileValue.thumbnailZoom == 20,
+                      "Each zoom drag remains captured outside its track and clamps at20x")
+                canvas.mouseUp()
+                check(commits == 1 && !canvas.isDragging, "Completing a zoom drag saves and publishes exactly once")
+                store.removeObserver(observer)
+            }
+            check(store.profile.backgroundWidth == savedGeometry.backgroundWidth
+                  && store.profile.backgroundOffsetX == savedGeometry.backgroundOffsetX
+                  && store.profile.backgroundOffsetY == savedGeometry.backgroundOffsetY
+                  && store.profile.thumbnailOffsetX == savedGeometry.thumbnailOffsetX
+                  && store.profile.thumbnailOffsetY == savedGeometry.thumbnailOffsetY
+                  && store.profile.avatarZoom == savedGeometry.avatarZoom,
+                  "Editing both zooms preserves the independent position and portrait controls")
+            let legacyThumbnail = HUDIdentityCard.thumbnailCrop(imageSize: CGSize(width: 200, height: 100),
+                targetSize: CGSize(width: 250, height: 80), offset: CGPoint(x: 0.5, y: -0.3))
+            let zoomedThumbnail = HUDIdentityCard.thumbnailCrop(imageSize: CGSize(width: 200, height: 100),
+                targetSize: CGSize(width: 250, height: 80), offset: CGPoint(x: 0.5, y: -0.3), zoom: 4)
+            check(abs(legacyThumbnail.width - 1) < 0.000001 && abs(legacyThumbnail.height - 0.64) < 0.000001
+                  && abs(legacyThumbnail.minY - 0.126) < 0.000001,
+                  "The default thumbnail zoom preserves the previous aspect-fill position exactly")
+            check(abs(zoomedThumbnail.width - legacyThumbnail.width / 4) < 0.000001
+                  && abs(zoomedThumbnail.height - legacyThumbnail.height / 4) < 0.000001
+                  && CGRect(x: 0, y: 0, width: 1, height: 1).contains(zoomedThumbnail),
+                  "Thumbnail zoom retains its crop position without exposing outside image edges")
             let widthTrack = canvas.accessibleSliders.first { $0.field == .backgroundWidth }!.rect
             _ = canvas.mouseDown(at: CGPoint(x: widthTrack.midX, y: widthTrack.midY))
             canvas.mouseDragged(to: CGPoint(x: widthTrack.minX - 1000, y: widthTrack.midY))
@@ -200,11 +254,13 @@ enum PersonalProfileCanvasTests {
                   "Dismissing a dragged background menu commits once and removes its sliders")
             canvas.perform(actionID: "profile:backgroundMenu")
             canvas.perform(actionID: "profile:resetBackground")
-            check(store.profile.backgroundWidth == 600 && store.profile.backgroundOffsetX == 0 && store.profile.thumbnailOffsetX == 0, "Restore background resets its geometry and thumbnail crop")
+            check(store.profile.backgroundWidth == 600 && store.profile.backgroundOffsetX == 0 && store.profile.thumbnailOffsetX == 0
+                  && store.profile.backgroundZoom == 1 && store.profile.thumbnailZoom == 1,
+                  "Restore background resets its geometry and both independent zooms")
             canvas.dismissPopover(); canvas.perform(actionID: "profile:visibility")
             check(canvas.isTextHidden && canvas.accessibleActions.count == 2 && canvas.accessibleActions.contains { $0.id == "profile:visibility" }, "Hide text leaves the theme submenu and visibility control accessible")
             canvas.perform(actionID: "profile:visibility")
-            check(!canvas.isTextHidden && canvas.accessibleActions.count == 11, "Show text restores profile actions")
+            check(!canvas.isTextHidden && canvas.accessibleActions.count == 12 && canvas.accessibleActions.contains { $0.id == "profile:playerID" }, "Show text restores profile actions including editable Player ID")
             check(!canvas.mouseDown(at: CGPoint(x: -5, y: 20)), "Outside clicks remain with shell")
             seconds = 9000; canvas.refreshWorkDuration()
             check(labels(canvas.layer).contains("2.50"), "Work hours read live elapsed seconds")
@@ -221,37 +277,66 @@ enum PersonalProfileCanvasTests {
             let input = HUDPersonalProfileInteraction(canvas: canvas, host: host)
             input.project = { $0.offsetBy(dx: 10, dy: 12) }; input.setActive(true)
             canvas.perform(actionID: "profile:permissionLevel")
-            let editor = host.subviews.compactMap { $0 as? NSTextField }.first!
-            check(editor.frame == canvas.fieldRect(.permissionLevel).offsetBy(dx: 10, dy: 12) && input.isInputLocked && input.isPresentingPanel, "Projected inline editor protects focus")
-            editor.stringValue = "61"
-            check(input.finishEditing() && editor.superview == nil && store.profile.permissionLevel == 60, "Out-of-range inline edit silently clamps and closes")
+            let surface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            let editor = surface.textView
+            check(surface.logicalRect == canvas.fieldRect(.permissionLevel) && surface.artwork.superlayer === canvas.layer
+                  && !input.isInputLocked && input.isPresentingPanel && window.firstResponder === editor,
+                  "Projected profile text retains native focus without holding the HUD pose")
+            editor.string = "61"
+            check(input.finishEditing() && surface.superview == nil && surface.artwork.superlayer == nil && store.profile.permissionLevel == 60,
+                  "Out-of-range inline edit silently clamps and closes")
             canvas.perform(actionID: "profile:name")
-            let nameEditor = host.subviews.compactMap { $0 as? NSTextField }.first!
-            nameEditor.stringValue = String(repeating: "界", count: 30)
-            input.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: nameEditor))
-            check(nameEditor.stringValue.count == 20, "Live name field clips committed input at20characters")
+            let nameSurface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            let nameEditor = nameSurface.textView
+            nameEditor.string = String(repeating: "界", count: 30)
+            nameEditor.setSelectedRange(NSRange(location: 30, length: 0))
+            nameEditor.setMarkedText("输入", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            input.textDidChange(Notification(name: NSText.didChangeNotification, object: nameEditor))
+            check(nameEditor.string.count == 32 && nameEditor.hasMarkedText(), "Name limits never cut unfinished Chinese marked text")
+            nameEditor.unmarkText(); input.textDidChange(Notification(name: NSText.didChangeNotification, object: nameEditor))
+            check(nameEditor.string.count == 20, "Live name input clips committed input at twenty Unicode characters")
+            let stableFont = nameEditor.font, stableFrame = nameEditor.frame
+            nameSurface.captureVisibleArtwork(); let beforePose = nameSurface.captureCount
+            for _ in 0..<120 { input.layoutAccessibility() }
+            check(nameEditor.frame == stableFrame && nameEditor.font == stableFont && nameSurface.captureCount == beforePose,
+                  "Profile pose refresh neither resizes text nor rerasterizes its native viewport")
             check(input.finishEditing(), "Clipped live name saves")
             canvas.perform(actionID: "profile:introduction")
-            let introEditor = host.subviews.compactMap { $0 as? NSTextField }.first!
-            introEditor.stringValue = String(repeating: "A", count: 180)
-            input.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: introEditor))
-            check(introEditor.stringValue.count == 150 && introEditor.maximumNumberOfLines == 0 && introEditor.cell?.wraps == true,
-                  "Introduction wraps and silentlyclips live input at150characters")
+            let introSurface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            let introEditor = introSurface.textView
+            introEditor.string = "First line\n" + String(repeating: "A", count: 180)
+            input.textDidChange(Notification(name: NSText.didChangeNotification, object: introEditor))
+            check(introEditor.string.count == 150 && introEditor.string.contains("\n")
+                  && introEditor.textContainer?.maximumNumberOfLines == 0 && introEditor.textContainer?.lineBreakMode == .byWordWrapping
+                  && introEditor.frame.height > introSurface.logicalRect.height,
+                  "Introduction preserves multiline wrapping and bounded committed text with a scrollable native document")
             _ = input.finishEditing(commit: false)
             canvas.perform(actionID: "profile:tag")
-            let tagEditor = host.subviews.compactMap { $0 as? NSTextField }.first!
-            tagEditor.stringValue = "0099"; let oldTag = store.profile.tag
+            let tagSurface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            tagSurface.textView.string = "0099"; let oldTag = store.profile.tag
             check(input.finishEditing(commit: false) && store.profile.tag == oldTag, "Escape preserves saved tag")
             canvas.perform(actionID: "profile:toggleDateLabel")
             canvas.perform(actionID: "profile:birthday")
-            let birthdayEditor = host.subviews.compactMap { $0 as? NSTextField }.first!
-            check(birthdayEditor.stringValue == "02/29" && birthdayEditor.frame == PersonalProfileCanvas.dateValueRect.offsetBy(dx: 10, dy: 12), "Birthday uses the existing projected inline field without a year")
-            birthdayEditor.stringValue = "11/20"
-            check(input.finishEditing() && store.profile.birthdayMonth == 11 && store.profile.birthdayDay == 20, "Inline birthday commits its month and day")
+            let birthdaySurface = host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.first!
+            let birthdayEditor = birthdaySurface.textView
+            check(birthdayEditor.string == "02/29" && birthdaySurface.logicalRect == PersonalProfileCanvas.dateValueRect,
+                  "Birthday uses a stable projected field without a year")
+            birthdayEditor.string = "02/31"
+            check(!input.finishEditing() && birthdaySurface.superview != nil && window.firstResponder === birthdayEditor,
+                  "An invalid birthday remains editable and keeps native focus")
+            birthdayEditor.string = "11/20"
+            window.makeFirstResponder(nil)
+            input.textDidEndEditing(Notification(name: NSText.didEndEditingNotification, object: birthdayEditor))
+            let commitDeadline = Date().addingTimeInterval(0.75)
+            while birthdaySurface.superview != nil && Date() < commitDeadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            check(birthdaySurface.superview == nil && store.profile.birthdayMonth == 11 && store.profile.birthdayDay == 20,
+                  "Focus loss commits the validated native birthday edit")
             canvas.perform(actionID: "profile:toggleDateLabel")
             canvas.perform(actionID: "profile:backgroundMenu")
             let backgroundSliders = host.subviews.compactMap { $0 as? NSSlider }.filter { !$0.isHidden }
-            check(backgroundSliders.count == 5 && host.subviews.compactMap { $0 as? NSTextField }.isEmpty
+            check(backgroundSliders.count == 7 && host.subviews.compactMap { $0 as? HUDProjectedTextEditor }.isEmpty
                   && !input.isInputLocked && input.capturesPointer,
                   "Background menu exposes native slider accessibility without opening an editor or freezing tilt")
             for control in canvas.accessibleSliders {
@@ -266,6 +351,15 @@ enum PersonalProfileCanvasTests {
             check(store.profile.backgroundWidth == 760, "Accessibility rejects a nonfinite geometry value")
             check(widthAX.accessibilityPerformIncrement() && store.profile.backgroundWidth > 760,
                   "Accessible increment changes geometry through the same slider action")
+            for field in [PersonalProfileField.backgroundZoom, .thumbnailZoom] {
+                let zoomAX = backgroundSliders.first { $0.accessibilityLabel() == field.title }!
+                zoomAX.setAccessibilityValue(NSNumber(value: 2.75))
+                check(zoomAX.doubleValue == 2.75 && zoomAX.minValue == 1 && zoomAX.maxValue == 20
+                      && zoomAX.accessibilityPerformIncrement(), "New zoom accessibility exposes the same finite range and keyboard adjustment as portrait")
+                check(field == .backgroundZoom ? abs(store.profile.backgroundZoom - 2.85) < 0.000001
+                      : abs(store.profile.thumbnailZoom - 2.85) < 0.000001,
+                      "Accessible zoom increments preserve fractional precision in the correct independent field")
+            }
             canvas.dismissPopover()
             canvas.perform(actionID: "profile:portraitMenu")
             check(!input.isInputLocked && input.capturesPointer, "Portrait adjustment menu leaves parallax live while capturing pointer input")
@@ -300,6 +394,19 @@ enum PersonalProfileCanvasTests {
             animated.perform(actionID: "profile:menu"); animated.dismissPopover()
             check(animated.activeAnimationCount > 0, "Custom menu has finite opening and closing movement")
             animated.deactivate(); check(animated.activeAnimationCount == 0, "Deactivation removes every profile animation")
+            let linked = PersonalProfileCanvas(store: store)
+            linked.gameSyncActive = true
+            let identity = store.profile.uid
+            check(linked.commit(field: .playerID, text: "CUSTOM-UID") && store.profile.displayedUID == "CUSTOM-UID" && store.profile.uid == identity,
+                  "Linked Player ID editor changes the display override without replacing the stable local identity")
+            check(linked.commit(field: .awakeningDate, text: "2020/03/14") && store.profile.hasManualAwakeningDate,
+                  "Editing awakening date marks an explicit override protected from later sync")
+            check(!linked.commit(field: .permissionLevel, text: "1") && !linked.commit(field: .operatorsCount, text: "1") && !linked.commit(field: .name, text: "Overwrite"),
+                  "Only synchronized game name, levels and counts are locked while profile sync is enabled")
+            check(linked.commit(field: .tag, text: "0099") && linked.commit(field: .introduction, text: "Local introduction"),
+                  "Linked profiles retain local tag and biography editing")
+            check(linked.accessibleActions.contains { $0.id == "profile:playerID" } && !linked.accessibleActions.contains { $0.id == "profile:permissionLevel" },
+                  "Projected accessibility exposes editable Player ID while excluding synchronized level controls")
         } catch { fatalError("Personal profile canvas fixture failed: \(error)") }
         return count
     }

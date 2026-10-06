@@ -22,6 +22,10 @@ Reduce Motion applies to the HUD and module actions, and also honors the system 
 
 Theme color applies to module controls, timer rings, Storage charts, navigation accents and the battery badge's hover outline. Activity Monitor graph series retain their fixed yellow/blue palette. Display also contains an **App / menu bar icon** chooser with **30 image-only choices**, including 27 original Endfield wiki assets plus Endfield, the original Battery and Perlica. Saved legacy selections remain readable; the picker offers the new game artwork. A four-column grid omits visible names while retaining accessibility labels. Choices persist and update the running application and menu bar immediately. The signed bundle's default icon is Endfield; changing the running icon does not modify its signature. Monochrome menu symbols adapt to macOS's menu-bar appearance; Perlica remains a color portrait.
 
+Battery notifications show **CHARGE MODE / 超充模式** when external power is connected, including full or paused charging, and **POWER MODE / 电源模式** after unplugging. The actual macOS charging flag remains separate diagnostic data. Other interface languages use the corresponding localized mode titles.
+
+Battery state uses the public any-power-source attribute notification, so charging can update while percentage and remaining time stay unchanged. Event bursts share one trailing refresh and reads are capped at 4 Hz; no periodic battery polling runs while idle. Stop/restart cancels pending work and ignores stale callbacks.
+
 Battery alert settings use complementary page masks with matched timing, keeping the outgoing and incoming text separated throughout the transition. Returning restores the main list scroll position. They have their own subsection: charging changes or always visible, duration (new default **3 seconds**), top-center/custom placement, and size. Position editing closes the HUD with animation and uses the existing draggable battery preview with confirm/discard controls.
 
 ## Hotkeys
@@ -47,3 +51,32 @@ The bundle identifier and existing `Application Support/EndfieldCharge` storage 
 默认召唤快捷键为 **Ctrl + 反引号**。可录入一个普通键和一至两个修饰键，最多同时三个键；遇到系统或已注册的冲突会保留原快捷键。新设置默认启用登录启动、失焦关闭、活动显示器和环境动画；登录启动仍需将应用安装到“应用程序”文件夹，系统可能要求批准。电池提醒默认显示3秒。
 
 主题提供五个颜色预设和原生色轮。低功耗视觉模式仅关闭装饰动画和背景模糊，不修改系统低电量模式。恢复默认设置保留便笺、文件架、剪贴板与应用快捷方式。
+
+### Roadmap batch 2
+
+The retained Watch time banner provides five saved clock presentations, selected
+by its five line indicators or horizontal wheel/trackpad swipes. A gesture changes
+one style; momentum does not repeatedly switch it. The banner highlights on hover
+and its body opens Work Mode. Style changes move one horizontal page within an
+inset clipped viewport, respecting Reduce Motion. The frame, indicator bars and
+Work Mode badge stay stationary; time, date and instrument artwork move together
+inside the box. All styles reuse the visible-only 1 Hz clock and 12/24-hour
+preference.
+
+Display → Center logo retains the original Endfield artwork by default, adds three
+existing faction silhouettes, and accepts a custom image. Imports are on demand,
+limited to 32 MB / 64 MP / 16,384px source dimensions, downsampled to at most 768px,
+and stored as 8-bit PNG. At most two revisions and two decoded images are retained.
+A small glow bitmap replaces the existing source sprite on selection; it follows
+the authored pose, deployment and logo-click flicker without another animation
+clock. The original file is never modified.
+
+Power has a direct Battery alert settings link. Alert readings can show battery,
+RAM used/total, CPU, network upload/download, or disk read/write. Network and disk
+rates have no fabricated percentage. Missing telemetry displays an unavailable
+reading. Mode titles follow external-power connection (Charge Mode / 超充模式)
+and disconnection (Power Mode / 电源模式), independent of macOS's delayed actual
+charging flag. Metrics do not restart the reveal or fixed compact-hold animation.
+One shared telemetry timer combines Activity Monitor and alert demand, sampling
+at 1 Hz while needed and returning to the existing 5-second history cadence when
+hidden. Per-app monitoring is unaffected.

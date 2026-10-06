@@ -5,6 +5,10 @@ protocol HUDControlFeedbackHost: AnyObject {
     func refreshControlHighlights()
 }
 
+/// Content-only geometry must never contain control highlights. This lets pointer
+/// feedback skip potentially thousands of drawing strokes and decoded media.
+class HUDDecorativeContentLayer: CALayer {}
+
 /// Lightweight retained feedback for controls drawn into the HUD. Hit testing
 /// stays with the existing interactions; these layers only render feedback.
 final class HUDControlHighlightLayer: CALayer {
@@ -75,6 +79,7 @@ final class HUDControlHighlightLayer: CALayer {
         var candidates: [HUDControlHighlightLayer] = []
         var hit: HUDControlHighlightLayer?
         func visit(_ item: CALayer, visible: Bool, pointVisible: Bool) {
+            if item is HUDDecorativeContentLayer { return }
             let shown = visible && !item.isHidden && item.opacity > 0.01
             var inside = pointVisible && shown
             // Artwork and text layers have no hit region. Convert only at

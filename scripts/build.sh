@@ -85,7 +85,7 @@ for ARCH in "${ARCHITECTURES[@]}"; do
         -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
         -module-cache-path "$BUILD_DIR/module-cache" \
         -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit \
-        "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 \
+        "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 -lz -framework WebKit -framework Security -framework PDFKit \
         "${SOURCES[@]}" -o "$BINARY"
     BINARIES+=("$BINARY")
 done
@@ -116,19 +116,27 @@ ditto "$PROJECT_DIR/Resources/AppIconSources" "$STAGED_APP/Contents/Resources/Ap
 # Prepared cells replace the full atlas in the running app. Keep the original in source.
 if [ -d "$STAGED_APP/Contents/Resources/AppIconSources/Factions" ]; then rm -f "$STAGED_APP/Contents/Resources/AppIconSources/FactionAtlas.png"; fi
 ditto "$PROJECT_DIR/Resources/WorldMap" "$STAGED_APP/Contents/Resources/WorldMap"
+rm -rf "$STAGED_APP/Contents/Resources/MediaAssembly"
+ditto "$PROJECT_DIR/Resources/MediaAssembly" "$STAGED_APP/Contents/Resources/MediaAssembly"
+ditto "$PROJECT_DIR/Resources/OrbiPom" "$STAGED_APP/Contents/Resources/OrbiPom"
   ditto "$PROJECT_DIR/Resources/Watch" "$STAGED_APP/Contents/Resources/Watch"
   python3 "$PROJECT_DIR/scripts/package-watch-resources.py" stage \
         "$PROJECT_DIR/Resources/WatchSource" "$STAGED_APP/Contents/Resources/WatchSource"
 "$PROJECT_DIR/scripts/embed-sparkle.sh" "$STAGED_APP" "$SPARKLE_DIR"
+"$PROJECT_DIR/scripts/embed-now-playing.sh" "$STAGED_APP" "$SELECTED_SDK" "${ARCHITECTURES[@]}"
 # Imported images can carry owner-only permissions. A release must remain
 # readable when Installer makes the bundle root-owned or another user opens it.
 python3 "$PROJECT_DIR/scripts/normalize-bundle-permissions.py" "$STAGED_APP"
 SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 if [ "$SIGNING_IDENTITY" = '-' ]; then
-    codesign --force --sign - "$STAGED_APP"
+    codesign --force --sign - --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$STAGED_APP"
     printf 'Signed locally (ad hoc); this build is not notarized.\n'
 else
-    codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime "$STAGED_APP"
+    # The main application sends user-authorized playback Apple Events and runs
+    # the isolated OrbiPom JavaScriptCore engine. Nested frameworks receive no
+    # main-application entitlements.
+    codesign --force --sign "$SIGNING_IDENTITY" --timestamp --options runtime \
+        --entitlements "$PROJECT_DIR/Resources/EndfieldHUD.entitlements" "$STAGED_APP"
     printf 'Signed with supplied identity; notarization is still a separate step.\n'
 fi
 "$PROJECT_DIR/scripts/verify-bundle.sh" "$STAGED_APP" "${ARCHITECTURES[@]}"

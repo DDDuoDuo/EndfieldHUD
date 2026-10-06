@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import QuartzCore
 
 struct NotesEditRequest {
@@ -10,6 +11,9 @@ struct NotesEditRequest {
     let fontSize: CGFloat
     let multiline: Bool
     var space: NotesCoordinateSpace = .workspace
+    /// Logical content offset; view scrolling is session state, never note data.
+    var scrollOffset: CGFloat = 0
+    var richText: NotesRichText? = nil
 }
 
 enum NotesCoordinateSpace { case module, workspace }
@@ -19,6 +23,133 @@ struct NotesCanvasAction {
     let label: String
     let rect: CGRect
     var space: NotesCoordinateSpace = .workspace
+}
+
+enum NotesCanvasEvent: String {
+    case createdText, createdTODO, createdMedia, createdDrawing
+    case editedText, formattedText, editedTODO, drawingEdited, deletedNote, mediaPlayback
+}
+
+/// Immutable line breaks shared by height measurement and visible-line drawing.
+/// Only visible lines receive backing layers; long documents never create a
+/// document-height bitmap. Cached entries are bounded by NotesCanvas.
+enum NotesTextMetrics {
+    static func lineHeight(fontSize: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: fontSize)
+        return ceil(font.ascender - font.descender + max(0, font.leading)) + 1
+    }
+}
+
+private final class NotesWrappedText {
+    let text: String
+    let lineHeight: CGFloat
+    let ranges: [NSRange]
+    let origins: [CGFloat]
+    let heights: [CGFloat]
+    let attributed: NSAttributedString
+    private let string: NSString
+    var height: CGFloat { (origins.last ?? 0) + (heights.last ?? lineHeight) }
+    var rangeBytes: Int { ranges.capacity * MemoryLayout<NSRange>.stride
+        + (origins.capacity + heights.capacity) * MemoryLayout<CGFloat>.stride }
+
+    init(text: String, width: CGFloat, fontSize: CGFloat, richText: NotesRichText? = nil) {
+        self.text = text
+        string = text as NSString
+        let font = NSFont.systemFont(ofSize: fontSize)
+        lineHeight = NotesTextMetrics.lineHeight(fontSize: fontSize)
+        attributed = richText?.attributed(text, defaultColor: .clear)
+            ?? NSAttributedString(string: text, attributes: [.font: font])
+        let typesetter = CTTypesetterCreateWithAttributedString(attributed)
+        var lines: [NSRange] = []
+        var position = 0
+        while position < string.length {
+            var length = CTTypesetterSuggestLineBreak(typesetter, position, Double(max(1, width)))
+            if length <= 0 {
+                length = string.rangeOfComposedCharacterSequence(at: position).length
+            }
+            length = min(length, string.length - position)
+            lines.append(NSRange(location: position, length: length))
+            position += length
+        }
+        if lines.isEmpty || text.hasSuffix("\n") || text.hasSuffix("\r") {
+            lines.append(NSRange(location: string.length, length: 0))
+        }
+        ranges = lines
+        var positions: [CGFloat] = [], sizes: [CGFloat] = [], y: CGFloat = 0
+        for range in lines {
+            let lineSize: CGFloat
+            if richText != nil, range.length > 0 {
+                var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
+                let line = CTLineCreateWithAttributedString(attributed.attributedSubstring(from: range))
+                _ = CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+                lineSize = max(1, ceil(ascent + descent + max(0, leading)) + 1)
+            } else { lineSize = lineHeight }
+            positions.append(y); sizes.append(lineSize); y += lineSize
+        }
+        origins = positions; heights = sizes
+    }
+
+    func string(at line: Int) -> String {
+        string.substring(with: ranges[line]).trimmingCharacters(in: .newlines)
+    }
+
+    func visibleLines(from minimum: CGFloat, to maximum: CGFloat) -> Range<Int> {
+        var low = 0, high = origins.count
+        while low < high {
+            let middle = (low + high) / 2
+            if origins[middle] + heights[middle] <= minimum { low = middle + 1 } else { high = middle }
+        }
+        let first = low
+        high = origins.count
+        while low < high {
+            let middle = (low + high) / 2
+            if origins[middle] < maximum { low = middle + 1 } else { high = middle }
+        }
+        return first..<low
+    }
+
+    func attributedLine(at index: Int, defaultColor: NSColor, strikethrough: Bool) -> NSAttributedString {
+        var range = ranges[index]
+        while range.length > 0, (CharacterSet.newlines as NSCharacterSet).characterIsMember(string.character(at: range.location + range.length - 1)) {
+            range.length -= 1
+        }
+        let result = NSMutableAttributedString(attributedString: attributed.attributedSubstring(from: range))
+        let full = NSRange(location: 0, length: result.length)
+        result.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
+            if value == nil || (value as? NSColor)?.isEqual(NSColor.clear) == true {
+                result.addAttribute(.foregroundColor, value: defaultColor, range: range)
+            }
+        }
+        if strikethrough { result.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: full) }
+        return result
+    }
+}
+
+/// All checklist paint, pointer, editor and accessibility geometry uses this
+/// measured index. It mirrors current rows only, with no historical layouts.
+private struct NotesContentGeometry {
+    let width: CGFloat
+    let kind: NoteKind
+    let rowOrigins: [CGFloat]
+    let rowHeights: [CGFloat]
+    let height: CGFloat
+
+    func visibleRows(offset: CGFloat, height viewportHeight: CGFloat) -> Range<Int> {
+        var low = 0, high = rowOrigins.count
+        while low < high {
+            let middle = (low + high) / 2
+            if rowOrigins[middle] + rowHeights[middle] <= offset { low = middle + 1 }
+            else { high = middle }
+        }
+        let first = low
+        high = rowOrigins.count
+        while low < high {
+            let middle = (low + high) / 2
+            if rowOrigins[middle] < offset + viewportHeight { low = middle + 1 }
+            else { high = middle }
+        }
+        return first..<low
+    }
 }
 
 /// A retained scene inside the common HUD. Note geometry is rendered in logical
@@ -36,12 +167,29 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private let deletionControls = CALayer()
     var onEdit: ((NotesEditRequest) -> Void)?
     var onChooseImage: ((CGPoint) -> Void)?
+    var onChooseShelfMedia: ((CGPoint) -> Void)?
+    var onFormat: ((UUID, String) -> Void)?
+    var onAction: ((NotesCanvasEvent) -> Void)?
     var onChange: (() -> Void)?
     private(set) var selectedNoteID: UUID?
-    var isDragging: Bool { drag != nil }
+    var isDragging: Bool { drag != nil || drawingGesture != nil || mediaSeek != nil }
     var hasSelection: Bool { selectedNoteID.map { visibleNoteIDs.contains($0) } ?? false }
     func clearSelection() { select(nil) }
     var noteCount: Int { notes.count }
+    var mediaSeekActions: [NotesCanvasAction] {
+        visibleNotes.compactMap { original in
+            guard original.media?.kind == .video, let duration = original.media?.duration, duration > 0 else { return nil }
+            let item = displayed(original)
+            return NotesCanvasAction(id: item.id.uuidString, label: L10n.text("Playback position", "播放进度"),
+                rect: mediaSeekRect(item).offsetBy(dx: item.x, dy: item.y))
+        }
+    }
+    func mediaPosition(for id: UUID) -> Double { nodes[id]?.media?.currentTime ?? 0 }
+    func mediaDuration(for id: UUID) -> Double { note(id)?.media?.duration ?? 0 }
+    func seekMedia(id: UUID, to value: Double) {
+        guard isVisible, visibleNoteIDs.contains(id), value.isFinite else { return }
+        nodes[id]?.media?.seek(to: value)
+    }
     var accessibleActions: [NotesCanvasAction] {
         var output = notesSelected ? toolbarActions() : []
         for original in visibleNotes.sorted(by: { $0.zIndex < $1.zIndex }) {
@@ -65,7 +213,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         visibleNotes.compactMap { nodes[$0.id]?.layer } + [deletionControls]
     }
 
-    private enum Tool: String { case text, todo, image }
+    private enum Tool: String { case text, todo, image, drawing }
     private struct Drag {
         let original: CanvasNote
         let start: CGPoint
@@ -74,8 +222,42 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     }
     private final class NoteNode {
         let layer = CALayer()
+        let viewport = CALayer()
+        let content = CALayer()
+        let footer = CATextLayer()
+        let mediaRail = CALayer()
+        let mediaFill = CALayer()
+        let mediaHandle = CALayer()
+        let formatSwatch = CALayer()
+        let scrollThumb = CALayer()
+        var geometry: NotesContentGeometry?
+        var textLines: [Int: CATextLayer] = [:]
+        var rows: [UUID: ChecklistRowNode] = [:]
         var imageName: String?
         var image: CGImage?
+        var media: NotesMediaPresentation?
+        var mediaReference: NotesMediaReference?
+        let drawingLayer = HUDDecorativeContentLayer()
+        let brushPreview = CAShapeLayer()
+        init() {
+            viewport.name = "notes.content.viewport"
+            viewport.masksToBounds = true
+            content.name = "notes.content.scroll"
+            viewport.addSublayer(content)
+            scrollThumb.name = "notes.content.scrollThumb"
+            scrollThumb.cornerRadius = 1
+            viewport.addSublayer(scrollThumb)
+        }
+    }
+    private final class ChecklistRowNode {
+        let layer = CALayer()
+        var lines: [Int: CATextLayer] = [:]
+    }
+    private struct TextLayoutKey: Hashable {
+        let note: UUID
+        let item: UUID?
+        let width: CGFloat
+        let fontSize: CGFloat
     }
 
     private let store: NotesStore?
@@ -87,8 +269,30 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private let emptyHint = CATextLayer()
     private let toolbar = CALayer()
     private var drag: Drag?
+    private struct MediaSeek { let id: UUID; var seconds: Double }
+    private var mediaSeek: MediaSeek?
+    private var editingColor: NSColor?
+    private struct DrawingGesture {
+        var note: CanvasNote
+        var stroke: NotesDrawingStroke
+        var erased = false
+    }
+    private var drawingGesture: DrawingGesture?
+    private var drawingWidth: CGFloat = 8
+    private var drawingColor = NotesRGBA(red: 0.98, green: 0.83, blue: 0.12)
+    private var erasing = false
+    private var pointerNote: UUID?
+    private var isVisible = false
     private var editing: NotesEditRequest?
-    private var rowOffsets: [UUID: Int] = [:]
+    private var scrollOffsets: [UUID: CGFloat] = [:]
+    private var textLayouts: [TextLayoutKey: NotesWrappedText] = [:]
+    private var textLayoutOrder: [TextLayoutKey] = []
+    static let textLayoutCacheLimit = 64
+    static let textLayoutRangeBudget = 16 * 1024 * 1024
+    private let layoutRangeBudget: Int
+    private(set) var cachedTextLayoutRangeBytes = 0
+    private(set) var textLayoutBuildCount = 0
+    var cachedTextLayoutCount: Int { textLayouts.count }
     private var errorMessage: String?
     private var unsavedNoteIDs: Set<UUID> = []
     private var dark = true
@@ -99,10 +303,12 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private var muted: NSColor { NSColor(white: dark ? 0.65 : 0.37, alpha: 1) }
     private var border: NSColor { NSColor(white: dark ? 0.72 : 0.24, alpha: dark ? 0.28 : 0.24) }
     private let headerHeight: CGFloat = 24
-    private let rowHeight: CGFloat = 25
 
-    init(store: NotesStore?, error: String? = nil, notesSelected: Bool = true, reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
+    init(store: NotesStore?, error: String? = nil, notesSelected: Bool = true,
+         textLayoutRangeBudget: Int = NotesCanvas.textLayoutRangeBudget,
+         reduceMotion: @escaping () -> Bool = { HUDRuntimeAppearance.reduceMotion }) {
         self.reduceMotion = reduceMotion
+        layoutRangeBudget = max(1, textLayoutRangeBudget)
         self.notesSelected = notesSelected
         self.store = store
         notes = store?.notes ?? []
@@ -145,6 +351,18 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     func makeContent(for module: HUDModule, style: HUDModuleContentStyle) -> CALayer {
         updateAppearance(style: style)
         return layer
+    }
+
+    /// Isolated native input checks need an actual retained note above another
+    /// control; diagnostic launches already use a separate temporary database.
+    func installNoteForVerification(_ note: CanvasNote) throws {
+        precondition(CommandLine.arguments.contains("--ui-test"))
+        guard let store else { throw NotesStoreError.invalidRecord }
+        let item = NotesGeometry.constrained(note, in: workspaceBounds)
+        try store.upsert(item)
+        replace(item)
+        withoutActions { render(item) }
+        onChange?()
     }
 
     /// Pinned cards belong to the retained workspace, so their appearance must
@@ -203,6 +421,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             let wasVisible = nodes[item.id].map { !$0.layer.isHidden && $0.layer.opacity > 0 } ?? false
             if visible && !wasVisible { withoutActions { render(item) } }
             guard let node = nodes[item.id] else { continue }
+            node.media?.setVisible(isVisible && visible, preserveArtworkOnHide: animated && !reduceMotion())
             guard visible != wasVisible else { continue }
             node.layer.removeAllAnimations()
             if visible {
@@ -258,6 +477,17 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             drag = Drag(original: displayed(note), start: point, resizing: true, changed: false)
             return true
         }
+        let displayedNote = displayed(note)
+        if note.media?.kind == .video, let duration = note.media?.duration, duration > 0,
+           mediaSeekRect(displayedNote).offsetBy(dx: displayedNote.x, dy: displayedNote.y).contains(point) {
+            mediaSeek = MediaSeek(id: note.id, seconds: 0); updateMediaSeek(at: point); return true
+        }
+        if note.kind == .drawing, drawingViewport(displayedNote).offsetBy(dx: displayedNote.x, dy: displayedNote.y).contains(point) {
+            drawingGesture = DrawingGesture(note: note,
+                stroke: NotesDrawingStroke(points: [], width: Double(drawingWidth), color: drawingColor))
+            updateDrawing(at: point)
+            return true
+        }
         if let action = actions(for: displayed(note)).reversed().first(where: { $0.rect.contains(point) }) {
             if action.id == noteAction(note, "edit") && clickCount < 2 {
                 drag = Drag(original: displayed(note), start: point, resizing: false, changed: false)
@@ -269,6 +499,8 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     }
 
     func mouseDragged(to point: CGPoint) {
+        if mediaSeek != nil { updateMediaSeek(at: point); return }
+        if drawingGesture != nil { updateDrawing(at: point); return }
         guard var gesture = drag, point.x.isFinite, point.y.isFinite,
               let index = notes.firstIndex(where: { $0.id == gesture.original.id }) else { return }
         let dx = Double(point.x - gesture.start.x)
@@ -296,25 +528,116 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     }
 
     func mouseUp() {
+        if let gesture = mediaSeek {
+            mediaSeek = nil; nodes[gesture.id]?.media?.seek(to: gesture.seconds)
+            if let item = note(gesture.id), let node = nodes[gesture.id] { withoutActions { updateMediaProgress(item, node: node) } }
+            return
+        }
+        if var gesture = drawingGesture {
+            drawingGesture = nil
+            if !erasing && !gesture.stroke.points.isEmpty {
+                var drawing = gesture.note.drawing ?? NotesDrawing()
+                if drawing.append(gesture.stroke) { gesture.note.drawing = drawing; gesture.erased = true }
+                else { errorMessage = L10n.text("Drawing limit reached. Create another drawing note.", "画画容量已满，请新建画画便笺。") }
+            }
+            if gesture.erased {
+                replace(gesture.note)
+                if save(gesture.note) { onAction?(.drawingEdited) }
+            }
+            withoutActions { if let item = note(gesture.note.id) { render(item) }; updateStatus() }
+            onChange?(); return
+        }
         guard let gesture = drag else { return }
         drag = nil
         if gesture.changed, let note = note(gesture.original.id) { save(note) }
         onChange?()
     }
 
-    /// Checklist overflow moves in discrete rows, without a display timer.
+    /// Preserve trackpad fractions and native momentum. Only the retained
+    /// content origin and newly visible rows change; no timer or save occurs.
     @discardableResult
     func scroll(at point: CGPoint, delta: CGFloat) -> Bool {
-        guard delta.isFinite, abs(delta) > 0.01, let note = topNote(at: point), note.kind == .todo else { return false }
-        let maximum = max(0, note.items.count - visibleRowCount(displayed(note)))
-        guard maximum > 0 else { return true }
-        let previous = rowOffsets[note.id] ?? 0
-        let next = min(maximum, max(0, previous + (delta > 0 ? 1 : -1)))
+        guard delta.isFinite, let original = topNote(at: point), original.kind != .image else { return false }
+        if original.kind == .drawing {
+            drawingWidth = min(80, max(1, drawingWidth + delta * 0.25))
+            mouseMoved(at: point); return true
+        }
+        guard delta != 0, drag == nil, editing?.noteID != original.id else { return true }
+        let note = displayed(original), geometry = contentGeometry(for: displayed(original))
+        let maximum = max(0, geometry.height - contentViewport(note).height)
+        let previous = scrollOffsets[note.id] ?? 0
+        let next = min(maximum, max(0, previous + delta))
         guard previous != next else { return true }
-        rowOffsets[note.id] = next
-        withoutActions { render(note) }
+        scrollOffsets[note.id] = next
+        withoutActions { layoutScrollableContent(note) }
         onChange?()
         return true
+    }
+
+    func contentViewport(for noteID: UUID) -> CGRect? {
+        guard let note = note(noteID), note.kind != .image else { return nil }
+        let item = displayed(note)
+        return contentViewport(item).offsetBy(dx: item.x, dy: item.y)
+    }
+
+    func scrollOffset(for noteID: UUID) -> CGFloat { scrollOffsets[noteID] ?? 0 }
+
+    func noteRect(for noteID: UUID) -> CGRect? { note(noteID).map { rect(displayed($0)) } }
+    func noteKind(for noteID: UUID) -> NoteKind? { note(noteID)?.kind }
+    func formatAction(at point: CGPoint) -> String? {
+        guard let item = topNote(at: point) else { return nil }
+        return actions(for: item).first { $0.id.contains(":format") && $0.rect.contains(point) }?.id
+    }
+    func setVisible(_ visible: Bool) {
+        isVisible = visible
+        let visibleIDs = visibleNoteIDs
+        for (id, node) in nodes { node.media?.setVisible(visible && visibleIDs.contains(id), preserveArtworkOnHide: !reduceMotion()) }
+        if !visible { mouseMoved(at: nil) }
+    }
+    func setDrawingColor(_ color: NSColor) {
+        if let value = NotesRGBA(color) {
+            drawingColor = value
+            if let id = selectedNoteID { withoutActions { nodes[id]?.formatSwatch.backgroundColor = color.cgColor } }
+        }
+    }
+    var currentDrawingColor: NSColor { drawingColor.color }
+    func setEditingColor(_ color: NSColor) {
+        guard editingColor?.isEqual(color) != true else { return }
+        editingColor = color
+        if let id = editing?.noteID { withoutActions { nodes[id]?.formatSwatch.backgroundColor = color.cgColor } }
+    }
+
+    @discardableResult func rightMouseDown(at point: CGPoint) -> Bool {
+        guard let original = topNote(at: point) else { return false }
+        let item = displayed(original)
+        guard item.kind == .drawing, drawingViewport(item).offsetBy(dx: item.x, dy: item.y).contains(point) else { return false }
+        if drawingGesture != nil { mouseUp() }
+        erasing.toggle(); mouseMoved(at: point); return true
+    }
+
+    func mouseMoved(at point: CGPoint?) {
+        if let previous = pointerNote { nodes[previous]?.brushPreview.isHidden = true }
+        pointerNote = nil
+        guard let point, let original = topNote(at: point), original.kind == .drawing,
+              let node = nodes[original.id] else { return }
+        let item = displayed(original)
+        let viewport = drawingViewport(item), local = CGPoint(x: point.x - item.x, y: point.y - item.y)
+        guard viewport.contains(local) else { return }
+        pointerNote = item.id
+        withoutActions {
+            let radius = drawingWidth / 2
+            node.brushPreview.isHidden = false
+            node.brushPreview.frame = node.layer.bounds
+            node.brushPreview.path = CGPath(ellipseIn: CGRect(x: local.x - radius, y: local.y - radius,
+                width: drawingWidth, height: drawingWidth), transform: nil)
+            node.brushPreview.fillColor = nil
+            node.brushPreview.strokeColor = (erasing ? NSColor.systemRed : primary).cgColor
+            node.brushPreview.lineWidth = 1
+        }
+    }
+
+    func contains(noteID: UUID, point: CGPoint) -> Bool {
+        topNote(at: point)?.id == noteID
     }
 
     func deleteSelection() {
@@ -325,22 +648,33 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     func setEditing(_ request: NotesEditRequest?) {
         let previous = editing?.noteID
         editing = request
+        if request == nil { editingColor = nil }
         withoutActions {
             if let id = previous, let item = note(id) { render(item) }
             if let request = request, request.noteID != previous, let item = note(request.noteID) { render(item) }
         }
     }
 
-    func finishEditing(_ request: NotesEditRequest, text: String) {
+    func finishEditing(_ request: NotesEditRequest, text: String, scrollOffset: CGFloat? = nil, richText: NotesRichText? = nil) {
         guard var item = note(request.noteID) else { return }
+        let previous = item
         if let id = request.itemID, let index = item.items.firstIndex(where: { $0.id == id }) {
             item.items[index].text = text
         } else if request.itemID == nil && item.kind == .text {
             item.text = text
+            item.richText = richText
         } else { return }
         editing = nil
         replace(item)
-        save(item)
+        if save(item), previous != item { onAction?(item.kind == .todo ? .editedTODO : previous.richText != item.richText ? .formattedText : .editedText) }
+        if let scrollOffset, scrollOffset.isFinite,
+           request.itemID == nil || scrollOffset > 0 || request.scrollOffset > 0 {
+            let geometry = contentGeometry(for: displayed(item))
+            let base = request.itemID.flatMap { id in item.items.firstIndex { $0.id == id } }
+                .map { geometry.rowOrigins[$0] + 3 } ?? 0
+            scrollOffsets[item.id] = min(max(0, geometry.height - contentViewport(displayed(item)).height),
+                                         max(0, base + scrollOffset))
+        }
         withoutActions { render(item) }
         onChange?()
     }
@@ -378,12 +712,72 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         } catch { report(error); return false }
     }
 
+    @discardableResult func importMedia(reference: NotesMediaReference, at point: CGPoint) -> Bool {
+        guard let store else { reportUnavailable(); return false }
+        do {
+            let item = try store.importMedia(reference: reference, at: point, bounds: workspaceBounds)
+            replace(item); select(item.id)
+            withoutActions { render(item); updateStatus() }
+            if let card = nodes[item.id]?.layer { animateCard(card, appearing: true) }
+            onChange?(); onAction?(.createdMedia); return true
+        } catch { report(error); return false }
+    }
+    func reportImportError(_ error: Error) { report(error) }
+
+    private func drawingViewport(_ item: CanvasNote) -> CGRect {
+        CGRect(x: 5, y: 29, width: CGFloat(item.width) - 10, height: max(1, CGFloat(item.height) - 56))
+    }
+    private func updateDrawing(at point: CGPoint) {
+        guard var gesture = drawingGesture, point.x.isFinite, point.y.isFinite else { return }
+        let item = displayed(gesture.note), viewport = drawingViewport(item)
+        let local = CGPoint(x: min(viewport.width, max(0, point.x - item.x - viewport.minX)),
+                            y: min(viewport.height, max(0, point.y - item.y - viewport.minY)))
+        if erasing {
+            var drawing = gesture.note.drawing ?? NotesDrawing()
+            if drawing.erase(at: local, radius: drawingWidth / 2, in: viewport.size) {
+                gesture.note.drawing = drawing; gesture.erased = true
+                if let node = nodes[item.id] { withoutActions { drawStrokes(drawing, on: node, size: viewport.size) } }
+            }
+        } else {
+            let next = NotesDrawingPoint(x: Double(local.x / viewport.width), y: Double(local.y / viewport.height))
+            if let last = gesture.stroke.points.last,
+               hypot((last.x - next.x) * viewport.width, (last.y - next.y) * viewport.height) < 0.8 { return }
+            if gesture.stroke.points.count < NotesDrawing.maximumPointsPerStroke {
+                gesture.stroke.points.append(next)
+                if let node = nodes[item.id] {
+                    withoutActions {
+                        let live: CAShapeLayer
+                        if let existing = node.drawingLayer.sublayers?.last as? CAShapeLayer, existing.name == "notes.drawing.live" { live = existing }
+                        else { live = CAShapeLayer(); live.name = "notes.drawing.live"; node.drawingLayer.addSublayer(live) }
+                        styleStroke(live, stroke: gesture.stroke, size: viewport.size)
+                    }
+                }
+            } else { errorMessage = L10n.text("Stroke limit reached. Release to start a new stroke.", "笔画长度已满，松开后可开始下一笔。") }
+        }
+        drawingGesture = gesture
+        mouseMoved(at: point)
+    }
+    private func styleStroke(_ layer: CAShapeLayer, stroke: NotesDrawingStroke, size: CGSize) {
+        layer.frame = CGRect(origin: .zero, size: size)
+        layer.path = NotesDrawing.path(stroke, size: size)
+        layer.fillColor = nil; layer.strokeColor = stroke.color.color.cgColor
+        layer.lineWidth = CGFloat(stroke.width); layer.lineCap = .round; layer.lineJoin = .round
+    }
+    private func drawStrokes(_ drawing: NotesDrawing, on node: NoteNode, size: CGSize) {
+        node.drawingLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        for stroke in drawing.strokes {
+            let shape = CAShapeLayer(); styleStroke(shape, stroke: stroke, size: size)
+            node.drawingLayer.addSublayer(shape)
+        }
+    }
+
     /// Called before switching sections or closing. Finishes an active geometry
     /// gesture immediately; no pending animation, task, or timer survives.
     func cancelInteraction() {
         mouseUp(); pendingDeletionID = nil
         presentationGeneration += 1
         cancelAnimations()
+        mouseMoved(at: nil)
         withoutActions {
             for item in notes { render(item) }
             renderDeletionControls()
@@ -402,6 +796,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             case .text: create(kind: .text, at: point)
             case .todo: create(kind: .todo, at: point)
             case .image: onChooseImage?(point)
+            case .drawing: create(kind: .drawing, at: point)
             }
             animateToolbar(actionID)
             return
@@ -419,6 +814,16 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             delete(id); return
         case "pin": item.isPinned.toggle()
         case "edit": beginEditing(item); return
+        case "formatFont", "formatSize", "formatColor", "formatSpecial":
+            if item.kind == .text, editing?.noteID != item.id { beginEditing(item) }
+            onFormat?(item.id, String(pieces[2].dropFirst(6)).lowercased()); return
+        case "mediaPlayback":
+            if let media = nodes[item.id]?.media {
+                let previous = media.state
+                media.togglePlayback()
+                if media.state != previous { onAction?(.mediaPlayback) }
+            }
+            return
         case "grow", "shrink":
             let step = pieces[2] == "grow" ? 20.0 : -20.0
             item.width += step
@@ -430,7 +835,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             item.items.append(child)
             replace(item)
             save(item)
-            rowOffsets[id] = max(0, item.items.count - visibleRowCount(displayed(item)))
+            scrollOffsets[id] = max(0, contentGeometry(for: displayed(item)).height - contentViewport(displayed(item)).height)
             withoutActions { render(item) }
             animateMutation(item.id)
             beginEditing(item, itemID: child.id)
@@ -459,13 +864,14 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         var item = CanvasNote(kind: kind)
         item.x = Double(point.x)
         item.y = Double(point.y)
-        item.width = kind == .todo ? 228 : 162
-        item.height = kind == .todo ? 154 : 104
+        item.width = kind == .drawing ? 300 : kind == .todo ? 228 : 210
+        item.height = kind == .drawing ? 240 : kind == .todo ? 154 : 140
         item.zIndex = nextZIndex()
         if kind == .todo { item.items = [NoteChecklistItem(text: "")] }
+        if kind == .drawing { item.drawing = NotesDrawing() }
         item = NotesGeometry.constrained(item, in: workspaceBounds)
         replace(item)
-        save(item)
+        if save(item) { onAction?(kind == .drawing ? .createdDrawing : kind == .todo ? .createdTODO : .createdText) }
         select(item.id)
         withoutActions { render(item); updateStatus() }
         if let card = nodes[item.id]?.layer { animateCard(card, appearing: true) }
@@ -477,20 +883,24 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         let item = displayed(original)
         let request: NotesEditRequest
         if let id = itemID, let index = item.items.firstIndex(where: { $0.id == id }) {
-            let visible = visibleRowCount(item)
-            let offset = rowOffsets[item.id] ?? 0
-            if index < offset || index >= offset + visible {
-                rowOffsets[item.id] = max(0, index - visible + 1)
-                withoutActions { render(item) }
+            let geometry = contentGeometry(for: item), viewport = contentViewport(item)
+            var offset = scrollOffsets[item.id] ?? 0
+            let top = geometry.rowOrigins[index], bottom = top + geometry.rowHeights[index]
+            if top < offset || bottom > offset + viewport.height {
+                offset = geometry.rowHeights[index] > viewport.height ? top : max(0, bottom - viewport.height)
+                offset = min(max(0, geometry.height - viewport.height), offset)
+                scrollOffsets[item.id] = offset
+                withoutActions { layoutScrollableContent(item) }
             }
-            let row = index - (rowOffsets[item.id] ?? 0)
-            let editRect = CGRect(x: item.x + 28, y: item.y + Double(headerHeight + CGFloat(row) * rowHeight + 5),
-                                  width: max(36, item.width - 89), height: 19)
-            request = NotesEditRequest(noteID: item.id, itemID: id, text: item.items[index].text, rect: editRect, fontSize: 11, multiline: false)
+            let full = checklistTextRect(item, geometry: geometry, index: index, offset: offset)
+            let editRect = full.intersection(viewport).offsetBy(dx: item.x, dy: item.y)
+            request = NotesEditRequest(noteID: item.id, itemID: id, text: item.items[index].text,
+                rect: editRect, fontSize: 11, multiline: false, scrollOffset: max(0, viewport.minY - full.minY))
         } else {
             guard item.kind == .text else { return }
             request = NotesEditRequest(noteID: item.id, itemID: nil, text: item.text,
-                rect: CGRect(x: item.x + 9, y: item.y + 29, width: item.width - 18, height: item.height - 40), fontSize: 12, multiline: true)
+                rect: contentViewport(item, editingText: true).offsetBy(dx: item.x, dy: item.y), fontSize: 12, multiline: true,
+                scrollOffset: scrollOffsets[item.id] ?? 0, richText: item.richText)
         }
         onEdit?(request)
     }
@@ -518,6 +928,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         guard let store = store else { reportUnavailable(); return }
         do {
             try store.delete(id: id)
+            nodes[id]?.media?.dispose()
             notes.removeAll { $0.id == id }
             if let card = nodes.removeValue(forKey: id)?.layer {
                 retiringLayers.append(card)
@@ -534,25 +945,29 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
                 }
             }
             pendingDeletionID = nil
-            rowOffsets.removeValue(forKey: id)
+            scrollOffsets.removeValue(forKey: id)
+            for key in textLayoutOrder.filter({ $0.note == id }) { removeTextLayout(key) }
             unsavedNoteIDs.remove(id)
             if selectedNoteID == id { selectedNoteID = nil }
             if editing?.noteID == id { editing = nil }
             withoutActions { updateStatus(); renderDeletionControls() }
             onChange?()
+            onAction?(.deletedNote)
         } catch { report(error) }
     }
 
-    private func save(_ item: CanvasNote) {
-        guard let store = store else { reportUnavailable(); return }
+    @discardableResult private func save(_ item: CanvasNote) -> Bool {
+        guard let store = store else { reportUnavailable(); return false }
         do {
             try store.upsert(item)
             unsavedNoteIDs.remove(item.id)
             if unsavedNoteIDs.isEmpty { errorMessage = nil }
             withoutActions { updateStatus() }
+            return true
         } catch {
             unsavedNoteIDs.insert(item.id)
             report(error)
+            return false
         }
     }
 
@@ -573,7 +988,17 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     }
 
     private func replace(_ item: CanvasNote) {
-        if let index = notes.firstIndex(where: { $0.id == item.id }) { notes[index] = item }
+        if let index = notes.firstIndex(where: { $0.id == item.id }) {
+            let previous = notes[index]
+            if previous.kind != item.kind || previous.width != item.width || previous.text != item.text
+                || previous.items != item.items || previous.richText != item.richText {
+                nodes[item.id]?.geometry = nil
+            }
+            if previous.richText != item.richText {
+                for key in textLayoutOrder.filter({ $0.note == item.id && $0.item == nil }) { removeTextLayout(key) }
+            }
+            notes[index] = item
+        }
         else { notes.append(item) }
     }
     private func note(_ id: UUID) -> CanvasNote? { notes.first { $0.id == id } }
@@ -584,17 +1009,87 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private func displayed(_ item: CanvasNote) -> CanvasNote { NotesGeometry.constrained(item, in: workspaceBounds) }
     private func localRect(_ item: CanvasNote) -> CGRect { rect(displayed(item)).offsetBy(dx: -workspaceBounds.minX, dy: -workspaceBounds.minY) }
     private func resizeRect(_ item: CanvasNote) -> CGRect { CGRect(x: item.x + item.width - 15, y: item.y + item.height - 15, width: 15, height: 15) }
-    private func visibleRowCount(_ item: CanvasNote) -> Int { max(1, Int((CGFloat(item.height) - headerHeight - 28) / rowHeight)) }
+
+    private func contentViewport(_ item: CanvasNote, editingText: Bool? = nil) -> CGRect {
+        let width = CGFloat(item.width), height = CGFloat(item.height)
+        let reservesFormatting = editingText ?? (editing?.noteID == item.id)
+        return item.kind == .todo
+            ? CGRect(x: 5, y: headerHeight + 3, width: width - 10, height: max(1, height - headerHeight - 31))
+            : CGRect(x: 9, y: 29, width: width - 18,
+                     height: max(1, height - (item.kind == .text && !reservesFormatting ? 37 : 58)))
+    }
+
+    private func wrappedText(_ text: String, noteID: UUID, itemID: UUID? = nil,
+                             width: CGFloat, fontSize: CGFloat, richText: NotesRichText? = nil) -> NotesWrappedText {
+        let key = TextLayoutKey(note: noteID, item: itemID, width: width, fontSize: fontSize)
+        if let cached = textLayouts[key], cached.text == text {
+            if textLayoutOrder.last != key { textLayoutOrder.removeAll { $0 == key }; textLayoutOrder.append(key) }
+            return cached
+        }
+        // A resize or font/content edit supersedes the previous measurement of
+        // this exact note/task. Release it before allocating the replacement.
+        for obsolete in textLayoutOrder.filter({ $0.note == noteID && $0.item == itemID }) {
+            removeTextLayout(obsolete)
+        }
+        let layout = NotesWrappedText(text: text, width: width, fontSize: fontSize, richText: richText)
+        textLayoutBuildCount += 1
+        textLayouts[key] = layout
+        cachedTextLayoutRangeBytes += layout.rangeBytes
+        textLayoutOrder.append(key)
+        // Keep the just-used layout even when one unusually long document alone
+        // exceeds the budget; otherwise each fractional scroll would re-typeset it.
+        while textLayoutOrder.count > 1 && (textLayoutOrder.count > Self.textLayoutCacheLimit
+            || cachedTextLayoutRangeBytes > layoutRangeBudget) {
+            removeTextLayout(textLayoutOrder[0])
+        }
+        return layout
+    }
+
+    private func removeTextLayout(_ key: TextLayoutKey) {
+        if let layout = textLayouts.removeValue(forKey: key) {
+            cachedTextLayoutRangeBytes -= layout.rangeBytes
+        }
+        textLayoutOrder.removeAll { $0 == key }
+    }
+
+    private func contentGeometry(for item: CanvasNote) -> NotesContentGeometry {
+        let width = CGFloat(item.width)
+        if let cached = nodes[item.id]?.geometry, cached.width == width, cached.kind == item.kind { return cached }
+        var origins: [CGFloat] = [], heights: [CGFloat] = [], height: CGFloat = 0
+        if item.kind == .todo {
+            for child in item.items {
+                let layout = wrappedText(child.text, noteID: item.id, itemID: child.id,
+                                         width: max(20, width - 89), fontSize: 11)
+                let rowHeight = max(25, layout.height + 8)
+                origins.append(height); heights.append(rowHeight); height += rowHeight
+            }
+        } else if item.kind == .text {
+            height = wrappedText(item.text, noteID: item.id, width: width - 18, fontSize: 12, richText: item.richText).height
+        }
+        let geometry = NotesContentGeometry(width: width, kind: item.kind,
+            rowOrigins: origins, rowHeights: heights, height: height)
+        nodes[item.id]?.geometry = geometry
+        return geometry
+    }
+
+    private func checklistTextRect(_ item: CanvasNote, geometry: NotesContentGeometry, index: Int, offset: CGFloat) -> CGRect {
+        CGRect(x: 28, y: contentViewport(item).minY + geometry.rowOrigins[index] - offset + 3,
+               width: max(20, CGFloat(item.width) - 89), height: geometry.rowHeights[index] - 6)
+    }
+
     private func noteAction(_ item: CanvasNote, _ verb: String) -> String { "note:\(item.id.uuidString):\(verb)" }
     private func noteLabel(_ item: CanvasNote) -> String {
-        let title = item.kind == .text ? L10n.text("Text", "文字") : item.kind == .todo ? L10n.text("Checklist", "待办") : L10n.text("Image", "图片")
+        let title = item.kind == .text ? L10n.text("Text", "文字") : item.kind == .todo ? L10n.text("Checklist", "待办") : item.kind == .drawing ? L10n.text("Drawing", "画画") : L10n.text("Image/Video", "图片/视频")
         return item.kind == .text && !item.text.isEmpty ? "\(title): \(item.text.prefix(64))" : title
     }
 
     private func toolbarActions() -> [NotesCanvasAction] {
-        [NotesCanvasAction(id: "tool:text", label: L10n.text("Text", "文字"), rect: CGRect(x: 39, y: 294, width: 102, height: 31), space: .module),
-         NotesCanvasAction(id: "tool:todo", label: L10n.text("TODO", "待办"), rect: CGRect(x: 149, y: 294, width: 102, height: 31), space: .module),
-         NotesCanvasAction(id: "tool:image", label: L10n.text("Image", "图片"), rect: CGRect(x: 259, y: 294, width: 102, height: 31), space: .module)]
+        let values = [("text", L10n.text("Text", "文字")), ("todo", L10n.text("TODO", "待办")),
+                      ("image", L10n.text("Image/Video", "图片/视频")), ("drawing", L10n.text("Drawing", "画画"))]
+        return values.enumerated().map { index, value in
+            NotesCanvasAction(id: "tool:" + value.0, label: value.1,
+                rect: CGRect(x: 7 + index * 98, y: 294, width: 92, height: 31), space: .module)
+        }
     }
 
     private func actions(for original: CanvasNote) -> [NotesCanvasAction] {
@@ -602,19 +1097,41 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         var output = [NotesCanvasAction(id: noteAction(item, "pin"), label: item.isPinned ? L10n.text("Unpin note", "取消固定") : L10n.text("Pin note", "固定便笺"), rect: CGRect(x: item.x + item.width - 46, y: item.y + 2, width: 21, height: 20)),
                       NotesCanvasAction(id: noteAction(item, "delete"), label: L10n.text("Delete note", "删除便笺"), rect: CGRect(x: item.x + item.width - 24, y: item.y + 2, width: 21, height: 20))]
         if item.kind == .text {
-            output.append(NotesCanvasAction(id: noteAction(item, "edit"), label: L10n.text("Edit text", "编辑文字"), rect: CGRect(x: item.x + 4, y: item.y + 25, width: item.width - 8, height: item.height - 30)))
+            output.append(NotesCanvasAction(id: noteAction(item, "edit"), label: L10n.text("Edit text", "编辑文字"),
+                rect: contentViewport(item).offsetBy(dx: item.x, dy: item.y)))
+            let formatLabels = [("formatSize", L10n.text("Font size", "字号")), ("formatFont", L10n.text("Font", "字体")),
+                                ("formatColor", L10n.text("Color", "颜色")), ("formatSpecial", L10n.text("Text style", "特殊"))]
+            let width = 22.0
+            for (index, value) in formatLabels.enumerated() where editing?.noteID == item.id {
+                output.append(NotesCanvasAction(id: noteAction(item, value.0), label: value.1,
+                    rect: CGRect(x: item.x + 6 + Double(index) * width, y: item.y + item.height - 25, width: 20, height: 20)))
+            }
+        } else if item.kind == .drawing, item.id == selectedNoteID {
+            output.append(NotesCanvasAction(id: noteAction(item, "formatColor"), label: L10n.text("Drawing color", "画笔颜色"),
+                rect: CGRect(x: item.x + 6, y: item.y + item.height - 24, width: 20, height: 20)))
+        } else if item.kind == .image, item.media?.kind != .image, item.media != nil {
+            output.append(NotesCanvasAction(id: noteAction(item, "mediaPlayback"),
+                label: nodes[item.id]?.media?.isPlaying == true ? L10n.text("Pause", "暂停") : L10n.text("Play", "播放"),
+                rect: CGRect(x: item.x + 6, y: item.y + item.height - 24, width: 66, height: 19)))
         } else if item.kind == .todo {
-            let visible = visibleRowCount(item)
-            let offset = min(max(0, item.items.count - visible), rowOffsets[item.id] ?? 0)
-            for index in offset..<min(item.items.count, offset + visible) {
+            let geometry = contentGeometry(for: item), viewport = contentViewport(item)
+            let offset = min(max(0, geometry.height - viewport.height), scrollOffsets[item.id] ?? 0)
+            func append(_ action: NotesCanvasAction) {
+                let clipped = action.rect.intersection(viewport)
+                guard !clipped.isNull, clipped.width > 1, clipped.height > 1 else { return }
+                output.append(NotesCanvasAction(id: action.id, label: action.label,
+                    rect: clipped.offsetBy(dx: item.x, dy: item.y)))
+            }
+            for index in geometry.visibleRows(offset: offset, height: viewport.height) {
                 let child = item.items[index]
-                let y = item.y + Double(headerHeight + CGFloat(index - offset) * rowHeight + 3)
+                let y = viewport.minY + geometry.rowOrigins[index] - offset
                 let suffix = ":\(child.id.uuidString)"
-                output.append(NotesCanvasAction(id: noteAction(item, "check") + suffix, label: child.isChecked ? L10n.text("Uncheck", "取消勾选") + " " + child.text : L10n.text("Check", "勾选") + " " + child.text, rect: CGRect(x: item.x + 5, y: y, width: 21, height: 22)))
-                output.append(NotesCanvasAction(id: noteAction(item, "editItem") + suffix, label: L10n.text("Edit item", "编辑事项") + " " + child.text, rect: CGRect(x: item.x + 28, y: y, width: max(20, item.width - 89), height: 22)))
-                let controls: [(String, String, Double)] = [("up", L10n.text("Move up", "上移"), 58), ("down", L10n.text("Move down", "下移"), 40), ("remove", L10n.text("Delete item", "删除事项"), 22)]
+                append(NotesCanvasAction(id: noteAction(item, "check") + suffix, label: child.isChecked ? L10n.text("Uncheck", "取消勾选") + " " + child.text : L10n.text("Check", "勾选") + " " + child.text, rect: CGRect(x: 5, y: y, width: 21, height: 22)))
+                append(NotesCanvasAction(id: noteAction(item, "editItem") + suffix, label: L10n.text("Edit item", "编辑事项") + " " + child.text,
+                    rect: checklistTextRect(item, geometry: geometry, index: index, offset: offset)))
+                let controls: [(String, String, CGFloat)] = [("up", L10n.text("Move up", "上移"), 58), ("down", L10n.text("Move down", "下移"), 40), ("remove", L10n.text("Delete item", "删除事项"), 22)]
                 for (verb, label, trailing) in controls {
-                    output.append(NotesCanvasAction(id: noteAction(item, verb) + suffix, label: label, rect: CGRect(x: item.x + item.width - trailing, y: y, width: 17, height: 22)))
+                    append(NotesCanvasAction(id: noteAction(item, verb) + suffix, label: label, rect: CGRect(x: CGFloat(item.width) - trailing, y: y, width: 17, height: 22)))
                 }
             }
             output.append(NotesCanvasAction(id: noteAction(item, "add"), label: L10n.text("Add item", "添加事项"), rect: CGRect(x: item.x + 7, y: item.y + item.height - 26, width: item.width - 29, height: 21)))
@@ -623,7 +1140,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     }
 
     private func repaint() {
-        heading.string = L10n.text("NOTES", "便笺")
+        heading.string = HUDSectionHeading.text(L10n.text("NOTES", "便笺"))
         heading.foregroundColor = primary.cgColor
         heading.contentsScale = HUDRenderScale.contentScale(for: heading, baseScale: scale)
         status.contentsScale = HUDRenderScale.contentScale(for: status, baseScale: scale)
@@ -658,14 +1175,19 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
             plate.lineWidth = 0.8
             toolbar.addSublayer(plate)
             HUDControlHighlightLayer.add(to: plate, rect: plate.bounds)
-            let symbol = action.id == "tool:text" ? "T" : action.id == "tool:todo" ? "☑" : "▧"
+            let symbol = action.id == "tool:text" ? "T" : action.id == "tool:todo" ? "☑" : action.id == "tool:drawing" ? "✎" : "▧"
             let color = primary
+            let iconRect = CGRect(x: 9, y: 5, width: 18, height: 18)
             let gameIcon: EndfieldGameIcon? = action.id == "tool:text" ? .operationalManual : action.id == "tool:todo" ? .mission : nil
-            if gameIcon?.add(to: plate, rect: CGRect(x: 9, y: 7, width: 18, height: 18),
+            if action.id == "tool:drawing" {
+                // Match the neighboring game icons' visible ink, including their transparent inset.
+                plate.addSublayer(HUDPencilArtwork.makeLayer(in: iconRect.insetBy(dx: 2, dy: 2),
+                    color: color, contentsScale: scale))
+            } else if gameIcon?.add(to: plate, rect: iconRect,
                              tint: color, contentsScale: scale) != true {
-                addText(symbol, rect: CGRect(x: 9, y: 7, width: 18, height: 18), size: 14, color: color, parent: plate, weight: .semibold)
+                addText(symbol, rect: iconRect, size: 14, color: color, parent: plate, weight: .semibold)
             }
-            addText(action.label, rect: CGRect(x: 31, y: 8, width: 65, height: 17), size: 11.5, color: color, parent: plate, weight: .semibold)
+            addText(action.label, rect: CGRect(x: 27, y: 8, width: 63, height: 17), size: 10, color: color, parent: plate, weight: .semibold)
         }
     }
 
@@ -673,6 +1195,7 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         // Unpinned cards are not visible on another section. In particular,
         // do not decode all stored note images merely to summon the map.
         guard notesSelected || original.isPinned else {
+            nodes[original.id]?.media?.setVisible(false)
             nodes[original.id]?.layer.isHidden = true
             nodes[original.id]?.layer.opacity = 0
             return
@@ -694,23 +1217,49 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         card.borderColor = (item.id == selectedNoteID ? accent : border).cgColor
         card.backgroundColor = NSColor(white: dark ? 0.105 : 0.92, alpha: 1).cgColor
         card.sublayers?.forEach { $0.removeFromSuperlayer() }
+        node.content.sublayers?.forEach { $0.removeFromSuperlayer() }
+        node.rows.removeAll(); node.textLines.removeAll()
         let head = CALayer()
         head.frame = CGRect(x: 0, y: 0, width: item.width, height: Double(headerHeight))
         head.backgroundColor = NSColor(white: dark ? 0.16 : 0.82, alpha: 1).cgColor
         card.addSublayer(head)
-        let title = item.kind == .text ? L10n.text("TEXT", "文字") : item.kind == .todo ? L10n.text("TODO", "待办") : L10n.text("IMAGE", "图片")
+        let title = item.kind == .text ? L10n.text("TEXT", "文字") : item.kind == .todo ? L10n.text("TODO", "待办") : item.kind == .drawing ? L10n.text("DRAWING", "画画") : L10n.text("IMAGE/VIDEO", "图片/视频")
         addText("⠿  " + title, rect: CGRect(x: 7, y: 6, width: item.width - 56, height: 14), size: 9, color: muted, parent: head, weight: .semibold)
         drawPin(in: CGRect(x: item.width - 41, y: 6, width: 12, height: 12), pinned: item.isPinned, parent: head)
         drawCross(in: CGRect(x: item.width - 17, y: 8, width: 7, height: 7), color: muted, parent: head)
         switch item.kind {
-        case .text:
-            if editing?.noteID != item.id {
-                addText(item.text.isEmpty ? L10n.text("Double-click to write…", "双击输入…") : item.text,
-                    rect: CGRect(x: 9, y: 29, width: item.width - 18, height: item.height - 40), size: 12,
-                    color: item.text.isEmpty ? muted : primary, parent: card, wrapped: true)
-            }
-        case .todo: renderChecklist(item, parent: card)
+        case .text, .todo: layoutScrollableContent(item)
+        case .drawing:
+            node.drawingLayer.frame = drawingViewport(item)
+            node.drawingLayer.masksToBounds = true
+            card.addSublayer(node.drawingLayer)
+            drawStrokes(item.drawing ?? NotesDrawing(), on: node, size: node.drawingLayer.bounds.size)
+            node.brushPreview.isHidden = true
+            card.addSublayer(node.brushPreview)
         case .image:
+            if let reference = item.media {
+                if node.mediaReference != reference {
+                    node.media?.dispose(); node.mediaReference = reference
+                    let presentation = NotesMediaPresentation(reference: reference)
+                    node.media = presentation
+                    presentation.onProgress = { [weak self, weak node] in
+                        guard let self, let node, let current = self.note(item.id) else { return }
+                        self.withoutActions { self.updateMediaProgress(current, node: node, animated: true) }
+                    }
+                    presentation.onStateChange = { [weak self, weak node] in
+                        guard let self, let node, let current = self.note(item.id) else { return }
+                        self.withoutActions { self.updateMediaFooter(current, node: node); self.updateMediaProgress(current, node: node) }
+                        self.onChange?()
+                    }
+                }
+                if let media = node.media {
+                    media.layer.frame = CGRect(x: 5, y: 29, width: item.width - 10, height: max(1, item.height - 56))
+                    card.addSublayer(media.layer); media.setVisible(isVisible)
+                    updateMediaFooter(item, node: node)
+                    updateMediaProgress(item, node: node)
+                }
+                break
+            }
             if node.imageName != item.imageName || node.image == nil {
                 node.imageName = item.imageName
                 if let url = store?.imageURL(for: item), let image = NSImage(contentsOf: url) {
@@ -730,7 +1279,23 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
                 addText(L10n.text("Image unavailable", "图片不可用"), rect: CGRect(x: 10, y: 40, width: item.width - 20, height: 35), size: 11, color: muted, parent: card, wrapped: true)
             }
         }
-        for action in actions(for: item) where !action.id.contains(":edit") {
+        for action in actions(for: item) where action.id.contains(":format") {
+            let frame = action.rect.offsetBy(dx: -CGFloat(item.x), dy: -CGFloat(item.y))
+            let plate = CALayer(); plate.frame = frame
+            plate.borderWidth = 0.5; plate.borderColor = border.cgColor
+            plate.backgroundColor = NSColor(white: dark ? 0.18 : 0.82, alpha: 1).cgColor
+            card.addSublayer(plate)
+            let kind = String(action.id.split(separator: ":").last ?? "")
+            if kind == "formatColor" {
+                let swatch = node.formatSwatch; swatch.frame = plate.bounds.insetBy(dx: 4, dy: 4)
+                swatch.backgroundColor = (item.kind == .drawing ? drawingColor.color : editingColor ?? primary).cgColor
+                plate.addSublayer(swatch)
+            } else {
+                let symbols = ["formatSize": "A↕", "formatFont": "Aa", "formatSpecial": "B"]
+                addText(symbols[kind] ?? action.label, rect: CGRect(x: 2, y: 3, width: frame.width - 4, height: 15), size: 10, color: primary, parent: plate)
+            }
+        }
+        for action in actions(for: item) where !action.id.contains(":edit") && action.id.split(separator: ":").count == 3 {
             HUDControlHighlightLayer.add(to: card, rect: action.rect.offsetBy(dx: -CGFloat(item.x), dy: -CGFloat(item.y)))
         }
         do {
@@ -748,41 +1313,164 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
         }
     }
 
-    private func renderChecklist(_ item: CanvasNote, parent: CALayer) {
-        let count = visibleRowCount(item)
-        let offset = min(max(0, item.items.count - count), rowOffsets[item.id] ?? 0)
-        rowOffsets[item.id] = offset
-        for index in offset..<min(item.items.count, offset + count) {
-            let child = item.items[index]
-            let y = headerHeight + CGFloat(index - offset) * rowHeight + 7
-            let check = CAShapeLayer()
-            check.frame = CGRect(x: 10, y: y, width: 12, height: 12)
-            check.path = CGPath(roundedRect: check.bounds, cornerWidth: 2, cornerHeight: 2, transform: nil)
-            check.fillColor = child.isChecked ? accent.cgColor : nil
-            check.strokeColor = child.isChecked ? accent.cgColor : muted.cgColor
-            check.lineWidth = 1
-            parent.addSublayer(check)
-            if child.isChecked {
-                let tick = CAShapeLayer()
-                tick.frame = check.bounds
-                let p = CGMutablePath(); p.move(to: CGPoint(x: 2.5, y: 6)); p.addLine(to: CGPoint(x: 5, y: 9)); p.addLine(to: CGPoint(x: 10, y: 3))
-                tick.path = p; tick.fillColor = nil; tick.strokeColor = NSColor(white: 0.1, alpha: 1).cgColor; tick.lineWidth = 1.4
-                check.addSublayer(tick)
-            }
-            if !(editing?.noteID == item.id && editing?.itemID == child.id) {
-                addText(child.text.isEmpty ? L10n.text("New item…", "新事项…") : child.text,
-                    rect: CGRect(x: 28, y: y - 1, width: max(20, item.width - 89), height: 18), size: 11,
-                    color: child.isChecked || child.text.isEmpty ? muted : primary, parent: parent)
-            }
-            drawChevron(in: CGRect(x: item.width - 53, y: Double(y) + 3, width: 7, height: 5), up: true,
-                        color: index > 0 ? muted : border, parent: parent)
-            drawChevron(in: CGRect(x: item.width - 35, y: Double(y) + 3, width: 7, height: 5), up: false,
-                        color: index + 1 < item.items.count ? muted : border, parent: parent)
-            drawCross(in: CGRect(x: item.width - 17, y: Double(y) + 2, width: 7, height: 7), color: muted, parent: parent)
+    private func mediaSeekRect(_ item: CanvasNote) -> CGRect {
+        CGRect(x: 78, y: item.height - 25, width: max(1, item.width - 97), height: 20)
+    }
+    private func updateMediaSeek(at point: CGPoint) {
+        guard var gesture = mediaSeek, let item = note(gesture.id), let duration = item.media?.duration,
+              let node = nodes[gesture.id], point.x.isFinite else { return }
+        let rect = mediaSeekRect(displayed(item))
+        gesture.seconds = min(1, max(0, (point.x - item.x - rect.minX) / rect.width)) * duration
+        mediaSeek = gesture
+        withoutActions { updateMediaProgress(item, node: node) }
+    }
+    private func updateMediaProgress(_ item: CanvasNote, node: NoteNode, animated: Bool = false) {
+        guard item.media?.kind == .video, let duration = item.media?.duration, duration > 0, let media = node.media else { return }
+        let rect = mediaSeekRect(item)
+        if node.mediaRail.superlayer !== node.layer {
+            for layer in [node.mediaRail, node.mediaFill, node.mediaHandle] { node.layer.addSublayer(layer) }
         }
-        let footer = item.items.count > count ? "\(offset + 1)–\(min(item.items.count, offset + count))/\(item.items.count)" : ""
-        addText(L10n.text("+ Add item", "+ 添加事项"), rect: CGRect(x: 10, y: item.height - 24, width: item.width - 68, height: 19), size: 10.5, color: primary, parent: parent, weight: .medium)
-        if !footer.isEmpty { addText(footer, rect: CGRect(x: item.width - 66, y: item.height - 22, width: 47, height: 17), size: 9, color: muted, parent: parent) }
+        node.mediaRail.frame = CGRect(x: rect.minX, y: rect.midY - 1, width: rect.width, height: 2)
+        node.mediaRail.backgroundColor = muted.withAlphaComponent(0.3).cgColor
+        node.mediaFill.backgroundColor = accent.cgColor; node.mediaHandle.backgroundColor = primary.cgColor
+        node.mediaFill.anchorPoint = CGPoint(x: 0, y: 0.5); node.mediaFill.position = CGPoint(x: rect.minX, y: rect.midY)
+        node.mediaHandle.bounds = CGRect(x: 0, y: 0, width: 5, height: 8)
+        let preview = mediaSeek?.id == item.id ? mediaSeek?.seconds : nil
+        let width = rect.width * min(1, max(0, (preview ?? media.currentTime) / duration))
+        let interpolate = animated && media.isPlaying && preview == nil && isVisible && !reduceMotion()
+        let target = interpolate ? min(rect.width, width + rect.width / duration) : width
+        node.mediaFill.removeAllAnimations(); node.mediaHandle.removeAllAnimations()
+        node.mediaFill.bounds = CGRect(x: 0, y: 0, width: target, height: 2)
+        node.mediaHandle.position = CGPoint(x: rect.minX + target, y: rect.midY)
+        if interpolate {
+            let fill = CABasicAnimation(keyPath: "bounds.size.width"); fill.fromValue = width; fill.toValue = target
+            fill.duration = 1; fill.timingFunction = CAMediaTimingFunction(name: .linear)
+            node.mediaFill.add(fill, forKey: "notes.media.progress")
+            let thumb = CABasicAnimation(keyPath: "position.x"); thumb.fromValue = rect.minX + width; thumb.toValue = rect.minX + target
+            thumb.duration = 1; thumb.timingFunction = fill.timingFunction; node.mediaHandle.add(thumb, forKey: "notes.media.progress")
+        }
+    }
+
+    private func updateMediaFooter(_ item: CanvasNote, node: NoteNode) {
+        if node.footer.superlayer !== node.layer { node.layer.addSublayer(node.footer) }
+        node.footer.frame = CGRect(x: 8, y: item.height - 23, width: item.media?.kind == .video ? 65 : item.width - 18, height: 18)
+        node.footer.font = NSFont.systemFont(ofSize: 10); node.footer.fontSize = 10
+        node.footer.foregroundColor = primary.cgColor; node.footer.truncationMode = .end
+        node.footer.contentsScale = scale
+        if let error = node.media?.error { node.footer.string = error.localizedDescription }
+        else if node.media?.state == .loading { node.footer.string = L10n.text("Loading media…", "正在载入媒体…") }
+        else if item.media?.kind == .image { node.footer.string = "" }
+        else { node.footer.string = node.media?.isPlaying == true ? L10n.text("Ⅱ Pause", "Ⅱ 暂停") : L10n.text("▶ Play", "▶ 播放") }
+    }
+
+    private func layoutScrollableContent(_ item: CanvasNote) {
+        guard let node = nodes[item.id] else { return }
+        let viewport = contentViewport(item), geometry = contentGeometry(for: item)
+        let maximum = max(0, geometry.height - viewport.height)
+        let offset = min(maximum, max(0, scrollOffsets[item.id] ?? 0))
+        scrollOffsets[item.id] = offset
+        if node.viewport.superlayer !== node.layer { node.layer.addSublayer(node.viewport) }
+        node.viewport.frame = viewport
+        node.content.frame = CGRect(origin: .zero, size: viewport.size)
+        node.content.bounds = CGRect(x: 0, y: offset, width: viewport.width, height: viewport.height)
+        node.scrollThumb.isHidden = maximum <= 0
+        if maximum > 0 {
+            let height = max(10, viewport.height * viewport.height / geometry.height)
+            node.scrollThumb.frame = CGRect(x: viewport.width - 2, y: offset / maximum * (viewport.height - height),
+                                           width: 2, height: height)
+            node.scrollThumb.backgroundColor = muted.withAlphaComponent(0.5).cgColor
+        }
+        if item.kind == .text {
+            let value = item.text.isEmpty ? L10n.text("Double-click to write…", "双击输入…") : item.text
+            let layout = wrappedText(value, noteID: item.id, width: viewport.width, fontSize: 12, richText: item.richText)
+            let visible = editing?.noteID == item.id ? 0..<0 : layout.visibleLines(from: offset, to: offset + viewport.height)
+            updateTextLines(&node.textLines, parent: node.content, layout: layout, visible: visible,
+                origin: .zero, width: viewport.width, fontSize: 12,
+                color: item.text.isEmpty ? muted : primary, strikethrough: false)
+            return
+        }
+
+        let visible = geometry.visibleRows(offset: offset, height: viewport.height)
+        let wanted = Set(visible.map { item.items[$0].id })
+        for id in Array(node.rows.keys) where !wanted.contains(id) {
+            node.rows.removeValue(forKey: id)?.layer.removeFromSuperlayer()
+        }
+        for index in visible {
+            let child = item.items[index]
+            let row: ChecklistRowNode
+            if let existing = node.rows[child.id] { row = existing }
+            else {
+                row = ChecklistRowNode(); node.rows[child.id] = row
+                row.layer.name = "notes.todo.row." + child.id.uuidString
+                node.content.addSublayer(row.layer)
+                makeChecklistControls(item, index: index, parent: row.layer)
+            }
+            row.layer.frame = CGRect(x: 0, y: geometry.rowOrigins[index], width: viewport.width, height: geometry.rowHeights[index])
+            let value = child.text.isEmpty ? L10n.text("New item…", "新事项…") : child.text
+            let width = max(20, CGFloat(item.width) - 89)
+            let layout = wrappedText(value, noteID: item.id, itemID: child.id, width: width, fontSize: 11)
+            let origin = CGPoint(x: 23, y: 3)
+            let lines = editing?.noteID == item.id && editing?.itemID == child.id ? 0..<0
+                : layout.visibleLines(from: offset - geometry.rowOrigins[index] - origin.y,
+                                      to: offset + viewport.height - geometry.rowOrigins[index] - origin.y)
+            updateTextLines(&row.lines, parent: row.layer, layout: layout, visible: lines,
+                origin: origin, width: width, fontSize: 11,
+                color: child.isChecked || child.text.isEmpty ? muted : primary,
+                strikethrough: child.isChecked && !child.text.isEmpty)
+        }
+        if node.footer.superlayer !== node.layer { node.layer.addSublayer(node.footer) }
+        node.footer.frame = CGRect(x: 10, y: item.height - 24, width: item.width - 24, height: 19)
+        node.footer.string = L10n.text("+ Add item", "+ 添加事项")
+        node.footer.font = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+        node.footer.fontSize = 10.5; node.footer.foregroundColor = primary.cgColor
+        node.footer.contentsScale = HUDRenderScale.contentScale(for: node.footer, baseScale: scale)
+    }
+
+    private func updateTextLines(_ lines: inout [Int: CATextLayer], parent: CALayer, layout: NotesWrappedText,
+                                 visible: Range<Int>, origin: CGPoint, width: CGFloat, fontSize: CGFloat,
+                                 color: NSColor, strikethrough: Bool) {
+        for index in Array(lines.keys) where !visible.contains(index) { lines.removeValue(forKey: index)?.removeFromSuperlayer() }
+        for index in visible {
+            let label: CATextLayer
+            if let existing = lines[index] { label = existing }
+            else {
+                label = CATextLayer(); lines[index] = label
+                label.name = "notes.content.line.\(index)"
+                label.isWrapped = false; label.truncationMode = .none
+                label.font = NSFont.systemFont(ofSize: fontSize); label.fontSize = fontSize
+                label.contentsScale = HUDRenderScale.contentScale(for: label, baseScale: scale)
+                label.string = layout.attributedLine(at: index, defaultColor: color, strikethrough: strikethrough)
+                parent.addSublayer(label)
+            }
+            label.frame = CGRect(x: origin.x, y: origin.y + layout.origins[index], width: width, height: layout.heights[index])
+        }
+    }
+
+    private func makeChecklistControls(_ item: CanvasNote, index: Int, parent: CALayer) {
+        let child = item.items[index]
+        let check = CAShapeLayer()
+        check.frame = CGRect(x: 5, y: 4, width: 12, height: 12)
+        check.path = CGPath(roundedRect: check.bounds, cornerWidth: 2, cornerHeight: 2, transform: nil)
+        check.fillColor = child.isChecked ? accent.cgColor : nil
+        check.strokeColor = child.isChecked ? accent.cgColor : muted.cgColor
+        check.lineWidth = 1
+        parent.addSublayer(check)
+        if child.isChecked {
+            let tick = CAShapeLayer()
+            tick.frame = check.bounds
+            let path = CGMutablePath(); path.move(to: CGPoint(x: 2.5, y: 6)); path.addLine(to: CGPoint(x: 5, y: 9)); path.addLine(to: CGPoint(x: 10, y: 3))
+            tick.path = path; tick.fillColor = nil; tick.strokeColor = NSColor(white: 0.1, alpha: 1).cgColor; tick.lineWidth = 1.4
+            check.addSublayer(tick)
+        }
+        drawChevron(in: CGRect(x: item.width - 58, y: 7, width: 7, height: 5), up: true,
+                    color: index > 0 ? muted : border, parent: parent)
+        drawChevron(in: CGRect(x: item.width - 40, y: 7, width: 7, height: 5), up: false,
+                    color: index + 1 < item.items.count ? muted : border, parent: parent)
+        drawCross(in: CGRect(x: item.width - 22, y: 6, width: 7, height: 7), color: muted, parent: parent)
+        HUDControlHighlightLayer.add(to: parent, rect: CGRect(x: 0, y: 0, width: 21, height: 22))
+        for trailing in [63.0, 45.0, 27.0] {
+            HUDControlHighlightLayer.add(to: parent, rect: CGRect(x: item.width - trailing, y: 0, width: 17, height: 22))
+        }
     }
 
     private func requestDeletion(_ id: UUID) {
@@ -801,8 +1489,10 @@ final class NotesCanvas: NSObject, HUDModuleContentFactory {
     private func deletionActions() -> [NotesCanvasAction] {
         guard let id = pendingDeletionID, let original = note(id), visibleNoteIDs.contains(id) else { return [] }
         let item = displayed(original)
-        let x = min(workspaceBounds.maxX - 60, max(workspaceBounds.minX, CGFloat(item.x + item.width / 2) - 28))
-        let y = min(workspaceBounds.maxY - 27, CGFloat(item.y + item.height) + 5)
+        // Right-align beneath the header's delete button, not the card footer.
+        // These same rectangles drive rendering, pointer hits and accessibility.
+        let x = min(workspaceBounds.maxX - 56, max(workspaceBounds.minX, CGFloat(item.x + item.width) - 59))
+        let y = min(workspaceBounds.maxY - 25, max(workspaceBounds.minY, CGFloat(item.y) + 27))
         return [NotesCanvasAction(id: noteAction(item, "cancelDelete"), label: L10n.text("Cancel deletion", "取消删除"),
                                   rect: CGRect(x: x, y: y, width: 25, height: 25)),
                 NotesCanvasAction(id: noteAction(item, "confirmDelete"), label: L10n.text("Confirm deletion", "确认删除"),

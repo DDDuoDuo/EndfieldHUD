@@ -27,13 +27,13 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.1</string>
+	<string>1.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>13</string>
+	<string>14</string>
 	<key>HUDAuthor</key>
 	<string>DDDuoDuo</string>
 	<key>HUDReleaseTag</key>
-	<string>v1.1.1</string>
+	<string>v1.2.0</string>
 	<key>HUDRepositoryURL</key>
 	<string>https://github.com/DDDuoDuo/EndfieldHUD</string>
 	<key>LSApplicationCategoryType</key>
@@ -51,6 +51,8 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>EndfieldHUD captures audio from apps you explicitly enable to adjust their volume. It does not record or save audio. EndfieldHUD 仅捕获您启用的应用音频以调整音量，不会录制或保存音频。</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>EndfieldHUD reads track information and controls playback in Music or Spotify when you connect that player.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>

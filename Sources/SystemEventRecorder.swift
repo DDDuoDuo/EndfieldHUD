@@ -8,8 +8,51 @@ final class SystemEventRecorder {
     private var work: WorkModeSnapshot?
     private var audioDevices: [String: String]?
     private var displays: [String: String]?
+    private struct DisplaySettings: Equatable {
+        let clockStyle: HUDClockStyle
+        let centerLogo: HUDCenterLogo
+        let centerLogoRevision: String?
+        let alertMetric: HUDChargeMetric
+    }
+    private var displaySettings: DisplaySettings?
+    private var profileCrop: (background: Double, thumbnail: Double)?
 
     init(log: SystemEventLog) { self.log = log }
+
+    /// Called only from committed configuration publications. The first value
+    /// establishes a baseline, and revision IDs are kept in memory only.
+    func receiveConfiguration(_ value: AppConfiguration) {
+        precondition(Thread.isMainThread)
+        let next = DisplaySettings(clockStyle: value.clockStyle, centerLogo: value.centerLogo,
+                                   centerLogoRevision: value.centerLogoRevision, alertMetric: value.alertMetric)
+        let previous = displaySettings; displaySettings = next
+        guard let previous else { return }
+        if previous.clockStyle != next.clockStyle {
+            log.record(kind: .displaySettingsChanged, metadata: ["field": "clockStyle", "value": next.clockStyle.rawValue])
+        }
+        if previous.centerLogo != next.centerLogo
+            || (next.centerLogo == .custom && previous.centerLogoRevision != next.centerLogoRevision) {
+            let imported = next.centerLogo == .custom && next.centerLogoRevision != nil
+                && previous.centerLogoRevision != next.centerLogoRevision
+            log.record(kind: .displaySettingsChanged, metadata: ["field": "centerLogo", "value": imported ? "customImported" : next.centerLogo.rawValue])
+        }
+        if previous.alertMetric != next.alertMetric {
+            log.record(kind: .displaySettingsChanged, metadata: ["field": "alertMetric", "value": next.alertMetric.rawValue])
+        }
+    }
+
+    /// Feed committed profile snapshots, never crop drafts or mouse movement.
+    /// Store only which crop changed; zoom values and user content are omitted.
+    func receiveProfileCrop(backgroundZoom: Double, thumbnailZoom: Double) {
+        precondition(Thread.isMainThread)
+        func normalized(_ value: Double) -> Double { value.isFinite ? min(20, max(1, value)) : 1 }
+        let next = (background: normalized(backgroundZoom), thumbnail: normalized(thumbnailZoom))
+        let previous = profileCrop; profileCrop = next
+        guard let previous else { return }
+        let background = previous.background != next.background, thumbnail = previous.thumbnail != next.thumbnail
+        guard background || thumbnail else { return }
+        log.record(kind: .profileCropChanged, metadata: ["target": background && thumbnail ? "both" : background ? "background" : "thumbnail"])
+    }
 
     func receiveBattery(_ value: BatterySnapshot) {
         precondition(Thread.isMainThread)

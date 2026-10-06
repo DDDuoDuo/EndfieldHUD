@@ -25,6 +25,8 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     let module: HUDModule
     var onChange: (() -> Void)?
     var onChooseColor: ((NSColor) -> Void)?
+    var onChooseLogo: (() -> Void)?
+    var onLogoSelection: (() -> Void)?
     var onCaptureChanged: ((Bool) -> Void)?
     private let controller: HUDSettingsController
     private let shouldReduceMotion: () -> Bool
@@ -54,7 +56,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
     private var selectedSlider: String?
     private var restoreConfirmation = false
     private var localStatus: String?
-    private enum Page: Equatable { case main, battery, icons, screens, languages }
+    private enum Page: Equatable { case main, battery, icons, screens, languages, logos, metrics }
     /// These canvases survive navigation. Reuse their already-rasterized text
     /// and controls unless something they display actually changed; activation
     /// and unchanged platform-status notifications are not paint requests.
@@ -95,6 +97,8 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         return localStatus ?? controller.shortcutStatus ?? controller.status ?? ""
     }
     private var config: AppConfiguration { controller.configuration }
+    var customLogoRevision: String? { config.centerLogoRevision }
+    var selectedLogo: HUDCenterLogo { config.centerLogo }
     private var primary: NSColor { NSColor(white: dark ? 0.94 : 0.12, alpha: 1) }
     private var muted: NSColor { NSColor(white: dark ? 0.64 : 0.40, alpha: 1) }
     private var accent: NSColor { config.accentColor }
@@ -209,6 +213,18 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
             ]
         }
         if module == .display {
+            if page == .logos {
+                return HUDCenterLogo.allCases.map { logo in
+                    Row(id: "logo:" + logo.rawValue, title: logo.title,
+                        kind: .selectionOption(selected: c.centerLogo == logo, detail: "", available: true))
+                }
+            }
+            if page == .metrics {
+                return HUDChargeMetric.allCases.map { metric in
+                    Row(id: "metric:" + metric.rawValue, title: metric.title,
+                        kind: .selectionOption(selected: c.alertMetric == metric, detail: "", available: true))
+                }
+            }
             if page == .icons {
                 let presets = HUDApplicationIcon.pickerCases
                 return stride(from: 0, to: presets.count, by: 4).map { index in
@@ -217,6 +233,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
             }
             if page == .battery {
                 return [
+                    Row(id: "metric", title: L10n.text("Reading", "显示数据"), kind: .choice(c.alertMetric.title)),
                     Row(id: "method", title: L10n.text("Display method", "显示方式"), kind: .choice(c.displayMode == .always ? L10n.text("Always", "始终显示") : L10n.text("Power changes", "充电状态变化"))),
                     Row(id: "duration", title: L10n.text("Display duration", "显示时长"), kind: .slider(c.displayDuration, 1, 60)),
                     Row(id: "placement", title: L10n.text("Display position", "显示位置"), kind: .choice(c.placement == .topCenter ? L10n.text("Top center", "顶部居中") : L10n.text("Custom", "自定"))),
@@ -235,6 +252,8 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
                 Row(id: "motion", title: L10n.text("Reduce Motion", "减少动态效果"), kind: .toggle(c.reduceMotion)),
                 Row(id: "theme", title: L10n.text("Theme", "主题"), kind: .choice(themeTitle(c.theme))),
                 Row(id: "clockFormat", title: L10n.text("Time format", "时间格式"), kind: .choice(c.clockFormat == .twentyFourHour ? L10n.text("24-hour", "24 小时制") : L10n.text("12-hour AM/PM", "12 小时制 AM/PM"))),
+                Row(id: "clockStyle", title: L10n.text("Clock style", "时钟样式"), kind: .choice("0\(c.clockStyle.index + 1) / 05")),
+                Row(id: "centerLogo", title: L10n.text("Center logo", "中心标志"), kind: .choice("›")),
                 Row(id: "appIcon", title: L10n.text("App / menu bar icon", "应用 / 菜单栏图标"), kind: .choice("›")),
                 Row(id: "palette", title: L10n.text("Theme color", "主题颜色"), kind: .palette, height: 54),
                 Row(id: "battery", title: L10n.text("Battery alert", "电池提醒"), kind: .choice("›")),
@@ -384,11 +403,14 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         guard accessibleActions.contains(where: { $0.id == id && $0.enabled }) else { return }
         localStatus = nil
         switch id {
-        case "back": reveal(direction: -1) { page = .main; scrollOffset = mainScrollOffset }; return
+        case "back": reveal(direction: -1) { if page == .metrics { page = .battery; scrollOffset = 0 } else { page = .main; scrollOffset = mainScrollOffset } }; return
         case "language": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .languages; scrollOffset = 0 }; return
         case "screen": displays = displayProvider(); reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .screens; scrollOffset = 0 }; return
         case "appIcon": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .icons; scrollOffset = 0 }; return
         case "battery": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .battery; scrollOffset = 0 }; return
+        case "metric": reveal(direction: 1) { page = .metrics; scrollOffset = 0 }; return
+        case "centerLogo": reveal(direction: 1) { mainScrollOffset = scrollOffset; page = .logos; scrollOffset = 0 }; return
+        case "logo:custom": onChooseLogo?(); return
         case "restore": reveal(direction: 1) { restoreConfirmation = true }; return
         case "restore:cancel": reveal(direction: -1) { restoreConfirmation = false }; return
         case "restore:confirm": reveal(direction: -1) { restoreConfirmation = false; controller.restoreDefaults() }; return
@@ -404,6 +426,13 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         case "automaticUpdates": controller.toggleAutomaticUpdates()
         case "latestRelease": if let url = controller.updateState.releaseURL { controller.openLink(url) }
         default:
+            if id.hasPrefix("logo:"), let logo = HUDCenterLogo(rawValue: String(id.dropFirst(5))) {
+                onLogoSelection?()
+                controller.update { $0.centerLogo = logo }; refresh(); animateRow(id); return
+            }
+            if id.hasPrefix("metric:"), let metric = HUDChargeMetric(rawValue: String(id.dropFirst(7))) {
+                reveal(direction: -1) { controller.update { $0.alertMetric = metric }; page = .battery; scrollOffset = 0 }; return
+            }
             if id.hasPrefix("language:"), let language = AppLanguage(rawValue: String(id.dropFirst(9))) {
                 reveal(direction: -1) {
                     page = .main; scrollOffset = mainScrollOffset
@@ -438,6 +467,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
                     case "lowPower": c.lowPowerVisualMode.toggle()
                     case "theme": c.theme = next(c.theme, in: OverlayTheme.allCases)
                     case "clockFormat": c.clockFormat = next(c.clockFormat, in: HUDClockFormat.allCases)
+                    case "clockStyle": c.clockStyle = c.clockStyle.advanced(1)
                     case "method": c.displayMode = next(c.displayMode, in: DisplayMode.allCases)
                     case "placement": c.placement = next(c.placement, in: OverlayPlacement.allCases)
                     default: break
@@ -452,6 +482,16 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
         let hex = String(format: "%02X%02X%02X", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
         controller.update { $0.accentHex = hex }; animateRow("palette")
     }
+    func showBatterySettings() {
+        guard module == .display else { return }
+        if page == .main { mainScrollOffset = scrollOffset }
+        settleTransition(); page = .battery; scrollOffset = 0; localStatus = nil; refresh()
+    }
+    func setCustomLogo(revision: String) {
+        controller.update { $0.centerLogo = .custom; $0.centerLogoRevision = revision }
+        refresh(); animateRow("logo:custom")
+    }
+    func showImportError(_ error: String) { localStatus = error; refresh() }
     @discardableResult func capture(_ event: NSEvent) -> Bool {
         guard isCapturingShortcut else { return false }
         if event.keyCode == 53 { cancelCapture(); return true }
@@ -475,7 +515,7 @@ final class HUDSettingsCanvas: NSObject, HUDModuleContentFactory {
 
     private func repaint() {
         rowsLayer.sublayers?.forEach { $0.removeFromSuperlayer() }; chrome.sublayers?.forEach { $0.removeFromSuperlayer() }; rowLayers.removeAll()
-        text(page == .battery ? L10n.text("Battery alert", "电池提醒") : page == .icons ? L10n.text("App / menu bar icon", "应用 / 菜单栏图标") : page == .screens ? L10n.text("Display", "显示器") : page == .languages ? L10n.text("Language", "语言") : module.title, in: chrome,
+        text(page == .battery || page == .metrics ? L10n.text("Battery alert", "电池提醒") : page == .logos ? L10n.text("Center logo", "中心标志") : page == .icons ? L10n.text("App / menu bar icon", "应用 / 菜单栏图标") : page == .screens ? L10n.text("Display", "显示器") : page == .languages ? L10n.text("Language", "语言") : module.title, in: chrome,
              rect: CGRect(x: 12, y: 1, width: 306, height: 23), size: 16, weight: .semibold, color: primary)
         let line = CALayer(); line.frame = CGRect(x: 12, y: 29, width: 376, height: 1); line.backgroundColor = accent.withAlphaComponent(0.5).cgColor; chrome.addSublayer(line)
         if page != .main { smallButton(L10n.text("‹ Back", "‹ 返回"), rect: CGRect(x: 323, y: 2, width: 65, height: 25), in: chrome) }

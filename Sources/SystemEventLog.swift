@@ -21,6 +21,13 @@ enum SystemEventKind: String, Codable, CaseIterable {
     case workStarted, workPaused, workResumed, workReset, workCompleted
     case powerConnected, powerDisconnected, batteryStateChanged
     case audioDeviceConnected, audioDeviceDisconnected, displayConnected, displayDisconnected
+    case displaySettingsChanged, profileCropChanged
+    case mapPinStyleChanged, mapRecentered
+    case noteAction, playbackAction
+    case projectionAction
+    case archiveAction, readerAction
+    case mediaAssemblyAction, calendarAction, minigameAction
+    case accountAction
 
     var category: SystemEventCategory {
         switch self {
@@ -31,6 +38,16 @@ enum SystemEventKind: String, Codable, CaseIterable {
         case .powerConnected, .powerDisconnected, .batteryStateChanged: return .power
         case .audioDeviceConnected, .audioDeviceDisconnected: return .audio
         case .displayConnected, .displayDisconnected: return .display
+        case .displaySettingsChanged, .profileCropChanged: return .display
+        case .mapPinStyleChanged, .mapRecentered: return .navigation
+        case .noteAction: return .files
+        case .playbackAction: return .audio
+        case .projectionAction: return .display
+        case .archiveAction, .readerAction: return .files
+        case .mediaAssemblyAction: return .files
+        case .calendarAction: return .work
+        case .minigameAction: return .work
+        case .accountAction: return .display
         }
     }
 
@@ -55,8 +72,34 @@ enum SystemEventKind: String, Codable, CaseIterable {
         case .audioDeviceDisconnected: return "Audio device disconnected"
         case .displayConnected: return "Display connected"
         case .displayDisconnected: return "Display disconnected"
+        case .displaySettingsChanged: return "Display setting changed"
+        case .profileCropChanged: return "Profile crop changed"
+        case .mapPinStyleChanged: return "Map pin style changed"
+        case .mapRecentered: return "Map recentered"
+        case .noteAction: return "Note changed"
+        case .playbackAction: return "Playback changed"
+        case .projectionAction: return "Projection changed"
+        case .archiveAction: return "Archive changed"
+        case .readerAction: return "Reader changed"
+        case .mediaAssemblyAction: return "Media changed"
+        case .calendarAction: return "Calendar changed"
+        case .minigameAction: return "Minigame"
+        case .accountAction: return "Account changed"
         }
     }
+}
+
+/// Closed metadata vocabulary: custom artwork identifiers, file paths and
+/// editable profile text never enter settings events.
+private enum SystemEventSettingsMetadata {
+    static let titles = ["clockStyle": "Clock style", "centerLogo": "Center logo", "alertMetric": "Charge metric"]
+    static let values = [
+        "clockStyle": ["digital": "Digital", "split": "Split", "dial": "Dial", "rail": "Rail", "stacked": "Stacked"],
+        "centerLogo": ["endfield": "Endfield", "rhodesIsland": "Rhodes Island", "babel": "Babel", "rhineLab": "Rhine Lab",
+                       "custom": "Custom", "customImported": "Custom artwork imported"],
+        "alertMetric": ["battery": "Battery", "ram": "RAM", "cpu": "CPU", "network": "Network", "disk": "Disk"],
+    ]
+    static let cropTargets = ["background": "Background", "thumbnail": "Thumbnail", "both": "Background and thumbnail"]
 }
 
 struct SystemEvent: Identifiable, Codable, Equatable {
@@ -89,6 +132,41 @@ struct SystemEvent: Identifiable, Codable, Equatable {
         }
         if let percentage = metadata["percentage"] { fields.append(percentage + "%") }
         if let count = metadata["count"] { fields.append("\(count) items") }
+        if kind == .displaySettingsChanged, let field = metadata["field"], let value = metadata["value"],
+           let title = SystemEventSettingsMetadata.titles[field], let choice = SystemEventSettingsMetadata.values[field]?[value] {
+            fields.append(title); fields.append(choice)
+        }
+        if kind == .profileCropChanged, let target = metadata["target"].flatMap({ SystemEventSettingsMetadata.cropTargets[$0] }) {
+            fields.append(target)
+        }
+        if kind == .mapPinStyleChanged, let style = metadata["style"],
+           let title = ["yellow": "Yellow", "green": "Green", "player": "Player"][style] {
+            fields.append(title)
+        }
+        if kind == .projectionAction, let action = metadata["action"], let title = [
+            "drawingEdited": "Drawing edited", "erased": "Drawing erased", "brushChanged": "Brush changed",
+            "backgroundChanged": "Background changed", "mediaAdded": "Media added", "mediaRemoved": "Media removed", "cleared": "Content cleared"][action] {
+            fields.append(title)
+        }
+        if kind == .archiveAction || kind == .readerAction, let action = metadata["action"], let title = [
+            "created": "Document created", "edited": "Document edited", "deleted": "Document deleted",
+            "mediaAdded": "Media added", "mediaRemoved": "Media removed", "imported": "Document imported",
+            "bookmarked": "Bookmark changed", "progress": "Reading progress changed", "settings": "Reading settings changed",
+            "categoryCreated": "Category created", "categoryChanged": "Category changed", "categoryDeleted": "Category deleted"][action] {
+            fields.append(title)
+        }
+        if kind == .mediaAssemblyAction, let action = metadata["action"], let title = [
+            "imported": "Media imported", "edited": "Media changed", "exported": "Media exported"][action] { fields.append(title) }
+        if kind == .minigameAction, let action = metadata["action"], let title = ["started":"Game started", "restarted":"Game restarted", "finished":"Game finished"][action] { fields.append(title) }
+        if kind == .accountAction, let action = metadata["action"], let title = ["linked":"Account linked", "unlinked":"Account unlinked", "synced":"Profile refreshed", "settings":"Account settings changed"][action] { fields.append(title) }
+        if kind == .calendarAction, let action = metadata["action"], let title = [
+            "created": "Event created", "edited": "Event edited", "deleted": "Event deleted"][action] { fields.append(title) }
+        if kind != .projectionAction, let action = metadata["action"], let title = [
+            "createdText": "Text added", "createdTODO": "Checklist added", "createdMedia": "Media added", "createdDrawing": "Drawing added",
+            "editedText": "Text edited", "formattedText": "Text formatted", "editedTODO": "Checklist edited", "drawingEdited": "Drawing edited",
+            "deletedNote": "Note deleted", "mediaPlayback": "Media playback", "playPause": "Play / pause", "previous": "Previous track",
+            "next": "Next track", "seek": "Seek"][action] { fields.append(title) }
+        if let source = metadata["source"], let name = ["music": "Music", "spotify": "Spotify", "netease": "NetEase Music", "qqMusic": "QQ Music", "kugou": "Kugou", "system": "Now Playing"][source] { fields.append(name) }
         return fields.joined(separator: " · ")
     }
 }
@@ -249,6 +327,28 @@ final class SystemEventLog {
                 if !name.isEmpty { result["device"] = name }
             }
         case .overlayOpened: break
+        case .displaySettingsChanged:
+            if let field = raw["field"], let value = raw["value"], SystemEventSettingsMetadata.values[field]?[value] != nil {
+                result = ["field": field, "value": value]
+            }
+        case .profileCropChanged: oneOf("target", Set(SystemEventSettingsMetadata.cropTargets.keys))
+        case .mapPinStyleChanged: oneOf("style", ["yellow", "green", "player"])
+        case .mapRecentered: break
+        case .noteAction:
+            oneOf("action", ["createdText", "createdTODO", "createdMedia", "createdDrawing", "editedText", "formattedText", "editedTODO", "drawingEdited", "deletedNote", "mediaPlayback"])
+        case .playbackAction:
+            oneOf("action", ["playPause", "previous", "next", "seek"])
+            oneOf("source", ["music", "spotify", "netease", "qqMusic", "kugou", "system"])
+        case .archiveAction:
+            oneOf("action", ["created", "edited", "deleted", "mediaAdded", "mediaRemoved", "categoryCreated", "categoryChanged", "categoryDeleted"])
+        case .mediaAssemblyAction: oneOf("action", ["imported", "edited", "exported"])
+        case .minigameAction: oneOf("action", ["started", "restarted", "finished"])
+        case .accountAction: oneOf("action", ["linked", "unlinked", "synced", "settings"])
+        case .calendarAction: oneOf("action", ["created", "edited", "deleted"])
+        case .readerAction:
+            oneOf("action", ["imported", "deleted", "bookmarked", "progress", "settings"])
+        case .projectionAction:
+            oneOf("action", ["drawingEdited", "erased", "brushChanged", "backgroundChanged", "mediaAdded", "mediaRemoved", "cleared"])
         }
         return result
     }

@@ -331,7 +331,7 @@ enum TelemetryCanvasTests {
               "The refresh control uses only an arrow while retaining a spoken action label")
         L10n.language = .simplifiedChinese
         _ = storage!.makeContent(for: .storage, style: light)
-        check(text("storage.heading", storageRoot) == "存储" && text("storage.settings.title", storageRoot) == "存储设置"
+        check(text("storage.heading", storageRoot) == "// 存储" && text("storage.settings.title", storageRoot) == "存储设置"
               && storage!.accessibleActions.last?.label == "刷新存储", "Storage artwork and icon accessibility localize together")
         check(ids(storageRoot) == storageIDs, "Theme and language changes preserve the simplified retained layer tree")
         let fixtureArrow = named("storage.refresh.arrow", storageRoot) as! CAShapeLayer

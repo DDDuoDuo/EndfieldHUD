@@ -65,6 +65,12 @@ verify_copy() {
     fi
 }
 verify_copy "$SPARKLE_DIR/LICENSE" "$RESOURCES/Sparkle-LICENSE.txt"
+verify_copy "$PROJECT_DIR/ThirdParty/MediaRemoteAdapter/LICENSE" "$RESOURCES/MediaRemoteAdapter-LICENSE.txt"
+verify_copy "$PROJECT_DIR/ThirdParty/MediaRemoteAdapter/bin/mediaremote-adapter.pl" "$RESOURCES/NowPlaying/mediaremote-adapter.pl"
+MEDIA_FRAMEWORK="$APP/Contents/Frameworks/MediaRemoteAdapter.framework"
+xcrun lipo "$MEDIA_FRAMEWORK/MediaRemoteAdapter" -verify_arch "$@"
+codesign --verify --strict --all-architectures "$MEDIA_FRAMEWORK"
+
 verify_copy "$PROJECT_DIR/LICENSE" "$RESOURCES/LICENSE.txt"
 verify_copy "$PROJECT_DIR/CREDITS.md" "$RESOURCES/CREDITS.md"
 verify_copy "$PROJECT_DIR/Resources/EndfieldIndustriesSource.png" "$RESOURCES/EndfieldIndustriesSource.png"
@@ -81,12 +87,35 @@ done
 for NAME in Perlica.png RhodesIsland.png; do
     verify_copy "$PROJECT_DIR/Resources/AppIconSources/$NAME" "$RESOURCES/AppIconSources/$NAME"
 done
-for DIRECTORY in AppIconSources/Factions AppIconSources/EndfieldWiki WorldMap; do
-    for SOURCE in "$PROJECT_DIR/Resources/$DIRECTORY"/*; do
-        [ -f "$SOURCE" ] || { printf 'Missing resource directory: %s\n' "$DIRECTORY" >&2; exit 1; }
-        verify_copy "$SOURCE" "$RESOURCES/$DIRECTORY/$(basename "$SOURCE")"
-    done
-done
+python3 - "$PROJECT_DIR/Resources" "$RESOURCES" <<'PY'
+from pathlib import Path
+import sys
+
+source_root, bundle_root = map(Path, sys.argv[1:])
+for directory in ('AppIconSources/Factions', 'AppIconSources/EndfieldWiki', 'WorldMap', 'MediaAssembly', 'OrbiPom'):
+    source, bundle = source_root / directory, bundle_root / directory
+    def files(root):
+        if not root.is_dir():
+            sys.exit(f'Missing resource directory: {root}')
+        result = {}
+        for path in root.rglob('*'):
+            if path.is_symlink():
+                sys.exit(f'Unexpected resource symlink: {path}')
+            if path.is_file():
+                result[path.relative_to(root)] = path
+        if not result:
+            sys.exit(f'Empty resource directory: {root}')
+        return result
+    expected, actual = files(source), files(bundle)
+    if expected.keys() != actual.keys():
+        sys.exit(f'Bundled resource file set differs: {directory}; '
+                 f'missing={sorted(map(str, expected.keys() - actual.keys()))}; '
+                 f'extra={sorted(map(str, actual.keys() - expected.keys()))}')
+    for relative, path in expected.items():
+        if path.read_bytes() != actual[relative].read_bytes():
+            sys.exit(f'Stale bundled resource: {directory}/{relative}')
+print('Verified exact recursive resource trees, including Media Assembly subdirectories.')
+PY
 python3 "$PROJECT_DIR/scripts/package-watch-resources.py" verify \
     "$PROJECT_DIR/Resources/WatchSource" "$RESOURCES/WatchSource"
 if [ -e "$RESOURCES/AppIconSources/FactionAtlas.png" ]; then

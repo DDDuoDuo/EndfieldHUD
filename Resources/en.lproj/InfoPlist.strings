@@ -1,1 +1,2 @@
 "NSAudioCaptureUsageDescription" = "EndfieldHUD captures audio from apps you enable to adjust their volume. Audio is processed in memory and is not saved.";
+"NSAppleEventsUsageDescription" = "EndfieldHUD reads track information and controls playback in Music or Spotify when you connect that player.";

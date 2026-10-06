@@ -221,7 +221,7 @@ enum HUDSettingsCanvasTests {
         check(controller.configuration.hudOffsetX == 0.5 && controller.layoutConfirmationRemaining == nil,
               "Closing during a position drag discards staging instead of restarting the safety preview")
         check(!display.setSlider(id: "positionY", value: .infinity), "Nonfinite position values cannot reach preview state")
-        for id in ["positionX", "positionY", "parallax", "perspective", "darkness", "blur", "motion", "theme", "clockFormat", "accent:FAD41F", "customColor", "battery", "lowPower"] {
+        for id in ["positionX", "positionY", "parallax", "perspective", "darkness", "blur", "motion", "theme", "clockFormat", "clockStyle", "centerLogo", "accent:FAD41F", "customColor", "battery", "lowPower"] {
             check(reach(id, in: display), "Every display setting is scroll-reachable: \(id)")
         }
         check(reach("clockFormat", in: display), "Time format is available in Display")
@@ -230,6 +230,75 @@ enum HUDSettingsCanvasTests {
               "The time-format row changes and persists the live format")
         display.perform(actionID: "clockFormat")
         check(controller.configuration.clockFormat == .twentyFourHour, "Time format cycles back to 24-hour time")
+        check(reach("clockStyle", in: display), "The five clock presentations remain scroll-reachable beside the existing time format")
+        let initialClockStyle = controller.configuration.clockStyle
+        var visitedClockStyles = Set<String>()
+        for step in 1...5 {
+            display.perform(actionID: "clockStyle")
+            let expected = initialClockStyle.advanced(step)
+            visitedClockStyles.insert(controller.configuration.clockStyle.rawValue)
+            check(controller.configuration.clockStyle == expected && store.configuration.clockStyle == expected
+                  && ConfigurationStore(defaults: defaults).configuration.clockStyle == expected,
+                  "Clock presentation choice persists every step of its five-style cycle")
+            check(display.accessibleActions.first(where: { $0.id == "clockStyle" })?.label.hasSuffix("0\(expected.index + 1) / 05") == true
+                  && controller.configuration.clockFormat == .twentyFourHour,
+                  "Clock style updates its indicator while preserving the independently selected time format")
+        }
+        check(visitedClockStyles.count == 5 && controller.configuration.clockStyle == initialClockStyle,
+              "Five clock-style activations visit every presentation and wrap back to the initial choice")
+
+        check(reach("centerLogo", in: display), "Center-logo presets have a reachable Display settings entry")
+        let logoScroll = display.scrollOffset
+        let priorLogo = controller.configuration.centerLogo
+        let retainedLogoLayer = display.layer
+        display.perform(actionID: "centerLogo")
+        check(display.layer === retainedLogoLayer && display.isTransitioning && controller.configuration.centerLogo == priorLogo,
+              "Opening logo choices retains the settings surface without changing the saved artwork")
+        checkPageHandoff(display, direction: 1); display.settleTransition()
+        check(display.accessibleActions.map(\.id) == ["back"] + HUDCenterLogo.allCases.map { "logo:" + $0.rawValue }
+              && display.accessibleSliders.isEmpty,
+              "All preset and custom logo choices fit in stable order without main-page hit targets")
+        var logoRequests = 0, committedLogoSelections = 0
+        display.onChooseLogo = { logoRequests += 1 }
+        display.onLogoSelection = { committedLogoSelections += 1 }
+        let beforeLogoChooser = store.configuration
+        display.perform(actionID: "logo:custom")
+        check(logoRequests == 1 && store.configuration == beforeLogoChooser,
+              "Custom-logo selection requests its native chooser without persisting an unfinished selection")
+        display.showImportError("Fixture import failed")
+        check(display.accessibilityStatus == "Fixture import failed" && store.configuration == beforeLogoChooser,
+              "Import errors remain accessible and preserve the saved logo choice")
+        let logoRevision = UUID().uuidString
+        display.setCustomLogo(revision: logoRevision)
+        check(controller.configuration.centerLogo == .custom && store.configuration.centerLogoRevision == logoRevision
+              && ConfigurationStore(defaults: defaults).configuration.centerLogoRevision == logoRevision
+              && display.customLogoRevision == logoRevision,
+              "A completed bounded import selects and persists only its supplied revision")
+        for choice in HUDCenterLogo.allCases where choice != .custom {
+            let beforeSelection = committedLogoSelections
+            display.perform(actionID: "logo:" + choice.rawValue)
+            check(committedLogoSelections == beforeSelection + 1,
+                  "Every explicit preset selection invalidates a pending custom-image import")
+            check(controller.configuration.centerLogo == choice && store.configuration.centerLogo == choice
+                  && store.configuration.centerLogoRevision == logoRevision,
+                  "Preset selection preserves the user's independently retained custom image revision")
+            check(display.accessibleActions.filter { $0.id.hasPrefix("logo:") && $0.label.hasSuffix(L10n.text("Selected", "已选择")) }.map(\.id)
+                  == ["logo:" + choice.rawValue], "Only the selected center-logo preset is announced as selected")
+        }
+        let lastChoice = controller.configuration.centerLogo
+        let beforeSameChoice = committedLogoSelections
+        display.perform(actionID: "logo:" + lastChoice.rawValue)
+        check(committedLogoSelections == beforeSameChoice + 1 && display.selectedLogo == lastChoice,
+              "Choosing the already-selected preset also cancels an in-flight import without changing artwork")
+        let beforeInvalidLogo = store.configuration
+        let beforeInvalidSelection = committedLogoSelections
+        display.perform(actionID: "logo:not-a-choice")
+        check(store.configuration == beforeInvalidLogo && committedLogoSelections == beforeInvalidSelection,
+              "Unknown logo actions cannot change saved preferences or invalidate valid work")
+        check(display.escape(), "Escape closes logo choices through the retained back transition")
+        checkPageHandoff(display, direction: -1); display.settleTransition()
+        check(display.scrollOffset == logoScroll && display.accessibleActions.contains(where: { $0.id == "centerLogo" }),
+              "Leaving the logo chooser restores the prior Display-list position")
         check(reach("customColor", in: display), "Custom color stays reachable")
         var requests = 0
         display.onChooseColor = { _ in requests += 1 }
@@ -278,6 +347,38 @@ enum HUDSettingsCanvasTests {
               "Battery detail controls replace the center content inside the same module layer")
         check(display.setSlider(id: "duration", value: 3), "Battery duration can be adjusted")
         check(controller.configuration.displayDuration == 3, "Battery duration saves the requested three seconds")
+        let metricBaseline = controller.configuration
+        display.perform(actionID: "metric")
+        check(display.isTransitioning && display.layer === retainedDisplayLayer,
+              "Battery metric choices reuse the same retained page handoff")
+        checkPageHandoff(display, direction: 1); display.settleTransition()
+        check(display.accessibleActions.map(\.id) == ["back"] + HUDChargeMetric.allCases.map { "metric:" + $0.rawValue }
+              && display.accessibleSliders.isEmpty,
+              "All five reading types replace battery controls without leaking duration or display actions")
+        check(display.escape(), "Escape from the metric chooser returns one level to Battery settings")
+        checkPageHandoff(display, direction: -1); display.settleTransition()
+        check(display.accessibleActions.contains(where: { $0.id == "metric" })
+              && display.accessibleSliders.contains(where: { $0.id == "duration" })
+              && !display.accessibleActions.contains(where: { $0.id == "centerLogo" })
+              && controller.configuration.alertMetric == metricBaseline.alertMetric,
+              "Cancelling metric selection returns to its Battery parent and preserves the reading")
+        for metric in HUDChargeMetric.allCases {
+            display.perform(actionID: "metric"); display.settleTransition()
+            display.perform(actionID: "metric:" + metric.rawValue)
+            checkPageHandoff(display, direction: -1); display.settleTransition()
+            check(controller.configuration.alertMetric == metric && store.configuration.alertMetric == metric
+                  && ConfigurationStore(defaults: defaults).configuration.alertMetric == metric,
+                  "Every battery reading choice persists and returns through its mechanical parent transition")
+            check(display.accessibleActions.first(where: { $0.id == "metric" })?.label.hasSuffix(metric.title) == true
+                  && controller.configuration.displayMode == metricBaseline.displayMode
+                  && controller.configuration.displayDuration == metricBaseline.displayDuration
+                  && controller.configuration.scale == metricBaseline.scale,
+                  "Changing readings preserves alert timing, display method and size")
+            display.perform(actionID: "metric"); display.settleTransition()
+            check(display.accessibleActions.filter { $0.id.hasPrefix("metric:") && $0.label.hasSuffix(L10n.text("Selected", "已选择")) }.map(\.id)
+                  == ["metric:" + metric.rawValue], "The metric chooser checks only its persisted reading")
+            display.perform(actionID: "back"); display.settleTransition()
+        }
         check(display.escape(), "Battery details return through a mechanical subsection transition")
         check(display.scrollOffset == mainScroll, "Returning from battery details restores the prior main-list scroll position")
         checkPageHandoff(display, direction: -1)
@@ -287,6 +388,33 @@ enum HUDSettingsCanvasTests {
         check(!display.isTransitioning && display.layer.sublayers?.count == 1, "Enabling Reduce Motion settles an in-flight subsection immediately")
         controller.update { $0.reduceMotion = false }
         display.deactivate()
+
+        let directBattery = HUDSettingsCanvas(module: .display, controller: controller,
+            reduceMotion: { controller.configuration.reduceMotion })
+        let directLayer = directBattery.makeContent(for: .display, style: style)
+        directBattery.showBatterySettings(); directBattery.activate()
+        check(directBattery.layer === directLayer && !directBattery.isTransitioning
+              && directBattery.accessibleActions.contains(where: { $0.id == "metric" })
+              && directBattery.accessibleSliders.contains(where: { $0.id == "duration" }),
+              "The Power-page shortcut opens Battery settings directly inside the retained Display surface")
+        directBattery.perform(actionID: "metric")
+        check(directBattery.isTransitioning, "The direct Battery route still supports its nested metric transition")
+        directBattery.showBatterySettings()
+        check(!directBattery.isTransitioning && directBattery.layer.sublayers?.count == 1
+              && directBattery.accessibleActions.contains(where: { $0.id == "metric" }),
+              "Repeating the Battery shortcut settles an interrupted nested transition without overlapping pages")
+        check(directBattery.escape(), "Back from the Power shortcut reaches the Display parent")
+        directBattery.settleTransition()
+        check(directBattery.accessibleSliders.contains(where: { $0.id == "uiScale" }) && !directBattery.escape(),
+              "Direct Battery navigation returns to main Display settings without an extra phantom parent")
+        let hotkeyActions = hotkeys.accessibleActions.map(\.id)
+        hotkeys.showBatterySettings()
+        check(hotkeys.accessibleActions.map(\.id) == hotkeyActions, "The direct Battery route is ignored by other Settings modules")
+        controller.update { $0.reduceMotion = true }
+        directBattery.showBatterySettings(); directBattery.perform(actionID: "metric")
+        check(!directBattery.isTransitioning && directBattery.accessibleActions.contains(where: { $0.id == "metric:battery" }),
+              "Direct and nested Battery navigation settle immediately with Reduce Motion")
+        directBattery.deactivate(); controller.update { $0.reduceMotion = false }
 
         controller.update { $0.language = .english }
         hotkeys.activate()

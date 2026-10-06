@@ -51,7 +51,7 @@ final class HUDWorldMapInteraction: NSObject {
 
     func deactivate() {
         endGesture()
-        canvas.mouseUp()
+        canvas.mouseUp(cancelled: true)
         active = false
         canvas.deactivate()
         accessibilityUpdate?.cancel(); accessibilityUpdate = nil
@@ -145,8 +145,8 @@ final class HUDWorldMapInteraction: NSObject {
         lastAccessibilityUpdate = timeSource()
         let label = canvas.accessibilityStatus
         let help = label + L10n.text(
-            ". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Left-click to hide coordinates. Arrow keys move the map.",
-            "。拖动平移，滚动或捏合缩放，右键放置或移除标记，左键隐藏坐标，方向键移动地图。")
+            ". Drag to pan. Scroll or pinch to zoom. Right-click to place or remove a pin. Click a pin to cycle yellow, green and player markers. Click terrain to recenter without changing zoom. Arrow keys move the map.",
+            "。拖动平移，滚动或捏合缩放，右键放置或移除标记，点击标记切换黄色、绿色和玩家样式，点击地形居中并保持缩放，方向键移动地图。")
         if status.isHidden { status.isHidden = false }
         if status.accessibilityLabel() != label { status.setAccessibilityLabel(label) }
         if status.accessibilityHelp() != help { status.setAccessibilityHelp(help) }

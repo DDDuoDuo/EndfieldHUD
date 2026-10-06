@@ -19,12 +19,13 @@ struct PersonalProfileSliderValue {
 }
 
 enum PersonalProfileField: String, CaseIterable {
-    case name, tag, introduction, awakeningDate, birthday, permissionLevel, explorationLevel, operatorsCount, weaponsCount, archivesCount
-    case backgroundWidth, backgroundOffsetX, backgroundOffsetY, thumbnailOffsetX, thumbnailOffsetY
+    case name, tag, playerID, introduction, awakeningDate, birthday, permissionLevel, explorationLevel, operatorsCount, weaponsCount, archivesCount
+    case backgroundWidth, backgroundZoom, backgroundOffsetX, backgroundOffsetY, thumbnailZoom, thumbnailOffsetX, thumbnailOffsetY
     case avatarZoom, avatarOffsetX, avatarOffsetY
     var title: String {
         switch self {
         case .name: return L10n.text("Name", "名称")
+        case .playerID: return L10n.text("Player ID", "玩家 ID")
         case .tag: return "#"
         case .introduction: return L10n.text("Introduction", "个人介绍")
         case .awakeningDate: return L10n.text("Awakening day", "苏醒日")
@@ -35,8 +36,10 @@ enum PersonalProfileField: String, CaseIterable {
         case .weaponsCount: return L10n.text("Weapons", "武器")
         case .archivesCount: return L10n.text("Archives", "档案")
         case .backgroundWidth: return L10n.text("Background width", "背景宽度")
+        case .backgroundZoom: return L10n.text("Background zoom", "背景缩放")
         case .backgroundOffsetX: return L10n.text("Background X", "背景 X")
         case .backgroundOffsetY: return L10n.text("Background Y", "背景 Y")
+        case .thumbnailZoom: return L10n.text("Thumbnail zoom", "缩略图缩放")
         case .thumbnailOffsetX: return L10n.text("Thumbnail X", "缩略图 X")
         case .thumbnailOffsetY: return L10n.text("Thumbnail Y", "缩略图 Y")
         case .avatarZoom: return L10n.text("Zoom", "缩放")
@@ -44,11 +47,12 @@ enum PersonalProfileField: String, CaseIterable {
         case .avatarOffsetY: return L10n.text("Portrait Y", "头像 Y")
         }
     }
-    var isNumeric: Bool { self != .name && self != .tag && self != .introduction && !isDate }
+    var isNumeric: Bool { self != .name && self != .tag && self != .playerID && self != .introduction && !isDate }
     var isDate: Bool { self == .awakeningDate || self == .birthday }
     var isGeometry: Bool { Self.geometryFields.contains(self) || Self.portraitFields.contains(self) }
-    var textLimit: Int? { self == .name ? 20 : self == .tag ? 10 : self == .introduction ? 150 : nil }
-    static let geometryFields: [Self] = [.backgroundWidth, .backgroundOffsetX, .backgroundOffsetY, .thumbnailOffsetX, .thumbnailOffsetY]
+    var isZoom: Bool { self == .avatarZoom || self == .backgroundZoom || self == .thumbnailZoom }
+    var textLimit: Int? { self == .name ? 20 : self == .tag ? 10 : self == .playerID ? 64 : self == .introduction ? 150 : nil }
+    static let geometryFields: [Self] = [.backgroundWidth, .backgroundZoom, .backgroundOffsetX, .backgroundOffsetY, .thumbnailZoom, .thumbnailOffsetX, .thumbnailOffsetY]
     static let portraitFields: [Self] = [.avatarZoom, .avatarOffsetX, .avatarOffsetY]
     static let counters: [Self] = [.operatorsCount, .weaponsCount, .archivesCount]
 }
@@ -62,6 +66,10 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     var onBackgroundChange: (() -> Void)?
     var onVisibilityChange: (() -> Void)?
     var onChange: (() -> Void)?
+    var gameSyncActive = false
+    private func canEdit(_ field: PersonalProfileField) -> Bool {
+        !gameSyncActive || !([.name, .permissionLevel, .explorationLevel] + PersonalProfileField.counters).contains(field)
+    }
     var onEditField: ((PersonalProfileField, CGRect, String) -> Void)?
     var onChooseImage: ((UserProfileImageKind) -> Void)?
     var onChooseColor: ((NSColor) -> Void)?
@@ -84,6 +92,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     private var errorMessage: String?
     private var shownHours = ""
     private let background = CALayer()
+    private var backgroundImage: CGImage?
     private let backgroundShade = CAGradientLayer()
     private let artwork = CALayer()
     private let toolbar = CALayer()
@@ -100,7 +109,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         guard let popover else { return nil }
         switch popover {
         case .identity: return CGRect(x: 18, y: 136, width: 188, height: 139)
-        case .background: return CGRect(x: 126, y: Self.backgroundRect.minY - 230, width: 264, height: 224)
+        case .background: return Self.backgroundPopoverRect
         case .themeColor: return CGRect(x: 126, y: Self.backgroundRect.minY - 136, width: 264, height: 130)
         case .portrait: return CGRect(x: 100, y: 111, width: 288, height: 146)
         }
@@ -115,6 +124,10 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     private let shouldReduceMotion: () -> Bool
     static let menuRect = CGRect(x: 20, y: 116, width: 19, height: 19)
     static let backgroundRect = CGRect(x: 243, y: 294, width: 109, height: 24)
+    private static var backgroundPopoverRect: CGRect {
+        let height = 74 + CGFloat(PersonalProfileField.geometryFields.count) * 30
+        return CGRect(x: 126, y: backgroundRect.minY - 6 - height, width: 264, height: height)
+    }
     static let visibilityRect = CGRect(x: 364, y: 294, width: 25, height: 24)
     static let dateLabelRect = CGRect(x: 98, y: 77, width: 67, height: 16)
     static let dateValueRect = CGRect(x: 165, y: 77, width: 90, height: 16)
@@ -142,7 +155,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         backgroundLayer.name = "profile.backgroundHost"; backgroundLayer.frame = layer.bounds
         backgroundLayer.masksToBounds = false; backgroundLayer.allowsGroupOpacity = false
         background.name = "profile.background"; background.frame = layer.bounds
-        background.contentsGravity = .resizeAspectFill; background.masksToBounds = true
+        background.contentsGravity = .resize; background.masksToBounds = true
         backgroundLayer.addSublayer(background)
         backgroundShade.frame = layer.bounds; backgroundShade.startPoint = CGPoint(x: 0, y: 0.5)
         backgroundShade.endPoint = CGPoint(x: 1, y: 0.5); backgroundShade.locations = [0, 0.60, 1]
@@ -224,7 +237,8 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         actions.append(PersonalProfileCanvasAction(id: "profile:" + dateField.rawValue, label: dateField.title + ": " + value(dateField, in: profile), rect: Self.dateValueRect))
         actions.append(PersonalProfileCanvasAction(id: "profile:menu", label: L10n.text("Edit personal profile", "编辑个人名片"), rect: Self.menuRect))
         actions.append(PersonalProfileCanvasAction(id: "profile:introduction", label: L10n.text("Edit introduction", "编辑个人介绍"), rect: Self.introductionActionRect))
-        for field in [PersonalProfileField.permissionLevel, .explorationLevel] + PersonalProfileField.counters {
+        actions.append(PersonalProfileCanvasAction(id: "profile:playerID", label: PersonalProfileField.playerID.title + ": " + profile.displayedUID, rect: fieldRect(.playerID)))
+        for field in [PersonalProfileField.permissionLevel, .explorationLevel] + PersonalProfileField.counters where canEdit(field) {
             actions.append(PersonalProfileCanvasAction(id: "profile:" + field.rawValue,
                 label: field.title + ": " + value(field, in: profile), rect: fieldRect(field)))
         }
@@ -241,18 +255,18 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
             let row = fieldRect(field)
             let range: ClosedRange<Double>
             switch field {
-            case .avatarZoom: range = 1...20
+            case .avatarZoom, .backgroundZoom, .thumbnailZoom: range = 1...20
             case .backgroundWidth: range = 400...900
             case .backgroundOffsetX: range = -400...400
             case .backgroundOffsetY: range = -250...250
             default: range = -100...100
             }
             let portrait = popover == .portrait
-            let suffix = field == .avatarZoom ? "×" : [.avatarOffsetX, .avatarOffsetY, .thumbnailOffsetX, .thumbnailOffsetY].contains(field) ? "%" : ""
+            let suffix = field.isZoom ? "×" : [.avatarOffsetX, .avatarOffsetY, .thumbnailOffsetX, .thumbnailOffsetY].contains(field) ? "%" : ""
             return PersonalProfileSliderValue(field: field, label: field.title,
                 rect: CGRect(x: portrait ? 112 : 138, y: row.minY + 12, width: portrait ? 262 : 240, height: 17),
                 value: geometryValue(field, in: profile), minimum: range.lowerBound, maximum: range.upperBound,
-                step: field == .avatarZoom ? 0.1 : 1, valueDescription: value(field, in: profile) + suffix)
+                step: field.isZoom ? 0.1 : 1, valueDescription: value(field, in: profile) + suffix)
         }
     }
     private func geometryValue(_ field: PersonalProfileField, in profile: UserProfile) -> Double {
@@ -261,8 +275,10 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         case .avatarOffsetX: return profile.avatarOffsetX * 100
         case .avatarOffsetY: return profile.avatarOffsetY * 100
         case .backgroundWidth: return profile.backgroundWidth
+        case .backgroundZoom: return profile.backgroundZoom
         case .backgroundOffsetX: return profile.backgroundOffsetX
         case .backgroundOffsetY: return profile.backgroundOffsetY
+        case .thumbnailZoom: return profile.thumbnailZoom
         case .thumbnailOffsetX: return profile.thumbnailOffsetX * 100
         case .thumbnailOffsetY: return profile.thumbnailOffsetY * 100
         default: return 0
@@ -274,8 +290,10 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         case .avatarOffsetX: profile.avatarOffsetX = value / 100
         case .avatarOffsetY: profile.avatarOffsetY = value / 100
         case .backgroundWidth: profile.backgroundWidth = value
+        case .backgroundZoom: profile.backgroundZoom = value
         case .backgroundOffsetX: profile.backgroundOffsetX = value
         case .backgroundOffsetY: profile.backgroundOffsetY = value
+        case .thumbnailZoom: profile.thumbnailZoom = value
         case .thumbnailOffsetX: profile.thumbnailOffsetX = value / 100
         case .thumbnailOffsetY: profile.thumbnailOffsetY = value / 100
         default: break
@@ -283,7 +301,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     }
     @discardableResult func setSlider(field: PersonalProfileField, value: Double) -> Bool {
         guard value.isFinite, let slider = accessibleSliders.first(where: { $0.field == field }) else { return false }
-        let precision = field == .avatarZoom ? 100.0 : 1.0
+        let precision = field.isZoom ? 100.0 : 1.0
         let bounded = (min(slider.maximum, max(slider.minimum, value)) * precision).rounded() / precision
         selectedSlider = field
         if draggedSlider == field {
@@ -376,7 +394,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         default:
             if actionID.hasPrefix("profile:theme:") { setThemeColor(String(actionID.dropFirst("profile:theme:".count))); return }
             guard actionID.hasPrefix("profile:"), let field = PersonalProfileField(rawValue: String(actionID.dropFirst("profile:".count))) else { return }
-            guard !field.isGeometry else { return }
+            guard !field.isGeometry, canEdit(field) else { return }
             dismissPopover()
             onEditField?(field, fieldRect(field), value(field, in: profile))
         }
@@ -389,6 +407,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         onChange?()
     }
     @discardableResult func commit(field: PersonalProfileField, text: String) -> Bool {
+        guard canEdit(field) else { return false }
         guard let store else { showError(L10n.text("Profile storage is unavailable.", "个人名片存储不可用。")); return false }
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let parsedDate = field == .awakeningDate ? Self.parseAwakeningDate(input) : nil
@@ -405,10 +424,11 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         do {
             try store.update { profile in
                 switch field {
+                case .playerID: profile.playerIDOverride = input
                 case .name: profile.name = String(input.prefix(20))
                 case .tag: profile.tag = String((input.hasPrefix("#") ? String(input.dropFirst()) : input).prefix(10))
                 case .introduction: profile.introduction = String(input.prefix(150))
-                case .awakeningDate: if let parsedDate { profile.awakeningDate = parsedDate }
+                case .awakeningDate: if let parsedDate { profile.awakeningDate = parsedDate; profile.hasManualAwakeningDate = true }
                 case .birthday: if let parsedBirthday { profile.birthdayMonth = parsedBirthday.month; profile.birthdayDay = parsedBirthday.day }
                 case .permissionLevel: profile.permissionLevel = min(60, max(1, Int(input) ?? 60))
                 case .explorationLevel: profile.explorationLevel = min(7, max(1, Int(input) ?? 7))
@@ -416,8 +436,10 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
                 case .weaponsCount: profile.weaponsCount = max(0, Int(input) ?? profile.weaponsCount)
                 case .archivesCount: profile.archivesCount = max(0, Int(input) ?? profile.archivesCount)
                 case .backgroundWidth: profile.backgroundWidth = finiteNumber(input, fallback: profile.backgroundWidth, range: 400...900)
+                case .backgroundZoom: profile.backgroundZoom = finiteNumber(input, fallback: profile.backgroundZoom, range: 1...20)
                 case .backgroundOffsetX: profile.backgroundOffsetX = finiteNumber(input, fallback: profile.backgroundOffsetX, range: -400...400)
                 case .backgroundOffsetY: profile.backgroundOffsetY = finiteNumber(input, fallback: profile.backgroundOffsetY, range: -250...250)
+                case .thumbnailZoom: profile.thumbnailZoom = finiteNumber(input, fallback: profile.thumbnailZoom, range: 1...20)
                 case .thumbnailOffsetX: profile.thumbnailOffsetX = finiteNumber(input, fallback: profile.thumbnailOffsetX * 100, range: -100...100) / 100
                 case .thumbnailOffsetY: profile.thumbnailOffsetY = finiteNumber(input, fallback: profile.thumbnailOffsetY * 100, range: -100...100) / 100
                 case .avatarZoom: profile.avatarZoom = finiteNumber(input, fallback: profile.avatarZoom, range: 1...20)
@@ -483,6 +505,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         switch field {
         case .name: return value.name
         case .tag: return value.tag
+        case .playerID: return value.displayedUID
         case .introduction: return value.introduction
         case .awakeningDate: return Self.awakeningString(value.awakeningDate)
         case .birthday: return String(format: "%02d/%02d", value.birthdayMonth, value.birthdayDay)
@@ -492,8 +515,10 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         case .weaponsCount: return String(value.weaponsCount)
         case .archivesCount: return String(value.archivesCount)
         case .backgroundWidth: return String(format: "%.0f", value.backgroundWidth)
+        case .backgroundZoom: return String(format: "%.2f", value.backgroundZoom)
         case .backgroundOffsetX: return String(format: "%.0f", value.backgroundOffsetX)
         case .backgroundOffsetY: return String(format: "%.0f", value.backgroundOffsetY)
+        case .thumbnailZoom: return String(format: "%.2f", value.thumbnailZoom)
         case .thumbnailOffsetX: return String(format: "%.0f", value.thumbnailOffsetX * 100)
         case .thumbnailOffsetY: return String(format: "%.0f", value.thumbnailOffsetY * 100)
         case .avatarZoom: return String(format: "%.2f", value.avatarZoom)
@@ -503,6 +528,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     }
     func fieldRect(_ field: PersonalProfileField) -> CGRect {
         switch field {
+        case .playerID: return CGRect(x: 98, y: 99, width: 260, height: 18)
         case .name, .tag: return CGRect(x: 97, y: 37, width: 286, height: 26)
         case .introduction: return Self.introductionRect.insetBy(dx: 5, dy: 9)
         case .awakeningDate, .birthday: return Self.dateValueRect
@@ -511,16 +537,29 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         case .operatorsCount: return CGRect(x: 18, y: 219, width: 74, height: 42)
         case .weaponsCount: return CGRect(x: 96, y: 219, width: 74, height: 42)
         case .archivesCount: return CGRect(x: 174, y: 219, width: 74, height: 42)
-        case .backgroundWidth, .backgroundOffsetX, .backgroundOffsetY, .thumbnailOffsetX, .thumbnailOffsetY:
+        case .backgroundWidth, .backgroundZoom, .backgroundOffsetX, .backgroundOffsetY, .thumbnailZoom, .thumbnailOffsetX, .thumbnailOffsetY:
             let index = PersonalProfileField.geometryFields.firstIndex(of: field) ?? 0
-            return CGRect(x: 260, y: Self.backgroundRect.minY - 162 + CGFloat(index) * 30, width: 55, height: 23)
+            return CGRect(x: 260, y: Self.backgroundPopoverRect.minY + 68 + CGFloat(index) * 30, width: 55, height: 23)
         case .avatarZoom, .avatarOffsetX, .avatarOffsetY:
             let index = PersonalProfileField.portraitFields.firstIndex(of: field) ?? 0
             return CGRect(x: 260, y: 151 + CGFloat(index) * 30, width: 55, height: 23)
         }
     }
     private func updateImages() {
-        background.contents = cgImage(store?.image(for: .background))
+        backgroundImage = cgImage(store?.image(for: .background))
+        background.contents = backgroundImage
+        updateBackgroundCrop()
+    }
+    private func updateBackgroundCrop() {
+        guard let image = backgroundImage else {
+            background.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            return
+        }
+        // Zoom changes the photo inside its saved extent; width and translation
+        // continue to position the backdrop itself, independently of the card.
+        background.contentsRect = HUDPortraitArtwork.crop(
+            imageSize: CGSize(width: image.width, height: image.height), targetSize: background.bounds.size,
+            zoom: profile.backgroundZoom, offset: .zero)
     }
     private func prepareArtworkForInteraction() {
         guard !artworkEnabled else { return }
@@ -591,7 +630,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         valueLayers[dateField] = text(value(dateField, in: profile), rect: CGRect(x: 169, y: Self.dateValueRect.midY - valueHeight / 2, width: 84, height: valueHeight), size: 10, weight: .semibold, color: NSColor(white: 0.16, alpha: 1), parent: artwork)
         HUDControlHighlightLayer.add(to: artwork, rect: Self.dateLabelRect)
         HUDControlHighlightLayer.add(to: artwork, rect: Self.dateValueRect)
-        text("UID: " + profile.uid, rect: CGRect(x: 98, y: 99, width: 260, height: 18), size: 11, color: muted, parent: artwork)
+        text("UID: " + profile.displayedUID, rect: CGRect(x: 98, y: 99, width: 260, height: 18), size: 11, color: muted, parent: artwork)
         let menu = CALayer(); menu.frame = Self.menuRect; menu.cornerRadius = Self.menuRect.height / 2
         menu.backgroundColor = ink.withAlphaComponent(0.85).cgColor; artwork.addSublayer(menu)
         for x: CGFloat in [5, 9.5, 14] { fill(CGRect(x: x - 1, y: 8.5, width: 2, height: 2), color: NSColor(white: dark || hasBackdrop ? 0.12 : 0.94, alpha: 1), parent: menu) }
@@ -637,9 +676,11 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         guard artworkEnabled else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         let previous = background.frame
+        let previousCrop = background.contentsRect
         let width = CGFloat(profile.backgroundWidth)
         background.frame = CGRect(x: (400 - width) / 2 + CGFloat(profile.backgroundOffsetX),
                                   y: CGFloat(profile.backgroundOffsetY), width: width, height: 334)
+        updateBackgroundCrop()
         backgroundShade.frame = background.bounds
         let horizontal = CAGradientLayer(); horizontal.frame = background.bounds
         horizontal.startPoint = CGPoint(x: 0, y: 0.5); horizontal.endPoint = CGPoint(x: 1, y: 0.5)
@@ -649,12 +690,14 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         vertical.startPoint = CGPoint(x: 0.5, y: 0); vertical.endPoint = CGPoint(x: 0.5, y: 1)
         vertical.colors = horizontal.colors; vertical.locations = [0, 0.08, 0.90, 1]
         horizontal.mask = vertical; background.mask = horizontal
-        if active, !isDragging, !shouldReduceMotion(), previous != background.frame {
+        if active, !isDragging, !shouldReduceMotion(), previous != background.frame || previousCrop != background.contentsRect {
             let position = CABasicAnimation(keyPath: "position")
             position.fromValue = NSValue(point: CGPoint(x: previous.midX, y: previous.midY)); position.toValue = NSValue(point: background.position)
             let bounds = CABasicAnimation(keyPath: "bounds")
             bounds.fromValue = NSValue(rect: CGRect(origin: .zero, size: previous.size)); bounds.toValue = NSValue(rect: background.bounds)
-            let move = CAAnimationGroup(); move.animations = [position, bounds]; move.duration = 0.18
+            let crop = CABasicAnimation(keyPath: "contentsRect")
+            crop.fromValue = NSValue(rect: previousCrop); crop.toValue = NSValue(rect: background.contentsRect)
+            let move = CAAnimationGroup(); move.animations = [position, bounds, crop]; move.duration = 0.18
             move.timingFunction = CAMediaTimingFunction(name: .easeOut); background.add(move, forKey: "profile.backgroundGeometry")
         }
         CATransaction.commit()
@@ -684,10 +727,11 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
             result = [PersonalProfileCanvasAction(id: "profile:menu", label: L10n.text("Back to profile menu", "返回名片菜单"), rect: CGRect(x: 110, y: 117, width: 23, height: 23)),
                       PersonalProfileCanvasAction(id: "profile:popoverClose", label: L10n.text("Close", "关闭"), rect: CGRect(x: 360, y: 117, width: 23, height: 23))]
         } else {
-            result = [PersonalProfileCanvasAction(id: "profile:popoverClose", label: L10n.text("Close", "关闭"), rect: CGRect(x: 361, y: 69, width: 23, height: 23)),
-                      PersonalProfileCanvasAction(id: "profile:background", label: L10n.text("Choose background", "选择背景"), rect: CGRect(x: 136, y: 97, width: 116, height: 23)),
-                      PersonalProfileCanvasAction(id: "profile:resetBackground", label: L10n.text("Restore default", "恢复默认"), rect: CGRect(x: 259, y: 97, width: 119, height: 23)),
-                      PersonalProfileCanvasAction(id: "profile:themeMenu", label: L10n.text("Card color", "名片颜色"), rect: CGRect(x: 331, y: 69, width: 23, height: 23))]
+            let top = Self.backgroundPopoverRect.minY
+            result = [PersonalProfileCanvasAction(id: "profile:popoverClose", label: L10n.text("Close", "关闭"), rect: CGRect(x: 361, y: top + 5, width: 23, height: 23)),
+                      PersonalProfileCanvasAction(id: "profile:background", label: L10n.text("Choose background", "选择背景"), rect: CGRect(x: 136, y: top + 33, width: 116, height: 23)),
+                      PersonalProfileCanvasAction(id: "profile:resetBackground", label: L10n.text("Restore default", "恢复默认"), rect: CGRect(x: 259, y: top + 33, width: 119, height: 23)),
+                      PersonalProfileCanvasAction(id: "profile:themeMenu", label: L10n.text("Card color", "名片颜色"), rect: CGRect(x: 331, y: top + 5, width: 23, height: 23))]
         }
         return result
     }
@@ -701,7 +745,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         if value == .background || value == .portrait {
             let portrait = value == .portrait
             let header = portrait ? L10n.text("PORTRAIT", "调整头像") : L10n.text("CARD THEME", "名片主题")
-            text(header, rect: portrait ? CGRect(x: 143, y: 121, width: 204, height: 20) : CGRect(x: 138, y: 72, width: 182, height: 20), size: 12, weight: .bold, color: color, parent: popoverLayer)
+            text(header, rect: portrait ? CGRect(x: 143, y: 121, width: 204, height: 20) : CGRect(x: 138, y: rect.minY + 8, width: 182, height: 20), size: 12, weight: .bold, color: color, parent: popoverLayer)
             for slider in accessibleSliders {
                 let row = fieldRect(slider.field), track = slider.rect.insetBy(dx: 4, dy: 0)
                 text(slider.label, rect: CGRect(x: slider.rect.minX, y: row.minY, width: slider.rect.width - 62, height: 13), size: 10, color: color, parent: popoverLayer)
@@ -746,10 +790,29 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
                  alignment: value == .identity ? .left : .center)
         }
     }
+    // The reference uses solid blocks with tapered tails, independent of the UI text font.
+    private static let introductionQuote: CGPath = {
+        let path = CGMutablePath()
+        for x: CGFloat in [0, 9] {
+            path.addLines(between: [CGPoint(x: x, y: 0), CGPoint(x: x + 6, y: 0), CGPoint(x: x + 6, y: 6),
+                CGPoint(x: x + 2, y: 6), CGPoint(x: x + 2, y: 8), CGPoint(x: x + 6, y: 12),
+                CGPoint(x: x + 4.5, y: 12), CGPoint(x: x, y: 8)])
+            path.closeSubpath()
+        }
+        return path
+    }()
+    private static let introductionClosingQuote: CGPath = {
+        var mirror = CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 15, ty: 0)
+        return introductionQuote.copy(using: &mirror)!
+    }()
     private func drawIntroduction(ink: NSColor, muted: NSColor) {
         let quoteInk = (dark || background.contents != nil) ? NSColor.white.withAlphaComponent(0.96) : ink
-        text("“", rect: CGRect(x: 257, y: 152, width: 25, height: 30), size: 31, weight: .bold, color: quoteInk, parent: artwork)
-        text("”", rect: CGRect(x: 366, y: 241, width: 25, height: 30), size: 31, weight: .bold, color: quoteInk, parent: artwork)
+        for (path, position) in [(Self.introductionQuote, CGPoint(x: 257, y: 159)),
+                                 (Self.introductionClosingQuote, CGPoint(x: 374, y: 244))] {
+            let quote = CAShapeLayer(); quote.path = path; quote.position = position
+            quote.fillColor = quoteInk.cgColor; quote.contentsScale = scale
+            artwork.addSublayer(quote)
+        }
         let item = text(profile.introduction.isEmpty ? "…" : profile.introduction,
                         rect: Self.introductionRect.insetBy(dx: 5, dy: 9), size: 10, weight: .medium, color: ink, parent: artwork, wrapped: true)
         valueLayers[.introduction] = item

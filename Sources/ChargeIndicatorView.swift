@@ -31,6 +31,9 @@ final class ChargeIndicatorView: NSView {
     private var generation = 0
     private var snapshot = BatterySnapshot.unavailable
     private var configuration = AppConfiguration.defaults
+    private var metric: HUDChargeMetric = .battery
+    private var telemetry: SystemActivitySnapshot?
+    private var metricProgress: Double?
     private var preview = false
     private var embeddedDarkAppearance: Bool?
     private var embeddedContentsScale: CGFloat?
@@ -181,10 +184,20 @@ final class ChargeIndicatorView: NSView {
     func set(snapshot: BatterySnapshot, configuration: AppConfiguration, preview: Bool = false) {
         self.snapshot = snapshot
         self.configuration = configuration
+        self.metric = configuration.alertMetric
         self.preview = preview
         updateContentsScale()
         updateContent()
         updateColors(for: stage)
+    }
+
+    /// The owner supplies its shared, demand-driven telemetry. Updating a
+    /// reading must not replay or cancel the notification's finite choreography.
+    func setMetric(_ metric: HUDChargeMetric, telemetry: SystemActivitySnapshot?) {
+        guard self.metric != metric || self.telemetry != telemetry else { return }
+        self.metric = metric
+        self.telemetry = telemetry
+        updateContent()
     }
 
     func setStage(_ stage: OverlayStage, animated: Bool = false) {
@@ -311,6 +324,10 @@ final class ChargeIndicatorView: NSView {
             : foreground.withAlphaComponent(isDark ? 0.045 : 0.08)
     }
     private var levelColor: NSColor {
+        if metric != .battery {
+            return metricProgress == nil && (metric == .ram || metric == .cpu)
+                ? foreground.withAlphaComponent(0.45) : configuration.accentColor
+        }
         switch snapshot.levelTone {
         case .green?: return isDark ? NSColor(srgbRed: 0.25, green: 0.87, blue: 0.43, alpha: 1)
                                    : NSColor(srgbRed: 0.08, green: 0.62, blue: 0.27, alpha: 1)
@@ -323,10 +340,12 @@ final class ChargeIndicatorView: NSView {
     }
 
     private func updateContent() {
+        let reading = HUDChargeMetricReading.resolve(metric: metric, battery: snapshot, telemetry: telemetry)
+        metricProgress = reading.progress
         withoutActions {
-            let englishMode = self.snapshot.isCharging ? "CHARGE MODE" : "BATTERY MODE"
-            let localizedMode = self.snapshot.isCharging ? L10n.text("CHARGE MODE", "超充模式")
-                : L10n.text("BATTERY MODE", "电池模式")
+            let englishMode = self.snapshot.isChargeMode ? "CHARGE MODE" : "POWER MODE"
+            let localizedMode = self.snapshot.isChargeMode ? L10n.text("CHARGE MODE", "超充模式")
+                : L10n.text("POWER MODE", "电源模式")
             let title = NSAttributedString(string: "// " + englishMode, attributes: [
                 .font: NSFont.systemFont(ofSize: 7.5, weight: .medium),
                 .foregroundColor: self.foreground.withAlphaComponent(0.55), .kern: 0.2
@@ -342,36 +361,42 @@ final class ChargeIndicatorView: NSView {
             self.bannerTitle.string = NSAttributedString(string: localizedMode, attributes: [
                 .font: titleFont, .foregroundColor: self.foreground
             ])
-            let current = self.snapshot.capacity.map { Self.number($0.current) } ?? "—"
-            let maximum = self.snapshot.capacity.map { Self.number($0.maximum) } ?? "—"
-            let unit = self.snapshot.capacity?.unit.rawValue ?? ""
-            let line = NSMutableAttributedString(string: current, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold),
-                .foregroundColor: self.foreground
-            ])
-            line.append(NSAttributedString(string: "/" + maximum, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
-                .foregroundColor: self.foreground.withAlphaComponent(0.47)
-            ]))
-            if !unit.isEmpty {
-                line.append(NSAttributedString(string: " " + unit, attributes: [
-                    .font: NSFont.systemFont(ofSize: 7.5, weight: .medium),
+            func metricLine(scale: CGFloat) -> NSAttributedString {
+                let line = NSMutableAttributedString(string: reading.primary, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12.5 * scale, weight: .semibold),
+                    .foregroundColor: self.foreground
+                ])
+                line.append(NSAttributedString(string: reading.secondary, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 9.5 * scale, weight: .medium),
                     .foregroundColor: self.foreground.withAlphaComponent(0.47)
                 ]))
+                if !reading.unit.isEmpty {
+                    line.append(NSAttributedString(string: " " + reading.unit, attributes: [
+                        .font: NSFont.systemFont(ofSize: 7.5 * scale, weight: .medium),
+                        .foregroundColor: self.foreground.withAlphaComponent(0.47)
+                    ]))
+                }
+                return line
             }
+            var scale: CGFloat = 1
+            var line = metricLine(scale: scale)
+            while line.size().width > 143 && scale > 0.6 { scale -= 0.05; line = metricLine(scale: scale) }
             self.capacityLabel.string = line
-            let percentage = self.snapshot.percentage.map { "\($0)%" } ?? "—"
-            self.percentageLabel.string = NSAttributedString(string: percentage, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold),
+            var valueFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+            while valueFont.pointSize > 9,
+                  (reading.trailing as NSString).size(withAttributes: [.font: valueFont]).width > 40 {
+                valueFont = NSFont.monospacedDigitSystemFont(ofSize: valueFont.pointSize - 0.5, weight: .semibold)
+            }
+            self.percentageLabel.string = NSAttributedString(string: reading.trailing, attributes: [
+                .font: valueFont,
                 .foregroundColor: self.foreground
             ])
-            self.ringProgress.strokeEnd = CGFloat(min(100, max(0, self.snapshot.percentage ?? 0))) / 100
+            self.ringProgress.strokeEnd = CGFloat(reading.progress ?? 0)
         }
-        let value = snapshot.percentage.map { "\($0)%" } ?? L10n.text("Battery unavailable", "电量不可用")
         let state = snapshot.isCharging ? L10n.text("Charging", "正在充电")
             : snapshot.isPluggedIn ? L10n.text("Power connected", "已连接电源")
             : L10n.text("On battery", "使用电池")
-        setAccessibilityLabel("EndfieldHUD, \(value), \(state)" + (preview ? L10n.text(", Preview", "，预览") : ""))
+        setAccessibilityLabel("EndfieldHUD, \(reading.accessibilityValue), \(state)" + (preview ? L10n.text(", Preview", "，预览") : ""))
         updateColors(for: stage)
     }
 
@@ -550,15 +575,6 @@ final class ChargeIndicatorView: NSView {
     private static func removeAnimations(from layer: CALayer) {
         layer.removeAllAnimations()
         layer.sublayers?.forEach(removeAnimations)
-    }
-
-    private static func number(_ value: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.usesGroupingSeparator = true
-        formatter.maximumFractionDigits = 0
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 
     private static func boltPath() -> CGPath {

@@ -74,6 +74,10 @@ struct AppConfiguration: Equatable {
     var lowPowerVisualMode = false
     var applicationIcon: HUDApplicationIcon = .endfield
     var clockFormat: HUDClockFormat = .twentyFourHour
+    var clockStyle: HUDClockStyle = .digital
+    var centerLogo: HUDCenterLogo = .endfield
+    var centerLogoRevision: String? = nil
+    var alertMetric: HUDChargeMetric = .battery
     var summonShortcut: SummonShortcut = .default
 
     static let defaults = AppConfiguration(displayMode: .whenChargingStarts,
@@ -102,6 +106,7 @@ struct AppConfiguration: Equatable {
             String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(128))
         }
         if result.hudDisplayName?.isEmpty == true { result.hudDisplayName = nil }
+        result.centerLogoRevision = centerLogoRevision.flatMap { UUID(uuidString: $0)?.uuidString }
         if summonShortcut.validationError != nil { result.summonShortcut = .default }
         return result
     }
@@ -176,6 +181,10 @@ final class ConfigurationStore {
             lowPowerVisualMode: Self.bool(defaults, "lowPowerVisualMode", fallback: false),
             applicationIcon: defaults.string(forKey: "applicationIcon").flatMap(HUDApplicationIcon.init(rawValue:)) ?? .endfield,
             clockFormat: defaults.string(forKey: "clockFormat").flatMap(HUDClockFormat.init(rawValue:)) ?? .twentyFourHour,
+            clockStyle: defaults.string(forKey: "clockStyle").flatMap(HUDClockStyle.init(rawValue:)) ?? .digital,
+            centerLogo: defaults.string(forKey: "centerLogo").flatMap(HUDCenterLogo.init(rawValue:)) ?? .endfield,
+            centerLogoRevision: defaults.string(forKey: "centerLogoRevision"),
+            alertMetric: defaults.string(forKey: "alertMetric").flatMap(HUDChargeMetric.init(rawValue:)) ?? .battery,
             summonShortcut: defaults.data(forKey: "summonShortcut").flatMap {
                 try? JSONDecoder().decode(SummonShortcut.self, from: $0)
             } ?? .default
@@ -221,6 +230,10 @@ final class ConfigurationStore {
         defaults.set(next.lowPowerVisualMode, forKey: "lowPowerVisualMode")
         defaults.set(next.applicationIcon.rawValue, forKey: "applicationIcon")
         defaults.set(next.clockFormat.rawValue, forKey: "clockFormat")
+        defaults.set(next.clockStyle.rawValue, forKey: "clockStyle")
+        defaults.set(next.centerLogo.rawValue, forKey: "centerLogo")
+        defaults.set(next.centerLogoRevision, forKey: "centerLogoRevision")
+        defaults.set(next.alertMetric.rawValue, forKey: "alertMetric")
         defaults.set(try? JSONEncoder().encode(next.summonShortcut), forKey: "summonShortcut")
         onChange?(next)
         Array(observers.values).forEach { $0(next) }

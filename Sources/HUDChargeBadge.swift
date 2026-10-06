@@ -71,6 +71,12 @@ final class HUDChargeBadge {
         renderer.set(snapshot: snapshot, configuration: configuration)
     }
 
+    /// The HUD owner shares its existing telemetry sample with the embedded
+    /// renderer. This control never starts a monitor or owns a sampling timer.
+    func setMetric(_ metric: HUDChargeMetric, telemetry: SystemActivitySnapshot?) {
+        renderer.setMetric(metric, telemetry: telemetry)
+    }
+
     func setStable(visible: Bool = true) {
         cancelAnimations()
         phase = visible ? .presented : .hidden

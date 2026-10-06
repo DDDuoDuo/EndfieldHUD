@@ -196,6 +196,35 @@ enum SystemActivityMonitorTests {
         check(wait { background.history.count == retained.count + 1 } && background.history.first == retained.first && background.snapshot.cpuPercent == nil,
               "True shutdown/restart retains past history but leaves a real baseline gap instead of joining sleep time")
         background.shutdown()
+
+        let sharedFake = FakeSampler(), sharedClock = FakeClock()
+        let shared = SystemActivityMonitor(sampler: sharedFake.read, cadenceSchedule: sharedClock.scheduleAtCadence)
+        shared.start()
+        check(wait { shared.history.count == 1 } && sharedClock.intervals == [5],
+              "Alert metrics reuse the session monitor's existing background history")
+        let sharedHistory = shared.history
+        shared.setAlertActive(true); shared.setAlertActive(true)
+        check(shared.isActive && shared.isAlertActive && sharedClock.intervals == [5, 1],
+              "A visible metric alert requests one shared 1 Hz timer, idempotently")
+        shared.activate(); shared.deactivate()
+        check(shared.isActive && sharedClock.intervals == [5, 1],
+              "Opening and closing Activity Monitor cannot disable a visible metric alert or replace its timer")
+        shared.activate(); shared.setAlertActive(false)
+        check(shared.isActive && !shared.isAlertActive && sharedClock.intervals == [5, 1],
+              "Closing the alert cannot disable a visible Activity Monitor")
+        shared.deactivate()
+        check(!shared.isActive && shared.isRunning && sharedClock.intervals == [5, 1, 5]
+              && shared.history == sharedHistory, "The last visible consumer releases fast sampling without dropping history")
+        shared.setAlertActive(true); shared.activate(); shared.shutdown()
+        check(!shared.isActive && !shared.isRunning && !shared.isAlertActive,
+              "Shutdown clears both visible demands and cancels the shared timer")
+        let afterSharedShutdown = sharedFake.readCount
+        sharedClock.fireCancelled(); drain()
+        check(sharedFake.readCount == afterSharedShutdown, "Canceled alert-era timers cannot sample after shutdown")
+        shared.start()
+        check(wait { shared.history.count == sharedHistory.count + 1 } && !shared.isActive && sharedClock.intervals.last == 5,
+              "Resume does not retain a hidden alert's or Activity canvas's stale fast-sampling demand")
+        shared.shutdown()
         return checks
     }
 

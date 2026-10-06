@@ -340,7 +340,7 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
         artwork.sublayers?.filter { $0 !== rows }.forEach { $0.removeFromSuperlayer() }
         rows.sublayers?.forEach { $0.removeFromSuperlayer() }
         rows.isHidden = isEditing
-        text(L10n.text("APPLICATIONS", "应用快捷方式"), rect: CGRect(x: 12, y: 7, width: 248, height: 22), size: 15, weight: .bold, color: ink, parent: artwork)
+        text(HUDSectionHeading.text(L10n.text("APPLICATIONS", "应用快捷方式")), rect: CGRect(x: 12, y: 7, width: 248, height: 22), size: 15, weight: .bold, color: ink, parent: artwork)
         control(L10n.text("+ Choose app", "+ 选择应用"), rect: CGRect(x: 270, y: 2, width: 118, height: 28), parent: artwork)
         if isEditing { drawDraft() } else { drawList() }
         if let errorMessage {
@@ -370,7 +370,7 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
             } else { glyph(item.iconPreset, rect: CGRect(x: 12, y: 10, width: 26, height: 26), color: yellow, parent: card) }
             text(item.name, rect: CGRect(x: 50, y: 7, width: 251, height: 17), size: 12, weight: .semibold, color: ink, parent: card)
             text(item.originalName, rect: CGRect(x: 50, y: 26, width: 251, height: 14), size: 9, color: muted, parent: card)
-            control("✎", rect: CGRect(x: 312, y: 10, width: 26, height: 26), parent: card)
+            control("", rect: CGRect(x: 312, y: 10, width: 26, height: 26), parent: card, drawsPencil: true)
             control("×", rect: CGRect(x: 344, y: 10, width: 26, height: 26), parent: card)
         }
     }
@@ -402,13 +402,18 @@ final class AppShortcutCanvas: NSObject, HUDModuleContentFactory {
         label.foregroundColor = color.cgColor; label.contentsScale = scale; label.alignmentMode = alignment
         label.isWrapped = wrapped; label.truncationMode = .end; parent.addSublayer(label)
     }
-    private func control(_ title: String, rect: CGRect, parent: CALayer, highlighted: Bool = false, alignment: CATextLayerAlignmentMode = .center) {
+    private func control(_ title: String, rect: CGRect, parent: CALayer, highlighted: Bool = false, alignment: CATextLayerAlignmentMode = .center, drawsPencil: Bool = false) {
         let face = CALayer(); face.frame = rect; face.cornerRadius = 3
         face.backgroundColor = (highlighted ? yellow : NSColor(white: dark ? 0.95 : 0.16, alpha: 0.12)).cgColor
         parent.addSublayer(face)
         HUDControlHighlightLayer.add(to: face, rect: face.bounds)
-        text(title, rect: CGRect(x: 6, y: 6, width: rect.width - 12, height: rect.height - 8), size: 11, weight: .semibold,
-             color: highlighted ? NSColor(white: 0.1, alpha: 1) : ink, parent: face, alignment: alignment)
+        if drawsPencil {
+            face.addSublayer(HUDPencilArtwork.makeLayer(in: CGRect(x: face.bounds.midX - 7, y: face.bounds.midY - 7, width: 14, height: 14),
+                color: ink, contentsScale: scale))
+        } else {
+            text(title, rect: CGRect(x: 6, y: 6, width: rect.width - 12, height: rect.height - 8), size: 11, weight: .semibold,
+                 color: highlighted ? NSColor(white: 0.1, alpha: 1) : ink, parent: face, alignment: alignment)
+        }
     }
     private func image(_ image: NSImage?) -> CGImage? {
         guard let image else { return nil }

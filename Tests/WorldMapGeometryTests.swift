@@ -32,6 +32,21 @@ enum WorldMapGeometryTests {
         }
 
         let nearSeam = WorldMapViewport(centerX: 0.99, centerY: 0.5, zoom: 4)
+        for camera in [nearSeam, WorldMapViewport(centerX: 0.01, centerY: 0.5, zoom: 128),
+                       WorldMapViewport(centerX: 0.5, centerY: 0.5, zoom: 2.1)] {
+            for point in [CGPoint(x: 42, y: 220), CGPoint(x: 403, y: 240), WorldMapGeometry.center] {
+                let target = WorldMapGeometry.world(at: point, viewport: camera)
+                let next = WorldMapGeometry.recentered(camera, at: point)
+                check(next.zoom == camera.zoom && wrappedDifference(next.centerX, target.x) < 0.000001,
+                      "Click recenter preserves zoom and the clicked longitude across either date-line seam")
+                check(next == WorldMapGeometry.constrained(WorldMapViewport(centerX: target.x, centerY: target.y, zoom: camera.zoom)),
+                      "Click recenter applies the same polar guard as other camera navigation")
+            }
+        }
+        for invalid in [CGPoint(x: CGFloat.nan, y: 220), CGPoint(x: 0, y: 0), CGPoint(x: 440, y: 220)] {
+            check(WorldMapGeometry.recentered(nearSeam, at: invalid) == nearSeam,
+                  "Off-map and nonfinite clicks cannot move the camera")
+        }
         let eastOfSeam = WorldMapGeometry.screen(x: 0.01, y: 0.5, viewport: nearSeam)
         check(near(Double(eastOfSeam.x), 255.2) && eastOfSeam.y == 220,
               "A pin just east of the antimeridian draws near a west-of-seam viewport")

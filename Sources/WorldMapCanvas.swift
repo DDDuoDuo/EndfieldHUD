@@ -13,6 +13,8 @@ struct WorldMapAction {
 final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     let layer = CALayer()
     var onChange: (() -> Void)?
+    var onPinStyleChanged: ((MapPinStyle) -> Void)?
+    var onRecenter: (() -> Void)?
     private let store: WorldMapStore?
     private let raster = WorldMapRasterController()
     private let pinsHost = CALayer()
@@ -47,6 +49,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     private(set) var showsPinCoordinates = false
     private var dragStart: CGPoint?
     private var dragViewport: WorldMapViewport?
+    private var dragMoved = false
     var isDragging: Bool { dragStart != nil }
     var pins: [MapPin] { store?.pins ?? [] }
     private static let deleteRect = CGRect(x: 316, y: 303, width: 21, height: 21)
@@ -103,7 +106,8 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         requestTerrain(); withoutActions { renderPins(); renderChrome() }; onChange?()
     }
     func deactivate() {
-        mouseUp(); endGesture(); active = false
+        // An interrupted click must not recenter while its section is leaving.
+        mouseUp(cancelled: true); endGesture(); active = false
         pinLayers.values.forEach { stopAnimations($0) }
         raster.deactivate(); chrome.removeAllAnimations()
     }
@@ -155,21 +159,26 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         if labeledPins != currentPins || pinLabelLanguage != L10n.resolvedLanguage {
             labeledPins = currentPins; pinLabelLanguage = L10n.resolvedLanguage
             pinLabels = Dictionary(uniqueKeysWithValues: currentPins.enumerated().map { index, pin in
-                (pin.id, L10n.text("Pin ", "标记 ") + String(index + 1) + ", "
+                (pin.id, WorldMapPinArtwork.title(for: pin.style) + " " + String(index + 1) + ", "
                     + WorldMapGeometry.coordinateDescription(x: pin.x, y: pin.y))
             })
         }
         for pin in currentPins {
             let p = WorldMapGeometry.screen(x: pin.x, y: pin.y, viewport: viewport)
-            guard containsMapPoint(p), !actions.contains(where: { $0.rect.insetBy(dx: -9, dy: -9).contains(p) }) else { continue }
+            let target = markerHitRect(pin, at: p)
+            guard containsMapPoint(p), !actions.contains(where: { $0.rect.intersects(target) }) else { continue }
             actions.append(WorldMapAction(id: "map:pin:" + pin.id.uuidString,
                 label: pinLabels[pin.id] ?? "",
-                rect: CGRect(x: p.x - 9, y: p.y - 9, width: 18, height: 18), enabled: true))
+                rect: target, enabled: true))
         }
         return actions
     }
     func containsMapPoint(_ point: CGPoint) -> Bool {
         WorldMapGeometry.contains(point)
+    }
+    private func markerHitRect(_ pin: MapPin, at point: CGPoint) -> CGRect {
+        let radius: CGFloat = pin.style == .player ? 13 : 9
+        return CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
     }
     @discardableResult func mouseDown(at point: CGPoint) -> Bool {
         guard containsMapPoint(point) else { return false }
@@ -178,16 +187,36 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
             hidePinCoordinates(); return true
         }
         hidePinCoordinates()
-        dragStart = point; dragViewport = viewport; return true
+        dragStart = point; dragViewport = viewport; dragMoved = false
+        return true
     }
     func mouseDragged(to point: CGPoint) {
         guard let start = dragStart, let original = dragViewport else { return }
+        guard point.x.isFinite, point.y.isFinite else { return }
+        guard dragMoved || hypot(point.x - start.x, point.y - start.y) > 3 else { return }
+        dragMoved = true
         let next = WorldMapGeometry.panned(original, delta: CGPoint(x: point.x - start.x, y: point.y - start.y))
         guard next != viewport else { return }; viewport = next
         updateCamera()
     }
-    func mouseUp() {
-        guard isDragging else { return }; dragStart = nil; dragViewport = nil; endGesture()
+    func mouseUp(cancelled: Bool = false) {
+        guard let start = dragStart, let original = dragViewport else { return }
+        let click = !dragMoved && !cancelled
+        dragStart = nil; dragViewport = nil; dragMoved = false
+        if click { recenter(at: start, from: original) }
+        else { endGesture() }
+    }
+    private func recenter(at point: CGPoint, from original: WorldMapViewport) {
+        let next = WorldMapGeometry.recentered(original, at: point)
+        guard next != viewport else { endGesture(); return }
+        guard let store else { return }
+        do {
+            // Commit first: a failed save must not visually claim a successful
+            // recenter or emit a navigation event.
+            try store.setViewport(next)
+            viewport = next; updateCamera(animated: true); raster.finishGesture()
+            onRecenter?()
+        } catch { showError(error.localizedDescription) }
     }
     func endGesture() {
         raster.finishGesture()
@@ -205,7 +234,7 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         // card. Deletion targets the marker itself, independent of AX spacing.
         for pin in pins.reversed() {
             let location = WorldMapGeometry.screen(x: pin.x, y: pin.y, viewport: viewport)
-            if CGRect(x: location.x - 9, y: location.y - 9, width: 18, height: 18).contains(point) {
+            if markerHitRect(pin, at: location).contains(point) {
                 removePin(id: pin.id); return true
             }
         }
@@ -219,8 +248,22 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
     }
     func perform(actionID: String) {
         if actionID.hasPrefix("map:pin:"), let id = UUID(uuidString: String(actionID.dropFirst(8))), pins.contains(where: { $0.id == id }) {
-            selectedPinID = id; showsPinCoordinates = true
-            withoutActions { renderPins(); renderChrome() }; onChange?(); return
+            guard let store else { return }
+            do {
+                guard let updated = try store.cyclePinStyle(id: id) else { return }
+                selectedPinID = id; showsPinCoordinates = true; message = nil
+                markerStyleRevisions.removeValue(forKey: id)
+                withoutActions { renderPins(); renderChrome() }; onChange?()
+                if active, !reduceMotion(), let marker = pinLayers[id] {
+                    let turn = CABasicAnimation(keyPath: "transform.rotation.z"); turn.fromValue = -0.12; turn.toValue = 0
+                    let opacity = CABasicAnimation(keyPath: "opacity"); opacity.fromValue = 0.45; opacity.toValue = 1
+                    let change = CAAnimationGroup(); change.animations = [turn, opacity]; change.duration = 0.16
+                    change.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    marker.add(change, forKey: "map.style")
+                }
+                onPinStyleChanged?(updated.style)
+            } catch { showError(error.localizedDescription) }
+            return
         }
         switch actionID {
         case "map:zoomIn", "map:zoomOut":
@@ -294,7 +337,8 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
         // behind the pointer and never animate a second terrain snapshot.
         let animate = animated && !reduceMotion()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        updateTerrainTransform(animated: animate); renderPins(animated: animate); renderChrome()
+        updateTerrainTransform(animated: animate)
+        renderPins(animated: animate); renderChrome()
         CATransaction.commit(); onChange?()
     }
     private func renderPins(animated: Bool = false) {
@@ -340,12 +384,17 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
                                            transform: .identity, from: start)
             marker.zPosition = pin.id == selectedPinID ? 1 : 0
             let updateStyle = markerStyleRevisions[pin.id] != pinStyleRevision
+            if updateStyle { updatePlayerArtwork(on: marker, visible: pin.style == .player) }
+            let markerColor = WorldMapPinArtwork.color(for: pin.style).cgColor
             for shape in marker.sublayers?.compactMap({ $0 as? CAShapeLayer }) ?? [] {
                 if updateStyle { shape.contentsScale = scale }
-                if shape.name == "map.pin.contrast" { continue }
+                if shape.name == "map.pin.contrast" {
+                    shape.isHidden = pin.style == .player; continue
+                }
                 if updateStyle {
-                    if shape.name == "map.pin.dot" { shape.fillColor = accent.cgColor }
-                    else { shape.strokeColor = accent.cgColor }
+                    if shape.name == "map.pin.dot" { shape.fillColor = markerColor }
+                    else { shape.strokeColor = markerColor }
+                    shape.isHidden = pin.style == .player && shape.name != "map.pin.pulse"
                 }
                 guard shape.name == "map.pin.pulse" else { continue }
                 let pulses = pulsesEnabled && animatedPinIDs.contains(pin.id)
@@ -360,12 +409,34 @@ final class WorldMapCanvas: NSObject, HUDModuleContentFactory {
             markerStyleRevisions[pin.id] = pinStyleRevision
         }
     }
+    private func updatePlayerArtwork(on marker: CALayer, visible: Bool) {
+        if visible && marker.sublayers?.contains(where: { $0.name == "map.pin.player" }) != true {
+            let halo = CALayer(); halo.name = "map.pin.playerHalo"
+            halo.frame = CGRect(x: -24, y: -26, width: 48, height: 52)
+            halo.contents = WorldMapPinArtwork.playerHalo; halo.opacity = 0.149
+            let beam = CALayer(); beam.name = "map.pin.playerBeam"
+            beam.frame = CGRect(x: -3, y: -106, width: 6, height: 102)
+            beam.contents = WorldMapPinArtwork.playerBeam
+            // Original Equipring projects a narrow vertical beam, with its
+            // source grayscale ramp black at the tip and bright at the base.
+            // The shared cache applies its original yellow material tint once;
+            // screen blending gives that prepared image an additive footprint.
+            beam.compositingFilter = "screenBlendMode"; beam.opacity = 0.72
+            let glyph = CALayer(); glyph.name = "map.pin.player"
+            glyph.frame = CGRect(x: -12, y: -12, width: 24, height: 24)
+            glyph.contents = WorldMapPinArtwork.playerGlyph; glyph.contentsGravity = .resizeAspect
+            marker.insertSublayer(halo, at: 0); marker.addSublayer(beam); marker.addSublayer(glyph)
+        }
+        for item in marker.sublayers ?? [] where item.name?.hasPrefix("map.pin.player") == true {
+            item.isHidden = !visible; item.contentsScale = scale
+        }
+    }
     private func renderChrome() {
         let key = "\(dark)|\(accent)|\(scale)|\(L10n.resolvedLanguage)|\(viewport.zoom < WorldMapViewport.maxZoom)|\(viewport.zoom > WorldMapViewport.minZoom)|\(pins.count)|\(selectedPinID?.uuidString ?? "")|\(showsPinCoordinates)|\(message ?? "")|\(terrain != nil)"
         guard key != chromeKey else { updateZoomStatus(); return }; chromeKey = key
         chrome.sublayers?.forEach { $0.removeFromSuperlayer() }
         let ink = NSColor(white: dark ? 0.95 : 0.13, alpha: 1)
-        text(L10n.text("MAP", "地图"), rect: CGRect(x: 122, y: 37, width: 196, height: 17), size: 11, color: ink, alignment: .center)
+        text(HUDSectionHeading.text(L10n.text("MAP", "地图")), rect: CGRect(x: 122, y: 37, width: 196, height: 17), size: 11, color: ink, alignment: .center)
         chromeStatus = text("", rect: CGRect(x: 115, y: 55, width: 210, height: 13), size: 8, color: ink.withAlphaComponent(0.55), alignment: .center)
         statusZoom = nil; updateZoomStatus()
         for action in toolbarActions {

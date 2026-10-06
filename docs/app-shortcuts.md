@@ -37,3 +37,16 @@ Only existing `.app` directories with an `APPL` Info.plist and an available exec
 点击快捷方式时，浮层先完成关闭动画，再启动应用或激活已运行的对应实例。不会在动画结束前切换应用，也不会用不同位置的同名应用替代用户选择的版本。若应用丢失或已被其他应用替换，会显示错误；可移除失效快捷方式，在应用可用后重新添加。启动失败后会重新打开添加应用页面。成功的启动／激活请求会在事件日志记录快捷方式名称，不记录完整路径。
 
 应用引用、名称与预设选择保存在上述本机 JSON 文件中；不会复制应用或保存图标文件，也不会持续扫描应用目录。macOS 能解析新位置时，书签可跟随应用移动并更新；同一应用的重复引用会被拒绝。损坏、不支持的版本或外部更改的数据不会被静默覆盖。此功能沿用项目的 macOS 10.15.4+（Intel）及 macOS 11+（Apple Silicon）支持范围。
+
+
+## Recycled row geometry (2026-10-05)
+
+Seventeen built-in/Add App entries plus two saved apps exceed the original
+18-button pool. Recycling the first row previously repeated its authored X
+position after the last row; the source's world-space slant operation made that
+wrap leak into tilted Y/Z and overlap adjacent buttons. Desktop rows now use
+one logical origin and uniform source-average pitch before the existing slant
+pass. The original curve, fixed nine-row pool, viewport masks and bounce remain.
+A final unpaired Add App consistently occupies the left column, with no phantom
+second button. Tests cover odd/even list lengths, pool wrap, large lists, pointer
+tilt extremes, clipping, accessibility and existing scroll behavior.
