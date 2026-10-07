@@ -5,8 +5,8 @@ EndfieldHUD is an unofficial fan project by [DDDuoDuo](https://github.com/DDDuoD
 ## Visual inspiration
 
 - *Arknights: Endfield* supplies the HUD's visual reference, including the Watch menu, motion, typography and Photo Mode.
-- [氰氨锗 / QinAnze](https://github.com/QinAnze/zmd-charge) supplied the Windows charging concept and circle → banner → battery sequence.
-- [llynxxx](https://www.bilibili.com/video/BV1DBaP6yEHs/) created the earlier macOS demonstration used as a visual reference.
+- [氰氨锗 / QinAnze](https://github.com/QinAnze/zmd-charge)
+- [llynxxx](https://www.bilibili.com/video/BV1DBaP6yEHs/)
 
 EndfieldHUD's Swift app and desktop renderer are independently implemented. No source code or assets from the QinAnze or llynxxx apps are included.
 
