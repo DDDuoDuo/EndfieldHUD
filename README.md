@@ -6,20 +6,20 @@ A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD 
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="Release v1.2.0" width="326"></a>
 
-[Download DMG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-macOS.dmg) · [Download PKG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-Installer.pkg) · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
+[Download PKG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-Installer.pkg) · [Download DMG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-macOS.dmg) · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
-![Installation](docs/media/readme/en-01-installation.png)
+<img src="docs/media/readme/en-01-installation.png" alt="Installation" width="326">
 
-1. Quit any older copy of EndfieldHUD.
-2. Open the DMG and drag **EndfieldHUD.app** into **Applications**, or run the PKG installer.
-3. Open EndfieldHUD from Applications. Look for its icon in the menu bar.
-4. Press **Ctrl + backtick (`)** to open the HUD. You can change this in **Hotkeys**.
+0. If you have already installed a copy of EndfieldHUD, click **Check Update** button in the menu bar.
+1. Open the DMG and drag **EndfieldHUD.app** into **Applications**, or run the PKG installer.
+2. Open EndfieldHUD from Applications. Look for its icon in the menu bar.
+3. Press **Ctrl + backtick (`)** to open the HUD. You can change the hotkey in **Hotkeys**.
 
-If macOS blocks the app, go to **System Settings → Privacy & Security → Open Anyway**, then confirm. The app isn't notarized by Apple yet. On older macOS versions, look in **System Preferences → Security & Privacy**.
+If macOS blocks the app, go to **System Settings → Privacy & Security → Open Anyway**, then confirm. The app isn't notarized by Apple yet.
 
-Use the side buttons to switch sections, and scroll the right side for more. **Esc** backs out of an edit before closing the HUD. Closing it keeps the app running; the red power button lets you quit.
+Use the side buttons to switch sections, and scroll the right side for more. **Esc** backs out of an edit before closing the HUD. Closing it keeps the app running; pressing the red power button allows you to quit this app.
 
-![Requirements](docs/media/readme/en-02-requirements.png)
+<img src="docs/media/readme/en-02-requirements.png" alt="Requirements" width="326">
 
 Apple silicon: **macOS 11+**. Intel: **macOS 10.15.4+**. Some tools need a newer system or supported hardware. [Compatibility notes](docs/testing-build.md)
 
@@ -35,7 +35,7 @@ Allow permissions when you use the features that need them:
 
 You can review permissions in **System Settings → Privacy & Security**; notifications have their own settings page.
 
-![Functions](docs/media/readme/en-03-functions.png)
+<img src="docs/media/readme/en-03-functions.png" alt="Functions" width="326">
 
 | Tool | What you can do |
 | --- | --- |
@@ -54,16 +54,16 @@ You can review permissions in **System Settings → Privacy & Security**; notifi
 | Battery, Storage & Activity Monitor | Check charging status, disk space, CPU, RAM, and running apps. |
 | App shortcuts | Add your apps with custom names and icons. |
 
-Mainland China account linking has been tested with Endfield and Arknights. Global support is included and still needs live testing. Linking is optional.
+*Linking is optional.
 
 In **Display**, change the theme, tilt, clock, icons, and animation settings. The HUD supports English, Simplified Chinese, Traditional Chinese, Japanese, and Korean.
 
 Your notes and settings stay on your Mac. Linked community credentials use macOS Keychain. Updates come from GitHub; check the menu bar or **About** for update controls.
 
-![Credits](docs/media/readme/en-04-credits.png)
+<img src="docs/media/readme/en-04-credits.png" alt="Credits" width="326">
 
-Made by [DDDuoDuo](https://github.com/DDDuoDuo). Thanks to [llynxxx](https://www.bilibili.com/video/BV1DBaP6yEHs/) for the macOS visual reference and [QinAnze](https://github.com/QinAnze/zmd-charge) for the Windows charging concept.
+Made by [DDDuoDuo](https://github.com/DDDuoDuo). Thanks to [QinAnze](https://github.com/QinAnze/zmd-charge) for inspiration.
 
 This is an unofficial fan project. *Arknights: Endfield* artwork and branding belong to HYPERGRYPH and their respective owners. Original code uses the [MIT license](LICENSE); game assets and dependencies keep their own licenses. [Full credits](CREDITS.md)
 
-[Report a bug](https://github.com/DDDuoDuo/EndfieldHUD/issues) · [Build from source](DEVELOPMENT.md) · [Testing notes](TESTING.md)
+[Report a bug](https://github.com/DDDuoDuo/EndfieldHUD/issues)
