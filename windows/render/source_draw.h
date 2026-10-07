@@ -14,6 +14,12 @@ enum class SourceOutputContract {
     // the accumulated bytes need a separate desktop presentation adapter.
     SourceLinearPremultiplied
 };
+enum class SourceTargetLoad {
+    Clear,
+    // An explicit native desktop layer has already populated the source
+    // attachment. Preserve it while applying the original source blend states.
+    PreserveBackground
+};
 // Native source sprite and selected UI/mesh FX programs. Complete source
 // soft-mask/stencil/HDR parity still requires matched visual acceptance.
 class SourceDraw final {
@@ -22,7 +28,8 @@ public:
     ~SourceDraw();
     HRESULT initialize(ID3D11Device*, ID3D11DeviceContext*, ID2D1DeviceContext*, IDWriteFactory*, const std::filesystem::path&);
     HRESULT draw(ID3D11RenderTargetView*, const scene::Frame&,
-                 SourceOutputContract = SourceOutputContract::EncodedPremultiplied);
+                 SourceOutputContract = SourceOutputContract::EncodedPremultiplied,
+                 SourceTargetLoad = SourceTargetLoad::Clear);
     std::size_t textureCount() const;
     std::size_t textCount() const;
     const std::string& initializationError() const;

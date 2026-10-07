@@ -3,6 +3,8 @@
 #include <cmath>
 #include <limits>
 #include <cwctype>
+#include <stdexcept>
+#include <utility>
 
 namespace endfield::platform {
 namespace {
@@ -135,6 +137,7 @@ bool ProjectiveMapping::unproject(double x, double y, double& ox, double& oy) co
 #include <wrl/client.h>
 #include <UIAutomation.h>
 #include <oleauto.h>
+#include <usp10.h>
 #include <atomic>
 #include <cstring>
 
@@ -178,10 +181,19 @@ struct ProjectedEditor::Impl {
     bool active{}, dragging{};
     std::uint64_t layout_revision{(std::numeric_limits<std::uint64_t>::max)()};
     char16_t pending_high{};
+    EditorAccessibilityNotifications accessibility_notifications;
+    std::u16string accessibility_value;
+    std::size_t accessibility_anchor{},accessibility_caret{};
+    enum class PointerUnit { character,word,paragraph };
+    PointerUnit pointer_unit{PointerUnit::character};
+    std::pair<std::size_t,std::size_t> pointer_anchor{};
+    POINT last_click{};ULONGLONG last_click_time{};unsigned click_count{};
+    std::vector<std::size_t> word_stops;
+    std::uint64_t word_revision{(std::numeric_limits<std::uint64_t>::max)()};
     void update_layout();
     void changed(std::size_t old_length, bool from_tsf = false);
     bool screen_rect(D2D1_RECT_F source, RECT* result);
-    bool hit(POINT client, LONG* position, bool require_inside);
+    bool hit(POINT client, LONG* position, bool require_inside,LONG* cluster_position=nullptr);
     void notify_selection();
     void terminate_composition();
     void artwork_changed();
@@ -191,6 +203,10 @@ struct ProjectedEditor::Impl {
     void set_composition_range(ITfCompositionView*,ITfRange* range=nullptr);
     void read_display_attributes(ITfContext*,TfEditCookie);
     void accessibility_event(EVENTID event);
+    void accessibility_selection();
+    void accessibility_text_changed();
+    std::pair<std::size_t,std::size_t> pointer_range(std::size_t position);
+    void update_words();
 };
 
 // TSF talks directly to this UTF-16 store; DirectWrite supplies artwork only.
@@ -259,7 +275,7 @@ public:
         if (count != 1 || !selection || !range(selection[0].acpStart, selection[0].acpEnd)) return E_INVALIDARG;
         if (selection[0].style.ase == TS_AE_START) host.model.select(selection[0].acpEnd, selection[0].acpStart);
         else host.model.select(selection[0].acpStart, selection[0].acpEnd);
-        host.ensure_caret_visible(); host.artwork_changed(); host.accessibility_event(UIA_Text_TextSelectionChangedEventId); return S_OK;
+        host.ensure_caret_visible(); host.artwork_changed(); host.accessibility_selection(); return S_OK;
     }
     STDMETHODIMP GetText(LONG start, LONG finish, WCHAR* plain, ULONG requested, ULONG* copied,
         TS_RUNINFO* runs, ULONG requested_runs, ULONG* copied_runs, LONG* next) override {
@@ -297,6 +313,7 @@ public:
         HRESULT hr=SetText(0,begin,end,text,count,change);
         if (SUCCEEDED(hr)) {
             host.model.select(begin,begin+static_cast<LONG>(count));
+            host.accessibility_selection();
             if (finish) *finish=begin+static_cast<LONG>(count);
         }
         return hr;
@@ -670,6 +687,82 @@ STDMETHODIMP ProjectedEditor::Impl::AccessibilityProvider::RangeFromPoint(UiaPoi
 void ProjectedEditor::Impl::accessibility_event(EVENTID event) {
     if (accessibility && UiaClientsAreListening()) UiaRaiseAutomationEvent(static_cast<IRawElementProviderSimple*>(accessibility.Get()),event);
 }
+void ProjectedEditor::Impl::accessibility_selection() {
+    if(accessibility_anchor==model.anchor() && accessibility_caret==model.caret()) return;
+    accessibility_anchor=model.anchor();accessibility_caret=model.caret();
+    ++accessibility_notifications.selection;accessibility_event(UIA_Text_TextSelectionChangedEventId);
+}
+void ProjectedEditor::Impl::accessibility_text_changed() {
+    if(accessibility_value!=model.text()) {
+        const auto previous=std::exchange(accessibility_value,model.text());
+        ++accessibility_notifications.text;accessibility_event(UIA_Text_TextChangedEventId);
+        ++accessibility_notifications.value;
+        if(accessibility && UiaClientsAreListening()) {
+            VARIANT before,after;VariantInit(&before);VariantInit(&after);before.vt=after.vt=VT_BSTR;
+            before.bstrVal=SysAllocStringLen(reinterpret_cast<const wchar_t*>(previous.data()),static_cast<UINT>(previous.size()));
+            after.bstrVal=SysAllocStringLen(reinterpret_cast<const wchar_t*>(accessibility_value.data()),static_cast<UINT>(accessibility_value.size()));
+            if(before.bstrVal && after.bstrVal) UiaRaiseAutomationPropertyChangedEvent(
+                static_cast<IRawElementProviderSimple*>(accessibility.Get()),UIA_ValueValuePropertyId,before,after);
+            VariantClear(&before);VariantClear(&after);
+        }
+    }
+    accessibility_selection();
+}
+
+void ProjectedEditor::Impl::update_words() {
+    update_layout();if(word_revision==model.revision()) return;
+    const auto& text=model.text();std::vector<std::size_t> stops{0,text.size()};
+    if(!text.empty()) {
+        // ScriptItemize requires cMaxItems >= 2 and a separate terminal item,
+        // including for a document containing just one UTF-16 code unit.
+        const auto maximum_items=(std::max)(std::size_t(3),text.size()+1);
+        std::vector<SCRIPT_ITEM> items((std::min)(maximum_items,std::size_t(64)));int count{};HRESULT status{};
+        for(;;) {
+            status=ScriptItemize(reinterpret_cast<const WCHAR*>(text.data()),static_cast<int>(text.size()),
+                static_cast<int>(items.size()-1),nullptr,nullptr,items.data(),&count);
+            if(status!=E_OUTOFMEMORY || items.size()>=maximum_items) break;
+            items.resize((std::min)(maximum_items,items.size()*2));
+        }
+        if(FAILED(status)) throw std::runtime_error("Native projected-editor word analysis failed");
+        std::vector<SCRIPT_LOGATTR> attributes(text.size());
+        for(int item=0;item<count;++item) {
+            const int first=items[item].iCharPos,length=items[item+1].iCharPos-first;
+            if(FAILED(ScriptBreak(reinterpret_cast<const WCHAR*>(text.data())+first,length,&items[item].a,attributes.data()+first)))
+                throw std::runtime_error("Native projected-editor word boundaries unavailable");
+        }
+        const auto whitespace=[&](std::size_t at) {
+            const auto unit=text[at];
+            // ScriptBreak treats hard paragraph separators separately from
+            // breakable word whitespace; they still bound pointer word spans.
+            return attributes[at].fWhiteSpace || unit==u'\r' || unit==u'\n' ||
+                unit==u'\u0085' || unit==u'\u2028' || unit==u'\u2029';
+        };
+        for(std::size_t at=1;at<text.size();++at)
+            // Word movement stops alone can include a word's trailing space.
+            // Selection keeps whitespace in a separate span, like AppKit.
+            if((attributes[at].fWordStop || whitespace(at)!=whitespace(at-1)) &&
+               EditorModel::scalar_boundary(text,at)==at &&
+               model.navigation_boundary(model.navigation_boundary(at,false),true)==at) stops.push_back(at);
+    }
+    std::sort(stops.begin(),stops.end());stops.erase(std::unique(stops.begin(),stops.end()),stops.end());
+    word_stops=std::move(stops);word_revision=model.revision();
+}
+std::pair<std::size_t,std::size_t> ProjectedEditor::Impl::pointer_range(std::size_t position) {
+    const auto& text=model.text();position=EditorModel::scalar_boundary(text,position);
+    if(pointer_unit==PointerUnit::character) return {position,position};
+    if(pointer_unit==PointerUnit::paragraph) {
+        std::size_t first=0,last=text.size();
+        for(std::size_t at=0;at<text.size();) {
+            if(text[at]!=u'\n' && text[at]!=u'\r' && text[at]!=u'\u2029') {++at;continue;}
+            auto next=at+1;if(text[at]==u'\r' && next<text.size() && text[next]==u'\n') ++next;
+            if(position<next) {last=next;break;}first=next;at=next;
+        }
+        return {first,last};
+    }
+    update_words();auto next=std::upper_bound(word_stops.begin(),word_stops.end(),position);
+    if(next==word_stops.end()) return {text.size(),text.size()};
+    return {*std::prev(next),*next};
+}
 
 void ProjectedEditor::Impl::artwork_changed() {
     ++artwork_version; if (invalidate) invalidate();
@@ -775,9 +868,9 @@ void ProjectedEditor::Impl::update_layout() {
 }
 void ProjectedEditor::Impl::changed(std::size_t old_length, bool from_tsf) {
     if (!from_tsf) { update_layout(); ensure_caret_visible(); if (store) { store->text_change(static_cast<LONG>(old_length)); store->selection_change(); store->layout_change(); } }
-    artwork_changed(); accessibility_event(UIA_Text_TextChangedEventId);
+    artwork_changed();accessibility_text_changed();
 }
-void ProjectedEditor::Impl::notify_selection() { ensure_caret_visible(); if (store) store->selection_change(); artwork_changed(); accessibility_event(UIA_Text_TextSelectionChangedEventId); }
+void ProjectedEditor::Impl::notify_selection() { ensure_caret_visible(); if (store) store->selection_change(); artwork_changed();accessibility_selection(); }
 void ProjectedEditor::Impl::terminate_composition() {
     if (!context || !model.composing()) return;
     ComPtr<ITfContextOwnerCompositionServices> service;
@@ -794,13 +887,14 @@ bool ProjectedEditor::Impl::screen_rect(D2D1_RECT_F source, RECT* result) {
     *result={static_cast<LONG>(std::floor(min_x))+origin.x,static_cast<LONG>(std::floor(min_y))+origin.y,
         static_cast<LONG>(std::ceil(max_x))+origin.x,static_cast<LONG>(std::ceil(max_y))+origin.y}; return true;
 }
-bool ProjectedEditor::Impl::hit(POINT client, LONG* position, bool require_inside) {
+bool ProjectedEditor::Impl::hit(POINT client, LONG* position, bool require_inside,LONG* cluster_position) {
     double x{},y{}; if (!projection.unproject(client.x,client.y,x,y)) return false;
     if (require_inside && (x<rectangle.left || x>rectangle.right || y<rectangle.top || y>rectangle.bottom)) return false;
     update_layout(); if (!layout) return false;
     BOOL trailing{},inside{}; DWRITE_HIT_TEST_METRICS metric{};
     if (FAILED(layout->HitTestPoint(static_cast<FLOAT>(x-rectangle.left),static_cast<FLOAT>(y-rectangle.top)+scroll_y,&trailing,&inside,&metric))) return false;
-    *position=static_cast<LONG>(metric.textPosition+(trailing ? metric.length : 0)); return true;
+    *position=static_cast<LONG>(metric.textPosition+(trailing ? metric.length : 0));
+    if(cluster_position) *cluster_position=static_cast<LONG>(metric.textPosition);return true;
 }
 ProjectedEditor::ProjectedEditor() : impl_(std::make_unique<Impl>()) {}
 ProjectedEditor::~ProjectedEditor() { shutdown(); }
@@ -825,6 +919,8 @@ HRESULT ProjectedEditor::initialize(HWND owner, IDWriteFactory* factory, std::fu
     CoCreateInstance(CLSID_TF_DisplayAttributeMgr,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&p.display_attributes));
     p.accessibility_lifetime=std::make_shared<Impl::AccessibilityLifetime>(Impl::AccessibilityLifetime{&p,GetCurrentThreadId()});
     p.accessibility.Attach(new Impl::AccessibilityProvider(p.accessibility_lifetime));
+    p.accessibility_value=p.model.text();p.accessibility_anchor=p.model.anchor();p.accessibility_caret=p.model.caret();
+    p.accessibility_notifications={};
     return p.tsf_result;
 }
 void ProjectedEditor::shutdown() {
@@ -844,6 +940,7 @@ void ProjectedEditor::shutdown() {
     p.layout.Reset(); p.format.Reset(); p.factory.Reset(); p.owner=nullptr; p.pending_high=0; p.invalidate={};
     p.active_composition.Reset(); p.marked_runs.clear(); p.marked_start=p.marked_length=0; p.scroll_y=p.text_height=0; ++p.artwork_version;
     p.layout_revision=(std::numeric_limits<std::uint64_t>::max)();
+    p.word_revision=(std::numeric_limits<std::uint64_t>::max)();p.word_stops.clear();p.click_count=0;p.last_click_time=0;
 }
 bool ProjectedEditor::set_text(std::u16string text) {
     auto& p=*impl_; if (p.store && p.store->locked()) return false; p.terminate_composition();
@@ -951,13 +1048,28 @@ bool ProjectedEditor::handle_message(UINT message, WPARAM wparam, LPARAM lparam,
             p.projection.unproject(point.x,point.y+screen_delta,offset_x,offset_y)) p.scroll(p.scroll_y-static_cast<float>(offset_y-local_y));
         return true;
     }
-    if (message==WM_LBUTTONDOWN || message==WM_MOUSEMOVE || message==WM_LBUTTONUP) {
+    if (message==WM_LBUTTONDOWN || message==WM_LBUTTONDBLCLK || message==WM_MOUSEMOVE || message==WM_LBUTTONUP) {
         if (message==WM_MOUSEMOVE && !p.dragging) return false;
         if (message==WM_LBUTTONUP) { if (!p.dragging) return false; p.dragging=false; ReleaseCapture(); return true; }
-        LONG position{}; if (!p.hit({GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)},&position,!p.dragging)) return false;
-        if (message==WM_LBUTTONDOWN) { p.terminate_composition(); SetFocus(p.owner); focus(true); p.dragging=true; SetCapture(p.owner);
-            p.model.select((GetKeyState(VK_SHIFT)&0x8000) ? p.model.anchor() : position,position); }
-        else p.model.select(p.model.anchor(),position);
+        LONG position{},cluster{}; if (!p.hit({GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)},&position,!p.dragging,&cluster)) return false;
+        if (message==WM_LBUTTONDOWN || message==WM_LBUTTONDBLCLK) {
+            p.terminate_composition();SetFocus(p.owner);focus(true);p.dragging=true;SetCapture(p.owner);
+            const ULONGLONG tick=GetTickCount64();const POINT point{GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)};
+            const UINT dpi=GetDpiForWindow(p.owner);
+            const bool repeated=p.click_count && tick-p.last_click_time<=GetDoubleClickTime() &&
+                std::abs(point.x-p.last_click.x)<=GetSystemMetricsForDpi(SM_CXDOUBLECLK,dpi)/2 &&
+                std::abs(point.y-p.last_click.y)<=GetSystemMetricsForDpi(SM_CYDOUBLECLK,dpi)/2;
+            p.click_count=repeated?(std::min)(p.click_count+1,3u):1;
+            if(message==WM_LBUTTONDBLCLK) p.click_count=(std::max)(2u,p.click_count);
+            p.last_click=point;p.last_click_time=tick;
+            p.pointer_unit=p.click_count>=3?Impl::PointerUnit::paragraph:p.click_count==2?Impl::PointerUnit::word:Impl::PointerUnit::character;
+            // A word click on a glyph's trailing half still belongs to that
+            // glyph, rather than the next whitespace span or the EOF caret.
+            p.pointer_anchor=(GetKeyState(VK_SHIFT)&0x8000)?std::pair{p.model.begin(),p.model.begin()}:
+                p.pointer_range(p.pointer_unit==Impl::PointerUnit::word?cluster:position);
+        }
+        const auto edge=p.pointer_range(p.pointer_unit==Impl::PointerUnit::word?cluster:position);
+        p.model.select((std::min)(p.pointer_anchor.first,edge.first),(std::max)(p.pointer_anchor.second,edge.second));
         p.notify_selection(); return true;
     }
     if (!p.active || (p.store && p.store->locked())) return false;
@@ -1100,5 +1212,6 @@ std::wstring ProjectedEditor::font_inventory() const {
     }
     return result;
 }
+EditorAccessibilityNotifications ProjectedEditor::accessibility_notifications() const {return impl_->accessibility_notifications;}
 }
 #endif

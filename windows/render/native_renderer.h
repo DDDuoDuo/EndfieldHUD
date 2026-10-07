@@ -10,11 +10,13 @@
 #include "platform/projected_editor.h"
 #include "source_draw.h"
 #include "presentation_adapter.h"
+#include "frozen_backdrop.h"
 #include <cstdint>
 
 namespace ehud::render {
 class NativeRenderer final {
 public:
+    ~NativeRenderer();
     HRESULT initialize(HWND owner, unsigned width, unsigned height);
     HRESULT resize(unsigned width, unsigned height);
     HRESULT loadSourceAssets(const std::filesystem::path& root);
@@ -22,12 +24,17 @@ public:
     HRESULT waitForDiagnosticGpu();
     HRESULT verifyDiagnosticAlpha();
     HRESULT draw(const scene::Frame& frame, endfield::platform::ProjectedEditor* editor = nullptr);
+    HRESULT setFrozenBackdrop(endfield::platform::FrozenSnapshot snapshot);
+    void enableFrozenBackdrop(bool enabled) { backdropEnabled_=enabled; }
+    void clearFrozenBackdrop();
     IDWriteFactory* textFactory() const { return text_.Get(); }
     ID3D11Device* graphicsDevice() const { return device_.Get(); }
     static endfield::platform::ProjectiveMapping editorProjection(const scene::Frame& frame);
     std::uint64_t submittedFrames() const { return submitted_; }
     std::size_t textureCount() const { return source_ ? source_->textureCount() : 0; }
     std::size_t textCount() const { return source_ ? source_->textCount() : 0; }
+    std::size_t backdropTextureCount() const { return frozenBackdrop_ ? frozenBackdrop_->texture_count() : 0; }
+    std::size_t backdropSnapshotBytes() const { return frozenBackdrop_ ? frozenBackdrop_->snapshot_byte_size() : 0; }
     void reset();
 private:
     template<class T> using ComPtr = Microsoft::WRL::ComPtr<T>;
@@ -48,6 +55,8 @@ private:
     ComPtr<ID3D11RenderTargetView> sourceTarget_;
     ComPtr<ID3D11ShaderResourceView> sourceView_;
     std::unique_ptr<SourcePresentationAdapter> presentationAdapter_;
+    std::unique_ptr<FrozenBackdrop> frozenBackdrop_;
+    bool backdropEnabled_{};
     std::shared_ptr<SourceDraw> source_;
     ComPtr<ID2D1SolidColorBrush> brush_;
     ComPtr<IDWriteFactory> text_;

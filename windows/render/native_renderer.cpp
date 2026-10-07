@@ -5,6 +5,7 @@
 #include <fstream>
 
 namespace ehud::render {
+NativeRenderer::~NativeRenderer() { reset(); }
 HRESULT NativeRenderer::initialize(HWND owner, unsigned width, unsigned height) {
     owner_ = owner;
     D3D_FEATURE_LEVEL level;
@@ -43,7 +44,19 @@ HRESULT NativeRenderer::initialize(HWND owner, unsigned width, unsigned height) 
     if (FAILED(hr = painter_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1), &brush_))) return hr;
     presentationAdapter_=std::make_unique<SourcePresentationAdapter>();
     if(FAILED(hr=presentationAdapter_->initialize(device_.Get()))) return hr;
+    frozenBackdrop_=std::make_unique<FrozenBackdrop>();
+    if(FAILED(hr=frozenBackdrop_->initialize(device_.Get(),context_.Get()))) return hr;
     return bindSurface();
+}
+HRESULT NativeRenderer::setFrozenBackdrop(endfield::platform::FrozenSnapshot snapshot) {
+    if(!frozenBackdrop_ || !snapshot) return E_INVALIDARG;
+    const HRESULT status=frozenBackdrop_->prepare(std::move(snapshot));
+    if(SUCCEEDED(status)) backdropEnabled_=true;
+    return status;
+}
+void NativeRenderer::clearFrozenBackdrop() {
+    backdropEnabled_=false;
+    if(frozenBackdrop_) frozenBackdrop_->clear();
 }
 HRESULT NativeRenderer::bindSurface() {
     ComPtr<IDXGISurface> buffer;
@@ -141,6 +154,11 @@ HRESULT NativeRenderer::verifyDiagnosticAlpha() {
 }
 HRESULT NativeRenderer::resize(unsigned width, unsigned height) {
     if (!swapchain_ || !width || !height) return S_OK;
+    const bool retainBackdropLayer=backdropEnabled_;
+    clearFrozenBackdrop();
+    // Never stretch old display pixels after a size/DPI change. Retain only
+    // the source tint/vignette fallback until the next hidden opening.
+    backdropEnabled_=retainBackdropLayer;
     painter_->SetTarget(nullptr); surface_.Reset(); renderTarget_.Reset();
     sourceView_.Reset();sourceTarget_.Reset();sourceSurface_.Reset();context_->ClearState();
     HRESULT hr = swapchain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
@@ -177,7 +195,14 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
         }
     }
     if (source_) {
-        HRESULT hr=source_->draw(sourceTarget_.Get(),frame,SourceOutputContract::SourceLinearPremultiplied);
+        HRESULT hr=S_OK;
+        if(backdropEnabled_) {
+            hr=frozenBackdrop_->draw(sourceTarget_.Get(),static_cast<unsigned>(frame.camera.viewport.x),
+                static_cast<unsigned>(frame.camera.viewport.y),frame.backdropAlpha,FrozenBackdropStyle{});
+            if(FAILED(hr)) return hr;
+        }
+        hr=source_->draw(sourceTarget_.Get(),frame,SourceOutputContract::SourceLinearPremultiplied,
+            backdropEnabled_?SourceTargetLoad::PreserveBackground:SourceTargetLoad::Clear);
         if(FAILED(hr)) return hr;
         hr=presentationAdapter_->draw(renderTarget_.Get(),sourceView_.Get(),
             static_cast<unsigned>(frame.camera.viewport.x),static_cast<unsigned>(frame.camera.viewport.y));
@@ -225,6 +250,7 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
     return hr;
 }
 void NativeRenderer::reset() {
+    clearFrozenBackdrop();frozenBackdrop_.reset();
     if (painter_) painter_->SetTarget(nullptr);
     if(context_) context_->ClearState();
     presentationAdapter_.reset();sourceView_.Reset();sourceTarget_.Reset();sourceSurface_.Reset();

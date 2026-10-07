@@ -69,6 +69,11 @@ struct ProjectiveMapping final {
 #include <dwrite.h>
 
 namespace endfield::platform {
+struct EditorAccessibilityNotifications {
+    // Requested provider notifications, independent of connected UIA clients.
+    // These diagnostics do not establish delivery or live Narrator behavior.
+    std::uint64_t text{}, selection{}, value{};
+};
 class ProjectedEditor final {
 public:
     ProjectedEditor();
@@ -99,6 +104,7 @@ public:
     const EditorModel& model() const;
     HRESULT tsf_status() const;
     std::wstring font_inventory() const;
+    EditorAccessibilityNotifications accessibility_notifications() const;
 
 private:
     struct Impl;

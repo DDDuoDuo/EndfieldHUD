@@ -37,3 +37,14 @@ Opening the executable creates a tray activation path. Use Ctrl + backtick or it
 The script runs native contracts and hardware capability probes, submits source frames to an invisible test HWND, checks 100 warmed reopen cycles, and returns to the message loop for a 61-second closed-state measurement. It writes local, ignored evidence under `windows/evidence/local`; it does not capture the desktop or start a visible helper. GPU utilization, wakeups, visible frame pacing, cold/warm visible opening latency, recording, actual IME use and Mac comparisons require separate measurements. Hardware-probe success does not establish visual or module parity.
 
 The projected editor includes native UIA Edit/Text/Value providers, scrolling and TSF marked-text display attributes. Live acceptance still must cover Chinese/Japanese/Korean IME and projected candidates; mixed-DPI monitors and unplug/recovery; a pre-opening desktop backdrop without recursive HUD capture; normal/custom cursor recording; Narrator and whole-HUD accessibility; device loss and sleep/resume; complete module/data/account/provider parity; and portable installation/update/rollback/uninstall with consent and verified hashes. The first feasibility gate remains open. Module implementation proceeds only after those architecture problems are resolved; no required module is dropped.
+
+Normal activation now prepares one bounded, memory-only frozen SDR snapshot while
+the HUD is hidden, then presents the original opening pose. A three-second
+readiness deadline, cancelled/stale result rejection and tint/vignette fallback
+keep failed capture from becoming a recursive backdrop. Captured pixels are
+discarded on close and display/device changes. The Gaussian prototype does not
+prove parity with the Mac native blur, ICC/HDR or composed-desktop freshness;
+[the backdrop contract](render/FROZEN-BACKDROP.md) records those limits. Synthetic
+diagnostics use generated pixels only and never call desktop capture. The editor
+also supports native Unicode double/triple-click selection and separate UIA text,
+value and caret/selection notifications; live IME/Narrator remains unverified.

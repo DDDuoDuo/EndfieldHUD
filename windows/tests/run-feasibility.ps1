@@ -18,6 +18,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Current desktop presentation contracts failed.
 if ($LASTEXITCODE -ne 0) { throw 'Source monitor selection contracts failed.' }
 & (Join-Path $build 'presentation_adapter_tests.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Source-to-Windows presentation contracts failed.' }
+& (Join-Path $build 'frozen_backdrop_tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Synthetic frozen backdrop contracts failed.' }
+& (Join-Path $build 'backdrop_preparation_tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Cancelled and delayed backdrop preparation contracts failed.' }
 & (Join-Path $build 'platform_probe.exe') (Join-Path $evidence 'platform-capabilities.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Native platform capability probe failed.' }
 $graphicsOutput = Join-Path $evidence 'graphics-lifecycle.json'
@@ -42,8 +46,8 @@ $hardware = [ordered]@{
   executable_sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
   source_mode = 'restarted desktop adaptation; raw Watch preview rejected'
   canonical_resource_baseline = '4036174a3facf935260f4d0a9c63bfff33b98c37'
-  settings = 'Synthetic 1280x720 hidden HWND; desktop profile/navigation/native labels; ambient off; no real data; source fixture pointer; source animation endpoints'
-  limits = 'No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified.'
+  settings = 'Synthetic 1280x720 hidden HWND; generated SDR backdrop pixels only; desktop profile/navigation/native labels; ambient off; no real data; source fixture pointer; source animation endpoints'
+  limits = 'No live desktop capture, visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified.'
 }
 $hardware | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'hardware.json') -Encoding UTF8
 Write-Output "Native diagnostics saved under $evidence"

@@ -25,6 +25,7 @@ template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;
 using ehud::scene::Frame;
 using ehud::scene::Graphic;
 using ehud::render::SourceOutputContract;
+using ehud::render::SourceTargetLoad;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonValue;
@@ -119,8 +120,9 @@ public:
         }
         return source;
     }
-    Pixel draw(ehud::render::SourceDraw& source, const Frame& scene, unsigned x = 16, unsigned y = 16) {
-        checked(source.draw(view.Get(),scene,contract_),"Submit isolated source material frame");
+    Pixel draw(ehud::render::SourceDraw& source, const Frame& scene, unsigned x = 16, unsigned y = 16,
+               SourceTargetLoad load = SourceTargetLoad::Clear) {
+        checked(source.draw(view.Get(),scene,contract_,load),"Submit isolated source material frame");
         context->OMSetRenderTargets(0,nullptr,nullptr);
         context->CopyResource(staging.Get(),target.Get());
         D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -131,6 +133,9 @@ public:
     }
     HRESULT submit(ehud::render::SourceDraw& source, const Frame& scene, SourceOutputContract contract) {
         return source.draw(view.Get(),scene,contract);
+    }
+    HRESULT submit_load(ehud::render::SourceDraw& source, const Frame& scene, SourceTargetLoad load) {
+        return source.draw(view.Get(),scene,contract_,load);
     }
 private:
     SourceOutputContract contract_;
@@ -534,6 +539,23 @@ void source_linear_accumulation(const std::filesystem::path& root) {
     std::cout<<"source_linear_srgb_accumulation=passed half_alpha_white_RGB=188 "
         <<"layered_source_over_additive=passed desktop_final_adapter=separate_contract\n";
 }
+void explicit_background_load(const std::filesystem::path& root) {
+    Gpu gpu(SourceOutputContract::SourceLinearPremultiplied);
+    auto source=gpu.initialize(root);
+    auto background=rectangle(imageId,{.2,.4,.6,1});
+    expect(gpu.draw(*source,frame(background)),source_pixel({.2,.4,.6},1),
+        "An explicit frozen desktop layer can populate the source attachment");
+    auto foreground=rectangle(imageId,{1,0,0,.25});
+    const auto mixed=source_pixel({.25+.2*.75,.4*.75,.6*.75},1);
+    expect(gpu.draw(*source,frame(foreground),16,16,SourceTargetLoad::PreserveBackground),mixed,
+        "Source UI retains and blends over the pre-opening layer in linear space",2);
+    Frame empty;empty.camera.viewport={32,32};
+    expect(gpu.draw(*source,empty,16,16,SourceTargetLoad::PreserveBackground),mixed,
+        "An empty preserved source frame does not erase its desktop input",2);
+    check(gpu.submit_load(*source,empty,static_cast<SourceTargetLoad>(999))==E_INVALIDARG,
+        "An unknown target load action is rejected before drawing");
+    expect(gpu.draw(*source,empty),{},"The default isolated source path still clears",0);
+}
 }
 int wmain(int argc, wchar_t** argv) {
     const HRESULT initialized=RoInitialize(RO_INIT_SINGLETHREADED);
@@ -543,6 +565,7 @@ int wmain(int argc, wchar_t** argv) {
         if (argc != 2) throw std::runtime_error("usage: source_draw_tests <staged Resources/WatchSource directory>");
         profile_byte_contracts();Gpu gpu;actual_source(gpu,argv[1]);actual_profile(gpu,argv[1]);material_regressions(gpu,argv[1]);
         source_linear_accumulation(argv[1]);
+        explicit_background_load(argv[1]);
         std::cout << "WARP_source_material_checks=" << checks << " desktop_capture=false hardware_parity=unverified\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; result=1; }
     catch (const winrt::hresult_error& error) { std::cerr << "Native GPU fixture failed HRESULT=0x" << std::hex << error.code().value << '\n'; result=1; }

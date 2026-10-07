@@ -1,8 +1,10 @@
 #include "render/native_renderer.h"
 #include "app/frame_schedule.h"
+#include "app/backdrop_preparation.h"
 #include "platform/composition_probe.h"
 #include "platform/rendered_cursor.h"
 #include "platform/monitor_snapshot.h"
+#include "platform/frozen_desktop_snapshot.h"
 #include "scene/desktop_shell.hpp"
 #include "scene/desktop_scroll.hpp"
 #include <windowsx.h>
@@ -21,10 +23,13 @@
 #include <optional>
 #include <sstream>
 #include <vector>
+#include <atomic>
+#include <thread>
 
 namespace {
 using Clock = std::chrono::steady_clock;
-constexpr UINT trayMessage = WM_APP + 1, frameTimer = 1, probeTimer = 2, clockTimer = 3;
+constexpr UINT trayMessage = WM_APP + 1, frameTimer = 1, probeTimer = 2, clockTimer = 3, backdropTimer = 4;
+constexpr UINT backdropReadyMessage = WM_APP + 4;
 constexpr UINT activateCommand = 100, quitCommand = 101;
 double cpuSeconds() {
     FILETIME creation{}, exit{}, kernel{}, user{};
@@ -60,6 +65,7 @@ public:
             }
         }
         WNDCLASSW windowClass{}; windowClass.lpfnWndProc = procedure; windowClass.hInstance = instance;
+        windowClass.style = CS_DBLCLKS;
         windowClass.lpszClassName = L"EndfieldHUD.Windows.DesktopFeasibility"; windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassW(&windowClass);
         window_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
@@ -221,7 +227,12 @@ private:
     }
     void toggle() {
         if (probe_) return;
+        if(backdropPreparation_.pending()) { cancelBackdropPreparation();return; }
         if (playback_ && playback_->phase() != ehud::scene::Phase::concealed) { close(false); return; }
+        // Keep at most one short-lived snapshot worker. A cancelled generation
+        // must finish before another capture is admitted; no polling is added.
+        if(backdropCapture_ && !backdropCapture_->complete.load(std::memory_order_acquire)) return;
+        finishBackdropWorker();
         try {
             if (!document_) {
                 auto root = executableRoot() / L"Resources" / L"NativeScene" / L"Scene";
@@ -249,19 +260,10 @@ private:
                     editor_->set_rectangle(D2D1::RectF(0, 0, 600, 220));
                 }
             }
-            buttons_->reset(now()); hovered_.reset(); pressed_.reset(); frameSchedule_.reset();
-            scrollMotion_.reset(scrollMotion_.position(),now());
-            refreshClock();
-            playback_->open(now()); dirty_ = true;
-            POINT pointer{}; GetCursorPos(&pointer); ScreenToClient(window_, &pointer);
-            pointer_ = {static_cast<double>(pointer.x), static_cast<double>(pointer.y)}; pointerChanged_ = true;
-            pointerInside_ = PtInRect(&client, pointer) != FALSE;
-            ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_);
-            cursor_.set_presented(true); cursor_.set_focused(GetForegroundWindow()==window_);
-            resolveCursor(true,true);
-            SetTimer(window_,clockTimer,1000,nullptr);
-            requestFrame();
+            beginBackdropPreparation();
         } catch (const std::exception& error) {
+            cancelBackdropPreparation();
+            finishBackdropWorker();
             if (playback_) playback_->conceal(); frame_.reset(); frameSchedule_.reset();
             cursor_.set_presented(false);
             cancelPointerInteraction();
@@ -272,7 +274,104 @@ private:
             MessageBoxW(window_, reason.c_str(), L"Windows feasibility prototype", MB_ICONERROR | MB_OK);
         }
     }
+    struct BackdropCapture {
+        std::uint64_t generation{};
+        endfield::platform::MonitorRectangle bounds;
+        endfield::platform::FrozenSnapshot snapshot;
+        HRESULT status{E_PENDING};
+        std::atomic<bool> complete{};
+    };
+    void finishBackdropWorker() {
+        if(backdropWorker_.joinable()) backdropWorker_.join();
+        backdropCapture_.reset();
+    }
+    void cancelBackdropPreparation() {
+        backdropPreparation_.cancel();KillTimer(window_,backdropTimer);
+        if(backdropWorker_.joinable()) backdropWorker_.request_stop();
+        if(renderer_) renderer_->clearFrozenBackdrop();
+    }
+    void beginBackdropPreparation() {
+        RECT bounds{};
+        if(IsWindowVisible(window_) || !GetWindowRect(window_,&bounds))
+            throw std::runtime_error("The desktop snapshot requires a hidden HUD");
+        renderer_->clearFrozenBackdrop();
+        auto capture=std::make_shared<BackdropCapture>();
+        capture->generation=backdropPreparation_.begin(now());
+        capture->bounds={bounds.left,bounds.top,bounds.right,bounds.bottom};
+        if(!SetTimer(window_,backdropTimer,static_cast<UINT>(ehud::app::BackdropPreparation::deadlineSeconds*1000),nullptr)) {
+            backdropPreparation_.cancel();
+            presentBackdropFallback(L"Desktop backdrop timer unavailable; using tint");return;
+        }
+        backdropCapture_=capture;
+        const HWND owner=window_;
+        backdropWorker_=std::jthread([capture,owner](std::stop_token stop) {
+            try {
+                capture->status=endfield::platform::capture_desktop_pre_open(owner,capture->bounds,stop,capture->snapshot);
+            } catch(const std::bad_alloc&) {capture->snapshot.reset();capture->status=E_OUTOFMEMORY;}
+            catch(...) {capture->snapshot.reset();capture->status=E_FAIL;}
+            capture->complete.store(true,std::memory_order_release);
+            // The message has no pointer payload. The shared result outlives
+            // cancellation and is accepted only by its current generation.
+            PostMessageW(owner,backdropReadyMessage,static_cast<WPARAM>(capture->generation),0);
+        });
+    }
+    void finishOpening() {
+        RECT client{};GetClientRect(window_,&client);
+        buttons_->reset(now());hovered_.reset();pressed_.reset();frameSchedule_.reset();
+        scrollMotion_.reset(scrollMotion_.position(),now());refreshClock();
+        playback_->open(now());dirty_=true;
+        POINT pointer{};GetCursorPos(&pointer);ScreenToClient(window_,&pointer);
+        pointer_={double(pointer.x),double(pointer.y)};pointerChanged_=true;
+        pointerInside_=PtInRect(&client,pointer)!=FALSE;
+        // Commit the new opening pose while still hidden. A retained swapchain
+        // must not briefly reveal its previous open's HUD or desktop pixels.
+        frame();
+        if(!renderer_ || playback_->phase()==ehud::scene::Phase::concealed) return;
+        ShowWindow(window_,SW_SHOW);SetForegroundWindow(window_);
+        cursor_.set_presented(true);cursor_.set_focused(GetForegroundWindow()==window_);
+        resolveCursor(true,true);SetTimer(window_,clockTimer,1000,nullptr);requestFrame();
+    }
+    void presentBackdropFallback(const wchar_t* reason) {
+        KillTimer(window_,backdropTimer);
+        if(backdropWorker_.joinable()) backdropWorker_.request_stop();
+        if(!renderer_) return;
+        renderer_->clearFrozenBackdrop();renderer_->enableFrozenBackdrop(true);
+        backdropStatus_=reason;finishOpening();
+    }
+    void acceptBackdrop(WPARAM generation) {
+        if(!backdropCapture_ || backdropCapture_->generation!=generation ||
+           !backdropCapture_->complete.load(std::memory_order_acquire)) return;
+        auto capture=backdropCapture_;
+        finishBackdropWorker();
+        if(backdropPreparation_.timed_out(now())) {
+            presentBackdropFallback(L"Desktop backdrop timed out; using tint");return;
+        }
+        if(!renderer_ || !backdropPreparation_.pending() || backdropPreparation_.ticket()!=capture->generation) return;
+        RECT current{};
+        if(!GetWindowRect(window_,&current) || IsWindowVisible(window_) ||
+           current.left!=capture->bounds.left || current.top!=capture->bounds.top ||
+           current.right!=capture->bounds.right || current.bottom!=capture->bounds.bottom) {
+            cancelBackdropPreparation();
+            if(placeOnSelectedMonitor()) presentBackdropFallback(L"Display changed; reopen to refresh the backdrop");
+            else backdropStatus_=L"Display unavailable";
+            return;
+        }
+        if(!backdropPreparation_.accept(capture->generation)) return;
+        KillTimer(window_,backdropTimer);
+        HRESULT status=capture->status;
+        if(SUCCEEDED(status)) status=renderer_->setFrozenBackdrop(capture->snapshot);
+        if(FAILED(status)) {
+            renderer_->clearFrozenBackdrop();
+            backdropStatus_=L"Desktop backdrop unavailable; using tint";
+        } else backdropStatus_.clear();
+        renderer_->enableFrozenBackdrop(true);
+        finishOpening();
+    }
     void close(bool quit) {
+        if(backdropPreparation_.pending()) {
+            cancelBackdropPreparation();
+            if(quit) DestroyWindow(window_);return;
+        }
         if (editor_) editor_->focus(false);
         cancelPointerInteraction();
         if (!playback_ || playback_->phase() == ehud::scene::Phase::concealed) {
@@ -284,6 +383,7 @@ private:
         quitAfterClose_ = quit; playback_->close(time); dirty_ = true; requestFrame();
     }
     void concealPresentation() {
+        cancelBackdropPreparation();
         if(editor_) editor_->focus(false);
         if(playback_) playback_->conceal();
         frame_.reset();frameSchedule_.reset();cursor_.set_presented(false);
@@ -341,6 +441,7 @@ private:
         return true;
     }
     void renderingFailed(HRESULT status) {
+        cancelBackdropPreparation();
         KillTimer(window_, frameTimer); frameTimerRunning_ = false;
         KillTimer(window_,clockTimer);
         frameSchedule_.reset();
@@ -357,6 +458,7 @@ private:
         if (!document_ || !renderer_ || !playback_) return;
         const double time = now(); auto sample = playback_->sample(time, false, ambientEnabled_);
         if (sample.phase == ehud::scene::Phase::concealed) {
+            renderer_->clearFrozenBackdrop();
             cursor_.set_presented(false);
             KillTimer(window_, frameTimer);KillTimer(window_,clockTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); frame_.reset(); gyro_.stop(time);
             frameSchedule_.reset();
@@ -445,6 +547,21 @@ private:
             if(FAILED(editorStatus)) throw std::runtime_error("Synthetic TSF context creation failed");
             editor.set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic TSF fixture");
             editor.set_rectangle(D2D1::RectF(0, 0, 600, 220));
+            // Supplied fixture pixels exercise the complete frozen background
+            // path without invoking any desktop capture or reading user pixels.
+            std::vector<std::uint8_t> syntheticPixels(1280*720*4);
+            for(unsigned y=0;y<720;++y) for(unsigned x=0;x<1280;++x) {
+                const auto offset=(std::size_t(y)*1280+x)*4;
+                const bool square=((x/96)+(y/96))%2;
+                syntheticPixels[offset]=static_cast<std::uint8_t>(70+y*100/720);
+                syntheticPixels[offset+1]=static_cast<std::uint8_t>(square?100:145);
+                syntheticPixels[offset+2]=static_cast<std::uint8_t>(45+x*80/1280);
+                syntheticPixels[offset+3]=255;
+            }
+            endfield::platform::FrozenSnapshot syntheticSnapshot;
+            if(FAILED(endfield::platform::FrozenDesktopSnapshot::from_bgra({0,0,1280,720},
+                std::move(syntheticPixels),syntheticSnapshot)))
+                throw std::runtime_error("Synthetic frozen desktop input validation failed");
             auto memory = [] {
                 PROCESS_MEMORY_COUNTERS_EX result{}; result.cb = sizeof(result);
                 GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&result), sizeof(result));
@@ -452,6 +569,8 @@ private:
             };
             auto drawCycle = [&](unsigned index) {
                 double time = index * 3.0;
+                if(FAILED(renderer.setFrozenBackdrop(syntheticSnapshot)))
+                    throw std::runtime_error("Synthetic frozen desktop GPU preparation failed");
                 playback.open(time); ehud::scene::GyroMotion gyro(doc.initialRootRotation());
                 gyro.retarget(desktopEuler(doc.pointerEuler({1100, 120}, {1280, 720})), time, doc.gyroDuration());
                 ehud::scene::FrameInput input{{1280, 720}, playback.sample(time + doc.entranceDuration(), false, false), gyro.rotation(time + 1)};
@@ -469,6 +588,7 @@ private:
                 if (FAILED(status)) throw std::runtime_error("Native projected frame submission failed");
                 playback.close(time + 1); auto closed = playback.sample(time + 1 + doc.exitDuration(), false, false);
                 if (closed.phase != ehud::scene::Phase::concealed) throw std::runtime_error("Closing lifecycle failed");
+                renderer.clearFrozenBackdrop();
             };
             // Warm caches before comparing bounded lifecycle ownership.
             for (unsigned index = 0; index < 5; ++index) drawCycle(index);
@@ -495,6 +615,9 @@ private:
                 << ",\n  \"editor_projection_corner_checks\": \"passed\",\n  \"visible_frame_pacing\": \"unverified; hidden-window test\",\n"
                 << "  \"encoded_premultiplied_alpha\": \"passed; synthetic half-alpha white GPU readback\",\n"
                 << "  \"source_accumulation\": \"linear fragments into BGRA8 sRGB; separate encoded-premultiplied Windows presentation\",\n"
+                << "  \"frozen_backdrop\": \"synthetic supplied SDR pixels; no desktop capture API executed\",\n"
+                << "  \"backdrop_textures_after_close\": " << renderer.backdropTextureCount()
+                << ",\n  \"backdrop_snapshot_bytes_after_close\": " << renderer.backdropSnapshotBytes() << ",\n"
                 << "  \"source_textures_retained\": " << renderer.textureCount() << ",\n  \"source_text_surfaces_retained\": " << renderer.textCount()
                 << ",\n  \"source_material_visual_parity\": \"unverified; selected source UI/mesh FX translated, complete FX/HDR comparison pending\",\n  \"live_ime\": \"unverified\"\n}\n";
             if (!output) throw std::runtime_error("Cannot write graphics evidence");
@@ -541,13 +664,17 @@ private:
             syncEditorCursorTracking(); if(handled) return result;
         }
         switch (message) {
-        case WM_APP + 3: graphicsProbe(); return 0;
+        case WM_APP + 3: if(graphicsProbe_) graphicsProbe(); return 0;
+        case backdropReadyMessage: acceptBackdrop(wparam);return 0;
         case WM_APP + 2: case WM_HOTKEY: toggle(); return 0;
         case WM_INPUTLANGCHANGE: if (!probe_) registerShortcut(); break;
         case WM_DISPLAYCHANGE:
         case WM_DPICHANGED:
             if(placingMonitor_) return 0;
+            if(backdropPreparation_.pending()) {cancelBackdropPreparation();return 0;}
             if(playback_ && playback_->phase()!=ehud::scene::Phase::concealed) {
+                renderer_->clearFrozenBackdrop();renderer_->enableFrozenBackdrop(true);
+                backdropStatus_=L"Display changed; reopen to refresh the backdrop";
                 if(!placeOnSelectedMonitor(true)) {
                     concealPresentation();return 0;
                 }
@@ -606,7 +733,10 @@ private:
             } return 0;
         case WM_KEYDOWN: if (wparam == VK_ESCAPE) { close(false); return 0; } break;
         case WM_TIMER: if (wparam == frameTimer) frame(); else if (wparam == probeTimer) writeProbe();
-            else if(wparam==clockTimer && playback_ && playback_->phase()!=ehud::scene::Phase::concealed && refreshClock()) {dirty_=true;requestFrame();} return 0;
+            else if(wparam==clockTimer && playback_ && playback_->phase()!=ehud::scene::Phase::concealed && refreshClock()) {dirty_=true;requestFrame();}
+            else if(wparam==backdropTimer && backdropPreparation_.timed_out(now())) {
+                presentBackdropFallback(L"Desktop backdrop timed out; using tint");
+            } return 0;
         case WM_CLOSE: close(false); return 0;
         case WM_POWERBROADCAST: if(wparam==PBT_APMSUSPEND) concealPresentation(); return TRUE;
         case trayMessage:
@@ -616,6 +746,7 @@ private:
                 cursor_.begin_native_tracking();
                 HMENU menu = CreatePopupMenu(); const auto label = L"Open / hide — " + shortcutLabel_;
                 AppendMenuW(menu, MF_STRING, activateCommand, label.c_str()); AppendMenuW(menu, MF_STRING, quitCommand, L"Quit EndfieldHUD feasibility prototype");
+                if(!backdropStatus_.empty()) AppendMenuW(menu,MF_STRING|MF_GRAYED,0,backdropStatus_.c_str());
                 POINT point{}; GetCursorPos(&point); SetForegroundWindow(window_);
                 auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, point.x, point.y, 0, window_, nullptr); DestroyMenu(menu);
                 if (command == activateCommand) toggle(); else if (command == quitCommand && MessageBoxW(window_, L"Quit EndfieldHUD?", L"EndfieldHUD", MB_YESNO | MB_ICONQUESTION) == IDYES) close(true);
@@ -628,6 +759,7 @@ private:
     void cleanup() {
         UnregisterHotKey(window_, 1); KillTimer(window_, frameTimer); KillTimer(window_, probeTimer);KillTimer(window_,clockTimer);
         if (!probe_) { NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = window_; data.uID = 1; Shell_NotifyIconW(NIM_DELETE, &data); }
+        cancelBackdropPreparation();finishBackdropWorker();
         cursor_.reset(); editor_.reset(); renderer_.reset(); if (mutex_) CloseHandle(mutex_);
     }
     HWND window_{}; HANDLE mutex_{}; UINT taskbarCreated_{};
@@ -637,6 +769,10 @@ private:
     std::uint64_t submittedAtClose_{};
     std::filesystem::path output_; unsigned probeSeconds_{60}; int exitCode_{};
     std::wstring shortcutLabel_;
+    std::wstring backdropStatus_;
+    std::shared_ptr<BackdropCapture> backdropCapture_;
+    std::jthread backdropWorker_;
+    ehud::app::BackdropPreparation backdropPreparation_;
     std::string clockTime_,clockDate_;
     Clock::time_point animationOrigin_{Clock::now()}, probeStart_{}; double cpuStart_{}; DWORD handlesStart_{};
     std::optional<ehud::scene::Document> document_; std::unique_ptr<ehud::scene::Playback> playback_;

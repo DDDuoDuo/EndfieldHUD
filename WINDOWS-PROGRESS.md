@@ -47,10 +47,10 @@ that the modules behind those buttons have been implemented.
 | Architecture check from the guideline | Acceptance status |
 | --- | --- |
 | Current desktop circle/buttons, exact open/close, live tilt and matching projected hit testing | Desktop adaptation implemented and isolated contracts checked; live matched Mac acceptance unverified. |
-| Frozen pre-opening backdrop, no recursive capture, HUD and cursor present in saved recording | Unverified. |
+| Frozen pre-opening backdrop, no recursive capture, HUD and cursor present in saved recording | Frozen snapshot and explicit tint/vignette fallback implemented; live desktop freshness and recording unverified. |
 | Mixed-DPI monitor movement, hot-plug and recovery | Unverified. |
 | Projected native editing, Chinese/Japanese/Korean IME and native font metrics | Unverified; isolated text/coordinate contracts alone are insufficient. |
-| Closed CPU/GPU/wakeups, bounded warm reopen ownership and visible frame pacing | Unverified; rerun on the corrected desktop path. |
+| Closed CPU/GPU/wakeups, bounded warm reopen ownership and visible frame pacing | Hidden endpoint and closed CPU checks repeated on the corrected path; live acceptance unverified. |
 
 No gate is accepted merely because the app compiles, a COM capability probe
 succeeds, or an offscreen WARP/unit test passes. Record fresh test results and
@@ -93,6 +93,29 @@ can still use virtual displays without them. PMv2 HWNDs supply current DPI.
 The saved-display settings UI is a later module; mixed-DPI and physical hot-plug
 acceptance remain unverified. The isolated editor has Tab/Shift+Tab focus entry
 and exit; native moves invalidate TSF screen rectangles without flattening it.
+Text edits now request both UIA text and Value property notifications, and caret/
+selection changes request their own event only when the state changes. Native
+Unicode double-click word selection and triple-click paragraph selection retain
+shaped UTF-16 clusters and drag granularity. Actual CJK IME, Narrator delivery and
+Mac linguistic/font comparisons are still unverified.
+
+The normal opening now prepares a memory-only frozen SDR snapshot while the HUD
+is hidden. Physical monitor bounds, visibility, cancellation and advanced-color
+capabilities are checked before accepting it. Generation tickets reject late
+results; the source clocks remain held until acceptance or the three-second tint
+fallback. The first opening frame is committed while hidden, avoiding reuse of
+the previous presented surface. Close and display/device changes release the
+captured CPU pixels and three GPU textures. There is no capture/export loop.
+Diagnostics provide generated pixels and never invoke desktop capture.
+
+This is the guideline's Windows fallback for the Mac desktop's native live blur.
+It retains source darkness/vignette controls and their exact alpha envelope;
+the quarter-resolution Gaussian is explicitly a prototype, not a measured Mac
+kernel. GDI has no ICC conversion or arbitrary z-order exclusion. Enabled advanced
+color and unsupported capture providers use tint instead. Cancellation cannot
+interrupt an executing GDI call: the deadline bounds fallback/publication, while
+worker completion and composed-desktop freshness remain live acceptance items.
+See [the backdrop contract](windows/render/FROZEN-BACKDROP.md).
 
 The resource gate verifies 741 canonical Git inputs and 753 traced outputs;
 754 staged files occupy 29.63 MiB. No old local checkout or staged folder is
@@ -106,16 +129,17 @@ path; complete HDR/backdrop/material and matched Mac acceptance remain open.
 
 Remaining visual work includes matched profile boundary and Mac font metrics,
 footer/wordmark overlap comparison at the
-fixture size, full material/soft-mask/HDR composition and the frozen backdrop.
+fixture size, full material/soft-mask/HDR composition and live backdrop fidelity.
 Module bindings are presentation only. Their bodies, providers, persistence,
 accounts, accessibility and full settings are subsequent required milestones.
 
 ## Fresh verification
 
 The restarted Release x64 build compiles with MSVC 14.44.35207 and Windows SDK
-10.0.26100.0. All nine native CTest suites pass, including 2,730 source scene
-checks, 797 desktop presentation checks, 244 isolated WARP source material checks,
-83 final presentation checks and 41 source monitor-policy checks.
+10.0.26100.0. All eleven native CTest suites pass, including 2,730 source scene
+checks, 797 desktop presentation checks, 250 isolated WARP source material checks,
+83 final presentation checks, 41 source monitor-policy checks, 338 native editing
+contracts, 16,413 synthetic backdrop checks and 161 fake-clock readiness checks.
 The Python packaging/source-provenance suite runs 78 tests: 77 pass locally and
 one symbolic-link fixture is skipped because the local account lacks that
 creation privilege. Windows short/long path aliases and real junction rejection
@@ -138,15 +162,17 @@ These are isolated contracts, not acceptance of the five live architecture gates
 
 [Fresh sanitized diagnostic evidence](windows/evidence/restart-desktop-2026-10-07.json)
 binds the final executable and native source files by SHA-256. In the corrected
-desktop path, 100 warmed source-endpoint cycles retained 594 handles. Private
-bytes changed from 192,630,784 to 192,999,424 and working set from 122,609,664
-to 123,052,032 after GPU drains; this small increase does not establish bounded
-long-term ownership. The following 61.0114-second closed interval submitted zero
-HUD frames and consumed 0.03125 CPU seconds. Closed handles changed from 595 to
-598; longer ownership testing
+desktop path with generated frozen SDR pixels, 100 warmed source-endpoint cycles
+retained 592 handles. Private bytes changed from 220,020,736 to 226,893,824 and
+working set from 135,860,224 to 134,926,336 after GPU drains. The 6,873,088-byte
+private-memory increase is a measured open regression/ownership question; bounded
+process RAM is unverified. Each close released all three backdrop textures and
+all retained snapshot bytes. The following 61.0077-second closed interval
+submitted zero HUD frames and recorded 0 CPU seconds in process-time counters.
+Closed handles changed from 593 to 596; longer ownership testing
 remains required. These hidden endpoint/ambient-off measurements establish no
 visible frame pacing, default ambient performance, GPU activity, wakeup,
-recording, live IME or Mac parity claim. Both compositor capability probes
+live capture, recording, live IME or Mac parity claim. Both compositor capability probes
 returned success; their backdrop/recording/performance comparison is still open.
 
 ## Remaining plan

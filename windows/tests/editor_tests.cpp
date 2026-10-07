@@ -7,12 +7,15 @@
 #include <objbase.h>
 #include <UIAutomation.h>
 #include <oleauto.h>
+#include <windowsx.h>
 #endif
 
 using endfield::platform::EditorModel;
 using endfield::platform::ProjectiveMapping;
 namespace {
+unsigned checks{};
 void check(bool expression, const char* description) {
+    ++checks;
     if (!expression) throw std::runtime_error(description);
 }
 void text_model() {
@@ -61,6 +64,36 @@ void coordinates() {
     check(!singular.project(1,1,x,y) && !singular.unproject(1,1,x,y),"invalid transforms cannot hit editor");
 }
 #ifdef _WIN32
+void notification_delta(const endfield::platform::ProjectedEditor& editor,
+    endfield::platform::EditorAccessibilityNotifications before,
+    std::uint64_t text,std::uint64_t selection,std::uint64_t value) {
+    const auto after=editor.accessibility_notifications();
+    check(after.text-before.text==text,"TextPattern change notification count follows actual text edits");
+    check(after.selection-before.selection==selection,"selection notification count follows actual selection/caret changes");
+    check(after.value-before.value==value,"ValuePattern property notification count follows actual value changes");
+}
+POINT text_point(HWND owner,ITextProvider* provider,const wchar_t* query,double fraction=.25) {
+    Microsoft::WRL::ComPtr<ITextRangeProvider> document,found;
+    check(SUCCEEDED(provider->get_DocumentRange(&document)),"synthetic pointer fixture document range");
+    BSTR text=SysAllocString(query);
+    const HRESULT status=document->FindText(text,FALSE,FALSE,&found);SysFreeString(text);
+    check(SUCCEEDED(status) && found,"synthetic pointer fixture text span");
+    SAFEARRAY* rectangles{};
+    check(SUCCEEDED(found->GetBoundingRectangles(&rectangles)) && rectangles,"pointer fixture uses projected UIA screen geometry");
+    LONG low{},high{};SafeArrayGetLBound(rectangles,1,&low);SafeArrayGetUBound(rectangles,1,&high);
+    check(high-low+1>=4,"pointer fixture span visible");
+    double values[4]{};
+    for(LONG at=0;at<4;++at) {LONG index=low+at;SafeArrayGetElement(rectangles,&index,&values[at]);}
+    SafeArrayDestroy(rectangles);
+    // Use the leading quarter so even a one-cluster span hits its leading ACP.
+    POINT point{static_cast<LONG>(std::lround(values[0]+values[2]*fraction)),
+                static_cast<LONG>(std::lround(values[1]+values[3]*.5))};
+    check(ScreenToClient(owner,&point)!=FALSE,"pointer fixture screen/client mapping");return point;
+}
+void pointer_message(endfield::platform::ProjectedEditor& editor,UINT message,POINT point) {
+    LRESULT result{};
+    check(editor.handle_message(message,MK_LBUTTON,MAKELPARAM(point.x,point.y),result),"synthetic editor pointer message consumed");
+}
 void native_text_store() {
     // Isolated window/model only. This does not read user files, install an IME,
     // synthesize user keyboard events, or claim that live composition passed.
@@ -86,6 +119,26 @@ void native_text_store() {
         check(invalidations>0,"text changes schedule artwork invalidation");
         check(!editor.font_inventory().empty(),"native installed-font inventory available");
         check(GetWindow(owner,GW_CHILD)==nullptr,"projected editor creates no flat child Edit HWND");
+        check(editor.set_text(u"ab"),"synthetic notification fixture");
+        auto notifications=editor.accessibility_notifications();editor.select_range(2,2);
+        notification_delta(editor,notifications,0,1,0);
+        notifications=editor.accessibility_notifications();editor.select_range(2,2);
+        notification_delta(editor,notifications,0,0,0);
+        editor.focus(true);LRESULT result{};
+        notifications=editor.accessibility_notifications();
+        check(editor.handle_message(WM_CHAR,u'c',0,result) && editor.model().text()==u"abc","synthetic ordinary character insertion");
+        notification_delta(editor,notifications,1,1,1);
+        notifications=editor.accessibility_notifications();
+        check(editor.handle_message(WM_KEYDOWN,VK_BACK,0,result) && editor.model().text()==u"ab","synthetic ordinary backspace");
+        notification_delta(editor,notifications,1,1,1);
+        notifications=editor.accessibility_notifications();
+        check(editor.handle_message(WM_KEYDOWN,VK_LEFT,0,result),"synthetic selection-only arrow");
+        notification_delta(editor,notifications,0,1,0);
+        notifications=editor.accessibility_notifications();check(editor.set_text(u"ab"),"same value can reset editor state");
+        notification_delta(editor,notifications,0,1,0);
+        notifications=editor.accessibility_notifications();
+        check(editor.handle_message(WM_KEYDOWN,VK_BACK,0,result),"empty leading backspace consumed");
+        notification_delta(editor,notifications,0,0,0);
         std::u16string document;
         for (unsigned row=0;row<100;++row) document+=u"中文 日本語 한국어 e\u0301 😀\n";
         check(editor.set_text(document),"long synthetic document");
@@ -117,8 +170,64 @@ void native_text_store() {
         LONG low{},high{}; SafeArrayGetLBound(bounds,1,&low); SafeArrayGetUBound(bounds,1,&high);
         check(high-low+1>=4,"UIA returns projected screen rectangle"); SafeArrayDestroy(bounds);
         Microsoft::WRL::ComPtr<IValueProvider> value_provider; check(SUCCEEDED(accessible.As(&value_provider)),"native ValuePattern provider");
+        notifications=editor.accessibility_notifications();
         check(SUCCEEDED(value_provider->SetValue(L"Accessible 😀 text")),"UIA edit operation");
         check(editor.model().text()==u"Accessible 😀 text","UIA edits same canonical model");
+        notification_delta(editor,notifications,1,1,1);
+
+        const std::u16string pointer_text=u"alpha cafe\u0301 😀 omega\r\nsecond line\n";
+        check(editor.set_text(pointer_text),"synthetic word/paragraph fixture");
+        const auto alpha=text_point(owner,text_provider.Get(),L"alpha");
+        const auto omega=text_point(owner,text_provider.Get(),L"omega");
+        const auto cafe=text_point(owner,text_provider.Get(),L"cafe\u0301");
+        const auto second=text_point(owner,text_provider.Get(),L"second");
+        pointer_message(editor,WM_LBUTTONDBLCLK,alpha);
+        check(editor.model().begin()==0 && editor.model().end()==5,"double click selects a word without trailing whitespace");
+        pointer_message(editor,WM_MOUSEMOVE,omega);
+        check(editor.model().begin()==0 && editor.model().end()==pointer_text.find(u"\r"),"word dragging expands by complete source words");
+        pointer_message(editor,WM_LBUTTONUP,omega);
+        check(!editor.pointer_tracking(),"synthetic word drag releases pointer scope");
+        pointer_message(editor,WM_LBUTTONDBLCLK,cafe);
+        check(editor.model().begin()==pointer_text.find(u"cafe\u0301") && editor.model().end()==pointer_text.find(u"cafe\u0301")+5,
+            "double click preserves the DirectWrite combining cluster in a word");
+        pointer_message(editor,WM_LBUTTONUP,cafe);
+        pointer_message(editor,WM_LBUTTONDOWN,cafe);
+        check(editor.model().begin()==0 && editor.model().end()==pointer_text.find(u"\r")+2,"third click selects the complete CRLF paragraph");
+        pointer_message(editor,WM_MOUSEMOVE,second);
+        check(editor.model().begin()==0 && editor.model().end()==pointer_text.size(),"paragraph dragging expands by complete paragraphs");
+        pointer_message(editor,WM_LBUTTONUP,second);
+        const auto emoji=text_point(owner,text_provider.Get(),L"😀");
+        pointer_message(editor,WM_LBUTTONDBLCLK,emoji);
+        check(editor.model().begin()==pointer_text.find(u"😀") && editor.model().end()==pointer_text.find(u"😀")+2,
+            "double click preserves the complete emoji surrogate pair");
+        pointer_message(editor,WM_LBUTTONUP,emoji);
+
+        check(editor.set_text(u"q"),"one-unit word analyzer fixture");
+        const auto single=text_point(owner,text_provider.Get(),L"q",.75);
+        pointer_message(editor,WM_LBUTTONDBLCLK,single);
+        check(editor.model().begin()==0 && editor.model().end()==1,"trailing-half word click supports a one-unit document and terminal item");
+        pointer_message(editor,WM_LBUTTONUP,single);
+        check(editor.set_text(u"first\u2029second"),"Unicode paragraph separator fixture");
+        const auto first=text_point(owner,text_provider.Get(),L"first");
+        pointer_message(editor,WM_LBUTTONDBLCLK,first);pointer_message(editor,WM_LBUTTONUP,first);
+        pointer_message(editor,WM_LBUTTONDOWN,first);
+        check(editor.model().begin()==0 && editor.model().end()==6,"third click honors the Unicode paragraph separator");
+        pointer_message(editor,WM_LBUTTONUP,first);
+        std::u16string mixed=u"target ";
+        for(unsigned item=0;item<120;++item) mixed+=u"中 Α ";
+        check(editor.set_text(mixed),"multi-item native word analyzer fixture");
+        const auto target=text_point(owner,text_provider.Get(),L"target");
+        pointer_message(editor,WM_LBUTTONDBLCLK,target);
+        check(editor.model().begin()==0 && editor.model().end()==6,"word analyzer grows its bounded script-item buffer for mixed scripts");
+        pointer_message(editor,WM_LBUTTONUP,target);
+        editor.set_rectangle(D2D1::RectF(90,120,190,360));
+        const std::u16string wrapped=u"wrapped paragraph continues beyond a visual line\nnext";
+        check(editor.set_text(wrapped),"soft-wrapped paragraph fixture");
+        const auto wrap=text_point(owner,text_provider.Get(),L"wrapped");
+        pointer_message(editor,WM_LBUTTONDBLCLK,wrap);pointer_message(editor,WM_LBUTTONUP,wrap);
+        pointer_message(editor,WM_LBUTTONDOWN,wrap);
+        check(editor.model().begin()==0 && editor.model().end()==wrapped.find(u'\n')+1,"paragraph selection crosses visual wrapping to the real separator");
+        pointer_message(editor,WM_LBUTTONUP,wrap);
         editor.shutdown();
         text=nullptr; check(full_range->GetText(-1,&text)==UIA_E_ELEMENTNOTAVAILABLE,"retained UIA ranges detach safely after editor closes");
     }
@@ -131,6 +240,6 @@ int main() {
 #ifdef _WIN32
         native_text_store();
 #endif
-        std::cout << "PASS: synthetic UTF-16, history, composition grouping, projected coordinates, native TSF context, DirectWrite layout, viewport scrolling and UIA text/value contracts (live CJK IME/Narrator unverified)\n"; return 0; }
+        std::cout << "PASS: " << checks << " checks; synthetic UTF-16, history, composition grouping, projected coordinates, native TSF context, DirectWrite layout, viewport scrolling, pointer selection and UIA text/value notification contracts (live CJK IME/Narrator unverified)\n"; return 0; }
     catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << '\n'; return 1; }
 }

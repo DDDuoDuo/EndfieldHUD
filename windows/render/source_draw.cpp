@@ -550,9 +550,10 @@ HRESULT SourceDraw::initialize(ID3D11Device* device, ID3D11DeviceContext* contex
     catch(...) {impl_->initializationError="Unknown source graphics initialization failure";return E_FAIL;}
 }
 HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& frame,
-                         SourceOutputContract outputContract) {
+                         SourceOutputContract outputContract, SourceTargetLoad targetLoad) {
     if (!target || (outputContract != SourceOutputContract::EncodedPremultiplied &&
-                   outputContract != SourceOutputContract::SourceLinearPremultiplied))
+                   outputContract != SourceOutputContract::SourceLinearPremultiplied) ||
+        (targetLoad != SourceTargetLoad::Clear && targetLoad != SourceTargetLoad::PreserveBackground))
         return E_INVALIDARG;
     D3D11_RENDER_TARGET_VIEW_DESC targetDescription{};
     target->GetDesc(&targetDescription);
@@ -568,7 +569,10 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
             if((graphic.kind=="UIText" || graphic.kind=="DesktopText") && !graphic.text.empty()) d.text(graphic);
             if(graphic.sampledProperties.contains("desktop.profileArtwork") && graphic.color[3]>0) d.profileArtwork(graphic);
         }
-        d.context->OMSetRenderTargets(1,&target,nullptr); const float clear[4]{}; d.context->ClearRenderTargetView(target,clear);
+        d.context->OMSetRenderTargets(1,&target,nullptr);
+        if(targetLoad==SourceTargetLoad::Clear) {
+            const float clear[4]{}; d.context->ClearRenderTargetView(target,clear);
+        }
         D3D11_VIEWPORT viewport{0,0,static_cast<float>(frame.camera.viewport.x),static_cast<float>(frame.camera.viewport.y),0,1};
         d.context->RSSetViewports(1,&viewport); d.context->RSSetState(d.raster.Get()); d.context->OMSetBlendState(d.blend.Get(),nullptr,UINT_MAX); d.context->OMSetDepthStencilState(d.depth.Get(),0);
         d.context->IASetInputLayout(d.layout.Get()); d.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
