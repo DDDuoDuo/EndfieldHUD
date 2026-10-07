@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a>
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
 A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD using hotkey/from the menu bar for notes, files, music, game stats, and everyday tools.
@@ -21,7 +21,7 @@ A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD 
 0. If you have already installed a copy of EndfieldHUD, click **Check Update** button in the menu bar.
 1. Open the DMG and drag **EndfieldHUD.app** into **Applications**, or run the PKG installer.
 2. Open EndfieldHUD from Applications. Look for its icon in the menu bar.
-3. Press **Ctrl + backtick (`)** to open the HUD. You can change the hotkey in **Hotkeys**.
+3. Press [Ctrl + backtick (`)](docs/system-overlay.md) to open the HUD. You can change the hotkey in **Hotkeys**.
 
 If macOS blocks the app, go to **System Settings → Privacy & Security → Open Anyway**, then confirm. The app isn't notarized by Apple yet.
 
@@ -51,28 +51,31 @@ You can review permissions in **System Settings → Privacy & Security**; notifi
 
 | Tool | What you can do |
 | --- | --- |
-| Notes | Write, draw, make checklists, and add images or videos. Pin panels across sections. |
-| Temporary File Shelf | Drop files in, preview them, and drag them back out. Originals stay where they are. |
-| Clipboard | Scroll through recent copied text, links, images, and files. History clears when you quit. |
-| Archive | Keep documents in your own categories, with rich text and media. |
-| Reader | Read novels and PDFs, bookmark pages, and zoom in. |
-| Media Assembly | Edit pictures and videos with cropping, adjustments, filters, and stickers. |
-| Projection | Draw on a screen-sized canvas, with an optional dotted background. |
-| Now Playing | See album art and available lyrics, and control playback. |
-| Volume | Switch audio devices and adjust supported volume controls. |
-| Work Mode & Calendar | Run a timer or stopwatch, and keep events with reminders. |
-| Map & Minigame | Explore the offline terrain map and place pins, or play Merge! OrbiPom! |
-| Personal ID & Account Binding | Customize your card. Link a game account for profile data and sanity countdowns. |
-| Battery, Storage & Activity Monitor | Check charging status, disk space, CPU, RAM, and running apps. |
-| App shortcuts | Add your apps with custom names and icons. |
-
-![Merge! OrbiPom! gameplay](docs/media/readme/minigame.gif)
+| [Notes](docs/notes-canvas.md) | Write, draw, make checklists, and add images or videos. Pin panels across sections. |
+| [Temporary File Shelf](docs/file-shelf.md) | Drop files in, preview them, and drag them back out. Originals stay where they are. |
+| [Clipboard Cache](docs/clipboard-cache.md) | Scroll through recent copied text, links, images, and files. History clears when you quit. |
+| [Archive](docs/archive.md) | Keep documents in your own categories, with rich text and media. |
+| [E-Reader](docs/reader.md) | Read novels and PDFs, bookmark pages, and zoom in. |
+| [Media Assembly](docs/media-assembly.md) | Edit pictures and videos with cropping, adjustments, filters, and stickers. |
+| [Projection](docs/projection.md) | Draw on a screen-sized canvas, with an optional dotted background. |
+| [Now Playing](docs/now-playing.md) | See album art and available lyrics, and control playback. |
+| [Work Mode & Volume](docs/audio-and-work-mode.md) | Enter Focus mode & Switch audio devices and [adjust supported volume controls.](docs/per-app-audio.md) |
+| [Calendar](docs/calendar.md) | Run a timer or stopwatch, and keep events with reminders. |
+| [Map](docs/map.md) | Explore the offline terrain map and place & customize pins. |
+| [Closure's Minigame](docs/orbipom-runtime.md) | Play Merge! OrbiPom! |
+| [Event Log](docs/event-log.md) | Check event log like a real Endministrator. |
+| [Personal ID](docs/personal-profile.md) | Customize your card. You can edit profile data freely. |
+| [Account Binding](docs/account-linking.md) | Link a HYPERGRYPH game account for profile data and sanity countdowns. |
+| [Battery, Storage & Activity Monitor](docs/storage-and-activity.md) | Check charging status, disk space, CPU, RAM, and running apps. |
+| [App shortcuts](docs/app-shortcuts.md) | Add your apps with custom names and icons. |
 
 Linking is optional.
 
-In **Display**, change the theme, tilt, clock, icons, and animation settings. The HUD supports English, Simplified Chinese, Traditional Chinese, Japanese, and Korean.
+In [Settings](docs/settings.md), change the theme, tilt, clock, icons, and animation settings. The HUD supports English, Simplified Chinese, Traditional Chinese, Japanese, and Korean.
 
 Your notes and settings stay on your Mac. Linked community credentials use macOS Keychain. Updates come from GitHub; check the menu bar or **About** for update controls.
+
+![Merge! OrbiPom! gameplay](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/en-04-credits.png" alt="Credits" width="326">
 

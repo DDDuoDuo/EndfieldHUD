@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a>
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
 給你的 Mac 加一點《明日方舟：終末地》的味道。按快速鍵或點選選單列，就能開啟有動畫和層次感的 HUD，寫便箋、放檔案、聽音樂、看遊戲資料，還有日常小工具。
@@ -21,7 +21,7 @@
 0. 已經裝過 EndfieldHUD？在選單列點**檢查更新**就行。
 1. 開啟 DMG，把 **EndfieldHUD.app** 拖進 **Applications（應用程式）**，也可以執行 PKG 安裝程式。
 2. 從「應用程式」開啟 EndfieldHUD，選單列裡會出現它的圖示。
-3. 按 **Ctrl + 反引號（`）** 開啟 HUD。想換快速鍵，可以到**快速鍵**裡改。
+3. 按 [Ctrl + 反引號（`）](docs/system-overlay.md) 開啟 HUD。想換快速鍵，可以到**快速鍵**裡改。
 
 如果 macOS 擋住了 App，到**系統設定 → 隱私權與安全性 → 強制打開**，再確認一次。App 目前還沒有經過 Apple 公證。
 
@@ -51,28 +51,31 @@ Apple 晶片：**macOS 11+**。Intel：**macOS 10.15.4+**。部分功能需要�
 
 | 工具 | 可以做什麼 |
 | --- | --- |
-| 便箋 | 寫字、畫畫、列待辦事項，還能加入圖片或影片。釘選面板後，切換功能也能看到。 |
-| 檔案暫存架 | 拖入檔案、預覽，再拖出來。原始檔案還在原來的位置。 |
-| 剪貼簿 | 捲動查看最近複製的文字、連結、圖片和檔案。結束 App 後清空記錄。 |
-| 檔案庫 | 按自己的分類儲存文件，支援格式化文字和圖片、影片。 |
-| 閱讀器 | 看小說和 PDF，加書籤，放大頁面。 |
-| 影像加工 | 裁切、調整圖片和影片，加入濾鏡和貼紙。 |
-| 投影 | 在全螢幕畫布上畫畫，也可以開啟點陣背景。 |
-| 目前播放 | 看專輯封面和可用的歌詞，控制播放。 |
-| 音量 | 切換音訊裝置，調整裝置支援的音量選項。 |
-| 工作模式與日曆 | 用倒數計時或碼錶，記錄行程並設定提醒。 |
-| 地圖與小遊戲 | 在離線地形圖上探索、放標記，或玩 Merge! OrbiPom!。 |
-| 個人名片與帳號綁定 | 自訂名片，綁定遊戲帳號同步資料和理智倒數。 |
-| 電源、儲存與活動監視器 | 查看充電狀態、磁碟空間、CPU、RAM 和執行中的 App。 |
-| App 捷徑 | 加入自己的 App，自訂名稱和圖示。 |
-
-![Merge! OrbiPom! 遊戲示範](docs/media/readme/minigame.gif)
+| [便箋](docs/notes-canvas.md) | 寫字、畫畫、列待辦事項，還能加入圖片或影片。釘選面板後，切換功能也能看到。 |
+| [檔案暫存架](docs/file-shelf.md) | 拖入檔案、預覽，再拖出來。原始檔案還在原來的位置。 |
+| [剪貼簿](docs/clipboard-cache.md) | 捲動查看最近複製的文字、連結、圖片和檔案。結束 App 後清空記錄。 |
+| [檔案庫](docs/archive.md) | 按自己的分類儲存文件，支援格式化文字和圖片、影片。 |
+| [閱讀器](docs/reader.md) | 看小說和 PDF，加書籤，放大頁面。 |
+| [影像加工](docs/media-assembly.md) | 裁切、調整圖片和影片，加入濾鏡和貼紙。 |
+| [投影](docs/projection.md) | 在全螢幕畫布上畫畫，也可以開啟點陣背景。 |
+| [目前播放](docs/now-playing.md) | 看專輯封面和可用的歌詞，控制播放。 |
+| [工作模式與音量](docs/audio-and-work-mode.md) | 進入專注模式，切換音訊裝置，[調整裝置支援的音量選項。](docs/per-app-audio.md) |
+| [日曆](docs/calendar.md) | 用倒數計時或碼錶，記錄行程並設定提醒。 |
+| [地圖](docs/map.md) | 探索離線地形圖，加入並自訂標記。 |
+| [可露希爾的小遊戲](docs/orbipom-runtime.md) | 玩 Merge! OrbiPom!。 |
+| [事件記錄](docs/event-log.md) | 像真正的管理員一樣查看事件記錄。 |
+| [個人名片](docs/personal-profile.md) | 自訂名片，自由編輯個人資料。 |
+| [帳號綁定](docs/account-linking.md) | 綁定 HYPERGRYPH 遊戲帳號，同步資料和理智倒數。 |
+| [電源、儲存與活動監視器](docs/storage-and-activity.md) | 查看充電狀態、磁碟空間、CPU、RAM 和執行中的 App。 |
+| [App 捷徑](docs/app-shortcuts.md) | 加入自己的 App，自訂名稱和圖示。 |
 
 帳號綁定是可選的。
 
-在**顯示**裡可以改主題、傾斜、時鐘、圖示和動畫設定。HUD 支援英語、簡體中文、繁體中文、日語和韓語。
+在[設定](docs/settings.md)裡可以改主題、傾斜、時鐘、圖示和動畫設定。HUD 支援英語、簡體中文、繁體中文、日語和韓語。
 
 便箋和設定都留在你的 Mac 上。綁定後的社群憑證儲存在 macOS 鑰匙圈裡。更新來自 GitHub；選單列和**關於**裡都有更新選項。
+
+![Merge! OrbiPom! 遊戲示範](docs/media/readme/minigame.gif)
 
 <img src="docs/media/readme/en-04-credits.png" alt="致謝" width="326">
 
