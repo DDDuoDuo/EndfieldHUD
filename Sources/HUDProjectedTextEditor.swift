@@ -186,6 +186,15 @@ final class HUDProjectedTextEditor: NSView {
         guard !disposed, let source = logicalPoint(convert(point, from: superview)), logicalRect.contains(source) else { return nil }
         return textView
     }
+    fileprivate func textCursor(atWindowPoint point: NSPoint) -> NSCursor? {
+        guard !disposed, !isHiddenOrHasHiddenAncestor, !textView.isHiddenOrHasHiddenAncestor,
+              textView.isEditable || textView.isSelectable,
+              let host = coordinateHost, superview === host,
+              let window, host.window === window, textView.window === window,
+              visibleRect.contains(convert(point, from: nil)),
+              hitTest(host.convert(point, from: nil)) === textView else { return nil }
+        return .iBeam
+    }
     func logicalPoint(_ point: CGPoint) -> CGPoint? { unproject?(point) ?? (unproject == nil ? point : nil) }
     func textPoint(screen: CGPoint) -> CGPoint? {
         guard let host = coordinateHost, let window = host.window else { return nil }
@@ -247,6 +256,12 @@ class HUDProjectedTextView: NSTextView {
     fileprivate var capturingArtwork = false
     private var selectionAnchor = NSRange(location: 0, length: 0)
     private var pointerGranularity: NSSelectionGranularity = .selectByCharacter
+    /// The HUD's existing cursor owner uses the projected input region. The
+    /// invisible native text/scroll rectangles cannot choose it for us. This
+    /// query neither changes the cursor nor creates a competing tracking area.
+    func projectedCursor(atWindowPoint point: NSPoint) -> NSCursor? {
+        projectionOwner?.textCursor(atWindowPoint: point)
+    }
     override func draw(_ dirtyRect: NSRect) {
         if capturingArtwork { super.draw(dirtyRect) }
         else { projectionOwner?.invalidateArtwork() }

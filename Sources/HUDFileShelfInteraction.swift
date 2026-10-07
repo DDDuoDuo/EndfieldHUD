@@ -11,6 +11,8 @@ final class HUDFileShelfInteraction: NSObject, NSDraggingSource, QLPreviewPanelD
     var project: ((CGRect) -> CGRect)?
     var onLock: (() -> Void)?
     var onDragSessionBegan: (() -> Void)?
+    /// Release HUD pointer ownership before entering AppKit's nested drag loop.
+    var onDragSessionWillBegin: (() -> Void)?
     /// Called with true only after a destination accepted the native copy. The
     /// controller owns closing/reopening animations and restores focus on cancel.
     var onDragSessionEnded: ((Bool) -> Void)?
@@ -214,6 +216,7 @@ final class HUDFileShelfInteraction: NSObject, NSDraggingSource, QLPreviewPanelD
             dragLeases = accesses
             isDraggingOut = true
             dragRetainer = self
+            onDragSessionWillBegin?()
             // willBegin requests the closing animation only after AppKit has
             // acquired the real source window and started its drag tracking.
             dragSession = host.beginDraggingSession(with: drags, event: event, source: self)

@@ -44,10 +44,16 @@ The native host owns one AppKit cursor tracking area while the desktop HUD is
 visible, including opening/closing; the standalone source viewer owns its own.
 The cursor area uses `activeInKeyWindow`; independent hover tracking uses
 `activeAlways`, which AppKit does not support for cursor updates.
-`cursorUpdate` and visibility lifecycle events set the cursor. There are no
-duplicate legacy cursor rectangles, post-dispatch resets, queued repairs, or
-per-frame cursor polling. Native text editors and file drags retain their own
-cursors, and teardown cannot overwrite a cursor chosen by another window. This
+Visible-rect tracking areas retain their identity across native layout. The
+original cursor bitmap is composited in one untransformed top-level layer while
+the HUD owns the active key window. Its balanced native-cursor hide lease is
+released for native editors, menus, control tracking, file drags, focus loss,
+concealment and teardown. Existing app-local pointer delivery positions the
+small layer with implicit animations disabled; repeated positions do not change
+it. There is no added event monitor, polling timer, capture service or cursor work
+in ambient rendering. AppKit still handles cursor-update arbitration and native
+text/drag cursors. Projected text editors explicitly choose the I-beam using
+their visible input geometry, rather than their invisible native backing frames. This
 follows [AppKit tracking-area cursor ownership](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/TrackingAreaObjects/TrackingAreaObjects.html).
 Unchanged hover and wordmark styles are compared before making
 mutable copies, so settled ambient frames do not rewrite that dictionary.

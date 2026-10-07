@@ -54,6 +54,11 @@ preserve_legacy_executable() {
 }
 
 SOURCES=("$PROJECT_DIR"/Sources/*.swift)
+DIAGNOSTIC_FLAGS=()
+if [ "${DEV_CURSOR_DIAGNOSTICS:-0}" = 1 ]; then
+    SOURCES+=("$PROJECT_DIR/Tests/HUDCursorDiagnostics.swift")
+    DIAGNOSTIC_FLAGS=(-D HUD_CURSOR_DIAGNOSTICS)
+fi
 BACKDROP_LINK_FLAGS=()
 if [ -d "$SELECTED_SDK/System/Library/Frameworks/ScreenCaptureKit.framework" ]; then
     # Match the release link policy: the guarded macOS 14 background path
@@ -74,7 +79,7 @@ printf 'Building native development app for %s (%s)…\n' "$TARGET" "$DEV_OPTIMI
     -module-cache-path "$DEV_BUILD_DIR/module-cache" \
     -framework Cocoa -framework IOKit -framework CoreAudio -framework ServiceManagement -framework Carbon -framework Quartz -framework Metal -framework MetalKit \
     "${BACKDROP_LINK_FLAGS[@]}" -lsqlite3 -lz -framework WebKit -framework Security -framework PDFKit \
-    "${SOURCES[@]}" -o "$DEV_STAGE/$APP_NAME"
+    ${DIAGNOSTIC_FLAGS[@]+"${DIAGNOSTIC_FLAGS[@]}"} "${SOURCES[@]}" -o "$DEV_STAGE/$APP_NAME"
 
 # Refresh the generated default icon only when its script or source changes.
 ICON_CACHE="$DEV_BUILD_DIR/AppIcon.icns"

@@ -137,6 +137,7 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Sources/HUDNowPlayingInteraction.swift" \
     "$PROJECT_DIR/Sources/NotesCanvas.swift" \
     "$PROJECT_DIR/Sources/HUDProjectedTextEditor.swift" \
+    "$PROJECT_DIR/Sources/HUDRenderedCursor.swift" \
     "$PROJECT_DIR/Sources/HUDNotesInteraction.swift" \
     "$PROJECT_DIR/Sources/FileShelfStore.swift" \
     "$PROJECT_DIR/Sources/FileShelfCanvas.swift" \
@@ -217,6 +218,7 @@ xcrun swiftc -swift-version 5 -Onone -whole-module-optimization -parse-as-librar
     "$PROJECT_DIR/Tests/NotesStoreTests.swift" \
     "$PROJECT_DIR/Tests/NotesCanvasTests.swift" \
     "$PROJECT_DIR/Tests/HUDProjectedTextEditorTests.swift" \
+    "$PROJECT_DIR/Tests/HUDRenderedCursorTests.swift" \
     "$PROJECT_DIR/Tests/HUDNotesInteractionTests.swift" \
     "$PROJECT_DIR/Tests/FileShelfStoreTests.swift" \
     "$PROJECT_DIR/Tests/FileShelfCanvasTests.swift" \

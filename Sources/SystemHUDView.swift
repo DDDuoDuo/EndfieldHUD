@@ -700,7 +700,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         settingsInteractions.values.forEach { $0.layoutAccessibility() }
         layoutPowerSettingsButton()
         scaleSafety?.frame = bounds
-        updateTrackingAreas()
     }
 
     override func viewDidMoveToWindow() {
@@ -796,7 +795,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     func showStable(preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
                     preparingSourceEntrance: Bool = false, preservingNowPlayingPresentation: Bool = false) {
         cancelAnimations(preservingChargeAnimation: preservingChargeAnimation, preservingPointerMotion: preservingPointerMotion,
-                         preservingNowPlayingPresentation: preservingNowPlayingPresentation)
+                         preservingNowPlayingPresentation: preservingNowPlayingPresentation, preservingCursor: true)
         if interactionEnabled { modulePresentationAllowed = true }
         sourceOverviewPresented = true
         headerClock.setActive(window != nil)
@@ -1057,10 +1056,10 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     func cancelAnimations(preserveClickFeedback: Bool = false, preservingChargeAnimation: Bool = false, preservingPointerMotion: Bool = false,
-                          preservingNowPlayingPresentation: Bool = false) {
+                          preservingNowPlayingPresentation: Bool = false, preservingCursor: Bool = false) {
         sourceEntranceReady = nil
         headerClock.setActive(false)
-        sourceWatch?.suspendForConcealment()
+        sourceWatch?.suspendForConcealment(preservingCursor: preservingCursor)
         if !preservingNowPlayingPresentation { modulePresentationAllowed = false }
         deactivateModuleInput(preservingNowPlayingPresentation: preservingNowPlayingPresentation)
         generation += 1 // A transaction completion can fire when animations are removed.
@@ -1100,7 +1099,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
             // a held initial pose must never submit a deployed stable frame.
             updateModulePresentation(restoreSourceOverview: false)
         }
-        sourceWatch?.suspendForConcealment()
+        sourceWatch?.suspendForConcealment(preservingCursor: preservingCursor)
         updateButtonStates()
     }
 
@@ -1447,18 +1446,20 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let tracking = tracking { removeTrackingArea(tracking) }
-        if let cursorTracking { removeTrackingArea(cursorTracking) }
-        let area = NSTrackingArea(rect: bounds,
-                                  options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        tracking = area
+        // inVisibleRect follows layout automatically. Keep the same cursor
+        // owner while native controls move with the projected scene.
+        if tracking == nil {
+            let area = NSTrackingArea(rect: .zero,
+                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+            addTrackingArea(area); tracking = area
+        }
         // Cursor updates require key-window tracking; activeAlways suppresses
         // them. Keep hover tracking independent for the nonactivating panel.
-        let cursorArea = NSTrackingArea(rect: bounds,
-            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
-        addTrackingArea(cursorArea); cursorTracking = cursorArea
+        if cursorTracking == nil {
+            let area = NSTrackingArea(rect: .zero,
+                options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
+            addTrackingArea(area); cursorTracking = area
+        }
     }
 
     var preservesNativeDragCursor: Bool { externalFileDragActive || isDraggingShelfItem || isAwaitingFileDrop }
@@ -3214,6 +3215,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         }
         input.onLock = { [weak self] in self?.lockParallaxForActiveInput() }
         input.onDragSessionBegan = { [weak self] in self?.onShelfDragSessionBegan?() }
+        input.onDragSessionWillBegin = { [weak self] in self?.sourceWatch?.refreshSourceCursor() }
         input.onDragSessionEnded = { [weak self] delivered in self?.onShelfDragSessionEnded?(delivered) }
         input.onRevealRequested = { [weak self] url in self?.onShelfReveal?(url) }
         shelfInteraction = input
@@ -3553,9 +3555,15 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         guard clickFeedbackMonitor == nil else { return }
         // App-local pointer events only. Observing before responder dispatch also
         // covers NSButtons and NSTextViews without intercepting their behavior.
-        clickFeedbackMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp]) { [weak self] event in
+        clickFeedbackMonitor = NSEvent.addLocalMonitorForEvents(matching: [
+            .mouseMoved, .mouseEntered, .mouseExited, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
+            .leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .rightMouseUp, .otherMouseUp
+        ]) { [weak self] event in
             guard let self, let window = self.window, event.window === window,
-                  window.isVisible, !self.retracting, self.interactionEnabled || self.transitioning else { return event }
+                  window.isVisible else { return event }
+            self.sourceWatch?.updateCursorPointer(with: event)
+            guard [.leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp].contains(event.type),
+                  !self.retracting, self.interactionEnabled || self.transitioning else { return event }
             self.updateControlHighlights(at: self.convert(event.locationInWindow, from: nil), pressed: event.type != .leftMouseUp)
             if event.type == .leftMouseUp { return event }
             self.acknowledgeHUDClick(at: self.convert(event.locationInWindow, from: nil))
@@ -3843,7 +3851,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         externalFileDragActive = true
-        guard sender.draggingSourceOperationMask.contains(.copy) else { endFileDrop(); return [] }
+        sourceWatch?.refreshSourceCursor()
+        guard sender.draggingSourceOperationMask.contains(.copy) else {
+            endFileDrop(preservingNativeDrag: true)
+            return []
+        }
         let overShelf = isShelfNavigationDrop(sender)
         if shelfNavigationDropTarget != overShelf {
             shelfNavigationDropTarget = overShelf
@@ -3876,14 +3888,17 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         return []
     }
 
-    private func endFileDrop() {
-        externalFileDragActive = false
+    private func endFileDrop(preservingNativeDrag: Bool = false) {
+        // Rejecting a source operation clears drop feedback, but AppKit still
+        // owns the pointer until that drag really exits or ends.
+        if !preservingNativeDrag { externalFileDragActive = false }
         if shelfNavigationDropTarget { navigation.hoverTarget(nil) }
         shelfNavigationDropTarget = false
         summonedDuringFileDrag = false
         notesInteraction?.endExternalDrag()
         shelfInteraction?.endExternalDrag()
         appShortcutInteraction?.endExternalDrag()
+        sourceWatch?.refreshSourceCursor()
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) { endFileDrop() }

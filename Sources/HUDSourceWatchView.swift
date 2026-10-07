@@ -243,6 +243,11 @@ final class HUDSourceWatchView: NSView {
     private var cursorBackingScale: CGFloat = 0
     private var previousCursor: NSCursor?
     private var yieldedToNativeDrag = false
+    private let renderedCursor = HUDRenderedCursor()
+    private var nativeCursorTracking = false
+    private var nativeCursorTrackingGeneration = 0
+    private var nativeTrackingMenus = Set<ObjectIdentifier>()
+    var renderedCursorVisibleForVerification: Bool { !renderedCursor.layer.isHidden }
     private(set) var sourceCursorSetCountForVerification = 0
     var sourceCursorOwnedForVerification: Bool { sourceCursor.map { NSCursor.current === $0 } ?? false }
     private var hovered: HUDSourceID?
@@ -523,9 +528,27 @@ final class HUDSourceWatchView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         restoreSourceCursor()
+        nativeCursorTracking = false; nativeTrackingMenus.removeAll()
         if window == nil { cancelBannerPointer(); pressed = nil }
         observers.forEach { NotificationCenter.default.removeObserver($0) }; observers.removeAll()
         if let window {
+            for name in [NSApplication.willResignActiveNotification, NSApplication.willHideNotification,
+                         NSApplication.willTerminateNotification, NSMenu.didBeginTrackingNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    if note.name == NSMenu.didBeginTrackingNotification, let menu = note.object as? NSMenu {
+                        self?.nativeTrackingMenus.insert(ObjectIdentifier(menu))
+                    }
+                    self?.renderedCursor.hide()
+                })
+            }
+            for name in [NSApplication.didBecomeActiveNotification, NSMenu.didEndTrackingNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    if note.name == NSMenu.didEndTrackingNotification, let menu = note.object as? NSMenu {
+                        self?.nativeTrackingMenus.remove(ObjectIdentifier(menu))
+                    }
+                    self?.refreshSourceCursor()
+                })
+            }
             for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
                          NSWindow.didDeminiaturizeNotification, NSWindow.willCloseNotification,
                          NSWindow.didResignKeyNotification, NSWindow.didBecomeKeyNotification,
@@ -562,21 +585,20 @@ final class HUDSourceWatchView: NSView {
         refreshSourceCursor()
     }
     override func updateTrackingAreas() {
-        if let tracking { removeTrackingArea(tracking) }
-        if let cursorTracking { removeTrackingArea(cursorTracking) }
-        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect]
+        super.updateTrackingAreas()
         // The desktop host covers both source and native content. Registering
         // a second cursor owner here makes AppKit arbitrate overlapping areas.
-        let area = NSTrackingArea(rect: bounds, options: options, owner: self)
-        tracking = area; addTrackingArea(area)
-        cursorTracking = nil
-        if !desktopMode {
+        if tracking == nil {
+            let area = NSTrackingArea(rect: .zero,
+                options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self)
+            tracking = area; addTrackingArea(area)
+        }
+        if !desktopMode, cursorTracking == nil {
             // AppKit never sends cursorUpdate for an activeAlways area.
-            let cursorArea = NSTrackingArea(rect: bounds,
+            let cursorArea = NSTrackingArea(rect: .zero,
                 options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
             cursorTracking = cursorArea; addTrackingArea(cursorArea)
         }
-        super.updateTrackingAreas()
     }
 
     private func randomizeDesktopAmbient() {
@@ -698,7 +720,7 @@ final class HUDSourceWatchView: NSView {
         try? gyro.stop(at: now)
         renderedFrame = nil; renderedCamera = nil; lastPose = nil
     }
-    func suspendForConcealment() {
+    func suspendForConcealment(preservingCursor: Bool = false) {
         logoFlickerStarted = nil; pressedIndustryLogo = false
         cancelPendingOpening()
         cancelBackdropCapture()
@@ -707,7 +729,10 @@ final class HUDSourceWatchView: NSView {
         // schedule a render. Preserve the last drawable until the owner hides
         // the view or chooses a new stable/opening pose.
         playback.conceal(); inputEnabled = false; stopTimer(); try? gyro.stop(at: now)
-        refreshSourceCursor()
+        // Stable-pose promotion happens synchronously while this same HUD
+        // remains visible. Releasing here would flash the hardware arrow
+        // between the opening pose and showStable's immediate reacquisition.
+        if !preservingCursor { refreshSourceCursor() }
     }
     func refreshPointerForVerification() { render(at: now) }
 
@@ -734,7 +759,6 @@ final class HUDSourceWatchView: NSView {
             // Module switches resume the native pointer bridge through this
             // entry point too. An unchanged preference set must not remeasure
             // every caption, invalidate the settled scene and restart Metal.
-            refreshSourceCursor()
             if timer == nil { refreshPlaybackScheduling() }
             return
         }
@@ -1193,16 +1217,17 @@ final class HUDSourceWatchView: NSView {
         return sourceCursor
     }
     @discardableResult
-    func refreshSourceCursor(fromCursorUpdate event: NSEvent? = nil) -> Bool {
+    func refreshSourceCursor(fromCursorUpdate event: NSEvent? = nil, atWindowPoint point: CGPoint? = nil) -> Bool {
         if desktopMode, (superview as? SystemHUDView)?.preservesNativeDragCursor == true {
             // This also applies to key/backing/display lifecycle updates, not
             // just the host's cursorUpdate handler.
-            yieldedToNativeDrag = true; return true
+            yieldedToNativeDrag = true; renderedCursor.hide(); return true
         }
         yieldedToNativeDrag = false
         let cursor = presentedSourceCursor
-        guard let cursor, let window else { restoreSourceCursor(); return false }
-        let windowPoint = event?.locationInWindow ?? window.convertPoint(fromScreen: pointerLocationProvider())
+        guard let cursor, let window else { restoreSourceCursor(); nativeCursorTracking = false; return false }
+        if nativeCursorTracking || !nativeTrackingMenus.isEmpty { renderedCursor.hide(); return true }
+        let windowPoint = point ?? event?.locationInWindow ?? window.convertPoint(fromScreen: pointerLocationProvider())
         let p = convert(windowPoint, from: nil)
         guard visibleRect.contains(p) else { restoreSourceCursor(); return false }
         // Native editors retain their text-selection cursor. This event-driven
@@ -1210,24 +1235,80 @@ final class HUDSourceWatchView: NSView {
         let host = desktopMode ? (superview ?? self) : self
         var hit = host.hitTest(convert(p, to: host.superview))
         while let view = hit, view !== host {
-            if view is NSTextView || (view as? NSTextField).map({ $0.isEditable || $0.isSelectable }) == true {
+            if let editor = view as? HUDProjectedTextView {
+                // Its native text view is transparent and unprojected. Cursor
+                // rectangles there cannot choose the visible editor's cursor.
+                if let textCursor = editor.projectedCursor(atWindowPoint: windowPoint) {
+                    if event != nil || NSCursor.current !== textCursor { textCursor.set() }
+                    renderedCursor.hide()
+                    return true
+                }
+            } else if view is NSTextView || (view as? NSTextField).map({ $0.isEditable || $0.isSelectable }) == true {
                 // AppKit chooses the editor cursor during cursorUpdate. Do not
                 // install an intermediate arrow while yielding that decision.
-                return true
+                renderedCursor.hide(); return true
+            } else if view !== self, view.trackingAreas.contains(where: {
+                $0.options.contains(.cursorUpdate) && ($0.options.contains(.inVisibleRect)
+                    || $0.rect.contains(view.convert(windowPoint, from: nil)))
+            }) {
+                // Child-owned resize and other native cursor regions take
+                // priority over the whole-HUD owner, including queued mouse
+                // delivery and native-control tracking loops.
+                renderedCursor.hide(); return true
             }
             hit = view.superview
         }
         if previousCursor == nil { previousCursor = NSCursor.current === cursor ? .arrow : NSCursor.current }
         // cursorUpdate is AppKit's arbitration point, before mouse delivery.
         // Always answer it even if the cursor stack still reports our object.
-        // Lifecycle changes may acquire ownership, but ordinary mouse events,
-        // rendering and delayed work never reassert it after native controls.
+        // Event delivery happens before native controls. Their tracking-loop
+        // completion reevaluates native ownership above; rendering never sets it.
         if event != nil || NSCursor.current !== cursor {
             cursor.set(); sourceCursorSetCountForVerification += 1
         }
+        // Composite the original artwork into the HUD. The built-in recorder
+        // no longer has to reproduce custom hardware-cursor image updates.
+        // A single balanced hide lease leaves native text and drag cursors alone.
+        if NSApp.isActive, window.occlusionState.contains(.visible), let parent = host.layer {
+            renderedCursor.show(image: cursorBitmap, size: cursor.image.size, hotspot: cursor.hotSpot,
+                point: host.convert(windowPoint, from: nil), parent: parent)
+        } else { renderedCursor.hide() }
         return true
     }
+    /// Uses existing app-local event delivery; never a render/display timer.
+    func updateCursorPointer(with event: NSEvent) {
+        guard let window, event.window === window else { return }
+        if [.leftMouseUp, .rightMouseUp, .otherMouseUp, .mouseMoved].contains(event.type) {
+            nativeCursorTracking = false
+        }
+        if [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
+            let host = desktopMode ? (superview ?? self) : self
+            var hit = host.hitTest(host.convert(host.convert(event.locationInWindow, from: nil), to: host.superview))
+            while let view = hit, view !== host {
+                // Native control tracking may consume movement in a nested
+                // AppKit loop. Yield before that loop can hide pointer motion.
+                if view is NSControl {
+                    nativeCursorTracking = true
+                    nativeCursorTrackingGeneration &+= 1
+                    let generation = nativeCursorTrackingGeneration
+                    // A native control can consume mouse-up in eventTracking
+                    // mode. Resume only after that loop returns to default mode.
+                    RunLoop.main.perform(inModes: [.default]) { [weak self, weak window] in
+                        guard let self, let window, self.window === window,
+                              self.nativeCursorTracking,
+                              self.nativeCursorTrackingGeneration == generation else { return }
+                        self.nativeCursorTracking = false
+                        self.refreshSourceCursor()
+                    }
+                    break
+                }
+                hit = view.superview
+            }
+        }
+        refreshSourceCursor(atWindowPoint: event.locationInWindow)
+    }
     private func restoreSourceCursor() {
+        defer { renderedCursor.hide() }
         if yieldedToNativeDrag || (desktopMode && (superview as? SystemHUDView)?.preservesNativeDragCursor == true) {
             previousCursor = nil; return
         }
@@ -1398,13 +1479,21 @@ final class HUDSourceWatchView: NSView {
         }
         else if forceRefresh || (timer == nil && !HUDRuntimeAppearance.reduceMotion) { refreshInteractionScheduling() }
     }
-    override func mouseEntered(with event: NSEvent) { updateHover(event) }
-    override func mouseMoved(with event: NSEvent) { onPointerMove?(); updateHover(event) }
-    override func mouseExited(with event: NSEvent) { hovered = nil; updateAnimatorStates(at: now); refreshInteractionScheduling() }
+    override func mouseEntered(with event: NSEvent) {
+        if !desktopMode { updateCursorPointer(with: event) }; updateHover(event)
+    }
+    override func mouseMoved(with event: NSEvent) {
+        if !desktopMode { updateCursorPointer(with: event) }; onPointerMove?(); updateHover(event)
+    }
+    override func mouseExited(with event: NSEvent) {
+        if !desktopMode { updateCursorPointer(with: event) }
+        hovered = nil; updateAnimatorStates(at: now); refreshInteractionScheduling()
+    }
     override func cursorUpdate(with event: NSEvent) {
         if !refreshSourceCursor(fromCursorUpdate: event) { super.cursorUpdate(with: event) }
     }
     override func mouseDown(with event: NSEvent) {
+        if !desktopMode { updateCursorPointer(with: event) }
         forwardingBackgroundPress = false
         pressedIndustryLogo = inputEnabled && playback.phase == .visible && industryLogoContains(point(event))
         if pressedIndustryLogo { window?.makeFirstResponder(self); return }
@@ -1433,6 +1522,7 @@ final class HUDSourceWatchView: NSView {
         updateAnimatorStates(at: now); refreshInteractionScheduling()
     }
     override func mouseDragged(with event: NSEvent) {
+        if !desktopMode { updateCursorPointer(with: event) }
         if let previous = bannerPointerPixels {
             let p = point(event), pixels = bannerScreenPixels(p)
             bannerPointerPixels = pixels
@@ -1451,6 +1541,7 @@ final class HUDSourceWatchView: NSView {
         updateHover(event, forceRefresh: true)
     }
     override func mouseUp(with event: NSEvent) {
+        if !desktopMode { updateCursorPointer(with: event) }
         if pressedIndustryLogo {
             pressedIndustryLogo = false
             if industryLogoContains(point(event)) { _ = flickerIndustryLogo() }

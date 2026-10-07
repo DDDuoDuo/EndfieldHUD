@@ -625,3 +625,49 @@ handler calls and settled idle intervals separately from that arbitration.
 
 The public version stays 1.2.0. Build 16 provides a distinct signed update;
 the existing release description is preserved.
+
+## Recording-only cursor follow-up (2026-10-06)
+
+The owner confirmed build 16 still alternates between the system arrow and
+Endfield cursor during built-in macOS recording, both live and in saved video;
+normal pointer movement is unaffected. The installed app was verified against
+the build 16 release binary. A stationary full-HUD baseline did not reproduce
+the reported physical-motion failure, so that baseline is not proof of a cause.
+
+The candidate composites the original cursor bitmap in a small, untransformed
+HUD layer and owns one balanced native-cursor hide lease. It reuses the existing
+app-local input monitor, changes the layer only when coordinates change, and
+adds no polling timer or production capture service. Native text, resize, menu,
+control tracking and file-drag cursors retain their ownership. The host/source
+tracking areas persist across layout, and the opening-to-stable transition
+retains its cursor lease. Projected editors select the I-beam at their visible,
+transformed hit region.
+
+An isolated recording used the built-in screencapture service, the full HUD and
+an opaque test shield beneath a small capture region, without exposing desktop
+content. The final recording contains 756 presented frames: no system-arrow
+return after Endfield acquisition, exactly one cursor in all 120 movement
+frames, and one blank frame (16.7 ms) at the initial hardware-to-layer handoff.
+Tracing confirms one hide and one unhide, including release after close. Motion
+was injected only into this application's local event queue; the physical
+pointer did not move. This is evidence for cursor composition, not verification
+of physical movement through the Shift–Command–5 toolbar. The owner then tested the separate final Cursor Test app with physical mouse
+movement and Shift–Command–5, and confirmed no flicker in either the live display
+or saved video. This verifies their reported recording workflow on this Mac.
+
+Core checks passed 80,940 assertions; the final native build passed 143 HUD
+lifecycle assertions, including native-control completion and rejected drag
+ownership. The script's following offline Metal
+compiler probe could not run because this host lacks that toolchain; no shaders
+changed. Compatibility guards pass. The opt-in diagnostic helper and its
+recording/tracing code are excluded from default development and release builds.
+The separate manual Cursor Test app uses temporary stores and fixture services,
+exits after 90 seconds or HUD dismissal, and leaves the installed app untouched.
+
+Cleanup removed about 7.1 GB of obsolete generated builds, duplicate packages,
+compiler caches and raw recording frames. Latest build 16 distribution files,
+source assets, verification reports and runnable test outputs were preserved.
+The bounded cleanup manifests and recording evidence remain under
+`build/storage-cleanup-20261006` and `build/cursor-build16-followup`. APFS snapshot
+and clone accounting may make the available-space increase differ from the
+removed files' allocated size. No real profile data was inspected or deleted.

@@ -106,3 +106,33 @@ Use `scripts/benchmark-map.sh` and `scripts/stress-map.sh` for focused map measu
 Profile a release-optimized build when performance changes warrant it. Record the
 hardware, OS, sample duration, visible module, and settings alongside measurements.
 Old measurements of earlier static HUD versions are not current performance claims.
+
+## Cursor recording regression
+
+Build the opt-in isolated cursor helper with:
+
+```sh
+DEV_CURSOR_DIAGNOSTICS=1 scripts/dev.sh
+build/dev/EndfieldHUD.app/Contents/MacOS/EndfieldHUD \
+  --ui-test --cursor-diagnostic --duration 90 --manual \
+  --output build/cursor-diagnostic/manual
+```
+
+This opens the complete HUD using temporary stores and fixture services, skips
+normal app startup, and exits when the overlay closes or after 90 seconds. It
+leaves an installed/running copy untouched. The default development and release
+builds exclude the helper. `--manual` disables cursor tracing and automated tab
+changes. Test with physical mouse movement and the built-in Shift–Command–5
+recorder, then inspect both the live cursor and saved video. Also check native
+text selection, resize regions, menus, accepted/rejected file drags, focus loss,
+and cursor restoration after closing.
+
+Without `--manual`, the bounded helper traces cursor ownership through layout
+and tab changes. `--rendered-motion` adds app-local synthetic movement without
+moving the physical pointer. These fixtures verify composition and lifecycle;
+they do not establish genuine hardware movement or the recorder-toolbar workflow.
+For comparisons against a frozen source tree, `scripts/diagnose-hud-cursor.sh`
+accepts `HUD_CURSOR_SOURCE_DIR`, `HUD_CURSOR_DIAGNOSTIC_DIR`, and
+`HUD_CURSOR_RESOURCE_APP`. Keep capture output limited to the diagnostic window
+or a region protected by an opaque test window; do not capture personal desktop
+content as test evidence.

@@ -112,6 +112,66 @@ enum HUDProjectedTextEditorTests {
         check(field.scrollView.contentView.bounds.minX > 0,
               "Native caret reveal can reach the end of a long single-line value")
         count += compositionChecks()
+        count += cursorChecks()
+        return count
+    }
+
+    private static func cursorChecks() -> Int {
+        var count = 0
+        func check(_ value: Bool, _ message: String) { count += 1; precondition(value, message) }
+        let container = ProjectedTestHost(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let host = ProjectedTestHost(frame: CGRect(x: 70, y: 55, width: 600, height: 450))
+        host.wantsLayer = true; container.addSubview(host)
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 800, height: 600),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = container
+        defer { window.close() }
+        let text = HUDProjectedTextView(frame: .zero)
+        text.isEditable = true; text.isSelectable = true
+        let rect = CGRect(x: 170, y: 120, width: 160, height: 70)
+        let editor = HUDProjectedTextEditor(textView: text, rect: rect, host: host, parent: host.layer!)
+        defer { editor.dispose() }
+        var offset = CGPoint(x: 45, y: 30)
+        let scale: CGFloat = 1.2
+        editor.unproject = { CGPoint(x: ($0.x - offset.x) / scale, y: ($0.y - offset.y) / scale) }
+        func windowPoint(_ logical: CGPoint) -> CGPoint {
+            host.convert(CGPoint(x: logical.x * scale + offset.x, y: logical.y * scale + offset.y), to: nil)
+        }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let inside = windowPoint(center)
+        let current = NSCursor.current
+        let captures = editor.captureCount
+        check(editor.scrollView.alphaValue == 0 && text.projectedCursor(atWindowPoint: inside) === NSCursor.iBeam,
+              "The invisible native editor offers I-beam at its scaled projected location in an offset parent")
+        check(text.projectedCursor(atWindowPoint: host.convert(CGPoint(x: 10, y: 10), to: nil)) == nil,
+              "The unprojected native backing rectangle cannot claim the editor cursor")
+        check(text.projectedCursor(atWindowPoint: windowPoint(CGPoint(x: rect.maxX + 1, y: rect.midY))) == nil,
+              "The cursor follows the inverse-projected input boundary")
+        text.isEditable = false
+        check(text.projectedCursor(atWindowPoint: inside) === NSCursor.iBeam,
+              "Selectable read-only projected text offers the selection cursor")
+        text.isSelectable = false
+        check(text.projectedCursor(atWindowPoint: inside) == nil,
+              "Nonselectable noneditable projected text does not claim a text cursor")
+        text.isEditable = true; text.isSelectable = true
+        editor.isHidden = true
+        check(text.projectedCursor(atWindowPoint: inside) == nil, "A hidden projected editor offers no cursor")
+        editor.isHidden = false; container.isHidden = true
+        check(text.projectedCursor(atWindowPoint: inside) == nil, "A hidden ancestor suppresses the projected editor cursor")
+        container.isHidden = false
+        offset.x += 210
+        check(text.projectedCursor(atWindowPoint: inside) == nil
+              && text.projectedCursor(atWindowPoint: windowPoint(center)) === NSCursor.iBeam,
+              "Cursor queries follow a moved projection without stale native cursor rectangles")
+        check(NSCursor.current === current && editor.captureCount == captures && editor.trackingAreas.isEmpty,
+              "Projected cursor queries do not set the system cursor, rasterize artwork, or add a cursor owner")
+        editor.removeFromSuperview()
+        check(text.projectedCursor(atWindowPoint: windowPoint(center)) == nil,
+              "A detached editor cannot offer a cursor for its former window")
+        host.addSubview(editor)
+        editor.dispose()
+        check(text.projectedCursor(atWindowPoint: windowPoint(center)) == nil,
+              "Disposal clears the projected cursor provider")
         return count
     }
 

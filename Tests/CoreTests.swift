@@ -62,6 +62,7 @@ enum CoreTests {
         assertionCount += ReaderTests.run()
         assertionCount += ArchiveCanvasTests.run()
         assertionCount += HUDProjectedTextEditorTests.run()
+        assertionCount += HUDRenderedCursorTests.run()
         assertionCount += NotesMediaTests.run()
         assertionCount += NotesExtendedStoreTests.run()
         assertionCount += NowPlayingTests.run()
