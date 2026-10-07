@@ -74,7 +74,7 @@ final class HypergryphAccountController {
     var region: HypergryphAccountRegion { cache.region }
     var record: RegionRecord { cache.records[region.rawValue] ?? RegionRecord() }
     var headerMode: HUDAccountPresentation.HeaderMode { .init(rawValue: cache.header) ?? .workMode }
-    var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedSnapshot?.role.game == .endfield }
+    var gameSyncActive: Bool { cache.syncProfile && record.linked && selectedRole?.game == .endfield }
     var selectedRole: HypergryphRole? { record.roles.first { $0.id == record.selectedRoleID } }
     var selectedSnapshot: HypergryphProfileSnapshot? { record.selectedRoleID.flatMap { record.snapshots[$0] } }
     var hasActiveRequest: Bool { busy || pendingDisconnects[region] != nil }
@@ -106,6 +106,9 @@ final class HypergryphAccountController {
                 self.changed(save: true)
             }
         }
+        // A previously enabled sync remains authoritative after an app update.
+        // Reuse its cached snapshot without a startup API or credential read.
+        applyProfile()
     }
     deinit { request?.cancel(); avatar?.cancel(); if let profileObserver { profile?.removeObserver(profileObserver) } }
     @discardableResult func observe(_ callback: @escaping () -> Void) -> UUID { let id = UUID(); observers[id] = callback; return id }
@@ -183,7 +186,7 @@ final class HypergryphAccountController {
         case .disconnect: disconnect()
         case .selectRegion(let choice):
             guard !busy else { return }; cancelRequests(); cache.region = choice == .china ? .mainland : .global
-            statusMessage = ""; nextRefresh = .distantPast; avatarURL = nil; onEvent?("settings"); changed(save: true); tick()
+            statusMessage = ""; nextRefresh = .distantPast; avatarURL = nil; applyProfile(); onEvent?("settings"); changed(save: true); tick()
         case .selectRole(let id):
             guard record.roles.contains(where: { $0.id == id }), !busy else { return }
             cache.records[region.rawValue, default: RegionRecord()].selectedRoleID = id
@@ -433,10 +436,16 @@ final class HypergryphAccountController {
     }
     private func applyProfile() {
         guard cache.syncProfile, record.linked, let snapshot = selectedSnapshot, snapshot.role.game == .endfield, let profile else { return }
+        let identity = snapshot.personalProfileIdentity
         do { try profile.update { value in
             value.gamePlayerID = snapshot.role.roleID
-            if let name = snapshot.name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { value.name = name.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ") }
-            if let date = snapshot.createdAt, !value.hasManualAwakeningDate { value.awakeningDate = date }
+            value.playerIDOverride = nil
+            if let name = identity.name { value.name = name }
+            if let tag = identity.tag { value.tag = tag }
+            if let date = snapshot.createdAt {
+                value.awakeningDate = date
+                value.hasManualAwakeningDate = false
+            }
             if let level = snapshot.level { value.permissionLevel = level }
             if let level = snapshot.worldLevel { value.explorationLevel = level }
             if let count = snapshot.operatorCount { value.operatorsCount = count }

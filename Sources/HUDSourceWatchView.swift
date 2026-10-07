@@ -1867,7 +1867,7 @@ final class HUDSourceWatchView: NSView {
         guard desktopMode, let card = document.desktopProfileCard else { return }
         desktopProfileInput = (profile, avatar, background, avatarOrientation)
         let accent = profile.resolvedAccent(fallback: HUDRuntimeAppearance.accent).usingColorSpace(.sRGB) ?? .white
-        let key = ProfileKey(strings: [profile.name, profile.tag, profile.uid, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
+        let key = ProfileKey(strings: [profile.name, profile.displayedUID, L10n.text("Authority", "权限等级"), L10n.text("MAX", "满级")],
             values: [Double(profile.permissionLevel), profile.avatarZoom, profile.avatarOffsetX, profile.avatarOffsetY,
                 profile.thumbnailOffsetX, profile.thumbnailOffsetY, profile.thumbnailZoom, Double(avatarOrientation),
                 Double(accent.redComponent), Double(accent.greenComponent), Double(accent.blueComponent)],
@@ -1875,7 +1875,7 @@ final class HUDSourceWatchView: NSView {
         guard desktopProfileKey != key else { return }
         desktopProfileKey = key
         let level = min(60, max(1, profile.permissionLevel))
-        let captions = ["managerName": profile.name + " #" + profile.tag, "managerNumber": "UID: " + profile.uid,
+        let captions = ["managerName": profile.name, "managerNumber": "UID: " + profile.displayedUID,
             "managerLevel": String(level), "managerLevelLabel": L10n.text("Authority", "权限等级"),
             "progressTxt": level == 60 ? L10n.text("MAX", "满级") : ""]
         CATransaction.begin(); CATransaction.setDisableActions(true)

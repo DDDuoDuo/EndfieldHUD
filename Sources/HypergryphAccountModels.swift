@@ -75,6 +75,31 @@ struct HypergryphProfileSnapshot: Codable, Equatable {
     var documentCount: Int? = nil
     var stamina: HypergryphStamina? = nil
 
+    /// Endfield publishes the discriminator as a suffix of its display name.
+    /// Older cached cards may contain that combined name, so split it only when
+    /// applying a profile rather than introducing another persisted identity.
+    var personalProfileIdentity: (name: String?, tag: String?) {
+        let card = Self.splitDisplayName(name)
+        let binding = Self.splitDisplayName(role.name)
+        return (card.name ?? binding.name, card.tag ?? binding.tag)
+    }
+
+    private static func splitDisplayName(_ raw: String?) -> (name: String?, tag: String?) {
+        guard let raw else { return (nil, nil) }
+        let name = raw.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return (nil, nil) }
+        if let separator = name.lastIndex(of: "#") {
+            let tag = name[name.index(after: separator)...]
+            let prefix = name[..<separator].trimmingCharacters(in: .whitespaces)
+            if !prefix.isEmpty, !tag.isEmpty, tag.count <= 10,
+               tag.utf8.allSatisfy({ (48...57).contains($0) }) {
+                return (prefix, String(tag))
+            }
+        }
+        return (name, nil)
+    }
+
     func sanityPresentation(at date: Date, isRefreshing: Bool = false,
                             refreshAvailable: Bool = false) -> HypergryphSanityPresentation? {
         guard let stamina, stamina.current >= 0, stamina.maximum > 0 else { return nil }

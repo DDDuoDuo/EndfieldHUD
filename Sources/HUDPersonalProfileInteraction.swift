@@ -139,7 +139,7 @@ final class HUDPersonalProfileInteraction: NSObject, NSTextViewDelegate {
         colorCloseObserver = nil
     }
     private func beginEditing(field: PersonalProfileField, rect: CGRect, value: String) {
-        guard active, chooser == nil, colorPanel == nil, let host, host.window != nil else { return }
+        guard active, canvas.canEdit(field), chooser == nil, colorPanel == nil, let host, host.window != nil else { return }
         guard finishEditing() else { return }
         onLock?(); beginningEdit = true
         defer { beginningEdit = false }
@@ -173,8 +173,9 @@ final class HUDPersonalProfileInteraction: NSObject, NSTextViewDelegate {
         guard !finishingEdit, let editor, let field = editingField else { return true }
         finishingEdit = true
         defer { finishingEdit = false }
-        if commit { editor.unmarkText(); normalizeEditor() }
-        if commit, !canvas.commit(field: field, text: editor.string) {
+        let shouldCommit = commit && canvas.canEdit(field)
+        if shouldCommit { editor.unmarkText(); normalizeEditor() }
+        if shouldCommit, !canvas.commit(field: field, text: editor.string) {
             projectedEditor?.setAppearance(background: NSColor(white: isDark?() == true ? 0.13 : 0.93, alpha: 1), border: .systemRed, radius: 2)
             editor.setAccessibilityHelp(canvas.accessibilityStatus)
             host?.window?.makeFirstResponder(editor); editor.selectAll(nil); return false
@@ -212,6 +213,10 @@ final class HUDPersonalProfileInteraction: NSObject, NSTextViewDelegate {
     }
     func layoutAccessibility() {
         guard active, let host else { return }
+        if let editingField, !canvas.canEdit(editingField) {
+            _ = finishEditing(commit: false)
+            return
+        }
         defer { HUDControlHighlightLayer.requestRefresh(on: host) }
         projectedEditor?.refreshProjection()
         let actions = canvas.accessibleActions.filter { action in editingField.map { action.id != "profile:" + $0.rawValue } ?? true }

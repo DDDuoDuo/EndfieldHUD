@@ -14,7 +14,7 @@ A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD 
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="Release v1.2.0" width="326"></a>
 
-[Download PKG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-Installer.pkg) · [Download DMG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-macOS.dmg) · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
+[Download PKG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-Installer.pkg) · [Download DMG](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-macOS.dmg) · [All releases](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
 <img src="docs/media/readme/en-01-installation.png" alt="Installation" width="326">
 

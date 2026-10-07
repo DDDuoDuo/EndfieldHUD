@@ -178,8 +178,6 @@ final class HUDIdentityCard {
         renderAvatar(in: foreground, white: white, gold: gold)
         text(details?.name ?? "Endministrator", in: foreground, rect: CGRect(x: 82, y: 10, width: 146, height: 24), size: 16.5,
              color: white, weight: .medium, italic: true)
-        text("#" + (details?.tag ?? "0000"), in: foreground, rect: CGRect(x: 84, y: 30, width: 106, height: 10), size: 6.5,
-             color: muted.withAlphaComponent(0.85), weight: .semibold)
         let level = min(60, max(1, details?.permissionLevel ?? 60))
         text(String(level), in: foreground, rect: CGRect(x: 82, y: 40, width: 51, height: 25), size: 21,
              color: white, weight: .semibold)

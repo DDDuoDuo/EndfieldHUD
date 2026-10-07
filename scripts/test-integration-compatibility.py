@@ -20,7 +20,7 @@ MANIFEST = ROOT / "Tests/Fixtures/stable-integration-contract.json"
 
 # The approved 1.2.0 release changes version metadata, not the stable bundle,
 # preferences, permission or signed-update identity recorded in the baseline.
-RELEASE_METADATA = {"CFBundleShortVersionString": "1.2.0", "CFBundleVersion": "17"}
+RELEASE_METADATA = {"CFBundleShortVersionString": "1.2.0", "CFBundleVersion": "18"}
 
 
 # The selected iOS-on-Mac app uses a wrapped flat bundle. Reverse only these

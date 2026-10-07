@@ -66,9 +66,19 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     var onBackgroundChange: (() -> Void)?
     var onVisibilityChange: (() -> Void)?
     var onChange: (() -> Void)?
-    var gameSyncActive = false
-    private func canEdit(_ field: PersonalProfileField) -> Bool {
-        !gameSyncActive || !([.name, .permissionLevel, .explorationLevel] + PersonalProfileField.counters).contains(field)
+    var gameSyncActive = false {
+        didSet {
+            guard gameSyncActive != oldValue else { return }
+            repaint(); onChange?()
+        }
+    }
+    func canEdit(_ field: PersonalProfileField) -> Bool {
+        guard gameSyncActive else { return true }
+        switch field {
+        case .name, .tag, .playerID, .awakeningDate, .permissionLevel, .explorationLevel,
+             .operatorsCount, .weaponsCount, .archivesCount: return false
+        default: return true
+        }
     }
     var onEditField: ((PersonalProfileField, CGRect, String) -> Void)?
     var onChooseImage: ((UserProfileImageKind) -> Void)?
@@ -108,7 +118,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
     var popoverBounds: CGRect? {
         guard let popover else { return nil }
         switch popover {
-        case .identity: return CGRect(x: 18, y: 136, width: 188, height: 139)
+        case .identity: return CGRect(x: 18, y: 136, width: 188, height: gameSyncActive ? 87 : 139)
         case .background: return Self.backgroundPopoverRect
         case .themeColor: return CGRect(x: 126, y: Self.backgroundRect.minY - 136, width: 264, height: 130)
         case .portrait: return CGRect(x: 100, y: 111, width: 288, height: 146)
@@ -234,10 +244,14 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         guard !isTextHidden else { return actions }
         let dateField: PersonalProfileField = profile.showsBirthday ? .birthday : .awakeningDate
         actions.append(PersonalProfileCanvasAction(id: "profile:toggleDateLabel", label: profile.showsBirthday ? L10n.text("Show awakening day", "切换为苏醒日") : L10n.text("Show birthday", "切换为生日"), rect: Self.dateLabelRect))
-        actions.append(PersonalProfileCanvasAction(id: "profile:" + dateField.rawValue, label: dateField.title + ": " + value(dateField, in: profile), rect: Self.dateValueRect))
+        if canEdit(dateField) {
+            actions.append(PersonalProfileCanvasAction(id: "profile:" + dateField.rawValue, label: dateField.title + ": " + value(dateField, in: profile), rect: Self.dateValueRect))
+        }
         actions.append(PersonalProfileCanvasAction(id: "profile:menu", label: L10n.text("Edit personal profile", "编辑个人名片"), rect: Self.menuRect))
         actions.append(PersonalProfileCanvasAction(id: "profile:introduction", label: L10n.text("Edit introduction", "编辑个人介绍"), rect: Self.introductionActionRect))
-        actions.append(PersonalProfileCanvasAction(id: "profile:playerID", label: PersonalProfileField.playerID.title + ": " + profile.displayedUID, rect: fieldRect(.playerID)))
+        if canEdit(.playerID) {
+            actions.append(PersonalProfileCanvasAction(id: "profile:playerID", label: PersonalProfileField.playerID.title + ": " + profile.displayedUID, rect: fieldRect(.playerID)))
+        }
         for field in [PersonalProfileField.permissionLevel, .explorationLevel] + PersonalProfileField.counters where canEdit(field) {
             actions.append(PersonalProfileCanvasAction(id: "profile:" + field.rawValue,
                 label: field.title + ": " + value(field, in: profile), rect: fieldRect(field)))
@@ -629,7 +643,7 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
         let valueHeight = ceil(valueFont.ascender - valueFont.descender)
         valueLayers[dateField] = text(value(dateField, in: profile), rect: CGRect(x: 169, y: Self.dateValueRect.midY - valueHeight / 2, width: 84, height: valueHeight), size: 10, weight: .semibold, color: NSColor(white: 0.16, alpha: 1), parent: artwork)
         HUDControlHighlightLayer.add(to: artwork, rect: Self.dateLabelRect)
-        HUDControlHighlightLayer.add(to: artwork, rect: Self.dateValueRect)
+        if canEdit(dateField) { HUDControlHighlightLayer.add(to: artwork, rect: Self.dateValueRect) }
         text("UID: " + profile.displayedUID, rect: CGRect(x: 98, y: 99, width: 260, height: 18), size: 11, color: muted, parent: artwork)
         let menu = CALayer(); menu.frame = Self.menuRect; menu.cornerRadius = Self.menuRect.height / 2
         menu.backgroundColor = ink.withAlphaComponent(0.85).cgColor; artwork.addSublayer(menu)
@@ -707,7 +721,8 @@ final class PersonalProfileCanvas: NSObject, HUDModuleContentFactory {
             let rows: [(String, String)] = [("name", L10n.text("Edit name", "修改名称")), ("tag", L10n.text("Edit #", "修改 #")),
                                            ("avatar", L10n.text("Change profile picture", "更换头像")), ("portraitMenu", L10n.text("Adjust portrait", "调整头像")),
                                            ("restoreAvatar", L10n.text("Restore default picture", "恢复默认头像"))]
-            return rows.enumerated().map { index, row in PersonalProfileCanvasAction(id: "profile:" + row.0, label: row.1,
+            let editableRows = rows.filter { row in PersonalProfileField(rawValue: row.0).map(canEdit) ?? true }
+            return editableRows.enumerated().map { index, row in PersonalProfileCanvasAction(id: "profile:" + row.0, label: row.1,
                 rect: CGRect(x: 23, y: 141 + CGFloat(index) * 26, width: 178, height: 24)) }
                 + [PersonalProfileCanvasAction(id: "profile:popoverClose", label: L10n.text("Close", "关闭"), rect: Self.menuRect)]
         }
