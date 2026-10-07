@@ -16,6 +16,12 @@ The latest sanitized evidence is [windows/evidence/feasibility-base-image-2026-1
 
 A renderer review caught incompatible D3D/D2D alpha encoding. The output now uses one encoded-space premultiplied BGRA contract; an actual synthetic half-alpha-white GPU readback passes. Rendering/resize failures park and report the preview instead of being silently ignored. Longer cache/device-loss and matched Mac visual/performance acceptance remain required.
 
+The first continuation CI build compiled successfully but caught pins that had
+been calculated from Windows-converted CRLF dependency files. The pins now use
+the authoritative Git blob bytes, and `.gitattributes` preserves those immutable
+JavaScript/license bytes in fresh Windows clones. The source assets themselves
+have no Git diff; local staging and all 46 packaging checks pass after the fix.
+
 ## Initial feasibility baseline (d03915a)
 
 - Native Windows-only C++20/CMake x64 executable, static MSVC runtime, per-monitor-v2 manifest, single lifecycle owner, tray activation, Explorer restart handler, keyboard-layout-aware Ctrl/backtick registration with conflict labels, suspend parking, and idle/closed frame scheduling. Live shell interaction and OS-change acceptance still need testing.

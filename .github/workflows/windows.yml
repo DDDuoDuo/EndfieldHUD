@@ -2,9 +2,9 @@ name: Windows native build and package validation
 on:
   push:
     branches: [codex/windows-migration]
-    paths: ['windows/**', 'Sources/**', 'Resources/**', 'scripts/package-watch-resources.py', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'Sources/**', 'Resources/**', 'scripts/package-watch-resources.py', '.github/workflows/windows.yml', '.gitattributes']
   pull_request:
-    paths: ['windows/**', 'Sources/**', 'Resources/**', 'scripts/package-watch-resources.py', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'Sources/**', 'Resources/**', 'scripts/package-watch-resources.py', '.github/workflows/windows.yml', '.gitattributes']
   workflow_dispatch:
 permissions:
   contents: read
