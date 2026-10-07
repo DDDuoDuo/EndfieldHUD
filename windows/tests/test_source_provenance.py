@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
@@ -71,6 +72,73 @@ class SourceProvenanceTests(unittest.TestCase):
         self.assertEqual(manifest["source"]["baseline_commit"], self.baseline)
         self.assertEqual(manifest["acceptance"], "restart-build-only-unverified")
         self.assertFalse(manifest["source"]["local_fallback"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows 8.3 path aliases are required")
+    def test_selection_short_and_long_paths_have_identical_provenance(self):
+        import ctypes
+        from ctypes import wintypes
+
+        long_root = self.root.resolve()
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        get_short_path.restype = wintypes.DWORD
+        size = get_short_path(str(long_root), None, 0)
+        if not size:
+            self.fail("GetShortPathNameW failed: " + str(ctypes.get_last_error()))
+        buffer = ctypes.create_unicode_buffer(size)
+        written = get_short_path(str(long_root), buffer, size)
+        self.assertGreater(written, 0)
+        self.assertLess(written, size)
+        short_root = Path(buffer.value)
+        if short_root == long_root:
+            self.skipTest("Filesystem 8.3 names are disabled or no alias is available for this fixture")
+        self.assertTrue(short_root.samefile(long_root))
+
+        manifest = self.fixture()
+        authority = proof.SourceAuthority(short_root, expected_repository=long_root, baseline=self.baseline)
+        for name in ("Resources/asset.png", "Resources/metadata.json"):
+            authority.read(name)
+        aliased_manifest = proof.create_manifest(authority, manifest["outputs"], short_root / "windows/resources/runtime-assets.json")
+        self.assertEqual(aliased_manifest, manifest)
+        self.assertEqual(proof.verify_manifest(short_root / "windows/build/synthetic/Resources", authority=authority), manifest)
+
+    def test_selection_outside_repository_is_rejected(self):
+        outside = Path(self.temporary.name) / "outside-policy.json"
+        outside.write_bytes(b"{}\n")
+        with self.assertRaisesRegex(ValueError, "escapes the repository"):
+            proof.create_manifest(self.authority(), [], outside)
+
+    def test_selection_parent_traversal_is_rejected(self):
+        selection = self.root / "windows/resources/../resources/runtime-assets.json"
+        with self.assertRaisesRegex(ValueError, "Unsafe selection"):
+            proof.create_manifest(self.authority(), [], selection)
+
+    def test_selection_symlink_is_rejected_before_resolution(self):
+        target = self.root / "windows/resources/runtime-assets.json"
+        link = Path(self.temporary.name) / "outside-policy-alias.json"
+        try:
+            os.symlink(target, link)
+        except OSError as error:
+            self.skipTest("Filesystem or account cannot create a symbolic-link fixture: " + str(error))
+        with self.assertRaisesRegex(ValueError, "Symbolic/reparse selection"):
+            proof.create_manifest(self.authority(), [], link)
+
+    @unittest.skipUnless(sys.platform == "win32" and shutil.which("powershell"), "Windows junction fixture requires PowerShell")
+    def test_selection_junction_is_rejected_before_resolution(self):
+        link = Path(self.temporary.name) / "outside-directory-alias"
+        environment = dict(os.environ, PROVENANCE_JUNCTION_PATH=str(link),
+                           PROVENANCE_JUNCTION_TARGET=str(self.root / "windows/resources"))
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+            "$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path $env:PROVENANCE_JUNCTION_PATH -Target $env:PROVENANCE_JUNCTION_TARGET | Out-Null"],
+            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        try:
+            self.assertEqual((link / "runtime-assets.json").resolve(), (self.root / "windows/resources/runtime-assets.json").resolve())
+            with self.assertRaisesRegex(ValueError, "Symbolic/reparse selection"):
+                proof.create_manifest(self.authority(), [], link / "runtime-assets.json")
+        finally:
+            # Remove only the synthetic junction itself, preserving its target.
+            link.rmdir()
 
     def test_repository_argument_cannot_select_old_checkout(self):
         other = Path(self.temporary.name) / "old-repository"

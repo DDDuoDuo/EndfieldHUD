@@ -96,7 +96,12 @@ accounts, accessibility and full settings are subsequent required milestones.
 The restarted Release x64 build compiles with MSVC 14.44.35207 and Windows SDK
 10.0.26100.0. All seven native CTest suites pass, including 2,702 source scene
 checks, 776 desktop presentation checks and 126 isolated WARP material checks.
-All 73 Python packaging/source-provenance tests pass. Source wheel tests cover
+The Python packaging/source-provenance suite runs 78 tests: 77 pass locally and
+one symbolic-link fixture is skipped because the local account lacks that
+creation privilege. Windows short/long path aliases and real junction rejection
+are checked. CI's first restarted run passed all seven native suites but exposed
+a short-name temporary-path mismatch in provenance; that mismatch is corrected.
+Source wheel tests cover
 analytic spring samples, rebound, invalid inputs, reduced motion and endpoint
 parking; actual resource tests confirm the final navigation slot is hittable.
 These are isolated contracts, not acceptance of the five live architecture gates.

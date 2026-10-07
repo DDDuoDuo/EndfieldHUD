@@ -144,6 +144,23 @@ def output_record(path: Path, root: Path, *, inputs: list[str], encoding: str = 
 
 
 def create_manifest(authority: SourceAuthority, outputs: list[dict], selection: Path) -> dict:
+    # Windows TEMP can spell an existing directory with an 8.3 alias, while
+    # SourceAuthority stores its resolved long path. Check the supplied path
+    # before resolving it so canonicalization cannot hide a symbolic/reparse
+    # component, then compare the canonical locations.
+    selection = selection.absolute()
+    if ".." in selection.parts:
+        raise ValueError("Unsafe selection provenance path")
+    for candidate in [selection, *selection.parents]:
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError as error:
+            raise ValueError("Missing selection provenance input") from error
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+            raise ValueError("Symbolic/reparse selection provenance path")
+    selection = selection.resolve()
+    if not selection.is_relative_to(authority.repository):
+        raise ValueError("Selection provenance input escapes the repository")
     policy_name = selection.relative_to(authority.repository).as_posix()
     policy = ordinary_path(authority.repository, policy_name).read_bytes()
     return {"schema": 1, "policy": "pinned-github-source-no-local-fallback", "acceptance": "restart-build-only-unverified",

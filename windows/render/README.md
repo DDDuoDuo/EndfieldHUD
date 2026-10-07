@@ -20,7 +20,8 @@ merge with serialized channels before conversion. The scene clock and sampled
 UIGraphicAnimation material fields feed the same presentation frame.
 The shell's ambient-off mode supplies shader time zero, matching the source.
 Finite geometry/button clocks continue independently and park at their endpoints;
-continuous effect demand for a future ambient-enabled mode is not implemented.
+the normal desktop uses the source's ambient-enabled default and keeps the
+shader clock running only while presented. `--ambient-off` freezes it explicitly.
 
 This remains a feasibility renderer. Complete FX/soft-mask/stencil/HDR/backdrop
 passes, original font metrics and matched Mac visual output have not reached
@@ -29,11 +30,12 @@ render pipeline; translated arithmetic and synthetic pixels do not establish
 complete compositing parity. Unsupported shader variants are still incomplete.
 The two authored anisotropic samplers use D3D's anisotropic filter; their source
 nearest-mip behavior needs a separate cross-platform sampling comparison.
-The diagnostic label and synthetic editor make this limitation visible.
+The normal desktop contains no diagnostic banner or editor. `--editor-fixture`
+explicitly enables the synthetic projected editor for isolated input checks.
 Linear RGB is encoded before premultiplication into the shared UNORM surface so
 D3D, Direct2D and the desktop compositor agree on translucent pixels. A native
 synthetic GPU readback verifies half-alpha white against that contract.
-`source_draw_tests` additionally performs 124 offscreen WARP checks using the
+`source_draw_tests` additionally performs 126 offscreen WARP checks using the
 unchanged staged source and isolated fixtures with original material IDs,
 metadata and blend states. Analytic pixels cover tint/gamma, raw mesh colors,
 red/RGBA masks, dissolve/discard/emissive, additive versus source-over layers,
