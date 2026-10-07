@@ -1,0 +1,3 @@
+# Preserve the pinned upstream JavaScript and license bytes on Windows checkouts.
+Resources/OrbiPom/matter-0.20.0.js -text
+Resources/OrbiPom/Matter-LICENSE.txt -text
