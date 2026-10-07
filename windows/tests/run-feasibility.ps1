@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$Configuration = 'Release')
+param([string]$Configuration = 'Release', [ValidateRange(1,10000)][int]$ReopenCycles = 100)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -26,10 +26,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Cancelled and delayed backdrop preparation con
 if ($LASTEXITCODE -ne 0) { throw 'Native platform capability probe failed.' }
 $graphicsOutput = Join-Path $evidence 'graphics-lifecycle.json'
 # Start-Process joins ArgumentList into a Windows command line; quote paths.
-$probe = Start-Process -FilePath $executable -ArgumentList '--graphics-probe', '--output', ('"' + $graphicsOutput + '"') -WorkingDirectory $repository -WindowStyle Hidden -PassThru
+$probe = Start-Process -FilePath $executable -ArgumentList '--graphics-probe', '--graphics-cycles', $ReopenCycles.ToString([Globalization.CultureInfo]::InvariantCulture), '--output', ('"' + $graphicsOutput + '"') -WorkingDirectory $repository -WindowStyle Hidden -PassThru
 $probe.WaitForExit()
 if ($probe.ExitCode -ne 0) { throw "Native graphics probe failed with exit $($probe.ExitCode); inspect its local JSON evidence." }
 $graphics = Get-Content -LiteralPath $graphicsOutput -Raw | ConvertFrom-Json
+if ($graphics.measured_reopen_cycles -ne $ReopenCycles) { throw 'Graphics probe did not run the requested measured cycle count.' }
 $closed = Get-Content -LiteralPath (Join-Path $evidence 'graphics-lifecycle.closed.json') -Raw | ConvertFrom-Json
 if ($closed.elapsed_seconds -lt 60 -or $closed.hud_frames_submitted -ne 0) { throw 'Closed-state frame submission contract failed.' }
 $os = Get-CimInstance Win32_OperatingSystem
@@ -47,9 +48,11 @@ $hardware = [ordered]@{
   source_mode = 'restarted desktop adaptation; raw Watch preview rejected'
   canonical_resource_baseline = '4036174a3facf935260f4d0a9c63bfff33b98c37'
   settings = 'Synthetic 1280x720 hidden HWND; generated SDR backdrop pixels only; desktop profile/navigation/native labels; ambient off; no real data; source fixture pointer; source animation endpoints'
+  measured_reopen_cycles = $ReopenCycles
   limits = 'No live desktop capture, visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified.'
 }
 $hardware | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'hardware.json') -Encoding UTF8
 Write-Output "Native diagnostics saved under $evidence"
 Write-Output "Closed seconds: $($closed.elapsed_seconds); submitted HUD frames: $($closed.hud_frames_submitted); CPU seconds: $($closed.process_cpu_seconds)"
 Write-Output "Warmed graphics reopen cycles: $($graphics.measured_reopen_cycles). Full migration/release acceptance remains unverified."
+Write-Output "Drained memory samples: $($graphics.drained_sample_points.Count); source cache counts: $($graphics.source_cache_count_stability); owned backdrop close checks: $($graphics.owned_backdrop_release_checks). Process counter changes are informational."

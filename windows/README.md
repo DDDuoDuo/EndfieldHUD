@@ -30,6 +30,11 @@ Opening the executable creates a tray activation path. Use Ctrl + backtick or it
 
 ## Reproducible isolated diagnostics
 
+Use [the live feasibility guide](tests/LIVE-FEASIBILITY.md) for the five section 3
+architecture gates: visible source comparisons, saved HUD/cursor recording,
+mixed-DPI hardware, real IME/accessibility and default ambient performance.
+Every live gate remains unverified; isolated checks below do not pass them.
+
 ```powershell
 .\windows\tests\run-feasibility.ps1
 ```

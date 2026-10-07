@@ -1,7 +1,6 @@
 #include "render/native_renderer.h"
 #include "app/frame_schedule.h"
 #include "app/backdrop_preparation.h"
-#include "platform/composition_probe.h"
 #include "platform/rendered_cursor.h"
 #include "platform/monitor_snapshot.h"
 #include "platform/frozen_desktop_snapshot.h"
@@ -45,9 +44,9 @@ std::filesystem::path executableRoot() {
 class Application final {
 public:
     explicit Application(bool probe, bool graphicsProbe, bool editorFixture, bool ambientEnabled, std::filesystem::path output, unsigned seconds,
-                         std::optional<ehud::scene::DesktopLanguage> language = {}) :
+                         std::optional<ehud::scene::DesktopLanguage> language = {}, unsigned graphicsCycles = 100) :
         probe_(probe || graphicsProbe), graphicsProbe_(graphicsProbe), editorFixture_(editorFixture),
-        ambientEnabled_(ambientEnabled), language_(language), output_(std::move(output)), probeSeconds_(seconds) {}
+        ambientEnabled_(ambientEnabled), language_(language), output_(std::move(output)), probeSeconds_(seconds), graphicsCycles_(graphicsCycles) {}
     int run(HINSTANCE instance) {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         if(!language_) {
@@ -507,7 +506,7 @@ private:
         const auto monitors=endfield::platform::collect_monitors();
         if (output_.has_parent_path()) std::filesystem::create_directories(output_.parent_path());
         std::ofstream output(output_); output << std::setprecision(12)
-            << "{\n  \"schema\": 1,\n  \"scenario\": \"" << (warmClosed_ ? "closed-after-105-graphics-cycles" : "closed-native-shell")
+            << "{\n  \"schema\": 1,\n  \"scenario\": \"" << (warmClosed_ ? "closed-after-" + std::to_string(graphicsCycles_ + 5) + "-graphics-cycles" : "closed-native-shell")
             << "\",\n  \"synthetic\": true,\n"
             << "  \"elapsed_seconds\": " << elapsed << ",\n  \"process_cpu_seconds\": " << processCpu
             << ",\n  \"hud_frames_submitted\": " << (renderer_ ? renderer_->submittedFrames() - submittedAtClose_ : 0)
@@ -537,16 +536,19 @@ private:
             renderStatus = renderer.loadSourceAssets(executableRoot() / L"Resources" / L"WatchSource");
             if (FAILED(renderStatus)) throw std::runtime_error("Original source sprite resource initialization failed");
             if (FAILED(renderer.verifyDiagnosticAlpha())) throw std::runtime_error("D3D/D2D encoded premultiplied alpha contract failed");
-            HWND unused = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
-                L"EndfieldHUD.Windows.DesktopFeasibility", L"Composition capability probe", WS_POPUP, 0, 0, 32, 32,
-                nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-            auto composition = endfield::platform::probe_compositors(unused, renderer.graphicsDevice());
-            if (unused) DestroyWindow(unused);
-            editor_ = std::make_unique<endfield::platform::ProjectedEditor>(); auto& editor = *editor_;
-            HRESULT editorStatus = editor.initialize(window_, renderer.textFactory(), []{});
-            if(FAILED(editorStatus)) throw std::runtime_error("Synthetic TSF context creation failed");
-            editor.set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic TSF fixture");
-            editor.set_rectangle(D2D1::RectF(0, 0, 600, 220));
+            // Compositor capability activation runs in platform_probe.exe.
+            // Default source lifecycle diagnostics create no TSF/editor context.
+            std::optional<HRESULT> editorStatus;
+            if(editorFixture_) {
+                editor_ = std::make_unique<endfield::platform::ProjectedEditor>();
+                const HRESULT initialized=editor_->initialize(window_,renderer.textFactory(),[]{});
+                if(FAILED(initialized))throw std::runtime_error("Synthetic TSF context creation failed");
+                editorStatus=editor_->tsf_status();
+                if(FAILED(*editorStatus))throw std::runtime_error("Synthetic TSF context status validation failed");
+                if(!editor_->set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic TSF fixture"))
+                    throw std::runtime_error("Synthetic projected editor fixture text validation failed");
+                editor_->set_rectangle(D2D1::RectF(0,0,600,220));
+            }
             // Supplied fixture pixels exercise the complete frozen background
             // path without invoking any desktop capture or reading user pixels.
             std::vector<std::uint8_t> syntheticPixels(1280*720*4);
@@ -564,7 +566,8 @@ private:
                 throw std::runtime_error("Synthetic frozen desktop input validation failed");
             auto memory = [] {
                 PROCESS_MEMORY_COUNTERS_EX result{}; result.cb = sizeof(result);
-                GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&result), sizeof(result));
+                if(!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&result), sizeof(result)))
+                    throw std::runtime_error("Cannot sample diagnostic process memory");
                 return result;
             };
             auto drawCycle = [&](unsigned index) {
@@ -584,35 +587,86 @@ private:
                         std::hypot(point.x - inverseX, point.y - inverseY) > 1e-7)
                         throw std::runtime_error("Editor/drawing projection mismatch");
                 }
-                HRESULT status = renderer.draw(frame, editorFixture_?&editor:nullptr);
+                HRESULT status = renderer.draw(frame,editor_.get());
                 if (FAILED(status)) throw std::runtime_error("Native projected frame submission failed");
                 playback.close(time + 1); auto closed = playback.sample(time + 1 + doc.exitDuration(), false, false);
                 if (closed.phase != ehud::scene::Phase::concealed) throw std::runtime_error("Closing lifecycle failed");
                 renderer.clearFrozenBackdrop();
+                if(renderer.backdropTextureCount()!=0 || renderer.backdropSnapshotBytes()!=0)
+                    throw std::runtime_error("Synthetic close retained owned backdrop pixels or textures");
             };
             // Warm caches before comparing bounded lifecycle ownership.
-            for (unsigned index = 0; index < 5; ++index) drawCycle(index);
+            constexpr unsigned warmupCycles=5,sampleInterval=100;
+            for (unsigned index = 0; index < warmupCycles; ++index) drawCycle(index);
             if (FAILED(renderer.waitForDiagnosticGpu())) throw std::runtime_error("Warm source GPU drain failed");
-            auto before = memory(); DWORD handlesBefore{}; GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
-            for (unsigned index = 5; index < 105; ++index) drawCycle(index);
-            if (FAILED(renderer.waitForDiagnosticGpu())) throw std::runtime_error("Repeated source GPU drain failed");
-            auto after = memory(); DWORD handlesAfter{}; GetProcessHandleCount(GetCurrentProcess(), &handlesAfter);
+            const auto measuredStart=Clock::now();const auto measuredCpuStart=cpuSeconds();
+            const auto warmupElapsed=std::chrono::duration<double>(measuredStart-start).count();
+            const auto texturesBefore=renderer.textureCount(),textBefore=renderer.textCount();
+            struct SamplePoint {
+                unsigned cycles{};std::uint64_t frames{};PROCESS_MEMORY_COUNTERS_EX memory{};DWORD handles{};
+                std::size_t textures{},text{},backdropTextures{},backdropBytes{};
+                double elapsed{},batchElapsed{},cpu{},batchCpu{};
+            };
+            std::vector<SamplePoint> samples;samples.reserve((graphicsCycles_+sampleInterval-1)/sampleInterval+1);
+            auto sample=[&](unsigned cycles) {
+                SamplePoint point;point.cycles=cycles;point.frames=renderer.submittedFrames();point.memory=memory();
+                if(!GetProcessHandleCount(GetCurrentProcess(),&point.handles))throw std::runtime_error("Cannot sample diagnostic process handles");
+                point.textures=renderer.textureCount();point.text=renderer.textCount();
+                point.backdropTextures=renderer.backdropTextureCount();point.backdropBytes=renderer.backdropSnapshotBytes();
+                point.elapsed=std::chrono::duration<double>(Clock::now()-measuredStart).count();point.cpu=cpuSeconds()-measuredCpuStart;
+                if(!samples.empty()){point.batchElapsed=point.elapsed-samples.back().elapsed;point.batchCpu=point.cpu-samples.back().cpu;}
+                if(point.textures!=texturesBefore || point.text!=textBefore)
+                    throw std::runtime_error("Warmed source texture or text cache count changed across synthetic cycles");
+                samples.push_back(point);
+            };
+            sample(0);
+            for(unsigned completed=1;completed<=graphicsCycles_;++completed) {
+                drawCycle(warmupCycles+completed-1);
+                if(completed%sampleInterval==0 || completed==graphicsCycles_) {
+                    if(FAILED(renderer.waitForDiagnosticGpu()))throw std::runtime_error("Repeated source GPU drain failed");
+                    sample(completed);
+                }
+            }
+            const auto& before=samples.front().memory;const auto& after=samples.back().memory;
+            const auto handlesBefore=samples.front().handles,handlesAfter=samples.back().handles;
             if (output_.has_parent_path()) std::filesystem::create_directories(output_.parent_path());
             auto picture = output_; picture.replace_extension(L".bmp");
             if (FAILED(renderer.saveDiagnosticFrame(picture))) throw std::runtime_error("Synthetic render readback failed");
             std::ofstream output(output_); output << std::setprecision(12)
                 << "{\n  \"schema\": 1,\n  \"scenario\": \"restarted-desktop-graphics-lifecycle\",\n  \"source_mode\": \"desktop\",\n  \"canonical_resource_baseline\": \"4036174a3facf935260f4d0a9c63bfff33b98c37\",\n  \"synthetic\": true,\n"
                 << "  \"elapsed_seconds\": " << std::chrono::duration<double>(Clock::now() - start).count()
-                << ",\n  \"direct_composition_hresult\": " << static_cast<long>(composition.direct_composition)
-                << ",\n  \"windows_ui_composition_hresult\": " << static_cast<long>(composition.windows_ui_composition)
-                << ",\n  \"dispatcher_queue_hresult\": " << static_cast<long>(composition.dispatcher_queue)
-                << ",\n  \"tsf_hresult\": " << static_cast<long>(editorStatus)
-                << ",\n  \"source_nodes\": " << doc.nodeCount() << ",\n  \"measured_reopen_cycles\": 100,\n  \"warmup_cycles\": 5,\n"
+                << ",\n  \"composition_capability\": \"measured separately by platform_probe; not initialized in this lifecycle process\""
+                << ",\n  \"editor_fixture\": " << (editorFixture_?"true":"false")
+                << ",\n  \"editor_fixture_frames\": " << (editorFixture_?renderer.submittedFrames():0)
+                << ",\n  \"tsf_scenario\": \"" << (editorFixture_?"synthetic projected editor fixture":"unrequested; source desktop lifecycle only") << '"'
+                << ",\n  \"tsf_status\": \"" << (editorStatus?"initialized; synthetic context validated":"unrequested; no editor or TSF context created") << '"'
+                << ",\n  \"tsf_hresult\": ";
+            if(editorStatus)output << static_cast<long>(*editorStatus);else output << "null";
+            output << ",\n  \"source_nodes\": " << doc.nodeCount() << ",\n  \"measured_reopen_cycles\": " << graphicsCycles_ << ",\n  \"warmup_cycles\": " << warmupCycles << ",\n"
                 << "  \"submitted_frames\": " << renderer.submittedFrames() << ",\n  \"private_bytes_before\": " << before.PrivateUsage
                 << ",\n  \"private_bytes_after\": " << after.PrivateUsage << ",\n  \"working_set_before\": " << before.WorkingSetSize
                 << ",\n  \"working_set_after\": " << after.WorkingSetSize << ",\n  \"handles_before\": " << handlesBefore
                 << ",\n  \"handles_after\": " << handlesAfter
-                << ",\n  \"editor_projection_corner_checks\": \"passed\",\n  \"visible_frame_pacing\": \"unverified; hidden-window test\",\n"
+                << ",\n  \"warmup_elapsed_seconds\": " << warmupElapsed
+                << ",\n  \"measured_elapsed_seconds\": " << samples.back().elapsed
+                << ",\n  \"measured_process_cpu_seconds\": " << samples.back().cpu
+                << ",\n  \"drained_sample_interval_cycles\": " << sampleInterval << ",\n  \"drained_sample_points\": [";
+            for(std::size_t index=0;index<samples.size();++index) {
+                if(index)output << ',';const auto& point=samples[index];
+                output << "\n    {\"measured_cycles\":" << point.cycles << ",\"total_cycles\":" << point.cycles+warmupCycles
+                    << ",\"submitted_frames\":" << point.frames
+                    << ",\"private_bytes\":" << point.memory.PrivateUsage << ",\"working_set_bytes\":" << point.memory.WorkingSetSize
+                    << ",\"handles\":" << point.handles << ",\"source_textures_retained\":" << point.textures
+                    << ",\"source_text_surfaces_retained\":" << point.text << ",\"backdrop_textures_after_close\":" << point.backdropTextures
+                    << ",\"backdrop_snapshot_bytes_after_close\":" << point.backdropBytes << ",\"elapsed_seconds\":" << point.elapsed
+                    << ",\"batch_elapsed_seconds\":" << point.batchElapsed << ",\"process_cpu_seconds\":" << point.cpu
+                    << ",\"batch_process_cpu_seconds\":" << point.batchCpu << '}';
+            }
+            output << "\n  ],\n  \"memory_observations\": \"informational drained process counters; driver/runtime allocations may fluctuate\",\n"
+                << "  \"owned_backdrop_release_checks\": " << warmupCycles+graphicsCycles_
+                << ",\n  \"source_cache_count_stability\": \"passed across drained samples after warmup\",\n"
+                << "  \"editor_projection_corner_checks\": \"passed\",\n  \"editor_projection_check_scope\": \"mathematical project/unproject; independent of TSF/editor rendering\",\n"
+                << "  \"visible_frame_pacing\": \"unverified; hidden-window endpoint test, not live acceptance proof\",\n"
                 << "  \"encoded_premultiplied_alpha\": \"passed; synthetic half-alpha white GPU readback\",\n"
                 << "  \"source_accumulation\": \"linear fragments into BGRA8 sRGB; separate encoded-premultiplied Windows presentation\",\n"
                 << "  \"frozen_backdrop\": \"synthetic supplied SDR pixels; no desktop capture API executed\",\n"
@@ -620,7 +674,8 @@ private:
                 << ",\n  \"backdrop_snapshot_bytes_after_close\": " << renderer.backdropSnapshotBytes() << ",\n"
                 << "  \"source_textures_retained\": " << renderer.textureCount() << ",\n  \"source_text_surfaces_retained\": " << renderer.textCount()
                 << ",\n  \"source_material_visual_parity\": \"unverified; selected source UI/mesh FX translated, complete FX/HDR comparison pending\",\n  \"live_ime\": \"unverified\"\n}\n";
-            if (!output) throw std::runtime_error("Cannot write graphics evidence");
+            output.close();
+            if (!output) throw std::runtime_error("Cannot write or close graphics evidence");
             // Return to the actual message loop for the closed-state measure.
             // The retained renderer owns its warmed caches but submits nothing.
             warmClosed_ = true; submittedAtClose_ = renderer.submittedFrames();
@@ -767,7 +822,7 @@ private:
     bool editorFixture_{},ambientEnabled_{true};double closingCanvasOpacity_{1};
     std::optional<ehud::scene::DesktopLanguage> language_;
     std::uint64_t submittedAtClose_{};
-    std::filesystem::path output_; unsigned probeSeconds_{60}; int exitCode_{};
+    std::filesystem::path output_; unsigned probeSeconds_{60},graphicsCycles_{100}; int exitCode_{};
     std::wstring shortcutLabel_;
     std::wstring backdropStatus_;
     std::shared_ptr<BackdropCapture> backdropCapture_;
@@ -798,16 +853,32 @@ private:
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HRESULT hr = RoInitialize(RO_INIT_SINGLETHREADED); if (FAILED(hr)) return 1;
     int count{}; auto arguments = CommandLineToArgvW(GetCommandLineW(), &count);
-    bool probe = false, graphicsProbe = false, editorFixture = false, ambientEnabled = true; std::filesystem::path output = L"closed-probe.json"; unsigned seconds = 60;
+    bool probe = false, graphicsProbe = false, editorFixture = false, ambientEnabled = true; std::filesystem::path output = L"closed-probe.json"; unsigned seconds = 60,graphicsCycles=100;
+    bool graphicsCyclesSpecified=false,invalidGraphicsCycles=false;
     std::optional<ehud::scene::DesktopLanguage> language;
     for (int index = 1; index < count; ++index) {
         if (std::wstring_view(arguments[index]) == L"--closed-probe") probe = true;
         else if (std::wstring_view(arguments[index]) == L"--graphics-probe") graphicsProbe = true;
+        else if (std::wstring_view(arguments[index]) == L"--graphics-cycles") {
+            if(graphicsCyclesSpecified || index+1>=count){invalidGraphicsCycles=true;break;}
+            graphicsCyclesSpecified=true;const std::wstring_view value(arguments[++index]);unsigned parsed{};
+            if(value.empty()){invalidGraphicsCycles=true;break;}
+            for(wchar_t digit:value) {
+                if(digit<L'0'||digit>L'9'||parsed>10000/10){invalidGraphicsCycles=true;break;}
+                parsed=parsed*10+static_cast<unsigned>(digit-L'0');
+                if(parsed>10000){invalidGraphicsCycles=true;break;}
+            }
+            if(invalidGraphicsCycles || parsed==0){invalidGraphicsCycles=true;break;}
+            graphicsCycles=parsed;
+        }
+        else if(std::wstring_view(arguments[index]).starts_with(L"--graphics-cycles")){invalidGraphicsCycles=true;break;}
         else if (std::wstring_view(arguments[index]) == L"--editor-fixture") editorFixture = true;
         else if (std::wstring_view(arguments[index]) == L"--ambient-off") ambientEnabled = false;
         else if (std::wstring_view(arguments[index]) == L"--language" && index + 1 < count) language=ehud::scene::DesktopShell::resolveLanguage({winrt::to_string(arguments[++index])});
         else if (std::wstring_view(arguments[index]) == L"--output" && index + 1 < count) output = arguments[++index];
         else if (std::wstring_view(arguments[index]) == L"--seconds" && index + 1 < count) seconds = std::clamp<unsigned>(_wtoi(arguments[++index]), 1, 3600);
     }
-    LocalFree(arguments); Application app(probe, graphicsProbe, editorFixture, ambientEnabled, output, seconds, language); int result = app.run(instance); RoUninitialize(); return result;
+    LocalFree(arguments);
+    if(invalidGraphicsCycles || (graphicsCyclesSpecified&&!graphicsProbe)){RoUninitialize();return 64;}
+    Application app(probe, graphicsProbe, editorFixture, ambientEnabled, output, seconds, language, graphicsCycles); int result = app.run(instance); RoUninitialize(); return result;
 }

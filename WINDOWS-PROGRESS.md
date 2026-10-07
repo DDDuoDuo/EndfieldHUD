@@ -127,6 +127,14 @@ source blending. A separate final pass converts that result to the encoded
 premultiplied format required for Windows presentation. This is the source LDR
 path; complete HDR/backdrop/material and matched Mac acceptance remain open.
 
+Renderer teardown now detaches the old composition tree, releases source/editor/
+backbuffer owners, then clears pipeline state and flushes deferred destruction
+before releasing the old device/context. Hardware remains the production default;
+WARP is explicitly selected only by isolated tests. The same-window recovery
+fixture exercises 36 device generations, active destructor teardown and resize.
+This enforces Microsoft's documented flip-chain recovery order; the initial
+old-order WARP fixture passed too, so no reproduced hardware failure is claimed.
+
 Remaining visual work includes matched profile boundary and Mac font metrics,
 footer/wordmark overlap comparison at the
 fixture size, full material/soft-mask/HDR composition and live backdrop fidelity.
@@ -136,9 +144,10 @@ accounts, accessibility and full settings are subsequent required milestones.
 ## Fresh verification
 
 The restarted Release x64 build compiles with MSVC 14.44.35207 and Windows SDK
-10.0.26100.0. All eleven native CTest suites pass, including 2,730 source scene
+10.0.26100.0. All twelve native CTest suites pass, including 2,730 source scene
 checks, 797 desktop presentation checks, 250 isolated WARP source material checks,
-83 final presentation checks, 41 source monitor-policy checks, 338 native editing
+83 final presentation checks, 1,006 WARP renderer lifecycle checks across 36
+same-window device generations, 41 source monitor-policy checks, 338 native editing
 contracts, 16,413 synthetic backdrop checks and 161 fake-clock readiness checks.
 The Python packaging/source-provenance suite runs 78 tests: 77 pass locally and
 one symbolic-link fixture is skipped because the local account lacks that
@@ -166,19 +175,40 @@ parking; actual resource tests confirm the final navigation slot is hittable.
 These are isolated contracts, not acceptance of the five live architecture gates.
 
 [Fresh sanitized diagnostic evidence](windows/evidence/restart-desktop-2026-10-07.json)
-binds the final executable and native source files by SHA-256. In the corrected
-desktop path with generated frozen SDR pixels, 100 warmed source-endpoint cycles
-retained 592 handles. Private bytes changed from 220,020,736 to 226,893,824 and
-working set from 135,860,224 to 134,926,336 after GPU drains. The 6,873,088-byte
-private-memory increase is a measured open regression/ownership question; bounded
-process RAM is unverified. Each close released all three backdrop textures and
-all retained snapshot bytes. The following 61.0077-second closed interval
-submitted zero HUD frames and recorded 0 CPU seconds in process-time counters.
-Closed handles changed from 593 to 596; longer ownership testing
-remains required. These hidden endpoint/ambient-off measurements establish no
-visible frame pacing, default ambient performance, GPU activity, wakeup,
-live capture, recording, live IME or Mac parity claim. Both compositor capability probes
-returned success; their backdrop/recording/performance comparison is still open.
+binds the final executable, native sources and diagnostic tools by SHA-256.
+The default renderer diagnostic now omits the separate compositor/TSF capability
+setup; an explicit editor fixture verifies six actual projected editor frames.
+Capability activation runs in its own process. The output stream is closed before
+the closed-state handle baseline, removing the previous one-file-handle bias.
+Ten malformed/unsupported cycle arguments are rejected before app creation;
+the minimum, 1,000 and maximum 10,000 cycle workloads were executed.
+
+With generated SDR pixels and fixed source endpoints, 1,000 measured reopen
+cycles retained 61 source textures and 34 text surfaces. Every one of the 1,005
+closes released all backdrop textures and snapshot ownership. Private bytes
+changed from 216,133,632 to 229,265,408; handles changed from 549 to 552. During
+the next 60.9971 seconds closed, zero HUD frames were submitted, process CPU time
+increased 0.03125 seconds, private bytes fell to 205,316,096 and handles reached
+553. These process counter changes remain unattributed, rather than proof of a
+leak or of fully bounded process RAM.
+
+A separate maximum workload completed 10,000 measured cycles with 101 drained
+points and 10,005 backdrop release checks. Private bytes changed from 216,133,632
+to 227,299,328, with an observed plateau from 6,000 to 10,000 measured cycles;
+handles changed from 549 to 557. Its following 61.0114-second closed interval
+submitted zero frames and added 0.015625 CPU seconds; private bytes fell to
+209,666,048 and handles reached 559. Stable owned-cache counts and this observed
+plateau do not attribute runtime/driver handles or pass live ownership acceptance.
+
+Thirty one-second external samples of the selected closed 1,000-cycle probe
+reported zero utilization on all 13 observed valid GPU engines per sample.
+Missing counters are never treated as zero. This measures sampled per-process
+engines only; complete GPU/compositor attribution, wakeups, visible pacing,
+default ambient performance, live capture/recording/IME and matched Mac parity
+remain unverified. Both separate compositor capability probes returned success;
+their live comparison is still open. The [live feasibility guide](windows/tests/LIVE-FEASIBILITY.md)
+provides reproducible laptop steps and explicit PASS/FAIL/UNVERIFIED fields for
+all five gates, including the additional monitor and matched Mac reference.
 
 ## Remaining plan
 

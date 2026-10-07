@@ -6,12 +6,15 @@
 
 namespace ehud::render {
 NativeRenderer::~NativeRenderer() { reset(); }
-HRESULT NativeRenderer::initialize(HWND owner, unsigned width, unsigned height) {
+HRESULT NativeRenderer::initialize(HWND owner, unsigned width, unsigned height, D3D_DRIVER_TYPE driver) {
+    if ((driver != D3D_DRIVER_TYPE_HARDWARE && driver != D3D_DRIVER_TYPE_WARP) || !owner || !width || !height)
+        return E_INVALIDARG;
+    reset();
     owner_ = owner;
     D3D_FEATURE_LEVEL level;
-    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+    HRESULT hr = D3D11CreateDevice(nullptr, driver, nullptr,
         D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device_, &level, &context_);
-    if (FAILED(hr)) return hr; // A software fallback is not a hardware parity result.
+    if (FAILED(hr)) return hr; // The explicitly selected driver is never substituted.
     ComPtr<IDXGIDevice> dxgi;
     if (FAILED(hr = device_.As(&dxgi))) return hr;
     ComPtr<IDXGIAdapter> adapter;
@@ -251,12 +254,23 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
 }
 void NativeRenderer::reset() {
     clearFrozenBackdrop();frozenBackdrop_.reset();
+    // Composition changes are batched. Detach the old swapchain/tree when the
+    // compositor can still accept commands; device removal may reject Commit.
+    // Teardown must nevertheless release every owner, without a blocking wait.
+    if (visual_) visual_->SetContent(nullptr);
+    if (target_) target_->SetRoot(nullptr);
+    if (compositor_) compositor_->Commit();
     if (painter_) painter_->SetTarget(nullptr);
-    if(context_) context_->ClearState();
     presentationAdapter_.reset();sourceView_.Reset();sourceTarget_.Reset();sourceSurface_.Reset();
-    editorBitmap_.Reset(); editorPlane_.Reset(); editorRevision_ = UINT64_MAX;
+    editorBitmap_.Reset(); editorPlane_.Reset(); editorRevision_ = editorArtworkRevision_ = UINT64_MAX;
+    editorAnchor_ = editorCaret_ = SIZE_MAX; editorFocused_ = false;
     source_.reset(); renderTarget_.Reset(); surface_.Reset(); brush_.Reset(); textFormat_.Reset(); text_.Reset(); painter_.Reset();
     d2d_.Reset(); factory_.Reset(); visual_.Reset(); target_.Reset(); compositor_.Reset();
-    swapchain_.Reset(); context_.Reset(); device_.Reset(); owner_ = nullptr;
+    swapchain_.Reset();
+    // Flip-chain destruction is deferred. Release the application/composition
+    // owners first, then drop pipeline references and flush their destruction
+    // while the old context remains alive, before another chain uses this HWND.
+    if (context_) { context_->ClearState(); context_->Flush(); }
+    context_.Reset(); device_.Reset(); owner_ = nullptr;
 }
 }

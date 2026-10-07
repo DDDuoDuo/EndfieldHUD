@@ -17,7 +17,10 @@ namespace ehud::render {
 class NativeRenderer final {
 public:
     ~NativeRenderer();
-    HRESULT initialize(HWND owner, unsigned width, unsigned height);
+    // Hardware remains the production default. WARP is an explicit isolated
+    // diagnostic selection, never an automatic rendering fallback.
+    HRESULT initialize(HWND owner, unsigned width, unsigned height,
+                       D3D_DRIVER_TYPE driver = D3D_DRIVER_TYPE_HARDWARE);
     HRESULT resize(unsigned width, unsigned height);
     HRESULT loadSourceAssets(const std::filesystem::path& root);
     HRESULT saveDiagnosticFrame(const std::filesystem::path& path);
