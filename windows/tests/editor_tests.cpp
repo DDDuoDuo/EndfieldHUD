@@ -5,6 +5,8 @@
 #ifdef _WIN32
 #include <wrl/client.h>
 #include <objbase.h>
+#include <UIAutomation.h>
+#include <oleauto.h>
 #endif
 
 using endfield::platform::EditorModel;
@@ -79,10 +81,46 @@ void native_text_store() {
         editor.set_projection({{1.1,.02,30,-.04,.95,10,.0002,.0001,1}});
         check(editor.set_text(u"中文 日本語 한국어 e\u0301 👩‍💻"),"native mixed-script text layout");
         check(editor.model().text()==u"中文 日本語 한국어 e\u0301 👩‍💻","layout preserves canonical UTF-16");
+        const auto combining=editor.model().text().find(u"e\u0301");
+        check(editor.model().navigation_boundary(combining,true)==combining+2,"native DirectWrite cluster navigation preserves combining accent");
         check(invalidations>0,"text changes schedule artwork invalidation");
         check(!editor.font_inventory().empty(),"native installed-font inventory available");
         check(GetWindow(owner,GW_CHILD)==nullptr,"projected editor creates no flat child Edit HWND");
+        std::u16string document;
+        for (unsigned row=0;row<100;++row) document+=u"中文 日本語 한국어 e\u0301 😀\n";
+        check(editor.set_text(document),"long synthetic document");
+        const auto text_revision=editor.model().revision();
+        editor.select_range(document.size(),document.size());
+        check(editor.scroll_offset()>0,"caret navigation reveals a line below viewport");
+        auto artwork=editor.artwork_revision(); editor.scroll_to(0);
+        check(editor.scroll_offset()==0 && editor.artwork_revision()>artwork,"wheel viewport invalidates only editor artwork");
+        check(editor.model().revision()==text_revision,"scrolling cannot mutate or relayout canonical text");
+        editor.scroll_to(-100); check(editor.scroll_offset()==0,"negative scroll clamps");
+        editor.scroll_to(1e9f); check(editor.scroll_offset()>0 && editor.scroll_offset()<1e9f,"scroll bounded by content height");
+        editor.scroll_to(0); editor.set_accessible_name(L"Synthetic notes");
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> accessible;
+        check(SUCCEEDED(editor.get_accessibility_provider(IID_PPV_ARGS(&accessible))),"native UIA provider available");
+        VARIANT name; VariantInit(&name);
+        check(SUCCEEDED(accessible->GetPropertyValue(UIA_NamePropertyId,&name)) && name.vt==VT_BSTR &&
+            std::wstring(name.bstrVal)==L"Synthetic notes","UIA accessible name reflects selected editor"); VariantClear(&name);
+        Microsoft::WRL::ComPtr<ITextProvider> text_provider;
+        check(SUCCEEDED(accessible.As(&text_provider)),"native TextPattern provider");
+        Microsoft::WRL::ComPtr<ITextRangeProvider> full_range;
+        check(SUCCEEDED(text_provider->get_DocumentRange(&full_range)),"UIA document range");
+        BSTR text{}; check(SUCCEEDED(full_range->GetText(-1,&text)),"UIA document text");
+        check(std::u16string(reinterpret_cast<const char16_t*>(text),SysStringLen(text))==document,"UIA preserves UTF-16 canonical text"); SysFreeString(text);
+        BSTR query=SysAllocString(L"日本語"); Microsoft::WRL::ComPtr<ITextRangeProvider> found;
+        check(SUCCEEDED(full_range->FindText(query,FALSE,FALSE,&found)) && found,"UIA find mixed-script phrase"); SysFreeString(query);
+        check(SUCCEEDED(found->Select()) && editor.model().end()-editor.model().begin()==3,"UIA selection controls same native text model");
+        SAFEARRAY* bounds{};
+        check(SUCCEEDED(found->GetBoundingRectangles(&bounds)) && bounds,"UIA projected visible text bounds");
+        LONG low{},high{}; SafeArrayGetLBound(bounds,1,&low); SafeArrayGetUBound(bounds,1,&high);
+        check(high-low+1>=4,"UIA returns projected screen rectangle"); SafeArrayDestroy(bounds);
+        Microsoft::WRL::ComPtr<IValueProvider> value_provider; check(SUCCEEDED(accessible.As(&value_provider)),"native ValuePattern provider");
+        check(SUCCEEDED(value_provider->SetValue(L"Accessible 😀 text")),"UIA edit operation");
+        check(editor.model().text()==u"Accessible 😀 text","UIA edits same canonical model");
         editor.shutdown();
+        text=nullptr; check(full_range->GetText(-1,&text)==UIA_E_ELEMENTNOTAVAILABLE,"retained UIA ranges detach safely after editor closes");
     }
     DestroyWindow(owner); factory.Reset(); CoUninitialize();
 }
@@ -93,6 +131,6 @@ int main() {
 #ifdef _WIN32
         native_text_store();
 #endif
-        std::cout << "PASS: synthetic UTF-16, history, composition grouping, projected coordinates, native TSF context and DirectWrite layout (live CJK IME unverified)\n"; return 0; }
+        std::cout << "PASS: synthetic UTF-16, history, composition grouping, projected coordinates, native TSF context, DirectWrite layout, viewport scrolling and UIA text/value contracts (live CJK IME/Narrator unverified)\n"; return 0; }
     catch (const std::exception& error) { std::cerr << "FAIL: " << error.what() << '\n'; return 1; }
 }

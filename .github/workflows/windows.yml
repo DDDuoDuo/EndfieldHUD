@@ -1,4 +1,4 @@
-name: Windows native feasibility
+name: Windows native build and package validation
 on:
   push:
     branches: [codex/windows-migration]
@@ -16,6 +16,9 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 25
     steps:
+      - name: Preserve source asset and license bytes
+        shell: pwsh
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
@@ -25,9 +28,14 @@ jobs:
       - name: Build, isolated tests, byte-exact resources, developer preview
         shell: pwsh
         run: .\windows\packaging\build.ps1 -Python (Get-Command python.exe).Source
+      - name: Validate unsigned MSIX candidate with the Windows SDK
+        shell: pwsh
+        run: |
+          & (Get-Command python.exe).Source windows/packaging/msix_release.py --candidate --executable windows/build/x64/Release/EndfieldHUDWindows.exe --resources windows/build/x64/Release/Resources --logo-source Resources/Watch/ui_mid_ring.png
+          if ($LASTEXITCODE -ne 0) { throw 'Windows MSIX format/payload validation failed.' }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: EndfieldHUD-Windows-x64-feasibility
+          name: EndfieldHUD-Windows-x64-developer-preview
           path: |
             windows/dist/*
             windows/build/x64/build-metadata.json

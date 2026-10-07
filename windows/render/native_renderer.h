@@ -8,6 +8,7 @@
 #include <wrl/client.h>
 #include "scene/watch_scene.hpp"
 #include "platform/projected_editor.h"
+#include "source_draw.h"
 #include <cstdint>
 
 namespace ehud::render {
@@ -15,11 +16,17 @@ class NativeRenderer final {
 public:
     HRESULT initialize(HWND owner, unsigned width, unsigned height);
     HRESULT resize(unsigned width, unsigned height);
+    HRESULT loadSourceAssets(const std::filesystem::path& root);
+    HRESULT saveDiagnosticFrame(const std::filesystem::path& path);
+    HRESULT waitForDiagnosticGpu();
+    HRESULT verifyDiagnosticAlpha();
     HRESULT draw(const scene::Frame& frame, endfield::platform::ProjectedEditor* editor = nullptr);
     IDWriteFactory* textFactory() const { return text_.Get(); }
     ID3D11Device* graphicsDevice() const { return device_.Get(); }
     static endfield::platform::ProjectiveMapping editorProjection(const scene::Frame& frame);
     std::uint64_t submittedFrames() const { return submitted_; }
+    std::size_t textureCount() const { return source_ ? source_->textureCount() : 0; }
+    std::size_t textCount() const { return source_ ? source_->textCount() : 0; }
     void reset();
 private:
     template<class T> using ComPtr = Microsoft::WRL::ComPtr<T>;
@@ -35,6 +42,8 @@ private:
     ComPtr<ID2D1Device> d2d_;
     ComPtr<ID2D1DeviceContext> painter_;
     ComPtr<ID2D1Bitmap1> surface_;
+    ComPtr<ID3D11RenderTargetView> renderTarget_;
+    std::shared_ptr<SourceDraw> source_;
     ComPtr<ID2D1SolidColorBrush> brush_;
     ComPtr<IDWriteFactory> text_;
     ComPtr<IDWriteTextFormat> textFormat_;
@@ -43,6 +52,7 @@ private:
     std::uint64_t editorRevision_{UINT64_MAX};
     std::size_t editorAnchor_{SIZE_MAX}, editorCaret_{SIZE_MAX};
     bool editorFocused_{};
+    std::uint64_t editorArtworkRevision_{UINT64_MAX};
     std::uint64_t submitted_{};
 };
 }

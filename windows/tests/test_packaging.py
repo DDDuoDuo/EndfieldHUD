@@ -3,20 +3,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
 from unittest import mock
 import zipfile
+import xml.etree.ElementTree as ET
 import zlib
 
 PACKAGING = Path(__file__).resolve().parents[1] / "packaging"
 sys.path.insert(0, str(PACKAGING))
 import package as windows_package
 import stage_resources
+import msix_release
 
 
 def container(data: bytes, length: int | None = None) -> bytes:
@@ -170,6 +174,95 @@ class WindowsStagingLockTests(unittest.TestCase):
         self.assertEqual(source.rename.call_count, 2)
 
 
+class MsixManifestTests(unittest.TestCase):
+    def test_msix_version_bounds(self):
+        self.assertEqual(msix_release.package_version("1.2.3.65535"), "1.2.3.65535")
+        for invalid in ("1.2.3", "1.2.3.65536", "01.2.3.4", "-1.2.3.4", "1.2.3.beta"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                msix_release.package_version(invalid)
+
+    def test_unsigned_candidate_has_separate_identity(self):
+        data = msix_release.appx_manifest(identity=msix_release.PREVIEW_IDENTITY, publisher="CN=Synthetic", version="0.0.0.0", min_os="10.0.26200.0", candidate=True)
+        document = ET.fromstring(data)
+        identity = document.find("{" + msix_release.FOUNDATION + "}Identity")
+        self.assertEqual(identity.attrib["Name"], msix_release.PREVIEW_IDENTITY)
+        self.assertEqual(identity.attrib["ProcessorArchitecture"], "x64")
+        self.assertIn(b"Windows.FullTrustApplication", data)
+
+    def test_default_appinstaller_requires_manual_updates(self):
+        data = msix_release.appinstaller_manifest(identity=msix_release.CONSUMER_IDENTITY, publisher="CN=Synthetic", version="1.2.3.4", package_uri="https://example.test/windows/package.msix", feed_uri="https://example.test/windows/EndfieldHUD-Windows.appinstaller")
+        self.assertNotIn(b"UpdateSettings", data)
+        self.assertNotIn(b"AutomaticBackgroundTask", data)
+
+    def test_opt_in_appinstaller_has_bounded_launch_checks(self):
+        data = msix_release.appinstaller_manifest(identity=msix_release.CONSUMER_IDENTITY, publisher="CN=Synthetic", version="1.2.3.4", package_uri="https://example.test/windows/package.msix", feed_uri="https://example.test/windows/EndfieldHUD-Windows.appinstaller", automatic_updates=True)
+        document = ET.fromstring(data)
+        launch = document.find("{" + msix_release.APP_INSTALLER + "}UpdateSettings/{" + msix_release.APP_INSTALLER + "}OnLaunch")
+        self.assertEqual(launch.attrib, {"HoursBetweenUpdateChecks": "24", "ShowPrompt": "true", "UpdateBlocksActivation": "false"})
+        self.assertNotIn(b"AutomaticBackgroundTask", data)
+
+    def test_mac_latest_and_insecure_feeds_are_rejected(self):
+        for uri in ("http://example.test/windows/feed", "https://user:secret@example.test/windows/feed", "https://example.test/mac/feed", "https://github.com/person/repo/releases/latest/download/EndfieldHUD-Windows.appinstaller"):
+            with self.subTest(uri=uri), self.assertRaises(ValueError):
+                msix_release.https_uri(uri, windows_feed=True)
+
+    def test_msix_payload_is_byte_exact_and_rejects_extra_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "payload"
+            staged.mkdir()
+            (staged / "LICENSE.txt").write_bytes(b"synthetic license")
+            archive = root / "synthetic.msix"
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr("LICENSE.txt", b"synthetic license")
+                package.writestr("AppxBlockMap.xml", b"synthetic SDK metadata")
+            msix_release.verify_msix_payload(archive, staged)
+            with zipfile.ZipFile(archive, "a") as package:
+                package.writestr("private-recording.gif", b"synthetic forbidden content")
+            with self.assertRaisesRegex(ValueError, "approved runtime"):
+                msix_release.verify_msix_payload(archive, staged)
+
+
+@unittest.skipUnless(os.name == "nt", "Windows PowerShell snapshot helper integration")
+class InstallerSnapshotTests(unittest.TestCase):
+    def run_snapshot_case(self, *, corrupt: bool):
+        with tempfile.TemporaryDirectory(prefix="ehud-synthetic-update-") as directory:
+            root = Path(directory)
+            script = root / "snapshot-test.ps1"
+            script.write_text('''param([string]$Helper,[string]$Root,[string]$Corrupt)
+$ErrorActionPreference='Stop'
+$identityName='DDDuoDuo.EndfieldHUD.Windows'
+$errors=$null;$tokens=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile($Helper,[ref]$tokens,[ref]$errors)
+if($errors.Count -gt 0){throw 'Updater parse failure'}
+foreach($statement in $ast.EndBlock.Statements){if($statement -is [Management.Automation.Language.FunctionDefinitionAst]){. ([scriptblock]::Create($statement.Extent.Text))}}
+$data=Join-Path $Root 'SyntheticData'
+$backups=Join-Path $Root 'SyntheticBackups'
+New-Item -ItemType Directory -Path $data | Out-Null
+[IO.File]::WriteAllText((Join-Path $data 'synthetic-note.json'),'original synthetic data')
+$snapshot=New-DataSnapshot $data $backups '1.0.0.0'
+[IO.File]::WriteAllText((Join-Path $data 'synthetic-note.json'),'new synthetic data')
+$rejected=$false
+if($Corrupt -eq 'yes'){[IO.File]::WriteAllText((Join-Path $snapshot 'data/synthetic-note.json'),'corrupted snapshot')}
+try{Restore-VerifiedSnapshot $snapshot $data $backups '1.0.0.0'}catch{if($Corrupt -ne 'yes'){throw};$rejected=$true}
+[ordered]@{rejected=$rejected;content=[IO.File]::ReadAllText((Join-Path $data 'synthetic-note.json'));snapshot_exists=(Test-Path -LiteralPath $snapshot)} | ConvertTo-Json -Compress
+''', encoding="utf-8")
+            shell = shutil.which("pwsh.exe") or "powershell.exe"
+            result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-File", str(script), "-Helper", str(PACKAGING / "install-update.ps1"), "-Root", str(root), "-Corrupt", "yes" if corrupt else "no"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+    def test_synthetic_snapshot_restores_exact_original_data(self):
+        result = self.run_snapshot_case(corrupt=False)
+        self.assertEqual(result["content"], "original synthetic data")
+        self.assertTrue(result["snapshot_exists"])
+
+    def test_altered_snapshot_does_not_replace_current_data(self):
+        result = self.run_snapshot_case(corrupt=True)
+        self.assertTrue(result["rejected"])
+        self.assertEqual(result["content"], "new synthetic data")
+
+
 class ReleaseGateTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -238,6 +331,7 @@ class PreviewPackageTests(unittest.TestCase):
             "LICENSE.txt": b"synthetic MIT notice",
             "CREDITS.md": b"synthetic credits",
             "OrbiPom/Matter-LICENSE.txt": b"synthetic dependency notice",
+            "zlib-LICENSE.txt": b"synthetic zlib notice",
             "WatchSource/runtime-inventory.json": stage_resources.json_bytes({"schema": 1, "profile": "desktop", "files": [], "derived_files": []}),
         }.items():
             path = self.resources / name
@@ -285,8 +379,28 @@ class PreviewPackageTests(unittest.TestCase):
 
     def test_consumer_release_is_refused_even_with_signature(self):
         with mock.patch.object(windows_package, "git_revision", return_value=("a" * 40, False)), mock.patch.object(windows_package, "authenticode", return_value={"status": "Valid", "thumbprint": "TEST"}):
-            with self.assertRaisesRegex(ValueError, "Consumer installer/updater is not implemented"):
+            with self.assertRaisesRegex(ValueError, "Consumer Windows release refused"):
                 windows_package.package_preview(self.repository, self.executable, self.resources, self.repository / "windows" / "dist", git="unused", release=True, version="9.9.9")
+        self.assertFalse((self.repository / "windows" / "dist").exists())
+
+    def test_completed_synthetic_gates_dispatch_to_real_msix_path(self):
+        artifact = self.repository / "synthetic-evidence.json"
+        artifact.write_bytes(b'{"synthetic":true}')
+        proof = {"path": artifact.name, "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+        evidence = {
+            "schema": 1, "chosen_by": "DDDuoDuo", "windows_version": "9.9.9", "source_commit": "a" * 40,
+            "executable_sha256": hashlib.sha256(self.executable.read_bytes()).hexdigest(), "signer_thumbprint": "TEST",
+            "hardware": {"os_build": "synthetic", "cpu": "synthetic", "gpu": "synthetic", "ram_bytes": 1, "monitor_dpi": 96, "refresh_hz": 60},
+            "gates": {name: {"status": "passed", "summary": "synthetic dispatch test", "artifacts": [proof]} for name in windows_package.RELEASE_GATES},
+        }
+        evidence_path = self.repository / "release-evidence.json"
+        evidence_path.write_bytes(stage_resources.json_bytes(evidence))
+        options = {"package_version": "9.9.9.0", "publisher": "CN=Synthetic", "logo_source": self.repository / "synthetic.png", "certificate_thumbprint": "TEST", "timestamp_uri": "https://example.test/time", "asset_base_uri": "https://example.test/windows/9.9.9", "feed_uri": "https://example.test/windows/feed.appinstaller"}
+        with mock.patch.object(windows_package, "git_revision", return_value=("a" * 40, False)), mock.patch.object(windows_package, "authenticode", return_value={"status": "Valid", "thumbprint": "TEST"}), mock.patch.object(msix_release, "create_release", return_value={"synthetic_dispatch": True}) as create:
+            report = windows_package.package_preview(self.repository, self.executable, self.resources, self.repository / "windows" / "dist", git="unused", release=True, version="9.9.9", evidence_path=evidence_path, release_options=options)
+        self.assertTrue(report["synthetic_dispatch"])
+        self.assertEqual(create.call_args.kwargs["version"], "9.9.9.0")
+        self.assertFalse(create.call_args.kwargs["automatic_updates"])
         self.assertFalse((self.repository / "windows" / "dist").exists())
 
 

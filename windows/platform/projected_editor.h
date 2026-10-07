@@ -29,6 +29,7 @@ public:
     bool erase(bool forward);
     void move(bool forward, bool extend);
     void set_clusters(std::vector<std::size_t> boundaries);
+    std::size_t navigation_boundary(std::size_t offset,bool forward) const;
     bool undo();
     bool redo();
     void begin_composition();
@@ -81,6 +82,14 @@ public:
     void set_projection(ProjectiveMapping mapping);
     void focus(bool active);
     bool focused() const;
+    std::uint64_t artwork_revision() const;
+    float scroll_offset() const;
+    void scroll_to(float logical_y);
+    void select_range(std::size_t anchor, std::size_t caret);
+    void set_accessible_name(std::wstring name);
+    // Native host integration and accessibility contract tests obtain a COM
+    // provider reference here. The caller releases the returned interface.
+    HRESULT get_accessibility_provider(REFIID iid,void** provider);
     // Call before TranslateMessage in the application's one message loop.
     bool pre_translate(const MSG& message);
     bool handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRESULT& result);

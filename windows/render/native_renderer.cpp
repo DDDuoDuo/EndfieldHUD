@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
+#include <fstream>
 
 namespace ehud::render {
 HRESULT NativeRenderer::initialize(HWND owner, unsigned width, unsigned height) {
@@ -49,12 +50,82 @@ HRESULT NativeRenderer::bindSurface() {
     const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
     if (FAILED(hr = painter_->CreateBitmapFromDxgiSurface(buffer.Get(), &properties, &surface_))) return hr;
+    ComPtr<ID3D11Texture2D> texture;
+    if (FAILED(hr = buffer.As(&texture))) return hr;
+    D3D11_RENDER_TARGET_VIEW_DESC target{};
+    // Both D3D source output and D2D overlay use encoded-space premultiplied
+    // BGRA for the desktop compositor. Source shader handles RGB encoding.
+    target.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    target.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+    if (FAILED(hr = device_->CreateRenderTargetView(texture.Get(), &target, &renderTarget_))) return hr;
     painter_->SetTarget(surface_.Get());
     return S_OK;
 }
+HRESULT NativeRenderer::loadSourceAssets(const std::filesystem::path& root) {
+    auto source = std::make_shared<SourceDraw>();
+    HRESULT hr = source->initialize(device_.Get(), context_.Get(), painter_.Get(), text_.Get(), root);
+    if (SUCCEEDED(hr)) source_ = std::move(source);
+    return hr;
+}
+HRESULT NativeRenderer::saveDiagnosticFrame(const std::filesystem::path& path) {
+    // Read only this renderer's own synthetic swapchain. No desktop capture.
+    ComPtr<ID3D11Texture2D> buffer;
+    HRESULT hr = swapchain_->GetBuffer(0, IID_PPV_ARGS(&buffer)); if (FAILED(hr)) return hr;
+    D3D11_TEXTURE2D_DESC description{}; buffer->GetDesc(&description);
+    description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0;
+    description.CPUAccessFlags = D3D11_CPU_ACCESS_READ; description.MiscFlags = 0;
+    ComPtr<ID3D11Texture2D> staging;
+    if (FAILED(hr = device_->CreateTexture2D(&description, nullptr, &staging))) return hr;
+    context_->CopyResource(staging.Get(), buffer.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(hr = context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return hr;
+    BITMAPFILEHEADER file{}; BITMAPINFOHEADER info{};
+    const DWORD bytes = description.Width * description.Height * 4;
+    file.bfType = 0x4d42; file.bfOffBits = sizeof(file) + sizeof(info); file.bfSize = file.bfOffBits + bytes;
+    info.biSize = sizeof(info); info.biWidth = static_cast<LONG>(description.Width);
+    info.biHeight = -static_cast<LONG>(description.Height); info.biPlanes = 1; info.biBitCount = 32;
+    info.biCompression = BI_RGB; info.biSizeImage = bytes;
+    std::ofstream output(path, std::ios::binary);
+    output.write(reinterpret_cast<const char*>(&file), sizeof(file)); output.write(reinterpret_cast<const char*>(&info), sizeof(info));
+    for (unsigned row = 0; row < description.Height; ++row)
+        output.write(static_cast<const char*>(mapped.pData) + std::size_t(row) * mapped.RowPitch, std::streamsize(description.Width) * 4);
+    context_->Unmap(staging.Get(), 0); return output ? S_OK : E_FAIL;
+}
+HRESULT NativeRenderer::waitForDiagnosticGpu() {
+    ComPtr<ID3D11Query> event;
+    D3D11_QUERY_DESC description{D3D11_QUERY_EVENT, 0};
+    HRESULT hr = device_->CreateQuery(&description, &event); if (FAILED(hr)) return hr;
+    context_->End(event.Get()); context_->Flush();
+    const auto start = GetTickCount64();
+    while ((hr = context_->GetData(event.Get(), nullptr, 0, 0)) == S_FALSE) {
+        if (GetTickCount64() - start > 5000) return HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+        Sleep(1);
+    }
+    return hr;
+}
+HRESULT NativeRenderer::verifyDiagnosticAlpha() {
+    if (!source_) return E_UNEXPECTED;
+    scene::Frame frame; frame.camera.viewport = {32, 32};
+    scene::Graphic graphic; graphic.color = {1, 1, 1, .5}; graphic.vertexColorReady = true;
+    graphic.quads.push_back({scene::Vec3{-1,-1,0}, {-1,1,0}, {1,1,0}, {1,-1,0}});
+    frame.graphics.push_back(std::move(graphic));
+    HRESULT hr = source_->draw(renderTarget_.Get(), frame); if (FAILED(hr)) return hr;
+    context_->OMSetRenderTargets(0, nullptr, nullptr);
+    ComPtr<ID3D11Texture2D> buffer; if (FAILED(hr = swapchain_->GetBuffer(0, IID_PPV_ARGS(&buffer)))) return hr;
+    D3D11_TEXTURE2D_DESC description{}; buffer->GetDesc(&description);
+    description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0;
+    description.CPUAccessFlags = D3D11_CPU_ACCESS_READ; description.MiscFlags = 0;
+    ComPtr<ID3D11Texture2D> staging; if (FAILED(hr = device_->CreateTexture2D(&description, nullptr, &staging))) return hr;
+    context_->CopyResource(staging.Get(), buffer.Get()); D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(hr = context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return hr;
+    auto pixel = static_cast<const unsigned char*>(mapped.pData) + std::size_t(16) * mapped.RowPitch + 16 * 4;
+    bool correct = true;
+    for (unsigned channel = 0; channel < 4; ++channel) correct = correct && std::abs(int(pixel[channel]) - 128) <= 1;
+    context_->Unmap(staging.Get(), 0); return correct ? S_OK : E_FAIL;
+}
 HRESULT NativeRenderer::resize(unsigned width, unsigned height) {
     if (!swapchain_ || !width || !height) return S_OK;
-    painter_->SetTarget(nullptr); surface_.Reset(); context_->ClearState();
+    painter_->SetTarget(nullptr); surface_.Reset(); renderTarget_.Reset(); context_->ClearState();
     HRESULT hr = swapchain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
     return FAILED(hr) ? hr : bindSurface();
 }
@@ -77,22 +148,27 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
             if (FAILED(hr)) return hr;
         }
         const auto& model = editor->model();
-        if (!editorBitmap_ || editorRevision_ != model.revision() || editorAnchor_ != model.anchor() ||
+        if (!editorBitmap_ || editorRevision_ != model.revision() || editorArtworkRevision_ != editor->artwork_revision() || editorAnchor_ != model.anchor() ||
             editorCaret_ != model.caret() || editorFocused_ != editor->focused()) {
             editorPlane_->BeginDraw(); editorPlane_->Clear(D2D1::ColorF(.035f, .055f, .065f, .9f));
             editor->draw(editorPlane_.Get());
             HRESULT hr = editorPlane_->EndDraw(); if (FAILED(hr)) return hr;
             editorBitmap_.Reset(); if (FAILED(hr = editorPlane_->GetBitmap(&editorBitmap_))) return hr;
             editorRevision_ = model.revision(); editorAnchor_ = model.anchor(); editorCaret_ = model.caret();
+            editorArtworkRevision_ = editor->artwork_revision();
             editorFocused_ = editor->focused();
         }
     }
+    if (source_) {
+        HRESULT hr = source_->draw(renderTarget_.Get(), frame);
+        if (FAILED(hr)) return hr;
+        context_->OMSetRenderTargets(0, nullptr, nullptr);
+    }
     painter_->BeginDraw(); painter_->SetTransform(D2D1::Matrix3x2F::Identity());
-    painter_->Clear(D2D1::ColorF(0, 0, 0, 0));
-    // Geometry diagnostic only. Source meshes/materials/textures must be ported
-    // before this becomes the app renderer; never classify this as visual parity.
+    if (!source_) painter_->Clear(D2D1::ColorF(0, 0, 0, 0));
+    // Keep geometry diagnostics available when source assets were not loaded.
     std::size_t count = 0;
-    for (const auto& graphic : frame.graphics) {
+    if (!source_) for (const auto& graphic : frame.graphics) {
         if (++count > 8192) break;
         const float alpha = static_cast<float>(std::clamp(graphic.color[3], 0.0, 1.0));
         if (alpha <= 0) continue;
@@ -114,7 +190,7 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
         }
     }
     brush_->SetColor(D2D1::ColorF(1, .82f, .2f, 1));
-    const wchar_t label[] = L"ENDFIELDHUD | Windows feasibility geometry probe | Not release-ready";
+    const wchar_t label[] = L"ENDFIELDHUD | Windows feasibility preview | Full app port in progress";
     painter_->DrawText(label, static_cast<UINT32>(std::size(label) - 1), textFormat_.Get(),
         D2D1::RectF(24, 20, static_cast<float>(frame.camera.viewport.x - 24), 50), brush_.Get());
     if (editor && editorBitmap_) {
@@ -135,7 +211,7 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
 void NativeRenderer::reset() {
     if (painter_) painter_->SetTarget(nullptr);
     editorBitmap_.Reset(); editorPlane_.Reset(); editorRevision_ = UINT64_MAX;
-    surface_.Reset(); brush_.Reset(); textFormat_.Reset(); text_.Reset(); painter_.Reset();
+    source_.reset(); renderTarget_.Reset(); surface_.Reset(); brush_.Reset(); textFormat_.Reset(); text_.Reset(); painter_.Reset();
     d2d_.Reset(); factory_.Reset(); visual_.Reset(); target_.Reset(); compositor_.Reset();
     swapchain_.Reset(); context_.Reset(); device_.Reset(); owner_ = nullptr;
 }

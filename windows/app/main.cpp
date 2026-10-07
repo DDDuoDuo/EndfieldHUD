@@ -126,18 +126,22 @@ private:
                 auto root = executableRoot() / L"Resources" / L"NativeScene" / L"Scene";
                 document_ = ehud::scene::Document::load(root);
                 playback_ = std::make_unique<ehud::scene::Playback>(document_->entranceDuration(), document_->exitDuration());
+                buttons_ = std::make_unique<ehud::scene::ButtonMotion>(*document_);
             }
             placeOnActiveMonitor(); RECT client{}; GetClientRect(window_, &client);
             if (!renderer_) {
                 renderer_ = std::make_unique<ehud::render::NativeRenderer>();
                 HRESULT hr = renderer_->initialize(window_, client.right, client.bottom);
                 if (FAILED(hr)) throw std::runtime_error("Native graphics initialization failed");
+                hr = renderer_->loadSourceAssets(executableRoot() / L"Resources" / L"WatchSource");
+                if (FAILED(hr)) throw std::runtime_error("Original source sprite/material resource initialization failed");
                 editor_ = std::make_unique<endfield::platform::ProjectedEditor>();
                 hr = editor_->initialize(window_, renderer_->textFactory(), [this] { dirty_ = true; requestFrame(); });
                 if (FAILED(hr)) throw std::runtime_error("TSF text editor initialization failed; projected input is unavailable");
                 editor_->set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic editing fixture — no saved user data");
                 editor_->set_rectangle(D2D1::RectF(0, 0, 600, 220));
             }
+            buttons_->reset(now()); hovered_.reset(); pressed_.reset();
             playback_->open(now()); dirty_ = true;
             POINT pointer{}; GetCursorPos(&pointer); ScreenToClient(window_, &pointer);
             pointer_ = {static_cast<double>(pointer.x), static_cast<double>(pointer.y)}; pointerChanged_ = true;
@@ -152,6 +156,7 @@ private:
     }
     void close(bool quit) {
         if (editor_) editor_->focus(false);
+        if (pressed_) { pressed_.reset(); if (GetCapture() == window_) ReleaseCapture(); }
         if (!playback_ || playback_->phase() == ehud::scene::Phase::concealed) {
             if (quit) DestroyWindow(window_); return;
         }
@@ -161,6 +166,24 @@ private:
         if (!probe_ && playback_ && playback_->phase() != ehud::scene::Phase::concealed && !frameTimerRunning_) {
             SetTimer(window_, frameTimer, 16, nullptr); frameTimerRunning_ = true;
         }
+    }
+    void updateHovered() {
+        if (!frame_ || !buttons_) return;
+        auto hit = frame_->buttonAt(pointer_);
+        if (hit == hovered_) return;
+        if (hovered_) buttons_->setHovered(false, *hovered_, now());
+        hovered_ = std::move(hit);
+        if (hovered_) buttons_->setHovered(true, *hovered_, now());
+        dirty_ = true; requestFrame();
+    }
+    void renderingFailed(HRESULT status) {
+        KillTimer(window_, frameTimer); frameTimerRunning_ = false;
+        if (playback_) playback_->conceal(); frame_.reset();
+        if (editor_) editor_->focus(false); editor_.reset(); renderer_.reset();
+        ShowWindow(window_, SW_HIDE);
+        wchar_t reason[192]{};
+        swprintf_s(reason, L"Windows preview rendering stopped (0x%08X). Reopen from the tray to retry. This feasibility build is still incomplete.", static_cast<unsigned>(status));
+        MessageBoxW(window_, reason, L"EndfieldHUD Windows preview", MB_OK | MB_ICONERROR);
     }
     void frame() {
         if (!document_ || !renderer_ || !playback_) return;
@@ -175,17 +198,19 @@ private:
             gyro_.retarget(document_->pointerEuler(pointer_, viewport), time, document_->gyroDuration()); pointerChanged_ = false;
         }
         gyro_.finishIfNeeded(time);
-        if (!dirty_ && !gyro_.animating() && sample.phase == ehud::scene::Phase::visible) {
+        const bool buttonAnimation = buttons_ && buttons_->requiresFrames(time);
+        if (!dirty_ && !gyro_.animating() && !buttonAnimation && sample.phase == ehud::scene::Phase::visible) {
             KillTimer(window_, frameTimer); frameTimerRunning_ = false; return;
         }
-        if (frame_ && !dirty_ && sample.phase == ehud::scene::Phase::visible)
+        if (frame_ && !dirty_ && !buttonAnimation && sample.phase == ehud::scene::Phase::visible)
             document_->reproject(*frame_, gyro_.rotation(time));
-        else frame_ = document_->frame({viewport, sample, gyro_.rotation(time)});
-        HRESULT hr = renderer_->draw(*frame_, editor_.get()); dirty_ = false;
-        if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET || hr == D2DERR_RECREATE_TARGET) {
-            editor_.reset(); renderer_.reset(); playback_->conceal(); frame_.reset();
-            KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE);
+        else {
+            ehud::scene::FrameInput input{viewport, sample, gyro_.rotation(time)};
+            input.interaction = buttons_.get(); input.time = time;
+            frame_ = document_->frame(input);
         }
+        HRESULT hr = renderer_->draw(*frame_, editor_.get()); dirty_ = false;
+        if (FAILED(hr)) renderingFailed(hr);
     }
     void writeProbe() {
         KillTimer(window_, probeTimer);
@@ -221,6 +246,9 @@ private:
             renderer_ = std::make_unique<ehud::render::NativeRenderer>(); auto& renderer = *renderer_;
             HRESULT renderStatus = renderer.initialize(window_, 1280, 720);
             if (FAILED(renderStatus)) throw std::runtime_error("D3D11/DirectComposition renderer creation failed");
+            renderStatus = renderer.loadSourceAssets(executableRoot() / L"Resources" / L"WatchSource");
+            if (FAILED(renderStatus)) throw std::runtime_error("Original source sprite resource initialization failed");
+            if (FAILED(renderer.verifyDiagnosticAlpha())) throw std::runtime_error("D3D/D2D encoded premultiplied alpha contract failed");
             HWND unused = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
                 L"EndfieldHUD.Windows.Feasibility", L"Composition capability probe", WS_POPUP, 0, 0, 32, 32,
                 nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -256,10 +284,14 @@ private:
             };
             // Warm caches before comparing bounded lifecycle ownership.
             for (unsigned index = 0; index < 5; ++index) drawCycle(index);
+            if (FAILED(renderer.waitForDiagnosticGpu())) throw std::runtime_error("Warm source GPU drain failed");
             auto before = memory(); DWORD handlesBefore{}; GetProcessHandleCount(GetCurrentProcess(), &handlesBefore);
             for (unsigned index = 5; index < 105; ++index) drawCycle(index);
+            if (FAILED(renderer.waitForDiagnosticGpu())) throw std::runtime_error("Repeated source GPU drain failed");
             auto after = memory(); DWORD handlesAfter{}; GetProcessHandleCount(GetCurrentProcess(), &handlesAfter);
             if (output_.has_parent_path()) std::filesystem::create_directories(output_.parent_path());
+            auto picture = output_; picture.replace_extension(L".bmp");
+            if (FAILED(renderer.saveDiagnosticFrame(picture))) throw std::runtime_error("Synthetic render readback failed");
             std::ofstream output(output_); output << std::setprecision(12)
                 << "{\n  \"schema\": 1,\n  \"scenario\": \"hidden-native-graphics-lifecycle\",\n  \"synthetic\": true,\n"
                 << "  \"elapsed_seconds\": " << std::chrono::duration<double>(Clock::now() - start).count()
@@ -273,7 +305,9 @@ private:
                 << ",\n  \"working_set_after\": " << after.WorkingSetSize << ",\n  \"handles_before\": " << handlesBefore
                 << ",\n  \"handles_after\": " << handlesAfter
                 << ",\n  \"editor_projection_corner_checks\": \"passed\",\n  \"visible_frame_pacing\": \"unverified; hidden-window test\",\n"
-                << "  \"source_material_visual_parity\": \"unverified; geometry-only renderer\",\n  \"live_ime\": \"unverified\"\n}\n";
+                << "  \"encoded_premultiplied_alpha\": \"passed; synthetic half-alpha white GPU readback\",\n"
+                << "  \"source_textures_retained\": " << renderer.textureCount() << ",\n  \"source_text_surfaces_retained\": " << renderer.textCount()
+                << ",\n  \"source_material_visual_parity\": \"unverified; base source image path implemented, FX/HDR incomplete\",\n  \"live_ime\": \"unverified\"\n}\n";
             if (!output) throw std::runtime_error("Cannot write graphics evidence");
             // Return to the actual message loop for the closed-state measure.
             // The retained renderer owns its warmed caches but submits nothing.
@@ -295,6 +329,11 @@ private:
         if (message == WM_MOUSEMOVE) {
             pointer_ = {static_cast<double>(GET_X_LPARAM(lparam)), static_cast<double>(GET_Y_LPARAM(lparam))};
             pointerChanged_ = true; requestFrame();
+            updateHovered();
+            TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window_, 0}; TrackMouseEvent(&tracking);
+        }
+        if ((message == WM_CAPTURECHANGED || message == WM_CANCELMODE) && pressed_ && buttons_) {
+            buttons_->setState(ehud::scene::ButtonState::normal, *pressed_, now()); pressed_.reset(); dirty_ = true; requestFrame();
         }
         if (editor_) { LRESULT result{}; if (editor_->handle_message(message, wparam, lparam, result)) return result; }
         switch (message) {
@@ -303,9 +342,23 @@ private:
         case WM_INPUTLANGCHANGE: if (!probe_) registerShortcut(); break;
         case WM_DISPLAYCHANGE: if (playback_ && playback_->phase() != ehud::scene::Phase::concealed) placeOnActiveMonitor(); dirty_ = true; requestFrame(); return 0;
         case WM_DPICHANGED: { auto* rect = reinterpret_cast<RECT*>(lparam); SetWindowPos(window_, HWND_TOPMOST, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOACTIVATE); dirty_ = true; requestFrame(); return 0; }
-        case WM_SIZE: if (renderer_) renderer_->resize(LOWORD(lparam), HIWORD(lparam)); dirty_ = true; requestFrame(); return 0;
+        case WM_SIZE:
+            if (renderer_) { HRESULT status = renderer_->resize(LOWORD(lparam), HIWORD(lparam)); if (FAILED(status)) { renderingFailed(status); return 0; } }
+            dirty_ = true; requestFrame(); return 0;
         case WM_MOUSEMOVE: return 0;
-        case WM_LBUTTONDOWN: if (frame_) { auto hit = frame_->buttonAt({static_cast<double>(GET_X_LPARAM(lparam)), static_cast<double>(GET_Y_LPARAM(lparam))}); if (hit) OutputDebugStringA(("Source button: " + *hit + "\n").c_str()); } return 0;
+        case WM_MOUSELEAVE:
+            if (hovered_ && buttons_) { buttons_->setHovered(false, *hovered_, now()); hovered_.reset(); dirty_ = true; requestFrame(); }
+            return 0;
+        case WM_LBUTTONDOWN:
+            if (frame_ && buttons_) {
+                pressed_ = frame_->buttonAt({static_cast<double>(GET_X_LPARAM(lparam)), static_cast<double>(GET_Y_LPARAM(lparam))});
+                if (pressed_) { buttons_->setState(ehud::scene::ButtonState::pressed, *pressed_, now()); SetCapture(window_); dirty_ = true; requestFrame(); }
+            } return 0;
+        case WM_LBUTTONUP:
+            if (pressed_ && buttons_) {
+                buttons_->setState(hovered_ == pressed_ ? ehud::scene::ButtonState::highlighted : ehud::scene::ButtonState::normal, *pressed_, now());
+                pressed_.reset(); ReleaseCapture(); dirty_ = true; requestFrame();
+            } return 0;
         case WM_KEYDOWN: if (wparam == VK_ESCAPE) { close(false); return 0; } break;
         case WM_TIMER: if (wparam == frameTimer) frame(); else if (wparam == probeTimer) writeProbe(); return 0;
         case WM_CLOSE: close(false); return 0;
@@ -338,6 +391,8 @@ private:
     std::wstring shortcutLabel_;
     Clock::time_point animationOrigin_{Clock::now()}, probeStart_{}; double cpuStart_{}; DWORD handlesStart_{};
     std::optional<ehud::scene::Document> document_; std::unique_ptr<ehud::scene::Playback> playback_;
+    std::unique_ptr<ehud::scene::ButtonMotion> buttons_;
+    std::optional<ehud::scene::SourceId> hovered_, pressed_;
     std::unique_ptr<ehud::render::NativeRenderer> renderer_;
     std::unique_ptr<endfield::platform::ProjectedEditor> editor_;
     std::optional<ehud::scene::Frame> frame_; ehud::scene::GyroMotion gyro_; ehud::scene::Vec2 pointer_{};

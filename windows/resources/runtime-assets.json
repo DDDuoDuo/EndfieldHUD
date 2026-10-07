@@ -14,6 +14,18 @@
       "license_sha256": "ec1926b78ed6487476a6ee322237067582e5667816737fadcc09570869fa88a0"
     }
   ],
+  "native_dependency_notices": [
+    {
+      "repository_path": "windows/dependencies/zlib-LICENSE.txt",
+      "destination": "zlib-LICENSE.txt",
+      "name": "zlib",
+      "version": "1.3.2",
+      "archive_sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16",
+      "license_sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+      "license_bytes": 1002,
+      "distribution": "six decoder source files statically linked; no DLL"
+    }
+  ],
   "trees": [
     {"source": "Watch", "patterns": ["*.png", "SOURCES.json"]},
     {
@@ -31,6 +43,7 @@
     "Scene/runtime-root-camera.json",
     "Scene/sprites.json",
     "Scene/watch-blur.json",
+    "Scene/controller-transitions.json",
     "Scene/materials.json",
     "Meshes/Equipring.json",
     "Meshes/watchline.json",

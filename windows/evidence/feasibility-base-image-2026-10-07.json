@@ -1,0 +1,120 @@
+{
+  "schema": 2,
+  "author": "DDDuoDuo",
+  "date": "2026-10-07",
+  "source_baseline": "fc429e63a2bead66f194ddb18ca947684de8fd76",
+  "executable_sha256": "6ee40d404adbb834b23bc51ea5ca9959133d3f41e1abf513810ff2756875b1dd",
+  "complete_migration": false,
+  "consumer_release_ready": false,
+  "hardware": {
+    "schema": 1,
+    "os_version": "10.0.26200",
+    "os_build": "26200",
+    "os_architecture": "64 位",
+    "cpu": [
+      "Intel(R) Core(TM) Ultra 7 251HX"
+    ],
+    "ram_bytes": 16573128704,
+    "gpus": [
+      {
+        "Name": "NVIDIA GeForce RTX 5060 Laptop GPU",
+        "DriverVersion": "32.0.16.1047",
+        "CurrentHorizontalResolution": 2560,
+        "CurrentVerticalResolution": 1600,
+        "CurrentRefreshRate": 165
+      },
+      {
+        "Name": "Intel(R) Graphics",
+        "DriverVersion": "32.0.101.8801",
+        "CurrentHorizontalResolution": 2560,
+        "CurrentVerticalResolution": 1600,
+        "CurrentRefreshRate": 164
+      }
+    ],
+    "monitors": [
+      {
+        "left": 0,
+        "top": 0,
+        "width": 2560,
+        "height": 1600,
+        "dpi_x": 144,
+        "dpi_y": 144
+      }
+    ],
+    "executable_sha256": "6ee40d404adbb834b23bc51ea5ca9959133d3f41e1abf513810ff2756875b1dd",
+    "settings": "Synthetic 1280x720 hidden HWND; ambient off; no real data; source fixture pointer; source animation endpoints",
+    "limits": "No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified."
+  },
+  "graphics": {
+    "schema": 1,
+    "scenario": "hidden-native-graphics-lifecycle",
+    "synthetic": true,
+    "elapsed_seconds": 1.5327034,
+    "direct_composition_hresult": 0,
+    "windows_ui_composition_hresult": 0,
+    "dispatcher_queue_hresult": 0,
+    "tsf_hresult": 0,
+    "source_nodes": 789,
+    "measured_reopen_cycles": 100,
+    "warmup_cycles": 5,
+    "submitted_frames": 105,
+    "private_bytes_before": 179204096,
+    "private_bytes_after": 172953600,
+    "working_set_before": 114089984,
+    "working_set_after": 108109824,
+    "handles_before": 583,
+    "handles_after": 583,
+    "editor_projection_corner_checks": "passed",
+    "visible_frame_pacing": "unverified; hidden-window test",
+    "encoded_premultiplied_alpha": "passed; synthetic half-alpha white GPU readback",
+    "source_textures_retained": 97,
+    "source_text_surfaces_retained": 2,
+    "source_material_visual_parity": "unverified; base source image path implemented, FX/HDR incomplete",
+    "live_ime": "unverified"
+  },
+  "closed": {
+    "schema": 1,
+    "scenario": "closed-after-105-graphics-cycles",
+    "synthetic": true,
+    "elapsed_seconds": 60.9931651,
+    "process_cpu_seconds": 0.015625,
+    "hud_frames_submitted": 0,
+    "renderer_created": true,
+    "working_set_bytes": 94478336,
+    "private_bytes": 164585472,
+    "handles_start": 584,
+    "handles_end": 580,
+    "monitors": [
+      {
+        "left": 0,
+        "top": 0,
+        "width": 2560,
+        "height": 1600,
+        "dpi_x": 144,
+        "dpi_y": 144
+      }
+    ],
+    "gpu_utilization": "unverified; requires GPU trace",
+    "wakeups": "unverified; WPR trace required",
+    "performance_parity": "unverified"
+  },
+  "tests": {
+    "native_ctest_suites": 4,
+    "scene_source_checks": 1564,
+    "packaging_checks": 46,
+    "status": "passed"
+  },
+  "installer": {
+    "sdk_msix_candidate_schema_and_payload": "passed",
+    "synthetic_snapshot_restore_and_tamper_rejection": "passed",
+    "trusted_install_update_rollback_uninstall": "unverified",
+    "signing_identity": "unavailable"
+  },
+  "limits": [
+    "Hidden source-frame endpoints, not visible opening/closing animation or module switching",
+    "GPU memory/utilization, wakeups, input latency and visible p50/p95 unverified",
+    "FX, soft-mask, stencil, HDR, backdrop, desktop mounting and original typography incomplete",
+    "Live CJK IME, Narrator, whole-HUD accessibility and mixed-DPI hot-plug unverified",
+    "Data import, modules, system providers and account adapters not implemented"
+  ]
+}

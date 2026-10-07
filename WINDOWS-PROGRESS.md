@@ -4,7 +4,19 @@ Authorship: **DDDuoDuo**. Branch: `codex/windows-migration`. Source baseline: `f
 
 **Milestone 1 is in progress. The full app is not migrated and a Windows consumer release is not ready.** This log supplements [WINDOWS-MIGRATION.md](WINDOWS-MIGRATION.md); its original requirements remain authoritative and unchanged. No required module is removed or narrowed to fit this prototype. Mac sources, scripts, resources, version, releases and update feed remain unchanged.
 
-## Implemented and verified
+## Latest continuation
+
+- Original source sprites now draw as filled perspective-correct D3D11 geometry with authored mip chains, source texture IDs and ancestor rectangular masks. Source layout/groups/fitter, sorting, radial fills, scroll/slant, button Animator transitions and selectable tint are implemented; live shell hover/press uses the same presentation clock. Full FX/soft-mask/stencil/HDR, desktop rows/profile mounting, exact typography and deployment flicker remain incomplete.
+- Projected editing now includes TSF display attributes/marked ranges, viewport scroll/caret reveal and native UIA Edit/Text/Value providers. DirectWrite caching includes the editor's artwork revision. Synthetic COM and coordinate contracts pass; live CJK, Narrator and whole-HUD accessibility remain unverified.
+- Four native CTest suites pass, including **1,564** combined scene/source checks, and **46** Python packaging tests pass. The native packed-resource decoder rejects corrupt, oversized, truncated and trailing raw-DEFLATE payloads. Its static zlib 1.3.2 source/archive/license are pinned.
+- Actual Windows SDK MakeAppx schema and byte-exact payload validation passes for an isolated unsigned MSIX candidate. Signed MSIX/App Installer generation, manual consent, optional explicitly enabled launch update checks, safe data snapshots and prior-package rollback helpers are implemented. Synthetic restore and tamper rejection pass; trusted live installation/update/uninstall remains unverified without a signing identity.
+- The current staged resource inventory has **752 files, 28.61 MiB**, including eleven decoded scene/controller inputs and the zlib notice. No user data, credentials, recordings or documentation media are bundled.
+
+The latest sanitized evidence is [windows/evidence/feasibility-base-image-2026-10-07.json](windows/evidence/feasibility-base-image-2026-10-07.json). The source renderer originally grew private bytes by 65.48 MiB across 100 rapid hidden submits. Reusing one vertex upload per frame and draining queued GPU work before snapshots resolved that observed growth: private bytes **179,204,096 → 172,953,600**, working set **114,089,984 → 108,109,824**, handles **583 → 583** over 100 source-endpoint cycles after five warmups. The same warmed process then closed for **60.993 seconds**, submitting **0** additional HUD frames with **0.015625 CPU seconds**. These are hidden endpoint tests, not visible animation or module-switch benchmarks. GPU utilization, wakeups, live input latency and p50/p95 remain unverified.
+
+A renderer review caught incompatible D3D/D2D alpha encoding. The output now uses one encoded-space premultiplied BGRA contract; an actual synthetic half-alpha-white GPU readback passes. Rendering/resize failures park and report the preview instead of being silently ignored. Longer cache/device-loss and matched Mac visual/performance acceptance remain required.
+
+## Initial feasibility baseline (d03915a)
 
 - Native Windows-only C++20/CMake x64 executable, static MSVC runtime, per-monitor-v2 manifest, single lifecycle owner, tray activation, Explorer restart handler, keyboard-layout-aware Ctrl/backtick registration with conflict labels, suspend parking, and idle/closed frame scheduling. Live shell interaction and OS-change acceptance still need testing.
 - Source scene loader: 789 original nodes, exact decimal signed IDs, source Hermite/stepped/weighted curves, finite OutQuad clocks, camera/FOV/canvas arithmetic, quaternion gyro, original sprite and triangle geometry, source-mask inverse hit testing and shared frame transforms. Pointer-only reprojection retains geometry allocations. Source flicker primitives are ported but their shell integration is pending.
@@ -18,7 +30,7 @@ Authorship: **DDDuoDuo**. Branch: `codex/windows-migration`. Source baseline: `f
 
 Windows 11 x64, OS build **26200**, Intel Core Ultra 7 251HX, NVIDIA RTX 5060 Laptop GPU plus Intel Graphics, RAM **16,573,128,704 bytes**. One attached display: 2560×1600, **144 DPI**, NVIDIA reports 165 Hz. Mixed-DPI and unplug/recovery tests cannot be represented by this single-display measurement.
 
-Toolchain: Visual Studio Build Tools 17.14.37710.0, MSVC tools 14.44.35207/compiler 19.44, Windows SDK 10.0.26100.0, CMake 3.31.6-msvc6, Python 3.12.14. No third-party native runtime or background browser is added.
+Toolchain: Visual Studio Build Tools 17.14.37710.0, MSVC tools 14.44.35207/compiler 19.44, Windows SDK 10.0.26100.0, CMake 3.31.6-msvc6, Python 3.12.14. The latest build adds a hash-pinned static zlib 1.3.2 inflater; no third-party DLL or background browser is added.
 
 Sanitized measurements and executable hash are in [windows/evidence/feasibility-2026-10-07.json](windows/evidence/feasibility-2026-10-07.json). Raw local outputs stay ignored under `windows/evidence/local`.
 
@@ -37,10 +49,10 @@ The hidden probe exposed a temporary-HWND null-pointer bug; it was fixed and the
 
 | Required gate | Status | Remaining work |
 | --- | --- | --- |
-| Transparent source circle/buttons, exact opening/closing, live tilt and hits | **Incomplete** | Geometry/camera/clips/hit contracts are tested; original HLSL materials/textures/HDR, layout writers, button controllers, shell flicker and visible Mac comparison remain. The current outline renderer is a diagnostic, not visual parity. |
+| Transparent source circle/buttons, exact opening/closing, live tilt and hits | **Incomplete** | Source sprites/mips, layout, ordering, radial fills and button controllers are now implemented; full FX/soft-mask/stencil/HDR, desktop mounting, shell flicker and visible Mac comparison remain. The renderer remains a feasibility preview. |
 | Frozen backdrop and recordable HUD/custom cursor | **Unverified** | No desktop capture performed. Prototype pre-opening capture/guarded refresh, test recursion and saved Windows recordings, implement/test cursor ownership. Current cursor is native. |
 | Mixed-DPI selection, moving/unplugging screen | **Unverified** | Physical-coordinate/per-monitor shell exists; only one display is connected. Explicit selected-monitor settings and real hot-plug acceptance remain. |
-| Tilted editor with CJK IME, caret, keyboard and font comparisons | **Partially verified** | TSF/model/DirectWrite/shared projection checks pass. Live IME composition/candidates, marked-text decoration, scrolling, UI Automation and Mac metrics are pending. |
+| Tilted editor with CJK IME, caret, keyboard and font comparisons | **Partially verified** | TSF/model/DirectWrite/shared projection, scroll and native UIA contracts pass. Marked-text decoration is implemented. Live CJK composition/candidates, Narrator, whole-HUD accessibility and Mac metrics remain unverified. |
 | Closed parking, bounded reopen memory, smooth pacing | **Partially verified** | Closed frame submissions and CPU measured; 100 hidden cycles pass ownership/handle checks. Private-byte rise, GPU budgets and visible frame pacing remain unresolved. |
 
 The five gates have not passed as a set. Module porting and consumer shipment cannot proceed on a claimed completed architecture; continue resolving milestone 1 before advancing the handoff's sequence.
@@ -55,10 +67,10 @@ The five gates have not passed as a set. Module porting and consumer shipment ca
 | Battery/device readings, Storage/Activity Monitor, audio/Now Playing, Work Mode | Not implemented. OS/provider capability tests, parked observers and Focus/DND restrictions remain. |
 | China/Global official login, signing, sanity, synced profile | Not implemented or live tested. No credentials transferred/read; require Windows reauthentication and byte-identical synthetic signing tests first. |
 | Direct tray drops, notifications/startup, accessibility, recording, sleep/device loss | Unverified; HUD shelf drop target and fallback/capability reports still required. |
-| Signed installation/update/rollback/uninstall, ARM64/older Windows | Not implemented/tested. Only the x64 feasibility build is established. |
+| Signed installation/update/rollback/uninstall, ARM64/older Windows | MSIX/App Installer and consent/backup/rollback helpers implemented. Unsigned SDK candidate and synthetic restore/tamper checks pass; trusted live install/update/uninstall remains unverified. Only x64 is tested. |
 
 ## Release preparation
 
-The Windows developer ZIP has its own name, inventory and hashes and does not change any Mac release/feed. It is unsigned (`NotSigned`) and explicitly labeled incomplete. DDDuoDuo has not chosen a Windows consumer version or signing identity. No release tag, consumer version bump, release-note change, installer, upload to Releases, or publication has been made.
+The Windows developer ZIP has its own name, inventory and hashes and does not change any Mac release/feed. It is unsigned (`NotSigned`) and explicitly labeled incomplete. DDDuoDuo requested the latest build and release publication, superseding the handoff's earlier instruction not to publish. A signing identity is unavailable, and full consumer gates remain incomplete. The choice between a public unsigned feasibility prerelease and waiting for the complete signed port remains pending after the signing explanation. A prepared draft does not constitute publication or completed migration.
 
 To reproduce: [windows/README.md](windows/README.md), [packaging documentation](windows/packaging/README.md), and `windows/tests/run-feasibility.ps1`. The [release evidence template](windows/packaging/release-evidence.template.json) deliberately leaves every consumer gate unverified. Advance through all seven handoff milestones and resolve measured regressions before preparing a release candidate.

@@ -139,13 +139,13 @@ def release_failures(evidence: dict, *, version: str | None, revision: str, dirt
     return failures
 
 
-def package_preview(repository: Path, executable: Path, resources: Path, output: Path, *, git: str, build_metadata: Path | None = None, release: bool = False, version: str | None = None, evidence_path: Path | None = None) -> dict:
+def package_preview(repository: Path, executable: Path, resources: Path, output: Path, *, git: str, build_metadata: Path | None = None, release: bool = False, version: str | None = None, evidence_path: Path | None = None, release_options: dict | None = None) -> dict:
     repository, executable, resources, output = repository.resolve(), executable.resolve(), resources.resolve(), output.resolve()
     if not output.is_relative_to(repository / "windows" / "dist"):
         raise ValueError("Windows packages must stay inside windows/dist, separate from Mac releases")
     architecture = pe_architecture(executable)
     resource_inventory = verify_resources(resources)
-    for notice in ("LICENSE.txt", "CREDITS.md", "OrbiPom/Matter-LICENSE.txt"):
+    for notice in ("LICENSE.txt", "CREDITS.md", "OrbiPom/Matter-LICENSE.txt", "zlib-LICENSE.txt"):
         checked_file(resources, notice)
     revision, dirty = git_revision(repository, git)
     executable_hash = file_digest(executable)
@@ -153,11 +153,14 @@ def package_preview(repository: Path, executable: Path, resources: Path, output:
     if release:
         evidence = json.loads(evidence_path.read_bytes()) if evidence_path else {}
         failures = release_failures(evidence, version=version, revision=revision, dirty=dirty, executable_sha256=executable_hash, signature=signature, evidence_root=evidence_path.parent if evidence_path else repository)
-        # A ZIP preview does not prove desktop installation, update replacement,
-        # rollback or signed installer capabilities. Deliberately refuse until
-        # the chosen consumer installer pipeline is implemented and tested.
-        failures.append("Consumer installer/updater is not implemented; this pipeline creates developer previews only")
-        raise ValueError("Consumer Windows release refused:\n- " + "\n- ".join(failures))
+        options = release_options or {}
+        for field in ("package_version", "publisher", "logo_source", "certificate_thumbprint", "timestamp_uri", "asset_base_uri", "feed_uri"):
+            if not options.get(field):
+                failures.append("Missing chosen signed MSIX release setting: " + field)
+        if failures:
+            raise ValueError("Consumer Windows release refused:\n- " + "\n- ".join(failures))
+        from msix_release import create_release
+        return create_release(repository, executable, resources, output, windows_version=version, version=options["package_version"], publisher=options["publisher"], logo_source=options["logo_source"], certificate_thumbprint=options["certificate_thumbprint"], timestamp_uri=options["timestamp_uri"], asset_base_uri=options["asset_base_uri"], feed_uri=options["feed_uri"], evidence_sha256=file_digest(evidence_path), source_commit=revision, min_os=options.get("min_os", "10.0.26200.0"), makeappx=options.get("makeappx"), signtool=options.get("signtool"), automatic_updates=bool(options.get("automatic_updates")), signer_script=options.get("signer_script"))
     if version or evidence_path:
         raise ValueError("Developer preview must not assign a consumer Windows version")
     files: dict[str, Path] = {"EndfieldHUDWindows.exe": executable}
@@ -188,11 +191,12 @@ def package_preview(repository: Path, executable: Path, resources: Path, output:
             {"name": "Windows system APIs", "distribution": "OS provided", "package_bytes": 0, "license": "Windows license", "version": "see build SDK and measured OS evidence"},
             {"name": "MSVC C++ runtime", "distribution": "statically linked /MT", "package_bytes": "included in executable", "license": "Microsoft Visual Studio runtime redistribution terms", "version": "see build compiler metadata"},
             {"name": "Matter.js", "version": "0.20.0", "distribution": "dormant original OrbiPom asset", "license": "MIT", "license_path": "Resources/OrbiPom/Matter-LICENSE.txt", "engine_status": "Windows game adapter not implemented"},
+            {"name": "zlib", "version": "1.3.2", "archive_sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16", "distribution": "six source files statically linked; no DLL", "license": "zlib", "license_path": "Resources/zlib-LICENSE.txt", "package_bytes": "included in measured executable; 1002-byte notice"},
         ],
         "files": records, "installed_payload_bytes": sum(record["bytes"] for record in records),
         "resources_bytes": resource_inventory["installed_bytes"],
         "native_scene_duplicate_bytes": resource_inventory["native_scene_duplicate_bytes"],
-        "consumer_release": "blocked by incomplete feasibility/parity evidence and unimplemented signed installer/updater",
+        "consumer_release": "requires completed feasibility/parity/install/update evidence and trusted signed MSIX",
     }
     output.mkdir(parents=True, exist_ok=True)
     stem = f"EndfieldHUD-Windows-{architecture}-preview-{revision[:12]}"
@@ -239,13 +243,30 @@ def main() -> None:
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--version")
     parser.add_argument("--evidence", type=Path)
+    parser.add_argument("--package-version")
+    parser.add_argument("--publisher")
+    parser.add_argument("--logo-source", type=Path)
+    parser.add_argument("--certificate-thumbprint")
+    parser.add_argument("--timestamp-uri")
+    parser.add_argument("--asset-base-uri")
+    parser.add_argument("--feed-uri")
+    parser.add_argument("--min-os", default="10.0.26200.0")
+    parser.add_argument("--makeappx", type=Path)
+    parser.add_argument("--signtool", type=Path)
+    parser.add_argument("--automatic-updates", action="store_true", help="explicitly opt into Windows App Installer launch checks; default is manual consent")
+    parser.add_argument("--signer-script", type=Path, help="explicit local PowerShell wrapper for an authorized signing service; output is still trust/hash verified")
     arguments = parser.parse_args()
     try:
-        report = package_preview(arguments.repository, arguments.executable, arguments.resources, arguments.output or arguments.repository / "windows" / "dist", git=arguments.git, build_metadata=arguments.build_metadata, release=arguments.release, version=arguments.version, evidence_path=arguments.evidence)
+        options = {"package_version": arguments.package_version, "publisher": arguments.publisher, "logo_source": arguments.logo_source, "certificate_thumbprint": arguments.certificate_thumbprint, "timestamp_uri": arguments.timestamp_uri, "asset_base_uri": arguments.asset_base_uri, "feed_uri": arguments.feed_uri, "min_os": arguments.min_os, "makeappx": arguments.makeappx, "signtool": arguments.signtool, "automatic_updates": arguments.automatic_updates, "signer_script": arguments.signer_script}
+        report = package_preview(arguments.repository, arguments.executable, arguments.resources, arguments.output or arguments.repository / "windows" / "dist", git=arguments.git, build_metadata=arguments.build_metadata, release=arguments.release, version=arguments.version, evidence_path=arguments.evidence, release_options=options)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")
-    print(f"Windows developer preview: {report['archive']}; download {report['download_bytes'] / 1048576:.2f} MiB; installed {report['installed_bytes_including_inventory'] / 1048576:.2f} MiB")
-    print(f"SHA-256: {report['archive_sha256']}")
+    if arguments.release:
+        print(f"Signed Windows MSIX: {report['file']}; download {report['download_bytes'] / 1048576:.2f} MiB; installed payload {report['installed_payload_bytes'] / 1048576:.2f} MiB")
+        print(f"SHA-256: {report['sha256']}")
+    else:
+        print(f"Windows developer preview: {report['archive']}; download {report['download_bytes'] / 1048576:.2f} MiB; installed {report['installed_bytes_including_inventory'] / 1048576:.2f} MiB")
+        print(f"SHA-256: {report['archive_sha256']}")
 
 
 if __name__ == "__main__":

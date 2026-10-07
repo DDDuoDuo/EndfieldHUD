@@ -210,6 +210,14 @@ def stage_resources(repository: Path, destination: Path) -> dict:
             target.write_bytes(path.read_bytes())
         for name, target_name in [("LICENSE", "LICENSE.txt"), ("CREDITS.md", "CREDITS.md")]:
             (staged / target_name).write_bytes(checked_file(repository, name).read_bytes())
+        native_dependencies = selection.get("native_dependency_notices", [])
+        for dependency in native_dependencies:
+            notice = checked_file(repository, dependency["repository_path"]).read_bytes()
+            if len(notice) != dependency["license_bytes"] or sha256(notice) != dependency["license_sha256"]:
+                raise ValueError("Native dependency license pin changed: " + dependency["name"])
+            target = staged / safe_relative(dependency["destination"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(notice)
         native_records = []
         for name in selection["native_scene_metadata"]:
             packed_path = checked_file(staged / "WatchSource", name)
@@ -233,6 +241,7 @@ def stage_resources(repository: Path, destination: Path) -> dict:
             "installed_bytes": sum(record["bytes"] for record in files),
             "selection_sha256": sha256(selection_path.read_bytes()), "watch_packer_sha256": sha256(packer.read_bytes()),
             "native_scene_duplicate_bytes": sum(record["bytes"] for record in native_records),
+            "native_dependencies": native_dependencies,
         }
         (staged / INVENTORY).write_bytes(json_bytes(manifest))
         verify_resources(staged)

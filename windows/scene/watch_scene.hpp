@@ -117,12 +117,13 @@ struct HitRegion {
         Rect rect{};
         Mat4 world{Mat4::identity()};
         Mat4 sceneWorld{Mat4::identity()};
+        SourceId nodeId;
     };
     std::vector<Mask> masks;
     Mat4 sceneWorld{Mat4::identity()};
 };
 struct Graphic {
-    SourceId nodeId, componentId, materialId;
+    SourceId nodeId, componentId, materialId, textureId;
     std::string path, kind, text;
     std::filesystem::path texturePath;
     Rect rect{};
@@ -135,7 +136,29 @@ struct Graphic {
     double fontSize{24};
     std::map<std::string, double> sampledProperties;
     Mat4 sceneWorld{Mat4::identity()};
+    int sortingOrder{};
+    bool vertexColorReady{}; // UI Color32/tint/canvas color-space policy already applied.
 };
+struct FilledGeometry {
+    std::vector<std::array<Vec3, 4>> quads;
+    std::vector<std::array<Vec2, 4>> uvQuads;
+};
+// Exact source Image filled methods: horizontal, vertical, radial90/180/360.
+FilledGeometry filledGeometry(Rect rect, std::array<Vec2, 4> uv, int method, int origin,
+                              bool clockwise, double amount);
+struct NodeGeometry {
+    SourceId id;
+    std::string path;
+    std::optional<Rect> rect;
+    Mat4 world{Mat4::identity()}, sceneWorld{Mat4::identity()};
+    bool active{};
+    int sortingOrder{};
+};
+struct ScrollInfo {
+    SourceId nodeId, contentId, viewportId;
+    double hiddenLength{}, sensitivity{}, normalizedPosition{};
+};
+struct FrameState;
 struct Frame {
     Camera camera{};
     Mat4 worldRoot{Mat4::identity()};
@@ -144,12 +167,27 @@ struct Frame {
     std::vector<HitRegion> hits;
     std::vector<std::string> diagnostics;
     double backdropAlpha{};
+    std::vector<NodeGeometry> nodes;
+    std::optional<ScrollInfo> scroll;
     std::optional<SourceId> buttonAt(Vec2 point) const;
+    const NodeGeometry *node(std::string_view id) const;
+
+  private:
+    friend class Document;
+    std::shared_ptr<const FrameState> sourceState_;
 };
+class ButtonMotion;
 struct FrameInput {
     Vec2 viewport{1920, 1080};
     PlaybackSample playback{};
     Quaternion rootRotation{};
+    ButtonMotion *interaction{};
+    double time{};
+    bool reduceMotion{};
+    double verticalNormalizedPosition{1};
+    std::optional<int> panelBase;
+    using IntrinsicSize = std::function<std::optional<Vec2>(const SourceId &, const Rect &)>;
+    IntrinsicSize intrinsicSize;
 };
 struct Button {
     SourceId id;
@@ -175,9 +213,36 @@ class Document {
     std::size_t nodeCount() const;
 
   private:
+    friend class ButtonMotion;
     struct Impl;
     explicit Document(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
     std::shared_ptr<const Impl> impl_;
+};
+
+enum class ButtonState { normal, highlighted, pressed, selected, disabled };
+// State ownership is separate from the immutable document. The caller passes
+// the same visible monotonic clock used by wrapper/gyro/presentation.
+class ButtonMotion {
+  public:
+    explicit ButtonMotion(const Document &document);
+    ~ButtonMotion();
+    ButtonMotion(ButtonMotion &&) noexcept;
+    ButtonMotion &operator=(ButtonMotion &&) noexcept;
+    ButtonMotion(const ButtonMotion &) = delete;
+    ButtonMotion &operator=(const ButtonMotion &) = delete;
+    void reset(double time, bool reduceMotion = false);
+    void setState(ButtonState state, const SourceId &id, double time, bool reduceMotion = false);
+    void setHovered(bool hovered, const SourceId &id, double time, bool reduceMotion = false);
+    void setEnabled(bool enabled, const SourceId &id, double time);
+    std::optional<ButtonState> state(const SourceId &id) const;
+    bool requiresFrames(double time) const;
+    std::uint64_t generation() const;
+    std::vector<SourceId> instanceIds() const;
+
+  private:
+    friend class Document;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace ehud::scene
