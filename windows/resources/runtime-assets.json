@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "policy": "explicit-runtime-assets-only",
+  "watch_profile": "desktop",
+  "files": ["EndfieldIndustriesSource.png"],
+  "pins": [
+    {
+      "path": "OrbiPom/matter-0.20.0.js",
+      "version": "0.20.0",
+      "bytes": 83322,
+      "sha256": "914ba8d41aacb2addb490dc2e011cf862e0233edba0eb893b4401733fb883622",
+      "license": "MIT",
+      "license_path": "OrbiPom/Matter-LICENSE.txt",
+      "license_sha256": "ec1926b78ed6487476a6ee322237067582e5667816737fadcc09570869fa88a0"
+    }
+  ],
+  "trees": [
+    {"source": "Watch", "patterns": ["*.png", "SOURCES.json"]},
+    {
+      "source": "AppIconSources",
+      "patterns": ["*.png", "CenterLogos/*.png", "CenterLogos/SOURCE.json", "EndfieldWiki/*.png", "EndfieldWiki/SOURCES.json", "Factions/*.png"],
+      "exclude": ["FactionAtlas.png"]
+    },
+    {"source": "WorldMap", "patterns": ["Terrain.bin", "Countries.bin", "SOURCES.json", "Countries-SOURCES.json"]},
+    {"source": "MediaAssembly", "patterns": ["filter-icons/*.png", "luts/*.rgb8", "stickers/*.png", "provenance.json"]},
+    {"source": "OrbiPom", "patterns": ["*.png", "matter-0.20.0.js", "orbipom.js", "Matter-LICENSE.txt", "provenance.json"]}
+  ],
+  "native_scene_metadata": [
+    "Scene/scene.json",
+    "Scene/clips.json",
+    "Scene/runtime-root-camera.json",
+    "Scene/sprites.json",
+    "Scene/watch-blur.json",
+    "Scene/materials.json",
+    "Meshes/Equipring.json",
+    "Meshes/watchline.json",
+    "Meshes/Plane.json",
+    "Meshes/Cylinder.json"
+  ],
+  "excluded": [
+    "docs/media", "recordings", "reference exports", "user data", "build caches",
+    "debug symbols", "shader extraction intermediates", "FactionAtlas.png",
+    "source SDF font atlases", "Mac Info.plist/entitlements/frameworks"
+  ]
+}

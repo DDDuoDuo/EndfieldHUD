@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "author": "DDDuoDuo",
+  "measured_date": "2026-10-07",
+  "source_baseline": "4079363c4a34d09f60f3f593b8b4f1cb82d9b518",
+  "implementation": "Native feasibility code in this commit; no consumer release",
+  "hardware": {
+    "schema": 1,
+    "os_version": "10.0.26200",
+    "os_build": "26200",
+    "os_architecture": "64 位",
+    "cpu": [
+      "Intel(R) Core(TM) Ultra 7 251HX"
+    ],
+    "ram_bytes": 16573128704,
+    "gpus": [
+      {
+        "Name": "NVIDIA GeForce RTX 5060 Laptop GPU",
+        "DriverVersion": "32.0.16.1047",
+        "CurrentHorizontalResolution": 2560,
+        "CurrentVerticalResolution": 1600,
+        "CurrentRefreshRate": 165
+      },
+      {
+        "Name": "Intel(R) Graphics",
+        "DriverVersion": "32.0.101.8801",
+        "CurrentHorizontalResolution": 2560,
+        "CurrentVerticalResolution": 1600,
+        "CurrentRefreshRate": 164
+      }
+    ],
+    "monitors": [
+      {
+        "left": 0,
+        "top": 0,
+        "width": 2560,
+        "height": 1600,
+        "dpi_x": 144,
+        "dpi_y": 144
+      }
+    ],
+    "executable_sha256": "66cfb6b614b3c81a5436b9b43d1fa12c54d966472130d0c3b591440136cdf7b2",
+    "settings": "Synthetic 1280x720 hidden HWND; ambient off; no real data; source fixture pointer; source animation endpoints",
+    "limits": "No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified."
+  },
+  "graphics": {
+    "schema": 1,
+    "scenario": "hidden-native-graphics-lifecycle",
+    "synthetic": true,
+    "elapsed_seconds": 1.4812383,
+    "direct_composition_hresult": 0,
+    "windows_ui_composition_hresult": 0,
+    "dispatcher_queue_hresult": 0,
+    "tsf_hresult": 0,
+    "source_nodes": 789,
+    "measured_reopen_cycles": 100,
+    "warmup_cycles": 5,
+    "submitted_frames": 105,
+    "private_bytes_before": 152805376,
+    "private_bytes_after": 161763328,
+    "working_set_before": 98865152,
+    "working_set_after": 108068864,
+    "handles_before": 563,
+    "handles_after": 563,
+    "editor_projection_corner_checks": "passed",
+    "visible_frame_pacing": "unverified; hidden-window test",
+    "source_material_visual_parity": "unverified; geometry-only renderer",
+    "live_ime": "unverified"
+  },
+  "closed_after_graphics": {
+    "schema": 1,
+    "scenario": "closed-after-105-graphics-cycles",
+    "synthetic": true,
+    "elapsed_seconds": 61.02448,
+    "process_cpu_seconds": 0.03125,
+    "hud_frames_submitted": 0,
+    "renderer_created": true,
+    "working_set_bytes": 87023616,
+    "private_bytes": 140689408,
+    "handles_start": 562,
+    "handles_end": 563,
+    "monitors": [
+      {
+        "left": 0,
+        "top": 0,
+        "width": 2560,
+        "height": 1600,
+        "dpi_x": 144,
+        "dpi_y": 144
+      }
+    ],
+    "gpu_utilization": "unverified; requires GPU trace",
+    "wakeups": "unverified; WPR trace required",
+    "performance_parity": "unverified"
+  },
+  "first_feasibility_gate": "incomplete",
+  "consumer_release": "not ready",
+  "no_app_data_or_account_access": true
+}

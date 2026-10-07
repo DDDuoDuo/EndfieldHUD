@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "chosen_by": null,
+  "windows_version": null,
+  "source_commit": null,
+  "executable_sha256": null,
+  "signer_thumbprint": null,
+  "hardware": {
+    "os_build": null,
+    "cpu": null,
+    "gpu": null,
+    "ram_bytes": null,
+    "monitor_dpi": null,
+    "refresh_hz": null
+  },
+  "gates": {
+    "transparent_source_scene_animation_tilt_hits": {"status": "unverified", "summary": "", "artifacts": []},
+    "backdrop_and_recordable_cursor": {"status": "unverified", "summary": "", "artifacts": []},
+    "mixed_dpi_and_monitor_hotplug": {"status": "unverified", "summary": "", "artifacts": []},
+    "projected_editor_ime_accessibility_fonts": {"status": "unverified", "summary": "", "artifacts": []},
+    "closed_scheduler_and_frame_pacing": {"status": "unverified", "summary": "", "artifacts": []},
+    "source_shader_material_parity": {"status": "unverified", "summary": "", "artifacts": []},
+    "settings_localization_and_profile": {"status": "unverified", "summary": "", "artifacts": []},
+    "atomic_offline_import_and_rollback": {"status": "unverified", "summary": "", "artifacts": []},
+    "notes_shelf_clipboard_archive": {"status": "unverified", "summary": "", "artifacts": []},
+    "reader_media_projection_map_minigame": {"status": "unverified", "summary": "", "artifacts": []},
+    "calendar_event_log_shortcuts": {"status": "unverified", "summary": "", "artifacts": []},
+    "battery_storage_activity_audio_work_mode": {"status": "unverified", "summary": "", "artifacts": []},
+    "china_account_login_signing_sanity": {"status": "unverified", "summary": "", "artifacts": []},
+    "global_account_login_signing_sanity": {"status": "unverified", "summary": "", "artifacts": []},
+    "closed_60_seconds": {"status": "unverified", "summary": "", "artifacts": []},
+    "open_idle_ambient_on_off": {"status": "unverified", "summary": "", "artifacts": []},
+    "pointer_navigation_latency": {"status": "unverified", "summary": "", "artifacts": []},
+    "cold_warm_open_close_frame_times": {"status": "unverified", "summary": "", "artifacts": []},
+    "heavy_modules_bounded_work": {"status": "unverified", "summary": "", "artifacts": []},
+    "100_lifecycle_cycles": {"status": "unverified", "summary": "", "artifacts": []},
+    "sleep_resume_device_loss_explorer_restart": {"status": "unverified", "summary": "", "artifacts": []},
+    "install_update_uninstall_consent_rollback": {"status": "unverified", "summary": "", "artifacts": []},
+    "architecture_and_dependency_audit": {"status": "unverified", "summary": "", "artifacts": []}
+  }
+}
