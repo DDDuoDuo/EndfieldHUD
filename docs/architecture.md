@@ -40,11 +40,16 @@ animation tracks. Full teardown stops presentation clocks and removes tracks. Ge
 completion callbacks. Module deactivation removes visible-only observers,
 editors, accessibility controls and display timers.
 
-The source and native host register the same AppKit cursor while the HUD is
-visible, including opening/closing. Pointer/lifecycle events update ownership;
-the renderer never polls or uploads cursor state each frame. Native text editors
-retain their text cursor, and teardown cannot overwrite a cursor chosen by
-another window. Unchanged hover and wordmark styles are compared before making
+The native host owns one AppKit cursor tracking area while the desktop HUD is
+visible, including opening/closing; the standalone source viewer owns its own.
+The cursor area uses `activeInKeyWindow`; independent hover tracking uses
+`activeAlways`, which AppKit does not support for cursor updates.
+`cursorUpdate` and visibility lifecycle events set the cursor. There are no
+duplicate legacy cursor rectangles, post-dispatch resets, queued repairs, or
+per-frame cursor polling. Native text editors and file drags retain their own
+cursors, and teardown cannot overwrite a cursor chosen by another window. This
+follows [AppKit tracking-area cursor ownership](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/EventOverview/TrackingAreaObjects/TrackingAreaObjects.html).
+Unchanged hover and wordmark styles are compared before making
 mutable copies, so settled ambient frames do not rewrite that dictionary.
 Gyro updates share the finite transition clock's visibility gate: delayed
 WindowServer occlusion notifications cannot freeze entrance/exit tilt, while

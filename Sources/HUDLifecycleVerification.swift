@@ -460,20 +460,17 @@ enum HUDLifecycleVerification {
             // The host's cursor-update route must restore it without a draw tick.
             NSCursor.arrow.set()
             window.resetCursorRects()
-            guard let event = NSEvent.mouseEvent(with: .mouseMoved,
-                location: window.convertPoint(fromScreen: screenPointer), modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else {
-                fail("Cannot create a local cursor-update event")
-            }
+            let point = host.convert(window.convertPoint(fromScreen: screenPointer), from: nil)
             let frames = source.renderedFrameCount
-            host.cursorUpdate(with: event)
-            check(source.sourceCursorOwnedForVerification && source.renderedFrameCount == frames,
-                  "Native center restores the Endfield cursor without render polling during \(phase)")
-            NSCursor.arrow.set()
-            source.cursorUpdate(with: event)
-            check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
-                  "Source and native panels reuse one cursor during \(phase)")
+            let sets = source.sourceCursorSetCountForVerification
+            sendCursorUpdate(at: point, host: host, window: window)
+            check(source.sourceCursorOwnedForVerification && source.renderedFrameCount == frames
+                  && source.sourceCursorSetCountForVerification == sets + 1,
+                  "The registered HUD owner answers cursorUpdate without render polling during \(phase)")
+            sendCursorUpdate(at: point, host: host, window: window)
+            check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor
+                  && source.sourceCursorSetCountForVerification == sets + 2,
+                  "cursorUpdate reinstalls the cursor even when NSCursor.current still names it during \(phase)")
         }
 
         private func checkCursorDispatchAndIdle(completion: @escaping () -> Void) {
@@ -487,6 +484,12 @@ enum HUDLifecycleVerification {
             quietConfiguration.reduceMotion = true
             quietConfiguration.ambientAnimation = false
             host.set(snapshot: snapshot, configuration: quietConfiguration)
+            host.updateTrackingAreas(); source.updateTrackingAreas()
+            let cursorAreas = host.trackingAreas.filter { $0.options.contains(.cursorUpdate) }
+            check(cursorAreas.count == 1 && cursorAreas[0].options.contains(.activeInKeyWindow)
+                  && !cursorAreas[0].options.contains(.activeAlways)
+                  && !source.trackingAreas.contains { $0.options.contains(.cursorUpdate) },
+                  "The sole desktop cursor owner uses key-window tracking that actually receives cursorUpdate")
             let probe = NativeCursorProbe(frame: CGRect(x: host.bounds.midX - 40,
                 y: host.bounds.midY - 40, width: 80, height: 80))
             host.addSubview(probe, positioned: .above, relativeTo: nil)
@@ -496,52 +499,116 @@ enum HUDLifecycleVerification {
             screenPointer = window.convertPoint(toScreen: host.convert(point, to: nil))
             check(host.hitTest(host.convert(point, to: host.superview)) === probe,
                   "Cursor dispatch reaches a native child above the source shell")
+            let sets = source.sourceCursorSetCountForVerification
             sendCursorProbeClick(at: point, host: host, window: window)
-            check(probe.mouseUpCount == 1 && source.sourceCursorOwnedForVerification,
-                  "Window dispatch restores Endfield after the native mouse-up handler sets the arrow")
+            check(probe.mouseUpCount == 1 && NSCursor.current === NSCursor.arrow
+                  && source.sourceCursorSetCountForVerification == sets,
+                  "Window mouse delivery does not overwrite a native cursor after dispatch")
             let resets = probe.cursorResetCount
             window.invalidateCursorRects(for: probe)
             window.resetCursorRects()
-            check(probe.cursorResetCount > resets && source.sourceCursorOwnedForVerification,
-                  "A native cursor-region rebuild restores Endfield after AppKit finishes resetting views")
-            // NSApplication can overwrite the visible cursor after the window
-            // dispatch/reset method has already returned. This deliberately
-            // happens after all synchronous reconciliation above.
-            NSCursor.arrow.set()
-            DispatchQueue.main.async { [self] in
-                check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
-                      "Deferred event-driven reconciliation repairs a late AppKit cursor reset")
-            }
-            // Let pending layout and tracking updates settle before measuring
-            // idle ownership. No source cursor handler is called by this probe.
-            later(0.25) { [self] in
-                check(source.playback.phase == .visible && !source.hasDisplayTimerForVerification,
-                      "Cursor idle verification runs after animations settle with the display clock stopped")
-                let frames = source.renderedFrameCount
-                later(2.5) { [self] in
-                    check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
-                          "Endfield retains ownership through several seconds of native-view idle time")
-                    check(!source.hasDisplayTimerForVerification && source.renderedFrameCount == frames,
-                          "Keeping the cursor visible does not restart rendering or poll from a display timer")
-                    probe.removeFromSuperview()
-                    let editor = NativeEditorCursorProbe(frame: probe.frame)
-                    editor.isEditable = true
-                    host.addSubview(editor, positioned: .above, relativeTo: nil)
-                    sendCursorProbeClick(at: point, host: host, window: window)
-                    check(editor.mouseUpCount == 1 && NSCursor.current === NSCursor.iBeam
-                          && !source.sourceCursorOwnedForVerification,
-                          "Window cursor reconciliation preserves a native text editor's I-beam")
-                    editor.removeFromSuperview()
-                    host.addSubview(probe, positioned: .above, relativeTo: nil)
-                    sendCursorProbeClick(at: point, host: host, window: window)
-                    check(probe.mouseUpCount == 2 && source.sourceCursorOwnedForVerification,
-                          "Leaving native text entry restores Endfield through normal window dispatch")
-                    probe.removeFromSuperview()
-                    screenPointer = previousPointer
-                    host.set(snapshot: snapshot, configuration: configuration)
-                    completion()
+            check(probe.cursorResetCount > resets && source.sourceCursorSetCountForVerification == sets,
+                  "Native cursor-region invalidation does not install a competing HUD cursor rect")
+            sendCursorUpdate(at: point, host: host, window: window)
+            check(source.sourceCursorOwnedForVerification && source.sourceCursorSetCountForVerification == sets + 1,
+                  "After native invalidation the registered cursorUpdate owner immediately restores Endfield")
+            // A native resize/drag cursor must survive window delivery and the
+            // following run-loop turn. The former async repair clobbered it.
+            probe.selectedCursor = .resizeLeftRight
+            sendCursorProbeClick(at: point, host: host, window: window)
+            check(NSCursor.current === NSCursor.resizeLeftRight,
+                  "Native resize selection survives synchronous window dispatch")
+            later(0.05) { [self] in
+                check(NSCursor.current === NSCursor.resizeLeftRight
+                      && source.sourceCursorSetCountForVerification == sets + 1,
+                      "There is no deferred HUD reassertion over a native resize cursor")
+                probe.selectedCursor = .dragCopy
+                sendCursorProbeClick(at: point, host: host, window: window)
+                later(0.05) { [self] in
+                    check(NSCursor.current === NSCursor.dragCopy
+                          && source.sourceCursorSetCountForVerification == sets + 1,
+                          "Native drag cursor selection survives subsequent event-loop work")
+                    let pasteboard = NSPasteboard(name: .init("EndfieldHUD.CursorDragProbe.\(UUID().uuidString)"))
+                    let drag = NativeCursorDragProbe(pasteboard: pasteboard)
+                    _ = host.draggingEntered(drag)
+                    source.refreshSourceCursor()
+                    source.viewDidChangeBackingProperties()
+                    sendCursorUpdate(at: point, host: host, window: window)
+                    check(host.preservesNativeDragCursor && NSCursor.current === NSCursor.dragCopy
+                          && source.sourceCursorSetCountForVerification == sets + 1,
+                          "Lifecycle and backing refreshes share the native drag cursor veto")
+                    host.draggingExited(drag)
+                    pasteboard.releaseGlobally()
+                    probe.selectedCursor = .arrow
+                    sendCursorUpdate(at: point, host: host, window: window)
+                    later(0.25) { [self] in
+                        check(source.playback.phase == .visible && !source.hasDisplayTimerForVerification,
+                              "Cursor idle verification runs after animations settle with the display clock stopped")
+                        let frames = source.renderedFrameCount
+                        let idleSets = source.sourceCursorSetCountForVerification
+                        later(2.5) { [self] in
+                            check(source.sourceCursorOwnedForVerification && source.presentedSourceCursor === cursor,
+                                  "Endfield retains ownership through several seconds of native-view idle time")
+                            check(!source.hasDisplayTimerForVerification && source.renderedFrameCount == frames
+                                  && source.sourceCursorSetCountForVerification == idleSets,
+                                  "Keeping the cursor visible neither renders nor repeatedly sets the cursor")
+                            probe.removeFromSuperview()
+                            let editor = NativeEditorCursorProbe(frame: probe.frame)
+                            editor.isEditable = true
+                            host.addSubview(editor, positioned: .above, relativeTo: nil)
+                            sendCursorProbeClick(at: point, host: host, window: window)
+                            sendCursorUpdate(at: point, host: host, window: window)
+                            check(editor.mouseUpCount == 1 && NSCursor.current === NSCursor.iBeam
+                                  && !source.sourceCursorOwnedForVerification
+                                  && source.sourceCursorSetCountForVerification == idleSets,
+                                  "The HUD cursor owner yields to a native text editor's I-beam")
+                            editor.removeFromSuperview()
+                            let selectable = NSTextField(frame: probe.frame)
+                            selectable.isEditable = false; selectable.isSelectable = true
+                            host.addSubview(selectable, positioned: .above, relativeTo: nil)
+                            sendCursorUpdate(at: point, host: host, window: window)
+                            check(NSCursor.current === NSCursor.iBeam
+                                  && source.sourceCursorSetCountForVerification == idleSets,
+                                  "Selectable read-only text also retains its native cursor")
+                            selectable.removeFromSuperview()
+                            host.addSubview(probe, positioned: .above, relativeTo: nil)
+                            sendCursorUpdate(at: point, host: host, window: window)
+                            check(source.sourceCursorOwnedForVerification,
+                                  "Leaving native text entry restores Endfield at the next cursorUpdate")
+                            let outside = CGPoint(x: host.bounds.maxX + 100, y: host.bounds.maxY + 100)
+                            let beforeExit = source.sourceCursorSetCountForVerification
+                            sendCursorUpdate(at: outside, host: host, window: window)
+                            check(!source.sourceCursorOwnedForVerification
+                                  && source.sourceCursorSetCountForVerification == beforeExit,
+                                  "An outside cursor event releases HUD ownership and falls through to AppKit")
+                            sendCursorUpdate(at: point, host: host, window: window)
+                            check(source.sourceCursorOwnedForVerification,
+                                  "Re-entry acquires the HUD cursor without waiting for mouse movement or a timer")
+                            probe.removeFromSuperview()
+                            screenPointer = previousPointer
+                            host.set(snapshot: snapshot, configuration: configuration)
+                            completion()
+                        }
+                    }
                 }
             }
+        }
+
+        private func sendCursorUpdate(at point: CGPoint, host: SystemHUDView, window: NSWindow) {
+            host.updateTrackingAreas()
+            guard let area = host.trackingAreas.first(where: { $0.options.contains(.cursorUpdate) }),
+                  let owner = area.owner as? NSResponder,
+                  let event = NSEvent.enterExitEvent(with: .cursorUpdate,
+                    location: host.convert(point, to: nil), modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                    context: nil, eventNumber: 0, trackingNumber: 0, userData: nil) else {
+                fail("Cannot find the registered HUD cursor owner or create its event")
+            }
+            // Public NSEvent factories cannot attach an NSTrackingArea, so a
+            // manufactured cursorUpdate is discarded by NSWindow.sendEvent.
+            // Mouse delivery/invalidation above use the actual window; this
+            // one message goes to the owner of its real registered area.
+            owner.cursorUpdate(with: event)
         }
 
         private func sendCursorProbeClick(at point: CGPoint, host: SystemHUDView, window: NSWindow) {
@@ -635,6 +702,7 @@ enum HUDLifecycleVerification {
         private var tracking: NSTrackingArea?
         private(set) var mouseUpCount = 0
         private(set) var cursorResetCount = 0
+        var selectedCursor: NSCursor = .arrow
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
             if let tracking { removeTrackingArea(tracking) }
@@ -651,7 +719,29 @@ enum HUDLifecycleVerification {
         override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
         override func mouseMoved(with event: NSEvent) { NSCursor.arrow.set() }
         override func mouseDown(with event: NSEvent) {}
-        override func mouseUp(with event: NSEvent) { mouseUpCount += 1; NSCursor.arrow.set() }
+        override func mouseUp(with event: NSEvent) { mouseUpCount += 1; selectedCursor.set() }
+    }
+
+    private final class NativeCursorDragProbe: NSObject, NSDraggingInfo {
+        let draggingPasteboard: NSPasteboard
+        let draggingSequenceNumber = 1
+        var draggingSourceOperationMask: NSDragOperation { .copy }
+        var draggingDestinationWindow: NSWindow? { nil }
+        var draggingLocation: NSPoint { CGPoint(x: -1000, y: -1000) }
+        var draggedImageLocation: NSPoint { .zero }
+        var draggedImage: NSImage? { nil }
+        var draggingSource: Any? { nil }
+        var draggingFormation: NSDraggingFormation = .none
+        var animatesToDestination = false
+        var numberOfValidItemsForDrop = 0
+        var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+        init(pasteboard: NSPasteboard) { draggingPasteboard = pasteboard }
+        func slideDraggedImage(to screenPoint: NSPoint) {}
+        override func namesOfPromisedFilesDropped(atDestination dropDestination: URL) -> [String]? { nil }
+        func resetSpringLoading() {}
+        func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions, for view: NSView?,
+            classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+            using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
     }
 
     private final class NativeEditorCursorProbe: NSTextView {

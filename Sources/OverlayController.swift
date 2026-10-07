@@ -1282,42 +1282,9 @@ final class OverlayController: NSObject {
 private final class PositionPanel: NSPanel {
     var allowsKey = false
     var onResignKey: (() -> Void)?
-    private var cursorReconciliationQueued = false
     override var canBecomeKey: Bool { allowsKey }
     override var canBecomeMain: Bool { false }
     override func resignKey() { super.resignKey(); onResignKey?() }
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        reconcileCursorAfterNativeDispatch()
-    }
-    override func sendEvent(_ event: NSEvent) {
-        super.sendEvent(event)
-        // Native child views and AppKit cursor regions run after the HUD's
-        // tracking callbacks. Reconcile once after dispatch, including the
-        // return from nested click handling. Drag sessions keep their cursors.
-        switch event.type {
-        case .mouseMoved, .mouseEntered, .mouseExited, .cursorUpdate,
-             .leftMouseUp, .rightMouseUp, .otherMouseUp, .scrollWheel:
-            reconcileCursorAfterNativeDispatch()
-        default: break
-        }
-    }
-
-    private func reconcileCursorAfterNativeDispatch() {
-        guard isVisible, let host = contentView as? SystemHUDView else { return }
-        host.reconcileCursorAfterNativeDispatch()
-        guard !cursorReconciliationQueued else { return }
-        cursorReconciliationQueued = true
-        // NSApplication can finish cursor-region work after NSWindow.sendEvent
-        // returns. Reconcile once at the next turn, coalescing all events and
-        // resets in this turn without a polling timer or a retained HUD.
-        DispatchQueue.main.async { [weak self, weak host] in
-            guard let self else { return }
-            self.cursorReconciliationQueued = false
-            guard self.isVisible, let host, self.contentView === host else { return }
-            host.reconcileCursorAfterNativeDispatch()
-        }
-    }
 }
 
 private final class PositionCanvas: NSView {

@@ -36,15 +36,16 @@ enum HUDCenterLogoTests {
                     }
                 }
                 check(visible, "Preset silhouettes are white artwork ready for the existing logo glow")
-                let presentation = HUDCenterLogoPresentation.image(image)
-                check(presentation?.width == 600 && presentation?.height == 130,
-                      "Each new center wordmark occupies the authored 300 by 65 slot at 2x")
+                let presentation = HUDCenterLogoPresentation.image(image)!
+                let size = HUDCenterLogoPresentation.displaySize(for: presentation)
+                check(size.height == 65 && abs(size.width / size.height - CGFloat(presentation.width) / CGFloat(presentation.height)) < 0.000_001,
+                      "Each center wordmark matches the default visible height without stretching its width")
+                check(presentation.width <= image.width && presentation.height <= image.height,
+                      "Logo glow retains a bounded cropped texture without a full-size intermediate")
             }
 
-            // File margins and aspect ratio must not shrink a user's center
-            // logo. Generate square, wide and tall fixtures with asymmetric
-            // transparent padding and compare their visible presentation.
-            var referencePixels: Data?
+            // Square, wide and tall custom artwork share the default height;
+            // asymmetric file margins cannot force a different aspect ratio.
             for size in [(200, 200), (768, 128), (128, 768)] {
                 let context = CGContext(data: nil, width: size.0, height: size.1,
                     bitsPerComponent: 8, bytesPerRow: size.0 * 4,
@@ -53,15 +54,29 @@ enum HUDCenterLogoTests {
                 context.setFillColor(NSColor(srgbRed: 0.15, green: 0.8, blue: 0.35, alpha: 1).cgColor)
                 context.fill(CGRect(x: 11, y: 23, width: size.0 - 36, height: size.1 - 47))
                 let presentation = HUDCenterLogoPresentation.image(context.makeImage()!)!
-                check(presentation.width == 600 && presentation.height == 130,
-                      "Custom square, wide and tall artwork use the default logo's exact footprint")
-                let pixels = presentation.dataProvider!.data! as Data
-                if let referencePixels {
-                    check(pixels == referencePixels, "Transparent file margins do not change the visible logo size")
-                } else { referencePixels = pixels }
-                let color = NSBitmapImageRep(cgImage: presentation).colorAt(x: 300, y: 65)!.usingColorSpace(.sRGB)!
+                let display = HUDCenterLogoPresentation.displaySize(for: presentation)
+                let expectedRatio = CGFloat(size.0 - 36) / CGFloat(size.1 - 47)
+                check(presentation.width == size.0 - 36 && presentation.height == size.1 - 47
+                      && display.height == 65 && abs(display.width / display.height - expectedRatio) < 0.000_001,
+                      "Custom square, wide and tall artwork retain their visible ratio at the default height")
+                let legacy = HUDCenterLogoPresentation.displaySize(for: presentation, height: 29)
+                check(legacy.height == 29 && abs(legacy.width / legacy.height - expectedRatio) < 0.000_001,
+                      "Fallback artwork keeps the same proportional rule at its own default height")
+                let color = NSBitmapImageRep(cgImage: presentation).colorAt(x: presentation.width / 2, y: presentation.height / 2)!.usingColorSpace(.sRGB)!
                 check(color.greenComponent > color.redComponent && color.greenComponent > color.blueComponent,
                       "Logo normalization retains custom artwork colors")
+            }
+            var referencePixels: Data?
+            for size in [(120, 80), (600, 200), (200, 600)] {
+                let context = CGContext(data: nil, width: size.0, height: size.1,
+                    bitsPerComponent: 8, bytesPerRow: size.0 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.setFillColor(NSColor.systemGreen.cgColor)
+                context.fill(CGRect(x: 11, y: 23, width: 80, height: 48))
+                let presentation = HUDCenterLogoPresentation.image(context.makeImage()!)!
+                let pixels = presentation.dataProvider!.data! as Data
+                if let referencePixels { check(pixels == referencePixels, "Transparent file margins do not change the visible artwork") }
+                else { referencePixels = pixels }
             }
             let transparent = CGContext(data: nil, width: 64, height: 64,
                 bitsPerComponent: 8, bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),

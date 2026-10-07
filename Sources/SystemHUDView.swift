@@ -418,6 +418,7 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     private var retracting = false
     private var transitionCompletion: (() -> Void)?
     private var tracking: NSTrackingArea?
+    private var cursorTracking: NSTrackingArea?
     private var designScale: CGFloat = 1
     private var designOrigin = CGPoint.zero
     private var notesLayoutSize = CGSize.zero
@@ -1447,24 +1448,27 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking = tracking { removeTrackingArea(tracking) }
+        if let cursorTracking { removeTrackingArea(cursorTracking) }
         let area = NSTrackingArea(rect: bounds,
-                                  options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect],
+                                  options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         tracking = area
+        // Cursor updates require key-window tracking; activeAlways suppresses
+        // them. Keep hover tracking independent for the nonactivating panel.
+        let cursorArea = NSTrackingArea(rect: bounds,
+            options: [.cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(cursorArea); cursorTracking = cursorArea
     }
 
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        if let cursor = sourceWatch?.presentedSourceCursor { addCursorRect(visibleRect, cursor: cursor) }
-    }
-    override func cursorUpdate(with event: NSEvent) { sourceWatch?.refreshSourceCursor() }
+    var preservesNativeDragCursor: Bool { externalFileDragActive || isDraggingShelfItem || isAwaitingFileDrop }
 
-    func reconcileCursorAfterNativeDispatch() {
+    override func cursorUpdate(with event: NSEvent) {
         // Preserve AppKit's actual file-drag cursor, while ordinary pressed
         // controls and note movement retain the HUD pointer.
-        guard !externalFileDragActive, !isDraggingShelfItem, !isAwaitingFileDrop else { return }
-        sourceWatch?.refreshSourceCursor(force: true)
+        // Preserving a native drag/editor cursor is a handled ownership choice;
+        // other unhandled cases continue through AppKit's responder chain.
+        if sourceWatch?.refreshSourceCursor(fromCursorUpdate: event) != true { super.cursorUpdate(with: event) }
     }
 
     override func mouseEntered(with event: NSEvent) { updateHover(event) }
@@ -1511,7 +1515,6 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
     }
 
     private func updateHover(_ event: NSEvent) {
-        sourceWatch?.refreshSourceCursor()
         followCurrentPointer()
         guard allowsModuleInput, window?.ignoresMouseEvents != true else { return }
         let location = convert(event.locationInWindow, from: nil)
@@ -2549,8 +2552,11 @@ final class SystemHUDView: NSView, HUDControlFeedbackHost {
         let bitmap = configuration.centerLogo.image(revision: configuration.centerLogoRevision).flatMap(HUDCenterLogoPresentation.image)
         withoutActions {
             self.industryWordmark.contents = bitmap
-            // Presentation already normalizes the visible logo. Fill the
-            // fallback's authored slot just as the source shell does.
+            let size = bitmap.map { HUDCenterLogoPresentation.displaySize(for: $0, height: 29) }
+                ?? CGSize(width: 150, height: 29)
+            self.industryWordmark.frame = CGRect(x: 500 - size.width / 2, y: 544, width: size.width, height: size.height)
+            // Each choice matches the fallback default's height and center;
+            // its visible width follows the original artwork's proportions.
             self.industryWordmark.contentsGravity = .resize
             self.industryWordmark.mask = bitmap == nil ? self.legacyWordmarkMask : nil
             self.industryWordmark.backgroundColor = bitmap == nil ? NSColor.white.cgColor : NSColor.clear.cgColor

@@ -63,6 +63,7 @@ final class HUDSourceWatchFrameBuilder {
     struct DesktopImage: Equatable {
         let texture: String
         let size: SIMD2<Float>
+        var displaySize: SIMD2<Double>? = nil
     }
     var desktopImages: [HUDSourceID: DesktopImage] = [:] {
         didSet { if oldValue != desktopImages { cacheGeneration &+= 1 } }
@@ -489,6 +490,11 @@ final class HUDSourceWatchFrameBuilder {
             var value = pose.transforms[id] ?? HUDSourceTransformOverride()
             value.active = false; pose.transforms[id] = value
         }
+        for (id, image) in desktopImages {
+            guard let size = image.displaySize else { continue }
+            var value = pose.transforms[id] ?? HUDSourceTransformOverride()
+            value.sizeDelta = HUDSourceVector2(size.x, size.y); pose.transforms[id] = value
+        }
         // Decorative rotations do not affect intrinsic sizing. The layout
         // writers read transforms, text and scroll inputs; color/material
         // changes still invalidate presentation without repeating sizing.
@@ -721,7 +727,11 @@ final class HUDSourceWatchFrameBuilder {
                     }
                     let fill = pose.value("m_FillAmount", on: id, fallback: component["m_FillAmount"].float(1))
                     let pivot = pose.transforms[id]?.pivot?.simd ?? n.node.transform.rect?.pivot.simd ?? SIMD2(0.5, 0.5)
-                    let mesh = try localImage(component: component, sprite: selectedSprite, spriteID: spriteID,
+                    // A proportionally sized desktop logo owns its complete
+                    // rectangle; the original sprite's trim must not crop it.
+                    let sizedReplacement = desktopImages[id]?.displaySize != nil
+                    let mesh = try localImage(component: component, sprite: sizedReplacement ? nil : selectedSprite,
+                        spriteID: sizedReplacement ? nil : spriteID,
                         rect: rect, pivot: pivot, fill: fill, desktopUV: desktopImages[id] != nil, forceRebuild: forceRebuild)
                     localPositions = mesh.positions; indices = mesh.indices; uv = mesh.uv
                     if let replacement = desktopImages[id] {

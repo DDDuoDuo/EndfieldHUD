@@ -3,18 +3,26 @@ import AppKit
 /// A small immutable glow bitmap is uploaded once per choice. No live blur,
 /// extra animation clock, or full-resolution custom texture is retained.
 enum HUDCenterLogoPresentation {
+    static let defaultHeight: CGFloat = 65
+
+    /// Keep the visible height of EndfieldText, letting width follow the
+    /// artwork's proportions. The source node retains its centered pivot.
+    static func displaySize(for image: CGImage, height: CGFloat = defaultHeight) -> CGSize {
+        CGSize(width: CGFloat(image.width) * height / CGFloat(image.height), height: height)
+    }
+
     static func image(_ source: CGImage) -> CGImage? {
-        // Match the authored 300 × 65 EndfieldText slot at 2×. Fitting the
-        // original file canvas made padded/square presets much smaller and
-        // the former 4:1 bitmap also distorted the slot's 60:13 proportions.
-        // Normalize visible artwork to this same footprint for every choice.
+        // Crop padding once, then retain the bounded artwork's native ratio.
+        // Scaling into a fixed-width texture would stretch narrow logos and
+        // compress wide ones even if their source node used aspect fitting.
         guard let content = visibleArtwork(source),
-              let context = CGContext(data: nil, width: 600, height: 130,
+              let context = CGContext(data: nil, width: content.width, height: content.height,
             bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         context.interpolationQuality = .high
-        context.setShadow(offset: .zero, blur: 7, color: NSColor.white.withAlphaComponent(0.7).cgColor)
-        context.draw(content, in: CGRect(x: 0, y: 0, width: 600, height: 130))
+        context.setShadow(offset: .zero, blur: CGFloat(content.height) * 3.5 / defaultHeight,
+            color: NSColor.white.withAlphaComponent(0.7).cgColor)
+        context.draw(content, in: CGRect(x: 0, y: 0, width: content.width, height: content.height))
         return context.makeImage()
     }
 

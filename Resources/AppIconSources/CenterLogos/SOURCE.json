@@ -1,6 +1,6 @@
 {
   "description": "User-supplied horizontal center wordmarks, replacing center presets only. Original artwork belongs to its respective rights holders.",
-  "preparation": "ImageIO via sips: proportional downsample to 768 pixels maximum; transparency retained. Display crops transparent margins once per selection and maps to the authored Endfield logo slot.",
+  "preparation": "ImageIO via sips: proportional downsample to 768 pixels maximum; transparency retained. Display crops transparent margins once per selection and matches the authored Endfield logo height with proportional width.",
   "assets": {
     "babel.png": {
       "suppliedSHA256": "11bdc1083fbf10b975be77a24f0cb1ade4165920673ac23f974e2b3a2c5f0211",

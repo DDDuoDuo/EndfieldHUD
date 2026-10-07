@@ -583,3 +583,29 @@ recorded in `docs/cursor-performance-1.2.0.md`.
 The public version remains 1.2.0; build 15 allows the signed updater to recognize
 the replacement. Release-description text is preserved. Tests use temporary
 stores and do not replace the owner's running app or modify personal data.
+
+## v1.2.0 build 16 maintenance (2026-10-06)
+
+Center artwork now matches the default logo's visible height with proportional
+width, correcting build 15's fixed-width normalization. Transparent margins are
+cropped once per selection, the centered source pivot and animations remain
+intact, and decoded artwork remains bounded to 768 pixels. The source shell uses
+its original 65-point height; the legacy fallback retains its 29-point height.
+
+The desktop host is the only HUD cursor tracking owner, using
+`activeInKeyWindow` instead of unsupported `activeAlways` cursor tracking.
+Duplicate cursor rectangles and synchronous/queued post-event reassertion were
+removed. Cursor updates answer AppKit at its arbitration point, with explicit
+visibility lifecycle handling and native editor/drag ownership preserved. No
+cursor timer, capture service, software pointer, or render-loop work was added.
+
+The isolated fixtures cover proportional geometry and restored default artwork,
+cursor tracking options, native mouse dispatch, text/drag cursor preservation,
+idle setter counts, and release on close. Synthetic cursor updates call the
+registered tracking owner because AppKit discards manufactured tracking events
+without its internal region association. Actual Shift–Command–5 recording
+remains a manual verification item; these fixtures cannot certify saved-video
+cursor appearance. The user's running HUD and personal data remain untouched.
+
+The public version stays 1.2.0. Build 16 provides a distinct signed update;
+the existing release description is preserved.

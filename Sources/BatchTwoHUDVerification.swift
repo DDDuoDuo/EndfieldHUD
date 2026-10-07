@@ -210,6 +210,14 @@ enum BatchTwoHUDVerification {
                       "Logo swaps keep the original projected source node alive")
                 check(state.overridden == (choice != .endfield) && state.glowHidden == (choice != .endfield),
                       "Preset artwork uses its baked glow and Endfield restores the original image/glow pair")
+                if let nodeID = state.nodeID, let rect = source.currentFrameForVerification?.node(nodeID)?.rect {
+                    let expected = choice.image().flatMap(HUDCenterLogoPresentation.image)
+                        .map { HUDCenterLogoPresentation.displaySize(for: $0) } ?? CGSize(width: 300, height: 65)
+                    check(abs(rect.size.x - Double(expected.width)) < 0.001 && abs(rect.size.y - 65) < 0.001,
+                          "Logo choice preserves its proportional width at the original source height")
+                    check(abs(rect.origin.x + rect.size.x / 2) < 0.001 && abs(rect.origin.y + rect.size.y / 2) < 0.001,
+                          "Changing logo width preserves the original centered pivot")
+                } else { fail("Selected logo has no resolved source rectangle") }
                 checkRetainedShell()
                 checkLogo(index: index + 1)
             }
