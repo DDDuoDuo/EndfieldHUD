@@ -36,11 +36,11 @@
 
 展开、收起与随鼠标倾斜：
 
-![HUD 展开、收起与倾斜演示](docs/media/motion.gif)
+![HUD 展开、收起与倾斜演示](docs/media/readme/opening.gif)
 
 功能页面之间的切换：
 
-![HUD 页面切换演示](docs/media/modules.gif)
+![HUD 页面切换演示](docs/media/readme/modules.gif)
 
 </details>
 

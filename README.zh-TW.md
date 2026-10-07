@@ -36,11 +36,11 @@ App 以 **Apple 晶片 macOS 11 以上**、**Intel macOS 10.15.4 以上**為建�
 
 展開、收起與隨滑鼠傾斜：
 
-![HUD 展開、收起與傾斜示範](docs/media/motion.gif)
+![HUD 展開、收起與傾斜示範](docs/media/readme/opening.gif)
 
 功能頁面之間的切換：
 
-![HUD 頁面切換示範](docs/media/modules.gif)
+![HUD 頁面切換示範](docs/media/readme/modules.gif)
 
 </details>
 

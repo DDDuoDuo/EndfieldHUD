@@ -29,8 +29,6 @@ Use the side buttons to switch sections, and scroll the right side for more. **E
 
 ![HUD opening and closing](docs/media/readme/opening.gif)
 
-![Pointer tilt](docs/media/readme/tilt.gif)
-
 <img src="docs/media/readme/en-02-requirements.png" alt="Requirements" width="326">
 
 Apple silicon: **macOS 11+**. Intel: **macOS 10.15.4+**. Some tools need a newer system or supported hardware.

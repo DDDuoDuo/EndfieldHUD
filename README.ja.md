@@ -36,11 +36,11 @@
 
 HUD の開閉と、マウスに合わせた傾き：
 
-![HUD の開閉と傾きのデモ](docs/media/motion.gif)
+![HUD の開閉と傾きのデモ](docs/media/readme/opening.gif)
 
 機能画面の切り替え：
 
-![HUD の画面切り替えのデモ](docs/media/modules.gif)
+![HUD の画面切り替えのデモ](docs/media/readme/modules.gif)
 
 </details>
 
