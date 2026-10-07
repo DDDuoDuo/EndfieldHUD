@@ -225,11 +225,11 @@ class MsixManifestTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt", "Windows PowerShell snapshot helper integration")
 class InstallerSnapshotTests(unittest.TestCase):
-    def run_snapshot_case(self, *, corrupt: bool):
+    def run_snapshot_case(self, *, corrupt: bool, hidden: bool = False):
         with tempfile.TemporaryDirectory(prefix="ehud-synthetic-update-") as directory:
             root = Path(directory)
             script = root / "snapshot-test.ps1"
-            script.write_text('''param([string]$Helper,[string]$Root,[string]$Corrupt)
+            script.write_text('''param([string]$Helper,[string]$Root,[string]$Corrupt,[string]$Hidden)
 $ErrorActionPreference='Stop'
 $identityName='DDDuoDuo.EndfieldHUD.Windows'
 $errors=$null;$tokens=$null
@@ -238,17 +238,33 @@ if($errors.Count -gt 0){throw 'Updater parse failure'}
 foreach($statement in $ast.EndBlock.Statements){if($statement -is [Management.Automation.Language.FunctionDefinitionAst]){. ([scriptblock]::Create($statement.Extent.Text))}}
 $data=Join-Path $Root 'SyntheticData'
 $backups=Join-Path $Root 'SyntheticBackups'
+if($Hidden -eq 'yes'){[IO.File]::SetAttributes($Root,[IO.File]::GetAttributes($Root) -bor [IO.FileAttributes]::Hidden)}
+$data=Get-CanonicalDirectory $data
+$backups=Get-CanonicalDirectory $backups
 New-Item -ItemType Directory -Path $data | Out-Null
 [IO.File]::WriteAllText((Join-Path $data 'synthetic-note.json'),'original synthetic data')
+if($Hidden -eq 'yes'){
+    [IO.File]::SetAttributes($data,[IO.File]::GetAttributes($data) -bor [IO.FileAttributes]::Hidden)
+    $hiddenFile=Join-Path $data 'hidden-synthetic-note.json'
+    [IO.File]::WriteAllText($hiddenFile,'original hidden synthetic data')
+    [IO.File]::SetAttributes($hiddenFile,[IO.File]::GetAttributes($hiddenFile) -bor [IO.FileAttributes]::Hidden)
+}
 $snapshot=New-DataSnapshot $data $backups '1.0.0.0'
 [IO.File]::WriteAllText((Join-Path $data 'synthetic-note.json'),'new synthetic data')
+if($Hidden -eq 'yes'){
+    $changedBytes=[Text.Encoding]::UTF8.GetBytes('new hidden synthetic data')
+    $changedFile=[IO.File]::Open($hiddenFile,[IO.FileMode]::Open,[IO.FileAccess]::Write)
+    try{$changedFile.SetLength(0);$changedFile.Write($changedBytes,0,$changedBytes.Length)}finally{$changedFile.Dispose()}
+}
 $rejected=$false
+$rejectionReason=$null
 if($Corrupt -eq 'yes'){[IO.File]::WriteAllText((Join-Path $snapshot 'data/synthetic-note.json'),'corrupted snapshot')}
-try{Restore-VerifiedSnapshot $snapshot $data $backups '1.0.0.0'}catch{if($Corrupt -ne 'yes'){throw};$rejected=$true}
-[ordered]@{rejected=$rejected;content=[IO.File]::ReadAllText((Join-Path $data 'synthetic-note.json'));snapshot_exists=(Test-Path -LiteralPath $snapshot)} | ConvertTo-Json -Compress
+try{Restore-VerifiedSnapshot $snapshot $data $backups '1.0.0.0'}catch{if($Corrupt -ne 'yes'){throw};$rejected=$true;$rejectionReason=$_.Exception.Message}
+$hiddenContent=if($Hidden -eq 'yes'){[IO.File]::ReadAllText((Join-Path $data 'hidden-synthetic-note.json'))}else{$null}
+[ordered]@{rejected=$rejected;rejection_reason=$rejectionReason;content=[IO.File]::ReadAllText((Join-Path $data 'synthetic-note.json'));hidden_content=$hiddenContent;snapshot_exists=(Test-Path -LiteralPath $snapshot)} | ConvertTo-Json -Compress
 ''', encoding="utf-8")
             shell = shutil.which("pwsh.exe") or "powershell.exe"
-            result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-File", str(script), "-Helper", str(PACKAGING / "install-update.ps1"), "-Root", str(root), "-Corrupt", "yes" if corrupt else "no"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+            result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-File", str(script), "-Helper", str(PACKAGING / "install-update.ps1"), "-Root", str(root), "-Corrupt", "yes" if corrupt else "no", "-Hidden", "yes" if hidden else "no"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
 
@@ -260,7 +276,14 @@ try{Restore-VerifiedSnapshot $snapshot $data $backups '1.0.0.0'}catch{if($Corrup
     def test_altered_snapshot_does_not_replace_current_data(self):
         result = self.run_snapshot_case(corrupt=True)
         self.assertTrue(result["rejected"])
+        self.assertEqual(result["rejection_reason"], "Rollback snapshot hash/length differs.")
         self.assertEqual(result["content"], "new synthetic data")
+
+    def test_hidden_ancestors_and_files_restore_exact_original_data(self):
+        result = self.run_snapshot_case(corrupt=False, hidden=True)
+        self.assertEqual(result["content"], "original synthetic data")
+        self.assertEqual(result["hidden_content"], "original hidden synthetic data")
+        self.assertTrue(result["snapshot_exists"])
 
 
 class ReleaseGateTests(unittest.TestCase):

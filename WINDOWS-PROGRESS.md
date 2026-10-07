@@ -8,19 +8,31 @@ Authorship: **DDDuoDuo**. Branch: `codex/windows-migration`. Source baseline: `f
 
 - Original source sprites now draw as filled perspective-correct D3D11 geometry with authored mip chains, source texture IDs and ancestor rectangular masks. Source layout/groups/fitter, sorting, radial fills, scroll/slant, button Animator transitions and selectable tint are implemented; live shell hover/press uses the same presentation clock. Full FX/soft-mask/stencil/HDR, desktop rows/profile mounting, exact typography and deployment flicker remain incomplete.
 - Projected editing now includes TSF display attributes/marked ranges, viewport scroll/caret reveal and native UIA Edit/Text/Value providers. DirectWrite caching includes the editor's artwork revision. Synthetic COM and coordinate contracts pass; live CJK, Narrator and whole-HUD accessibility remain unverified.
-- Four native CTest suites pass, including **1,564** combined scene/source checks, and **46** Python packaging tests pass. The native packed-resource decoder rejects corrupt, oversized, truncated and trailing raw-DEFLATE payloads. Its static zlib 1.3.2 source/archive/license are pinned.
+- Four native CTest suites pass, including **1,676** combined scene/source checks, and **47** Python packaging tests pass. The native packed-resource decoder rejects corrupt, oversized, truncated and trailing raw-DEFLATE payloads. Its static zlib 1.3.2 source/archive/license are pinned.
 - Actual Windows SDK MakeAppx schema and byte-exact payload validation passes for an isolated unsigned MSIX candidate. Signed MSIX/App Installer generation, manual consent, optional explicitly enabled launch update checks, safe data snapshots and prior-package rollback helpers are implemented. Synthetic restore and tamper rejection pass; trusted live installation/update/uninstall remains unverified without a signing identity.
 - The current staged resource inventory has **752 files, 28.61 MiB**, including eleven decoded scene/controller inputs and the zlib notice. No user data, credentials, recordings or documentation media are bundled.
 
-The latest sanitized evidence is [windows/evidence/feasibility-base-image-2026-10-07.json](windows/evidence/feasibility-base-image-2026-10-07.json). The source renderer originally grew private bytes by 65.48 MiB across 100 rapid hidden submits. Reusing one vertex upload per frame and draining queued GPU work before snapshots resolved that observed growth: private bytes **179,204,096 → 172,953,600**, working set **114,089,984 → 108,109,824**, handles **583 → 583** over 100 source-endpoint cycles after five warmups. The same warmed process then closed for **60.993 seconds**, submitting **0** additional HUD frames with **0.015625 CPU seconds**. These are hidden endpoint tests, not visible animation or module-switch benchmarks. GPU utilization, wakeups, live input latency and p50/p95 remain unverified.
+The latest sanitized evidence is [windows/evidence/feasibility-base-image-2026-10-07.json](windows/evidence/feasibility-base-image-2026-10-07.json). The source renderer originally grew private bytes by 65.48 MiB across 100 rapid hidden submits. Reusing one vertex upload per frame and draining queued GPU work before snapshots resolved that observed growth: private bytes **179,617,792 → 174,092,288**, working set **114,597,888 → 109,096,960**, handles **583 → 583** over 100 source-endpoint cycles after five warmups. The same warmed process then closed for **61.009 seconds**, submitting **0** additional HUD frames with **0 CPU seconds**. These are hidden endpoint tests, not visible animation or module-switch benchmarks. GPU utilization, wakeups, live input latency and p50/p95 remain unverified.
 
 A renderer review caught incompatible D3D/D2D alpha encoding. The output now uses one encoded-space premultiplied BGRA contract; an actual synthetic half-alpha-white GPU readback passes. Rendering/resize failures park and report the preview instead of being silently ignored. Longer cache/device-loss and matched Mac visual/performance acceptance remain required.
+
+The final preview review found that timer parking could omit the settled entrance,
+gyro or button endpoint. Submission history now requires that last frame before
+parking, with a full rebuild for the final button tint/depth. Hover follows the
+presented geometry even under a stationary pointer. Failure/suspend/close cancel
+mouse capture and pointer state. Synthetic scheduling checks verify settlement,
+reduced-motion reopen and closed/idle parking; live interaction remains unverified.
 
 The first continuation CI build compiled successfully but caught pins that had
 been calculated from Windows-converted CRLF dependency files. The pins now use
 the authoritative Git blob bytes, and `.gitattributes` preserves those immutable
 JavaScript/license bytes in fresh Windows clones. The source assets themselves
 have no Git diff; local staging and all 46 packaging checks pass after the fix.
+
+Fresh CI then found a hidden-folder lookup in the synthetic rollback test.
+Snapshot helpers now include hidden ancestors, directories and files in their
+existing path/hash checks and restore them explicitly. A hidden-data regression
+failed before the fix and passes afterward; all 47 local packaging checks pass.
 
 ## Initial feasibility baseline (d03915a)
 
@@ -59,7 +71,7 @@ The hidden probe exposed a temporary-HWND null-pointer bug; it was fixed and the
 | Frozen backdrop and recordable HUD/custom cursor | **Unverified** | No desktop capture performed. Prototype pre-opening capture/guarded refresh, test recursion and saved Windows recordings, implement/test cursor ownership. Current cursor is native. |
 | Mixed-DPI selection, moving/unplugging screen | **Unverified** | Physical-coordinate/per-monitor shell exists; only one display is connected. Explicit selected-monitor settings and real hot-plug acceptance remain. |
 | Tilted editor with CJK IME, caret, keyboard and font comparisons | **Partially verified** | TSF/model/DirectWrite/shared projection, scroll and native UIA contracts pass. Marked-text decoration is implemented. Live CJK composition/candidates, Narrator, whole-HUD accessibility and Mac metrics remain unverified. |
-| Closed parking, bounded reopen memory, smooth pacing | **Partially verified** | Closed frame submissions and CPU measured; 100 hidden cycles pass ownership/handle checks. Private-byte rise, GPU budgets and visible frame pacing remain unresolved. |
+| Closed parking, bounded reopen memory, smooth pacing | **Partially verified** | Closed frame submissions and CPU measured; 100 hidden cycles pass ownership/handle checks, and the observed private-byte rise is resolved in this fixture. Broader cache/GPU budgets and visible frame pacing remain unverified. |
 
 The five gates have not passed as a set. Module porting and consumer shipment cannot proceed on a claimed completed architecture; continue resolving milestone 1 before advancing the handoff's sequence.
 

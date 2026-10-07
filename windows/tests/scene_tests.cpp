@@ -1,4 +1,5 @@
 #include "scene/watch_scene.hpp"
+#include "app/frame_schedule.h"
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -68,6 +69,48 @@ void lifecycle() {
           "Reduced motion seeks source endpoint");
     near(Playback::clipTime(-1, 0.75), 0, 0, "Finite clock lower clamp");
     near(Playback::clipTime(100, 0.75), 0.75, 0, "Finite clock upper clamp");
+}
+void frameScheduling() {
+    ehud::app::FrameSchedule schedule;
+    Playback playback(0.2, 0.2);
+    playback.open(0);
+    auto phase = playback.sample(0.184).phase;
+    auto decision = schedule.next(phase, false, false, false);
+    check(decision.submit && decision.rebuild, "Opening submits source geometry");
+    schedule.submitted(phase, false, false);
+    phase = playback.sample(0.216).phase;
+    decision = schedule.next(phase, false, false, false);
+    check(decision.submit && decision.rebuild, "Entrance deadline draws exact source endpoint before parking");
+    schedule.submitted(phase, false, false);
+    check(!schedule.next(phase, false, false, false).submit, "Settled entrance parks on next tick");
+
+    GyroMotion motion;
+    motion.retarget({2, 3, 0}, 1, 0.2);
+    motion.finishIfNeeded(1.184);
+    decision = schedule.next(phase, false, motion.animating(), false);
+    check(decision.submit && !decision.rebuild, "Pointer-only motion reuses source geometry");
+    schedule.submitted(phase, motion.animating(), false);
+    motion.finishIfNeeded(1.216);
+    decision = schedule.next(phase, false, motion.animating(), false);
+    check(decision.submit && !decision.rebuild, "Gyro deadline reprojects exact settled transform");
+    schedule.submitted(phase, motion.animating(), false);
+    check(!schedule.next(phase, false, false, false).submit, "Settled gyro parks after endpoint");
+
+    decision = schedule.next(phase, true, false, true);
+    check(decision.submit && decision.rebuild, "Button animation rebuilds changed source geometry");
+    schedule.submitted(phase, false, true);
+    decision = schedule.next(phase, false, false, false);
+    check(decision.submit && decision.rebuild, "Button deadline rebuilds its final tint and depth");
+    schedule.submitted(phase, false, false);
+    for (int i = 0; i < 100; ++i)
+        check(!schedule.next(phase, false, false, false).submit, "Settled demand does not restart idle frames");
+    schedule.submitted(phase, true, true);
+    check(!schedule.next(Phase::concealed, true, true, true).submit, "Closed state cancels all animation work");
+    check(!schedule.next(Phase::concealed, false, false, false).submit, "Closed state remains parked");
+    decision = schedule.next(Phase::visible, true, false, false);
+    check(decision.submit && decision.rebuild, "Reduced-motion reopen still draws full endpoint");
+    schedule.submitted(Phase::visible, false, false);
+    check(!schedule.next(Phase::visible, false, false, false).submit, "Reopen forgets interrupted animation demand");
 }
 void projection() {
     Camera camera;
@@ -2157,6 +2200,7 @@ int main(int argc, char **argv) {
     try {
         curves();
         lifecycle();
+        frameScheduling();
         projection();
         gyro();
         flicker();

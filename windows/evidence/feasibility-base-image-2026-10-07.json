@@ -3,7 +3,7 @@
   "author": "DDDuoDuo",
   "date": "2026-10-07",
   "source_baseline": "fc429e63a2bead66f194ddb18ca947684de8fd76",
-  "executable_sha256": "6ee40d404adbb834b23bc51ea5ca9959133d3f41e1abf513810ff2756875b1dd",
+  "executable_sha256": "cf5da4fba4a62727d1ddb57176c7eb1798950f6692ce0b004d996d715394544d",
   "complete_migration": false,
   "consumer_release_ready": false,
   "hardware": {
@@ -41,7 +41,7 @@
         "dpi_y": 144
       }
     ],
-    "executable_sha256": "6ee40d404adbb834b23bc51ea5ca9959133d3f41e1abf513810ff2756875b1dd",
+    "executable_sha256": "cf5da4fba4a62727d1ddb57176c7eb1798950f6692ce0b004d996d715394544d",
     "settings": "Synthetic 1280x720 hidden HWND; ambient off; no real data; source fixture pointer; source animation endpoints",
     "limits": "No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified."
   },
@@ -49,7 +49,7 @@
     "schema": 1,
     "scenario": "hidden-native-graphics-lifecycle",
     "synthetic": true,
-    "elapsed_seconds": 1.5327034,
+    "elapsed_seconds": 1.5890399,
     "direct_composition_hresult": 0,
     "windows_ui_composition_hresult": 0,
     "dispatcher_queue_hresult": 0,
@@ -58,10 +58,10 @@
     "measured_reopen_cycles": 100,
     "warmup_cycles": 5,
     "submitted_frames": 105,
-    "private_bytes_before": 179204096,
-    "private_bytes_after": 172953600,
-    "working_set_before": 114089984,
-    "working_set_after": 108109824,
+    "private_bytes_before": 179617792,
+    "private_bytes_after": 174092288,
+    "working_set_before": 114597888,
+    "working_set_after": 109096960,
     "handles_before": 583,
     "handles_after": 583,
     "editor_projection_corner_checks": "passed",
@@ -76,14 +76,14 @@
     "schema": 1,
     "scenario": "closed-after-105-graphics-cycles",
     "synthetic": true,
-    "elapsed_seconds": 60.9931651,
-    "process_cpu_seconds": 0.015625,
+    "elapsed_seconds": 61.009149,
+    "process_cpu_seconds": 0,
     "hud_frames_submitted": 0,
     "renderer_created": true,
-    "working_set_bytes": 94478336,
-    "private_bytes": 164585472,
+    "working_set_bytes": 96292864,
+    "private_bytes": 162299904,
     "handles_start": 584,
-    "handles_end": 580,
+    "handles_end": 587,
     "monitors": [
       {
         "left": 0,
@@ -100,8 +100,8 @@
   },
   "tests": {
     "native_ctest_suites": 4,
-    "scene_source_checks": 1564,
-    "packaging_checks": 46,
+    "scene_source_checks": 1676,
+    "packaging_checks": 47,
     "status": "passed"
   },
   "installer": {
