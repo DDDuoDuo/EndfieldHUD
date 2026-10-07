@@ -1,6 +1,7 @@
 #include "source_draw.h"
 #include "resources/resource_data.h"
 #include <d3dcompiler.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -134,7 +135,7 @@ float4 pixelMain(P p) : SV_Target {
     if (isText != 0) sample.rgb = 1;
     color *= tint;
     if(useVfxParameters != 0) { color.rgb *= tintIntensity; color.a *= tintAlpha; }
-    color.a = round(color.a * 255) / 255;
+    if(isText!=2) color.a = round(color.a * 255) / 255;
     float4 result = color * (sample + sampleAdd);
     // Encode straight linear RGB before premultiplying, matching D2D and the
     // desktop compositor's encoded-space BGRA alpha contract.
@@ -144,7 +145,7 @@ float4 pixelMain(P p) : SV_Target {
 )";
 }
 struct SourceDraw::Impl {
-    struct Asset { Ptr<ID3D11ShaderResourceView> view; Ptr<ID3D11SamplerState> sampler; };
+    struct Asset { Ptr<ID3D11ShaderResourceView> view; Ptr<ID3D11SamplerState> sampler; unsigned width{},height{}; };
     struct Material {
         Constants constants; std::string mainTexture;
         std::string vfxTexture;
@@ -217,6 +218,52 @@ struct SourceDraw::Impl {
         }
         return result;
     }
+    Asset& desktopImage(const scene::Graphic& graphic) {
+        if(!graphic.textureId.starts_with("desktop.") || graphic.texturePath.empty()) throw std::runtime_error("Invalid desktop image binding");
+        if(auto found=assets.find(graphic.textureId);found!=assets.end()) return found->second;
+        const auto resourceRoot=root.parent_path();
+        const auto relative=graphic.texturePath.generic_string();
+        auto path=safePath(resourceRoot,relative);
+        auto resolved=std::filesystem::weakly_canonical(path), base=std::filesystem::weakly_canonical(resourceRoot);
+        auto contained=resolved.lexically_relative(base);
+        if(contained.empty() || contained.is_absolute()) throw std::runtime_error("Desktop image is outside staged resources");
+        for(const auto& part:contained) if(part==L"..") throw std::runtime_error("Desktop image escapes staged resources");
+        if(!relative.starts_with("AppIconSources/") && !relative.starts_with("Watch/")) throw std::runtime_error("Desktop image is not approved shell artwork");
+        Ptr<IWICImagingFactory> imaging; checked(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&imaging)));
+        Ptr<IWICBitmapDecoder> decoder; checked(imaging->CreateDecoderFromFilename(path.c_str(),nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,&decoder));
+        Ptr<IWICBitmapFrameDecode> frame; checked(decoder->GetFrame(0,&frame)); UINT width{},height{}; checked(frame->GetSize(&width,&height));
+        if(!width || !height || width>4096 || height>4096) throw std::runtime_error("Desktop artwork dimensions exceed bounds");
+        Ptr<IWICFormatConverter> converted; checked(imaging->CreateFormatConverter(&converted));
+        checked(converted->Initialize(frame.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));
+        std::vector<unsigned char> bytes(std::size_t(width)*height*4); checked(converted->CopyPixels(nullptr,width*4,static_cast<UINT>(bytes.size()),bytes.data()));
+        if(auto crop=graphic.sampledProperties.find("desktop.iconAlphaCrop");crop!=graphic.sampledProperties.end()) {
+            if(!std::isfinite(crop->second) || crop->second<0 || crop->second>255) throw std::runtime_error("Invalid desktop icon alpha threshold");
+            // Source desktop icons fit into a 96px image before alpha cropping.
+            // WIC resampling is platform-native; matched Mac raster QA remains required.
+            const double ratio=std::min(96./width,96./height);
+            const unsigned scaledWidth=std::max(1u,static_cast<unsigned>(std::lround(width*ratio)));
+            const unsigned scaledHeight=std::max(1u,static_cast<unsigned>(std::lround(height*ratio)));
+            Ptr<IWICBitmapScaler> scaler; checked(imaging->CreateBitmapScaler(&scaler));
+            checked(scaler->Initialize(converted.Get(),scaledWidth,scaledHeight,WICBitmapInterpolationModeFant));
+            std::vector<unsigned char> scaled(std::size_t(scaledWidth)*scaledHeight*4);
+            checked(scaler->CopyPixels(nullptr,scaledWidth*4,static_cast<UINT>(scaled.size()),scaled.data()));
+            unsigned left=scaledWidth,top=scaledHeight,right{},bottom{}; bool visible=false;
+            for(unsigned y=0;y<scaledHeight;++y) for(unsigned x=0;x<scaledWidth;++x)
+                if(scaled[(std::size_t(y)*scaledWidth+x)*4+3]>crop->second) {
+                    visible=true;left=std::min(left,x);top=std::min(top,y);right=std::max(right,x);bottom=std::max(bottom,y);
+                }
+            if(!visible) throw std::runtime_error("Desktop icon has no visible alpha");
+            width=right-left+1;height=bottom-top+1;bytes.resize(std::size_t(width)*height*4);
+            for(unsigned y=0;y<height;++y) std::memcpy(bytes.data()+std::size_t(y)*width*4,
+                scaled.data()+(std::size_t(y+top)*scaledWidth+left)*4,std::size_t(width)*4);
+        }
+        D3D11_TEXTURE2D_DESC td{}; td.Width=width;td.Height=height;td.MipLevels=td.ArraySize=td.SampleDesc.Count=1;
+        td.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;td.Usage=D3D11_USAGE_IMMUTABLE;td.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA initial{bytes.data(),width*4,0}; Ptr<ID3D11Texture2D> texture; checked(device->CreateTexture2D(&td,&initial,&texture));
+        Asset asset; checked(device->CreateShaderResourceView(texture.Get(),nullptr,&asset.view)); asset.sampler=assets.at("__white").sampler;
+        asset.width=width;asset.height=height;
+        return assets.emplace(graphic.textureId,std::move(asset)).first->second;
+    }
     Asset& texture(const std::string& id) {
         if (auto found = assets.find(id); found != assets.end()) return found->second;
         auto found = descriptors.find(id); if (found == descriptors.end()) throw std::runtime_error("Unresolved source texture ID");
@@ -255,7 +302,17 @@ struct SourceDraw::Impl {
         checked(device->CreateSamplerState(&sd,&asset.sampler)); return assets.emplace(id,std::move(asset)).first->second;
     }
     Asset& text(const scene::Graphic& graphic) {
-        std::string key=graphic.text + ":" + std::to_string(graphic.fontSize) + ":" + std::to_string(graphic.rect.size.x) + ":" + std::to_string(graphic.rect.size.y);
+        auto option=[&](const char* key,double fallback){auto it=graphic.sampledProperties.find(key);const double value=it==graphic.sampledProperties.end()?fallback:it->second;
+            if(!std::isfinite(value)) throw std::runtime_error("Invalid desktop text option");return value;};
+        const auto alignment=static_cast<unsigned>(std::clamp(option("desktop.textAlignment",0),0.,2.));
+        const auto vertical=static_cast<unsigned>(std::clamp(option("desktop.textVerticalAlignment",0),0.,2.));
+        const auto weight=static_cast<unsigned>(std::clamp(option("desktop.fontWeight",400),100.,900.));
+        const bool monospace=option("desktop.fontFamily",0)==1,digits=option("desktop.monospacedDigits",0)!=0;
+        const bool wrap=option("desktop.textWrap",1)!=0,truncate=option("desktop.textTruncate",0)!=0;
+        const bool fit=option("desktop.textFit",0)!=0;
+        const double minimum=std::clamp(option("desktop.minimumFontSize",10),1.,256.);
+        const double step=std::clamp(option("desktop.fontSizeStep",.5),.5,256.);
+        std::string key=graphic.text + ":" + std::to_string(graphic.fontSize) + ":" + std::to_string(graphic.rect.size.x) + ":" + std::to_string(graphic.rect.size.y)+":"+std::to_string(alignment)+":"+std::to_string(vertical)+":"+std::to_string(weight)+":"+std::to_string(wrap)+":"+std::to_string(truncate)+":"+std::to_string(fit)+":"+std::to_string(minimum)+":"+std::to_string(step)+":"+std::to_string(monospace)+":"+std::to_string(digits);
         auto& record=texts[graphic.componentId]; record.used=generation;
         if (record.key==key && record.asset.view) return record.asset;
         auto value=winrt::to_hstring(graphic.text);
@@ -268,12 +325,29 @@ struct SourceDraw::Impl {
         Ptr<IDXGISurface> surface; checked(native.As(&surface)); Ptr<ID2D1Bitmap1> bitmap;
         auto properties=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,D2D1::PixelFormat(description.Format,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
         checked(painter->CreateBitmapFromDxgiSurface(surface.Get(),&properties,&bitmap));
-        Ptr<IDWriteTextFormat> format; checked(fonts->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,
+        Ptr<IDWriteTextFormat> format; checked(fonts->CreateTextFormat(monospace?L"Consolas":L"Segoe UI",nullptr,static_cast<DWRITE_FONT_WEIGHT>(weight),DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,
             static_cast<float>(std::clamp(graphic.fontSize,1.,256.)),L"en-US",&format));
+        checked(format->SetTextAlignment(alignment==1?DWRITE_TEXT_ALIGNMENT_CENTER:alignment==2?DWRITE_TEXT_ALIGNMENT_TRAILING:DWRITE_TEXT_ALIGNMENT_LEADING));
+        checked(format->SetParagraphAlignment(vertical==1?DWRITE_PARAGRAPH_ALIGNMENT_CENTER:vertical==2?DWRITE_PARAGRAPH_ALIGNMENT_FAR:DWRITE_PARAGRAPH_ALIGNMENT_NEAR));
+        checked(format->SetWordWrapping(wrap?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP));
+        Ptr<IDWriteTextLayout> textLayout; checked(fonts->CreateTextLayout(value.c_str(),static_cast<UINT32>(value.size()),format.Get(),static_cast<float>(w),static_cast<float>(h),&textLayout));
+        if(digits) {Ptr<IDWriteTypography> typography;checked(fonts->CreateTypography(&typography));
+            checked(typography->AddFontFeature(DWRITE_FONT_FEATURE{DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES,1}));
+            checked(textLayout->SetTypography(typography.Get(),DWRITE_TEXT_RANGE{0,static_cast<UINT32>(value.size())}));}
+        if(fit) {
+            double size=std::clamp(graphic.fontSize,1.,256.);const double limit=std::min(size,minimum);
+            for(unsigned attempt=0;attempt<512;++attempt) {
+                DWRITE_TEXT_METRICS metrics{};checked(textLayout->GetMetrics(&metrics));
+                if((metrics.widthIncludingTrailingWhitespace<=std::max(1.,static_cast<double>(w)-2) && metrics.height<=std::max(1.,static_cast<double>(h)-2)) || size<=limit) break;
+                size=std::max(limit,size-step);checked(textLayout->SetFontSize(static_cast<float>(size),DWRITE_TEXT_RANGE{0,static_cast<UINT32>(value.size())}));
+            }
+        }
+        Ptr<IDWriteInlineObject> ellipsis;
+        if(truncate) {checked(fonts->CreateEllipsisTrimmingSign(format.Get(),&ellipsis)); DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER,0,0};checked(textLayout->SetTrimming(&trimming,ellipsis.Get()));}
         Ptr<ID2D1SolidColorBrush> white; checked(painter->CreateSolidColorBrush(D2D1::ColorF(1,1,1,1),&white));
         Ptr<ID2D1Image> previous; painter->GetTarget(&previous); painter->SetTarget(bitmap.Get());
         painter->BeginDraw(); painter->SetTransform(D2D1::Matrix3x2F::Identity()); painter->Clear(D2D1::ColorF(0,0,0,0));
-        painter->DrawText(value.c_str(),static_cast<UINT32>(value.size()),format.Get(),D2D1::RectF(0,0,static_cast<float>(w),static_cast<float>(h)),white.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        painter->DrawTextLayout(D2D1::Point2F(0,0),textLayout.Get(),white.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
         auto status=painter->EndDraw(); painter->SetTarget(previous.Get()); checked(status);
         record.asset={}; checked(device->CreateShaderResourceView(native.Get(),nullptr,&record.asset.view));
         record.asset.sampler=assets.at("__white").sampler; record.key=std::move(key); return record.asset;
@@ -298,7 +372,12 @@ HRESULT SourceDraw::initialize(ID3D11Device* device, ID3D11DeviceContext* contex
             if(reference.GetNamedValue(L"path_id").ValueType()==winrt::Windows::Data::Json::JsonValueType::String)
                 shaderCatalog.emplace(string(reference,L"path_id"),record);
         }
-        for (const auto& item:object(root/L"Scene"/L"materials.json").GetNamedArray(L"materials")) {
+        auto sourceMaterials=object(root/L"Scene"/L"materials.json").GetNamedArray(L"materials");
+        if(std::filesystem::exists(root/L"Scene"/L"desktop-profile-card.json")) {
+            auto card=object(root/L"Scene"/L"desktop-profile-card.json").GetNamedObject(L"materials");
+            for(const auto& material:card.GetNamedArray(L"materials")) sourceMaterials.Append(material);
+        }
+        for (const auto& item:sourceMaterials) {
             auto material=item.GetObject(); Impl::Material native;
             auto data=material.GetNamedObject(L"data"); auto saved=data.GetNamedObject(L"m_SavedProperties");
             auto shaderId=string(data.GetNamedObject(L"m_Shader"),L"m_PathID");
@@ -379,7 +458,7 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
         auto& d=*impl_; ++d.generation;
         // Rasterize changed text before binding the shared D3D target. The
         // cache is keyed by component and replaced, never appended on reopen.
-        for(const auto& graphic:frame.graphics) if(graphic.kind=="UIText" && !graphic.text.empty()) d.text(graphic);
+        for(const auto& graphic:frame.graphics) if((graphic.kind=="UIText" || graphic.kind=="DesktopText") && !graphic.text.empty()) d.text(graphic);
         d.context->OMSetRenderTargets(1,&target,nullptr); const float clear[4]{}; d.context->ClearRenderTargetView(target,clear);
         D3D11_VIEWPORT viewport{0,0,static_cast<float>(frame.camera.viewport.x),static_cast<float>(frame.camera.viewport.y),0,1};
         d.context->RSSetViewports(1,&viewport); d.context->RSSetState(d.raster.Get()); d.context->OMSetBlendState(d.blend.Get(),nullptr,UINT_MAX); d.context->OMSetDepthStencilState(d.depth.Get(),0);
@@ -389,17 +468,23 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
         struct Command { Constants constants; std::array<Impl::Asset*,3> assets; ID3D11BlendState* blend; UINT first, count; };
         std::vector<Command> commands; std::vector<Vertex> vertices;
         for(const auto& graphic:frame.graphics) {
-            if(graphic.quads.empty() || graphic.color[3]<=0 || (graphic.kind=="UIText" && graphic.text.empty())) continue;
+            if(graphic.quads.empty() || graphic.color[3]<=0 || ((graphic.kind=="UIText" || graphic.kind=="DesktopText") && graphic.text.empty())) continue;
             if(graphic.quads.size() > (1048576 - vertices.size()) / 6) throw std::runtime_error("Source draw vertex bound exceeded");
             Constants constants{}; std::string id=graphic.textureId; Impl::Material* material=nullptr;
             if(auto found=d.materials.find(graphic.materialId); found!=d.materials.end()) {
-                material=&found->second; constants=d.materialConstants(*material,graphic,frame.sceneTime);
-                if(constants.program==1 || constants.program==2) id=material->vfxTexture;
-                else if(id.empty()) id=material->mainTexture;
+                if(graphic.normalMaterial) {
+                    if(id.empty()) id=found->second.mainTexture;
+                } else {
+                    material=&found->second; constants=d.materialConstants(*material,graphic,frame.sceneTime);
+                    if(constants.program==1 || constants.program==2) id=material->vfxTexture;
+                    else if(id.empty()) id=material->mainTexture;
+                }
             }
-            const bool isText=graphic.kind=="UIText" && !graphic.text.empty();
-            auto& asset=isText ? d.texts.at(graphic.componentId).asset : d.texture(id.empty()?"__white":id);
+            const bool isText=(graphic.kind=="UIText" || graphic.kind=="DesktopText") && !graphic.text.empty();
+            auto& asset=isText ? d.texts.at(graphic.componentId).asset : !graphic.texturePath.empty()&&graphic.textureId.starts_with("desktop.") ? d.desktopImage(graphic) : d.texture(id.empty()?"__white":id);
             if(isText) {constants=Constants{}; constants.padding=1;}
+            if(graphic.kind=="DesktopIcon") {constants=Constants{}; constants.padding=1;}
+            if(graphic.kind.starts_with("Desktop")) {constants=Constants{};constants.padding=2;}
             auto& maskAsset=d.texture(material&&!material->effectTextures[0].empty()?material->effectTextures[0]:"__white");
             auto& dissolve=d.texture(material&&!material->effectTextures[1].empty()?material->effectTextures[1]:"__white");
             if(graphic.masks.size()>8) throw std::runtime_error("Source mask depth exceeds native bound");
@@ -414,13 +499,24 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
             }
             const UINT first=static_cast<UINT>(vertices.size()); const auto matrix=frame.camera.viewProjection*graphic.world;
             for(std::size_t q=0;q<graphic.quads.size();++q) for(unsigned i:{0u,1u,2u,0u,2u,3u}) {
-                auto p=graphic.quads[q][i]; const auto& m=matrix.values; Vertex v{};
+                auto p=graphic.quads[q][i];
+                if(graphic.kind=="DesktopIcon" && asset.width && asset.height) {
+                    const auto& quad=graphic.quads[q];
+                    const double w=std::hypot(quad[3].x-quad[0].x,quad[3].y-quad[0].y);
+                    const double h=std::hypot(quad[1].x-quad[0].x,quad[1].y-quad[0].y);
+                    if(w>0 && h>0) {
+                        const double ratio=std::min(w/asset.width,h/asset.height);
+                        const double cx=(quad[0].x+quad[2].x)*.5,cy=(quad[0].y+quad[2].y)*.5;
+                        p.x=cx+(p.x-cx)*(asset.width*ratio/w);p.y=cy+(p.y-cy)*(asset.height*ratio/h);
+                    }
+                }
+                const auto& m=matrix.values; Vertex v{};
                 for(unsigned row=0;row<4;++row) v.position[row]=static_cast<float>(m[row]*p.x+m[4+row]*p.y+m[8+row]*p.z+m[12+row]);
                 v.position[2]=0; auto uv=q<graphic.uvQuads.size()?graphic.uvQuads[q][i]:scene::Vec2{};
                 // Source raw mip rows and Unity UVs share the same origin.
                 if(isText) uv={i<2?0.:1.,i==0||i==3?1.:0.};
                 v.uv[0]=static_cast<float>(uv.x); v.uv[1]=static_cast<float>(uv.y);
-                for(unsigned c=0;c<3;++c) v.color[c]=q<graphic.colorQuads.size()?static_cast<float>(graphic.colorQuads[q][i][c]*graphic.color[c]):graphic.vertexColorReady ? static_cast<float>(graphic.color[c]) :
+                for(unsigned c=0;c<3;++c) v.color[c]=graphic.kind.starts_with("Desktop")?linear(graphic.color[c]):q<graphic.colorQuads.size()?static_cast<float>(graphic.colorQuads[q][i][c]*graphic.color[c]):graphic.vertexColorReady ? static_cast<float>(graphic.color[c]) :
                     linear(std::nearbyint(std::clamp(graphic.color[c],0.,1.)*255)/255);
                 v.color[3]=static_cast<float>(std::clamp(graphic.color[3],0.,1.)*(q<graphic.colorQuads.size()?graphic.colorQuads[q][i][3]:1)); vertices.push_back(v);
             }

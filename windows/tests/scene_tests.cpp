@@ -1,8 +1,10 @@
 #include "app/frame_schedule.h"
+#include "scene/desktop_scroll.hpp"
 #include "scene/watch_scene.hpp"
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -16,7 +18,10 @@ void check(bool ok, const char *reason) {
         throw std::runtime_error(reason);
 }
 void near(double a, double b, double tolerance, const char *reason) {
-    check(std::abs(a - b) <= tolerance, reason);
+    ++checks;
+    if (!(std::abs(a - b) <= tolerance))
+        throw std::runtime_error(std::string(reason) + ": got " + std::to_string(a) +
+                                 ", expected " + std::to_string(b));
 }
 template <class F> void rejects(F &&operation, const char *reason) {
     bool rejected = false;
@@ -26,6 +31,119 @@ template <class F> void rejects(F &&operation, const char *reason) {
         rejected = true;
     }
     check(rejected, reason);
+}
+void desktopScroll() {
+    DesktopScrollMotion motion;
+    check(motion.position() == 1 && motion.target() == 1 && !motion.requiresFrames(),
+          "Desktop wheel motion starts parked at source normalized top");
+    check(!motion.canScroll(-1) && motion.canScroll(1),
+          "Source direction availability reads bounded target instead of animated position");
+    motion.reset(1, 10);
+    motion.scroll(-.5, 100, 10);
+    near(motion.position(), 1, 0,
+         "Ordinary wheel input retargets without jumping current position");
+    near(motion.target(), .5, 0, "Wheel input accumulates normalized delta in the source target");
+    check(motion.requiresFrames(), "Unsettled source spring requests frame clock");
+    near(motion.advance(10.05), .8552733733030645, 1e-12,
+         "Source spring first reference sample uses decay11/frequency15");
+    near(motion.advance(10.15), .49447024824534547, 1e-12,
+         "Original damped spring crosses target without Euler cadence dependence");
+    near(motion.advance(10.2), .45088625126458476, 1e-12,
+         "Original spring carries velocity between clock samples");
+    DesktopScrollMotion single;
+    single.reset(1, 10);
+    single.scroll(-.5, 100, 10);
+    near(single.advance(10.2), motion.position(), 1e-12,
+         "Closed-form scroll is independent of subdivided frame cadence");
+    const double prior = motion.position();
+    motion.scroll(-.2, 100, 10.2);
+    near(motion.target(), .3, 1e-12,
+         "Repeated wheel deltas accumulate in target rather than lagging pose");
+    near(motion.position(), prior, 0,
+         "Wheel retarget preserves continuous current spring position");
+    motion.advance(12.2);
+    check(motion.position() == motion.target() && !motion.requiresFrames(),
+          "Two-second advance cap ends finite motion at exact target");
+    motion.reset(1, 0);
+    motion.scroll(.1, 100, 0);
+    near(motion.position(), 1.055, 1e-12, "Edge overflow uses the exact source0.55 gain");
+    near(motion.target(), 1, 0, "Wheel edge target stays bounded while presentation rebounds");
+    motion.reset(1, 0);
+    for (int i = 0; i < 10; ++i)
+        motion.scroll(1000, 100, 0);
+    near(motion.position(), 2.8, 1e-12, "Repeated wheel overflow stays within180 source units");
+    check(!motion.canScroll(-1) && motion.canScroll(1),
+          "Overscroll cannot enable navigation past bounded source target");
+    motion.advance(1);
+    check(motion.position() == 1 && !motion.requiresFrames(),
+          "One-second delayed wheel frame settles exactly without persistent demand");
+    motion.reset(0, 0);
+    motion.scroll(-1000, 100, 0);
+    near(motion.position(), -.9, 1e-12,
+         "One lower-edge wheel impulse is capped at half180-unit travel");
+    for (int i = 0; i < 10; ++i)
+        motion.scroll(-1000, 100, 0);
+    near(motion.position(), -1.8, 1e-12,
+         "Lower wheel rebound has the same original bounded travel");
+    motion.reset(1, 0);
+    motion.scroll(1000, .25, 0);
+    near(motion.position(), 91, 0, "Short lists use a one-unit divisor floor for edge travel");
+    near(DesktopScrollMotion::presentationPosition(10000, .25), 241, 0,
+         "Source layout shares240-unit rebound allowance with precision-gesture provider");
+    near(DesktopScrollMotion::presentationPosition(-10000, 100), -2.4, 0,
+         "Source presentation lower edge preserves full original240-unit allowance");
+    near(DesktopScrollMotion::presentationPosition(10000, 100), 3.4, 0,
+         "Source presentation upper edge preserves full original240-unit allowance");
+    near(DesktopScrollMotion::presentationPosition(2, 0), 1, 0,
+         "No-overflow layout permits no rebound");
+    motion.reset(1, 0);
+    motion.scroll(-.5, 100, 0, true);
+    check(motion.position() == .5 && motion.target() == .5 && !motion.requiresFrames(),
+          "Reduced motion immediately seeks source bounded target");
+    motion.scroll(10, 100, .1, true);
+    check(motion.position() == 1 && !motion.requiresFrames(),
+          "Reduced-motion edges do not create a rebound or animation timer");
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
+    motion.reset(nan, nan);
+    check(motion.position() == 1 && !motion.requiresFrames(),
+          "Source reset sanitizes nonfinite position and unsets invalid clock");
+    motion.scroll(-.5, 100, 0);
+    near(motion.advance(.05), .8552733733030645, 1e-12,
+         "First valid wheel clock initializes time after an invalid reset time");
+    const auto before = motion.position(), target = motion.target();
+    motion.scroll(nan, 100, .2);
+    motion.scroll(-.5, nan, .2);
+    motion.scroll(-.5, 0, .2);
+    motion.scroll(-.5, 100, nan);
+    motion.advance(nan);
+    check(motion.position() == before && motion.target() == target,
+          "Invalid wheel/time/overflow inputs leave source motion and clock untouched");
+    near(motion.advance(.15), .49447024824534547, 1e-12,
+         "Ignored invalid input cannot alter later source clock integration");
+    motion.reset(1, 0);
+    motion.scroll(-.5, 100, 0);
+    constexpr double targetCrossing = .146903010786472;
+    near(motion.advance(targetCrossing), .5, 1e-12,
+         "Source spring reference reaches zero displacement before stopping");
+    check(motion.requiresFrames(), "Spring velocity keeps frame demand through target crossing");
+    DesktopScrollMotion shortList, longList;
+    shortList.reset(1, 0);
+    longList.reset(1, 0);
+    shortList.scroll(-.5, 100, 0);
+    longList.scroll(-.5, 10000000, 0);
+    shortList.advance(.9);
+    longList.advance(.9);
+    check(!shortList.requiresFrames() && shortList.position() == .5 && longList.requiresFrames(),
+          "Source epsilon tightens to0.25 source units for very long lists");
+    longList.advance(1.9);
+    check(longList.position() == .5 && !longList.requiresFrames(),
+          "Even tight long-list epsilon parks after a delayed source frame");
+    motion.reset(-1, 0);
+    check(motion.position() == 0 && motion.canScroll(-1) && !motion.canScroll(1),
+          "Reset clamps lower boundary and exposes only the permitted direction");
+    motion.reset(2, 0);
+    check(motion.position() == 1 && !motion.canScroll(-1) && motion.canScroll(1),
+          "Reset clamps upper boundary and exposes only the permitted direction");
 }
 void curves() {
     ScalarCurve hermite({{0, 2, 0, 3}, {2, 8, 3, 0}});
@@ -2164,6 +2282,12 @@ void layoutAndButtons() {
          "Normalized bottom aligns source lower bounds");
     near(bottom.node("CAB:content")->sceneWorld.values[12], 20, 1e-12,
          "Scroll updates slant position from finalized Y");
+    auto rawOverscroll = doc.frame(input(10, -.5));
+    near(rawOverscroll.scroll->normalizedPosition, 0, 0,
+         "Raw reference scroll keeps original normalized clamp outside desktop navigation");
+    near(rawOverscroll.node("CAB:content")->sceneWorld.values[13],
+         bottom.node("CAB:content")->sceneWorld.values[13], 0,
+         "Desktop rebound allowance cannot change raw reference scroll geometry");
     auto baseInput = input(10);
     baseInput.panelBase = 2000;
     check(doc.frame(baseInput).node(button)->sortingOrder == 2007,
@@ -2425,6 +2549,247 @@ void shaderChannelsAndDeployment() {
     rejects([&] { groupDocument.frame(input); },
             "Nonfinite scene material clock rejects before shader upload");
 }
+const Graphic *findNodeGraphic(const Frame &frame, std::string_view id) {
+    for (const auto &graphic : frame.graphics)
+        if (graphic.nodeId == id)
+            return &graphic;
+    return nullptr;
+}
+void desktopSource(const std::filesystem::path &path) {
+    auto raw = Document::load(path);
+    auto doc = Document::loadDesktop(path);
+    const auto *info = doc.desktopInfo();
+    check(info != nullptr && raw.desktopInfo() == nullptr,
+          "Desktop mounting is explicit; the reference document stays raw");
+    check(raw.nodeCount() == 789 && doc.nodeCount() == 834,
+          "Canonical desktop graph mounts the exact 45-node BP13 card");
+    check(raw.buttons().size() == 22 && doc.buttons().size() == 24,
+          "Original main button order is retained with two explicit desktop supplements");
+    check(info->profileRootId == "CAB-7979328e8a85d73c8b989cdca5a79bf8:-8536182027554143077" &&
+              info->profileParentId == "CAB-194e41a66c2317b9df19269f505210be:7686435424458337495",
+          "Canonical signed profile identities are preserved");
+    FrameInput input{{1920, 1080}, {Phase::visible, doc.entranceDuration(), {}, {}, 0}, {}};
+    input.reduceMotion = true;
+    auto frame = doc.frame(input);
+    auto reference = raw.frame(input);
+    near(doc.initialRootRotation().w, 1, 0, "Canonical initial camera root uses authored identity");
+    const auto *profile = frame.node(info->profileRootId);
+    const auto *parent = frame.node(info->profileParentId);
+    check(profile && parent && profile->active && parent->active && profile->rect,
+          "Desktop profile is mounted under the original visible deployment parent");
+    check(profile->path.starts_with(parent->path + "/PlayInfoBp13Cell"),
+          "Mounted source paths retain the original parent and selected card subtree");
+    near(profile->rect->size.x, 364, 0, "Selected source profile width is unchanged");
+    near(profile->rect->size.y, 128, 0, "Selected source profile height is unchanged");
+    check(std::none_of(frame.graphics.begin(), frame.graphics.end(),
+                       [](const auto &g) { return g.kind == "UIText"; }) &&
+              std::any_of(reference.graphics.begin(), reference.graphics.end(),
+                          [](const auto &g) { return g.kind == "UIText"; }),
+          "Desktop suppresses raw game text while preserving the reference path");
+    check(!info->hiddenNodeIds.empty() && !info->centerNodeId.empty() &&
+              !info->statusNodeId.empty(),
+          "Desktop retains explicit hidden-game, center and status source anchors");
+    for (const auto &id : info->hiddenNodeIds) {
+        const auto *node = frame.node(id);
+        check(node && !node->active, "Game-only desktop nodes are inactive but queryable");
+        check(std::none_of(frame.graphics.begin(), frame.graphics.end(),
+                           [&](const auto &g) {
+                               return g.path == node->path || g.path.starts_with(node->path + "/");
+                           }),
+              "Hidden game-only subtrees emit no source artwork");
+    }
+    for (const auto &button : doc.buttons()) {
+        check(frame.node(button.captionNodeId) && frame.node(button.iconNodeId),
+              "Native navigation caption and icon bindings use real source nodes");
+        check(std::any_of(frame.hits.begin(), frame.hits.end(),
+                          [&](const auto &hit) { return hit.buttonId == button.id; }),
+              "Available desktop source buttons retain authored hit regions");
+    }
+    for (const auto *binding : {"button", "playerHeadBtn", "rightBtn"}) {
+        const auto &id = info->profileBindings.at(binding);
+        check(std::any_of(frame.hits.begin(), frame.hits.end(),
+                          [&](const auto &hit) { return hit.buttonId == id; }),
+              "Original profile hit regions remain available to the grouped native action");
+    }
+    const auto *background = findNodeGraphic(frame, info->profileBackgroundId);
+    check(background &&
+              background->textureId == "CAB-4a2267055b2c5652681adcf56a5c9ac3:-4827637915678035611",
+          "Desktop selects the canonical business_card_topic_normal_1 sprite texture");
+    for (const auto &id : info->profileGlowIds)
+        if (id != info->profileHighlightId)
+            check(findNodeGraphic(frame, id) == nullptr,
+                  "Broad profile/portrait additive source glow is suppressed");
+    std::size_t defaultStyles{};
+    for (const auto &g : frame.graphics) {
+        check(!g.normalMaterial,
+              "Original desktop materials remain unchanged until replacement ready");
+        if (g.path.find("/MiddleDecoNode/") == std::string::npos)
+            continue;
+        const double opacity = g.path.ends_with("/triangle_fx1") || g.path.ends_with("/RingFoMesh")
+                                   ? .88
+                               : g.path.ends_with("/EndfieldTextGlow") ? .78
+                                                                       : 1;
+        if (opacity == 1)
+            continue;
+        const auto *original = findNodeGraphic(reference, g.nodeId);
+        check(original != nullptr, "Desktop restrained glow retains its original source graphic");
+        near(g.color[3], original->color[3] * opacity, 1e-8,
+             "Desktop glow opacity follows the exact source view constants");
+        ++defaultStyles;
+    }
+    check(defaultStyles >= 2, "Actual desktop center glow policies are exercised");
+    check(std::any_of(frame.nodes.begin(), frame.nodes.end(),
+                      [](const auto &n) { return !n.masks.empty(); }),
+          "Native source-plane bindings inherit real clipping masks");
+    const auto &firstButton = doc.buttons().front();
+    for (int i = 0; i < 16; ++i)
+        near(frame.node(firstButton.id)->world.values[i],
+             reference.node(firstButton.id)->world.values[i], 1e-9,
+             "Desktop mounting leaves original left deployment geometry unchanged");
+    check(info->navigationRows.size() == 9 && frame.desktopRightAssignments.size() == 18,
+          "Fixed desktop fixture uses the exact nine-row two-column source pool");
+    for (std::size_t row = 0; row < info->navigationRows.size(); ++row)
+        for (std::size_t column = 0; column < 2; ++column)
+            check(frame.desktopRightAssignments.at(info->navigationRows[row].buttons[column]) ==
+                      row * 2 + column,
+                  "Desktop entry assignments retain authored physical order");
+    input.desktopEntryCount = 19;
+    input.verticalNormalizedPosition = 0;
+    auto partial = doc.frame(input);
+    const auto &lastPhysical = info->navigationRows[0]; // logical row 9 wraps to slot zero.
+    check(partial.desktopRightAssignments.at(lastPhysical.buttons[0]) == 18 &&
+              !partial.desktopRightAssignments.contains(lastPhysical.buttons[1]),
+          "Lone final entry keeps source first column in the recycled physical slot");
+    const auto *partialRow = partial.node(lastPhysical.id);
+    near(partialRow->rect->size.x, lastPhysical.size.x / 2, 1e-9,
+         "Partial source row contracts width to avoid recentering the lone item");
+    near(partialRow->rect->origin.x, -lastPhysical.size.x / 2, 1e-9,
+         "Partial source row pivot retains original first-column origin");
+    input.desktopEntryCount = 64;
+    input.verticalNormalizedPosition = 1;
+    auto top = doc.frame(input);
+    input.verticalNormalizedPosition = 0;
+    auto bottom = doc.frame(input);
+    check(top.nodes.size() == bottom.nodes.size() && bottom.nodes.size() == 834 &&
+              top.desktopRightAssignments.size() == 18 &&
+              bottom.desktopRightAssignments.size() == 18,
+          "Long desktop lists reuse bounded source nodes instead of cloning artwork");
+    check(std::all_of(bottom.desktopRightAssignments.begin(), bottom.desktopRightAssignments.end(),
+                      [](const auto &assignment) { return assignment.second >= 46; }),
+          "Bottom scrolling binds the final logical desktop entries to the existing pool");
+    check(top.scroll && bottom.scroll && top.scroll->contentId == info->navigationContentId &&
+              top.scroll->hiddenLength > 0,
+          "Desktop scroll bounds come from the canonical recycled content and viewport");
+    input.verticalNormalizedPosition = 1.1;
+    auto topRebound = doc.frame(input);
+    const double topPresentation =
+        DesktopScrollMotion::presentationPosition(1.1, top.scroll->hiddenLength);
+    near(topRebound.scroll->normalizedPosition, topPresentation, 0,
+         "Desktop layout preserves bounded spring presentation beyond normalized top");
+    check(topRebound.desktopRightAssignments == top.desktopRightAssignments,
+          "Overscroll keeps bounded logical-row assignment while source content rebounds");
+    auto viewInverse = inverse(top.node(top.scroll->viewportId)->sceneWorld);
+    check(viewInverse.has_value(), "Original scroll viewport inverse remains available");
+    const auto topContent = *viewInverse * top.node(info->navigationContentId)->sceneWorld;
+    const auto reboundContent =
+        *viewInverse * topRebound.node(info->navigationContentId)->sceneWorld;
+    near(reboundContent.values[13] - topContent.values[13],
+         -(topPresentation - 1) * top.scroll->hiddenLength, 1e-4,
+         "Visible source rebound retains exact normalized-position times hidden-length "
+         "displacement");
+    input.verticalNormalizedPosition = -.1;
+    auto bottomRebound = doc.frame(input);
+    const double bottomPresentation =
+        DesktopScrollMotion::presentationPosition(-.1, bottom.scroll->hiddenLength);
+    near(bottomRebound.scroll->normalizedPosition, bottomPresentation, 0,
+         "Desktop layout preserves bounded spring presentation beyond normalized bottom");
+    check(bottomRebound.desktopRightAssignments == bottom.desktopRightAssignments,
+          "Bottom rebound never recycles away the final visible logical entries");
+    input.desktopEntryCount = 18;
+    input.verticalNormalizedPosition = 0;
+    auto reachedBottom = doc.frame(input);
+    const auto &lastButton = info->navigationRows.back().buttons.back();
+    bool reachable = false;
+    for (const auto &hit : reachedBottom.hits)
+        if (hit.buttonId == lastButton) {
+            Vec3 center{hit.rect.origin.x + hit.rect.size.x / 2,
+                        hit.rect.origin.y + hit.rect.size.y / 2, 0};
+            if (auto pixel = reachedBottom.camera.project(center, hit.world))
+                reachable = reachable || reachedBottom.buttonAt(*pixel) == lastButton;
+        }
+    check(reachable,
+          "Scrolled source bottom makes the last desktop slot inverse-hit-test reachable");
+    input.desktopEntryCount = 64;
+    input.verticalNormalizedPosition = std::numeric_limits<double>::quiet_NaN();
+    check(doc.frame(input).desktopRightAssignments == top.desktopRightAssignments,
+          "Desktop row sampling uses source finite-scroll fallback");
+    input.desktopEntryCount = 0;
+    input.verticalNormalizedPosition = 1;
+    check(doc.frame(input).desktopRightAssignments.empty(),
+          "Empty desktop lists disable all source pool slots safely");
+    input.desktopEntryCount = 18;
+    DesktopPresentation presentation;
+    presentation.hiddenNodes.push_back(firstButton.iconNodeId);
+    presentation.properties[info->profileBindings.at("levelSlider")]["m_FillAmount"] = .5;
+    presentation.normalMaterialNodes.push_back(info->profileHighlightId);
+    input.desktopPresentation = &presentation;
+    ButtonMotion motion(doc);
+    motion.reset(0, true);
+    motion.setHovered(true, info->profileRootId, 1, true);
+    input.interaction = &motion;
+    input.time = 1;
+    auto native = doc.frame(input);
+    check(native.node(firstButton.iconNodeId) && !native.node(firstButton.iconNodeId)->active &&
+              !findNodeGraphic(native, firstButton.iconNodeId),
+          "Explicit native replacements hide source art while keeping authored geometry");
+    const auto *highlight = findNodeGraphic(native, info->profileHighlightId);
+    check(highlight && highlight->normalMaterial,
+          "Normal alpha is explicit only for the caller's prepared profile hover replacement");
+    // Exercise the same calibrated local mapping native overlays attach to an
+    // existing source node, independently of their artwork/text provider.
+    Graphic overlay;
+    overlay.nodeId = firstButton.captionNodeId;
+    overlay.nodeLocal = Mat4::identity();
+    overlay.nodeLocal.values[0] = .4;
+    overlay.nodeLocal.values[5] = .7;
+    overlay.nodeLocal.values[12] = 12;
+    overlay.nodeLocal.values[13] = -8;
+    overlay.sceneWorld = native.node(overlay.nodeId)->sceneWorld * overlay.nodeLocal;
+    overlay.world = native.worldRoot * overlay.sceneWorld;
+    overlay.masks = native.node(overlay.nodeId)->masks;
+    native.graphics.push_back(overlay);
+    Graphic footer = overlay;
+    footer.fixedWorld = true;
+    native.graphics.push_back(footer);
+    Quaternion tilt{0, std::sin(.025), 0, std::cos(.025)};
+    doc.reproject(native, tilt);
+    const auto expected = native.node(overlay.nodeId)->world * overlay.nodeLocal;
+    for (int i = 0; i < 16; ++i) {
+        near(native.graphics[native.graphics.size() - 2].world.values[i], expected.values[i], 1e-9,
+             "Source-plane local calibration survives slant and gyro reprojection");
+        near(native.graphics.back().world.values[i], footer.world.values[i], 0,
+             "Fixed footer remains in its original screen/design plane");
+    }
+    for (const auto &node : native.nodes)
+        for (const auto &mask : node.masks)
+            check(mask.world.values == (native.worldRoot * mask.sceneWorld).values,
+                  "Native label clipping masks follow the reprojected source root");
+    presentation.properties[firstButton.id]["m_Color.a"] = std::numeric_limits<double>::infinity();
+    rejects([&] { doc.frame(input); }, "Nonfinite native desktop properties reject");
+    auto reader = [&](const auto &file) {
+        std::ifstream stream(file, std::ios::binary);
+        std::string bytes{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+        check(!bytes.empty(), "Fresh actual source fixture files are available");
+        if (file.filename() == "desktop-profile-card.json") {
+            const auto position = bytes.find(info->profileParentId);
+            check(position != std::string::npos, "Actual profile fixture has canonical parent");
+            bytes.replace(position, info->profileParentId.size(), raw.buttons().front().id);
+        }
+        return bytes;
+    };
+    rejects([&] { Document::loadDesktop(path, reader); },
+            "Mounting rejects occupied authored parents instead of discarding source children");
+}
 void source(const std::filesystem::path &path) {
     auto doc = Document::load(path);
     check(doc.nodeCount() > 700, "Actual scene graph loaded");
@@ -2520,6 +2885,7 @@ void source(const std::filesystem::path &path) {
 int main(int argc, char **argv) {
     try {
         curves();
+        desktopScroll();
         lifecycle();
         frameScheduling();
         projection();
@@ -2529,8 +2895,10 @@ int main(int argc, char **argv) {
         fills();
         layoutAndButtons();
         shaderChannelsAndDeployment();
-        if (argc > 1)
+        if (argc > 1) {
             source(std::filesystem::path(argv[1]));
+            desktopSource(std::filesystem::path(argv[1]));
+        }
         std::cout << "Passed " << checks << " scene contract checks"
                   << (argc > 1 ? " including actual source resources" : " (synthetic fixtures)")
                   << '\n';

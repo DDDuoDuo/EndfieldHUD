@@ -2,11 +2,14 @@
 #include "app/frame_schedule.h"
 #include "platform/composition_probe.h"
 #include "platform/rendered_cursor.h"
+#include "scene/desktop_shell.hpp"
+#include "scene/desktop_scroll.hpp"
 #include <windowsx.h>
 #include <shellapi.h>
 #include <psapi.h>
 #include <shellscalingapi.h>
 #include <roapi.h>
+#include <winrt/base.h>
 #include <chrono>
 #include <algorithm>
 #include <cmath>
@@ -21,7 +24,7 @@
 
 namespace {
 using Clock = std::chrono::steady_clock;
-constexpr UINT trayMessage = WM_APP + 1, frameTimer = 1, probeTimer = 2;
+constexpr UINT trayMessage = WM_APP + 1, frameTimer = 1, probeTimer = 2, clockTimer = 3;
 constexpr UINT activateCommand = 100, quitCommand = 101;
 struct Monitor { RECT area{}; UINT dpiX{96}, dpiY{96}; };
 BOOL CALLBACK enumerateMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM context) {
@@ -42,19 +45,28 @@ std::filesystem::path executableRoot() {
 }
 class Application final {
 public:
-    explicit Application(bool probe, bool graphicsProbe, std::filesystem::path output, unsigned seconds) :
-        probe_(probe || graphicsProbe), graphicsProbe_(graphicsProbe), output_(std::move(output)), probeSeconds_(seconds) {}
+    explicit Application(bool probe, bool graphicsProbe, bool editorFixture, bool ambientEnabled, std::filesystem::path output, unsigned seconds,
+                         std::optional<ehud::scene::DesktopLanguage> language = {}) :
+        probe_(probe || graphicsProbe), graphicsProbe_(graphicsProbe), editorFixture_(editorFixture),
+        ambientEnabled_(ambientEnabled), language_(language), output_(std::move(output)), probeSeconds_(seconds) {}
     int run(HINSTANCE instance) {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        if(!language_) {
+            ULONG count{},length{};GetUserPreferredUILanguages(MUI_LANGUAGE_NAME,&count,nullptr,&length);
+            std::vector<wchar_t> names(length);std::vector<std::string> languages;
+            if(length && GetUserPreferredUILanguages(MUI_LANGUAGE_NAME,&count,names.data(),&length))
+                for(const wchar_t* p=names.data();*p;p+=wcslen(p)+1) languages.push_back(winrt::to_string(p));
+            language_=ehud::scene::DesktopShell::resolveLanguage(languages);
+        }
         if (!probe_) {
-            mutex_ = CreateMutexW(nullptr, FALSE, L"Local\\DDDuoDuo.EndfieldHUD.Windows.Feasibility");
+            mutex_ = CreateMutexW(nullptr, FALSE, L"Local\\DDDuoDuo.EndfieldHUD.Windows.DesktopFeasibility");
             if (GetLastError() == ERROR_ALREADY_EXISTS) {
-                if (auto existing = FindWindowW(L"EndfieldHUD.Windows.Feasibility", nullptr)) PostMessageW(existing, WM_APP + 2, 0, 0);
+                if (auto existing = FindWindowW(L"EndfieldHUD.Windows.DesktopFeasibility", nullptr)) PostMessageW(existing, WM_APP + 2, 0, 0);
                 return 0;
             }
         }
         WNDCLASSW windowClass{}; windowClass.lpfnWndProc = procedure; windowClass.hInstance = instance;
-        windowClass.lpszClassName = L"EndfieldHUD.Windows.Feasibility"; windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        windowClass.lpszClassName = L"EndfieldHUD.Windows.DesktopFeasibility"; windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         RegisterClassW(&windowClass);
         window_ = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             windowClass.lpszClassName, L"EndfieldHUD Windows feasibility", WS_POPUP, 0, 0, 1280, 720,
@@ -91,6 +103,57 @@ private:
         return app ? app->handle(message, wparam, lparam) : DefWindowProcW(window, message, wparam, lparam);
     }
     double now() const { return std::chrono::duration<double>(Clock::now() - animationOrigin_).count(); }
+    static ehud::scene::Vec3 desktopEuler(ehud::scene::Vec3 raw) {
+        // HUDSourceWatchView's desktop adapter with the source default
+        // parallaxIntensity=1 and perspectiveIntensity=1.
+        return {raw.x*1.25,raw.y*1.25,raw.z*1.25};
+    }
+    bool refreshClock() {
+        SYSTEMTIME time{};GetLocalTime(&time);char clock[16]{},date[32]{};
+        static constexpr const char* weekdays[]{"SUN","MON","TUE","WED","THU","FRI","SAT"};
+        static constexpr const char* months[]{"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        sprintf_s(clock,"%02u:%02u:%02u",time.wHour,time.wMinute,time.wSecond);
+        sprintf_s(date,"%s %s %u",weekdays[time.wDayOfWeek],months[time.wMonth-1],time.wDay);
+        if(clockTime_==clock && clockDate_==date) return false;
+        clockTime_=clock;clockDate_=date;return true;
+    }
+    ehud::scene::DesktopShellFixture desktopFixture(const ehud::scene::PlaybackSample& sample, bool synthetic=false) const {
+        ehud::scene::DesktopShellFixture fixture;
+        fixture.phase=sample.phase;fixture.phaseElapsed=sample.phaseElapsed;fixture.closingCanvasOpacity=closingCanvasOpacity_;
+        fixture.accent={250./255,212./255,31./255};
+        if(language_) fixture.language=*language_;
+        if(!shortcutLabel_.empty()) fixture.summonShortcut=winrt::to_string(shortcutLabel_);
+        if(!synthetic) {
+            fixture.clockTime=clockTime_;fixture.clockDate=clockDate_;
+        }
+        return fixture;
+    }
+    ehud::scene::Frame desktopFrame(const ehud::scene::Document& document, ehud::scene::DesktopShell& shell,
+        ehud::scene::FrameInput input, bool synthetic=false) {
+        auto fixture=desktopFixture(input.playback,synthetic);
+        auto source=shell.sourcePresentation(fixture);input.desktopPresentation=&source;
+        input.desktopEntryCount=ehud::scene::DesktopShell::rightModules().size();
+        input.verticalNormalizedPosition=scrollMotion_.position();
+        auto frame=document.frame(input);presentation_=shell.decorate(frame,fixture);return frame;
+    }
+    bool outsideDesktopCircle(ehud::scene::Vec2 pointer) const {
+        if(!frame_ || !presentation_ || !presentation_->centerPlane) return false;
+        auto presentedWorld=[&](const ehud::scene::DesktopNativePlane& plane) {
+            // Camera-only frames update graphics in place. Use their current
+            // plane, rather than the metadata from the last tree rebuild.
+            for(const auto& graphic:frame_->graphics)
+                if(graphic.nodeId==plane.nodeId && graphic.kind.starts_with("Desktop")) return graphic.world;
+            return plane.world;
+        };
+        if(presentation_->statusPlane && frame_->camera.hit(pointer,presentedWorld(*presentation_->statusPlane),presentation_->statusPlane->sourceRect)) return false;
+        if(frame_->scroll) if(auto node=frame_->node(frame_->scroll->viewportId);node&&node->rect&&frame_->camera.hit(pointer,node->world,*node->rect)) return false;
+        const auto& plane=*presentation_->centerPlane;
+        auto local=frame_->camera.pointOnPlane(pointer,presentedWorld(plane));
+        if(!local || plane.sourceRect.size.x<=0 || plane.sourceRect.size.y<=0) return false;
+        const double dx=(local->x-plane.sourceRect.origin.x)/plane.sourceRect.size.x*1000-500;
+        const double dy=(local->y-plane.sourceRect.origin.y)/plane.sourceRect.size.y*640-320;
+        return dx*dx+dy*dy>=310*310;
+    }
     void addTray() {
         NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = window_; data.uID = 1;
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; data.uCallbackMessage = trayMessage;
@@ -126,7 +189,9 @@ private:
         try {
             if (!document_) {
                 auto root = executableRoot() / L"Resources" / L"NativeScene" / L"Scene";
-                document_ = ehud::scene::Document::load(root);
+                document_ = ehud::scene::Document::loadDesktop(root);
+                shell_ = std::make_unique<ehud::scene::DesktopShell>(*document_);
+                gyro_=ehud::scene::GyroMotion(document_->initialRootRotation());
                 playback_ = std::make_unique<ehud::scene::Playback>(document_->entranceDuration(), document_->exitDuration());
                 buttons_ = std::make_unique<ehud::scene::ButtonMotion>(*document_);
             }
@@ -139,13 +204,17 @@ private:
                 if (FAILED(hr)) throw std::runtime_error("Native graphics initialization failed");
                 hr = renderer_->loadSourceAssets(executableRoot() / L"Resources" / L"WatchSource");
                 if (FAILED(hr)) throw std::runtime_error("Original source sprite/material resource initialization failed");
-                editor_ = std::make_unique<endfield::platform::ProjectedEditor>();
-                hr = editor_->initialize(window_, renderer_->textFactory(), [this] { dirty_ = true; requestFrame(); });
-                if (FAILED(hr)) throw std::runtime_error("TSF text editor initialization failed; projected input is unavailable");
-                editor_->set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic editing fixture — no saved user data");
-                editor_->set_rectangle(D2D1::RectF(0, 0, 600, 220));
+                if(editorFixture_) {
+                    editor_ = std::make_unique<endfield::platform::ProjectedEditor>();
+                    hr = editor_->initialize(window_, renderer_->textFactory(), [this] { dirty_ = true; requestFrame(); });
+                    if (FAILED(hr)) throw std::runtime_error("TSF text editor initialization failed; projected input is unavailable");
+                    editor_->set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic editing fixture — no saved user data");
+                    editor_->set_rectangle(D2D1::RectF(0, 0, 600, 220));
+                }
             }
             buttons_->reset(now()); hovered_.reset(); pressed_.reset(); frameSchedule_.reset();
+            scrollMotion_.reset(scrollMotion_.position(),now());
+            refreshClock();
             playback_->open(now()); dirty_ = true;
             POINT pointer{}; GetCursorPos(&pointer); ScreenToClient(window_, &pointer);
             pointer_ = {static_cast<double>(pointer.x), static_cast<double>(pointer.y)}; pointerChanged_ = true;
@@ -153,13 +222,14 @@ private:
             ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_);
             cursor_.set_presented(true); cursor_.set_focused(GetForegroundWindow()==window_);
             resolveCursor(true,true);
+            SetTimer(window_,clockTimer,1000,nullptr);
             requestFrame();
         } catch (const std::exception& error) {
             if (playback_) playback_->conceal(); frame_.reset(); frameSchedule_.reset();
             cursor_.set_presented(false);
             cancelPointerInteraction();
             if (editor_) editor_->focus(false); editor_.reset(); renderer_.reset();
-            KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE);
+            KillTimer(window_, frameTimer);KillTimer(window_,clockTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE);
             const int size = MultiByteToWideChar(CP_UTF8, 0, error.what(), -1, nullptr, 0);
             std::wstring reason(size, L'\0'); MultiByteToWideChar(CP_UTF8, 0, error.what(), -1, reason.data(), size);
             MessageBoxW(window_, reason.c_str(), L"Windows feasibility prototype", MB_ICONERROR | MB_OK);
@@ -171,7 +241,10 @@ private:
         if (!playback_ || playback_->phase() == ehud::scene::Phase::concealed) {
             if (quit) DestroyWindow(window_); return;
         }
-        quitAfterClose_ = quit; playback_->close(now()); dirty_ = true; requestFrame();
+        const double time=now();closingCanvasOpacity_=ehud::scene::DesktopShell::canvasAlpha(desktopFixture(playback_->sample(time,false,ambientEnabled_)));
+        KillTimer(window_,clockTimer);
+        scrollMotion_.reset(scrollMotion_.position(),time);
+        quitAfterClose_ = quit; playback_->close(time); dirty_ = true; requestFrame();
     }
     void cancelPointerInteraction() {
         const double time = now();
@@ -223,6 +296,7 @@ private:
     }
     void renderingFailed(HRESULT status) {
         KillTimer(window_, frameTimer); frameTimerRunning_ = false;
+        KillTimer(window_,clockTimer);
         frameSchedule_.reset();
         if (playback_) playback_->conceal(); frame_.reset();
         cursor_.set_presented(false);
@@ -235,20 +309,21 @@ private:
     }
     void frame() {
         if (!document_ || !renderer_ || !playback_) return;
-        const double time = now(); auto sample = playback_->sample(time, false, false);
+        const double time = now(); auto sample = playback_->sample(time, false, ambientEnabled_);
         if (sample.phase == ehud::scene::Phase::concealed) {
             cursor_.set_presented(false);
-            KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); frame_.reset(); gyro_.stop(time);
+            KillTimer(window_, frameTimer);KillTimer(window_,clockTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); frame_.reset(); gyro_.stop(time);
             frameSchedule_.reset();
             if (quitAfterClose_) DestroyWindow(window_); return;
         }
         RECT client{}; GetClientRect(window_, &client);
         ehud::scene::Vec2 viewport{static_cast<double>(client.right), static_cast<double>(client.bottom)};
         if (pointerChanged_) {
-            gyro_.retarget(document_->pointerEuler(pointer_, viewport), time, document_->gyroDuration()); pointerChanged_ = false;
+            gyro_.retarget(desktopEuler(document_->pointerEuler(pointer_, viewport)), time, document_->gyroDuration()); pointerChanged_ = false;
         }
         gyro_.finishIfNeeded(time);
-        const bool buttonAnimation = buttons_ && buttons_->requiresFrames(time);
+        scrollMotion_.advance(time);
+        const bool buttonAnimation = (buttons_ && buttons_->requiresFrames(time)) || scrollMotion_.requiresFrames() || sample.ambientTime.has_value();
         const auto decision = frameSchedule_.next(sample.phase, dirty_, gyro_.animating(), buttonAnimation);
         if (!decision.submit) {
             KillTimer(window_, frameTimer); frameTimerRunning_ = false; return;
@@ -258,22 +333,21 @@ private:
         else {
             ehud::scene::FrameInput input{viewport, sample, gyro_.rotation(time)};
             input.interaction = buttons_.get(); input.time = time;
-            frame_ = document_->frame(input);
+            frame_ = desktopFrame(*document_,*shell_,input);
         }
         // Opening and depth/tilt motion can move a button under a stationary
         // pointer. Resolve hover against this frame, using its same clock.
         if (updateHovered(time)) {
             ehud::scene::FrameInput input{viewport, sample, gyro_.rotation(time)};
             input.interaction = buttons_.get(); input.time = time;
-            frame_ = document_->frame(input);
+            frame_ = desktopFrame(*document_,*shell_,input);
         }
-        // Match HUDSourceWatchView's ambient-off shader clock. Geometry and
-        // interaction retain their finite animation clock; UV effects stay
-        // fixed at zero while idle instead of jumping on the next input.
-        frame_->sceneTime=0;
+        // The source default enables ambient animation. Explicit ambient-off
+        // diagnostics keep shader time at zero while finite geometry proceeds.
+        frame_->sceneTime=ambientEnabled_?time:0;
         HRESULT hr = renderer_->draw(*frame_, editor_.get()); dirty_ = false;
         if (FAILED(hr)) renderingFailed(hr);
-        else { frameSchedule_.submitted(sample.phase, gyro_.animating(), buttons_ && buttons_->requiresFrames(time)); resolveCursor(false); }
+        else { frameSchedule_.submitted(sample.phase, gyro_.animating(), (buttons_ && buttons_->requiresFrames(time)) || scrollMotion_.requiresFrames() || sample.ambientTime.has_value()); resolveCursor(false); }
     }
     void writeProbe() {
         KillTimer(window_, probeTimer);
@@ -304,7 +378,8 @@ private:
     void graphicsProbe() {
         const auto start = Clock::now();
         try {
-            auto doc = ehud::scene::Document::load(executableRoot() / L"Resources" / L"NativeScene" / L"Scene");
+            auto doc = ehud::scene::Document::loadDesktop(executableRoot() / L"Resources" / L"NativeScene" / L"Scene");
+            ehud::scene::DesktopShell shell(doc);
             ehud::scene::Playback playback(doc.entranceDuration(), doc.exitDuration());
             renderer_ = std::make_unique<ehud::render::NativeRenderer>(); auto& renderer = *renderer_;
             HRESULT renderStatus = renderer.initialize(window_, 1280, 720);
@@ -313,12 +388,13 @@ private:
             if (FAILED(renderStatus)) throw std::runtime_error("Original source sprite resource initialization failed");
             if (FAILED(renderer.verifyDiagnosticAlpha())) throw std::runtime_error("D3D/D2D encoded premultiplied alpha contract failed");
             HWND unused = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW,
-                L"EndfieldHUD.Windows.Feasibility", L"Composition capability probe", WS_POPUP, 0, 0, 32, 32,
+                L"EndfieldHUD.Windows.DesktopFeasibility", L"Composition capability probe", WS_POPUP, 0, 0, 32, 32,
                 nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
             auto composition = endfield::platform::probe_compositors(unused, renderer.graphicsDevice());
             if (unused) DestroyWindow(unused);
             editor_ = std::make_unique<endfield::platform::ProjectedEditor>(); auto& editor = *editor_;
             HRESULT editorStatus = editor.initialize(window_, renderer.textFactory(), []{});
+            if(FAILED(editorStatus)) throw std::runtime_error("Synthetic TSF context creation failed");
             editor.set_text(u"English 简体中文 繁體中文 日本語 한국어 😀\nSynthetic TSF fixture");
             editor.set_rectangle(D2D1::RectF(0, 0, 600, 220));
             auto memory = [] {
@@ -328,10 +404,10 @@ private:
             };
             auto drawCycle = [&](unsigned index) {
                 double time = index * 3.0;
-                playback.open(time); ehud::scene::GyroMotion gyro;
-                gyro.retarget(doc.pointerEuler({1100, 120}, {1280, 720}), time, doc.gyroDuration());
+                playback.open(time); ehud::scene::GyroMotion gyro(doc.initialRootRotation());
+                gyro.retarget(desktopEuler(doc.pointerEuler({1100, 120}, {1280, 720})), time, doc.gyroDuration());
                 ehud::scene::FrameInput input{{1280, 720}, playback.sample(time + doc.entranceDuration(), false, false), gyro.rotation(time + 1)};
-                input.time=time+doc.entranceDuration(); auto frame = doc.frame(input); frame.sceneTime=0;
+                input.time=time+doc.entranceDuration(); auto frame = desktopFrame(doc,shell,input,true); frame.sceneTime=0;
                 const auto mapping = ehud::render::NativeRenderer::editorProjection(frame);
                 for (ehud::scene::Vec2 point : {ehud::scene::Vec2{0, 0}, {600, 0}, {600, 220}, {0, 220}}) {
                     auto source = frame.camera.project({point.x - 300, 170 - point.y, 0}, frame.worldRoot);
@@ -341,7 +417,7 @@ private:
                         std::hypot(point.x - inverseX, point.y - inverseY) > 1e-7)
                         throw std::runtime_error("Editor/drawing projection mismatch");
                 }
-                HRESULT status = renderer.draw(frame, &editor);
+                HRESULT status = renderer.draw(frame, editorFixture_?&editor:nullptr);
                 if (FAILED(status)) throw std::runtime_error("Native projected frame submission failed");
                 playback.close(time + 1); auto closed = playback.sample(time + 1 + doc.exitDuration(), false, false);
                 if (closed.phase != ehud::scene::Phase::concealed) throw std::runtime_error("Closing lifecycle failed");
@@ -357,7 +433,7 @@ private:
             auto picture = output_; picture.replace_extension(L".bmp");
             if (FAILED(renderer.saveDiagnosticFrame(picture))) throw std::runtime_error("Synthetic render readback failed");
             std::ofstream output(output_); output << std::setprecision(12)
-                << "{\n  \"schema\": 1,\n  \"scenario\": \"hidden-native-graphics-lifecycle\",\n  \"synthetic\": true,\n"
+                << "{\n  \"schema\": 1,\n  \"scenario\": \"restarted-desktop-graphics-lifecycle\",\n  \"source_mode\": \"desktop\",\n  \"canonical_resource_baseline\": \"4036174a3facf935260f4d0a9c63bfff33b98c37\",\n  \"synthetic\": true,\n"
                 << "  \"elapsed_seconds\": " << std::chrono::duration<double>(Clock::now() - start).count()
                 << ",\n  \"direct_composition_hresult\": " << static_cast<long>(composition.direct_composition)
                 << ",\n  \"windows_ui_composition_hresult\": " << static_cast<long>(composition.windows_ui_composition)
@@ -429,10 +505,30 @@ private:
             resolveCursor(false,true);
             if (hovered_ && buttons_) { buttons_->setHovered(false, *hovered_, now()); hovered_.reset(); dirty_ = true; requestFrame(); }
             return 0;
+        case WM_MOUSEWHEEL:
+            if(frame_ && frame_->scroll && playback_ && playback_->phase()==ehud::scene::Phase::visible && frame_->scroll->hiddenLength>0) {
+                const auto& scroll=*frame_->scroll;auto node=frame_->node(scroll.viewportId);
+                POINT point{GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)};ScreenToClient(window_,&point);
+                if(node && node->rect && frame_->camera.hit({double(point.x),double(point.y)},node->world,*node->rect)) {
+                    const auto& rect=*node->rect;
+                    auto bottom=frame_->camera.project({rect.origin.x,rect.origin.y,0},node->world);
+                    auto top=frame_->camera.project({rect.origin.x,rect.origin.y+rect.size.y,0},node->world);
+                    if(bottom && top) {
+                        UINT lines=3;SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&lines,0);
+                        const double pixels=std::max(1.,std::hypot(top->x-bottom->x,top->y-bottom->y));
+                        const double units=rect.size.y/pixels;
+                        const double travel=lines==WHEEL_PAGESCROLL?pixels:double(lines)*10*GetDpiForWindow(window_)/96.;
+                        const double delta=double(GET_WHEEL_DELTA_WPARAM(wparam))/WHEEL_DELTA*travel*units/std::max(1.,scroll.hiddenLength);
+                        scrollMotion_.scroll(delta,scroll.hiddenLength,now());dirty_=true;requestFrame();return 0;
+                    }
+                }
+            } break;
         case WM_LBUTTONDOWN:
-            if (frame_ && buttons_) {
-                pressed_ = frame_->buttonAt({static_cast<double>(GET_X_LPARAM(lparam)), static_cast<double>(GET_Y_LPARAM(lparam))});
+            if (frame_ && buttons_ && playback_ && playback_->phase()==ehud::scene::Phase::visible) {
+                const ehud::scene::Vec2 pointer{static_cast<double>(GET_X_LPARAM(lparam)), static_cast<double>(GET_Y_LPARAM(lparam))};
+                pressed_ = frame_->buttonAt(pointer);
                 if (pressed_) { buttons_->setState(ehud::scene::ButtonState::pressed, *pressed_, now()); SetCapture(window_); dirty_ = true; requestFrame(); }
+                else if(outsideDesktopCircle(pointer)) close(false);
             } return 0;
         case WM_LBUTTONUP:
             if (pressed_ && buttons_) {
@@ -440,14 +536,15 @@ private:
                 pressed_.reset(); ReleaseCapture(); dirty_ = true; requestFrame();
             } return 0;
         case WM_KEYDOWN: if (wparam == VK_ESCAPE) { close(false); return 0; } break;
-        case WM_TIMER: if (wparam == frameTimer) frame(); else if (wparam == probeTimer) writeProbe(); return 0;
+        case WM_TIMER: if (wparam == frameTimer) frame(); else if (wparam == probeTimer) writeProbe();
+            else if(wparam==clockTimer && playback_ && playback_->phase()!=ehud::scene::Phase::concealed && refreshClock()) {dirty_=true;requestFrame();} return 0;
         case WM_CLOSE: close(false); return 0;
         case WM_POWERBROADCAST: if (wparam == PBT_APMSUSPEND && playback_) {
             if (editor_) editor_->focus(false); playback_->conceal(); frame_.reset();
             cursor_.set_presented(false);
             frameSchedule_.reset();
             cancelPointerInteraction();
-            KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); gyro_.stop(now());
+            KillTimer(window_, frameTimer);KillTimer(window_,clockTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); gyro_.stop(now());
         } return TRUE;
         case trayMessage:
             if (LOWORD(lparam) == NIN_SELECT || LOWORD(lparam) == NIN_KEYSELECT) toggle();
@@ -466,23 +563,29 @@ private:
         return DefWindowProcW(window_, message, wparam, lparam);
     }
     void cleanup() {
-        UnregisterHotKey(window_, 1); KillTimer(window_, frameTimer); KillTimer(window_, probeTimer);
+        UnregisterHotKey(window_, 1); KillTimer(window_, frameTimer); KillTimer(window_, probeTimer);KillTimer(window_,clockTimer);
         if (!probe_) { NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = window_; data.uID = 1; Shell_NotifyIconW(NIM_DELETE, &data); }
         cursor_.reset(); editor_.reset(); renderer_.reset(); if (mutex_) CloseHandle(mutex_);
     }
     HWND window_{}; HANDLE mutex_{}; UINT taskbarCreated_{};
     bool probe_{}, graphicsProbe_{}, warmClosed_{}, shortcutReady_{}, dirty_{}, pointerChanged_{}, pointerInside_{}, quitAfterClose_{}, frameTimerRunning_{};
+    bool editorFixture_{},ambientEnabled_{true};double closingCanvasOpacity_{1};
+    std::optional<ehud::scene::DesktopLanguage> language_;
     std::uint64_t submittedAtClose_{};
     std::filesystem::path output_; unsigned probeSeconds_{60}; int exitCode_{};
     std::wstring shortcutLabel_;
+    std::string clockTime_,clockDate_;
     Clock::time_point animationOrigin_{Clock::now()}, probeStart_{}; double cpuStart_{}; DWORD handlesStart_{};
     std::optional<ehud::scene::Document> document_; std::unique_ptr<ehud::scene::Playback> playback_;
+    std::unique_ptr<ehud::scene::DesktopShell> shell_;
     std::unique_ptr<ehud::scene::ButtonMotion> buttons_;
     std::optional<ehud::scene::SourceId> hovered_, pressed_;
     std::unique_ptr<ehud::render::NativeRenderer> renderer_;
     std::unique_ptr<endfield::platform::ProjectedEditor> editor_;
     std::optional<ehud::scene::Frame> frame_; ehud::scene::GyroMotion gyro_; ehud::scene::Vec2 pointer_{};
+    std::optional<ehud::scene::DesktopShellPresentation> presentation_;
     ehud::app::FrameSchedule frameSchedule_;
+    ehud::scene::DesktopScrollMotion scrollMotion_;
     ehud::platform::RenderedCursor cursor_;
     ehud::platform::CursorRegion cursorRegion_{ehud::platform::CursorRegion::outside};
     bool editorPointerTracking_{};
@@ -492,12 +595,16 @@ private:
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     HRESULT hr = RoInitialize(RO_INIT_SINGLETHREADED); if (FAILED(hr)) return 1;
     int count{}; auto arguments = CommandLineToArgvW(GetCommandLineW(), &count);
-    bool probe = false, graphicsProbe = false; std::filesystem::path output = L"closed-probe.json"; unsigned seconds = 60;
+    bool probe = false, graphicsProbe = false, editorFixture = false, ambientEnabled = true; std::filesystem::path output = L"closed-probe.json"; unsigned seconds = 60;
+    std::optional<ehud::scene::DesktopLanguage> language;
     for (int index = 1; index < count; ++index) {
         if (std::wstring_view(arguments[index]) == L"--closed-probe") probe = true;
         else if (std::wstring_view(arguments[index]) == L"--graphics-probe") graphicsProbe = true;
+        else if (std::wstring_view(arguments[index]) == L"--editor-fixture") editorFixture = true;
+        else if (std::wstring_view(arguments[index]) == L"--ambient-off") ambientEnabled = false;
+        else if (std::wstring_view(arguments[index]) == L"--language" && index + 1 < count) language=ehud::scene::DesktopShell::resolveLanguage({winrt::to_string(arguments[++index])});
         else if (std::wstring_view(arguments[index]) == L"--output" && index + 1 < count) output = arguments[++index];
         else if (std::wstring_view(arguments[index]) == L"--seconds" && index + 1 < count) seconds = std::clamp<unsigned>(_wtoi(arguments[++index]), 1, 3600);
     }
-    LocalFree(arguments); Application app(probe, graphicsProbe, output, seconds); int result = app.run(instance); RoUninitialize(); return result;
+    LocalFree(arguments); Application app(probe, graphicsProbe, editorFixture, ambientEnabled, output, seconds, language); int result = app.run(instance); RoUninitialize(); return result;
 }

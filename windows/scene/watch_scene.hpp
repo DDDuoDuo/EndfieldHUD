@@ -190,6 +190,11 @@ struct Graphic {
     Mat4 sceneWorld{Mat4::identity()};
     int sortingOrder{};
     bool vertexColorReady{}; // UI Color32/tint/canvas color-space policy already applied.
+    bool normalMaterial{};   // Desktop's explicit normal-alpha replacement policy.
+    // Native source-plane offsets survive slant/gyro reprojection. Screen/design
+    // overlays set fixedWorld so their already-projected world matrix is retained.
+    Mat4 nodeLocal{Mat4::identity()};
+    bool fixedWorld{};
 };
 struct FilledGeometry {
     std::vector<std::array<Vec3, 4>> quads;
@@ -207,6 +212,8 @@ struct NodeGeometry {
     int sortingOrder{};
     double localOpacity{1};
     bool locallyHidden{};
+    double inheritedAlpha{1};
+    std::vector<HitRegion::Mask> masks;
 };
 struct ScrollInfo {
     SourceId nodeId, contentId, viewportId;
@@ -224,6 +231,8 @@ struct Frame {
     double sceneTime{};
     std::vector<NodeGeometry> nodes;
     std::optional<ScrollInfo> scroll;
+    // Current recycled physical slot -> logical right-side desktop entry.
+    std::map<SourceId, std::size_t> desktopRightAssignments;
     std::optional<SourceId> buttonAt(Vec2 point) const;
     const NodeGeometry *node(std::string_view id) const;
 
@@ -232,6 +241,16 @@ struct Frame {
     std::shared_ptr<const FrameState> sourceState_;
 };
 class ButtonMotion;
+struct DesktopGraphicStyle {
+    std::optional<std::array<double, 3>> tint;
+    double opacity{1};
+};
+struct DesktopPresentation {
+    // Native replacements hide only their explicit authored source graphics.
+    std::vector<SourceId> hiddenNodes, normalMaterialNodes;
+    std::map<SourceId, std::map<std::string, double>> properties;
+    std::map<SourceId, DesktopGraphicStyle> graphicStyles;
+};
 struct FrameInput {
     Vec2 viewport{1920, 1080};
     PlaybackSample playback{};
@@ -245,10 +264,29 @@ struct FrameInput {
     IntrinsicSize intrinsicSize;
     // Explicit selected groups only. Never inferred from Watch sprite paths.
     const DeploymentFlicker *deployment{};
+    // Used only by loadDesktop; source row pool is recycled, never cloned.
+    std::size_t desktopEntryCount{18};
+    const DesktopPresentation *desktopPresentation{};
 };
 struct Button {
     SourceId id;
     std::string path, textId, sourceLabel;
+    SourceId captionNodeId, iconNodeId;
+};
+struct DesktopNavigationRow {
+    SourceId id;
+    std::vector<SourceId> buttons;
+    Vec2 anchored{}, size{};
+};
+struct DesktopSceneInfo {
+    SourceId profileParentId, profileRootId, profileBackgroundId, profileHighlightId;
+    SourceId centerNodeId, statusNodeId;
+    std::map<std::string, SourceId> profileBindings;
+    std::vector<SourceId> profileButtonIds, hiddenNodeIds, profileGlowIds;
+    std::vector<DesktopNavigationRow> navigationRows;
+    SourceId navigationContentId, navigationViewportId;
+    Vec2 navigationContentSize{};
+    double rowStep{}, rowScale{}, viewportHeight{};
 };
 
 class Document {
@@ -257,6 +295,8 @@ class Document {
     // the scene to a platform, compression library, timer, or real app data.
     using ResourceReader = std::function<std::string(const std::filesystem::path &)>;
     static Document load(const std::filesystem::path &sceneRoot, ResourceReader reader = {});
+    static Document loadDesktop(const std::filesystem::path &sceneRoot, ResourceReader reader = {});
+    const DesktopSceneInfo *desktopInfo() const;
     Frame frame(const FrameInput &input) const;
     // Retains ordered candidates and centers supplied in the source artwork's
     // coordinate space. Reads ancestry/local model opacity from this snapshot.
@@ -267,6 +307,7 @@ class Document {
     void reproject(Frame &frame, Quaternion rootRotation) const;
     Vec3 pointerEuler(Vec2 clientPoint, Vec2 viewport, bool detect = true) const;
     double gyroDuration() const;
+    Quaternion initialRootRotation() const;
     double entranceDuration() const;
     double exitDuration() const;
     double ambientDuration() const;
@@ -276,6 +317,8 @@ class Document {
   private:
     friend class ButtonMotion;
     struct Impl;
+    static Document loadWithMode(const std::filesystem::path &sceneRoot, ResourceReader reader,
+                                 bool desktop);
     explicit Document(std::shared_ptr<const Impl> impl) : impl_(std::move(impl)) {}
     std::shared_ptr<const Impl> impl_;
 };

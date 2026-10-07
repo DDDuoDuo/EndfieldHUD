@@ -21,7 +21,38 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          # Build the triggering immutable commit, even after the branch moves.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
+        env:
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
+      - name: Attach the source branch to the exact triggering commit
+        shell: pwsh
+        env:
+          WINDOWS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          WINDOWS_SOURCE_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          if ($env:WINDOWS_SOURCE_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid immutable Windows source commit.' }
+          if ($env:WINDOWS_SOURCE_REF -ne 'codex/windows-migration') { throw 'Windows source authority requires codex/windows-migration.' }
+          $origins = @(& git remote get-url --all origin)
+          if ($LASTEXITCODE -ne 0 -or $origins.Count -ne 1) { throw 'Checkout origin is missing or ambiguous.' }
+          $canonicalOrigin = 'https://github.com/DDDuoDuo/EndfieldHUD.git'
+          if ($origins[0] -ne $canonicalOrigin -and $origins[0] -ne 'https://github.com/DDDuoDuo/EndfieldHUD') { throw 'Checkout origin is not the authorized GitHub repository.' }
+          # Checkout uses the same HTTPS repository URL without the .git suffix.
+          # Normalize only that verified spelling; fetched refs stay untouched.
+          & git remote set-url origin $canonicalOrigin
+          if ($LASTEXITCODE -ne 0) { throw 'Could not record the canonical GitHub origin.' }
+          $checkedOut = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $checkedOut -ne $env:WINDOWS_SOURCE_SHA) { throw 'Checkout differs from the triggering source commit.' }
+          & git checkout -B $env:WINDOWS_SOURCE_REF $env:WINDOWS_SOURCE_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Could not attach the exact Windows source commit to its local branch.' }
+          $attachedCommit = (& git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $attachedCommit -ne $env:WINDOWS_SOURCE_SHA) { throw 'Local Windows branch changed the triggering commit.' }
+          $attachedBranch = (& git symbolic-ref --short HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $attachedBranch -ne $env:WINDOWS_SOURCE_REF) { throw 'Local Windows source branch is ambiguous.' }
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'

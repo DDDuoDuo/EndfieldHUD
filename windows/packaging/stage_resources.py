@@ -14,6 +14,9 @@ import tempfile
 import time
 import zlib
 
+from source_provenance import (PROVENANCE, SourceAuthority, create_manifest,
+                               output_record, verify_manifest as verify_source_provenance)
+
 MAGIC = b"EHUDZ01\0"
 MAX_RESOURCE_BYTES = 128 * 1024 * 1024
 INVENTORY = "resources-inventory.json"
@@ -171,10 +174,12 @@ def verify_resources(destination: Path) -> dict:
         if len(data) != record["bytes"] or sha256(data) != record["sha256"]:
             raise ValueError("Altered Windows runtime asset: " + record["path"])
     audit_watch(destination / "WatchSource")
+    verify_source_provenance(destination)
     return manifest
 
 
 def stage_resources(repository: Path, destination: Path) -> dict:
+    authority = SourceAuthority(repository)
     repository, destination = repository.resolve(), destination.resolve()
     source = repository / "Resources"
     if destination == source or destination.is_relative_to(source) or source.is_relative_to(destination):
@@ -187,8 +192,19 @@ def stage_resources(repository: Path, destination: Path) -> dict:
     selection = json.loads(selection_path.read_bytes())
     assets = source_assets(source, selection)
     packer = repository / "scripts" / "package-watch-resources.py"
-    if not packer.is_file():
-        raise ValueError("The original Watch resource packer is required")
+    authority.read("scripts/package-watch-resources.py")
+    authority.read("WINDOWS-MIGRATION.md")
+    # Catalog/selection discovery must not observe an untracked or altered
+    # extraction file, even if that file would later be omitted from packaging.
+    authority.audit_tree("Resources/WatchSource")
+    for name, _ in assets:
+        authority.read("Resources/" + name)
+    for name in ("LICENSE", "CREDITS.md"):
+        authority.read(name)
+    for dependency in selection.get("native_dependency_notices", []):
+        authority.read(dependency["repository_path"])
+    if "Scene/desktop-profile-card.json" not in selection["native_scene_metadata"]:
+        raise ValueError("The canonical desktop profile card is required for restart staging")
     destination.parent.mkdir(parents=True, exist_ok=True)
     # A short staging parent also avoids nesting the authoritative packer's
     # own temporary directory beneath the long VS configuration directory.
@@ -204,35 +220,70 @@ def stage_resources(repository: Path, destination: Path) -> dict:
         run_watch_packer([*command, "stage", *arguments])
         run_watch_packer([*command, "verify", *arguments])
         audit_watch(staged / "WatchSource")
+        provenance_outputs = []
+        watch = json.loads((staged / "WatchSource/runtime-inventory.json").read_bytes())
+        watch_inputs = []
+        for record in watch["files"]:
+            source_name = "Resources/WatchSource/" + record["path"]
+            source_data = authority.read(source_name)
+            target = checked_file(staged / "WatchSource", record["path"])
+            decoded = decode_resource(target.read_bytes(), require_container=record["encoding"] == "raw-deflate-v1")
+            if decoded != source_data:
+                raise ValueError("Packed output differs from canonical GitHub blob: " + source_name)
+            watch_inputs.append(source_name)
+            provenance_outputs.append(output_record(target, staged, inputs=[source_name], encoding=record["encoding"], decoded=decoded))
+        selection_inputs = ["Resources/WatchSource/" + name for name in (
+            "materials.json", "textures.json", "Scene/materials.json", "Scene/sprites.json",
+            "Scene/fonts.json", "Scene/scene.json", "Scene/desktop-profile-card.json")]
+        for name in selection_inputs:
+            authority.read(name)
+        for name, algorithm in [("runtime-selection.json", "canonical-desktop-selection-json"),
+                                ("runtime-materials.json", "selected-original-json-tokens"),
+                                ("runtime-inventory.json", "canonical-watch-runtime-inventory")]:
+            target = staged / "WatchSource" / name
+            data = target.read_bytes()
+            provenance_outputs.append(output_record(target, staged,
+                inputs=sorted(set(watch_inputs + selection_inputs)) if name == "runtime-inventory.json" else selection_inputs,
+                encoding="raw-deflate-v1" if data.startswith(MAGIC) else "identity",
+                decoded=decode_resource(data), algorithm=algorithm))
         for name, path in assets:
             target = staged / safe_relative(name)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(path.read_bytes())
+            source_name = "Resources/" + name
+            target.write_bytes(authority.read(source_name))
+            provenance_outputs.append(output_record(target, staged, inputs=[source_name]))
         for name, target_name in [("LICENSE", "LICENSE.txt"), ("CREDITS.md", "CREDITS.md")]:
-            (staged / target_name).write_bytes(checked_file(repository, name).read_bytes())
+            target = staged / target_name
+            target.write_bytes(authority.read(name))
+            provenance_outputs.append(output_record(target, staged, inputs=[name]))
         native_dependencies = selection.get("native_dependency_notices", [])
         for dependency in native_dependencies:
-            notice = checked_file(repository, dependency["repository_path"]).read_bytes()
+            notice = authority.read(dependency["repository_path"])
             if len(notice) != dependency["license_bytes"] or sha256(notice) != dependency["license_sha256"]:
                 raise ValueError("Native dependency license pin changed: " + dependency["name"])
             target = staged / safe_relative(dependency["destination"])
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(notice)
+            provenance_outputs.append(output_record(target, staged, inputs=[dependency["repository_path"]]))
         native_records = []
         for name in selection["native_scene_metadata"]:
             packed_path = checked_file(staged / "WatchSource", name)
-            source_path = checked_file(source / "WatchSource", name)
+            source_name = "Resources/WatchSource/" + name
             data = decode_resource(packed_path.read_bytes())
-            if data != source_path.read_bytes():
+            if data != authority.read(source_name):
                 raise ValueError("Native scene metadata is not byte-exact: " + name)
             target = staged / "NativeScene" / safe_relative(name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
             native_records.append(record_file(target, staged / "NativeScene", source_path="WatchSource/" + name, source_sha256=sha256(data)))
+            provenance_outputs.append(output_record(target, staged, inputs=[source_name], decoded=data))
         (staged / "NativeScene" / "native-scene-inventory.json").write_bytes(json_bytes({
             "schema": 1, "policy": "byte-exact-decoded-approved-metadata", "files": native_records,
             "texture_root": "../WatchSource/Scene", "bytes": sum(record["bytes"] for record in native_records),
         }))
+        provenance_outputs.append(output_record(staged / "NativeScene/native-scene-inventory.json", staged,
+            inputs=["Resources/WatchSource/" + name for name in selection["native_scene_metadata"]], algorithm="decoded-native-scene-inventory"))
+        (staged / PROVENANCE).write_bytes(json_bytes(create_manifest(authority, provenance_outputs, selection_path)))
         files = [record_file(path, staged) for path in sorted(staged.rglob("*")) if path.is_file()]
         if any(part.startswith(".") for record in files for part in PurePosixPath(record["path"]).parts):
             raise ValueError("A temporary resource directory remains locked; refusing to bundle staging artifacts")

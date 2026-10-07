@@ -359,6 +359,11 @@ class ReleaseGateTests(unittest.TestCase):
 
 class PreviewPackageTests(unittest.TestCase):
     def setUp(self):
+        # Package-only fixtures retain real payload/hash/release checks.
+        # Exact Git provenance uses real repositories in test_source_provenance.
+        provenance = mock.patch.object(stage_resources, "verify_source_provenance", return_value={"acceptance": "synthetic-package-fixture"})
+        provenance.start()
+        self.addCleanup(provenance.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.repository = Path(self.temporary.name)

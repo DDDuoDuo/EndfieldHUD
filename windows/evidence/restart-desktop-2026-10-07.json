@@ -1,0 +1,177 @@
+{
+  "schema": 1,
+  "scope": "restarted milestone 1 isolated desktop diagnostics",
+  "acceptance": "unverified; this is not consumer release evidence",
+  "source": {
+    "origin": "https://github.com/DDDuoDuo/EndfieldHUD.git",
+    "branch": "codex/windows-migration",
+    "canonical_resource_baseline": "4036174a3facf935260f4d0a9c63bfff33b98c37",
+    "rejected_raw_watch_preview": "withdrawn to recoverable draft"
+  },
+  "build": {
+    "schema": 1,
+    "architecture": "x64",
+    "configuration": "Release",
+    "cmake": "cmake version 3.31.6-msvc6",
+    "generator": "Visual Studio 17 2022",
+    "visual_studio_version": "17.14.37710.0",
+    "msvc_tools_version": "14.44.35207",
+    "windows_sdk": "10.0.26100.0",
+    "runtime": "/MT for Release; /MTd for Debug",
+    "python": "3.12.14",
+    "native_tests": "passed",
+    "resource_verification": "passed",
+    "stage": "feasibility developer preview; Windows parity remains unverified"
+  },
+  "executable_sha256": "ccf3b6ef32ae4ecb700d0c8ef51abd7b537cbc3c63341b5e5c1a15d950c16c76",
+  "native_code_sha256": {
+    "windows/app/app.manifest": "42d03535dad5d873c065816364d103c42e45bfdd4297790a90180529e2bed744",
+    "windows/app/frame_schedule.h": "38e474c6d17aa6cc2d445ebb56040b111e1f0f8a3d7b60f4b3a3160853d477b9",
+    "windows/app/main.cpp": "e92ea58fc47b2b8aad04dce3762053d1b6547296f0b95b651196007346bd1f37",
+    "windows/platform/composition_probe.cpp": "b2741c0d8d7390448d4529bd51fa88fc8f274823b9b078bb9daad79495ff344a",
+    "windows/platform/composition_probe.h": "2b3e2dc2d0b661c6e469cf8326137800e1e7a92603dcb537e5f892b17e57f8fe",
+    "windows/platform/projected_editor.cpp": "53c2dc57c3c9e030e8c86685cc344f123d03840539cdc0725b7520baf9a39c9d",
+    "windows/platform/projected_editor.h": "24ee6f0531e4618eb507cfcfccab0b194e57b9f024cb7d761706f21961ec297b",
+    "windows/platform/rendered_cursor.cpp": "3ac99ea24b1b6fc349474b33596f11e9347743a8af89b7e8191bd6ec04ccc2bb",
+    "windows/platform/rendered_cursor.h": "3630a157c03896d5fd012c9b8059be0b46774293c495b29571b5947905de5d7f",
+    "windows/render/native_renderer.cpp": "032029954fe05bada7ebe4522fdccc738c8e94577671dd5028b2b0fdae7c6c04",
+    "windows/render/native_renderer.h": "692eb29d1fdca06a20b0f23b832067b61c4123428a9ecf4dc457c74a422162d9",
+    "windows/render/source_draw.cpp": "bcf335430535b6be8b143836745f6844d531810ab87c461d8c4996f9572d42af",
+    "windows/render/source_draw.h": "40a256ad8fa2150301c243430d485363056fc511194b95df1d670ad0676d7254",
+    "windows/resources/resource_data.cpp": "b3429e1ea215bbe9b643684282a70ba1d0648399dbef433014b50c393cf38067",
+    "windows/resources/resource_data.h": "5a57271a2ef2b148b6e501c24bec86659cf2419f3ae610825596887ddf01e910",
+    "windows/scene/desktop_scroll.hpp": "d0749bfbf0bab8a03e8c457dcf466b39de111c4e99a47574ff47907f5496e674",
+    "windows/scene/desktop_shell.cpp": "ba5cd2b8e654271f64d1d591657e0ae882ec7e7cc1e50f4062046e08700c1a36",
+    "windows/scene/desktop_shell.hpp": "de012a79b472068036ba549c612f01ef5ad1d99c68963d4e9c7da678fc89a4ef",
+    "windows/scene/watch_scene.cpp": "a7b5b4f9adb4cf3af4950e9668d2c581c0691ee8b68a2f971592a0279a5c0e46",
+    "windows/scene/watch_scene.hpp": "82e9ee466ba3f03750f24535cc08f93de0f72d454830b46c4934d9b63f30f021",
+    "windows/CMakeLists.txt": "fd4d270a1c6760173310bfb638ef42995f29100a04e38b96bc1578d3052d1d56"
+  },
+  "verification": {
+    "native_ctest_suites": 7,
+    "native_ctest_result": "passed",
+    "source_scene_checks": 2702,
+    "desktop_shell_checks": 776,
+    "warp_material_checks": 126,
+    "python_tests": 73,
+    "python_result": "passed",
+    "canonical_git_inputs": 741,
+    "traced_resource_outputs": 753,
+    "staged_resource_files": 754,
+    "staged_resource_bytes": 31064728
+  },
+  "graphics": {
+    "schema": 1,
+    "scenario": "restarted-desktop-graphics-lifecycle",
+    "source_mode": "desktop",
+    "canonical_resource_baseline": "4036174a3facf935260f4d0a9c63bfff33b98c37",
+    "synthetic": true,
+    "elapsed_seconds": 1.8542571,
+    "direct_composition_hresult": 0,
+    "windows_ui_composition_hresult": 0,
+    "dispatcher_queue_hresult": 0,
+    "tsf_hresult": 0,
+    "source_nodes": 834,
+    "measured_reopen_cycles": 100,
+    "warmup_cycles": 5,
+    "submitted_frames": 105,
+    "private_bytes_before": 198987776,
+    "private_bytes_after": 186372096,
+    "working_set_before": 129855488,
+    "working_set_after": 121348096,
+    "handles_before": 592,
+    "handles_after": 592,
+    "editor_projection_corner_checks": "passed",
+    "visible_frame_pacing": "unverified; hidden-window test",
+    "encoded_premultiplied_alpha": "passed; synthetic half-alpha white GPU readback",
+    "source_textures_retained": 60,
+    "source_text_surfaces_retained": 34,
+    "source_material_visual_parity": "unverified; selected source UI/mesh FX translated, complete FX/HDR comparison pending",
+    "live_ime": "unverified"
+  },
+  "closed": {
+    "schema": 1,
+    "scenario": "closed-after-105-graphics-cycles",
+    "synthetic": true,
+    "elapsed_seconds": 61.0106433,
+    "process_cpu_seconds": 0.046875,
+    "hud_frames_submitted": 0,
+    "renderer_created": true,
+    "working_set_bytes": 104382464,
+    "private_bytes": 170000384,
+    "handles_start": 593,
+    "handles_end": 596,
+    "monitors": [
+      {
+        "left": 0,
+        "top": 0,
+        "width": 2560,
+        "height": 1600,
+        "dpi_x": 144,
+        "dpi_y": 144
+      }
+    ],
+    "gpu_utilization": "unverified; requires GPU trace",
+    "wakeups": "unverified; WPR trace required",
+    "performance_parity": "unverified"
+  },
+  "hardware": {
+    "schema": 1,
+    "os_version": "10.0.26200",
+    "os_build": "26200",
+    "os_architecture": "64 位",
+    "cpu": [
+      "Intel(R) Core(TM) Ultra 7 251HX"
+    ],
+    "ram_bytes": 16573128704,
+    "gpus": [
+      {
+        "Name": "NVIDIA GeForce RTX 5060 Laptop GPU",
+        "DriverVersion": "32.0.16.1047",
+        "CurrentHorizontalResolution": 2560,
+        "CurrentVerticalResolution": 1600,
+        "CurrentRefreshRate": 165
+      },
+      {
+        "Name": "Intel(R) Graphics",
+        "DriverVersion": "32.0.101.8801",
+        "CurrentHorizontalResolution": 2560,
+        "CurrentVerticalResolution": 1600,
+        "CurrentRefreshRate": 164
+      }
+    ],
+    "monitors": [
+      {
+        "left": 0,
+        "top": 0,
+        "width": 2560,
+        "height": 1600,
+        "dpi_x": 144,
+        "dpi_y": 144
+      }
+    ],
+    "executable_sha256": "ccf3b6ef32ae4ecb700d0c8ef51abd7b537cbc3c63341b5e5c1a15d950c16c76",
+    "source_mode": "restarted desktop adaptation; raw Watch preview rejected",
+    "canonical_resource_baseline": "4036174a3facf935260f4d0a9c63bfff33b98c37",
+    "settings": "Synthetic 1280x720 hidden HWND; desktop profile/navigation/native labels; ambient off; no real data; source fixture pointer; source animation endpoints",
+    "limits": "No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified."
+  },
+  "rendered_fixture": {
+    "type": "own synthetic D3D framebuffer; no desktop capture",
+    "sha256": "34ad3a6e2d25f5f1b77525167acc585b314348ccc15a336ff2af9515c76bbaef",
+    "settings": "1280x720; stable source endpoint; ambient off; desktop tilt factor 1.25; no editor plane"
+  },
+  "unverified": [
+    "matched current Mac visual/font metrics",
+    "frozen pre-opening backdrop",
+    "HUD/cursor in saved Windows recording",
+    "live Chinese/Japanese/Korean IME",
+    "mixed-DPI hot-plug",
+    "visible cold/warm latency and frame pacing",
+    "GPU utilization and wakeups",
+    "source profile themed/hover artwork",
+    "whole-HUD accessibility",
+    "module/data/provider/account parity",
+    "consumer deployment/update/rollback acceptance"
+  ]
+}

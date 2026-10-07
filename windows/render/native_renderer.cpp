@@ -189,10 +189,6 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
                 painter_->DrawLine(corners[i], corners[(i + 1) % 4], brush_.Get(), .6f);
         }
     }
-    brush_->SetColor(D2D1::ColorF(1, .82f, .2f, 1));
-    const wchar_t label[] = L"ENDFIELDHUD | Windows feasibility preview | Full app port in progress";
-    painter_->DrawText(label, static_cast<UINT32>(std::size(label) - 1), textFormat_.Get(),
-        D2D1::RectF(24, 20, static_cast<float>(frame.camera.viewport.x - 24), 50), brush_.Get());
     if (editor && editorBitmap_) {
         const auto& h = editorProjection(frame).values;
         const D2D1_MATRIX_4X4_F perspective{

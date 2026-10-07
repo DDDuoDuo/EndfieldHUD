@@ -9,7 +9,10 @@ Authorities are `Sources/HUDSourceScene.swift`,
 `HUDSourceImageGeometry.swift`, `HUDSourceWatchFrameBuilder.swift`,
 `HUDSourceWatchLayout.swift`, `HUDSourceCanvasSorting.swift`,
 `HUDSourceWatchButtonAnimation.swift`, `HUDSourceSelectableColor.swift` and
-`HUDDeploymentFlicker.swift` at this migration branch's source baseline. Mac
+`HUDDeploymentFlicker.swift`, plus the desktop path in
+`HUDSourceWatchDocument.swift`, `HUDSourceDesktopNavigationLayout.swift` and
+`HUDSourceWatchView.swift` at the fresh GitHub baseline
+`4036174a3facf935260f4d0a9c63bfff33b98c37`. Mac
 sources and resources remain unchanged.
 
 `Document::load` reads the actual exported scene, wrapper clips, per-instance bound button
@@ -19,6 +22,50 @@ animation and geometry values use doubles. Hierarchy traversal follows child
 order. The root's serialized zero scale is replaced only by the explicit
 runtime canvas initialization. The finite wrapper applies OutQuad once, while
 source key interpolation preserves Hermite, stepped and weighted Bezier tracks.
+
+The native desktop host must use `Document::loadDesktop`, matching
+`SystemHUDView`'s `HUDSourceWatchView(desktopMode: true)`. It mounts the selected
+45-node BP13 card into its original empty parent, validates disjoint signed
+identities and required bindings, and merges original then card components,
+sprites, textures and materials. `load` stays available for raw reference
+contracts. Desktop frames omit all game `UIText`, game-only branches and the
+bottom shadow's unrelated children; they expose the original 22 main buttons
+plus the two explicit Techtree/Report supplements, without game lock or unread
+state. Hidden nodes remain queryable source geometry for native planes.
+
+`desktopInfo()` exposes the exact profile bindings and root highlight,
+center/status anchors, original ordered row pool and navigation extents.
+`Button::captionNodeId` and `iconNodeId` bind native overlays to authored source
+rects. `FrameInput::desktopEntryCount` and normalized scroll sample the canonical
+row reuse formulas before source layout/slant: no node cloning, fixed logical
+pitch, original deployment depth and first-column placement for partial rows.
+`Frame::desktopRightAssignments` maps the current physical slot to its logical
+right-side entry. `NodeGeometry` carries inherited alpha, masks and source/world
+matrices for native caption/icon alignment.
+
+`desktop_scroll.hpp` ports the pure wheel/spring portion of
+`HUDSourceDesktopScrollMotion`. The host supplies normalized deltas and the same
+frame clock through `scroll`/`advance`, resets on lifecycle changes, and parks
+when `requiresFrames()` is false. It retains 180-unit wheel edge travel,
+0.55 overflow gain, source-length epsilon, decay 11/frequency 15, the two-second
+integration cap and exact delayed-frame settling. Availability reads the bounded
+target. Only the canonical desktop navigation content uses the source 240-unit
+layout presentation allowance; row assignment remains bounded while its content
+visibly rebounds. Other source ScrollRects keep their original 0...1 clamp.
+Windows wheel-line preferences and projected pixel-to-source conversion belong
+to the host. Precision touchpad gesture phases, OS momentum ownership and gesture
+continuation remain unverified; this wheel API does not synthesize them.
+
+Desktop default graphic policies retain side edge opacity 0.18, center
+triangle/ring opacity 0.88 and text glow opacity 0.78. Broad profile/portrait
+additive Lights are suppressed, retaining the root ColorTint target alpha for
+the caller's prepared hover plate. Profile outline and quit background gains
+follow the original selectable fade. The background selects the canonical
+`business_card_topic_normal_1` sprite. `DesktopPresentation` accepts explicit
+replacement hiding, finite source properties and styles; `normalMaterialNodes`
+is applied only when the caller supplies its normal-alpha replacement. Native
+avatar, accent-themed background/hover artwork, persisted profile fields and
+native typography remain the host/provider's responsibility.
 
 Camera layout preserves the source's documented float arithmetic boundaries,
 standard ratio, narrow-screen FOV adjustment, Unity Euler order and quaternion
@@ -32,6 +79,12 @@ The immutable document loads metadata once. `frame` constructs source local
 geometry for the requested clip pose; `reproject` updates camera/world
 matrices and reruns the source slant writer against the cached pose before
 slant, while keeping geometry allocations when the pointer alone changes.
+Appended native source-plane graphics preserve their calibration in
+`Graphic::nodeLocal`; source slant/gyro uses the new node world times that local
+matrix. `fixedWorld` retains the already-projected screen/design footer world.
+`initialRootRotation()` returns the normalized authored camera root quaternion
+for gyro initialization and neutral native-plane calibration (identity in the
+selected source asset).
 There are no timers, renderer loops, OS services, accounts or application-data
 paths here. The lifecycle owner must stop requesting frames when concealed.
 `Frame::sceneTime` retains the caller's finite monotonic clock for animated
@@ -83,9 +136,10 @@ packed files. Native packaging stages byte-exact decoded approved metadata at
 `Resources/NativeScene/Scene` and `Resources/NativeScene/Meshes`; source PNGs
 resolve to `Resources/WatchSource/Scene` for source-path diagnostics. Native
 rendering uses each `Graphic::textureId` with approved `WatchSource/textures.json`
-and original mip data instead of relying on PNG deployment. Eleven metadata
+and original mip data instead of relying on PNG deployment. Twelve metadata
 files are required: Scene/{scene,clips,controller-transitions,runtime-root-camera,
-sprites,watch-blur,materials}.json and Meshes/{Equipring,watchline,Plane,Cylinder}.json. It does not use documentation GIFs or
+sprites,watch-blur,materials,desktop-profile-card}.json and
+Meshes/{Equipring,watchline,Plane,Cylinder}.json. It does not use documentation GIFs or
 private reference exports. The 128 MiB bound applies per metadata input.
 
 UI images preserve original trim, UVs, aspect, sliced borders, tiling and all five filled-image methods, including
@@ -123,8 +177,8 @@ renderers must not quantize or linear-convert that RGB again.
 
 Still requiring implementation or validation:
 
-- Desktop navigation recycling, elastic/inertial scheduling and profile mounting;
-  custom GridLayoutGroup, NotchAdapter and UIStepScrollList behavior.
+- Desktop precision-gesture/momentum integration; custom GridLayoutGroup,
+  NotchAdapter and UIStepScrollList behavior.
 - Slant Tick scheduling relative to the original engine Canvas rebuild,
   source layout/transition screenshots and matched native frame cost.
 - Desktop ambient per-opening seeded variation and source-language replacement.
@@ -146,5 +200,14 @@ fixtures verify raw mesh RGBA, bounds validation, sampled material scale/alpha,
 zero-scale threshold, cloned RawImage binding and preserved scene clock.
 Passing an actual scene path also checks the current resource graph, clip
 lengths, source button instances, gyro endpoints, sorting, exact texture IDs,
-mesh/UV alignment and 100 isolated open/close snapshots. These checks do not
+mesh/UV alignment and 100 isolated open/close snapshots. Actual desktop checks
+independently verify canonical card identity/size/mounting, raw game-text
+suppression, game-only hiding, original button/hit geometry, chosen background,
+glow policies, bounded row recycling/partial rows, finite property overrides,
+native source-plane reprojection and fixed footer continuity. These checks do not
 prove screen capture, mixed DPI, IME, hardware pacing or rendering parity.
+Wheel tests independently check source spring samples/cadence, accumulated
+retargeting, both edge bounds, invalid input, reduced motion, velocity demand,
+source-length epsilon and exact settling. Actual scene checks verify visible
+rebound displacement, bounded row assignments and inverse-hit reachability of
+the final source slot after scrolling.

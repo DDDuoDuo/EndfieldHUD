@@ -12,6 +12,8 @@ New-Item -ItemType Directory -Path $evidence -Force | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Source scene contracts failed.' }
 & (Join-Path $build 'editor_tests.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Projected editor contracts failed.' }
+& (Join-Path $build 'desktop_shell_tests.exe') (Join-Path $repository 'Resources\WatchSource\Scene')
+if ($LASTEXITCODE -ne 0) { throw 'Current desktop presentation contracts failed.' }
 & (Join-Path $build 'platform_probe.exe') (Join-Path $evidence 'platform-capabilities.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Native platform capability probe failed.' }
 $graphicsOutput = Join-Path $evidence 'graphics-lifecycle.json'
@@ -34,7 +36,9 @@ $hardware = [ordered]@{
   gpus = @((Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution, CurrentRefreshRate))
   monitors = $closed.monitors
   executable_sha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash.ToLowerInvariant()
-  settings = 'Synthetic 1280x720 hidden HWND; ambient off; no real data; source fixture pointer; source animation endpoints'
+  source_mode = 'restarted desktop adaptation; raw Watch preview rejected'
+  canonical_resource_baseline = '4036174a3facf935260f4d0a9c63bfff33b98c37'
+  settings = 'Synthetic 1280x720 hidden HWND; desktop profile/navigation/native labels; ambient off; no real data; source fixture pointer; source animation endpoints'
   limits = 'No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified.'
 }
 $hardware | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $evidence 'hardware.json') -Encoding UTF8

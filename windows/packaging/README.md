@@ -1,6 +1,6 @@
 # Windows build and package boundary
 
-Authorship remains **DDDuoDuo**. The default build produces a Windows feasibility preview. The chosen consumer distribution is an unsigned portable ZIP, released only when its full acceptance evidence passes. Packaging does not publish a release, change the Mac appcast, or replace Mac v1.2.0 assets.
+Authorship remains **DDDuoDuo**. This restart produces an unverified development build. The rejected preview is withdrawn; previous feasibility claims do not establish acceptance for the restart. The chosen consumer distribution is an unsigned portable ZIP, released only when its full acceptance evidence passes. Packaging does not publish a release, change the Mac appcast, or replace Mac v1.2.0 assets.
 
 From the repository root, run:
 
@@ -20,7 +20,9 @@ The default build runs native CTest checks and synthetic Python tests, stages as
 
 The strict decoder audits the eight-byte `EHUDZ01\0` magic, little-endian uint64 length, the **1..128 MiB** output limit, raw DEFLATE, exact decoded length, end of stream, and absence of trailing/concatenated data. The Python tests use generated in-memory payloads and temporary directories; they never read real app data, tokens, or account IDs.
 
-Eleven approved scene/material/mesh/controller metadata files are decoded into `Resources/NativeScene` without reserializing JSON. Its separate `native-scene-inventory.json` proves equality to source bytes. The native renderer reads the original packed texture/mip payloads under `Resources/WatchSource`; PNGs remain in the approved inventory for consumers that use them. Textures are not duplicated. The main inventory reports the precise metadata duplication overhead. A native bounded decoder uses static zlib for direct packed-resource loading; the decoded adapter remains available during integration and testing. This adapter supplies no altered timing curves or replacement artwork.
+Twelve approved scene/material/mesh/controller metadata files, including the canonical desktop profile card, are decoded into `Resources/NativeScene` without reserializing JSON. Its separate `native-scene-inventory.json` proves equality to source bytes. The native renderer reads the original packed texture/mip payloads under `Resources/WatchSource`; PNGs remain in the approved inventory for consumers that use them. Textures are not duplicated. The main inventory reports the precise metadata duplication overhead. A native bounded decoder uses static zlib for direct packed-resource loading; the decoded adapter remains available during integration and testing. This adapter supplies no altered timing curves or replacement artwork.
+
+The restart adds a mandatory [GitHub source provenance gate](SOURCE-PROVENANCE.md). Every approved input is checked against its exact Git blob at the immutable GitHub baseline, and every copied/decoded/derived output is traced in `Resources/source-provenance.json`. Other local clones, converted newlines, changed inputs and old staged folders are refused. The byte proof remains `restart-build-only-unverified`; desktop mounting, modules and acceptance evidence require their own implementation and checks.
 
 Additional staged assets are approved icon cells, Watch sprites, WorldMap runtime vectors, Media Assembly filter LUTs/stickers, OrbiPom rules/artwork, and their ownership/license manifests. `FactionAtlas.png` is excluded because prepared cells replace it. Documentation GIFs/media, private recordings, raw reference exports, source SDF font atlases, shader extraction intermediates, Mac frameworks/plists, caches, symbols, and user data are excluded.
 

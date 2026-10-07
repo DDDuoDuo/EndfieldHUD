@@ -124,6 +124,11 @@ void actual_source(Gpu& gpu, const std::filesystem::path& root) {
     expect(gpu.draw(*source,empty),{},"Actual source empty frame clears the target",0);
     auto quad=rectangle(imageId,{decode(64.0/255),decode(128.0/255),decode(192.0/255),128.0/255});
     expect(gpu.draw(*source,frame(quad)),{32,64,96,128},"Original UI material applies Canvas color once and premultiplies encoded RGB");
+    quad=rectangle(uiFxId,{decode(64.0/255),decode(128.0/255),decode(192.0/255),128.0/255});
+    quad.normalMaterial=true;
+    expect(gpu.draw(*source,frame(quad)),{32,64,96,128},"Desktop normal-alpha override bypasses source FX and its blend");
+    quad=rectangle("",{64.0/255,128.0/255,192.0/255,128.0/255});quad.kind="DesktopVector";
+    expect(gpu.draw(*source,frame(quad)),{32,64,96,128},"Native desktop artwork uses direct sRGB ink once");
     std::cout << "unchanged_staged_source_initialization=passed actual_UI_color=passed\n";
 }
 void write(const std::filesystem::path& path, std::string_view bytes) {

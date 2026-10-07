@@ -1,4 +1,5 @@
 #include "watch_scene.hpp"
+#include "desktop_scroll.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -25,6 +26,12 @@ void require(bool ok, std::string_view reason) {
 double finite(double value) {
     require(std::isfinite(value), "Nonfinite scene input");
     return value;
+}
+std::string trimmed(std::string_view value) {
+    const auto begin = value.find_first_not_of(" \t\r\n\f\v");
+    if (begin == std::string_view::npos)
+        return {};
+    return std::string(value.substr(begin, value.find_last_not_of(" \t\r\n\f\v") - begin + 1));
 }
 Vec2 add(Vec2 a, Vec2 b) { return {a.x + b.x, a.y + b.y}; }
 Vec2 sub(Vec2 a, Vec2 b) { return {a.x - b.x, a.y - b.y}; }
@@ -181,6 +188,24 @@ struct Json {
         return finite(*n);
     }
 };
+Json &field(Json &object, std::string_view key) {
+    auto value = std::get_if<Json::Object>(&object.value);
+    require(value != nullptr, "Expected mutable source object");
+    return (*value)[std::string(key)];
+}
+Json::Array &array(Json &value) {
+    auto elements = std::get_if<Json::Array>(&value.value);
+    require(elements != nullptr, "Expected source array");
+    return *elements;
+}
+void mergeArrays(Json &original, const Json &additions, std::initializer_list<const char *> keys) {
+    for (auto key : keys) {
+        auto &values = array(field(original, key));
+        const auto &extra = additions[key].array();
+        require(values.size() + extra.size() < 100000, "Merged source array size guard");
+        values.insert(values.end(), extra.begin(), extra.end());
+    }
+}
 class JsonParser {
   public:
     explicit JsonParser(std::string_view text) : text_(text) {
@@ -1304,6 +1329,7 @@ struct LayoutEngine {
     Frame &frame;
     std::vector<Resolved> initial;
     std::set<SourceId> missingText;
+    SourceId desktopContentId;
     std::optional<Rect> rect(std::size_t i) const {
         const auto &n = nodes[i];
         const auto &t = pose[i].transform;
@@ -1575,7 +1601,10 @@ struct LayoutEngine {
                 extent = view.rect->size.y;
             }
             double hidden = std::max(0.0, extent - view.rect->size.y),
-                   position = std::clamp(input.verticalNormalizedPosition, 0.0, 1.0),
+                   position = nodes[content->second].id == desktopContentId
+                                  ? DesktopScrollMotion::presentationPosition(
+                                        input.verticalNormalizedPosition, hidden)
+                                  : std::clamp(input.verticalNormalizedPosition, 0.0, 1.0),
                    delta = view.rect->origin.y - position * hidden - lower;
             if (std::abs(delta) > 0.01) {
                 auto target = item.localPosition;
@@ -1757,6 +1786,10 @@ struct Document::Impl {
     std::vector<std::size_t> order;
     std::vector<Button> buttons;
     std::set<std::size_t> buttonNodes, hiddenDecorations;
+    std::set<std::size_t> mainButtonNodes, desktopHiddenNodes;
+    std::optional<DesktopSceneInfo> desktop;
+    std::map<std::size_t, DesktopGraphicStyle> desktopStyles;
+    std::map<std::size_t, std::map<std::string, double>> desktopProperties;
     std::unordered_map<SourceId, Sprite> sprites;
     std::unordered_map<SourceId, Mesh> meshes;
     std::unordered_map<SourceId, Json> materials;
@@ -1771,11 +1804,22 @@ struct Document::Impl {
     bool gyroEnabled{};
     Mat4 cameraWorld{Mat4::identity()}, worldParent{Mat4::identity()};
     Vec3 rootPosition{};
+    Quaternion initialRotation{};
     std::vector<std::string> diagnostics;
     Frame camera(Vec2 viewport, Quaternion rootRotation) const;
 };
 
 Document Document::load(const std::filesystem::path &root, ResourceReader reader) {
+    return loadWithMode(root, std::move(reader), false);
+}
+Document Document::loadDesktop(const std::filesystem::path &root, ResourceReader reader) {
+    return loadWithMode(root, std::move(reader), true);
+}
+const DesktopSceneInfo *Document::desktopInfo() const {
+    return impl_->desktop ? &*impl_->desktop : nullptr;
+}
+Document Document::loadWithMode(const std::filesystem::path &root, ResourceReader reader,
+                                bool desktop) {
     if (!reader)
         reader = readFile;
     auto data = [&](std::string_view name) {
@@ -1788,6 +1832,62 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
     if (root.filename() == "Scene" && root.parent_path().filename() == "NativeScene")
         impl->textureRoot = root.parent_path().parent_path() / "WatchSource" / "Scene";
     Json graph = data("scene");
+    Json profile;
+    if (desktop) {
+        profile = data("desktop-profile-card");
+        impl->desktop.emplace();
+        auto &info = *impl->desktop;
+        info.profileParentId = profile["parent_id"].requiredString();
+        info.profileRootId = profile["scene"]["root_node_id"].requiredString();
+        auto &original = array(field(graph, "nodes"));
+        const auto &additions = profile["scene"]["nodes"].array();
+        require(!additions.empty() && original.size() + additions.size() < 100000,
+                "Invalid selected desktop profile size");
+        std::set<SourceId> profileIds, originalIds;
+        for (const auto &row : original)
+            originalIds.insert(row["id"].requiredString());
+        for (const auto &row : additions)
+            require(profileIds.insert(row["id"].requiredString()).second &&
+                        !originalIds.contains(row["id"].requiredString()),
+                    "Source desktop profile IDs conflict");
+        auto parent = std::find_if(original.begin(), original.end(), [&](const auto &row) {
+            return row["id"].string() == info.profileParentId;
+        });
+        require(parent != original.end() && (*parent)["child_ids"].array().empty(),
+                "Source desktop profile parent missing or occupied");
+        const auto prefix = (*parent)["path"].requiredString();
+        field(*parent, "child_ids") = Json{Json::Array{Json{info.profileRootId}}};
+        auto selectedRoot = std::find_if(additions.begin(), additions.end(), [&](const auto &row) {
+            return row["id"].string() == info.profileRootId;
+        });
+        require(selectedRoot != additions.end() && (*selectedRoot)["parent_id"].isNull(),
+                "Invalid selected desktop profile root");
+        const auto rect = parseTransform((*selectedRoot)["transform"]["raw"], true);
+        require(rect.sizeDelta.x == 364 && rect.sizeDelta.y == 128,
+                "Selected desktop profile authored dimensions differ");
+        for (const auto *binding : {"button", "playerHead", "managerName", "managerNumber",
+                                    "managerLevel", "levelSlider"})
+            require(profileIds.contains(
+                        profile["bindings"][binding]["target_node_id"].requiredString()),
+                    "Missing selected desktop profile binding");
+        if (const auto *bindings = std::get_if<Json::Object>(&profile["bindings"].value))
+            for (const auto &[name, binding] : *bindings)
+                if (!binding["target_node_id"].isNull()) {
+                    const auto id = binding["target_node_id"].requiredString();
+                    require(profileIds.contains(id), "Invalid selected desktop profile target");
+                    info.profileBindings.emplace(name, id);
+                }
+        for (auto row : additions) {
+            field(row, "path") = Json{prefix + "/" + row["path"].requiredString()};
+            if (row["id"].string() == info.profileRootId)
+                field(row, "parent_id") = Json{info.profileParentId};
+            original.push_back(std::move(row));
+        }
+        for (const auto *binding : {"button", "playerInfoBtn", "playerHeadBtn", "rightBtn"})
+            if (auto target = info.profileBindings.find(binding);
+                target != info.profileBindings.end())
+                info.profileButtonIds.push_back(target->second);
+    }
     const auto &rows = graph["nodes"].array();
     require(!rows.empty() && rows.size() < 100000, "Invalid source graph size");
     for (const auto &raw : rows) {
@@ -1855,10 +1955,12 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
         out.path = b["path"].requiredString();
         auto index = impl->indices.find(out.id);
         require(index != impl->indices.end(), "Missing main button");
+        impl->mainButtonNodes.insert(index->second);
         for (const auto &label : b["labels"].array())
             if (label["text_id"].string() != "ui_common_new_eng" && !label["cn_literal"].isNull()) {
                 out.textId = label["text_id"].string();
                 out.sourceLabel = label["cn_literal"].string();
+                out.captionNodeId = label["node_id"].string();
                 break;
             }
         impl->buttons.push_back(std::move(out));
@@ -1868,20 +1970,154 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
             impl->buttonNodes.insert(i);
     for (std::size_t i = 0; i < impl->nodes.size(); ++i) {
         const auto &node = impl->nodes[i];
-        auto name = node.name;
+        auto name = trimmed(node.name);
+        const bool lock = name == "LockIcon" || name == "SafeZoneIcon";
         std::transform(name.begin(), name.end(), name.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        bool notification = name.ends_with("reddot"),
-             lock = node.name == "LockIcon" || node.name == "SafeZoneIcon";
+        bool notification = name.ends_with("reddot");
         if (notification)
             impl->hiddenDecorations.insert(i);
         else if (lock) {
             auto p = node.parent;
-            while (p && !impl->buttonNodes.contains(*p))
+            while (p && !impl->mainButtonNodes.contains(*p))
                 p = impl->nodes[*p].parent;
             if (p)
                 impl->hiddenDecorations.insert(i);
         }
+    }
+    if (desktop) {
+        auto &info = *impl->desktop;
+        const std::set<std::string> hiddenNames{
+            "Map",         "MoneyCellRoot",   "ExploreRoot",        "EndfieldLogo",
+            "GlowLeftBtn", "GlowRightBtn",    "Top_RightNode",      "TopLeftBtnNode",
+            "HomePageBtn", "CloseButtonNode", "FullScreenCloseBtn", "ControllerHintPlaceholder",
+            "BannerNode"};
+        std::optional<std::size_t> bottom;
+        for (std::size_t i = 0; i < impl->nodes.size(); ++i) {
+            const auto &node = impl->nodes[i];
+            if (hiddenNames.contains(node.name))
+                impl->desktopHiddenNodes.insert(i);
+            if (node.name == "HudBgShdow")
+                bottom = i;
+            if (info.centerNodeId.empty() && node.name == "MiddleDecoNode")
+                info.centerNodeId = node.id;
+            if (info.statusNodeId.empty() && node.name == "BannerNode" &&
+                node.path.find("/RightBottomNode/") != std::string::npos)
+                info.statusNodeId = node.id;
+            if (node.path.find("/MiddleDecoNode/") != std::string::npos) {
+                if (node.name == "triangle_fx1" || node.name == "RingFoMesh")
+                    impl->desktopStyles[i].opacity = .88;
+                else if (node.name == "EndfieldTextGlow")
+                    impl->desktopStyles[i].opacity = .78;
+            }
+            if (node.name == "BgImage" && node.path.find("PlayInfoBp13Cell/") != std::string::npos)
+                info.profileBackgroundId = node.id;
+            if (node.name == "Light" && (node.parent == impl->indices.at(info.profileRootId) ||
+                                         node.path.ends_with("/PlayerHeadBtn/Light"))) {
+                info.profileGlowIds.push_back(node.id);
+                impl->desktopProperties[i]["m_Color.a"] = 0;
+            }
+        }
+        if (bottom)
+            for (auto child : impl->nodes[*bottom].children)
+                if (impl->nodes[child].name != "TechtreeNode" &&
+                    impl->nodes[child].name != "ReportNode")
+                    impl->desktopHiddenNodes.insert(child);
+        for (const auto *name : {"TechtreeBtn", "ReportBtn"}) {
+            auto node = std::find_if(impl->nodes.begin(), impl->nodes.end(),
+                                     [&](const auto &n) { return n.name == name; });
+            if (node == impl->nodes.end())
+                continue;
+            const auto prefix = node->path + "/";
+            const auto label =
+                std::find_if(impl->nodes.begin(), impl->nodes.end(), [&](const auto &n) {
+                    return n.path.starts_with(prefix) && n.name == "BtnName";
+                });
+            require(label != impl->nodes.end(), "Missing supplemental desktop button caption");
+            Button button{node->id, node->path, {}, {}, label->id, {}};
+            impl->buttons.push_back(std::move(button));
+            for (std::size_t i = 0; i < impl->nodes.size(); ++i) {
+                const auto &child = impl->nodes[i];
+                if (!child.path.starts_with(prefix))
+                    continue;
+                if (child.name == "ForbidIcon" || child.name == "LockIcon" ||
+                    (child.name == "IconShadow" && node->name != "ReportBtn"))
+                    impl->desktopHiddenNodes.insert(i);
+            }
+        }
+        for (auto &button : impl->buttons) {
+            const auto prefix = button.path + "/";
+            const bool bottomButton =
+                button.path.ends_with("/TechtreeBtn") || button.path.ends_with("/ReportBtn");
+            auto icon = std::find_if(impl->nodes.begin(), impl->nodes.end(), [&](const auto &n) {
+                if (!n.path.starts_with(prefix))
+                    return false;
+                const auto name = trimmed(n.name);
+                return bottomButton
+                           ? n.path.find("/IconShadow/") != std::string::npos && name == "Icon"
+                           : name == "Icon" || name == "Icon01";
+            });
+            if (icon != impl->nodes.end())
+                button.iconNodeId = icon->id;
+            for (std::size_t i = 0; i < impl->nodes.size(); ++i)
+                if (impl->nodes[i].path.starts_with(prefix) &&
+                    impl->nodes[i].path.ends_with("/HoverHint/NaviHint/Img"))
+                    impl->desktopStyles[i].opacity = .18;
+        }
+        for (auto i : impl->desktopHiddenNodes)
+            info.hiddenNodeIds.push_back(impl->nodes[i].id);
+
+        std::map<SourceId, std::size_t> rowIndices;
+        for (const auto &button : impl->buttons) {
+            if (button.path.find("/RightBottomNode/") == std::string::npos)
+                continue;
+            const auto parent = impl->nodes[impl->indices.at(button.id)].parent;
+            require(parent.has_value(), "Missing desktop navigation row parent");
+            const auto &node = impl->nodes[*parent];
+            auto found = rowIndices.find(node.id);
+            if (found == rowIndices.end()) {
+                require(node.transform.hasRect, "Invalid desktop navigation row rect");
+                found = rowIndices.emplace(node.id, info.navigationRows.size()).first;
+                info.navigationRows.push_back(
+                    {node.id, {}, node.transform.anchored, node.transform.sizeDelta});
+            }
+            info.navigationRows[found->second].buttons.push_back(button.id);
+        }
+        require(info.navigationRows.size() > 1 && !info.navigationRows.front().buttons.empty(),
+                "Missing desktop source navigation row pool");
+        const auto columns = info.navigationRows.front().buttons.size();
+        for (const auto &row : info.navigationRows)
+            require(row.buttons.size() == columns, "Unequal desktop source navigation row columns");
+        std::set<std::size_t> ancestors;
+        auto ancestor =
+            std::optional<std::size_t>{impl->indices.at(info.navigationRows.front().id)};
+        while (ancestor) {
+            ancestors.insert(*ancestor);
+            ancestor = impl->nodes[*ancestor].parent;
+        }
+        for (auto i : impl->order) {
+            const auto *scroll = component(impl->nodes[i], "UIScrollRect");
+            if (!scroll)
+                continue;
+            const auto content =
+                impl->indices.find(scroll->data["m_Content"]["target_id"].string());
+            if (content == impl->indices.end() || !ancestors.contains(content->second))
+                continue;
+            info.navigationContentId = content->first;
+            info.navigationViewportId = impl->nodes[i].id;
+            info.navigationContentSize = impl->nodes[content->second].transform.sizeDelta;
+            info.viewportHeight = impl->nodes[i].transform.sizeDelta.y;
+            break;
+        }
+        const auto rowParent = impl->nodes[impl->indices.at(info.navigationRows.front().id)].parent;
+        require(rowParent.has_value() && !info.navigationContentId.empty(),
+                "Missing desktop source navigation extent");
+        info.rowStep =
+            (info.navigationRows.front().anchored.y - info.navigationRows.back().anchored.y) /
+            static_cast<double>(info.navigationRows.size() - 1);
+        info.rowScale = impl->nodes[*rowParent].transform.localScale.y;
+        require(info.rowStep > 0 && info.rowScale > 0 && info.viewportHeight > 0,
+                "Invalid desktop source navigation extent");
     }
     Json library = data("clips");
     std::set<std::string> bindings;
@@ -2023,6 +2259,18 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
                 }
             impl->tintConfigs.push_back(config);
         }
+    if (desktop) {
+        auto &info = *impl->desktop;
+        for (const auto &tint : impl->tintConfigs)
+            if (tint.button == info.profileRootId) {
+                info.profileHighlightId = impl->nodes[tint.target].id;
+                // Source setDesktopProfile preserves only the root selectable's
+                // alpha; the native hover plate is supplied separately.
+                impl->desktopProperties[tint.target]["m_Color.a"] = 1;
+                break;
+            }
+        require(!info.profileHighlightId.empty(), "Missing desktop profile selectable highlight");
+    }
     Json runtime = data("runtime-root-camera");
     const Json *gyro = nullptr, *scaleHelper = nullptr, *camera = nullptr, *worldRoot = nullptr,
                *cameraTransform = nullptr;
@@ -2099,6 +2347,7 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
     impl->cameraWorld = world(*cameraTransform, {});
     require(inverse(impl->cameraWorld).has_value(), "Singular camera world");
     impl->rootPosition = v3((*worldRoot)["data"]["m_LocalPosition"]);
+    impl->initialRotation = normalized(quat((*worldRoot)["data"]["m_LocalRotation"]));
     const auto &cameraData = (*camera)["data"];
     impl->fov = cameraData["field of view"].requiredNumber();
     impl->near = cameraData["near clip plane"].requiredNumber();
@@ -2127,7 +2376,10 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
     impl->blurIn = scalarCurve(blur["entrance"]["curve"]["raw"]["curve"]["m_Curve"]);
     impl->blurOut = scalarCurve(blur["exit"]["curve"]["raw"]["curve"]["m_Curve"]);
     Json sprites = data("sprites");
+    if (desktop)
+        mergeArrays(sprites, profile["sprites"], {"sprites", "source_textures"});
     std::unordered_map<SourceId, const Json *> textures;
+    std::unordered_map<SourceId, Sprite> spriteIds;
     for (const auto &texture : sprites["source_textures"].array())
         textures.emplace(texture["id"].requiredString(), &texture);
     for (const auto &source : sprites["sprites"].array()) {
@@ -2161,10 +2413,26 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
         require(file.find("..") == std::string::npos && !std::filesystem::path(file).is_absolute(),
                 "Unsafe source texture path");
         sprite.path = impl->textureRoot / utf8Path(file);
+        if (desktop)
+            spriteIds.emplace(source["id"].requiredString(), sprite);
         for (const auto &binding : source["bindings"].array())
             impl->sprites.emplace(binding["component_id"].requiredString(), sprite);
     }
+    if (desktop) {
+        const auto &selected = profile["sprites"]["sprites"].array();
+        auto source = std::find_if(selected.begin(), selected.end(), [](const auto &row) {
+            return row["name"].string() == "business_card_topic_normal_1";
+        });
+        require(source != selected.end() && !impl->desktop->profileBackgroundId.empty(),
+                "Missing selected desktop profile background");
+        const auto &node = impl->nodes[impl->indices.at(impl->desktop->profileBackgroundId)];
+        const auto *image = component(node, "UIImage");
+        require(image != nullptr, "Missing selected desktop profile background graphic");
+        impl->sprites[image->id] = spriteIds.at((*source)["id"].requiredString());
+    }
     Json materialData = data("materials");
+    if (desktop)
+        mergeArrays(materialData, profile["materials"], {"materials"});
     for (const auto &material : materialData["materials"].array())
         impl->materials.emplace(material["id"].requiredString(), material);
     for (const auto *name : {"Equipring", "watchline", "Plane", "Cylinder"}) {
@@ -2211,7 +2479,7 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
         impl->meshes.emplace(std::move(id), std::move(mesh));
     }
     impl->diagnostics.push_back(
-        "Prototype: desktop navigation/profile mounting, ambient seeded "
+        "Prototype: native desktop profile artwork/text providers, ambient seeded "
         "variation, custom Grid/Notch/Step layout, materials/HDR, "
         "text metrics/font fallback and soft masks require parity validation");
     impl->diagnostics.push_back("Source slant Tick world-X contract is implemented; scheduling "
@@ -2522,6 +2790,7 @@ std::vector<SourceId> ButtonMotion::instanceIds() const {
 }
 
 double Document::gyroDuration() const { return impl_->gyroDuration; }
+Quaternion Document::initialRootRotation() const { return impl_->initialRotation; }
 double Document::entranceDuration() const { return impl_->entrance.length; }
 double Document::exitDuration() const { return impl_->exit.length; }
 double Document::ambientDuration() const { return impl_->ambient.length; }
@@ -2617,8 +2886,11 @@ void Document::reproject(Frame &frame, Quaternion rootRotation) const {
         mask.world = next.worldRoot * mask.sceneWorld;
     };
     for (auto &graphic : frame.graphics) {
+        if (graphic.fixedWorld)
+            continue;
         if (resolved)
-            graphic.sceneWorld = (*resolved)[impl_->indices.at(graphic.nodeId)].world;
+            graphic.sceneWorld =
+                (*resolved)[impl_->indices.at(graphic.nodeId)].world * graphic.nodeLocal;
         graphic.world = next.worldRoot * graphic.sceneWorld;
         for (auto &mask : graphic.masks)
             updateMask(mask);
@@ -2634,6 +2906,8 @@ void Document::reproject(Frame &frame, Quaternion rootRotation) const {
         if (resolved)
             node.sceneWorld = (*resolved)[impl_->indices.at(node.id)].world;
         node.world = next.worldRoot * node.sceneWorld;
+        for (auto &mask : node.masks)
+            updateMask(mask);
     }
     frame.camera = next.camera;
     frame.worldRoot = next.worldRoot;
@@ -2690,14 +2964,109 @@ Frame Document::frame(const FrameInput &input) const {
         apply(d.ambient, *input.playback.ambientTime, pose);
     if (input.playback.exitTime)
         apply(d.exit, *input.playback.exitTime, pose);
-    for (const auto &button : d.buttons)
-        pose[d.indices.at(button.id)].active = true;
+    for (auto button : d.mainButtonNodes)
+        pose[button].active = true;
     for (auto hidden : d.hiddenDecorations)
         pose[hidden].active = false;
     if (input.interaction) {
         require(input.interaction->impl_->document.get() == impl_.get(),
                 "ButtonMotion belongs to a different document");
         input.interaction->impl_->apply(pose, input.time, input.reduceMotion);
+    }
+    auto styles = d.desktopStyles;
+    std::set<std::size_t> normalMaterialNodes;
+    if (d.desktop) {
+        for (const auto &[i, properties] : d.desktopProperties)
+            for (const auto &[name, value] : properties)
+                pose[i].properties[name] = value;
+        for (auto i : d.desktopHiddenNodes)
+            pose[i].active = false;
+        if (input.desktopPresentation) {
+            const auto &presentation = *input.desktopPresentation;
+            auto index = [&](const SourceId &id) {
+                auto found = d.indices.find(id);
+                require(found != d.indices.end(), "Unknown native desktop presentation node");
+                return found->second;
+            };
+            for (const auto &id : presentation.hiddenNodes)
+                pose[index(id)].active = false;
+            for (const auto &id : presentation.normalMaterialNodes)
+                normalMaterialNodes.insert(index(id));
+            for (const auto &[id, properties] : presentation.properties)
+                for (const auto &[name, value] : properties)
+                    pose[index(id)].properties[name] = finite(value);
+            for (const auto &[id, style] : presentation.graphicStyles) {
+                require(std::isfinite(style.opacity) && style.opacity >= 0,
+                        "Invalid native desktop graphic opacity");
+                if (style.tint)
+                    for (auto value : *style.tint)
+                        require(std::isfinite(value) && value >= 0,
+                                "Invalid native desktop graphic tint");
+                styles[index(id)] = style;
+            }
+        }
+        // HUDSourceDesktopNavigationLayout.sample/apply: reuse the authored
+        // physical pool, retaining wrapper/controller depth before the source
+        // layout and world-X slant writers run.
+        const auto &info = *d.desktop;
+        require(input.desktopEntryCount <= 100000, "Desktop navigation entry count guard");
+        const auto columns = info.navigationRows.front().buttons.size();
+        const auto count =
+            input.desktopEntryCount / columns + (input.desktopEntryCount % columns != 0);
+        const double lastRowY = info.navigationRows.front().anchored.y -
+                                static_cast<double>(count ? count - 1 : 0) * info.rowStep;
+        const double contentHeight =
+            std::max(info.viewportHeight,
+                     info.navigationContentSize.y +
+                         (info.navigationRows.back().anchored.y - lastRowY) * info.rowScale);
+        const double normalized = std::isfinite(input.verticalNormalizedPosition)
+                                      ? std::clamp(input.verticalNormalizedPosition, 0.0, 1.0)
+                                      : 1;
+        const double offset = (1 - normalized) * std::max(0.0, contentHeight - info.viewportHeight);
+        const auto visible = static_cast<std::size_t>(offset / (info.rowStep * info.rowScale));
+        const auto first =
+            std::min(count > info.navigationRows.size() ? count - info.navigationRows.size() : 0,
+                     visible ? visible - 1 : 0);
+        std::map<SourceId, std::size_t> logicalRows;
+        for (auto logical = first; logical < std::min(count, first + info.navigationRows.size());
+             ++logical) {
+            const auto &row = info.navigationRows[logical % info.navigationRows.size()];
+            logicalRows.emplace(row.id, logical);
+            for (std::size_t column = 0; column < columns; ++column)
+                if (const auto entry = logical * columns + column; entry < input.desktopEntryCount)
+                    frame.desktopRightAssignments.emplace(row.buttons[column], entry);
+        }
+        pose[d.indices.at(info.navigationContentId)].transform.sizeDelta = {
+            info.navigationContentSize.x, contentHeight};
+        for (const auto &row : info.navigationRows) {
+            auto &p = pose[d.indices.at(row.id)];
+            auto logical = logicalRows.find(row.id);
+            p.active = logical != logicalRows.end();
+            if (p.active) {
+                const double depth = p.positionComponents[2].value_or(
+                    p.position ? p.position->z : p.transform.position.z);
+                p.transform.anchored = {info.navigationRows.front().anchored.x,
+                                        info.navigationRows.front().anchored.y -
+                                            static_cast<double>(logical->second) * info.rowStep};
+                p.transform.position.z = depth;
+                p.position.reset();
+                p.positionComponents[0].reset();
+                p.positionComponents[1].reset();
+                const auto occupied =
+                    std::min(columns, input.desktopEntryCount - logical->second * columns);
+                const double width = row.size.x * static_cast<double>(occupied) / columns;
+                p.transform.sizeDelta = {width, row.size.y};
+                p.transform.pivot = {row.size.x / (2 * width), .5};
+            }
+            for (const auto &button : row.buttons) {
+                const bool assigned = frame.desktopRightAssignments.contains(button);
+                pose[d.indices.at(button)].active = assigned;
+                auto metadata = std::find_if(d.buttons.begin(), d.buttons.end(),
+                                             [&](const auto &b) { return b.id == button; });
+                if (metadata != d.buttons.end() && !metadata->captionNodeId.empty())
+                    pose[d.indices.at(metadata->captionNodeId)].active = assigned;
+            }
+        }
     }
     std::map<std::size_t, std::array<float, 4>> tints;
     if (input.interaction) {
@@ -2709,14 +3078,60 @@ Frame Document::frame(const FrameInput &input) const {
         for (const auto &tint : d.tintConfigs)
             tints[tint.target] = tint.colors[static_cast<std::size_t>(
                 tint.interactable ? ButtonState::normal : ButtonState::disabled)];
+    if (d.desktop) {
+        auto progress = [&](const TintConfig &binding) {
+            const float normal = binding.colors[static_cast<std::size_t>(ButtonState::normal)][3],
+                        range =
+                            binding.colors[static_cast<std::size_t>(ButtonState::highlighted)][3] -
+                            normal;
+            auto tint = tints.find(binding.target);
+            return range > 0 && tint != tints.end() && std::isfinite(tint->second[3])
+                       ? std::clamp((tint->second[3] - normal) / range, 0.0f, 1.0f)
+                       : 0.0f;
+        };
+        auto feedback = [&](std::size_t i, double opacity) {
+            if (!input.desktopPresentation ||
+                !input.desktopPresentation->graphicStyles.contains(d.nodes[i].id))
+                styles[i].opacity = opacity;
+        };
+        for (const auto &binding : d.tintConfigs) {
+            if (binding.button == d.desktop->profileRootId) {
+                const float amount = progress(binding);
+                for (std::size_t i = 0; i < d.nodes.size(); ++i) {
+                    const auto &n = d.nodes[i];
+                    if (n.path.find("/PlayInfoBp13Cell/PlayerInfo/DecoNode/") ==
+                            std::string::npos ||
+                        (n.name != "LeftLineImage" && n.name != "RightLineImage" &&
+                         n.name != "LineImage" && n.name != "LeftBottomImage"))
+                        continue;
+                    if (const auto *image = component(n, "UIImage")) {
+                        const float alpha =
+                            static_cast<float>(image->data["m_Color"]["a"].number());
+                        if (alpha > 0)
+                            feedback(i, 1 + std::max(0.0f, .62f - alpha) / alpha * amount);
+                    }
+                }
+            }
+            const auto &button = d.nodes[d.indices.at(binding.button)];
+            if (button.name == "QuitBtn")
+                for (std::size_t i = 0; i < d.nodes.size(); ++i)
+                    if (d.nodes[i].path == button.path + "/Bg")
+                        feedback(i, 1 + .25f * progress(binding));
+        }
+    }
     const auto *sourceCanvas = component(d.nodes[d.rootIndex], "Canvas");
     const int panelBase = input.panelBase.value_or(
         sourceCanvas ? static_cast<int>(sourceCanvas->data["m_SortingOrder"].number()) : 0);
     auto state = std::make_shared<FrameState>();
     state->panelBase = panelBase;
     state->document = impl_.get();
-    LayoutEngine layout{d.nodes,     d.indices, d.order,         d.sprites, pose,
-                        d.rootIndex, panelBase, frame.worldRoot, input,     frame};
+    auto layoutInput = input;
+    if (d.desktop && !std::isfinite(layoutInput.verticalNormalizedPosition))
+        layoutInput.verticalNormalizedPosition = 1;
+    LayoutEngine layout{d.nodes,     d.indices, d.order,         d.sprites,   pose,
+                        d.rootIndex, panelBase, frame.worldRoot, layoutInput, frame};
+    if (d.desktop)
+        layout.desktopContentId = d.desktop->navigationContentId;
     layout.apply(&state->pose);
     frame.sourceState_ = std::move(state);
     auto resolved = resolve(d.nodes, d.order, pose, d.rootIndex, panelBase);
@@ -2733,11 +3148,25 @@ Frame Document::frame(const FrameInput &input) const {
             deploymentAlpha[i] =
                 localFactor * (d.nodes[i].parent ? deploymentAlpha[*d.nodes[i].parent] : 1);
         }
-    for (auto i : d.order)
-        frame.nodes.push_back({d.nodes[i].id, d.nodes[i].path, resolved[i].rect,
-                               frame.worldRoot * resolved[i].world, resolved[i].world,
-                               resolved[i].active, resolved[i].order, resolved[i].localOpacity,
-                               !pose[i].active});
+    for (auto i : d.order) {
+        std::vector<HitRegion::Mask> masks;
+        for (auto mask : resolved[i].masks)
+            if (resolved[mask].rect)
+                masks.push_back({*resolved[mask].rect, frame.worldRoot * resolved[mask].world,
+                                 resolved[mask].world, d.nodes[mask].id});
+        frame.nodes.push_back(
+            {d.nodes[i].id, d.nodes[i].path, resolved[i].rect, frame.worldRoot * resolved[i].world,
+             resolved[i].world, resolved[i].active, resolved[i].order, resolved[i].localOpacity,
+             !pose[i].active, resolved[i].alpha * deploymentAlpha[i], std::move(masks)});
+    }
+    auto applyStyle = [&](std::size_t i, Graphic &g) {
+        if (auto style = styles.find(i); style != styles.end()) {
+            if (style->second.tint)
+                std::copy(style->second.tint->begin(), style->second.tint->end(), g.color.begin());
+            g.color[3] *= style->second.opacity;
+        }
+        g.normalMaterial = normalMaterialNodes.contains(i);
+    };
     struct SortedGraphic {
         int order;
         std::size_t sequence;
@@ -2781,6 +3210,7 @@ Frame Document::frame(const FrameInput &input) const {
                         g.world = frame.worldRoot * r.world;
                         g.sceneWorld = r.world;
                         g.color[3] *= deploymentAlpha[i];
+                        applyStyle(i, g);
                         g.sampledProperties.insert(p.properties.begin(), p.properties.end());
                         const auto &source = mesh->second;
                         for (std::size_t index = 0; index < source.indices.size(); index += 3) {
@@ -2840,6 +3270,8 @@ Frame Document::frame(const FrameInput &input) const {
         for (const auto &c : n.components) {
             if (!c.enabled)
                 continue;
+            if (d.desktop && c.kind == "UIText")
+                continue; // The desktop uses native text on these source planes.
             bool drawing = c.kind == "UIImage" || c.kind == "Image" || c.kind == "UIRawImage" ||
                            c.kind == "RawImage" || c.kind == "UIText",
                  nonDrawing = c.kind == "NonDrawingGraphic";
@@ -2887,6 +3319,7 @@ Frame Document::frame(const FrameInput &input) const {
             }
             g.color[3] = static_cast<float>(g.color[3]) * static_cast<float>(r.alpha);
             g.color[3] *= deploymentAlpha[i];
+            applyStyle(i, g);
             g.vertexColorReady = true;
             if (c.kind == "UIText") {
                 g.text = c.data["m_text"].string();
