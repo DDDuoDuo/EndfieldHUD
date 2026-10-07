@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create an isolated Windows developer preview and report consumer release gaps."""
+"""Create Windows preview ZIPs or evidence-gated portable/MSIX releases."""
 from __future__ import annotations
 
 import argparse
@@ -30,6 +30,14 @@ RELEASE_GATES = (
     "100_lifecycle_cycles", "sleep_resume_device_loss_explorer_restart",
     "install_update_uninstall_consent_rollback", "architecture_and_dependency_audit",
 )
+MSIX_DEPLOYMENT_GATE = "install_update_uninstall_consent_rollback"
+PORTABLE_DEPLOYMENT_GATE = "portable_manual_update_uninstall_consent_rollback"
+
+
+def required_release_gates(distribution: str) -> tuple[str, ...]:
+    if distribution not in ("portable", "msix"):
+        raise ValueError("Windows distribution must be portable or msix")
+    return tuple(PORTABLE_DEPLOYMENT_GATE if name == MSIX_DEPLOYMENT_GATE and distribution == "portable" else name for name in RELEASE_GATES)
 
 
 def file_digest(path: Path) -> str:
@@ -96,20 +104,24 @@ $certificate = $signature.SignerCertificate
         return {"status": "unverified", "thumbprint": None, "reason": "Windows Authenticode validation is unavailable"}
 
 
-def release_failures(evidence: dict, *, version: str | None, revision: str, dirty: bool, executable_sha256: str, signature: dict, evidence_root: Path) -> list[str]:
+def release_failures(evidence: dict, *, version: str | None, revision: str, dirty: bool, executable_sha256: str, signature: dict, evidence_root: Path, distribution: str = "portable") -> list[str]:
     if not isinstance(evidence, dict):
         return ["Malformed Windows release evidence"]
     failures = []
+    gates_required = required_release_gates(distribution)
     if not version or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version):
         failures.append("DDDuoDuo must choose an explicit Windows version")
     if evidence.get("schema") != 1 or evidence.get("chosen_by") != "DDDuoDuo" or evidence.get("windows_version") != version:
         failures.append("Windows version/author approval evidence is missing or mismatched")
+    if evidence.get("distribution") != distribution:
+        failures.append("Chosen Windows distribution evidence is missing or mismatched")
     if evidence.get("source_commit") != revision or evidence.get("executable_sha256") != executable_sha256 or dirty:
         failures.append("Release evidence must identify this executable and a clean source commit")
-    if signature.get("status") != "Valid" or not signature.get("thumbprint"):
-        failures.append("Executable must have a Windows-validated Authenticode signature")
-    if evidence.get("signer_thumbprint") != signature.get("thumbprint"):
-        failures.append("Chosen signing identity does not match the executable")
+    if distribution == "msix":
+        if signature.get("status") != "Valid" or not signature.get("thumbprint"):
+            failures.append("Executable must have a Windows-validated Authenticode signature")
+        if evidence.get("signer_thumbprint") != signature.get("thumbprint"):
+            failures.append("Chosen signing identity does not match the executable")
     hardware = evidence.get("hardware", {})
     if not isinstance(hardware, dict):
         hardware = {}
@@ -118,7 +130,7 @@ def release_failures(evidence: dict, *, version: str | None, revision: str, dirt
     gates = evidence.get("gates", {})
     if not isinstance(gates, dict):
         gates = {}
-    for name in RELEASE_GATES:
+    for name in gates_required:
         gate = gates.get(name, {})
         if not isinstance(gate, dict):
             gate = {}
@@ -139,7 +151,7 @@ def release_failures(evidence: dict, *, version: str | None, revision: str, dirt
     return failures
 
 
-def package_preview(repository: Path, executable: Path, resources: Path, output: Path, *, git: str, build_metadata: Path | None = None, release: bool = False, version: str | None = None, evidence_path: Path | None = None, release_options: dict | None = None) -> dict:
+def package_preview(repository: Path, executable: Path, resources: Path, output: Path, *, git: str, build_metadata: Path | None = None, release: bool = False, version: str | None = None, evidence_path: Path | None = None, release_options: dict | None = None, distribution: str = "portable") -> dict:
     repository, executable, resources, output = repository.resolve(), executable.resolve(), resources.resolve(), output.resolve()
     if not output.is_relative_to(repository / "windows" / "dist"):
         raise ValueError("Windows packages must stay inside windows/dist, separate from Mac releases")
@@ -150,23 +162,29 @@ def package_preview(repository: Path, executable: Path, resources: Path, output:
     revision, dirty = git_revision(repository, git)
     executable_hash = file_digest(executable)
     signature = authenticode(executable)
+    required_release_gates(distribution)
     if release:
         evidence = json.loads(evidence_path.read_bytes()) if evidence_path else {}
-        failures = release_failures(evidence, version=version, revision=revision, dirty=dirty, executable_sha256=executable_hash, signature=signature, evidence_root=evidence_path.parent if evidence_path else repository)
+        failures = release_failures(evidence, version=version, revision=revision, dirty=dirty, executable_sha256=executable_hash, signature=signature, evidence_root=evidence_path.parent if evidence_path else repository, distribution=distribution)
         options = release_options or {}
-        for field in ("package_version", "publisher", "logo_source", "certificate_thumbprint", "timestamp_uri", "asset_base_uri", "feed_uri"):
-            if not options.get(field):
-                failures.append("Missing chosen signed MSIX release setting: " + field)
+        if distribution == "msix":
+            for field in ("package_version", "publisher", "logo_source", "certificate_thumbprint", "timestamp_uri", "asset_base_uri", "feed_uri"):
+                if not options.get(field):
+                    failures.append("Missing chosen signed MSIX release setting: " + field)
         if failures:
             raise ValueError("Consumer Windows release refused:\n- " + "\n- ".join(failures))
-        from msix_release import create_release
-        return create_release(repository, executable, resources, output, windows_version=version, version=options["package_version"], publisher=options["publisher"], logo_source=options["logo_source"], certificate_thumbprint=options["certificate_thumbprint"], timestamp_uri=options["timestamp_uri"], asset_base_uri=options["asset_base_uri"], feed_uri=options["feed_uri"], evidence_sha256=file_digest(evidence_path), source_commit=revision, min_os=options.get("min_os", "10.0.26200.0"), makeappx=options.get("makeappx"), signtool=options.get("signtool"), automatic_updates=bool(options.get("automatic_updates")), signer_script=options.get("signer_script"))
-    if version or evidence_path:
+        if distribution == "msix":
+            from msix_release import create_release
+            return create_release(repository, executable, resources, output, windows_version=version, version=options["package_version"], publisher=options["publisher"], logo_source=options["logo_source"], certificate_thumbprint=options["certificate_thumbprint"], timestamp_uri=options["timestamp_uri"], asset_base_uri=options["asset_base_uri"], feed_uri=options["feed_uri"], evidence_sha256=file_digest(evidence_path), source_commit=revision, min_os=options.get("min_os", "10.0.26200.0"), makeappx=options.get("makeappx"), signtool=options.get("signtool"), automatic_updates=bool(options.get("automatic_updates")), signer_script=options.get("signer_script"))
+    if not release and (version or evidence_path):
         raise ValueError("Developer preview must not assign a consumer Windows version")
     files: dict[str, Path] = {"EndfieldHUDWindows.exe": executable}
     for record in resource_inventory["files"]:
         files["Resources/" + record["path"]] = checked_file(resources, record["path"])
     files["Resources/resources-inventory.json"] = checked_file(resources, "resources-inventory.json")
+    if release:
+        for helper in ("portable-update.ps1", "data-snapshots.ps1"):
+            files[helper] = checked_file(Path(__file__).resolve().parent, helper)
     if build_metadata:
         metadata = json.loads(build_metadata.read_bytes())
     else:
@@ -179,33 +197,52 @@ def package_preview(repository: Path, executable: Path, resources: Path, output:
         "Use isolated synthetic data. No Mac release or update feed is changed.\n"
         "See Resources/LICENSE.txt and Resources/CREDITS.md for ownership and notices.\n"
     ).encode("utf-8")
+    notice_name = "PORTABLE.txt" if release else "PREVIEW.txt"
+    if release:
+        preview_notice = (
+            f"EndfieldHUD Windows portable release {version}\n"
+            "Authorship: DDDuoDuo\n"
+            "Portable ZIP distribution. Authenticode signing is not required.\n"
+            f"Observed Windows Authenticode status: {signature.get('status', 'unverified')}\n"
+            "Verify the published ZIP SHA-256 before extraction or a manual update.\n"
+            "Windows can show an unknown-publisher warning for an unsigned executable.\n"
+            "Save and quit before updating. Keep app data outside this executable/resource folder.\n"
+            "portable-update.ps1 validates every payload, preserves the previous version and snapshots data.\n"
+            "Updates and rollback require explicit user consent; no updater runs in the background.\n"
+            "See Resources/LICENSE.txt and Resources/CREDITS.md for ownership and notices.\n"
+        ).encode("utf-8")
     records = [record_file(path, path.parent, path_in_package=name) for name, path in sorted(files.items())]
     for record in records:
         record["path"] = record.pop("path_in_package")
-    records.append({"path": "PREVIEW.txt", "bytes": len(preview_notice), "sha256": hashlib.sha256(preview_notice).hexdigest()})
+    records.append({"path": notice_name, "bytes": len(preview_notice), "sha256": hashlib.sha256(preview_notice).hexdigest()})
     inventory = {
-        "schema": 1, "kind": "developer-preview", "author": "DDDuoDuo", "platform": "Windows",
-        "architecture": architecture, "windows_version": None, "source_commit": revision, "source_dirty": dirty,
+        "schema": 1, "kind": "portable-consumer-release" if release else "developer-preview", "author": "DDDuoDuo", "platform": "Windows",
+        "distribution": "portable", "architecture": architecture, "windows_version": version if release else None, "source_commit": revision, "source_dirty": dirty,
         "executable_sha256": executable_hash, "authenticode": signature, "build": metadata,
+        "authenticode_required": False,
+        "update_policy": "manual consent; closed app; verified hashes; retain previous payload; optional explicit data rollback",
         "runtime_dependencies": [
             {"name": "Windows system APIs", "distribution": "OS provided", "package_bytes": 0, "license": "Windows license", "version": "see build SDK and measured OS evidence"},
             {"name": "MSVC C++ runtime", "distribution": "statically linked /MT", "package_bytes": "included in executable", "license": "Microsoft Visual Studio runtime redistribution terms", "version": "see build compiler metadata"},
-            {"name": "Matter.js", "version": "0.20.0", "distribution": "dormant original OrbiPom asset", "license": "MIT", "license_path": "Resources/OrbiPom/Matter-LICENSE.txt", "engine_status": "Windows game adapter not implemented"},
+            {"name": "Matter.js", "version": "0.20.0", "distribution": "original OrbiPom asset", "license": "MIT", "license_path": "Resources/OrbiPom/Matter-LICENSE.txt", "engine_status": "see accepted native game evidence" if release else "Windows game adapter parity is unverified"},
             {"name": "zlib", "version": "1.3.2", "archive_sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16", "distribution": "six source files statically linked; no DLL", "license": "zlib", "license_path": "Resources/zlib-LICENSE.txt", "package_bytes": "included in measured executable; 1002-byte notice"},
         ],
         "files": records, "installed_payload_bytes": sum(record["bytes"] for record in records),
         "resources_bytes": resource_inventory["installed_bytes"],
         "native_scene_duplicate_bytes": resource_inventory["native_scene_duplicate_bytes"],
-        "consumer_release": "requires completed feasibility/parity/install/update evidence and trusted signed MSIX",
+        "consumer_release": "all applicable acceptance evidence passed" if release else "requires completed feasibility/parity/data/performance and portable deployment evidence; signing is optional for portable ZIP",
     }
+    if release:
+        inventory["release_evidence_sha256"] = file_digest(evidence_path)
+        inventory["passed_release_gates"] = list(required_release_gates("portable"))
     output.mkdir(parents=True, exist_ok=True)
-    stem = f"EndfieldHUD-Windows-{architecture}-preview-{revision[:12]}"
+    stem = f"EndfieldHUD-Windows-{architecture}-portable-{version}" if release else f"EndfieldHUD-Windows-{architecture}-preview-{revision[:12]}"
     archive = output / (stem + ".zip")
     with tempfile.TemporaryDirectory(prefix=".windows-package-", dir=output) as temporary:
         staged_archive = Path(temporary) / archive.name
         with zipfile.ZipFile(staged_archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as package:
             payloads = {name: path.read_bytes() for name, path in files.items()}
-            payloads["PREVIEW.txt"] = preview_notice
+            payloads[notice_name] = preview_notice
             payloads["package-inventory.json"] = json_bytes(inventory)
             for name, data in sorted(payloads.items()):
                 safe_relative(name)
@@ -241,6 +278,7 @@ def main() -> None:
     parser.add_argument("--git", default="git")
     parser.add_argument("--build-metadata", type=Path)
     parser.add_argument("--release", action="store_true")
+    parser.add_argument("--format", choices=("portable", "msix"), default="portable", dest="distribution", help="portable ZIP requires no signing certificate; msix is an optional signed distribution")
     parser.add_argument("--version")
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--package-version")
@@ -258,14 +296,15 @@ def main() -> None:
     arguments = parser.parse_args()
     try:
         options = {"package_version": arguments.package_version, "publisher": arguments.publisher, "logo_source": arguments.logo_source, "certificate_thumbprint": arguments.certificate_thumbprint, "timestamp_uri": arguments.timestamp_uri, "asset_base_uri": arguments.asset_base_uri, "feed_uri": arguments.feed_uri, "min_os": arguments.min_os, "makeappx": arguments.makeappx, "signtool": arguments.signtool, "automatic_updates": arguments.automatic_updates, "signer_script": arguments.signer_script}
-        report = package_preview(arguments.repository, arguments.executable, arguments.resources, arguments.output or arguments.repository / "windows" / "dist", git=arguments.git, build_metadata=arguments.build_metadata, release=arguments.release, version=arguments.version, evidence_path=arguments.evidence, release_options=options)
+        report = package_preview(arguments.repository, arguments.executable, arguments.resources, arguments.output or arguments.repository / "windows" / "dist", git=arguments.git, build_metadata=arguments.build_metadata, release=arguments.release, version=arguments.version, evidence_path=arguments.evidence, release_options=options, distribution=arguments.distribution)
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(1, str(error) + "\n")
-    if arguments.release:
+    if arguments.release and arguments.distribution == "msix":
         print(f"Signed Windows MSIX: {report['file']}; download {report['download_bytes'] / 1048576:.2f} MiB; installed payload {report['installed_payload_bytes'] / 1048576:.2f} MiB")
         print(f"SHA-256: {report['sha256']}")
     else:
-        print(f"Windows developer preview: {report['archive']}; download {report['download_bytes'] / 1048576:.2f} MiB; installed {report['installed_bytes_including_inventory'] / 1048576:.2f} MiB")
+        label = "Windows portable release" if arguments.release else "Windows developer preview"
+        print(f"{label}: {report['archive']}; download {report['download_bytes'] / 1048576:.2f} MiB; installed {report['installed_bytes_including_inventory'] / 1048576:.2f} MiB")
         print(f"SHA-256: {report['archive_sha256']}")
 
 

@@ -1,5 +1,6 @@
 {
   "schema": 1,
+  "distribution": "msix",
   "chosen_by": null,
   "windows_version": null,
   "source_commit": null,

@@ -28,7 +28,7 @@ jobs:
       - name: Build, isolated tests, byte-exact resources, developer preview
         shell: pwsh
         run: .\windows\packaging\build.ps1 -Python (Get-Command python.exe).Source
-      - name: Validate unsigned MSIX candidate with the Windows SDK
+      - name: Validate optional unsigned MSIX format with the Windows SDK
         shell: pwsh
         run: |
           & (Get-Command python.exe).Source windows/packaging/msix_release.py --candidate --executable windows/build/x64/Release/EndfieldHUDWindows.exe --resources windows/build/x64/Release/Resources --logo-source Resources/Watch/ui_mid_ring.png

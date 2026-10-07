@@ -1,6 +1,7 @@
 #include "render/native_renderer.h"
 #include "app/frame_schedule.h"
 #include "platform/composition_probe.h"
+#include "platform/rendered_cursor.h"
 #include <windowsx.h>
 #include <shellapi.h>
 #include <psapi.h>
@@ -130,6 +131,8 @@ private:
                 buttons_ = std::make_unique<ehud::scene::ButtonMotion>(*document_);
             }
             placeOnActiveMonitor(); RECT client{}; GetClientRect(window_, &client);
+            if (!cursor_.handle() && FAILED(cursor_.initialize(window_, executableRoot()/L"Resources"/L"WatchSource"/L"Cursor")))
+                throw std::runtime_error("Original source cursor initialization failed");
             if (!renderer_) {
                 renderer_ = std::make_unique<ehud::render::NativeRenderer>();
                 HRESULT hr = renderer_->initialize(window_, client.right, client.bottom);
@@ -148,9 +151,12 @@ private:
             pointer_ = {static_cast<double>(pointer.x), static_cast<double>(pointer.y)}; pointerChanged_ = true;
             pointerInside_ = PtInRect(&client, pointer) != FALSE;
             ShowWindow(window_, SW_SHOW); SetForegroundWindow(window_);
+            cursor_.set_presented(true); cursor_.set_focused(GetForegroundWindow()==window_);
+            resolveCursor(true,true);
             requestFrame();
         } catch (const std::exception& error) {
             if (playback_) playback_->conceal(); frame_.reset(); frameSchedule_.reset();
+            cursor_.set_presented(false);
             cancelPointerInteraction();
             if (editor_) editor_->focus(false); editor_.reset(); renderer_.reset();
             KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE);
@@ -174,6 +180,32 @@ private:
         pressed_.reset(); hovered_.reset(); pointerInside_ = false;
         if (GetCapture() == window_) ReleaseCapture();
     }
+    bool resolveCursor(bool queryPointer, bool force=false) {
+        if (probe_ || nativeHostTracking_) return false;
+        if(queryPointer) {
+            POINT point{}; RECT client{}; GetClientRect(window_,&client);
+            pointerInside_=GetCursorPos(&point) && ScreenToClient(window_,&point) && PtInRect(&client,point);
+            pointer_={static_cast<double>(point.x),static_cast<double>(point.y)};
+        }
+        auto region=pointerInside_?ehud::platform::CursorRegion::source:ehud::platform::CursorRegion::outside;
+        if(editor_ && editor_->pointer_tracking()) region=ehud::platform::CursorRegion::native;
+        else if(pointerInside_ && frame_ && editor_) {
+            double x{},y{};
+            if(ehud::render::NativeRenderer::editorProjection(*frame_).unproject(pointer_.x,pointer_.y,x,y) && x>=0 && x<=600 && y>=0 && y<=220)
+                region=ehud::platform::CursorRegion::native;
+        }
+        if(force || region!=cursorRegion_) {
+            if(region==ehud::platform::CursorRegion::native) SetCursor(LoadCursorW(nullptr,IDC_IBEAM));
+            cursorRegion_=region; cursor_.set_region(region); cursor_.refresh();
+        }
+        return region==ehud::platform::CursorRegion::native;
+    }
+    void syncEditorCursorTracking() {
+        const bool tracking=editor_ && editor_->pointer_tracking();
+        if(tracking==editorPointerTracking_) return;
+        if(tracking) cursor_.begin_native_tracking(); else cursor_.end_native_tracking();
+        editorPointerTracking_=tracking; resolveCursor(true,true);
+    }
     void requestFrame() {
         if (!probe_ && playback_ && playback_->phase() != ehud::scene::Phase::concealed && !frameTimerRunning_) {
             SetTimer(window_, frameTimer, 16, nullptr); frameTimerRunning_ = true;
@@ -193,6 +225,7 @@ private:
         KillTimer(window_, frameTimer); frameTimerRunning_ = false;
         frameSchedule_.reset();
         if (playback_) playback_->conceal(); frame_.reset();
+        cursor_.set_presented(false);
         cancelPointerInteraction();
         if (editor_) editor_->focus(false); editor_.reset(); renderer_.reset();
         ShowWindow(window_, SW_HIDE);
@@ -204,6 +237,7 @@ private:
         if (!document_ || !renderer_ || !playback_) return;
         const double time = now(); auto sample = playback_->sample(time, false, false);
         if (sample.phase == ehud::scene::Phase::concealed) {
+            cursor_.set_presented(false);
             KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); frame_.reset(); gyro_.stop(time);
             frameSchedule_.reset();
             if (quitAfterClose_) DestroyWindow(window_); return;
@@ -233,9 +267,13 @@ private:
             input.interaction = buttons_.get(); input.time = time;
             frame_ = document_->frame(input);
         }
+        // Match HUDSourceWatchView's ambient-off shader clock. Geometry and
+        // interaction retain their finite animation clock; UV effects stay
+        // fixed at zero while idle instead of jumping on the next input.
+        frame_->sceneTime=0;
         HRESULT hr = renderer_->draw(*frame_, editor_.get()); dirty_ = false;
         if (FAILED(hr)) renderingFailed(hr);
-        else frameSchedule_.submitted(sample.phase, gyro_.animating(), buttons_ && buttons_->requiresFrames(time));
+        else { frameSchedule_.submitted(sample.phase, gyro_.animating(), buttons_ && buttons_->requiresFrames(time)); resolveCursor(false); }
     }
     void writeProbe() {
         KillTimer(window_, probeTimer);
@@ -292,7 +330,8 @@ private:
                 double time = index * 3.0;
                 playback.open(time); ehud::scene::GyroMotion gyro;
                 gyro.retarget(doc.pointerEuler({1100, 120}, {1280, 720}), time, doc.gyroDuration());
-                auto frame = doc.frame({{1280, 720}, playback.sample(time + doc.entranceDuration(), false, false), gyro.rotation(time + 1)});
+                ehud::scene::FrameInput input{{1280, 720}, playback.sample(time + doc.entranceDuration(), false, false), gyro.rotation(time + 1)};
+                input.time=time+doc.entranceDuration(); auto frame = doc.frame(input); frame.sceneTime=0;
                 const auto mapping = ehud::render::NativeRenderer::editorProjection(frame);
                 for (ehud::scene::Vec2 point : {ehud::scene::Vec2{0, 0}, {600, 0}, {600, 220}, {0, 220}}) {
                     auto source = frame.camera.project({point.x - 300, 170 - point.y, 0}, frame.worldRoot);
@@ -332,7 +371,7 @@ private:
                 << ",\n  \"editor_projection_corner_checks\": \"passed\",\n  \"visible_frame_pacing\": \"unverified; hidden-window test\",\n"
                 << "  \"encoded_premultiplied_alpha\": \"passed; synthetic half-alpha white GPU readback\",\n"
                 << "  \"source_textures_retained\": " << renderer.textureCount() << ",\n  \"source_text_surfaces_retained\": " << renderer.textCount()
-                << ",\n  \"source_material_visual_parity\": \"unverified; base source image path implemented, FX/HDR incomplete\",\n  \"live_ime\": \"unverified\"\n}\n";
+                << ",\n  \"source_material_visual_parity\": \"unverified; selected source UI/mesh FX translated, complete FX/HDR comparison pending\",\n  \"live_ime\": \"unverified\"\n}\n";
             if (!output) throw std::runtime_error("Cannot write graphics evidence");
             // Return to the actual message loop for the closed-state measure.
             // The retained renderer owns its warmed caches but submits nothing.
@@ -357,13 +396,24 @@ private:
             pointerInside_ = PtInRect(&client, POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)}) != FALSE;
             pointerChanged_ = true; requestFrame();
             updateHovered(now());
+            resolveCursor(false,true);
             TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, window_, 0}; TrackMouseEvent(&tracking);
         }
         if ((message == WM_CAPTURECHANGED || message == WM_CANCELMODE) && pressed_ && buttons_) {
             buttons_->setState(hovered_ == pressed_ ? ehud::scene::ButtonState::highlighted : ehud::scene::ButtonState::normal,
                 *pressed_, now()); pressed_.reset(); dirty_ = true; requestFrame();
         }
-        if (editor_) { LRESULT result{}; if (editor_->handle_message(message, wparam, lparam, result)) return result; }
+        if(message==WM_SETFOCUS) {cursor_.set_focused(true); resolveCursor(true,true);}
+        if(message==WM_KILLFOCUS) cursor_.set_focused(false);
+        if(message==WM_SETCURSOR) {
+            const auto target=reinterpret_cast<HWND>(wparam); const unsigned hit=LOWORD(lparam);
+            if(target==window_ && hit==HTCLIENT && resolveCursor(true)) {SetCursor(LoadCursorW(nullptr,IDC_IBEAM)); return TRUE;}
+            if(cursor_.handle_set_cursor(target,hit)) return TRUE;
+        }
+        if (editor_) {
+            LRESULT result{}; const bool handled=editor_->handle_message(message,wparam,lparam,result);
+            syncEditorCursorTracking(); if(handled) return result;
+        }
         switch (message) {
         case WM_APP + 3: graphicsProbe(); return 0;
         case WM_APP + 2: case WM_HOTKEY: toggle(); return 0;
@@ -376,6 +426,7 @@ private:
         case WM_MOUSEMOVE: return 0;
         case WM_MOUSELEAVE:
             pointerInside_ = false;
+            resolveCursor(false,true);
             if (hovered_ && buttons_) { buttons_->setHovered(false, *hovered_, now()); hovered_.reset(); dirty_ = true; requestFrame(); }
             return 0;
         case WM_LBUTTONDOWN:
@@ -393,6 +444,7 @@ private:
         case WM_CLOSE: close(false); return 0;
         case WM_POWERBROADCAST: if (wparam == PBT_APMSUSPEND && playback_) {
             if (editor_) editor_->focus(false); playback_->conceal(); frame_.reset();
+            cursor_.set_presented(false);
             frameSchedule_.reset();
             cancelPointerInteraction();
             KillTimer(window_, frameTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); gyro_.stop(now());
@@ -400,20 +452,23 @@ private:
         case trayMessage:
             if (LOWORD(lparam) == NIN_SELECT || LOWORD(lparam) == NIN_KEYSELECT) toggle();
             else if (LOWORD(lparam) == WM_CONTEXTMENU) {
+                ++nativeHostTracking_;
+                cursor_.begin_native_tracking();
                 HMENU menu = CreatePopupMenu(); const auto label = L"Open / hide — " + shortcutLabel_;
                 AppendMenuW(menu, MF_STRING, activateCommand, label.c_str()); AppendMenuW(menu, MF_STRING, quitCommand, L"Quit EndfieldHUD feasibility prototype");
                 POINT point{}; GetCursorPos(&point); SetForegroundWindow(window_);
                 auto command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, point.x, point.y, 0, window_, nullptr); DestroyMenu(menu);
                 if (command == activateCommand) toggle(); else if (command == quitCommand && MessageBoxW(window_, L"Quit EndfieldHUD?", L"EndfieldHUD", MB_YESNO | MB_ICONQUESTION) == IDYES) close(true);
+                cursor_.end_native_tracking(); --nativeHostTracking_; resolveCursor(true,true);
             } return 0;
-        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_DESTROY: cursor_.reset(); PostQuitMessage(0); return 0;
         }
         return DefWindowProcW(window_, message, wparam, lparam);
     }
     void cleanup() {
         UnregisterHotKey(window_, 1); KillTimer(window_, frameTimer); KillTimer(window_, probeTimer);
         if (!probe_) { NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = window_; data.uID = 1; Shell_NotifyIconW(NIM_DELETE, &data); }
-        editor_.reset(); renderer_.reset(); if (mutex_) CloseHandle(mutex_);
+        cursor_.reset(); editor_.reset(); renderer_.reset(); if (mutex_) CloseHandle(mutex_);
     }
     HWND window_{}; HANDLE mutex_{}; UINT taskbarCreated_{};
     bool probe_{}, graphicsProbe_{}, warmClosed_{}, shortcutReady_{}, dirty_{}, pointerChanged_{}, pointerInside_{}, quitAfterClose_{}, frameTimerRunning_{};
@@ -428,6 +483,10 @@ private:
     std::unique_ptr<endfield::platform::ProjectedEditor> editor_;
     std::optional<ehud::scene::Frame> frame_; ehud::scene::GyroMotion gyro_; ehud::scene::Vec2 pointer_{};
     ehud::app::FrameSchedule frameSchedule_;
+    ehud::platform::RenderedCursor cursor_;
+    ehud::platform::CursorRegion cursorRegion_{ehud::platform::CursorRegion::outside};
+    bool editorPointerTracking_{};
+    unsigned nativeHostTracking_{};
 };
 }
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {

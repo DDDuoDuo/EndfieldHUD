@@ -34,8 +34,48 @@ matrices and reruns the source slant writer against the cached pose before
 slant, while keeping geometry allocations when the pointer alone changes.
 There are no timers, renderer loops, OS services, accounts or application-data
 paths here. The lifecycle owner must stop requesting frames when concealed.
-The deterministic flicker utility retains source pulses and directional gates;
-the shell must group artwork and measure settled centers before folding it.
+`Frame::sceneTime` retains the caller's finite monotonic clock for animated
+shader UVs. Pointer-only `reproject` preserves this clock; the host explicitly
+updates it when submitting a later camera-only frame.
+
+`DeploymentFlicker` retains the source SplitMix64 pulses, original candidate
+indices, unsigned wrapped seeds, directional delays, duplicate and selected
+ancestor suppression, local Float baselines and linear additive opacity.
+Opening gates backward-fill until a group's turn; closing gates keep the group
+off after completion without retaining frame demand. Applying to a subset
+cancels its old tracks before the reduced-motion guard and retains unselected
+tracks, matching `HUDDeploymentFlicker.apply(to:)`. `cancel()` clears all tracks
+when concealed or reused. The effect has no timer and no per-frame randomness.
+
+The source `SystemHUDView.addDeploymentFlicker` selects legacy artwork in this
+order: machinery plus progress; visible navigation cards excluding power and
+profile plus identity-card children; readout descendants; the selected profile
+background; header/footer lettering plus industry wordmark; notes. Its opening
+sweep uses duration 0.13, delay 0.20 and span 0.25; closing uses 0.11, 0.01 and
+0.23, both in canvas Y range 0...640. `DeploymentOptions::legacySweep` preserves
+those constants. The source Watch branch follows its wrapper clips and does
+not call this helper, so Windows does not infer legacy groups from Watch sprites.
+The charge badge's separate ungated application can use the same owner with its
+own explicit group and timing.
+
+For an approved artwork provider, measure each group's visual bounds before
+mechanical transforms change: shape-path bounds first, otherwise nonempty local
+bounds, otherwise the union of converted child visual bounds. Convert the
+center into the caller's source coordinate space once. Supply those ordered
+group snapshots directly to `DeploymentFlicker::begin`, or use
+`Document::deploymentGroups(settledFrame, orderedCandidates)` for explicitly
+selected source nodes. The document helper derives ancestry and local
+CanvasGroup model opacity; the caller provides the settled Y and additional
+layer delay. It does not substitute screen pixels for source artwork coordinates.
+
+Pass the owner through `FrameInput::deployment` only for these explicit source
+groups. Sample `opacity` directly for external artwork. Supply one seed per
+opening/closing and the same clock as scene playback. Rebuild through the final
+finite endpoint, then park; `requiresFrames` excludes held closing fill. Clearing
+or bypassing tracks for reduced motion requires a fresh frame. The effect adds
+its captured baseline to the current local group opacity; it never scales a
+reveal curve's sampled opacity as a replacement animation. Source hit regions,
+wrapper curves, ambient transforms and backdrop/blur remain independent.
 
 Metadata can be plain source JSON or supplied through the `ResourceReader`
 callback after bounded complete EHUDZ01 decoding. The default reader rejects
@@ -50,10 +90,18 @@ private reference exports. The 128 MiB bound applies per metadata input.
 
 UI images preserve original trim, UVs, aspect, sliced borders, tiling and all five filled-image methods, including
 original radial cuts in geometry and UV coordinates. Mesh
-graphics retain source triangle positions/UVs and material IDs. A triangle uses
+graphics retain source triangle positions/UVs, raw RGBA channels and material IDs. A triangle uses
 the renderer's quad stream with a repeated fourth vertex; sampled material
 channels remain separate in `Graphic::sampledProperties`. Native HLSL must still
 implement those channels at their original shader positions.
+`Graphic::colorQuads` is empty for implicit white mesh vertices, or aligned with
+triangle quad order, including the repeated fourth vertex. Mesh color channels
+are raw bounded source floats and bypass UI Color32/gamma policy. All four
+currently approved source meshes omit these channels. Enabled
+`UIGraphicAnimation` emits its sampled inverse scale and centered offsets as
+`material._VFXMainTex_ST.{x,y,z,w}` and alpha as `material._TintColorAlpha`, at the
+source Float uniform boundary. The component changes its cloned material rather
+than the transform; RawImage also retains its cloned material binding.
 
 Source horizontal/vertical group and ContentSizeFitter passes retain measurement
 priorities, LayoutElement ignore semantics, parent rect anchors, child scaling
@@ -83,14 +131,19 @@ Still requiring implementation or validation:
 - Shader/material effects, blending, soft masks, HDR composite and text
   metrics/font fallback. Exact texture IDs and mip bindings are available;
   their native shader behavior belongs to the render adapter.
-- Integrating flicker with the shell's settled groups and checking the result
-  against the released Mac source frame/time/pointer.
+- Mounting the approved legacy artwork groups before applying their sweep and
+  checking visual output against the released Mac source frame/time/pointer.
 
 `scene_tests` checks synthetic curve, lifecycle, gyro, sweep, projective input,
 all filled methods and an independent in-memory exported scene. That fixture
 checks layout priorities, disabled sorting/ignore registration, scroll/slant,
 finite controller speed and normalized/interrupted blends, separate hover,
 ColorTint fades/enable/disable, reduced motion and slant-aware reproject.
+Explicit deployment tests cover source seeded reference values, candidate-index
+filtering, ancestor/duplicate suppression, additive baselines, frozen sweep
+centers, reduced-motion cancellation and finite/held endpoints. Shader channel
+fixtures verify raw mesh RGBA, bounds validation, sampled material scale/alpha,
+zero-scale threshold, cloned RawImage binding and preserved scene clock.
 Passing an actual scene path also checks the current resource graph, clip
 lengths, source button instances, gyro endpoints, sorting, exact texture IDs,
 mesh/UV alignment and 100 isolated open/close snapshots. These checks do not

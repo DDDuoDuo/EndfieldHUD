@@ -236,6 +236,7 @@ $errors=$null;$tokens=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile($Helper,[ref]$tokens,[ref]$errors)
 if($errors.Count -gt 0){throw 'Updater parse failure'}
 foreach($statement in $ast.EndBlock.Statements){if($statement -is [Management.Automation.Language.FunctionDefinitionAst]){. ([scriptblock]::Create($statement.Extent.Text))}}
+. (Join-Path (Split-Path -Parent $Helper) 'data-snapshots.ps1')
 $data=Join-Path $Root 'SyntheticData'
 $backups=Join-Path $Root 'SyntheticBackups'
 if($Hidden -eq 'yes'){[IO.File]::SetAttributes($Root,[IO.File]::GetAttributes($Root) -bor [IO.FileAttributes]::Hidden)}
@@ -295,14 +296,14 @@ class ReleaseGateTests(unittest.TestCase):
         artifact.write_bytes(b'{"synthetic":true}')
         self.digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
         self.evidence = {
-            "schema": 1, "chosen_by": "DDDuoDuo", "windows_version": "9.9.9",
+            "schema": 1, "chosen_by": "DDDuoDuo", "windows_version": "9.9.9", "distribution": "msix",
             "source_commit": "a" * 40, "executable_sha256": "b" * 64, "signer_thumbprint": "TEST",
             "hardware": {"os_build": "synthetic", "cpu": "synthetic", "gpu": "synthetic", "ram_bytes": 1, "monitor_dpi": 96, "refresh_hz": 60},
             "gates": {name: {"status": "passed", "summary": "synthetic validator test", "artifacts": [{"path": artifact.name, "sha256": self.digest}]} for name in windows_package.RELEASE_GATES},
         }
 
     def failures(self, **overrides):
-        arguments = {"version": "9.9.9", "revision": "a" * 40, "dirty": False, "executable_sha256": "b" * 64, "signature": {"status": "Valid", "thumbprint": "TEST"}, "evidence_root": self.root}
+        arguments = {"version": "9.9.9", "revision": "a" * 40, "dirty": False, "executable_sha256": "b" * 64, "signature": {"status": "Valid", "thumbprint": "TEST"}, "evidence_root": self.root, "distribution": "msix"}
         arguments.update(overrides)
         return windows_package.release_failures(self.evidence, **arguments)
 
@@ -318,6 +319,16 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_signature_must_be_valid(self):
         self.assertTrue(any("Authenticode" in failure for failure in self.failures(signature={"status": "NotSigned", "thumbprint": None})))
+
+    def test_portable_requires_its_deployment_gate_without_a_signature(self):
+        self.evidence["distribution"] = "portable"
+        self.evidence["gates"][windows_package.PORTABLE_DEPLOYMENT_GATE] = self.evidence["gates"].pop(windows_package.MSIX_DEPLOYMENT_GATE)
+        self.assertEqual(self.failures(distribution="portable", signature={"status": "NotSigned", "thumbprint": None}), [])
+        self.evidence["gates"][windows_package.PORTABLE_DEPLOYMENT_GATE]["status"] = "unverified"
+        self.assertTrue(any(windows_package.PORTABLE_DEPLOYMENT_GATE in failure for failure in self.failures(distribution="portable", signature={"status": "NotSigned", "thumbprint": None})))
+
+    def test_distribution_approval_cannot_be_reused_for_a_different_format(self):
+        self.assertTrue(any("distribution" in failure for failure in self.failures(distribution="portable")))
 
     def test_dirty_or_different_build_cannot_reuse_evidence(self):
         self.assertTrue(any("clean source" in failure for failure in self.failures(dirty=True)))
@@ -340,6 +351,10 @@ class ReleaseGateTests(unittest.TestCase):
         template = json.loads((PACKAGING / "release-evidence.template.json").read_bytes())
         self.assertEqual(set(template["gates"]), set(windows_package.RELEASE_GATES))
         self.assertTrue(all(gate["status"] == "unverified" for gate in template["gates"].values()))
+        portable = json.loads((PACKAGING / "portable-release-evidence.template.json").read_bytes())
+        self.assertEqual(portable["distribution"], "portable")
+        self.assertEqual(set(portable["gates"]), set(windows_package.required_release_gates("portable")))
+        self.assertTrue(all(gate["status"] == "unverified" for gate in portable["gates"].values()))
 
 
 class PreviewPackageTests(unittest.TestCase):
@@ -411,7 +426,7 @@ class PreviewPackageTests(unittest.TestCase):
         artifact.write_bytes(b'{"synthetic":true}')
         proof = {"path": artifact.name, "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
         evidence = {
-            "schema": 1, "chosen_by": "DDDuoDuo", "windows_version": "9.9.9", "source_commit": "a" * 40,
+            "schema": 1, "chosen_by": "DDDuoDuo", "windows_version": "9.9.9", "distribution": "msix", "source_commit": "a" * 40,
             "executable_sha256": hashlib.sha256(self.executable.read_bytes()).hexdigest(), "signer_thumbprint": "TEST",
             "hardware": {"os_build": "synthetic", "cpu": "synthetic", "gpu": "synthetic", "ram_bytes": 1, "monitor_dpi": 96, "refresh_hz": 60},
             "gates": {name: {"status": "passed", "summary": "synthetic dispatch test", "artifacts": [proof]} for name in windows_package.RELEASE_GATES},
@@ -420,11 +435,140 @@ class PreviewPackageTests(unittest.TestCase):
         evidence_path.write_bytes(stage_resources.json_bytes(evidence))
         options = {"package_version": "9.9.9.0", "publisher": "CN=Synthetic", "logo_source": self.repository / "synthetic.png", "certificate_thumbprint": "TEST", "timestamp_uri": "https://example.test/time", "asset_base_uri": "https://example.test/windows/9.9.9", "feed_uri": "https://example.test/windows/feed.appinstaller"}
         with mock.patch.object(windows_package, "git_revision", return_value=("a" * 40, False)), mock.patch.object(windows_package, "authenticode", return_value={"status": "Valid", "thumbprint": "TEST"}), mock.patch.object(msix_release, "create_release", return_value={"synthetic_dispatch": True}) as create:
-            report = windows_package.package_preview(self.repository, self.executable, self.resources, self.repository / "windows" / "dist", git="unused", release=True, version="9.9.9", evidence_path=evidence_path, release_options=options)
+            report = windows_package.package_preview(self.repository, self.executable, self.resources, self.repository / "windows" / "dist", git="unused", release=True, version="9.9.9", evidence_path=evidence_path, release_options=options, distribution="msix")
         self.assertTrue(report["synthetic_dispatch"])
         self.assertEqual(create.call_args.kwargs["version"], "9.9.9.0")
         self.assertFalse(create.call_args.kwargs["automatic_updates"])
         self.assertFalse((self.repository / "windows" / "dist").exists())
+
+    def portable_release(self, version="9.9.9", *, incomplete_gate=None):
+        artifact = self.repository / "synthetic-measurement.json"
+        artifact.write_bytes(b'{"synthetic":true}')
+        proof = {"path": artifact.name, "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+        evidence = {
+            "schema": 1, "chosen_by": "DDDuoDuo", "windows_version": version, "distribution": "portable", "source_commit": "a" * 40,
+            "executable_sha256": hashlib.sha256(self.executable.read_bytes()).hexdigest(),
+            "hardware": {"os_build": "synthetic", "cpu": "synthetic", "gpu": "synthetic", "ram_bytes": 1, "monitor_dpi": 96, "refresh_hz": 60},
+            "gates": {name: {"status": "passed", "summary": "synthetic portable packaging test", "artifacts": [proof]} for name in windows_package.required_release_gates("portable")},
+        }
+        if incomplete_gate:
+            evidence["gates"][incomplete_gate]["status"] = "unverified"
+        evidence_path = self.repository / ("synthetic-release-evidence-" + version + ".json")
+        evidence_path.write_bytes(stage_resources.json_bytes(evidence))
+        with mock.patch.object(windows_package, "git_revision", return_value=("a" * 40, False)), mock.patch.object(windows_package, "authenticode", return_value={"status": "NotSigned", "thumbprint": None}):
+            return windows_package.package_preview(self.repository, self.executable, self.resources, self.repository / "windows" / "dist", git="unused", release=True, version=version, evidence_path=evidence_path, distribution="portable")
+
+    def test_unsigned_portable_release_records_status_and_exact_payload(self):
+        with mock.patch.object(msix_release, "create_release", side_effect=AssertionError("Portable ZIP must not invoke MSIX signing")):
+            report = self.portable_release()
+        self.assertEqual(report["kind"], "portable-consumer-release")
+        self.assertEqual(report["windows_version"], "9.9.9")
+        self.assertEqual(report["authenticode"]["status"], "NotSigned")
+        self.assertFalse(report["authenticode_required"])
+        self.assertEqual(set(report["passed_release_gates"]), set(windows_package.required_release_gates("portable")))
+        with zipfile.ZipFile(self.repository / "windows" / "dist" / report["archive"]) as archive:
+            self.assertIn("EndfieldHUD-Windows/portable-update.ps1", archive.namelist())
+            self.assertIn("EndfieldHUD-Windows/data-snapshots.ps1", archive.namelist())
+            self.assertNotIn("EndfieldHUD-Windows/PREVIEW.txt", archive.namelist())
+            self.assertEqual(sum(len(archive.read(name)) for name in archive.namelist()), report["installed_bytes_including_inventory"])
+
+    def test_unsigned_portable_does_not_bypass_app_or_data_acceptance(self):
+        for gate in ("source_shader_material_parity", "atomic_offline_import_and_rollback", windows_package.PORTABLE_DEPLOYMENT_GATE):
+            with self.subTest(gate=gate), self.assertRaisesRegex(ValueError, gate):
+                self.portable_release(incomplete_gate=gate)
+        self.assertFalse((self.repository / "windows" / "dist").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows portable deployment helper integration")
+    def test_portable_manual_install_update_rollback_and_uninstall_preserve_data(self):
+        old = self.portable_release("9.9.8")
+        new = self.portable_release("9.9.9")
+        script = self.repository / "portable-integration.ps1"
+        script.write_text('''param([string]$Helper,[string]$Root,[string]$OldZip,[string]$OldHash,[string]$NewZip,[string]$NewHash)
+$ErrorActionPreference='Stop'
+$settings=@{InstallRoot=(Join-Path $Root 'SyntheticApp');BackupRoot=(Join-Path $Root 'SyntheticPayloadBackups');DataRoot=(Join-Path $Root 'SyntheticData');DataBackupRoot=(Join-Path $Root 'SyntheticDataBackups');Confirm=$false}
+New-Item -ItemType Directory -Path $settings.DataRoot | Out-Null
+$note=Join-Path $settings.DataRoot 'synthetic-note.json'
+[IO.File]::WriteAllText($note,'original synthetic data')
+$installed=& $Helper -Mode Install -PackagePath $OldZip -ExpectedSHA256 $OldHash -ExpectedVersion '9.9.8' @settings | ConvertFrom-Json
+$updated=& $Helper -Mode Update -PackagePath $NewZip -ExpectedSHA256 $NewHash -ExpectedVersion '9.9.9' @settings | ConvertFrom-Json
+[IO.File]::WriteAllText($note,'new synthetic data')
+$rolled=& $Helper -Mode Rollback -PackagePath $OldZip -ExpectedSHA256 $OldHash -ExpectedVersion '9.9.8' -RestoreDataSnapshot $updated.data_snapshot @settings | ConvertFrom-Json
+$restored=[IO.File]::ReadAllText($note)
+$removed=& $Helper -Mode Uninstall -ExpectedVersion '9.9.8' @settings | ConvertFrom-Json
+[ordered]@{installed=$installed.completed;updated=$updated.completed;rolled_back=$rolled.completed;removed=$removed.completed;restored=$restored;data_after_uninstall=[IO.File]::ReadAllText($note);payload_absent=(-not(Test-Path -LiteralPath $settings.InstallRoot));previous_payload=(Test-Path -LiteralPath $updated.previous_payload);launched=$updated.app_launched} | ConvertTo-Json -Compress
+''', encoding="utf-8")
+        shell = shutil.which("pwsh.exe") or "powershell.exe"
+        output = self.repository / "windows" / "dist"
+        result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-File", str(script), "-Helper", str(PACKAGING / "portable-update.ps1"), "-Root", str(self.repository), "-OldZip", str(output / old["archive"]), "-OldHash", old["archive_sha256"], "-NewZip", str(output / new["archive"]), "-NewHash", new["archive_sha256"]], capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(all(report[name] for name in ("installed", "updated", "rolled_back", "removed", "payload_absent", "previous_payload")))
+        self.assertEqual(report["restored"], "original synthetic data")
+        self.assertEqual(report["data_after_uninstall"], "original synthetic data")
+        self.assertFalse(report["launched"])
+
+    @unittest.skipUnless(os.name == "nt", "Windows portable ZIP verification integration")
+    def test_portable_validation_rejects_wrong_hash_altered_payload_and_extra_entry(self):
+        report = self.portable_release()
+        path = self.repository / "windows" / "dist" / report["archive"]
+        shell = shutil.which("pwsh.exe") or "powershell.exe"
+        def validate(archive, digest):
+            return subprocess.run([shell, "-NoProfile", "-NonInteractive", "-File", str(PACKAGING / "portable-update.ps1"), "-PackagePath", str(archive), "-ExpectedSHA256", digest, "-ExpectedVersion", "9.9.9"], capture_output=True, encoding="utf-8")
+        self.assertEqual(validate(path, report["archive_sha256"]).returncode, 0)
+        wrong = validate(path, "0" * 64)
+        self.assertNotEqual(wrong.returncode, 0)
+        self.assertIn("published release", wrong.stderr)
+        for extra in (False, True):
+            tampered = self.repository / ("synthetic-extra.zip" if extra else "synthetic-altered.zip")
+            with zipfile.ZipFile(path) as original, zipfile.ZipFile(tampered, "w", compression=zipfile.ZIP_DEFLATED) as changed:
+                for item in original.infolist():
+                    data = original.read(item.filename)
+                    if not extra and item.filename.endswith("Resources/LICENSE.txt"):
+                        data = b"changed synthetic notice"
+                    changed.writestr(item, data)
+                if extra:
+                    changed.writestr("EndfieldHUD-Windows/../synthetic-escape", b"synthetic forbidden data")
+            rejected = validate(tampered, hashlib.sha256(tampered.read_bytes()).hexdigest())
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("Portable", rejected.stderr)
+        self.assertFalse((self.repository / "SyntheticApp").exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows portable promotion failure integration")
+    def test_portable_whatif_and_failed_promotion_preserve_previous_payload(self):
+        old = self.portable_release("9.9.8")
+        new = self.portable_release("9.9.9")
+        script = self.repository / "portable-failure-test.ps1"
+        script.write_text('''param([string]$Helper,[string]$Root,[string]$OldZip,[string]$OldHash,[string]$NewZip,[string]$NewHash)
+$ErrorActionPreference='Stop'
+$settings=@{InstallRoot=(Join-Path $Root 'SyntheticApp');BackupRoot=(Join-Path $Root 'SyntheticPayloadBackups');DataRoot=(Join-Path $Root 'SyntheticData');DataBackupRoot=(Join-Path $Root 'SyntheticDataBackups');Confirm=$false}
+$null=& $Helper -Mode Install -PackagePath $OldZip -ExpectedSHA256 $OldHash -ExpectedVersion '9.9.8' -WhatIf @settings
+$whatIfUntouched=@($settings.Values | Where-Object { $_ -is [string] -and (Test-Path -LiteralPath $_) }).Count -eq 0
+New-Item -ItemType Directory -Path $settings.DataRoot | Out-Null
+$note=Join-Path $settings.DataRoot 'synthetic-note.json'
+[IO.File]::WriteAllText($note,'unchanged synthetic data')
+$null=& $Helper -Mode Install -PackagePath $OldZip -ExpectedSHA256 $OldHash -ExpectedVersion '9.9.8' @settings
+$global:syntheticPortablePromotionFailure=$true
+function Move-Item {
+    [CmdletBinding()]param([string]$LiteralPath,[string]$Destination,[switch]$Force)
+    if($global:syntheticPortablePromotionFailure -and (Split-Path -Leaf $LiteralPath) -like 'ready-*'){$global:syntheticPortablePromotionFailure=$false;throw 'synthetic promotion failure'}
+    Microsoft.PowerShell.Management\\Move-Item @PSBoundParameters
+}
+$rejected=$false
+try{$null=& $Helper -Mode Update -PackagePath $NewZip -ExpectedSHA256 $NewHash -ExpectedVersion '9.9.9' @settings}catch{if($_.Exception.Message -ne 'synthetic promotion failure'){throw};$rejected=$true}
+$current=Get-Content -LiteralPath (Join-Path $settings.InstallRoot 'package-inventory.json') -Raw | ConvertFrom-Json
+[ordered]@{whatif_untouched=$whatIfUntouched;rejected=$rejected;version=$current.windows_version;content=[IO.File]::ReadAllText($note);exe_hash=(Get-FileHash -LiteralPath (Join-Path $settings.InstallRoot 'EndfieldHUDWindows.exe') -Algorithm SHA256).Hash} | ConvertTo-Json -Compress
+''', encoding="utf-8")
+        shell = shutil.which("pwsh.exe") or "powershell.exe"
+        output = self.repository / "windows" / "dist"
+        result = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-File", str(script), "-Helper", str(PACKAGING / "portable-update.ps1"), "-Root", str(self.repository), "-OldZip", str(output / old["archive"]), "-OldHash", old["archive_sha256"], "-NewZip", str(output / new["archive"]), "-NewHash", new["archive_sha256"]], capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # PowerShell's WhatIf explanation precedes the machine-readable result.
+        report = json.loads(result.stdout.splitlines()[-1])
+        self.assertTrue(report["whatif_untouched"])
+        self.assertTrue(report["rejected"])
+        self.assertEqual(report["version"], "9.9.8")
+        self.assertEqual(report["content"], "unchanged synthetic data")
+        self.assertEqual(report["exe_hash"].lower(), old["executable_sha256"])
 
 
 if __name__ == "__main__":

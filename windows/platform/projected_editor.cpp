@@ -869,6 +869,7 @@ void ProjectedEditor::focus(bool active) {
     if (active) p.accessibility_event(UIA_AutomationFocusChangedEventId);
 }
 bool ProjectedEditor::focused() const { return impl_->active; }
+bool ProjectedEditor::pointer_tracking() const { return impl_->dragging; }
 std::uint64_t ProjectedEditor::artwork_revision() const { return impl_->artwork_version; }
 float ProjectedEditor::scroll_offset() const { return impl_->scroll_y; }
 void ProjectedEditor::scroll_to(float logical_y) { impl_->scroll(logical_y); }

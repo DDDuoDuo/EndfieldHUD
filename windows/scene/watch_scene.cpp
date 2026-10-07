@@ -693,26 +693,30 @@ const NodeGeometry *Frame::node(std::string_view id) const {
     return nullptr;
 }
 
-double FlickerSequence::opacity(double elapsed, bool opening, bool gate) const {
+double FlickerSequence::offset(double elapsed, bool opening, bool gate) const {
     finite(elapsed);
-    require(keyTimes.size() == opacityOffsets.size() && !keyTimes.empty() && duration > 0,
+    require(keyTimes.size() == opacityOffsets.size() && !keyTimes.empty() &&
+                std::isfinite(duration) && duration > 0 && std::isfinite(delay),
             "Invalid flicker sequence");
     if (elapsed < delay)
-        return gate && opening ? 0 : 1;
+        return gate && opening ? -1 : 0;
     if (elapsed >= delay + duration)
-        return gate && !opening ? 0 : 1;
+        return gate && !opening ? -1 : 0;
     double time = (elapsed - delay) / duration;
     auto upper = std::upper_bound(keyTimes.begin(), keyTimes.end(), time);
     std::size_t right = static_cast<std::size_t>(upper - keyTimes.begin());
     if (right == 0)
-        return gate && opening ? 0 : 1;
+        return gate && opening ? -1 : 0;
     if (right >= keyTimes.size())
-        return 1;
+        return 0;
     std::size_t left = right - 1;
     double a = gate && opening && left == 0 ? -1 : opacityOffsets[left],
            b = gate && !opening && right + 1 == keyTimes.size() ? -1 : opacityOffsets[right],
            progress = (time - keyTimes[left]) / (keyTimes[right] - keyTimes[left]);
-    return std::clamp(1 + a + (b - a) * progress, 0.0, 1.0);
+    return a + (b - a) * progress;
+}
+double FlickerSequence::opacity(double elapsed, bool opening, bool gate) const {
+    return std::clamp(1 + offset(elapsed, opening, gate), 0.0, 1.0);
 }
 FlickerSequence flickerSequence(bool opening, double requested, double delay, std::uint64_t seed) {
     auto unit = [&]() {
@@ -751,6 +755,76 @@ double sweepDelay(double y, double lower, double upper, bool opening, double spa
         return 0;
     double fraction = std::clamp((y - lower) / (upper - lower), 0.0, 1.0);
     return (opening ? fraction : 1 - fraction) * std::max(0.0, span);
+}
+
+DeploymentOptions DeploymentOptions::legacySweep(bool opening) {
+    return {opening ? 0.13 : 0.11, opening ? 0.20 : 0.01, true, opening ? 0.25 : 0.23, 0, 640};
+}
+void DeploymentFlicker::cancel() {
+    tracks_.clear();
+    ++generation_;
+}
+void DeploymentFlicker::cancel(const std::vector<SourceId> &ids) {
+    const std::set<SourceId> selected(ids.begin(), ids.end());
+    std::erase_if(tracks_, [&](const auto &track) { return selected.contains(track.id); });
+    ++generation_;
+}
+void DeploymentFlicker::begin(const std::vector<DeploymentGroup> &groups, bool opening, double time,
+                              std::uint64_t seed, DeploymentOptions options, bool reduceMotion) {
+    const std::set<SourceId> candidates = [&] {
+        std::set<SourceId> ids;
+        for (const auto &group : groups)
+            ids.insert(group.id);
+        return ids;
+    }();
+    // Source cancellation precedes the reduced-motion guard and includes
+    // duplicate, hidden, zero-opacity and ancestor-suppressed candidates.
+    std::erase_if(tracks_, [&](const auto &track) { return candidates.contains(track.id); });
+    ++generation_;
+    if (reduceMotion)
+        return;
+    finite(time);
+    std::set<SourceId> seen;
+    for (std::size_t index = 0; index < groups.size(); ++index) {
+        const auto &group = groups[index];
+        if (!seen.insert(group.id).second || group.hidden || !std::isfinite(group.opacity) ||
+            group.opacity <= 0 || group.opacity > std::numeric_limits<float>::max())
+            continue;
+        const float modelOpacity = static_cast<float>(group.opacity);
+        if (modelOpacity <= 0)
+            continue;
+        if (std::any_of(group.ancestors.begin(), group.ancestors.end(),
+                        [&](const auto &id) { return candidates.contains(id); }))
+            continue;
+        double delay = options.delay + group.additionalDelay;
+        if (options.sweepSpan)
+            delay += sweepDelay(group.settledCenterY, options.verticalLower, options.verticalUpper,
+                                opening, *options.sweepSpan);
+        const auto groupSeed = seed + static_cast<std::uint64_t>(index) * 0x9E3779B97F4A7C15ull;
+        tracks_.push_back(
+            {group.id, index, groupSeed, std::min(1.0f, modelOpacity), group.settledCenterY, time,
+             opening, options.gateVisibility,
+             flickerSequence(opening, options.duration.value_or(opening ? 0.42 : 0.23), delay,
+                             groupSeed)});
+    }
+}
+double DeploymentFlicker::additiveOffset(std::string_view id, double time) const {
+    finite(time);
+    for (const auto &track : tracks_)
+        if (track.id == id)
+            return track.sequence.offset(time - track.startedAt, track.opening,
+                                         track.gateVisibility) *
+                   track.baseline;
+    return 0;
+}
+double DeploymentFlicker::opacity(std::string_view id, double modelOpacity, double time) const {
+    return std::clamp(finite(modelOpacity) + additiveOffset(id, time), 0.0, 1.0);
+}
+bool DeploymentFlicker::requiresFrames(double time) const {
+    finite(time);
+    return std::any_of(tracks_.begin(), tracks_.end(), [&](const auto &track) {
+        return time < track.startedAt + track.sequence.delay + track.sequence.duration;
+    });
 }
 
 namespace {
@@ -940,6 +1014,7 @@ struct Sprite {
 struct Mesh {
     std::vector<Vec3> positions;
     std::vector<Vec2> uv;
+    std::vector<std::array<double, 4>> colors;
     std::vector<std::uint32_t> indices;
 };
 struct PoseNode {
@@ -954,6 +1029,7 @@ struct Resolved {
     std::optional<Rect> rect;
     bool active{};
     double alpha{1};
+    double localOpacity{1};
     int order{};
     std::vector<std::size_t> masks;
     Vec3 localPosition{};
@@ -1176,8 +1252,11 @@ std::vector<Resolved> resolve(const std::vector<Node> &nodes, const std::vector<
         out.alwaysGamma = parent && parent->alwaysGamma;
         out.masks = parent ? parent->masks : std::vector<std::size_t>{};
         for (const auto &c : n.components)
-            if (c.enabled && c.kind == "CanvasGroup")
-                out.alpha *= property(p, "m_Alpha", c.data["m_Alpha"].number(1));
+            if (c.enabled && c.kind == "CanvasGroup") {
+                const double local = property(p, "m_Alpha", c.data["m_Alpha"].number(1));
+                out.alpha *= local;
+                out.localOpacity *= local;
+            }
         if (const auto *canvas = component(n, "Canvas")) {
             out.alwaysGamma = canvas->data["m_VertexColorAlwaysGammaSpace"].flag();
             int localOrder = i == rootIndex
@@ -2109,6 +2188,19 @@ Document Document::load(const std::filesystem::path &root, ResourceReader reader
         }
         require(mesh.uv.empty() || mesh.uv.size() == mesh.positions.size(),
                 "Source UV/vertex count mismatch");
+        for (const auto &color : source["colors"].array()) {
+            const auto &channels = color.array();
+            require(channels.size() == 4, "Invalid source vertex color dimensions");
+            std::array<double, 4> rgba{};
+            for (std::size_t channel = 0; channel < 4; ++channel) {
+                rgba[channel] = channels[channel].requiredNumber();
+                require(rgba[channel] >= 0 && rgba[channel] <= 1,
+                        "Source vertex color outside normalized range");
+            }
+            mesh.colors.push_back(rgba);
+        }
+        require(mesh.colors.empty() || mesh.colors.size() == mesh.positions.size(),
+                "Source color/vertex count mismatch");
         for (const auto &index : source["indices"].array()) {
             double n = index.requiredNumber();
             require(n >= 0 && n < mesh.positions.size() && n == std::floor(n),
@@ -2547,13 +2639,39 @@ void Document::reproject(Frame &frame, Quaternion rootRotation) const {
     frame.worldRoot = next.worldRoot;
     frame.canvasSize = next.canvasSize;
 }
+std::vector<DeploymentGroup>
+Document::deploymentGroups(const Frame &settled,
+                           const std::vector<DeploymentCandidate> &ordered) const {
+    require(settled.sourceState_ && settled.sourceState_->document == impl_.get(),
+            "Deployment snapshot belongs to a different document or is concealed");
+    std::vector<DeploymentGroup> groups;
+    groups.reserve(ordered.size());
+    for (const auto &candidate : ordered) {
+        const auto index = impl_->indices.find(candidate.nodeId);
+        require(index != impl_->indices.end(), "Unknown deployment group node");
+        const auto *snapshot = settled.node(candidate.nodeId);
+        require(snapshot != nullptr, "Missing deployment group snapshot");
+        DeploymentGroup group{candidate.nodeId,         {},
+                              snapshot->locallyHidden,  snapshot->localOpacity,
+                              candidate.settledCenterY, candidate.additionalDelay};
+        auto ancestor = impl_->nodes[index->second].parent;
+        while (ancestor) {
+            group.ancestors.push_back(impl_->nodes[*ancestor].id);
+            ancestor = impl_->nodes[*ancestor].parent;
+        }
+        groups.push_back(std::move(group));
+    }
+    return groups;
+}
 Frame Document::frame(const FrameInput &input) const {
     if (input.playback.phase == Phase::concealed) {
         Frame frame;
         frame.camera.viewport = input.viewport;
+        frame.sceneTime = finite(input.time);
         return frame;
     }
     Frame frame = impl_->camera(input.viewport, input.rootRotation);
+    frame.sceneTime = finite(input.time);
     const auto &d = *impl_;
     std::vector<PoseNode> pose;
     pose.reserve(d.nodes.size());
@@ -2602,10 +2720,24 @@ Frame Document::frame(const FrameInput &input) const {
     layout.apply(&state->pose);
     frame.sourceState_ = std::move(state);
     auto resolved = resolve(d.nodes, d.order, pose, d.rootIndex, panelBase);
+    std::vector<double> deploymentAlpha(d.nodes.size(), 1);
+    if (input.deployment && !input.reduceMotion)
+        for (auto i : d.order) {
+            const auto &r = resolved[i];
+            const double offset = input.deployment->additiveOffset(d.nodes[i].id, input.time);
+            const double localFactor =
+                offset == 0 ? 1
+                : r.localOpacity > 0
+                    ? std::clamp(r.localOpacity + offset, 0.0, 1.0) / r.localOpacity
+                    : 0;
+            deploymentAlpha[i] =
+                localFactor * (d.nodes[i].parent ? deploymentAlpha[*d.nodes[i].parent] : 1);
+        }
     for (auto i : d.order)
         frame.nodes.push_back({d.nodes[i].id, d.nodes[i].path, resolved[i].rect,
                                frame.worldRoot * resolved[i].world, resolved[i].world,
-                               resolved[i].active, resolved[i].order});
+                               resolved[i].active, resolved[i].order, resolved[i].localOpacity,
+                               !pose[i].active});
     struct SortedGraphic {
         int order;
         std::size_t sequence;
@@ -2648,6 +2780,7 @@ Frame Document::frame(const FrameInput &input) const {
                         }
                         g.world = frame.worldRoot * r.world;
                         g.sceneWorld = r.world;
+                        g.color[3] *= deploymentAlpha[i];
                         g.sampledProperties.insert(p.properties.begin(), p.properties.end());
                         const auto &source = mesh->second;
                         for (std::size_t index = 0; index < source.indices.size(); index += 3) {
@@ -2662,6 +2795,9 @@ Frame Document::frame(const FrameInput &input) const {
                             else
                                 g.uvQuads.push_back(
                                     {source.uv[a], source.uv[b], source.uv[c], source.uv[c]});
+                            if (!source.colors.empty())
+                                g.colorQuads.push_back({source.colors[a], source.colors[b],
+                                                        source.colors[c], source.colors[c]});
                         }
                         int sortingOrder =
                             static_cast<int>(render->data["m_SortingOrder"].number());
@@ -2750,6 +2886,7 @@ Frame Document::frame(const FrameInput &input) const {
                 g.color[axis] = value;
             }
             g.color[3] = static_cast<float>(g.color[3]) * static_cast<float>(r.alpha);
+            g.color[3] *= deploymentAlpha[i];
             g.vertexColorReady = true;
             if (c.kind == "UIText") {
                 g.text = c.data["m_text"].string();
@@ -2775,6 +2912,24 @@ Frame Document::frame(const FrameInput &input) const {
                                1.0));
             }
             g.sampledProperties.insert(p.properties.begin(), p.properties.end());
+            if (const auto *animation = component(n, "UIGraphicAnimation")) {
+                const double sx = property(p, "_scale.x", animation->data["_scale"]["x"].number(1)),
+                             sy = property(p, "_scale.y", animation->data["_scale"]["y"].number(1));
+                const double zero =
+                    static_cast<double>(std::numeric_limits<float>::denorm_min()) * 8;
+                const double ix = std::abs(sx) < zero ? 0 : 1 / sx,
+                             iy = std::abs(sy) < zero ? 0 : 1 / sy;
+                g.sampledProperties["material._VFXMainTex_ST.x"] = static_cast<float>(ix);
+                g.sampledProperties["material._VFXMainTex_ST.y"] = static_cast<float>(iy);
+                g.sampledProperties["material._VFXMainTex_ST.z"] =
+                    static_cast<float>((1 - ix) * 0.5);
+                g.sampledProperties["material._VFXMainTex_ST.w"] =
+                    static_cast<float>((1 - iy) * 0.5);
+                g.sampledProperties["material._TintColorAlpha"] =
+                    static_cast<float>(property(p, "_alpha", animation->data["_alpha"].number()));
+                if (c.kind == "UIRawImage" || c.kind == "RawImage")
+                    g.materialId = animation->data["_material"]["target_id"].string(g.materialId);
+            }
             if (g.color[3] > 0 && !g.quads.empty())
                 graphics.push_back({r.order, sequence, std::move(g)});
             ++sequence;

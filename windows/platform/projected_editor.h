@@ -82,6 +82,7 @@ public:
     void set_projection(ProjectiveMapping mapping);
     void focus(bool active);
     bool focused() const;
+    bool pointer_tracking() const;
     std::uint64_t artwork_revision() const;
     float scroll_offset() const;
     void scroll_to(float logical_y);

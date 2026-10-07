@@ -129,7 +129,7 @@ $buildMetadata = Join-Path $buildRoot 'build-metadata.json'
 
 if (-not $SkipPackage) {
     if ($SkipResources) { throw 'Packaging requires verified staged resources; remove -SkipResources or also pass -SkipPackage.' }
-    Invoke-Checked $Python @((Join-Path $PSScriptRoot 'package.py'), '--repository', $repository, '--executable', $executable, '--resources', $resources, '--build-metadata', $buildMetadata, '--git', $Git)
+    Invoke-Checked $Python @((Join-Path $PSScriptRoot 'package.py'), '--format', 'portable', '--repository', $repository, '--executable', $executable, '--resources', $resources, '--build-metadata', $buildMetadata, '--git', $Git)
 }
 Write-Output "Windows $Configuration executable: $executable"
 Write-Output 'Consumer release is gated; no version, release publication or Mac update feed was changed.'

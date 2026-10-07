@@ -3,7 +3,7 @@
   "author": "DDDuoDuo",
   "date": "2026-10-07",
   "source_baseline": "fc429e63a2bead66f194ddb18ca947684de8fd76",
-  "executable_sha256": "cf5da4fba4a62727d1ddb57176c7eb1798950f6692ce0b004d996d715394544d",
+  "executable_sha256": "6873577b8ba7ed027b584d3ca518723ff319c21772b552432dc2959d87cda793",
   "complete_migration": false,
   "consumer_release_ready": false,
   "hardware": {
@@ -41,7 +41,7 @@
         "dpi_y": 144
       }
     ],
-    "executable_sha256": "cf5da4fba4a62727d1ddb57176c7eb1798950f6692ce0b004d996d715394544d",
+    "executable_sha256": "6873577b8ba7ed027b584d3ca518723ff319c21772b552432dc2959d87cda793",
     "settings": "Synthetic 1280x720 hidden HWND; ambient off; no real data; source fixture pointer; source animation endpoints",
     "limits": "No visible frame pacing, recording, GPU/wakeup trace, real CJK IME or Mac font comparison; all unverified."
   },
@@ -49,7 +49,7 @@
     "schema": 1,
     "scenario": "hidden-native-graphics-lifecycle",
     "synthetic": true,
-    "elapsed_seconds": 1.5890399,
+    "elapsed_seconds": 1.8364487,
     "direct_composition_hresult": 0,
     "windows_ui_composition_hresult": 0,
     "dispatcher_queue_hresult": 0,
@@ -58,32 +58,32 @@
     "measured_reopen_cycles": 100,
     "warmup_cycles": 5,
     "submitted_frames": 105,
-    "private_bytes_before": 179617792,
-    "private_bytes_after": 174092288,
-    "working_set_before": 114597888,
-    "working_set_after": 109096960,
-    "handles_before": 583,
-    "handles_after": 583,
+    "private_bytes_before": 196788224,
+    "private_bytes_after": 190558208,
+    "working_set_before": 128593920,
+    "working_set_after": 127922176,
+    "handles_before": 581,
+    "handles_after": 581,
     "editor_projection_corner_checks": "passed",
     "visible_frame_pacing": "unverified; hidden-window test",
     "encoded_premultiplied_alpha": "passed; synthetic half-alpha white GPU readback",
-    "source_textures_retained": 97,
+    "source_textures_retained": 102,
     "source_text_surfaces_retained": 2,
-    "source_material_visual_parity": "unverified; base source image path implemented, FX/HDR incomplete",
+    "source_material_visual_parity": "unverified; selected source UI/mesh FX translated, complete FX/HDR comparison pending",
     "live_ime": "unverified"
   },
   "closed": {
     "schema": 1,
     "scenario": "closed-after-105-graphics-cycles",
     "synthetic": true,
-    "elapsed_seconds": 61.009149,
-    "process_cpu_seconds": 0,
+    "elapsed_seconds": 61.0007832,
+    "process_cpu_seconds": 0.046875,
     "hud_frames_submitted": 0,
     "renderer_created": true,
-    "working_set_bytes": 96292864,
-    "private_bytes": 162299904,
-    "handles_start": 584,
-    "handles_end": 587,
+    "working_set_bytes": 108572672,
+    "private_bytes": 170954752,
+    "handles_start": 582,
+    "handles_end": 585,
     "monitors": [
       {
         "left": 0,
@@ -99,22 +99,43 @@
     "performance_parity": "unverified"
   },
   "tests": {
-    "native_ctest_suites": 4,
-    "scene_source_checks": 1676,
-    "packaging_checks": 47,
-    "status": "passed"
+    "native_ctest_suites": 6,
+    "scene_source_checks": 1992,
+    "packaging_checks": 54,
+    "status": "passed",
+    "offscreen_warp_material_checks": 124,
+    "original_cursor_reopen_cycles": 100,
+    "original_cursor_recreation_cycles": 100
   },
   "installer": {
     "sdk_msix_candidate_schema_and_payload": "passed",
     "synthetic_snapshot_restore_and_tamper_rejection": "passed",
     "trusted_install_update_rollback_uninstall": "unverified",
-    "signing_identity": "unavailable"
+    "signing_identity": "not requested; optional MSIX only",
+    "distribution": "unsigned portable ZIP",
+    "authenticode_required": false,
+    "synthetic_portable_install_update_data_rollback_uninstall": "passed",
+    "synthetic_portable_tamper_and_failed_promotion_recovery": "passed"
   },
   "limits": [
     "Hidden source-frame endpoints, not visible opening/closing animation or module switching",
     "GPU memory/utilization, wakeups, input latency and visible p50/p95 unverified",
-    "FX, soft-mask, stencil, HDR, backdrop, desktop mounting and original typography incomplete",
+    "Complete FX parity, soft-mask, stencil, HDR, backdrop, desktop mounting and original typography incomplete",
     "Live CJK IME, Narrator, whole-HUD accessibility and mixed-DPI hot-plug unverified",
     "Data import, modules, system providers and account adapters not implemented"
-  ]
+  ],
+  "cursor": {
+    "approved_source_pixels": "58x58",
+    "hotspot": [
+      0,
+      0
+    ],
+    "actual_native_pixels_and_mask": "passed; isolated HCURSOR readback",
+    "reopen_cycles": 100,
+    "recreation_cycles": 100,
+    "final_live_handles": 0,
+    "actual_cursor_selection_during_tests": false,
+    "recording": "unverified",
+    "mixed_dpi_and_accessibility_pointer_size": "unverified"
+  }
 }

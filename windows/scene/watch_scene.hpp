@@ -102,12 +102,61 @@ class GyroMotion {
 struct FlickerSequence {
     std::vector<double> keyTimes, opacityOffsets;
     double duration{}, delay{};
+    double offset(double elapsed, bool opening, bool gateVisibility = true) const;
     double opacity(double elapsed, bool opening, bool gateVisibility = true) const;
 };
 // Ported from HUDDeploymentFlicker. The owner seeds once per deployment and
 // measures each group's settled center before the mechanical fold begins.
 FlickerSequence flickerSequence(bool opening, double duration, double delay, std::uint64_t seed);
 double sweepDelay(double y, double lower, double upper, bool opening, double span);
+
+// Ordered source layer snapshots. opacity is the layer's local model opacity,
+// not its inherited/reveal alpha; settledCenterY is already converted into the
+// caller's coordinate space before deployment transforms change.
+struct DeploymentGroup {
+    SourceId id;
+    std::vector<SourceId> ancestors;
+    bool hidden{};
+    double opacity{1}, settledCenterY{}, additionalDelay{};
+};
+struct DeploymentOptions {
+    std::optional<double> duration;
+    double delay{};
+    bool gateVisibility{};
+    std::optional<double> sweepSpan;
+    double verticalLower{}, verticalUpper{640};
+    static DeploymentOptions legacySweep(bool opening);
+};
+struct DeploymentTrack {
+    SourceId id;
+    std::size_t candidateIndex{};
+    std::uint64_t seed{};
+    double baseline{}, settledCenterY{}, startedAt{};
+    bool opening{}, gateVisibility{};
+    FlickerSequence sequence;
+};
+class DeploymentFlicker {
+  public:
+    // Replaces tracks on every supplied candidate, including filtered ones.
+    // Unselected tracks remain, matching source apply(to:); cancel() clears all.
+    void begin(const std::vector<DeploymentGroup> &orderedGroups, bool opening, double time,
+               std::uint64_t seed, DeploymentOptions options = {}, bool reduceMotion = false);
+    void cancel();
+    void cancel(const std::vector<SourceId> &ids);
+    double additiveOffset(std::string_view id, double time) const;
+    double opacity(std::string_view id, double currentModelOpacity, double time) const;
+    bool requiresFrames(double time) const;
+    const std::vector<DeploymentTrack> &tracks() const { return tracks_; }
+    std::uint64_t generation() const { return generation_; }
+
+  private:
+    std::vector<DeploymentTrack> tracks_;
+    std::uint64_t generation_{};
+};
+struct DeploymentCandidate {
+    SourceId nodeId;
+    double settledCenterY{}, additionalDelay{};
+};
 
 struct HitRegion {
     SourceId graphicId, buttonId;
@@ -132,6 +181,9 @@ struct Graphic {
     // Each quad is BL, TL, TR, BR in Unity local space. UV y is Unity +up.
     std::vector<std::array<Vec3, 4>> quads;
     std::vector<std::array<Vec2, 4>> uvQuads;
+    // Original mesh vertex channels, read directly by source FX shaders. Empty
+    // means white; UI's separate Canvas vertex policy is already in color.
+    std::vector<std::array<std::array<double, 4>, 4>> colorQuads;
     std::vector<HitRegion::Mask> masks;
     double fontSize{24};
     std::map<std::string, double> sampledProperties;
@@ -153,6 +205,8 @@ struct NodeGeometry {
     Mat4 world{Mat4::identity()}, sceneWorld{Mat4::identity()};
     bool active{};
     int sortingOrder{};
+    double localOpacity{1};
+    bool locallyHidden{};
 };
 struct ScrollInfo {
     SourceId nodeId, contentId, viewportId;
@@ -167,6 +221,7 @@ struct Frame {
     std::vector<HitRegion> hits;
     std::vector<std::string> diagnostics;
     double backdropAlpha{};
+    double sceneTime{};
     std::vector<NodeGeometry> nodes;
     std::optional<ScrollInfo> scroll;
     std::optional<SourceId> buttonAt(Vec2 point) const;
@@ -188,6 +243,8 @@ struct FrameInput {
     std::optional<int> panelBase;
     using IntrinsicSize = std::function<std::optional<Vec2>(const SourceId &, const Rect &)>;
     IntrinsicSize intrinsicSize;
+    // Explicit selected groups only. Never inferred from Watch sprite paths.
+    const DeploymentFlicker *deployment{};
 };
 struct Button {
     SourceId id;
@@ -201,6 +258,10 @@ class Document {
     using ResourceReader = std::function<std::string(const std::filesystem::path &)>;
     static Document load(const std::filesystem::path &sceneRoot, ResourceReader reader = {});
     Frame frame(const FrameInput &input) const;
+    // Retains ordered candidates and centers supplied in the source artwork's
+    // coordinate space. Reads ancestry/local model opacity from this snapshot.
+    std::vector<DeploymentGroup>
+    deploymentGroups(const Frame &settled, const std::vector<DeploymentCandidate> &ordered) const;
     // Camera-only updates reuse source geometry and textures. A changed
     // viewport/layout, clock, content or finite clip requires a new frame.
     void reproject(Frame &frame, Quaternion rootRotation) const;

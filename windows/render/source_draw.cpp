@@ -39,35 +39,121 @@ D3D11_TEXTURE_ADDRESS_MODE address(int value) {
     default: throw std::runtime_error("Unknown source wrap mode"); }
 }
 float linear(double value) { return static_cast<float>(value <= .04045 ? value / 12.92 : std::pow((value + .055) / 1.055, 2.4)); }
+float materialLinear(float value) { return value <= .04045f ? value / 12.92f : value < 1 ? std::pow((value+.055f)/1.055f,2.4f) : std::pow(value,2.2f); }
+D3D11_BLEND sourceBlend(unsigned value) {
+    const D3D11_BLEND values[]{D3D11_BLEND_ZERO,D3D11_BLEND_ONE,D3D11_BLEND_DEST_COLOR,D3D11_BLEND_SRC_COLOR,
+      D3D11_BLEND_INV_DEST_COLOR,D3D11_BLEND_SRC_ALPHA,D3D11_BLEND_INV_SRC_COLOR,D3D11_BLEND_DEST_ALPHA,
+      D3D11_BLEND_INV_DEST_ALPHA,D3D11_BLEND_SRC_ALPHA_SAT,D3D11_BLEND_INV_SRC_ALPHA};
+    if(value>=std::size(values)) throw std::runtime_error("Unknown source blend factor"); return values[value];
+}
+D3D11_BLEND_OP sourceBlendOp(unsigned value) {
+    const D3D11_BLEND_OP values[]{D3D11_BLEND_OP_ADD,D3D11_BLEND_OP_SUBTRACT,D3D11_BLEND_OP_REV_SUBTRACT,D3D11_BLEND_OP_MIN,D3D11_BLEND_OP_MAX};
+    if(value>=std::size(values)) throw std::runtime_error("Unknown source blend operation"); return values[value];
+}
 struct Vertex { float position[4], uv[2], color[4]; };
 struct alignas(16) Constants {
     float st[4]{1,1,0,0}; float sampleAdd[4]{};
     float opaque{}, additive{}; unsigned edgeCount{}, padding{};
     float edges[32][4]{};
+    unsigned program{}; float sceneTime{}, disableVertColor{}, useMainAsAlpha{};
+    float useMaskAsAlpha{}, tintIntensity{}, tintAlpha{}, useVfxParameters{};
+    float expThreshold{}, expIntensity{}, dissolveOffset{}, dissolveHardness{};
+    float dissolveWidth{}, dissolveIntensity{}, dissolveColorWidth{}, dissolveRamp{};
+    float dissolveByDir{}, paddingFx[3]{};
+    float tint[4]{1,1,1,1}, mainSpeed[4]{}, mainRotate[4]{1,0,0,1};
+    float maskST[4]{1,1,0,0}, maskSpeed[4]{}, maskRotate[4]{1,0,0,1};
+    float dissolveST[4]{1,1,0,0}, dissolveSpeed[4]{}, dissolveRotate[4]{1,0,0,1};
+    float emissive[4]{}, emissive2[4]{}, dissolveDir[4]{}, dissolvePoint[4]{};
+    float vfxST[4]{1,1,0,0};
 };
 const char shader[] = R"(
-cbuffer Params : register(b0) { float4 st; float4 sampleAdd; float opaque; float additive; uint edgeCount; uint isText; float4 edges[32]; };
+// Source programs: UI Default 211/272 and UIMeshVfxEffect 12/13/15.
+// The desktop output adapter retains encoded-space premultiplied BGRA.
+cbuffer Params : register(b0) {
+ float4 st; float4 sampleAdd; float opaque; float additive; uint edgeCount; uint isText; float4 edges[32];
+ uint program; float sceneTime; float disableVertColor; float useMainAsAlpha;
+ float useMaskAsAlpha; float tintIntensity; float tintAlpha; float useVfxParameters;
+ float expThreshold; float expIntensity; float dissolveOffset; float dissolveHardness;
+ float dissolveWidth; float dissolveIntensity; float dissolveColorWidth; float dissolveRamp;
+ float dissolveByDir; float3 paddingFx;
+ float4 tint; float4 mainSpeed; float4 mainRotate;
+ float4 maskST; float4 maskSpeed; float4 maskRotate;
+ float4 dissolveST; float4 dissolveSpeed; float4 dissolveRotate;
+ float4 emissive; float4 emissive2; float4 dissolveDir; float4 dissolvePoint; float4 vfxST;
+};
 Texture2D sourceTexture : register(t0); SamplerState sourceSampler : register(s0);
+Texture2D maskTexture : register(t1); SamplerState maskSampler : register(s1);
+Texture2D dissolveTexture : register(t2); SamplerState dissolveSampler : register(s2);
 struct V { float4 position : POSITION; float2 uv : TEXCOORD; float4 color : COLOR; };
 struct P { float4 position : SV_Position; float2 uv : TEXCOORD; float4 color : COLOR; };
-P vertexMain(V v) { P o; o.position = v.position; o.uv = v.uv * st.xy + st.zw; o.color = v.color; return o; }
+P vertexMain(V v) { P o; o.position = v.position; o.uv = program >= 12 ? v.uv : v.uv * st.xy + st.zw; o.color = v.color; return o; }
+float2 effectUV(float2 uv, float4 transform, float4 speed, float4 rotate) {
+ float2 q = uv + speed.xy * fmod(sceneTime, 1024.0) - .5;
+ // Metal's float2x2 arguments are columns, not rows.
+ return (float2(rotate.x*q.x + rotate.z*q.y, rotate.y*q.x + rotate.w*q.y) + .5) * transform.xy + transform.zw;
+}
+float4 alphaChannel(float4 value, float useRed) { return lerp(value, float4(1,1,1,value.r), useRed); }
+float3 encodedRGB(float3 rgb) {
+ rgb = max(rgb,0);
+ return lerp(1.055 * pow(rgb, 1.0 / 2.4) - .055, rgb * 12.92, step(rgb, .0031308));
+}
 float4 pixelMain(P p) : SV_Target {
     [loop] for (uint i = 0; i < edgeCount; ++i) clip(dot(float3(p.position.xy,1), edges[i].xyz));
-    float4 color = p.color; color.a = round(color.a * 255) / 255;
+    float4 color = p.color;
+    if (program != 0 && isText == 0) {
+      bool mesh = program >= 12;
+      float4 value = mesh ? tint * (disableVertColor != 0 ? float4(1,1,1,1) : p.color) : color;
+      if (mesh) { value.rgb *= tintIntensity; value.a *= tintAlpha; }
+      else { value *= tint; if (useVfxParameters != 0) { value.rgb *= tintIntensity; value.a *= tintAlpha; } value.a = round(value.a * 255) / 255; }
+      value *= alphaChannel(sourceTexture.Sample(sourceSampler,
+        effectUV(p.uv, mesh ? st : vfxST, mainSpeed, mainRotate)), useMainAsAlpha);
+      if (program == 2 || program == 13 || program == 15)
+        value *= alphaChannel(maskTexture.Sample(maskSampler, effectUV(p.uv, maskST, maskSpeed, maskRotate)), useMaskAsAlpha);
+      if (program == 2 || program == 15) {
+        float2 uv = effectUV(p.uv, dissolveST, dissolveSpeed, dissolveRotate);
+        float field = dissolveTexture.Sample(dissolveSampler, uv).r - dissolveOffset;
+        // Evaluate the direction term only when selected, avoiding 0 * NaN
+        // for a disabled zero direction while preserving the authored mode.
+        if (dissolveByDir != 0) {
+          float directional = dissolveByDir == 1 ? dot(normalize(dissolveDir.xy), uv) : length(uv - dissolvePoint.xy);
+          field += lerp(0, directional, saturate(dissolveByDir));
+        }
+        clip(field);
+        float edge = smoothstep(dissolveWidth, dissolveWidth + dissolveIntensity, 1 - saturate(field));
+        float ramp = smoothstep(1 - dissolveColorWidth, 1 - dissolveColorWidth + dissolveRamp, edge);
+        value.rgb = lerp(value.rgb, lerp(emissive,emissive2,ramp).rgb * tint.r, edge);
+        value.a *= lerp(1,1-edge,dissolveHardness);
+      }
+      if (mesh) { value.rgb = clamp(value.rgb + max(value.rgb-expThreshold,0)*expIntensity,0,500); value.a = saturate(value.a); }
+      float3 encoded = encodedRGB(value.rgb);
+      // FX materials retain their authored straight-alpha blend factors;
+      // ordinary UI effects use the same premultiplied adapter as images.
+      return mesh ? float4(encoded,value.a) : float4(encoded*value.a,value.a*(1-additive));
+    }
     float4 sample = sourceTexture.Sample(sourceSampler, p.uv); sample.a = opaque != 0 ? 1 : sample.a;
     if (isText != 0) sample.rgb = 1;
+    color *= tint;
+    if(useVfxParameters != 0) { color.rgb *= tintIntensity; color.a *= tintAlpha; }
+    color.a = round(color.a * 255) / 255;
     float4 result = color * (sample + sampleAdd);
     // Encode straight linear RGB before premultiplying, matching D2D and the
     // desktop compositor's encoded-space BGRA alpha contract.
-    float3 rgb = max(result.rgb, 0);
-    float3 encoded = lerp(1.055 * pow(rgb, 1.0 / 2.4) - .055, rgb * 12.92, step(rgb, .0031308));
+    float3 encoded = encodedRGB(result.rgb);
     result.rgb = encoded * result.a; result.a *= 1 - additive; return result;
 }
 )";
 }
 struct SourceDraw::Impl {
     struct Asset { Ptr<ID3D11ShaderResourceView> view; Ptr<ID3D11SamplerState> sampler; };
-    struct Material { Constants constants; std::string mainTexture; };
+    struct Material {
+        Constants constants; std::string mainTexture;
+        std::string vfxTexture;
+        std::array<std::string, 2> effectTextures;
+        std::map<std::string, std::array<float,4>> values;
+        std::map<std::string, std::pair<unsigned,unsigned>> types;
+        Ptr<ID3D11BlendState> blend;
+        bool prepared{};
+    };
     struct Text { Asset asset; std::string key; std::uint64_t used{}; };
     Ptr<ID3D11Device> device; Ptr<ID3D11DeviceContext> context; Ptr<ID2D1DeviceContext> painter;
     Ptr<IDWriteFactory> fonts; Ptr<ID3D11VertexShader> vertex; Ptr<ID3D11PixelShader> pixel;
@@ -76,6 +162,61 @@ struct SourceDraw::Impl {
     std::map<std::string, JsonObject> descriptors; std::map<std::string, Asset> assets;
     std::map<std::string, Material> materials; std::map<std::string, Text> texts;
     std::filesystem::path root; unsigned capacity{}; std::uint64_t generation{};
+    std::string initializationError;
+    Constants materialConstants(const Material& material, const scene::Graphic& graphic, double time) const {
+        Constants result = material.constants;
+        result.sceneTime=static_cast<float>(time);
+        const auto firstAnimated=graphic.sampledProperties.lower_bound("material.");
+        if(material.prepared && (firstAnimated==graphic.sampledProperties.end() || !firstAnimated->first.starts_with("material."))) return result;
+        auto value=[&](const char* key, float* output, unsigned count) {
+            std::array<float,4> v{};
+            for(unsigned i=0;i<count;++i) v[i]=output[i];
+            if(auto it=material.values.find(key);it!=material.values.end()) v=it->second;
+            bool animated=false; const auto prefix=std::string("material.")+key;
+            if(auto it=graphic.sampledProperties.find(prefix);it!=graphic.sampledProperties.end()) {v[0]=static_cast<float>(it->second); animated=true;}
+            const char* axes[]{".r",".g",".b",".a"}; const char* vectorAxes[]{".x",".y",".z",".w"};
+            for(unsigned i=0;i<count;++i) for(auto suffix:{axes[i],vectorAxes[i]})
+                if(auto it=graphic.sampledProperties.find(prefix+suffix);it!=graphic.sampledProperties.end()) {v[i]=static_cast<float>(it->second); animated=true;}
+            const auto type=material.types.find(key);
+            // Serialized channels are converted once during initialization;
+            // animated material.* values start in the source serialized space.
+            if(animated && type!=material.types.end() && (type->second.first==0 || (type->second.second&32))) {
+                auto raw=material.values.find(std::string("@raw:")+key);
+                if(raw!=material.values.end()) {
+                    for(unsigned i=0;i<count;++i) {
+                        const auto scalar=graphic.sampledProperties.find(prefix);
+                        const auto colorAxis=graphic.sampledProperties.find(prefix+axes[i]);
+                        const auto vectorAxis=graphic.sampledProperties.find(prefix+vectorAxes[i]);
+                        v[i]=scalar!=graphic.sampledProperties.end()&&i==0?static_cast<float>(scalar->second):colorAxis!=graphic.sampledProperties.end()?static_cast<float>(colorAxis->second):vectorAxis!=graphic.sampledProperties.end()?static_cast<float>(vectorAxis->second):raw->second[i];
+                    }
+                }
+                const auto converted=type->second.first==2 || type->second.first==3 ? 1u : std::min(count,3u);
+                for(unsigned i=0;i<converted;++i) v[i]=materialLinear(v[i]);
+            }
+            for(unsigned i=0;i<count;++i) { if(!std::isfinite(v[i])) throw std::runtime_error("Nonfinite source material channel"); output[i]=v[i]; }
+        };
+        auto scalar=[&](const char* key,float& output){value(key,&output,1);};
+        scalar("_UIImageOpaque",result.opaque); scalar("_UseAdditiveBlendMode",result.additive);
+        scalar("_UIVFXParameters",result.useVfxParameters);
+        scalar("_TintColorIntensity",result.tintIntensity); scalar("_TintColorAlpha",result.tintAlpha);
+        value(result.program>=12?"_TintColor":"_Color",result.tint,4);
+        value("_MainTex_ST",result.st,4);
+        if(result.program) {
+            scalar("_DisableVertColor",result.disableVertColor); scalar("_UseMainTexAsAlpha",result.useMainAsAlpha);
+            scalar("_UseMaskTexAsAlpha",result.useMaskAsAlpha);
+            scalar("_ExpThreshold",result.expThreshold); scalar("_ExpIntensity",result.expIntensity);
+            scalar("_DissolveScheduleOffset",result.dissolveOffset); scalar("_DissolveEdgeHardness",result.dissolveHardness);
+            scalar("_DissolveEdgeWidth",result.dissolveWidth); scalar("_DissolveEdgeIntensity",result.dissolveIntensity);
+            scalar("_DissolveColorWidth",result.dissolveColorWidth); scalar("_DissolveColorRamp",result.dissolveRamp);
+            scalar("_DissolveByDir",result.dissolveByDir);
+            value("_MainTexUVSpeed",result.mainSpeed,4); value("_MainTexUVRotateMat",result.mainRotate,4);
+            value("_MaskTex_ST",result.maskST,4); value("_MaskTexUVSpeed",result.maskSpeed,4); value("_MaskTexUVRotateMat",result.maskRotate,4);
+            value("_DissolveTex_ST",result.dissolveST,4); value("_DissolveUVSpeed",result.dissolveSpeed,4); value("_DissolveUVRotateMat",result.dissolveRotate,4);
+            value("_DissolveEmissiveColor",result.emissive,4); value("_DissolveEmissiveColor2",result.emissive2,4);
+            value("_DissolveDir",result.dissolveDir,4); value("_DissolvePoint",result.dissolvePoint,4); value("_VFXMainTex_ST",result.vfxST,4);
+        }
+        return result;
+    }
     Asset& texture(const std::string& id) {
         if (auto found = assets.find(id); found != assets.end()) return found->second;
         auto found = descriptors.find(id); if (found == descriptors.end()) throw std::runtime_error("Unresolved source texture ID");
@@ -145,21 +286,73 @@ HRESULT SourceDraw::initialize(ID3D11Device* device, ID3D11DeviceContext* contex
         auto textures=JsonArray::Parse(winrt::to_hstring(resources::text(root/L"textures.json")));
         for (const auto& item:textures) { auto info=item.GetObject(); auto id=string(info,L"path_id");
             d.descriptors.emplace(id,info); d.descriptors.emplace(string(info,L"cab") + ":" + id,info); }
+        std::map<std::string,JsonObject> catalog, shaderCatalog;
+        for(const auto& item:object(root/L"runtime-materials.json").GetNamedArray(L"materials")) {
+            auto record=item.GetObject();
+            if(record.HasKey(L"id") && record.GetNamedValue(L"id").ValueType()==winrt::Windows::Data::Json::JsonValueType::String) {
+                auto id=string(record,L"id"); if(!id.empty()) catalog.emplace(id,record);
+            }
+            // Only the canonical string-ID records can serve as shader
+            // metadata for this scene. Never round auxiliary numeric IDs.
+            auto reference=record.GetNamedObject(L"shader");
+            if(reference.GetNamedValue(L"path_id").ValueType()==winrt::Windows::Data::Json::JsonValueType::String)
+                shaderCatalog.emplace(string(reference,L"path_id"),record);
+        }
         for (const auto& item:object(root/L"Scene"/L"materials.json").GetNamedArray(L"materials")) {
             auto material=item.GetObject(); Impl::Material native;
-            auto saved=material.GetNamedObject(L"data").GetNamedObject(L"m_SavedProperties");
+            auto data=material.GetNamedObject(L"data"); auto saved=data.GetNamedObject(L"m_SavedProperties");
+            auto shaderId=string(data.GetNamedObject(L"m_Shader"),L"m_PathID");
+            bool dissolve=false,mask=false,mainFx=false;
+            for(const auto& key:data.GetNamedArray(L"m_ValidKeywords")) {
+                auto name=key.GetString(); dissolve|=name==L"HG_UI_VFX_DISSOLVE"; mask|=name==L"HG_UI_VFX_MASKTEX"; mainFx|=name==L"HG_UI_VFX_MAINTEX";
+            }
+            native.constants.program=shaderId=="-7864008769510089003" ? (dissolve?15u:mask?13u:12u) : shaderId=="-5686924490240107124" ? (dissolve?2u:mainFx?1u:0u) : 0u;
             for (const auto& entry:saved.GetNamedArray(L"m_Floats")) {auto values=entry.GetArray(); auto name=values.GetStringAt(0);
-                if(name==L"_UIImageOpaque") native.constants.opaque=static_cast<float>(values.GetNumberAt(1));
-                else if(name==L"_UseAdditiveBlendMode") native.constants.additive=static_cast<float>(values.GetNumberAt(1)); }
-            for (const auto& entry:saved.GetNamedArray(L"m_TexEnvs")) {auto values=entry.GetArray(); if(values.GetStringAt(0)!=L"_MainTex") continue;
-                auto info=values.GetObjectAt(1); native.mainTexture=string(info.GetNamedObject(L"m_Texture"),L"target_id");
+                native.values[winrt::to_string(name)]={static_cast<float>(values.GetNumberAt(1)),0,0,0}; }
+            for(const auto& entry:saved.GetNamedArray(L"m_Colors")) { auto pair=entry.GetArray(); auto c=pair.GetObjectAt(1);
+                native.values[winrt::to_string(pair.GetStringAt(0))]={static_cast<float>(number(c,L"r")),static_cast<float>(number(c,L"g")),static_cast<float>(number(c,L"b")),static_cast<float>(number(c,L"a"))}; }
+            for (const auto& entry:saved.GetNamedArray(L"m_TexEnvs")) {auto values=entry.GetArray(); auto name=winrt::to_string(values.GetStringAt(0));
+                auto info=values.GetObjectAt(1); auto id=string(info.GetNamedObject(L"m_Texture"),L"target_id");
+                if(name=="_MainTex") native.mainTexture=id; else if(name=="_VFXMainTex") native.vfxTexture=id;
+                else if(name=="_MaskTex") native.effectTextures[0]=id; else if(name=="_DissolveTex") native.effectTextures[1]=id;
                 auto scale=info.GetNamedObject(L"m_Scale"), offset=info.GetNamedObject(L"m_Offset");
-                native.constants.st[0]=static_cast<float>(number(scale,L"x",1)); native.constants.st[1]=static_cast<float>(number(scale,L"y",1));
-                native.constants.st[2]=static_cast<float>(number(offset,L"x")); native.constants.st[3]=static_cast<float>(number(offset,L"y")); }
-            d.materials.emplace(string(material,L"id"),native);
+                native.values[name+"_ST"]={static_cast<float>(number(scale,L"x",1)),static_cast<float>(number(scale,L"y",1)),static_cast<float>(number(offset,L"x")),static_cast<float>(number(offset,L"y"))}; }
+            auto metadata=catalog.find(string(material,L"id"));
+            auto shaderMetadata=shaderCatalog.find(shaderId);
+            const auto properties=metadata!=catalog.end()?metadata->second:shaderMetadata!=shaderCatalog.end()?shaderMetadata->second:JsonObject{};
+            if(native.constants.program && metadata==catalog.end()) throw std::runtime_error("Source FX material metadata is missing");
+            for(const auto& property:properties.GetNamedArray(L"shader_properties",JsonArray{})) {
+                auto p=property.GetObject(); auto name=string(p,L"name"); auto type=integer(p,L"type",0,5),flags=integer(p,L"flags",0,UINT_MAX);
+                native.types[name]={type,flags};
+                if(auto value=native.values.find(name);value!=native.values.end()&&(type==0||(flags&32))) {
+                    native.values["@raw:"+name]=value->second;
+                    const unsigned count=type==2||type==3?1:3;
+                    for(unsigned i=0;i<count;++i) value->second[i]=materialLinear(value->second[i]);
+                }
+            }
+            if(native.constants.program>=12) {
+                bool found=false;
+                for(const auto& pass:metadata->second.GetNamedArray(L"static_pass_states")) {auto p=pass.GetObject(); if(string(p,L"name")!="Default") continue;
+                    auto blend=p.GetNamedObject(L"state").GetNamedObject(L"rtBlend0");
+                    auto scalar=[&](const wchar_t* key,unsigned max){return integer(blend.GetNamedObject(key),L"value",0,max);};
+                    D3D11_BLEND_DESC desc{}; auto& b=desc.RenderTarget[0]; b.BlendEnable=TRUE;
+                    b.SrcBlend=sourceBlend(scalar(L"srcBlend",10)); b.DestBlend=sourceBlend(scalar(L"destBlend",10));
+                    b.SrcBlendAlpha=sourceBlend(scalar(L"srcBlendAlpha",10)); b.DestBlendAlpha=sourceBlend(scalar(L"destBlendAlpha",10));
+                    b.BlendOp=sourceBlendOp(scalar(L"blendOp",4)); b.BlendOpAlpha=sourceBlendOp(scalar(L"blendOpAlpha",4));
+                    b.RenderTargetWriteMask=static_cast<UINT8>(scalar(L"colMask",15)); checked(device->CreateBlendState(&desc,&native.blend)); found=true; break;
+                }
+                if(!found) throw std::runtime_error("Source FX default blend state unavailable");
+            }
+            native.constants=d.materialConstants(native,{},0); native.prepared=true;
+            d.materials.emplace(string(material,L"id"),std::move(native));
         }
-        Ptr<ID3DBlob> vs,ps,errors; checked(D3DCompile(shader,sizeof(shader)-1,"native-source-image",nullptr,nullptr,"vertexMain","vs_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&vs,&errors));
-        checked(D3DCompile(shader,sizeof(shader)-1,"native-source-image",nullptr,nullptr,"pixelMain","ps_4_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&ps,&errors));
+        Ptr<ID3DBlob> vs,ps,errors;
+        auto compile=[&](const char* entry,const char* profile,Ptr<ID3DBlob>& output) {
+            auto status=D3DCompile(shader,sizeof(shader)-1,"native-source-image",nullptr,nullptr,entry,profile,D3DCOMPILE_ENABLE_STRICTNESS,0,&output,&errors);
+            if(FAILED(status) && errors) throw std::runtime_error(std::string(static_cast<const char*>(errors->GetBufferPointer()),errors->GetBufferSize()));
+            checked(status);
+        };
+        compile("vertexMain","vs_4_0",vs); compile("pixelMain","ps_4_0",ps);
         checked(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&d.vertex)); checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&d.pixel));
         D3D11_INPUT_ELEMENT_DESC attributes[]={{"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
             {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0},{"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,24,D3D11_INPUT_PER_VERTEX_DATA,0}};
@@ -177,7 +370,9 @@ HRESULT SourceDraw::initialize(ID3D11Device* device, ID3D11DeviceContext* contex
         checked(device->CreateShaderResourceView(texture.Get(),nullptr,&asset.view)); D3D11_SAMPLER_DESC sd{};
         sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR; sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP; sd.MaxLOD=D3D11_FLOAT32_MAX;
         checked(device->CreateSamplerState(&sd,&asset.sampler)); d.assets.emplace("__white",std::move(asset)); return S_OK;
-    } catch(const winrt::hresult_error& error) {return error.code();} catch(...) {return E_FAIL;}
+    } catch(const winrt::hresult_error& error) {impl_->initializationError=winrt::to_string(error.message());return error.code();}
+    catch(const std::exception& error) {impl_->initializationError=error.what();return E_FAIL;}
+    catch(...) {impl_->initializationError="Unknown source graphics initialization failure";return E_FAIL;}
 }
 HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& frame) {
     try {
@@ -191,16 +386,22 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
         d.context->IASetInputLayout(d.layout.Get()); d.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         d.context->VSSetShader(d.vertex.Get(),nullptr,0); d.context->PSSetShader(d.pixel.Get(),nullptr,0);
         auto cb=d.constants.Get(); d.context->VSSetConstantBuffers(0,1,&cb); d.context->PSSetConstantBuffers(0,1,&cb);
-        struct Command { Constants constants; Impl::Asset* asset; UINT first, count; };
+        struct Command { Constants constants; std::array<Impl::Asset*,3> assets; ID3D11BlendState* blend; UINT first, count; };
         std::vector<Command> commands; std::vector<Vertex> vertices;
         for(const auto& graphic:frame.graphics) {
             if(graphic.quads.empty() || graphic.color[3]<=0 || (graphic.kind=="UIText" && graphic.text.empty())) continue;
             if(graphic.quads.size() > (1048576 - vertices.size()) / 6) throw std::runtime_error("Source draw vertex bound exceeded");
-            Constants constants{}; std::string id=graphic.textureId;
-            if(auto material=d.materials.find(graphic.materialId); material!=d.materials.end()) {constants=material->second.constants; if(id.empty()) id=material->second.mainTexture;}
+            Constants constants{}; std::string id=graphic.textureId; Impl::Material* material=nullptr;
+            if(auto found=d.materials.find(graphic.materialId); found!=d.materials.end()) {
+                material=&found->second; constants=d.materialConstants(*material,graphic,frame.sceneTime);
+                if(constants.program==1 || constants.program==2) id=material->vfxTexture;
+                else if(id.empty()) id=material->mainTexture;
+            }
             const bool isText=graphic.kind=="UIText" && !graphic.text.empty();
             auto& asset=isText ? d.texts.at(graphic.componentId).asset : d.texture(id.empty()?"__white":id);
-            if(isText) {constants.st[0]=constants.st[1]=1; constants.st[2]=constants.st[3]=0; constants.padding=1;}
+            if(isText) {constants=Constants{}; constants.padding=1;}
+            auto& maskAsset=d.texture(material&&!material->effectTextures[0].empty()?material->effectTextures[0]:"__white");
+            auto& dissolve=d.texture(material&&!material->effectTextures[1].empty()?material->effectTextures[1]:"__white");
             if(graphic.masks.size()>8) throw std::runtime_error("Source mask depth exceeds native bound");
             for(const auto& mask:graphic.masks) {
                 auto r=mask.rect; std::array<scene::Vec3,4> points{{{r.origin.x,r.origin.y,0},{r.origin.x,r.origin.y+r.size.y,0},{r.origin.x+r.size.x,r.origin.y+r.size.y,0},{r.origin.x+r.size.x,r.origin.y,0}}};
@@ -219,11 +420,11 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
                 // Source raw mip rows and Unity UVs share the same origin.
                 if(isText) uv={i<2?0.:1.,i==0||i==3?1.:0.};
                 v.uv[0]=static_cast<float>(uv.x); v.uv[1]=static_cast<float>(uv.y);
-                for(unsigned c=0;c<3;++c) v.color[c]=graphic.vertexColorReady ? static_cast<float>(graphic.color[c]) :
+                for(unsigned c=0;c<3;++c) v.color[c]=q<graphic.colorQuads.size()?static_cast<float>(graphic.colorQuads[q][i][c]*graphic.color[c]):graphic.vertexColorReady ? static_cast<float>(graphic.color[c]) :
                     linear(std::nearbyint(std::clamp(graphic.color[c],0.,1.)*255)/255);
-                v.color[3]=static_cast<float>(std::clamp(graphic.color[3],0.,1.)); vertices.push_back(v);
+                v.color[3]=static_cast<float>(std::clamp(graphic.color[3],0.,1.)*(q<graphic.colorQuads.size()?graphic.colorQuads[q][i][3]:1)); vertices.push_back(v);
             }
-            commands.push_back({constants,&asset,first,static_cast<UINT>(vertices.size())-first});
+            commands.push_back({constants,{&asset,&maskAsset,&dissolve},!isText&&material&&material->blend?material->blend.Get():d.blend.Get(),first,static_cast<UINT>(vertices.size())-first});
         }
         if(vertices.size()>1048576) throw std::runtime_error("Source draw vertex bound exceeded");
         if(!vertices.empty()) {
@@ -233,14 +434,18 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
             auto buffer=d.vertices.Get(); UINT stride=sizeof(Vertex),offset=0; d.context->IASetVertexBuffers(0,1,&buffer,&stride,&offset);
             for(const auto& command:commands) {
                 checked(d.context->Map(d.constants.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped)); std::memcpy(mapped.pData,&command.constants,sizeof(Constants)); d.context->Unmap(d.constants.Get(),0);
-                auto view=command.asset->view.Get(); auto sampler=command.asset->sampler.Get(); d.context->PSSetShaderResources(0,1,&view); d.context->PSSetSamplers(0,1,&sampler); d.context->Draw(command.count,command.first);
+                ID3D11ShaderResourceView* views[3]; ID3D11SamplerState* samplers[3];
+                for(unsigned i=0;i<3;++i) {views[i]=command.assets[i]->view.Get(); samplers[i]=command.assets[i]->sampler.Get();}
+                d.context->OMSetBlendState(command.blend,nullptr,UINT_MAX);
+                d.context->PSSetShaderResources(0,3,views); d.context->PSSetSamplers(0,3,samplers); d.context->Draw(command.count,command.first);
             }
         }
-        ID3D11ShaderResourceView* empty=nullptr; d.context->PSSetShaderResources(0,1,&empty);
+        ID3D11ShaderResourceView* empty[3]{}; d.context->PSSetShaderResources(0,3,empty);
         for(auto it=d.texts.begin();it!=d.texts.end();) if(it->second.used!=d.generation) it=d.texts.erase(it); else ++it;
         return S_OK;
     } catch(const winrt::hresult_error& error) {return error.code();} catch(...) {return E_FAIL;}
 }
 std::size_t SourceDraw::textureCount() const {return impl_->assets.size();}
 std::size_t SourceDraw::textCount() const {return impl_->texts.size();}
+const std::string& SourceDraw::initializationError() const {return impl_->initializationError;}
 }

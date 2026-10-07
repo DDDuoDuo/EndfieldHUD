@@ -4,10 +4,11 @@
 #include <dwrite.h>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include "scene/watch_scene.hpp"
 namespace ehud::render {
-// Native source sprite path. The remaining FX/soft-mask/HDR programs are
-// explicitly outside this class's verified scope.
+// Native source sprite and selected UI/mesh FX programs. Complete source
+// soft-mask/stencil/HDR parity still requires matched visual acceptance.
 class SourceDraw final {
 public:
     SourceDraw();
@@ -16,6 +17,7 @@ public:
     HRESULT draw(ID3D11RenderTargetView*, const scene::Frame&);
     std::size_t textureCount() const;
     std::size_t textCount() const;
+    const std::string& initializationError() const;
 private:
     struct Impl; std::unique_ptr<Impl> impl_;
 };
