@@ -274,7 +274,15 @@ double DesktopShell::canvasAlpha(const DesktopShellFixture &fixture) {
 }
 DesktopPresentation DesktopShell::sourcePresentation(const DesktopShellFixture &fixture) const {
     DesktopPresentation result;
-    for(const auto &id:info_.profileGlowIds)result.properties[id]["m_Color.a"]=0;
+    // setDesktopProfile retains exactly the root Selectable's highlight. Its
+    // original ColorTint owns the finite fade of the normal-alpha native plate.
+    for(const auto &id:info_.profileGlowIds)result.properties[id]["m_Color.a"]=id==info_.profileHighlightId?1:0;
+    for(const auto &[id,kind]:std::array<std::pair<SourceId,double>,2>{{{info_.profileBackgroundId,1},{info_.profileHighlightId,2}}}) {
+        if(id.empty())continue;
+        auto &properties=result.properties[id];properties["desktop.profileArtwork"]=kind;
+        for(std::size_t i=0;i<3;++i)properties[std::string("desktop.profileAccent.")+"rgb"[i]]=finiteUnit(fixture.accent[i]);
+    }
+    if(!info_.profileHighlightId.empty())result.normalMaterialNodes.push_back(info_.profileHighlightId);
     if(auto it=info_.profileBindings.find("levelSlider");it!=info_.profileBindings.end())result.properties[it->second]["m_FillAmount"]=std::clamp(fixture.permissionLevel,1,60)/60.0;
     for(const auto &id:profileAccentIds_)for(std::size_t i=0;i<3;++i)result.properties[id][std::string("m_Color.")+"rgb"[i]]=finiteUnit(fixture.accent[i]);
     return result;

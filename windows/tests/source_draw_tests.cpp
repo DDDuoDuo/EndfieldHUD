@@ -1,4 +1,5 @@
 #include "render/source_draw.h"
+#include "render/profile_artwork.hpp"
 #include "resources/resource_data.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
@@ -14,6 +15,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -22,6 +24,7 @@ namespace {
 template<class T> using Ptr = Microsoft::WRL::ComPtr<T>;
 using ehud::scene::Frame;
 using ehud::scene::Graphic;
+using ehud::render::SourceOutputContract;
 using winrt::Windows::Data::Json::JsonObject;
 using winrt::Windows::Data::Json::JsonArray;
 using winrt::Windows::Data::Json::JsonValue;
@@ -51,6 +54,15 @@ unsigned byte(double value) { return static_cast<unsigned>(std::lround(std::clam
 Pixel premultiplied(std::array<double,3> linear, double alpha) {
     return {byte(encode(linear[0])*alpha),byte(encode(linear[1])*alpha),byte(encode(linear[2])*alpha),byte(alpha)};
 }
+// Source attachment storage: fragment premultiplication and blending happen
+// in linear RGB; hardware applies the sRGB transfer only after accumulation.
+Pixel source_pixel(std::array<double,3> accumulated, double alpha) {
+    return {byte(encode(accumulated[0])),byte(encode(accumulated[1])),byte(encode(accumulated[2])),byte(alpha)};
+}
+Pixel source_premultiplied(std::array<double,3> linear, double alpha) {
+    for (auto& channel:linear) channel*=alpha;
+    return source_pixel(linear,alpha);
+}
 Graphic rectangle(const char* material, std::array<double,4> color = {1,1,1,1}) {
     Graphic graphic;
     graphic.componentId = "synthetic-gpu-quad"; graphic.nodeId = "synthetic-gpu-node";
@@ -66,7 +78,8 @@ Frame frame(Graphic graphic, double time = 0) {
 }
 class Gpu {
 public:
-    Gpu() {
+    explicit Gpu(SourceOutputContract contract = SourceOutputContract::EncodedPremultiplied)
+        : contract_(contract) {
         D3D_FEATURE_LEVEL level{};
         checked(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             nullptr,0,D3D11_SDK_VERSION,&device,&level,&context),"Create isolated WARP device");
@@ -80,14 +93,18 @@ public:
             reinterpret_cast<IUnknown**>(fonts.GetAddressOf())),"Create native font factory");
         D3D11_TEXTURE2D_DESC description{};
         description.Width=description.Height=32; description.MipLevels=description.ArraySize=description.SampleDesc.Count=1;
-        description.Format=DXGI_FORMAT_B8G8R8A8_UNORM; description.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+        description.Format=contract_==SourceOutputContract::SourceLinearPremultiplied
+            ?DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:DXGI_FORMAT_B8G8R8A8_UNORM;
+        description.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
         checked(device->CreateTexture2D(&description,nullptr,&target),"Create offscreen 32x32 target");
-        checked(device->CreateRenderTargetView(target.Get(),nullptr,&view),"Create encoded-space UNORM target view");
-        Ptr<IDXGISurface> surface; checked(target.As(&surface),"Get offscreen DXGI surface");
-        auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET|D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-            D2D1::PixelFormat(description.Format,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
-        checked(painter->CreateBitmapFromDxgiSurface(surface.Get(),&properties,&bitmap),"Create compatible native D2D bitmap");
-        painter->SetTarget(bitmap.Get());
+        checked(device->CreateRenderTargetView(target.Get(),nullptr,&view),"Create explicit source output target view");
+        if(contract_==SourceOutputContract::EncodedPremultiplied) {
+            Ptr<IDXGISurface> surface; checked(target.As(&surface),"Get offscreen DXGI surface");
+            auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET|D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                D2D1::PixelFormat(description.Format,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+            checked(painter->CreateBitmapFromDxgiSurface(surface.Get(),&properties,&bitmap),"Create compatible native D2D bitmap");
+            painter->SetTarget(bitmap.Get());
+        }
         description.Usage=D3D11_USAGE_STAGING; description.BindFlags=0; description.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
         checked(device->CreateTexture2D(&description,nullptr,&staging),"Create isolated GPU readback texture");
     }
@@ -103,7 +120,7 @@ public:
         return source;
     }
     Pixel draw(ehud::render::SourceDraw& source, const Frame& scene, unsigned x = 16, unsigned y = 16) {
-        checked(source.draw(view.Get(),scene),"Submit isolated source material frame");
+        checked(source.draw(view.Get(),scene,contract_),"Submit isolated source material frame");
         context->OMSetRenderTargets(0,nullptr,nullptr);
         context->CopyResource(staging.Get(),target.Get());
         D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -112,7 +129,11 @@ public:
         const Pixel result{pixel[2],pixel[1],pixel[0],pixel[3]};
         context->Unmap(staging.Get(),0); return result;
     }
+    HRESULT submit(ehud::render::SourceDraw& source, const Frame& scene, SourceOutputContract contract) {
+        return source.draw(view.Get(),scene,contract);
+    }
 private:
+    SourceOutputContract contract_;
     Ptr<ID3D11Device> device; Ptr<ID3D11DeviceContext> context;
     Ptr<ID2D1Factory1> factory; Ptr<ID2D1Device> d2d; Ptr<ID2D1DeviceContext> painter;
     Ptr<IDWriteFactory> fonts; Ptr<ID3D11Texture2D> target,staging;
@@ -130,6 +151,68 @@ void actual_source(Gpu& gpu, const std::filesystem::path& root) {
     quad=rectangle("",{64.0/255,128.0/255,192.0/255,128.0/255});quad.kind="DesktopVector";
     expect(gpu.draw(*source,frame(quad)),{32,64,96,128},"Native desktop artwork uses direct sRGB ink once");
     std::cout << "unchanged_staged_source_initialization=passed actual_UI_color=passed\n";
+}
+void profile_byte_contracts() {
+    namespace p=ehud::render::profile;
+    const std::vector<std::uint8_t> bgra{40,180,200,128,7,9,11,255,
+                                      255,255,255,0,30,20,10,255};
+    const auto pixels=p::cropPremultipliedBGRA(bgra,2,2,{0,0,2,2});
+    check(pixels[0]==p::Pixel{100,90,20,128},"Profile source BGRA enters the premultiplied eight-bit domain once");
+    check(pixels[1]==p::Pixel{11,9,7,255} && pixels[3]==p::Pixel{10,20,30,255},"Profile cropping retains original bottom-row order and converts BGRA channels");
+    check(pixels[2]==p::Pixel{},"Zero-alpha source RGB cannot enter profile chroma");
+    const auto crop=p::cropPremultipliedBGRA(bgra,2,2,{1,0,1,2});
+    check(crop.size()==2 && crop[0]==pixels[1] && crop[1]==pixels[3],"Profile crop applies source x/y before row extraction");
+    check(p::themed(pixels[0],{0,0,1})==p::Pixel{30,20,90,128},"Seventy premultiplied yellow units become blue while neutral channels and alpha survive");
+    check(p::themed({31,31,31,200},{0,0,1})==p::Pixel{31,31,31,200},"Profile neutral gray is not accent tinted");
+    check(p::themed({1,1,0,255},{.5,.5,.5})==p::Pixel{1,1,1,255},"Swift positive half rounding remains half up");
+    check(p::straight({30,20,90,128})==p::Pixel{60,40,179,128},"Profile texture output uses source integer unpremultiplication");
+    check(p::straight({19,18,17,0})==p::Pixel{},"Profile output clears hidden RGB at zero alpha");
+    const p::Accent gold{250./255,212./255,31./255};
+    check(p::hover({255,255,255,255},gold,0)==p::Pixel{95,81,12,97},"Normal-alpha hover sourceIn edge carries the authored 38 percent wash");
+    check(p::hover({255,255,255,255},gold,255)==p::Pixel{13,11,2,13},"Hover destinationIn panel retains the authored five percent interior after byte rounding");
+    check(p::hover({64,64,64,128},{0,0,1},0)==p::Pixel{0,0,49,49},"Hover edge preserves translucent source silhouette");
+    check(p::hover({64,64,64,128},{0,0,1},255)==p::Pixel{0,0,6,6},"Hover panel does not apply the source silhouette twice");
+    bool rejected=false;try {p::cropPremultipliedBGRA(bgra,2,2,{1,1,2,1});}catch(const std::runtime_error&){rejected=true;}
+    check(rejected,"Profile source rejects crops outside the original mip");
+    rejected=false;try {p::validate({std::numeric_limits<double>::quiet_NaN(),0,1});}catch(const std::runtime_error&){rejected=true;}
+    check(rejected,"Profile cache rejects nonfinite accent keys");
+}
+Graphic profile_sample(unsigned mode,unsigned x,unsigned y,std::array<double,3> accent={0,0,1}) {
+    auto graphic=rectangle(imageId);graphic.normalMaterial=mode==2;
+    // Keep an actual source mesh but make its position-relative UV uniformly
+    // sample one source texel; its old texture UV intentionally points elsewhere.
+    constexpr double span=1e8;
+    graphic.rect={{-(x+.5)/530*span,-(y+.5)/204*span},{span,span}};
+    graphic.sampledProperties={{"desktop.profileArtwork",double(mode)},
+        {"desktop.profileAccent.r",accent[0]},{"desktop.profileAccent.g",accent[1]},{"desktop.profileAccent.b",accent[2]}};
+    return graphic;
+}
+void actual_profile(Gpu& gpu,const std::filesystem::path& root) {
+    const auto mip=root/L"Textures"/L"business_card_topic_normal_1--4a226705---4827637915678035611.bgra-mips.bin";
+    const auto original=ehud::resources::read(mip);
+    check(original.size()==532*204*4,"Selected original normal_1 decoded mip dimensions remain 532 by 204");
+    auto source=gpu.initialize(root);
+    expect(gpu.draw(*source,frame(profile_sample(1,432,22))),{36,28,158,255},"Original opaque yellow profile chroma becomes blue with its neutral components intact");
+    expect(gpu.draw(*source,frame(profile_sample(1,432,181))),{30,22,150,247},"Original opposite source row preserves translucent premultiplied channels and bottom-origin UV");
+    expect(gpu.draw(*source,frame(profile_sample(1,265,102))),{41,41,41,226},"Original neutral profile panel retains its gray and alpha");
+    expect(gpu.draw(*source,frame(profile_sample(1,265,10))),{},"Original profile alpha silhouette is preserved",0);
+    expect(gpu.draw(*source,frame(profile_sample(2,510,100))),{0,0,97,97},"Original profile edge outside x507 retains the normal-alpha 38 percent plate");
+    expect(gpu.draw(*source,frame(profile_sample(2,506,100))),{0,0,13,13},"Original profile inner panel ends at x507 and carries five percent wash");
+    expect(gpu.draw(*source,frame(profile_sample(2,265,102))),{0,0,11,11},"Hover panel carries source alpha through both byte-domain operations once");
+    auto fading=profile_sample(2,510,100);fading.color[3]=.5;
+    expect(gpu.draw(*source,frame(fading)),{0,0,49,49},"Source ColorTint alpha fades the normal-alpha hover plate independently of its cached accent");
+    const auto retained=source->textureCount();
+    for(unsigned cycle=0;cycle<48;++cycle) {
+        auto graphic=profile_sample(2,510,100);graphic.color[3]=(cycle%9)/8.;
+        gpu.draw(*source,frame(graphic));
+    }
+    check(source->textureCount()==retained,"Pointer and finite ColorTint alpha changes reuse immutable profile textures");
+    for(unsigned revision=0;revision<12;++revision)
+        gpu.draw(*source,frame(profile_sample(1,432,22,{double(revision)/12,.25,.5})));
+    check(source->textureCount()<=retained-2+16,"Exact per-accent profile cache stays bounded to eight texture pairs");
+    check(ehud::resources::read(mip)==original,"Profile rendering does not rewrite the staged source bytes");
+    std::cout<<"source_profile_premultiplied_chroma=passed source_profile_normal_alpha_hover=passed "
+             <<"source_profile_rows_UV=passed profile_rounded_boundary_Mac_raster=unverified\n";
 }
 void write(const std::filesystem::path& path, std::string_view bytes) {
     std::ofstream output(path,std::ios::binary);
@@ -349,6 +432,108 @@ void material_regressions(Gpu& gpu,const std::filesystem::path& root) {
     std::cout << "source_programs=UI211,UI272,Mesh12,Mesh13,Mesh15 analytic_RGBA_cases=passed "
         << "fixture_source_ids=original original_assets_modified=false\n";
 }
+void source_linear_accumulation(const std::filesystem::path& root) {
+    // Independent closed-form cases from source UI211/272's linear RGB times
+    // alpha, Mesh12/13/15's straight linear output/authored blend, and the Mac
+    // renderer's bgra8Unorm_srgb attachment. This stage is not DComp output.
+    Gpu gpu(SourceOutputContract::SourceLinearPremultiplied);
+    Fixture basic(root,12);auto source=gpu.initialize(basic.root);
+    Frame empty;empty.camera.viewport={32,32};
+    check(gpu.submit(*source,empty,SourceOutputContract::EncodedPremultiplied)==E_INVALIDARG,
+        "Encoded premultiplied fragments cannot enter the source sRGB attachment");
+    check(gpu.submit(*source,empty,static_cast<SourceOutputContract>(42))==E_INVALIDARG,
+        "Unknown fragment output contracts are rejected before submission");
+    expect(gpu.draw(*source,empty),{},"Source sRGB attachment clears all channels",0);
+    auto white=rectangle(imageId,{1,1,1,128.0/255});
+    expect(gpu.draw(*source,frame(white)),{188,188,188,128},
+        "Source UI half-alpha white encodes linear-premultiplied RGB in the attachment");
+    auto gray=rectangle(imageId,{decode(128.0/255),decode(128.0/255),decode(128.0/255),128.0/255});
+    expect(gpu.draw(*source,frame(gray)),source_premultiplied({decode(128.0/255),decode(128.0/255),decode(128.0/255)},128.0/255),
+        "Source translucent gray premultiplies after decoding and before attachment encoding");
+    auto normal=gray;normal.materialId=uiFxId;normal.normalMaterial=true;
+    expect(gpu.draw(*source,frame(normal)),gpu.draw(*source,frame(gray)),
+        "Desktop normal-alpha source artwork retains the source linear accumulation contract",0);
+    auto native=rectangle("",{128.0/255,128.0/255,128.0/255,128.0/255});native.kind="DesktopVector";
+    expect(gpu.draw(*source,frame(native)),gpu.draw(*source,frame(gray)),
+        "Native overlay ink enters the source linear stage after one sRGB decode",0);
+
+    auto fx=rectangle(uiFxId);
+    expect(gpu.draw(*source,frame(fx)),source_premultiplied({64.0/255,128.0/255,192.0/255},160.0/255),
+        "UI211 emits linear sampled VFX RGB before alpha and attachment transfer");
+    fx.sampledProperties["material._UseMainTexAsAlpha"]=1;
+    expect(gpu.draw(*source,frame(fx)),source_premultiplied({1,1,1},64.0/255),
+        "UI211 red-as-alpha coverage does not become an encoded-space RGB multiplier");
+    fx=rectangle(uiDissolveId);
+    expect(gpu.draw(*source,frame(fx)),source_premultiplied({1,1,1},64.0/255),
+        "UI272 red mask coverage remains linear-premultiplied");
+    fx.sampledProperties={{"material._DissolveScheduleOffset",191.0/255-.25},{"material._DissolveEdgeWidth",.5},
+        {"material._DissolveEdgeIntensity",.5},{"material._DissolveEdgeHardness",1}};
+    expect(gpu.draw(*source,frame(fx)),source_premultiplied({.5,1,.5},32.0/255),
+        "UI272 emissive and edge coverage combine before source attachment encoding");
+
+    auto mesh=rectangle(meshId);uniform_mesh_color(mesh,{.25,.5,.75,.5});
+    expect(gpu.draw(*source,frame(mesh)),source_premultiplied({.25,.5,.75},.5),
+        "Mesh12 authored straight-alpha blend premultiplies linear raw vertex RGB");
+    mesh=rectangle(meshId,{1,0,0,.25});auto added=frame(mesh);added.graphics.push_back(mesh);
+    expect(gpu.draw(*source,added),source_pixel({.5,0,0},.5),
+        "Mesh12 source additive overlap accumulates linear contributions before transfer");
+    auto first=rectangle(imageId,{1,0,0,64.0/255});
+    auto second=rectangle(imageId,{0,0,1,128.0/255});auto over=frame(first);over.graphics.push_back(second);
+    const double low=64.0/255,half=128.0/255;
+    expect(gpu.draw(*source,over),source_pixel({low*(1-half),0,half},half+low*(1-half)),
+        "Source red then blue uses linear source-over RGB and untransferred alpha",2);
+    over=frame(second);over.graphics.push_back(first);
+    expect(gpu.draw(*source,over),source_pixel({low,0,half*(1-low)},low+half*(1-low)),
+        "Reversing source-over layer order changes the linear accumulation",2);
+    over=frame(gray);second=rectangle(imageId,{1,1,1,low});over.graphics.push_back(second);
+    const double mixed=low+decode(128.0/255)*half*(1-low);
+    expect(gpu.draw(*source,over),source_pixel({mixed,mixed,mixed},low+half*(1-low)),
+        "Source translucent gray and white blend in linear RGB rather than encoded bytes",2);
+    first=rectangle(imageId,{1,0,0,low});first.sampledProperties["material._UseAdditiveBlendMode"]=1;
+    added=frame(first);added.graphics.push_back(first);
+    expect(gpu.draw(*source,added),source_pixel({2*low,0,0},0),
+        "Original additive UI keeps source color when output alpha is zero");
+    added.graphics.push_back(gray);
+    expect(gpu.draw(*source,added),source_pixel({2*low*(1-half)+decode(128.0/255)*half,
+        decode(128.0/255)*half,decode(128.0/255)*half},half),
+        "A subsequent source-over layer attenuates additive destination RGB in linear space",2);
+
+    Fixture mask(root,13);source=gpu.initialize(mask.root);mesh=rectangle(meshId);
+    expect(gpu.draw(*source,frame(mesh)),source_premultiplied({1,1,1},64.0/255),
+        "Mesh13 source mask and authored blend retain linear coverage");
+    mesh.sampledProperties["material._UseMaskTexAsAlpha"]=0;
+    expect(gpu.draw(*source,frame(mesh)),source_premultiplied({64.0/255,128.0/255,192.0/255},160.0/255),
+        "Mesh13 RGBA modulation uses linear mask RGB in the source target");
+    Fixture dissolve(root,15);source=gpu.initialize(dissolve.root);mesh=rectangle(meshId);
+    mesh.sampledProperties={{"material._DissolveScheduleOffset",191.0/255-.25},{"material._DissolveEdgeWidth",.5},
+        {"material._DissolveEdgeIntensity",.5},{"material._DissolveEdgeHardness",1}};
+    expect(gpu.draw(*source,frame(mesh)),source_premultiplied({.5,1,.5},32.0/255),
+        "Mesh15 linear emissive output precedes its authored straight-alpha blend");
+    mesh.sampledProperties["material._DissolveScheduleOffset"]=1;
+    expect(gpu.draw(*source,frame(mesh)),{},"Source stage preserves Mesh15 discard",0);
+    Fixture srgb(root,12,false,false,true);source=gpu.initialize(srgb.root);fx=rectangle(uiFxId);
+    expect(gpu.draw(*source,frame(fx)),source_premultiplied({decode(64.0/255),decode(128.0/255),decode(192.0/255)},160.0/255),
+        "sRGB VFX textures decode once before original linear alpha multiplication");
+    source=gpu.initialize(root);
+    expect(gpu.draw(*source,frame(white)),{188,188,188,128},
+        "Unchanged original UI material also produces the source half-alpha attachment bytes");
+    expect(gpu.draw(*source,frame(profile_sample(2,510,100))),source_premultiplied({0,0,1},97.0/255),
+        "Canonical generated hover edge keeps straight sRGB accent and source linear coverage");
+    expect(gpu.draw(*source,frame(profile_sample(2,506,100))),source_premultiplied({0,0,1},13.0/255),
+        "Canonical hover interior transfers its five-percent alpha only after linear multiplication");
+    auto fading=profile_sample(2,510,100);fading.color[3]=.5;
+    expect(gpu.draw(*source,frame(fading)),source_premultiplied({0,0,1},(97.0/255)*(128.0/255)),
+        "Original finite ColorTint multiplies source hover alpha independently of texture transfer");
+
+    // Existing default fixtures must not silently switch output contracts.
+    Gpu encoded;source=encoded.initialize(basic.root);
+    check(encoded.submit(*source,empty,SourceOutputContract::SourceLinearPremultiplied)==E_INVALIDARG,
+        "Source linear fragments cannot bypass the required sRGB attachment");
+    expect(encoded.draw(*source,frame(white)),{128,128,128,128},
+        "Standalone encoded-premultiplied compatibility remains explicit");
+    std::cout<<"source_linear_srgb_accumulation=passed half_alpha_white_RGB=188 "
+        <<"layered_source_over_additive=passed desktop_final_adapter=separate_contract\n";
+}
 }
 int wmain(int argc, wchar_t** argv) {
     const HRESULT initialized=RoInitialize(RO_INIT_SINGLETHREADED);
@@ -356,7 +541,8 @@ int wmain(int argc, wchar_t** argv) {
     int result{};
     try {
         if (argc != 2) throw std::runtime_error("usage: source_draw_tests <staged Resources/WatchSource directory>");
-        Gpu gpu; actual_source(gpu,argv[1]); material_regressions(gpu,argv[1]);
+        profile_byte_contracts();Gpu gpu;actual_source(gpu,argv[1]);actual_profile(gpu,argv[1]);material_regressions(gpu,argv[1]);
+        source_linear_accumulation(argv[1]);
         std::cout << "WARP_source_material_checks=" << checks << " desktop_capture=false hardware_parity=unverified\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; result=1; }
     catch (const winrt::hresult_error& error) { std::cerr << "Native GPU fixture failed HRESULT=0x" << std::hex << error.code().value << '\n'; result=1; }

@@ -70,6 +70,10 @@ projected planes. The clock preserves `HH:mm:ss` and `EEE MMM d` with uppercase
 weekday, right alignment, tabular digits and source frame/indicator geometry.
 The portrait is the source's native no-image silhouette; profile fields are
 synthetic and carry no linked UID. Source accent bindings use the default FAD41F.
+The card background and normal-alpha hover plate are derived from the canonical
+normal_1 BGRA pixels using the source's byte-domain chroma and rounded-panel
+operations. A bounded cache retains at most eight accent pairs; pointer/fade
+updates reuse those textures. Matched Mac antialiasing at the boundary is open.
 The normal HUD omits the diagnostic editor; `--editor-fixture` explicitly enables
 the projected in-memory TSF fixture. The footer retains its source screen plane.
 
@@ -77,16 +81,31 @@ Desktop tilt applies the Mac adapter's default ×1.25 factor. Ambient animation
 uses the source default, enabled; `--ambient-off` selects the diagnostic case.
 The visible wall clock samples only on activation and its one-second callback,
 then stops on close. Projected wheel scrolling uses the original finite spring
-and bounded row pool. Windows precision touchpad phases and arrow controls still
-need their dedicated input adaptation and live checks.
+and bounded row pool. The source's outer scroll arrows retain their projected
+hit planes and grey disabled styles. Release on the same arrow advances 32
+logical points through the source spring; disabled arrows consume the press.
+Windows precision touchpad phases and live input acceptance remain open.
+
+Display selection uses the source's fixed/active/main policy and full display
+bounds. An open HUD retains its current connected monitor through topology
+notifications. Windows device paths provide stable identities; automatic mode
+can still use virtual displays without them. PMv2 HWNDs supply current DPI.
+The saved-display settings UI is a later module; mixed-DPI and physical hot-plug
+acceptance remain unverified. The isolated editor has Tab/Shift+Tab focus entry
+and exit; native moves invalidate TSF screen rectangles without flattening it.
 
 The resource gate verifies 741 canonical Git inputs and 753 traced outputs;
 754 staged files occupy 29.63 MiB. No old local checkout or staged folder is
 accepted. CI checks out its exact event commit, attaches the authorized branch,
 and preserves canonical file bytes and baseline history.
 
-Remaining visual work includes the source's themed profile background/hover
-artwork, matched Mac font metrics, footer/wordmark overlap comparison at the
+Source fragments now accumulate in a BGRA8 sRGB intermediate, preserving linear
+source blending. A separate final pass converts that result to the encoded
+premultiplied format required for Windows presentation. This is the source LDR
+path; complete HDR/backdrop/material and matched Mac acceptance remain open.
+
+Remaining visual work includes matched profile boundary and Mac font metrics,
+footer/wordmark overlap comparison at the
 fixture size, full material/soft-mask/HDR composition and the frozen backdrop.
 Module bindings are presentation only. Their bodies, providers, persistence,
 accounts, accessibility and full settings are subsequent required milestones.
@@ -94,13 +113,17 @@ accounts, accessibility and full settings are subsequent required milestones.
 ## Fresh verification
 
 The restarted Release x64 build compiles with MSVC 14.44.35207 and Windows SDK
-10.0.26100.0. All seven native CTest suites pass, including 2,702 source scene
-checks, 776 desktop presentation checks and 126 isolated WARP material checks.
+10.0.26100.0. All nine native CTest suites pass, including 2,730 source scene
+checks, 797 desktop presentation checks, 244 isolated WARP source material checks,
+83 final presentation checks and 41 source monitor-policy checks.
 The Python packaging/source-provenance suite runs 78 tests: 77 pass locally and
 one symbolic-link fixture is skipped because the local account lacks that
 creation privilege. Windows short/long path aliases and real junction rejection
-are checked. CI's first restarted run passed all seven native suites but exposed
-a short-name temporary-path mismatch in provenance; that mismatch is corrected.
+are checked. CI's first restarted run exposed a short-name temporary-path
+mismatch in provenance. The corrected [CI run](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37682014773)
+passed native/resource/Python/developer-package and unsigned MSIX format checks
+at commit `f4868da22b8afe972c989b3eeac9f8d0d78020ae`. Subsequent profile/arrow/
+monitor/linear-composition changes are verified locally and require fresh CI.
 Source wheel tests cover
 analytic spring samples, rebound, invalid inputs, reduced motion and endpoint
 parking; actual resource tests confirm the final navigation slot is hittable.
@@ -108,10 +131,12 @@ These are isolated contracts, not acceptance of the five live architecture gates
 
 [Fresh sanitized diagnostic evidence](windows/evidence/restart-desktop-2026-10-07.json)
 binds the final executable and native source files by SHA-256. In the corrected
-desktop path, 100 warmed source-endpoint cycles retained 592 handles and reduced
-private bytes from 198,987,776 to 186,372,096 after the GPU drained. The following
-61.0106-second closed interval submitted zero HUD frames and consumed 0.046875
-CPU seconds. Closed handles changed from 593 to 596; longer ownership testing
+desktop path, 100 warmed source-endpoint cycles retained 594 handles. Private
+bytes changed from 192,630,784 to 192,999,424 and working set from 122,609,664
+to 123,052,032 after GPU drains; this small increase does not establish bounded
+long-term ownership. The following 61.0114-second closed interval submitted zero
+HUD frames and consumed 0.03125 CPU seconds. Closed handles changed from 595 to
+598; longer ownership testing
 remains required. These hidden endpoint/ambient-off measurements establish no
 visible frame pacing, default ambient performance, GPU activity, wakeup,
 recording, live IME or Mac parity claim. Both compositor capability probes

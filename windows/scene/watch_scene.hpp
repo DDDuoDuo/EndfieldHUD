@@ -219,6 +219,16 @@ struct ScrollInfo {
     SourceId nodeId, contentId, viewportId;
     double hiddenLength{}, sensitivity{}, normalizedPosition{};
 };
+struct ScrollIndicator {
+    int direction{}; // -1 up, +1 down, as the source desktop adapter.
+    SourceId nodeId;
+    Rect rect{};
+    Mat4 world{Mat4::identity()}, sceneWorld{Mat4::identity()};
+    std::vector<HitRegion::Mask> masks;
+    // Active includes the visible-phase input guard. Disabled active arrows
+    // still consume a hit; the host checks enabled/canScroll on release.
+    bool active{}, enabled{};
+};
 struct FrameState;
 struct Frame {
     Camera camera{};
@@ -231,9 +241,11 @@ struct Frame {
     double sceneTime{};
     std::vector<NodeGeometry> nodes;
     std::optional<ScrollInfo> scroll;
+    std::vector<ScrollIndicator> scrollIndicators;
     // Current recycled physical slot -> logical right-side desktop entry.
     std::map<SourceId, std::size_t> desktopRightAssignments;
     std::optional<SourceId> buttonAt(Vec2 point) const;
+    std::optional<int> scrollDirectionAt(Vec2 point) const;
     const NodeGeometry *node(std::string_view id) const;
 
   private:
@@ -267,6 +279,8 @@ struct FrameInput {
     // Used only by loadDesktop; source row pool is recycled, never cloned.
     std::size_t desktopEntryCount{18};
     const DesktopPresentation *desktopPresentation{};
+    // Availability follows the motion's bounded target, not rebound position.
+    std::optional<double> desktopScrollTarget;
 };
 struct Button {
     SourceId id;
@@ -287,6 +301,7 @@ struct DesktopSceneInfo {
     SourceId navigationContentId, navigationViewportId;
     Vec2 navigationContentSize{};
     double rowStep{}, rowScale{}, viewportHeight{};
+    std::map<int, SourceId> scrollIndicatorIds;
 };
 
 class Document {

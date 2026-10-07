@@ -2,12 +2,12 @@
 #include "app/frame_schedule.h"
 #include "platform/composition_probe.h"
 #include "platform/rendered_cursor.h"
+#include "platform/monitor_snapshot.h"
 #include "scene/desktop_shell.hpp"
 #include "scene/desktop_scroll.hpp"
 #include <windowsx.h>
 #include <shellapi.h>
 #include <psapi.h>
-#include <shellscalingapi.h>
 #include <roapi.h>
 #include <winrt/base.h>
 #include <chrono>
@@ -26,12 +26,6 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr UINT trayMessage = WM_APP + 1, frameTimer = 1, probeTimer = 2, clockTimer = 3;
 constexpr UINT activateCommand = 100, quitCommand = 101;
-struct Monitor { RECT area{}; UINT dpiX{96}, dpiY{96}; };
-BOOL CALLBACK enumerateMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM context) {
-    MONITORINFO info{sizeof(info)}; GetMonitorInfoW(monitor, &info);
-    Monitor result{info.rcWork}; GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &result.dpiX, &result.dpiY);
-    reinterpret_cast<std::vector<Monitor>*>(context)->push_back(result); return TRUE;
-}
 double cpuSeconds() {
     FILETIME creation{}, exit{}, kernel{}, user{};
     if (!GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user)) return 0;
@@ -86,6 +80,12 @@ public:
         }
         MSG message{}; BOOL result;
         while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0) {
+            if(editor_ && message.hwnd==window_ && message.message==WM_KEYDOWN && message.wParam==VK_TAB &&
+               playback_ && playback_->phase()==ehud::scene::Phase::visible && !editor_->model().composing()) {
+                // The isolated fixture has one editable plane. Tab/Shift+Tab
+                // alternate its focus with the shell without inserting a tab.
+                editor_->focus(!editor_->focused());syncEditorCursorTracking();continue;
+            }
             if (editor_ && editor_->pre_translate(message)) continue;
             TranslateMessage(&message); DispatchMessageW(&message);
         }
@@ -134,7 +134,26 @@ private:
         auto source=shell.sourcePresentation(fixture);input.desktopPresentation=&source;
         input.desktopEntryCount=ehud::scene::DesktopShell::rightModules().size();
         input.verticalNormalizedPosition=scrollMotion_.position();
+        input.desktopScrollTarget=scrollMotion_.target();
         auto frame=document.frame(input);presentation_=shell.decorate(frame,fixture);return frame;
+    }
+    bool scrollDesktopNavigation(int direction) {
+        if(!frame_ || !frame_->scroll || !playback_ || playback_->phase()!=ehud::scene::Phase::visible ||
+           (direction!=-1 && direction!=1) || !scrollMotion_.canScroll(direction)) return false;
+        const auto& scroll=*frame_->scroll;
+        auto node=frame_->node(scroll.viewportId);
+        if(scroll.hiddenLength<=0 || !node || !node->rect) return false;
+        const auto& rect=*node->rect;
+        const auto bottom=frame_->camera.project({rect.origin.x,rect.origin.y,0},node->world);
+        const auto top=frame_->camera.project({rect.origin.x,rect.origin.y+rect.size.y,0},node->world);
+        if(!bottom || !top) return false;
+        const double pixels=std::max(1.,std::hypot(top->x-bottom->x,top->y-bottom->y));
+        // HUDSourceWatchView.scrollDesktopNavigation advances 32 logical points
+        // on the current projected viewport. Win32 pointer coordinates are pixels.
+        const double points=32.*GetDpiForWindow(window_)/96.;
+        const double delta=-double(direction)*points*rect.size.y/pixels/std::max(1.,scroll.hiddenLength);
+        scrollMotion_.scroll(delta,scroll.hiddenLength,now());
+        dirty_=true;requestFrame();return true;
     }
     bool outsideDesktopCircle(ehud::scene::Vec2 pointer) const {
         if(!frame_ || !presentation_ || !presentation_->centerPlane) return false;
@@ -177,11 +196,28 @@ private:
         shortcutReady_ = RegisterHotKey(window_, 1, modifiers, LOBYTE(translated)) != FALSE;
         if (!shortcutReady_) shortcutLabel_ += L" (conflict; use tray)";
     }
-    void placeOnActiveMonitor() {
-        POINT pointer{}; GetCursorPos(&pointer); MONITORINFO info{sizeof(info)};
-        GetMonitorInfoW(MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST), &info);
-        SetWindowPos(window_, HWND_TOPMOST, info.rcWork.left, info.rcWork.top,
-            info.rcWork.right - info.rcWork.left, info.rcWork.bottom - info.rcWork.top, SWP_NOACTIVATE);
+    bool placeOnSelectedMonitor(bool topologyChange=false) {
+        const auto monitors=endfield::platform::collect_monitors();
+        std::vector<endfield::platform::MonitorDescriptor> descriptors;
+        descriptors.reserve(monitors.size());
+        for(const auto& monitor:monitors) descriptors.push_back(monitor.descriptor);
+        POINT pointer{};GetCursorPos(&pointer);
+        const auto selected=endfield::platform::MonitorPolicy::resolve_index(descriptors,monitorPreference_,
+            {double(pointer.x),double(pointer.y)},currentMonitorId_,topologyChange);
+        if(!selected) return false;
+        const auto& monitor=descriptors[*selected];const auto& area=monitor.bounds;
+        currentMonitorId_=monitor.stable_id;
+        RECT current{};GetWindowRect(window_,&current);
+        // The source system overlay occupies the full display, including the
+        // taskbar area. Work rectangles belong to ordinary window placement.
+        if(current.left!=area.left || current.top!=area.top || current.right!=area.right || current.bottom!=area.bottom) {
+            placingMonitor_=true;
+            const bool moved=SetWindowPos(window_,HWND_TOPMOST,area.left,area.top,area.right-area.left,area.bottom-area.top,SWP_NOACTIVATE)!=FALSE;
+            placingMonitor_=false;if(!moved) return false;
+        }
+        POINT local=pointer;ScreenToClient(window_,&local);RECT client{};GetClientRect(window_,&client);
+        pointer_={double(local.x),double(local.y)};pointerInside_=PtInRect(&client,local)!=FALSE;
+        pointerChanged_=true;dirty_=true;resolveCursor(false,true);return true;
     }
     void toggle() {
         if (probe_) return;
@@ -195,7 +231,8 @@ private:
                 playback_ = std::make_unique<ehud::scene::Playback>(document_->entranceDuration(), document_->exitDuration());
                 buttons_ = std::make_unique<ehud::scene::ButtonMotion>(*document_);
             }
-            placeOnActiveMonitor(); RECT client{}; GetClientRect(window_, &client);
+            if(!placeOnSelectedMonitor()) throw std::runtime_error("No available display for the source HUD");
+            RECT client{}; GetClientRect(window_, &client);
             if (!cursor_.handle() && FAILED(cursor_.initialize(window_, executableRoot()/L"Resources"/L"WatchSource"/L"Cursor")))
                 throw std::runtime_error("Original source cursor initialization failed");
             if (!renderer_) {
@@ -246,11 +283,20 @@ private:
         scrollMotion_.reset(scrollMotion_.position(),time);
         quitAfterClose_ = quit; playback_->close(time); dirty_ = true; requestFrame();
     }
+    void concealPresentation() {
+        if(editor_) editor_->focus(false);
+        if(playback_) playback_->conceal();
+        frame_.reset();frameSchedule_.reset();cursor_.set_presented(false);
+        cancelPointerInteraction();
+        KillTimer(window_,frameTimer);KillTimer(window_,clockTimer);frameTimerRunning_=false;
+        ShowWindow(window_,SW_HIDE);gyro_.stop(now());
+    }
     void cancelPointerInteraction() {
         const double time = now();
         if (pressed_ && buttons_) buttons_->setState(ehud::scene::ButtonState::normal, *pressed_, time);
         if (hovered_ && buttons_) buttons_->setHovered(false, *hovered_, time);
         pressed_.reset(); hovered_.reset(); pointerInside_ = false;
+        pressedScrollDirection_.reset();
         if (GetCapture() == window_) ReleaseCapture();
     }
     bool resolveCursor(bool queryPointer, bool force=false) {
@@ -352,24 +398,26 @@ private:
     void writeProbe() {
         KillTimer(window_, probeTimer);
         const auto elapsed = std::chrono::duration<double>(Clock::now() - probeStart_).count();
+        const auto processCpu=cpuSeconds()-cpuStart_;
         DWORD handles{}; GetProcessHandleCount(GetCurrentProcess(), &handles);
         PROCESS_MEMORY_COUNTERS_EX memory{}; memory.cb = sizeof(memory);
         GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory));
-        std::vector<Monitor> monitors; EnumDisplayMonitors(nullptr, nullptr, enumerateMonitor, reinterpret_cast<LPARAM>(&monitors));
+        const auto monitors=endfield::platform::collect_monitors();
         if (output_.has_parent_path()) std::filesystem::create_directories(output_.parent_path());
         std::ofstream output(output_); output << std::setprecision(12)
             << "{\n  \"schema\": 1,\n  \"scenario\": \"" << (warmClosed_ ? "closed-after-105-graphics-cycles" : "closed-native-shell")
             << "\",\n  \"synthetic\": true,\n"
-            << "  \"elapsed_seconds\": " << elapsed << ",\n  \"process_cpu_seconds\": " << cpuSeconds() - cpuStart_
+            << "  \"elapsed_seconds\": " << elapsed << ",\n  \"process_cpu_seconds\": " << processCpu
             << ",\n  \"hud_frames_submitted\": " << (renderer_ ? renderer_->submittedFrames() - submittedAtClose_ : 0)
             << ",\n  \"renderer_created\": " << (renderer_ ? "true" : "false") << ",\n  \"working_set_bytes\": " << memory.WorkingSetSize
             << ",\n  \"private_bytes\": " << memory.PrivateUsage << ",\n  \"handles_start\": " << handlesStart_
             << ",\n  \"handles_end\": " << handles << ",\n  \"monitors\": [";
         for (std::size_t index = 0; index < monitors.size(); ++index) {
-            if (index) output << ','; const auto& monitor = monitors[index];
-            output << "{\"left\":" << monitor.area.left << ",\"top\":" << monitor.area.top
-                << ",\"width\":" << monitor.area.right - monitor.area.left << ",\"height\":" << monitor.area.bottom - monitor.area.top
-                << ",\"dpi_x\":" << monitor.dpiX << ",\"dpi_y\":" << monitor.dpiY << '}';
+            if (index) output << ','; const auto& entry=monitors[index];const auto& monitor=entry.descriptor;
+            output << "{\"left\":" << monitor.bounds.left << ",\"top\":" << monitor.bounds.top
+                << ",\"width\":" << monitor.bounds.right-monitor.bounds.left << ",\"height\":" << monitor.bounds.bottom-monitor.bounds.top
+                << ",\"dpi_x\":" << monitor.dpi_x << ",\"dpi_y\":" << monitor.dpi_y
+                << ",\"persistent_identity_available\":" << (entry.persistent_identity?"true":"false") << '}';
         }
         output << "],\n  \"gpu_utilization\": \"unverified; requires GPU trace\",\n"
             << "  \"wakeups\": \"unverified; WPR trace required\",\n  \"performance_parity\": \"unverified\"\n}\n";
@@ -446,6 +494,7 @@ private:
                 << ",\n  \"handles_after\": " << handlesAfter
                 << ",\n  \"editor_projection_corner_checks\": \"passed\",\n  \"visible_frame_pacing\": \"unverified; hidden-window test\",\n"
                 << "  \"encoded_premultiplied_alpha\": \"passed; synthetic half-alpha white GPU readback\",\n"
+                << "  \"source_accumulation\": \"linear fragments into BGRA8 sRGB; separate encoded-premultiplied Windows presentation\",\n"
                 << "  \"source_textures_retained\": " << renderer.textureCount() << ",\n  \"source_text_surfaces_retained\": " << renderer.textCount()
                 << ",\n  \"source_material_visual_parity\": \"unverified; selected source UI/mesh FX translated, complete FX/HDR comparison pending\",\n  \"live_ime\": \"unverified\"\n}\n";
             if (!output) throw std::runtime_error("Cannot write graphics evidence");
@@ -479,6 +528,7 @@ private:
             buttons_->setState(hovered_ == pressed_ ? ehud::scene::ButtonState::highlighted : ehud::scene::ButtonState::normal,
                 *pressed_, now()); pressed_.reset(); dirty_ = true; requestFrame();
         }
+        if(message==WM_CAPTURECHANGED || message==WM_CANCELMODE) pressedScrollDirection_.reset();
         if(message==WM_SETFOCUS) {cursor_.set_focused(true); resolveCursor(true,true);}
         if(message==WM_KILLFOCUS) cursor_.set_focused(false);
         if(message==WM_SETCURSOR) {
@@ -494,8 +544,16 @@ private:
         case WM_APP + 3: graphicsProbe(); return 0;
         case WM_APP + 2: case WM_HOTKEY: toggle(); return 0;
         case WM_INPUTLANGCHANGE: if (!probe_) registerShortcut(); break;
-        case WM_DISPLAYCHANGE: if (playback_ && playback_->phase() != ehud::scene::Phase::concealed) placeOnActiveMonitor(); dirty_ = true; requestFrame(); return 0;
-        case WM_DPICHANGED: { auto* rect = reinterpret_cast<RECT*>(lparam); SetWindowPos(window_, HWND_TOPMOST, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOACTIVATE); dirty_ = true; requestFrame(); return 0; }
+        case WM_DISPLAYCHANGE:
+        case WM_DPICHANGED:
+            if(placingMonitor_) return 0;
+            if(playback_ && playback_->phase()!=ehud::scene::Phase::concealed) {
+                if(!placeOnSelectedMonitor(true)) {
+                    concealPresentation();return 0;
+                }
+                requestFrame();
+            }
+            return 0;
         case WM_SIZE:
             if (renderer_) { HRESULT status = renderer_->resize(LOWORD(lparam), HIWORD(lparam)); if (FAILED(status)) { renderingFailed(status); return 0; } }
             dirty_ = true; requestFrame(); return 0;
@@ -526,11 +584,22 @@ private:
         case WM_LBUTTONDOWN:
             if (frame_ && buttons_ && playback_ && playback_->phase()==ehud::scene::Phase::visible) {
                 const ehud::scene::Vec2 pointer{static_cast<double>(GET_X_LPARAM(lparam)), static_cast<double>(GET_Y_LPARAM(lparam))};
+                if(auto direction=frame_->scrollDirectionAt(pointer)) {
+                    pressedScrollDirection_=direction;SetCapture(window_);return 0;
+                }
                 pressed_ = frame_->buttonAt(pointer);
                 if (pressed_) { buttons_->setState(ehud::scene::ButtonState::pressed, *pressed_, now()); SetCapture(window_); dirty_ = true; requestFrame(); }
                 else if(outsideDesktopCircle(pointer)) close(false);
             } return 0;
         case WM_LBUTTONUP:
+            if(pressedScrollDirection_) {
+                const int direction=*pressedScrollDirection_;pressedScrollDirection_.reset();
+                const ehud::scene::Vec2 pointer{static_cast<double>(GET_X_LPARAM(lparam)),static_cast<double>(GET_Y_LPARAM(lparam))};
+                const bool sameArrow=frame_ && frame_->scrollDirectionAt(pointer)==direction;
+                ReleaseCapture();
+                if(sameArrow) scrollDesktopNavigation(direction);
+                return 0;
+            }
             if (pressed_ && buttons_) {
                 buttons_->setState(hovered_ == pressed_ ? ehud::scene::ButtonState::highlighted : ehud::scene::ButtonState::normal, *pressed_, now());
                 pressed_.reset(); ReleaseCapture(); dirty_ = true; requestFrame();
@@ -539,13 +608,7 @@ private:
         case WM_TIMER: if (wparam == frameTimer) frame(); else if (wparam == probeTimer) writeProbe();
             else if(wparam==clockTimer && playback_ && playback_->phase()!=ehud::scene::Phase::concealed && refreshClock()) {dirty_=true;requestFrame();} return 0;
         case WM_CLOSE: close(false); return 0;
-        case WM_POWERBROADCAST: if (wparam == PBT_APMSUSPEND && playback_) {
-            if (editor_) editor_->focus(false); playback_->conceal(); frame_.reset();
-            cursor_.set_presented(false);
-            frameSchedule_.reset();
-            cancelPointerInteraction();
-            KillTimer(window_, frameTimer);KillTimer(window_,clockTimer); frameTimerRunning_ = false; ShowWindow(window_, SW_HIDE); gyro_.stop(now());
-        } return TRUE;
+        case WM_POWERBROADCAST: if(wparam==PBT_APMSUSPEND) concealPresentation(); return TRUE;
         case trayMessage:
             if (LOWORD(lparam) == NIN_SELECT || LOWORD(lparam) == NIN_KEYSELECT) toggle();
             else if (LOWORD(lparam) == WM_CONTEXTMENU) {
@@ -580,6 +643,10 @@ private:
     std::unique_ptr<ehud::scene::DesktopShell> shell_;
     std::unique_ptr<ehud::scene::ButtonMotion> buttons_;
     std::optional<ehud::scene::SourceId> hovered_, pressed_;
+    std::optional<int> pressedScrollDirection_;
+    endfield::platform::MonitorPreference monitorPreference_;
+    std::optional<std::wstring> currentMonitorId_;
+    bool placingMonitor_{};
     std::unique_ptr<ehud::render::NativeRenderer> renderer_;
     std::unique_ptr<endfield::platform::ProjectedEditor> editor_;
     std::optional<ehud::scene::Frame> frame_; ehud::scene::GyroMotion gyro_; ehud::scene::Vec2 pointer_{};

@@ -73,11 +73,42 @@ void source(const std::filesystem::path &root) {
         near(properties.at("m_Color.r"),250.0/255,1e-12,"Profile fill/frame uses canonical yellow accent");
         near(properties.at("m_Color.g"),212.0/255,1e-12,"Profile fill/frame does not retain original game green");
     }
+    for(const auto &id:info.profileGlowIds)
+        near(sourceProperties.properties.at(id).at("m_Color.a"),id==info.profileHighlightId?1:0,0,"Only canonical profile root highlight retains source ColorTint alpha");
+    check(sourceProperties.normalMaterialNodes==std::vector<SourceId>{info.profileHighlightId},"Only prepared profile hover plate uses explicit normal alpha");
+    check(sourceProperties.properties.at(info.profileBackgroundId).at("desktop.profileArtwork")==1&&sourceProperties.properties.at(info.profileHighlightId).at("desktop.profileArtwork")==2,"Card and hover replace exact original source nodes");
+    for(const auto &id:{info.profileBackgroundId,info.profileHighlightId})
+        for(std::size_t channel=0;channel<3;++channel)
+            near(sourceProperties.properties.at(id).at(std::string("desktop.profileAccent.")+"rgb"[channel]),fixture.accent[channel],0,"Profile artwork carries encoded source accent without global bitmap tint");
     fixture.permissionLevel=999;auto clamped=shell.sourcePresentation(fixture);
     near(clamped.properties.at(info.profileBindings.at("levelSlider")).at("m_FillAmount"),1,0,"Source profile authority is bounded at60");
     fixture.permissionLevel=60;
     FrameInput input;input.viewport={1920,1080};input.playback={Phase::visible,document.entranceDuration(),{}, {},0};input.desktopPresentation=&sourceProperties;
     auto frame=document.frame(input);auto hits=frame.hits;auto nodeCount=frame.nodes.size();
+    auto nodeGraphic=[](const Frame &value,const SourceId &id)->const Graphic* {
+        auto it=std::find_if(value.graphics.begin(),value.graphics.end(),[&](const auto &g){return g.nodeId==id;});
+        return it==value.graphics.end()?nullptr:&*it;
+    };
+    auto background=nodeGraphic(frame,info.profileBackgroundId);
+    check(background&&background->sampledProperties.at("desktop.profileArtwork")==1&&!background->normalMaterial,"Prepared themed card retains original source UI material policy");
+    ButtonMotion profileMotion(document);profileMotion.reset(0,true);profileMotion.setHovered(true,info.profileRootId,1);
+    auto hoverInput=input;hoverInput.interaction=&profileMotion;hoverInput.time=2;
+    auto hovered=document.frame(hoverInput);auto hover=nodeGraphic(hovered,info.profileHighlightId);
+    check(hover&&hover->normalMaterial&&hover->sampledProperties.at("desktop.profileArtwork")==2&&hover->color[3]>0,"Source root hover finitefade reveals prepared normal-alpha plate");
+    auto rawHoverInput=hoverInput;rawHoverInput.desktopPresentation=nullptr;
+    auto rawHovered=document.frame(rawHoverInput);auto rawHover=nodeGraphic(rawHovered,info.profileHighlightId);
+    check(rawHover&&hover->textureId==rawHover->textureId&&hover->quads.size()==rawHover->quads.size()&&hover->uvQuads.size()==rawHover->uvQuads.size(),"Native profile policy retains original highlight texture identity and authored mesh");
+    near(hover->color[3],rawHover->color[3],0,"Profile replacement alpha comes from source ColorTint, without second fade");
+    check(!profileMotion.requiresFrames(2),"Settled profile hover cannot require a perpetual animation loop");
+    profileMotion.setHovered(false,info.profileRootId,2);hoverInput.time=3;
+    auto departed=document.frame(hoverInput);auto hiddenHover=nodeGraphic(departed,info.profileHighlightId);
+    check(!hiddenHover||hiddenHover->color[3]==0,"Source ColorTint fully hides native profile plate after finite exit");
+    check(!profileMotion.requiresFrames(3),"Profile finite hover exit parks frame demand");
+    auto blueFixture=fixture;blueFixture.accent={.12,.66,.95};auto blueProperties=shell.sourcePresentation(blueFixture);
+    auto blueInput=input;blueInput.desktopPresentation=&blueProperties;auto blue=document.frame(blueInput);auto blueBackground=nodeGraphic(blue,info.profileBackgroundId);
+    check(blueBackground&&blueBackground->textureId==background->textureId&&blueBackground->quads.size()==background->quads.size(),"Alternate synthetic accent never selects an unrelated card sprite or geometry");
+    for(std::size_t channel=0;channel<3;++channel)
+        near(blueBackground->sampledProperties.at(std::string("desktop.profileAccent.")+"rgb"[channel]),blueFixture.accent[channel],0,"Synthetic accent reaches cached renderer artwork contract");
     auto presentation=shell.decorate(frame,fixture);
     check(presentation.centerPlane.has_value()&&presentation.statusPlane.has_value()&&presentation.footerPlane.has_value(),"Native header/status/footer have explicit source planes");
     check(presentation.sourceLogoRetained,"Default source Endfield lettering remains in the source packet");

@@ -90,8 +90,19 @@ All four source profile accent decorations (levelSlider, headFrameImg, IconRight
 ArrowImage) receive the source accent before the frame is sampled. Their IDs are
 resolved once and do not introduce pointer-time scene scans. Immutable portrait
 and clock vector triangulation is cached by a fixed set of canonical skin keys.
+The background and exact root Selectable highlight retain their source geometry,
+texture IDs and ordering. `desktop.profileArtwork` is1 for the themed normal_1
+card and2 for its native hover plate; `desktop.profileAccent.r/g/b` are encoded
+sRGB channels. The renderer derives cached artwork from the original530x204
+sprite, remaps its source mesh across the local rectangle as the Mac desktopUV
+path does, and preserves its authored alpha. The highlight alone receives
+normalMaterial, with m_Color.a=1; other broad profile glow layers stay at0.
+The original ColorTint supplies the one finite enter/exit fade. The source
+authority is `HUDSourceWatchView.setDesktopProfile`,
+`HUDSourceDesktopHoverFeedback` in `HUDSourceDesktopNavigationLayout.swift`, and
+`HUDSourceProfileArtwork.themedBackgroundArtwork/hoverArtwork`.
 The clock is a digital first-gate presentation; alternative clock styles, clock
-controls, profile editing/imported photos, saved-app navigation, hover texture synthesis,
+controls, profile editing/imported photos, saved-app navigation,
 live status providers and module surfaces remain unfinished.
 
 `desktop_shell_tests` covers canonical module order, localized identities,

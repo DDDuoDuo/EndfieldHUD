@@ -75,7 +75,9 @@ class DesktopShell {
     static DesktopLanguage resolveLanguage(const std::vector<std::string> &preferredLanguages);
     static double canvasAlpha(const DesktopShellFixture &fixture);
     // Pass this before Document::frame to update the original profile's fill,
-    // glow and accent properties. No images, timers or module models are made.
+    // glow and accent properties. desktop.profileArtwork=1 selects the original
+    // themed card, =2 its normal-alpha hover plate; the renderer caches those
+    // source-only replacements. No images, timers or module models are made.
     DesktopPresentation sourcePresentation(const DesktopShellFixture &fixture) const;
     // Replaces only native desktop overlays and their explicit source icons.
     // Repeated decoration is idempotent; source camera/geometry/hits remain owned

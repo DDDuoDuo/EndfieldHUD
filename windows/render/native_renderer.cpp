@@ -41,6 +41,8 @@ HRESULT NativeRenderer::initialize(HWND owner, unsigned width, unsigned height) 
     if (FAILED(hr = text_->CreateTextFormat(L"Segoe UI", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 14, L"en-US", &textFormat_))) return hr;
     if (FAILED(hr = painter_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1), &brush_))) return hr;
+    presentationAdapter_=std::make_unique<SourcePresentationAdapter>();
+    if(FAILED(hr=presentationAdapter_->initialize(device_.Get()))) return hr;
     return bindSurface();
 }
 HRESULT NativeRenderer::bindSurface() {
@@ -58,6 +60,16 @@ HRESULT NativeRenderer::bindSurface() {
     target.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     target.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
     if (FAILED(hr = device_->CreateRenderTargetView(texture.Get(), &target, &renderTarget_))) return hr;
+    D3D11_TEXTURE2D_DESC source{};texture->GetDesc(&source);
+    source.Format=DXGI_FORMAT_B8G8R8A8_TYPELESS;source.MipLevels=source.ArraySize=1;
+    source.Usage=D3D11_USAGE_DEFAULT;source.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+    source.CPUAccessFlags=source.MiscFlags=0;
+    if(FAILED(hr=device_->CreateTexture2D(&source,nullptr,&sourceSurface_))) return hr;
+    auto sourceTarget=target;sourceTarget.Format=DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    if(FAILED(hr=device_->CreateRenderTargetView(sourceSurface_.Get(),&sourceTarget,&sourceTarget_))) return hr;
+    D3D11_SHADER_RESOURCE_VIEW_DESC sourceView{};sourceView.Format=DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    sourceView.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;sourceView.Texture2D.MipLevels=1;
+    if(FAILED(hr=device_->CreateShaderResourceView(sourceSurface_.Get(),&sourceView,&sourceView_))) return hr;
     painter_->SetTarget(surface_.Get());
     return S_OK;
 }
@@ -105,11 +117,15 @@ HRESULT NativeRenderer::waitForDiagnosticGpu() {
 }
 HRESULT NativeRenderer::verifyDiagnosticAlpha() {
     if (!source_) return E_UNEXPECTED;
-    scene::Frame frame; frame.camera.viewport = {32, 32};
+    D3D11_TEXTURE2D_DESC sourceDescription{};sourceSurface_->GetDesc(&sourceDescription);
+    scene::Frame frame;frame.camera.viewport={double(sourceDescription.Width),double(sourceDescription.Height)};
     scene::Graphic graphic; graphic.color = {1, 1, 1, .5}; graphic.vertexColorReady = true;
     graphic.quads.push_back({scene::Vec3{-1,-1,0}, {-1,1,0}, {1,1,0}, {1,-1,0}});
     frame.graphics.push_back(std::move(graphic));
-    HRESULT hr = source_->draw(renderTarget_.Get(), frame); if (FAILED(hr)) return hr;
+    HRESULT hr=source_->draw(sourceTarget_.Get(),frame,SourceOutputContract::SourceLinearPremultiplied);
+    if(FAILED(hr)) return hr;
+    hr=presentationAdapter_->draw(renderTarget_.Get(),sourceView_.Get(),sourceDescription.Width,sourceDescription.Height);
+    if(FAILED(hr)) return hr;
     context_->OMSetRenderTargets(0, nullptr, nullptr);
     ComPtr<ID3D11Texture2D> buffer; if (FAILED(hr = swapchain_->GetBuffer(0, IID_PPV_ARGS(&buffer)))) return hr;
     D3D11_TEXTURE2D_DESC description{}; buffer->GetDesc(&description);
@@ -125,7 +141,8 @@ HRESULT NativeRenderer::verifyDiagnosticAlpha() {
 }
 HRESULT NativeRenderer::resize(unsigned width, unsigned height) {
     if (!swapchain_ || !width || !height) return S_OK;
-    painter_->SetTarget(nullptr); surface_.Reset(); renderTarget_.Reset(); context_->ClearState();
+    painter_->SetTarget(nullptr); surface_.Reset(); renderTarget_.Reset();
+    sourceView_.Reset();sourceTarget_.Reset();sourceSurface_.Reset();context_->ClearState();
     HRESULT hr = swapchain_->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
     return FAILED(hr) ? hr : bindSurface();
 }
@@ -160,7 +177,10 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
         }
     }
     if (source_) {
-        HRESULT hr = source_->draw(renderTarget_.Get(), frame);
+        HRESULT hr=source_->draw(sourceTarget_.Get(),frame,SourceOutputContract::SourceLinearPremultiplied);
+        if(FAILED(hr)) return hr;
+        hr=presentationAdapter_->draw(renderTarget_.Get(),sourceView_.Get(),
+            static_cast<unsigned>(frame.camera.viewport.x),static_cast<unsigned>(frame.camera.viewport.y));
         if (FAILED(hr)) return hr;
         context_->OMSetRenderTargets(0, nullptr, nullptr);
     }
@@ -206,6 +226,8 @@ HRESULT NativeRenderer::draw(const scene::Frame& frame, endfield::platform::Proj
 }
 void NativeRenderer::reset() {
     if (painter_) painter_->SetTarget(nullptr);
+    if(context_) context_->ClearState();
+    presentationAdapter_.reset();sourceView_.Reset();sourceTarget_.Reset();sourceSurface_.Reset();
     editorBitmap_.Reset(); editorPlane_.Reset(); editorRevision_ = UINT64_MAX;
     source_.reset(); renderTarget_.Reset(); surface_.Reset(); brush_.Reset(); textFormat_.Reset(); text_.Reset(); painter_.Reset();
     d2d_.Reset(); factory_.Reset(); visual_.Reset(); target_.Reset(); compositor_.Reset();

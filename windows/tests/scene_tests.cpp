@@ -144,6 +144,24 @@ void desktopScroll() {
     motion.reset(2, 0);
     check(motion.position() == 1 && !motion.canScroll(-1) && motion.canScroll(1),
           "Reset clamps upper boundary and exposes only the permitted direction");
+    Frame arrows;
+    arrows.camera.viewport = {200, 100};
+    arrows.camera.viewProjection = Mat4::identity();
+    arrows.scrollIndicators.push_back(
+        {-1, "arrow", {{-.5, -.5}, {1, 1}}, Mat4::identity(), Mat4::identity(), {}, true, false});
+    check(arrows.scrollDirectionAt({100, 50}) == -1,
+          "Disabled active source arrows consume their authored hit plane");
+    arrows.scrollIndicators.front().masks.push_back(
+        {{{.1, .1}, {.2, .2}}, Mat4::identity(), Mat4::identity(), "mask"});
+    check(!arrows.scrollDirectionAt({100, 50}),
+          "Arrow input shares the actual source mask intersection");
+    arrows.scrollIndicators.front().masks.clear();
+    arrows.scrollIndicators.front().active = false;
+    check(!arrows.scrollDirectionAt({100, 50}),
+          "Opening/closing source arrows cannot receive input");
+    arrows.scrollIndicators.front().active = true;
+    check(!arrows.scrollDirectionAt({180, 50}),
+          "Arrow input uses the bounded local rectangle rather than a screen strip");
 }
 void curves() {
     ScalarCurve hermite({{0, 2, 0, 3}, {2, 8, 3, 0}});
@@ -2572,6 +2590,63 @@ void desktopSource(const std::filesystem::path &path) {
     input.reduceMotion = true;
     auto frame = doc.frame(input);
     auto reference = raw.frame(input);
+    check(frame.scrollIndicators.size() == 2 && reference.scrollIndicators.empty(),
+          "Only desktop frames expose the two canonical authored scroll arrow planes");
+    check(info->scrollIndicatorIds.at(-1) ==
+                  "CAB-194e41a66c2317b9df19269f505210be:3878725756700159191" &&
+              info->scrollIndicatorIds.at(1) ==
+                  "CAB-194e41a66c2317b9df19269f505210be:6424409055855602903",
+          "Desktop uses outer30-unit arrow lines, excluding nested13-unit source duplicates");
+    for (const auto &arrow : frame.scrollIndicators) {
+        near(arrow.rect.size.y, 30, 0, "Canonical arrow hit plane retains source height");
+        check(arrow.active && arrow.enabled == (arrow.direction > 0),
+              "Top-of-list arrow availability follows bounded source target");
+        const auto *graphic = findNodeGraphic(frame, arrow.nodeId);
+        const auto *original = findNodeGraphic(reference, arrow.nodeId);
+        check(graphic && original, "Source arrow artwork stays in the original render stream");
+        near(graphic->color[0], arrow.enabled ? 1 : static_cast<double>(.32f), 0,
+             "Arrow disabled tint retains source linear Float0.32");
+        near(graphic->color[3],
+             original->color[3] * (arrow.enabled ? 1 : static_cast<double>(.65f)), 1e-8,
+             "Arrow limit opacity multiplies authored source alpha without replacing it");
+        const Vec3 center{arrow.rect.origin.x + arrow.rect.size.x / 2,
+                          arrow.rect.origin.y + arrow.rect.size.y / 2, 0};
+        auto pixel = frame.camera.project(center, arrow.world);
+        check(pixel && frame.scrollDirectionAt(*pixel) == arrow.direction,
+              "Both enabled and disabled actual source arrows share projective input planes");
+    }
+    auto arrowInput = input;
+    arrowInput.verticalNormalizedPosition = 1.2;
+    arrowInput.desktopScrollTarget = .5;
+    auto middleArrows = doc.frame(arrowInput);
+    check(std::all_of(middleArrows.scrollIndicators.begin(), middleArrows.scrollIndicators.end(),
+                      [](const auto &arrow) { return arrow.enabled; }),
+          "Arrow availability follows motion target rather than overscrolling presentation");
+    arrowInput.desktopScrollTarget = 0;
+    auto endArrows = doc.frame(arrowInput);
+    check(std::all_of(endArrows.scrollIndicators.begin(), endArrows.scrollIndicators.end(),
+                      [](const auto &arrow) { return arrow.enabled == (arrow.direction < 0); }),
+          "Bottom target enables up and dims down independently of lagging scroll position");
+    Playback arrowPlayback(doc.entranceDuration(), doc.exitDuration());
+    arrowPlayback.open(0);
+    arrowInput.playback = arrowPlayback.sample(doc.entranceDuration() / 2);
+    arrowInput.desktopScrollTarget = 1;
+    auto enteringArrows = doc.frame(arrowInput);
+    auto rawEnteringArrows = raw.frame(arrowInput);
+    check(std::none_of(enteringArrows.scrollIndicators.begin(),
+                       enteringArrows.scrollIndicators.end(),
+                       [](const auto &arrow) { return arrow.active; }),
+          "Mid-entrance arrow geometry is presented without enabling source input");
+    const auto &up = info->scrollIndicatorIds.at(-1);
+    const auto *entering = findNodeGraphic(enteringArrows, up);
+    const auto *rawEntering = findNodeGraphic(rawEnteringArrows, up);
+    check(entering && rawEntering, "Original arrow artwork is exercised during finite entrance");
+    near(entering->color[3], rawEntering->color[3] * static_cast<double>(.65f), 1e-8,
+         "Middle-transition disabled arrow opacity retains sampled source CanvasGroup alpha");
+    arrowInput.playback = input.playback;
+    arrowInput.desktopScrollTarget = std::numeric_limits<double>::infinity();
+    rejects([&] { doc.frame(arrowInput); },
+            "Nonfinite source scroll target cannot drive arrow states");
     near(doc.initialRootRotation().w, 1, 0, "Canonical initial camera root uses authored identity");
     const auto *profile = frame.node(info->profileRootId);
     const auto *parent = frame.node(info->profileParentId);
@@ -2763,6 +2838,16 @@ void desktopSource(const std::filesystem::path &path) {
     native.graphics.push_back(footer);
     Quaternion tilt{0, std::sin(.025), 0, std::cos(.025)};
     doc.reproject(native, tilt);
+    for (const auto &arrow : native.scrollIndicators) {
+        const auto *node = native.node(arrow.nodeId);
+        check(node && arrow.world.values == node->world.values,
+              "Arrow draw/input metadata shares the reprojected source node transform");
+        const Vec3 center{arrow.rect.origin.x + arrow.rect.size.x / 2,
+                          arrow.rect.origin.y + arrow.rect.size.y / 2, 0};
+        auto pixel = native.camera.project(center, arrow.world);
+        check(pixel && native.scrollDirectionAt(*pixel) == arrow.direction,
+              "Arrow projective hits survive camera-only live tilt");
+    }
     const auto expected = native.node(overlay.nodeId)->world * overlay.nodeLocal;
     for (int i = 0; i < 16; ++i) {
         near(native.graphics[native.graphics.size() - 2].world.values[i], expected.values[i], 1e-9,

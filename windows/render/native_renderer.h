@@ -9,6 +9,7 @@
 #include "scene/watch_scene.hpp"
 #include "platform/projected_editor.h"
 #include "source_draw.h"
+#include "presentation_adapter.h"
 #include <cstdint>
 
 namespace ehud::render {
@@ -43,6 +44,10 @@ private:
     ComPtr<ID2D1DeviceContext> painter_;
     ComPtr<ID2D1Bitmap1> surface_;
     ComPtr<ID3D11RenderTargetView> renderTarget_;
+    ComPtr<ID3D11Texture2D> sourceSurface_;
+    ComPtr<ID3D11RenderTargetView> sourceTarget_;
+    ComPtr<ID3D11ShaderResourceView> sourceView_;
+    std::unique_ptr<SourcePresentationAdapter> presentationAdapter_;
     std::shared_ptr<SourceDraw> source_;
     ComPtr<ID2D1SolidColorBrush> brush_;
     ComPtr<IDWriteFactory> text_;

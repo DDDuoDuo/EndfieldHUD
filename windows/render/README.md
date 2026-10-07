@@ -25,22 +25,41 @@ shader clock running only while presented. `--ambient-off` freezes it explicitly
 
 This remains a feasibility renderer. Complete FX/soft-mask/stencil/HDR/backdrop
 passes, original font metrics and matched Mac visual output have not reached
-parity. The encoded UNORM desktop adapter is not the source's full linear/HDR
-render pipeline; translated arithmetic and synthetic pixels do not establish
-complete compositing parity. Unsupported shader variants are still incomplete.
+parity. The source LDR accumulation and final desktop adapter are separate
+stages; their synthetic pixels do not establish complete compositing parity
+or the original HDR pipeline. Unsupported shader variants are still incomplete.
 The two authored anisotropic samplers use D3D's anisotropic filter; their source
 nearest-mip behavior needs a separate cross-platform sampling comparison.
 The normal desktop contains no diagnostic banner or editor. `--editor-fixture`
 explicitly enables the synthetic projected editor for isolated input checks.
-Linear RGB is encoded before premultiplication into the shared UNORM surface so
-D3D, Direct2D and the desktop compositor agree on translucent pixels. A native
-synthetic GPU readback verifies half-alpha white against that contract.
-`source_draw_tests` additionally performs 126 offscreen WARP checks using the
+`SourceDraw::draw` explicitly selects its output contract. The host uses
+`SourceLinearPremultiplied`: original UI fragments premultiply linear RGB,
+mesh fragments retain their authored straight-alpha blend factors, and an
+`_UNORM_SRGB` attachment transfers RGB after linear accumulation. This follows
+`HUDSourceMetalRenderer.swift`'s `bgra8Unorm_srgb` target and the extracted
+UI211/272 and Mesh12/13/15 fragment programs. Half-alpha white is approximately
+188 RGB / 128 alpha in that source attachment. A separate presentation adapter
+converts the accumulated result for the encoded-premultiplied DComp surface;
+Direct2D editor overlays draw there afterward. The standalone
+`EncodedPremultiplied` contract remains explicit for existing isolated fixtures
+(half-alpha white 128 RGB / 128 alpha), and mismatched attachment contracts
+are rejected before rendering.
+`source_draw_tests` performs offscreen WARP checks using the
 unchanged staged source and isolated fixtures with original material IDs,
 metadata and blend states. Analytic pixels cover tint/gamma, raw mesh colors,
 red/RGBA masks, dissolve/discard/emissive, additive versus source-over layers,
 animated channels, column UV rotation, 1024-second wrapping and bounded textures.
+Independent sRGB-target expectations additionally cover translucent white/gray,
+ordered source-over, additive color with zero alpha, selected mesh blend states
+and the source themed profile's finite normal-alpha hover. Profile artwork keeps
+the original premultiplied byte-domain chroma operations, crop/row direction,
+integer unpremultiplication and bounded per-accent texture cache; matched
+CoreGraphics/Direct2D rounded-boundary antialiasing remains unverified.
 These tests capture only their own targets and do not certify hardware/HDR parity.
+Zero-alpha additive source pixels retain RGB energy, as the original UI fragment
+and Mac drawable readback require; the final adapter preserves those channels
+without division by zero. Matched Mac/Windows desktop composition over real
+backdrops remains unverified, including mixed additive and nonzero-alpha layers.
 
 `NativeRenderer` owns the composition swapchain, D2D editor surface and source
 resources. Diagnostic BMP readback reads only its own synthetic buffer. The

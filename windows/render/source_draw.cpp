@@ -1,4 +1,5 @@
 #include "source_draw.h"
+#include "profile_artwork.hpp"
 #include "resources/resource_data.h"
 #include <d3dcompiler.h>
 #include <wincodec.h>
@@ -60,7 +61,7 @@ struct alignas(16) Constants {
     float useMaskAsAlpha{}, tintIntensity{}, tintAlpha{}, useVfxParameters{};
     float expThreshold{}, expIntensity{}, dissolveOffset{}, dissolveHardness{};
     float dissolveWidth{}, dissolveIntensity{}, dissolveColorWidth{}, dissolveRamp{};
-    float dissolveByDir{}, paddingFx[3]{};
+    float dissolveByDir{}; unsigned outputContract{}; float paddingFx[2]{};
     float tint[4]{1,1,1,1}, mainSpeed[4]{}, mainRotate[4]{1,0,0,1};
     float maskST[4]{1,1,0,0}, maskSpeed[4]{}, maskRotate[4]{1,0,0,1};
     float dissolveST[4]{1,1,0,0}, dissolveSpeed[4]{}, dissolveRotate[4]{1,0,0,1};
@@ -69,14 +70,15 @@ struct alignas(16) Constants {
 };
 const char shader[] = R"(
 // Source programs: UI Default 211/272 and UIMeshVfxEffect 12/13/15.
-// The desktop output adapter retains encoded-space premultiplied BGRA.
+// Source accumulation writes linear values to an sRGB attachment. The legacy
+// standalone adapter instead writes encoded-premultiplied values to UNORM.
 cbuffer Params : register(b0) {
  float4 st; float4 sampleAdd; float opaque; float additive; uint edgeCount; uint isText; float4 edges[32];
  uint program; float sceneTime; float disableVertColor; float useMainAsAlpha;
  float useMaskAsAlpha; float tintIntensity; float tintAlpha; float useVfxParameters;
  float expThreshold; float expIntensity; float dissolveOffset; float dissolveHardness;
  float dissolveWidth; float dissolveIntensity; float dissolveColorWidth; float dissolveRamp;
- float dissolveByDir; float3 paddingFx;
+ float dissolveByDir; uint outputContract; float2 paddingFx;
  float4 tint; float4 mainSpeed; float4 mainRotate;
  float4 maskST; float4 maskSpeed; float4 maskRotate;
  float4 dissolveST; float4 dissolveSpeed; float4 dissolveRotate;
@@ -126,10 +128,10 @@ float4 pixelMain(P p) : SV_Target {
         value.a *= lerp(1,1-edge,dissolveHardness);
       }
       if (mesh) { value.rgb = clamp(value.rgb + max(value.rgb-expThreshold,0)*expIntensity,0,500); value.a = saturate(value.a); }
-      float3 encoded = encodedRGB(value.rgb);
+      float3 output = outputContract != 0 ? value.rgb : encodedRGB(value.rgb);
       // FX materials retain their authored straight-alpha blend factors;
       // ordinary UI effects use the same premultiplied adapter as images.
-      return mesh ? float4(encoded,value.a) : float4(encoded*value.a,value.a*(1-additive));
+      return mesh ? float4(output,value.a) : float4(output*value.a,value.a*(1-additive));
     }
     float4 sample = sourceTexture.Sample(sourceSampler, p.uv); sample.a = opaque != 0 ? 1 : sample.a;
     if (isText != 0) sample.rgb = 1;
@@ -137,10 +139,10 @@ float4 pixelMain(P p) : SV_Target {
     if(useVfxParameters != 0) { color.rgb *= tintIntensity; color.a *= tintAlpha; }
     if(isText!=2) color.a = round(color.a * 255) / 255;
     float4 result = color * (sample + sampleAdd);
-    // Encode straight linear RGB before premultiplying, matching D2D and the
-    // desktop compositor's encoded-space BGRA alpha contract.
-    float3 encoded = encodedRGB(result.rgb);
-    result.rgb = encoded * result.a; result.a *= 1 - additive; return result;
+    // Original UI programs premultiply linear RGB; the sRGB attachment encodes
+    // after linear blending. Only standalone UNORM adapts before multiplication.
+    float3 output = outputContract != 0 ? result.rgb : encodedRGB(result.rgb);
+    result.rgb = output * result.a; result.a *= 1 - additive; return result;
 }
 )";
 }
@@ -156,14 +158,108 @@ struct SourceDraw::Impl {
         bool prepared{};
     };
     struct Text { Asset asset; std::string key; std::uint64_t used{}; };
+    struct ProfileArtwork { std::array<Asset,2> assets; std::uint64_t used{}; };
     Ptr<ID3D11Device> device; Ptr<ID3D11DeviceContext> context; Ptr<ID2D1DeviceContext> painter;
     Ptr<IDWriteFactory> fonts; Ptr<ID3D11VertexShader> vertex; Ptr<ID3D11PixelShader> pixel;
     Ptr<ID3D11InputLayout> layout; Ptr<ID3D11Buffer> vertices, constants;
     Ptr<ID3D11BlendState> blend; Ptr<ID3D11RasterizerState> raster; Ptr<ID3D11DepthStencilState> depth;
     std::map<std::string, JsonObject> descriptors; std::map<std::string, Asset> assets;
     std::map<std::string, Material> materials; std::map<std::string, Text> texts;
+    std::map<profile::Accent,ProfileArtwork> profiles;
+    std::vector<profile::Pixel> profilePixels;
+    std::vector<std::uint8_t> profilePanelCoverage;
+    unsigned profileWidth{},profileHeight{};
     std::filesystem::path root; unsigned capacity{}; std::uint64_t generation{};
     std::string initializationError;
+    void profileSource() {
+        if(!profilePixels.empty()) return;
+        const auto catalog=object(root/L"Scene"/L"desktop-profile-card.json").GetNamedObject(L"sprites");
+        JsonObject selected,textureInfo; unsigned matches{};
+        for(const auto& value:catalog.GetNamedArray(L"sprites")) {
+            auto sprite=value.GetObject();
+            if(string(sprite,L"name")=="business_card_topic_normal_1") {selected=sprite;++matches;}
+        }
+        if(matches!=1) throw std::runtime_error("Canonical normal_1 profile sprite is ambiguous or missing");
+        const auto textureId=string(selected.GetNamedObject(L"texture"),L"id");
+        matches=0;
+        for(const auto& value:catalog.GetNamedArray(L"source_textures")) {
+            auto info=value.GetObject(); if(string(info,L"id")==textureId) {textureInfo=info;++matches;}
+        }
+        if(matches!=1 || !descriptors.contains(textureId) || integer(textureInfo,L"texture_format",0,63)!=25)
+            throw std::runtime_error("Selected profile BGRA source is unavailable");
+        const unsigned width=integer(textureInfo,L"width",1,16384),height=integer(textureInfo,L"height",1,16384);
+        const auto rendered=selected.GetNamedObject(L"effective_render_data");
+        const auto rect=rendered.GetNamedObject(L"textureRect"),offset=rendered.GetNamedObject(L"textureRectOffset");
+        const auto raw=selected.GetNamedObject(L"raw_sprite").GetNamedObject(L"m_Rect");
+        auto coordinate=[](double value) {
+            if(!std::isfinite(value) || value<0 || value>16384 || value!=std::floor(value))
+                throw std::runtime_error("Nonintegral source profile sprite crop");
+            return static_cast<unsigned>(value);
+        };
+        const profile::Crop crop{coordinate(number(rect,L"x")-number(offset,L"x")),
+            coordinate(number(rect,L"y")-number(offset,L"y")),coordinate(number(raw,L"width")),coordinate(number(raw,L"height"))};
+        if(crop.width!=530 || crop.height!=204) throw std::runtime_error("Unexpected normal_1 profile artwork size");
+        auto rawPath=safePath(root,string(textureInfo.GetNamedObject(L"raw"),L"file"));
+        auto bytes=resources::read(root/L"Textures"/(rawPath.stem().wstring()+L".bgra-mips.bin"));
+        profilePixels=profile::cropPremultipliedBGRA(bytes,width,height,crop);
+        profileWidth=crop.width;profileHeight=crop.height;
+    }
+    void profileClip() {
+        if(!profilePanelCoverage.empty()) return;
+        // CoreGraphics clips a rounded (20,22)-(507,182) panel, radius22,
+        // in the 530x204 artwork. Native D2D retains this geometry and AA;
+        // the platform-specific boundary raster still needs matched Mac QA.
+        D3D11_TEXTURE2D_DESC description{};description.Width=profileWidth;description.Height=profileHeight;
+        description.MipLevels=description.ArraySize=description.SampleDesc.Count=1;
+        description.Format=DXGI_FORMAT_B8G8R8A8_UNORM;description.BindFlags=D3D11_BIND_RENDER_TARGET;
+        Ptr<ID3D11Texture2D> native;checked(device->CreateTexture2D(&description,nullptr,&native));
+        Ptr<IDXGISurface> surface;checked(native.As(&surface));Ptr<ID2D1Bitmap1> bitmap;
+        auto properties=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET|D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(description.Format,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96);
+        checked(painter->CreateBitmapFromDxgiSurface(surface.Get(),&properties,&bitmap));
+        Ptr<ID2D1SolidColorBrush> white;checked(painter->CreateSolidColorBrush(D2D1::ColorF(1,1,1,1),&white));
+        Ptr<ID2D1Image> previous;painter->GetTarget(&previous);D2D1_MATRIX_3X2_F transform;painter->GetTransform(&transform);
+        const auto antialias=painter->GetAntialiasMode();painter->SetTarget(bitmap.Get());
+        painter->BeginDraw();painter->SetTransform(D2D1::Matrix3x2F::Identity());painter->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        painter->Clear(D2D1::ColorF(0,0,0,0));
+        const float sx=profileWidth/530.f,sy=profileHeight/204.f;
+        painter->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(20*sx,22*sy,507*sx,182*sy),22*sx,22*sy),white.Get());
+        const auto status=painter->EndDraw();painter->SetTarget(previous.Get());painter->SetTransform(transform);painter->SetAntialiasMode(antialias);checked(status);
+        description.Usage=D3D11_USAGE_STAGING;description.BindFlags=0;description.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        Ptr<ID3D11Texture2D> staging;checked(device->CreateTexture2D(&description,nullptr,&staging));context->CopyResource(staging.Get(),native.Get());
+        std::vector<std::uint8_t> coverage(std::size_t(profileWidth)*profileHeight);
+        D3D11_MAPPED_SUBRESOURCE mapped{};checked(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped));
+        for(unsigned y=0;y<profileHeight;++y) for(unsigned x=0;x<profileWidth;++x)
+            coverage[std::size_t(profileHeight-y-1)*profileWidth+x]=static_cast<const std::uint8_t*>(mapped.pData)[std::size_t(y)*mapped.RowPitch+x*4+3];
+        context->Unmap(staging.Get(),0);
+        profilePanelCoverage=std::move(coverage);
+    }
+    Asset& profileArtwork(const scene::Graphic& graphic) {
+        auto option=[&](const char* key,double fallback) {auto found=graphic.sampledProperties.find(key);return found==graphic.sampledProperties.end()?fallback:found->second;};
+        const double mode=option("desktop.profileArtwork",0);
+        if(mode!=1 && mode!=2) throw std::runtime_error("Invalid desktop profile artwork mode");
+        const profile::Accent accent{option("desktop.profileAccent.r",250./255),option("desktop.profileAccent.g",212./255),option("desktop.profileAccent.b",31./255)};
+        profile::validate(accent);
+        if(auto found=profiles.find(accent);found!=profiles.end()) {found->second.used=generation;return found->second.assets[static_cast<unsigned>(mode)-1];}
+        constexpr std::size_t maximumAccents=8;
+        if(profiles.size()>=maximumAccents) {
+            auto oldest=std::min_element(profiles.begin(),profiles.end(),[](const auto& a,const auto& b){return a.second.used<b.second.used;});
+            if(oldest->second.used==generation) throw std::runtime_error("Too many profile accents in one source frame");
+            profiles.erase(oldest);
+        }
+        profileSource();profileClip();ProfileArtwork artwork;artwork.used=generation;
+        for(unsigned variant=0;variant<2;++variant) {
+            std::vector<profile::Pixel> pixels(profilePixels.size());
+            for(std::size_t i=0;i<pixels.size();++i) pixels[i]=profile::straight(variant==0 ? profile::themed(profilePixels[i],accent) : profile::hover(profilePixels[i],accent,profilePanelCoverage[i]));
+            D3D11_TEXTURE2D_DESC description{};description.Width=profileWidth;description.Height=profileHeight;
+            description.MipLevels=description.ArraySize=description.SampleDesc.Count=1;description.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+            description.Usage=D3D11_USAGE_IMMUTABLE;description.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA initial{pixels.data(),profileWidth*4,0};Ptr<ID3D11Texture2D> native;checked(device->CreateTexture2D(&description,&initial,&native));
+            auto& asset=artwork.assets[variant];checked(device->CreateShaderResourceView(native.Get(),nullptr,&asset.view));
+            asset.sampler=assets.at("__white").sampler;asset.width=profileWidth;asset.height=profileHeight;
+        }
+        return profiles.emplace(accent,std::move(artwork)).first->second.assets[static_cast<unsigned>(mode)-1];
+    }
     Constants materialConstants(const Material& material, const scene::Graphic& graphic, double time) const {
         Constants result = material.constants;
         result.sceneTime=static_cast<float>(time);
@@ -453,12 +549,25 @@ HRESULT SourceDraw::initialize(ID3D11Device* device, ID3D11DeviceContext* contex
     catch(const std::exception& error) {impl_->initializationError=error.what();return E_FAIL;}
     catch(...) {impl_->initializationError="Unknown source graphics initialization failure";return E_FAIL;}
 }
-HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& frame) {
+HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& frame,
+                         SourceOutputContract outputContract) {
+    if (!target || (outputContract != SourceOutputContract::EncodedPremultiplied &&
+                   outputContract != SourceOutputContract::SourceLinearPremultiplied))
+        return E_INVALIDARG;
+    D3D11_RENDER_TARGET_VIEW_DESC targetDescription{};
+    target->GetDesc(&targetDescription);
+    const bool srgb = targetDescription.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+                      targetDescription.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    if (srgb != (outputContract == SourceOutputContract::SourceLinearPremultiplied))
+        return E_INVALIDARG;
     try {
         auto& d=*impl_; ++d.generation;
         // Rasterize changed text before binding the shared D3D target. The
         // cache is keyed by component and replaced, never appended on reopen.
-        for(const auto& graphic:frame.graphics) if((graphic.kind=="UIText" || graphic.kind=="DesktopText") && !graphic.text.empty()) d.text(graphic);
+        for(const auto& graphic:frame.graphics) {
+            if((graphic.kind=="UIText" || graphic.kind=="DesktopText") && !graphic.text.empty()) d.text(graphic);
+            if(graphic.sampledProperties.contains("desktop.profileArtwork") && graphic.color[3]>0) d.profileArtwork(graphic);
+        }
         d.context->OMSetRenderTargets(1,&target,nullptr); const float clear[4]{}; d.context->ClearRenderTargetView(target,clear);
         D3D11_VIEWPORT viewport{0,0,static_cast<float>(frame.camera.viewport.x),static_cast<float>(frame.camera.viewport.y),0,1};
         d.context->RSSetViewports(1,&viewport); d.context->RSSetState(d.raster.Get()); d.context->OMSetBlendState(d.blend.Get(),nullptr,UINT_MAX); d.context->OMSetDepthStencilState(d.depth.Get(),0);
@@ -481,10 +590,13 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
                 }
             }
             const bool isText=(graphic.kind=="UIText" || graphic.kind=="DesktopText") && !graphic.text.empty();
-            auto& asset=isText ? d.texts.at(graphic.componentId).asset : !graphic.texturePath.empty()&&graphic.textureId.starts_with("desktop.") ? d.desktopImage(graphic) : d.texture(id.empty()?"__white":id);
+            const bool isProfile=graphic.sampledProperties.contains("desktop.profileArtwork");
+            auto& asset=isProfile ? d.profileArtwork(graphic) : isText ? d.texts.at(graphic.componentId).asset : !graphic.texturePath.empty()&&graphic.textureId.starts_with("desktop.") ? d.desktopImage(graphic) : d.texture(id.empty()?"__white":id);
+            if(isProfile) {constants=Constants{};material=nullptr;}
             if(isText) {constants=Constants{}; constants.padding=1;}
             if(graphic.kind=="DesktopIcon") {constants=Constants{}; constants.padding=1;}
             if(graphic.kind.starts_with("Desktop")) {constants=Constants{};constants.padding=2;}
+            constants.outputContract = outputContract == SourceOutputContract::SourceLinearPremultiplied;
             auto& maskAsset=d.texture(material&&!material->effectTextures[0].empty()?material->effectTextures[0]:"__white");
             auto& dissolve=d.texture(material&&!material->effectTextures[1].empty()?material->effectTextures[1]:"__white");
             if(graphic.masks.size()>8) throw std::runtime_error("Source mask depth exceeds native bound");
@@ -515,6 +627,13 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
                 v.position[2]=0; auto uv=q<graphic.uvQuads.size()?graphic.uvQuads[q][i]:scene::Vec2{};
                 // Source raw mip rows and Unity UVs share the same origin.
                 if(isText) uv={i<2?0.:1.,i==0||i==3?1.:0.};
+                if(isProfile) {
+                    if(!std::isfinite(graphic.rect.size.x) || !std::isfinite(graphic.rect.size.y) || graphic.rect.size.x<=0 || graphic.rect.size.y<=0)
+                        throw std::runtime_error("Invalid desktop profile replacement rectangle");
+                    // Mac desktopUV preserves the authored source mesh but
+                    // maps the cropped replacement across its complete rect.
+                    uv={(p.x-graphic.rect.origin.x)/graphic.rect.size.x,(p.y-graphic.rect.origin.y)/graphic.rect.size.y};
+                }
                 v.uv[0]=static_cast<float>(uv.x); v.uv[1]=static_cast<float>(uv.y);
                 for(unsigned c=0;c<3;++c) v.color[c]=graphic.kind.starts_with("Desktop")?linear(graphic.color[c]):q<graphic.colorQuads.size()?static_cast<float>(graphic.colorQuads[q][i][c]*graphic.color[c]):graphic.vertexColorReady ? static_cast<float>(graphic.color[c]) :
                     linear(std::nearbyint(std::clamp(graphic.color[c],0.,1.)*255)/255);
@@ -541,7 +660,7 @@ HRESULT SourceDraw::draw(ID3D11RenderTargetView* target, const scene::Frame& fra
         return S_OK;
     } catch(const winrt::hresult_error& error) {return error.code();} catch(...) {return E_FAIL;}
 }
-std::size_t SourceDraw::textureCount() const {return impl_->assets.size();}
+std::size_t SourceDraw::textureCount() const {return impl_->assets.size()+impl_->profiles.size()*2;}
 std::size_t SourceDraw::textCount() const {return impl_->texts.size();}
 const std::string& SourceDraw::initializationError() const {return impl_->initializationError;}
 }

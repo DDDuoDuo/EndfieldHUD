@@ -717,6 +717,16 @@ const NodeGeometry *Frame::node(std::string_view id) const {
             return &n;
     return nullptr;
 }
+std::optional<int> Frame::scrollDirectionAt(Vec2 point) const {
+    for (const auto &indicator : scrollIndicators) {
+        if (!indicator.active || !camera.hit(point, indicator.world, indicator.rect))
+            continue;
+        if (std::all_of(indicator.masks.begin(), indicator.masks.end(),
+                        [&](const auto &mask) { return camera.hit(point, mask.world, mask.rect); }))
+            return indicator.direction;
+    }
+    return {};
+}
 
 double FlickerSequence::offset(double elapsed, bool opening, bool gate) const {
     finite(elapsed);
@@ -2004,6 +2014,12 @@ Document Document::loadWithMode(const std::filesystem::path &root, ResourceReade
             if (info.statusNodeId.empty() && node.name == "BannerNode" &&
                 node.path.find("/RightBottomNode/") != std::string::npos)
                 info.statusNodeId = node.id;
+            if (node.path.find("/RightBottomNode/DecoLine/") != std::string::npos) {
+                if (node.path.ends_with("/UpLineNode/UpLine"))
+                    info.scrollIndicatorIds[-1] = node.id;
+                else if (node.path.ends_with("/BottonLineNode/BottonLine"))
+                    info.scrollIndicatorIds[1] = node.id;
+            }
             if (node.path.find("/MiddleDecoNode/") != std::string::npos) {
                 if (node.name == "triangle_fx1" || node.name == "RingFoMesh")
                     impl->desktopStyles[i].opacity = .88;
@@ -2902,6 +2918,13 @@ void Document::reproject(Frame &frame, Quaternion rootRotation) const {
         for (auto &mask : hit.masks)
             updateMask(mask);
     }
+    for (auto &indicator : frame.scrollIndicators) {
+        if (resolved)
+            indicator.sceneWorld = (*resolved)[impl_->indices.at(indicator.nodeId)].world;
+        indicator.world = next.worldRoot * indicator.sceneWorld;
+        for (auto &mask : indicator.masks)
+            updateMask(mask);
+    }
     for (auto &node : frame.nodes) {
         if (resolved)
             node.sceneWorld = (*resolved)[impl_->indices.at(node.id)].world;
@@ -3135,6 +3158,39 @@ Frame Document::frame(const FrameInput &input) const {
     layout.apply(&state->pose);
     frame.sourceState_ = std::move(state);
     auto resolved = resolve(d.nodes, d.order, pose, d.rootIndex, panelBase);
+    if (d.desktop) {
+        const double target = input.desktopScrollTarget
+                                  ? std::clamp(finite(*input.desktopScrollTarget), 0.0, 1.0)
+                              : std::isfinite(input.verticalNormalizedPosition)
+                                  ? std::clamp(input.verticalNormalizedPosition, 0.0, 1.0)
+                                  : 1;
+        const bool scrollable = frame.scroll &&
+                                frame.scroll->contentId == d.desktop->navigationContentId &&
+                                frame.scroll->hiddenLength > 0;
+        for (const auto &[direction, id] : d.desktop->scrollIndicatorIds) {
+            const auto i = d.indices.at(id);
+            const auto &r = resolved[i];
+            const bool available =
+                scrollable && (direction < 0 ? target < 1 - 1e-9 : target > 1e-9);
+            if (!input.desktopPresentation ||
+                !input.desktopPresentation->graphicStyles.contains(id))
+                styles[i] = {std::array<double, 3>{available ? 1 : static_cast<double>(.32f),
+                                                   available ? 1 : static_cast<double>(.32f),
+                                                   available ? 1 : static_cast<double>(.32f)},
+                             available ? 1 : static_cast<double>(.65f)};
+            if (!r.rect)
+                continue;
+            std::vector<HitRegion::Mask> masks;
+            for (auto mask : r.masks)
+                if (resolved[mask].rect)
+                    masks.push_back({*resolved[mask].rect, frame.worldRoot * resolved[mask].world,
+                                     resolved[mask].world, d.nodes[mask].id});
+            const bool active = r.active && input.playback.phase == Phase::visible && scrollable;
+            frame.scrollIndicators.push_back({direction, id, *r.rect, frame.worldRoot * r.world,
+                                              r.world, std::move(masks), active,
+                                              active && available});
+        }
+    }
     std::vector<double> deploymentAlpha(d.nodes.size(), 1);
     if (input.deployment && !input.reduceMotion)
         for (auto i : d.order) {

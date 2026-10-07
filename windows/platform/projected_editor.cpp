@@ -930,6 +930,11 @@ std::u16string clipboard_paste(HWND owner) {
 }
 bool ProjectedEditor::handle_message(UINT message, WPARAM wparam, LPARAM lparam, LRESULT& result) {
     auto& p=*impl_; result=0;
+    // A display move can leave the source homography unchanged while changing
+    // ClientToScreen. TSF must invalidate its cached candidate/caret screen rect.
+    if(message==WM_MOVE || message==WM_DPICHANGED) {
+        if(p.store) p.store->layout_change();return false;
+    }
     if (message==WM_GETOBJECT && static_cast<LONG>(lparam)==UiaRootObjectId && p.accessibility) {
         result=UiaReturnRawElementProvider(p.owner,wparam,lparam,static_cast<IRawElementProviderSimple*>(p.accessibility.Get())); return true;
     }

@@ -56,6 +56,19 @@ Windows wheel-line preferences and projected pixel-to-source conversion belong
 to the host. Precision touchpad gesture phases, OS momentum ownership and gesture
 continuation remain unverified; this wheel API does not synthesize them.
 
+`Frame::scrollIndicators` exposes the original outer UpLine/BottonLine planes,
+not the nested decorative duplicates. They retain exact source rects, masks and
+world/scene matrices through camera-only reprojection. Supply the bounded motion
+target in `FrameInput::desktopScrollTarget`: up is available below `1-1e-9`, down
+above `1e-9`, provided the canonical content overflows. The source styles use
+linear Float tint 1/0.32 and opacity 1/0.65, multiplying the sampled authored
+alpha throughout opening/closing. `scrollDirectionAt` includes disabled active
+arrow hits; the host checks `canScroll` on matching release so disabled arrows
+consume input without dismissing the HUD. Input becomes active only in the
+visible phase. Mouse activation uses the source's animated 32-point step,
+converted through the actual projected viewport into source units; accessibility
+activation follows the source default immediate step.
+
 Desktop default graphic policies retain side edge opacity 0.18, center
 triangle/ring opacity 0.88 and text glow opacity 0.78. Broad profile/portrait
 additive Lights are suppressed, retaining the root ColorTint target alpha for

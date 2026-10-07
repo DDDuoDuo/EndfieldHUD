@@ -14,6 +14,10 @@ if ($LASTEXITCODE -ne 0) { throw 'Source scene contracts failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Projected editor contracts failed.' }
 & (Join-Path $build 'desktop_shell_tests.exe') (Join-Path $repository 'Resources\WatchSource\Scene')
 if ($LASTEXITCODE -ne 0) { throw 'Current desktop presentation contracts failed.' }
+& (Join-Path $build 'monitor_policy_tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Source monitor selection contracts failed.' }
+& (Join-Path $build 'presentation_adapter_tests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Source-to-Windows presentation contracts failed.' }
 & (Join-Path $build 'platform_probe.exe') (Join-Path $evidence 'platform-capabilities.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Native platform capability probe failed.' }
 $graphicsOutput = Join-Path $evidence 'graphics-lifecycle.json'
