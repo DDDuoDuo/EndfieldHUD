@@ -10,7 +10,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
-A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD from the menu bar for notes, files, music, game stats, and everyday tools.
+A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD using hotkey/from the menu bar for notes, files, music, game stats, and everyday tools.
 
 <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="Release v1.2.0" width="326"></a>
 
@@ -78,7 +78,7 @@ Your notes and settings stay on your Mac. Linked community credentials use macOS
 
 <img src="docs/media/readme/en-04-credits.png" alt="Credits" width="326">
 
-Made by [DDDuoDuo](https://github.com/DDDuoDuo). Inspired by *Arknights: Endfield* and [QinAnze’s charging concept](https://github.com/QinAnze/zmd-charge).
+Made by [DDDuoDuo](https://github.com/DDDuoDuo). Inspired by *Arknights: Endfield*, [QinAnze](https://github.com/QinAnze/zmd-charge), and [llynxxx](https://www.bilibili.com/video/BV1DBaP6yEHs/)
 
 An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is [MIT licensed](LICENSE); third-party assets and libraries keep their own terms. [Full credits and sources](CREDITS.md)
 
