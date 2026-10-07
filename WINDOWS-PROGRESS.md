@@ -122,8 +122,15 @@ creation privilege. Windows short/long path aliases and real junction rejection
 are checked. CI's first restarted run exposed a short-name temporary-path
 mismatch in provenance. The corrected [CI run](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37682014773)
 passed native/resource/Python/developer-package and unsigned MSIX format checks
-at commit `f4868da22b8afe972c989b3eeac9f8d0d78020ae`. Subsequent profile/arrow/
-monitor/linear-composition changes are verified locally and require fresh CI.
+at commit `f4868da22b8afe972c989b3eeac9f8d0d78020ae`. The subsequent profile,
+arrow, monitor and linear-composition implementation at
+`998979dd0d43db550b627e6a54ca1f7e534bc4db` also passed its own
+[fresh CI run](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37685248165):
+all nine native suites, all 78 Python tests (no runner skips), canonical resource
+verification, developer ZIP and unsigned MSIX format validation. The unsigned
+developer ZIP is 18.34 MiB downloaded and 30.96 MiB extracted. It contains no
+diagnostic images, recordings, symbols or user data. This is reviewable prototype
+packaging; consumer release and installation acceptance remain unverified.
 Source wheel tests cover
 analytic spring samples, rebound, invalid inputs, reduced motion and endpoint
 parking; actual resource tests confirm the final navigation slot is hittable.
