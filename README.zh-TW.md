@@ -21,7 +21,7 @@
 
 此版本使用**本機臨時簽署（ad hoc），未經 Apple 公證**。如果 macOS 因無法驗證開發者而阻擋開啟，請先嘗試開啟已安裝的 App；確認信任此下載後，在**系統設定 → 隱私權與安全性 → 強制打開**中僅批准 EndfieldHUD，再確認開啟。較舊的 macOS 使用「系統偏好設定 → 安全性與隱私權」。無須關閉 Gatekeeper。請參閱 [Apple 操作說明](https://support.apple.com/zh-tw/102445)。
 
-App 以 **Apple 晶片 macOS 11 以上**、**Intel macOS 10.15.4 以上**為建置目標，部分功能需要更新的系統。測試主要在 macOS 15.7.4 的 M2 MacBook Air 上進行，其他機型和舊系統的驗證仍有限。[相容性說明](docs/testing-build.md)
+App 以 **Apple 晶片 macOS 11 以上**、**Intel macOS 10.15.4 以上**為建置目標，部分功能需要更新的系統。測試主要在 macOS 15.7.4 的 M2 MacBook Air 上進行，其他機型和舊系統的驗證仍有限。
 
 ## 先試試這些
 
@@ -75,9 +75,9 @@ App 以 **Apple 晶片 macOS 11 以上**、**Intel macOS 10.15.4 以上**為建�
 | 檔案與圖片 | 存取你選擇、貼上或拖入的項目。檔案架儲存參照；圖片便箋與個人名片圖片儲存本機副本。 |
 | 更新提醒 | 通知權限可選。即使拒絕通知，選單列和「關於」仍會顯示更新資訊。 |
 | 登入啟動 | 先安裝至「應用程式」；macOS 可能要求在登入項目中批准。 |
-| 自動專注模式 | 本整合分支在 **macOS 11+** 上優先使用控制中心，需要你授予**輔助使用**權限且系統控制項可辨識；**macOS 13+** 上已設定的捷徑作為備援。穩定版 v1.0.1 下載仍需自行建立這兩個捷徑。請參閱[專注模式設定](docs/audio-and-work-mode.md#automatic-focus-setup)；沒有自動專注也能使用計時器。 |
+| 自動專注模式 | 本整合分支在 **macOS 11+** 上優先使用控制中心，需要你授予**輔助使用**權限且系統控制項可辨識；**macOS 13+** 上已設定的捷徑作為備援。穩定版 v1.0.1 下載仍需自行建立這兩個捷徑。請參閱[專注模式設定](docs/audio-and-work-mode.md#work-mode)；沒有自動專注也能使用計時器。 |
 
-便箋、檔案參照、個人名片、地圖標記與事件記錄儲存在本機。剪貼簿記錄只保存在記憶體中，結束後清空。檢查和下載更新會連線至 GitHub，使用 App 無須帳號。[設定說明](docs/settings.md) · [更新說明](docs/updates.md)
+便箋、檔案參照、個人名片、地圖標記與事件記錄儲存在本機。剪貼簿記錄只保存在記憶體中，結束後清空。檢查和下載更新會連線至 GitHub，使用 App 無須帳號。[設定說明](docs/settings.md)
 
 ## 專案與致謝
 
@@ -85,4 +85,4 @@ EndfieldHUD 由 **DDDuoDuo** 開發，是受《明日方舟：終末地》啟發
 
 原創程式碼採用 [MIT 授權](LICENSE)。遊戲圖片、品牌標誌及其他第三方素材保留各自的權利與授權。視覺參考、素材、地圖資料和相依項目的來源請見 [Credits／致謝](CREDITS.md)。
 
-[回報問題](https://github.com/DDDuoDuo/EndfieldHUD/issues) · [建置與開發](DEVELOPMENT.md) · [測試記錄](TESTING.md)
+[回報問題](https://github.com/DDDuoDuo/EndfieldHUD/issues)

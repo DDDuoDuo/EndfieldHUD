@@ -1,6 +1,14 @@
 ![EndfieldHUD](docs/media/readme/endfield-hud-title.png)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
+<p align="center">
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/version-badge.svg" alt="Release v1.2.0" height="38"></a>
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/issues"><img src="docs/media/readme/bug-badge.svg" alt="Report a bug" height="38"></a>
+  <a href="https://space.bilibili.com/223936961"><img src="docs/media/readme/bilibili-badge.svg" alt="DDDuoDuo on Bilibili" height="38"></a>
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a>
+</p>
 
 A little bit of *Arknights: Endfield* on your Mac. Open a layered, animated HUD from the menu bar for notes, files, music, game stats, and everyday tools.
 
@@ -19,9 +27,13 @@ If macOS blocks the app, go to **System Settings → Privacy & Security → Open
 
 Use the side buttons to switch sections, and scroll the right side for more. **Esc** backs out of an edit before closing the HUD. Closing it keeps the app running; pressing the red power button allows you to quit this app.
 
+![HUD opening and closing](docs/media/readme/opening.gif)
+
+![Pointer tilt](docs/media/readme/tilt.gif)
+
 <img src="docs/media/readme/en-02-requirements.png" alt="Requirements" width="326">
 
-Apple silicon: **macOS 11+**. Intel: **macOS 10.15.4+**. Some tools need a newer system or supported hardware. [Compatibility notes](docs/testing-build.md)
+Apple silicon: **macOS 11+**. Intel: **macOS 10.15.4+**. Some tools need a newer system or supported hardware.
 
 Allow permissions when you use the features that need them:
 
@@ -36,6 +48,8 @@ Allow permissions when you use the features that need them:
 You can review permissions in **System Settings → Privacy & Security**; notifications have their own settings page.
 
 <img src="docs/media/readme/en-03-functions.png" alt="Functions" width="326">
+
+![Switching HUD sections](docs/media/readme/modules.gif)
 
 | Tool | What you can do |
 | --- | --- |
@@ -54,7 +68,9 @@ You can review permissions in **System Settings → Privacy & Security**; notifi
 | Battery, Storage & Activity Monitor | Check charging status, disk space, CPU, RAM, and running apps. |
 | App shortcuts | Add your apps with custom names and icons. |
 
-*Linking is optional.
+![Merge! OrbiPom! gameplay](docs/media/readme/minigame.gif)
+
+Linking is optional.
 
 In **Display**, change the theme, tilt, clock, icons, and animation settings. The HUD supports English, Simplified Chinese, Traditional Chinese, Japanese, and Korean.
 
@@ -62,8 +78,8 @@ Your notes and settings stay on your Mac. Linked community credentials use macOS
 
 <img src="docs/media/readme/en-04-credits.png" alt="Credits" width="326">
 
-Made by [DDDuoDuo](https://github.com/DDDuoDuo). Thanks to [QinAnze](https://github.com/QinAnze/zmd-charge) for inspiration.
+Made by [DDDuoDuo](https://github.com/DDDuoDuo). Inspired by *Arknights: Endfield* and [QinAnze’s charging concept](https://github.com/QinAnze/zmd-charge).
 
-This is an unofficial fan project. *Arknights: Endfield* artwork and branding belong to HYPERGRYPH and their respective owners. Original code uses the [MIT license](LICENSE); game assets and dependencies keep their own licenses. [Full credits](CREDITS.md)
+An unofficial fan project. Game artwork and branding belong to HYPERGRYPH and their respective owners. Original code is [MIT licensed](LICENSE); third-party assets and libraries keep their own terms. [Full credits and sources](CREDITS.md)
 
 [Report a bug](https://github.com/DDDuoDuo/EndfieldHUD/issues)

@@ -53,15 +53,23 @@ GENERATED_FILES=("$(basename "$ARCHIVE")")
 # cannot accidentally enter the source download.
 SOURCE_ROOT="$PACKAGE_STAGE/EndfieldHUD"
 mkdir -p "$SOURCE_ROOT"
-SOURCE_PATHS=(Sources Tests Resources ThirdParty scripts .github README.md README.zh-CN.md README.zh-TW.md README.ja.md CREDITS.md LICENSE DEVELOPMENT.md TESTING.md .gitignore)
+SOURCE_PATHS=(Sources Resources ThirdParty scripts README.md README.zh-CN.md README.zh-TW.md README.ja.md CREDITS.md LICENSE .gitignore)
 if [ -d "$PROJECT_DIR/docs" ]; then SOURCE_PATHS+=(docs); fi
 if [ -d "$PROJECT_DIR/updates" ]; then SOURCE_PATHS+=(updates); fi
+# Local-only research and tests remain in the checkout. Include only public,
+# tracked files so they cannot leak back into a release source archive.
+git -C "$PROJECT_DIR" ls-files -z -- "${SOURCE_PATHS[@]}" > "$PACKAGE_STAGE/source-manifest"
+if [ ! -s "$PACKAGE_STAGE/source-manifest" ]; then
+    printf 'A Git checkout with tracked source files is required for packaging.\n' >&2
+    exit 1
+fi
 COPYFILE_DISABLE=1 tar -C "$PROJECT_DIR" \
     --exclude='.DS_Store' --exclude='._*' --exclude='.git' \
     --exclude='build' --exclude='dist' \
     --exclude='*.p12' --exclude='*.p8' --exclude='*.mobileprovision' \
     --exclude='*.provisionprofile' --exclude='.env' --exclude='.env.*' \
-    -cf - "${SOURCE_PATHS[@]}" | COPYFILE_DISABLE=1 tar -C "$SOURCE_ROOT" -xf -
+    --null -T "$PACKAGE_STAGE/source-manifest" \
+    -cf - | COPYFILE_DISABLE=1 tar -C "$SOURCE_ROOT" -xf -
 SOURCE_ARCHIVE="$PACKAGE_STAGE/$ARTIFACT_STEM-source.zip"
 ditto -c -k --norsrc --noextattr --keepParent "$SOURCE_ROOT" "$SOURCE_ARCHIVE"
 unzip -tq "$SOURCE_ARCHIVE"
@@ -83,7 +91,7 @@ if [ "$MAKE_DMG" -eq 1 ]; then
     ditto --norsrc --noextattr --noqtn "$APP" "$DMG_ROOT/EndfieldHUD.app"
     ln -s /Applications "$DMG_ROOT/Applications"
     cp "$PROJECT_DIR/LICENSE" "$DMG_ROOT/LICENSE.txt"
-    cp "$PROJECT_DIR/docs/testing-build.md" "$DMG_ROOT/Testing-build.md"
+    cp "$PROJECT_DIR/README.md" "$DMG_ROOT/README.md"
     DMG="$PACKAGE_STAGE/$ARTIFACT_STEM-macOS.dmg"
     hdiutil create -volname EndfieldHUD -srcfolder "$DMG_ROOT" -format UDZO -ov "$DMG"
     if [ -n "${CODE_SIGN_IDENTITY:-}" ] && [ "$CODE_SIGN_IDENTITY" != '-' ]; then
