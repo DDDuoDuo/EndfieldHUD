@@ -26,15 +26,15 @@ struct Statement {
     }
     ~Statement(){if(value) sqlite3_finalize(value);}
     Statement(const Statement&)=delete;
-    void text(int column,const std::string& value) {
-        require(value.size()<=static_cast<std::size_t>(std::numeric_limits<int>::max()),"Note string too large");
-        check(sqlite3_bind_text(this->value,column,value.data(),static_cast<int>(value.size()),SQLITE_TRANSIENT),db);
+    void text(int column,const std::string& incoming) {
+        require(incoming.size()<=static_cast<std::size_t>(std::numeric_limits<int>::max()),"Note string too large");
+        check(sqlite3_bind_text(value,column,incoming.data(),static_cast<int>(incoming.size()),SQLITE_TRANSIENT),db);
     }
-    void optional(int column,const std::optional<std::string>& value) {
-        if(value) text(column,*value);else check(sqlite3_bind_null(this->value,column),db);
+    void optional(int column,const std::optional<std::string>& incoming) {
+        if(incoming) text(column,*incoming);else check(sqlite3_bind_null(value,column),db);
     }
-    void real(int column,double value) {check(sqlite3_bind_double(this->value,column,value),db);}
-    void integer(int column,std::int64_t value) {check(sqlite3_bind_int64(this->value,column,value),db);}
+    void real(int column,double incoming) {check(sqlite3_bind_double(value,column,incoming),db);}
+    void integer(int column,std::int64_t incoming) {check(sqlite3_bind_int64(value,column,incoming),db);}
     void done() {if(sqlite3_step(value)!=SQLITE_DONE) unavailable(db);}
 };
 void execute(sqlite3* db,const char* sql) {check(sqlite3_exec(db,sql,nullptr,nullptr,nullptr),db);}
