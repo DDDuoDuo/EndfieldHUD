@@ -79,4 +79,3 @@ function Restore-VerifiedSnapshot([string]$Snapshot, [string]$Root, [string]$Bac
         throw
     }
 }
-
