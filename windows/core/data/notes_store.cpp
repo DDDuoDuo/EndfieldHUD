@@ -1,7 +1,7 @@
 #include "core/data/data_store.hpp"
 #include "core/data/file_io.hpp"
 #ifdef _WIN32
-#include <winsqlite3.h>
+#include <winsqlite/winsqlite3.h>
 #else
 #include <sqlite3.h>
 #endif
