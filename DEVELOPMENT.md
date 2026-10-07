@@ -615,5 +615,13 @@ frames (84 Endfield, 55 I-beam, no unexpected/arrow frames), confirmed in both r
 capture buffers and the decoded movie. This verifies that isolated cursor path;
 it is not a test of the full HUD through the Shift–Command–5 recorder UI.
 
+Local verification passed 80,912 core assertions, 112 compatibility mutation
+checks, 127 native lifecycle assertions, and 157 clock/logo integration
+assertions on the final universal app. The core script's subsequent offline
+Metal compiler probe is unavailable on this host; the complete GitHub check
+also covers shader and GPU fixtures. Native cursor-region invalidation can
+legitimately emit cursor updates, so the lifecycle fixture measures explicit
+handler calls and settled idle intervals separately from that arbitration.
+
 The public version stays 1.2.0. Build 16 provides a distinct signed update;
 the existing release description is preserved.
