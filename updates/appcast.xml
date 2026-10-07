@@ -8,6 +8,15 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         <language>en</language>
         <item>
             <title>1.2.0</title>
+            <pubDate>Tue, 06 Oct 2026 19:57:35 -0700</pubDate>
+            <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>10.15.4</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build17-macOS.zip" length="28981181" type="application/octet-stream" sparkle:edSignature="mfN/3JBu/E86JkX4e6ikqkPfvyfUdtrR2dVOW4BSfP4SCc3/q1ToAlLt/23jXznSAb5eF0SQNAg5ibjd9QTnBA=="></enclosure>
+        </item>
+        <item>
+            <title>1.2.0</title>
             <pubDate>Tue, 06 Oct 2026 17:41:45 -0700</pubDate>
             <link>https://github.com/DDDuoDuo/EndfieldHUD</link>
             <sparkle:version>16</sparkle:version>
@@ -243,6 +252,6 @@ Original code: MIT. Game artwork belongs to its respective owners; see [credits]
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: fSF0hMh2WHWDn+XlYTdfpdy0EYB5HLqt83ts0Z+qlCE+L/jPQ+wakEkZ4rw9nzigACMPYNl94GLgL8BQYQfBDw==
-length: 20936
+edSignature: h22p5A5RX5bPIhbhmtsXUqXkR9vxHbqwU5edxNlM3UYzpJSFVavUDkbOs1bA5fk5hOswiDHgkztWyDvdYzrvDw==
+length: 21638
 -->
