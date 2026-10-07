@@ -1,88 +1,83 @@
-# EndfieldHUD
+![EndfieldHUD](docs/media/readme/endfield-hud-title.png)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
+<p align="center">
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/version-badge.svg" alt="リリース v1.2.0" height="38"></a>
+  <a href="https://github.com/DDDuoDuo/EndfieldHUD/issues"><img src="docs/media/readme/bug-badge.svg" alt="不具合を報告" height="38"></a>
+  <a href="https://space.bilibili.com/223936961"><img src="docs/media/readme/bilibili-badge.svg" alt="DDDuoDuo の Bilibili" height="38"></a>
+</p>
 
-『アークナイツ：エンドフィールド』をモチーフにした macOS のメニューバーアプリです。ショートカットで立体的に動く HUD を開き、メモ、ファイルの一時置き、タイマー、音量調整、Mac の状態確認などを使えます。
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a>
+</p>
 
-**統合テスト用ブランチ：**新しい Watch の外観に、安定版 1.0.1 の機能と保存データ形式を組み合わせています。このブランチを試すには、[このブランチの成功した Build and test 実行](https://github.com/DDDuoDuo/EndfieldHUD/actions/workflows/build.yml?query=branch%3Acodex%2Fendfield-hud-integration)から **EndfieldHUD-macOS-…** アーティファクトをダウンロードしてください。以下のリリースへのリンクとプレビューは安定版のもので、このブランチのものではありません。
+Mac に『アークナイツ：エンドフィールド』をちょっと。ショートカットやメニューバーから、奥行きのある動く HUD を開けます。メモ、ファイル、音楽、ゲームの情報、毎日使うツールをひとまとめに。
 
-**[v1.0.1 をダウンロード — EndfieldHUD-1.0.1-build11-macOS.dmg](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.0.1/EndfieldHUD-1.0.1-build11-macOS.dmg)** · [すべてのリリース](https://github.com/DDDuoDuo/EndfieldHUD/releases)
+<a href="https://github.com/DDDuoDuo/EndfieldHUD/releases/tag/v1.2.0"><img src="docs/media/readme/release-v1.2.0.png" alt="リリース v1.2.0" width="326"></a>
 
-![サンプルの数値を表示した EndfieldHUD の電源画面](docs/media/overview.png)
+[PKG をダウンロード](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-Installer.pkg) · [DMG をダウンロード](https://github.com/DDDuoDuo/EndfieldHUD/releases/download/v1.2.0/EndfieldHUD-1.2.0-build18-macOS.dmg) · [すべてのリリース](https://github.com/DDDuoDuo/EndfieldHUD/releases)
 
-*以下のプレビューは、実際のアプリにデモ用の内容とサンプルの数値を表示したものです。個人のメモ、クリップボード履歴、ファイルは含まれていません。*
+<img src="docs/media/readme/en-01-installation.png" alt="インストール" width="326">
 
-## インストール
+0. すでに EndfieldHUD を使っている場合は、メニューバーの **更新を確認**をクリックします。
+1. DMG を開いて **EndfieldHUD.app** を **Applications（アプリケーション）** にドラッグするか、PKG インストーラを実行します。
+2. 「アプリケーション」から EndfieldHUD を開くと、メニューバーにアイコンが表示されます。
+3. **Ctrl + バッククォート（`）** で HUD を開きます。キーは **ショートカット**で変更できます。
 
-1. 上の DMG をダウンロードします。旧バージョンが起動している場合は、メニューバーから終了します。
-2. DMG を開き、**EndfieldHUD.app** を **Applications（アプリケーション）** にドラッグします。
-3. ディスクイメージを取り出し、「アプリケーション」から EndfieldHUD を開きます。メニューバーにアイコンが表示されます。
-4. **Ctrl + バッククォート（`）** で HUD を開きます。
+macOS にブロックされた場合は、**システム設定 → プライバシーとセキュリティ → このまま開く**から確認して開いてください。アプリはまだ Apple の公証を受けていません。
 
-このリリースは **ad hoc 署名で、Apple の公証を受けていません**。開発元を確認できないという理由で macOS にブロックされた場合は、まずインストール済みのアプリを一度開いてください。このダウンロード元を信頼する場合は、**システム設定 → プライバシーとセキュリティ → このまま開く**で EndfieldHUD を個別に許可し、確認します。古い macOS では「システム環境設定 → セキュリティとプライバシー」を使います。Gatekeeper を無効にする必要はありません。[Apple の手順](https://support.apple.com/ja-jp/102445)
+左右のボタンで画面を切り替え、右側をスクロールするとほかの画面も選べます。**Esc** は編集中の項目を先に閉じ、その後 HUD を閉じます。HUD を閉じてもアプリは動き続けます。終了するには赤い電源ボタンを押してください。
 
-**Apple シリコンでは macOS 11 以降**、**Intel では macOS 10.15.4 以降**を対象にビルドしています。一部の機能には、より新しい macOS が必要です。主な動作確認環境は macOS 15.7.4 の M2 MacBook Air で、ほかの機種や古い OS での検証は限られています。
+![HUD の開閉](docs/media/readme/opening.gif)
 
-## 使い始める
+<img src="docs/media/readme/en-02-requirements.png" alt="動作環境" width="326">
 
-- **開く・隠す：**Ctrl + バッククォート、またはメニューバーの **HUDを開く**を使います。Esc は編集中の項目や選択を先に閉じ、その後 HUD を閉じます。
-- **画面を切り替える：**左右のボタンを使います。右側の一覧はスクロールできます。ストレージとアクティビティモニタは中央下、プロフィールは左下のカードから開きます。
-- **言語を選ぶ：** **システム → 言語**を開くと、現在の選択にチェックが付いた一覧が表示されます。**システムに合わせる、English、简体中文、繁體中文、日本語**から選べます。4 言語に対応し、選択はすぐに反映されます。[言語選択](docs/media/languages.png)・[日本語の画面](docs/media/japanese.png)
-- **見た目を変える：**「表示」で大きさ、位置、色、テーマ、ぼかし、遠近感、視差効果を調整できます。「ショートカット」では HUD を呼び出すキーを変更できます。
-- **アプリを終了する：**メニューバーの **EndfieldHUDを終了**を選ぶか、プロフィールカード横の赤いボタンを押して確認します。HUD を隠しただけでは、アプリは終了しません。
+Apple シリコン：**macOS 11 以降**。Intel：**macOS 10.15.4 以降**。一部の機能には、より新しい OS や対応するハードウェアが必要です。
 
-<details>
-<summary>開閉、傾き、画面切り替えの動きを見る</summary>
+必要な機能を使うときに、次の権限を許可してください。
 
-HUD の開閉と、マウスに合わせた傾き：
-
-![HUD の開閉と傾きのデモ](docs/media/readme/opening.gif)
-
-機能画面の切り替え：
-
-![HUD の画面切り替えのデモ](docs/media/readme/modules.gif)
-
-</details>
-
-## 機能一覧
-
-各プレビューから画面を確認できます。機能名のリンクには詳しい使い方があります。
-
-| 画面 | できること | プレビュー |
-| --- | --- | --- |
-| 電源 | 取得できるバッテリー残量や充電状態を表示します。主画面とは別の充電通知も使えます。 | [電源](docs/media/overview.png) |
-| [メモ](docs/notes-canvas.md) | テキスト、チェックリスト、画像を追加。カードの移動・サイズ変更や、別の HUD 画面へのピン留めができます。 | [メモ](docs/media/notes.png) |
-| [一時ファイルシェルフ](docs/file-shelf.md) | ファイルやフォルダを置き、プレビューして、まとめてドラッグできます。シェルフから削除しても元のファイルは残ります。 | [ファイルシェルフ](docs/media/shelf.png) |
-| [クリップボード](docs/clipboard-cache.md) | 最近コピーしたテキスト、リンク、画像、ファイルを再利用し、よく使う項目をピン留めできます。履歴はアプリ終了時に消えます。 | [クリップボード](docs/media/clipboard.png) |
-| [音量](docs/audio-and-work-mode.md) | 音声デバイスを選び、対応する音量・ミュート・左右バランスを調整します。アプリ別音量は実験的な機能で、macOS 14.2 以降が必要です。 | [音量](docs/media/volume.png) |
-| [作業モード](docs/audio-and-work-mode.md#work-mode) | カウントダウンとストップウォッチ。5・30・60 分のプリセットと自由な時間設定に対応し、HUD を隠しても続きます。 | [作業モード](docs/media/work-mode.png) |
-| [イベントログ](docs/event-log.md) | タイマー、ファイルシェルフの操作、デバイスの変化など、HUD のローカルイベントを確認・絞り込みできます。 | [イベントログ](docs/media/event-log.png) |
-| [ストレージ](docs/storage-and-activity.md#storage) | 使用済み容量と空き容量を確認・更新し、macOS のストレージ設定を開けます。 | [ストレージ](docs/media/storage.png) |
-| [アクティビティモニタ](docs/storage-and-activity.md) | CPU、メモリ、ネットワーク、ディスクのグラフと、並べ替えできるアプリ一覧を表示します。取得できない値はダッシュになります。 | [アクティビティ](docs/media/activity.png) |
-| [+ アプリを追加](docs/app-shortcuts.md) | インストール済みアプリへのショートカットを保存。名前とアイコンを変え、HUD から起動できます。 | [アプリのショートカット](docs/media/apps.png) |
-| [プロフィール](docs/personal-profile.md) | 名前、画像、背景、紹介文、日付を編集し、作業モードの累計時間を確認できます。 | [プロフィール](docs/media/profile.png) |
-| [マップ](docs/map.md) | オフラインの地球地図を移動・拡大し、ピンを追加できます。位置情報は使わず、街路地図も読み込みません。 | [マップ](docs/media/map.png) |
-| システム | 言語、表示先のディスプレイ、ログイン時の起動などを設定します。 | [言語選択](docs/media/languages.png) |
-| 表示 | 見た目、アプリ・メニューバーのアイコン、バッテリー通知を設定します。大きさと位置の変更は、時間内に確認しなければ元に戻ります。 | [設定](docs/media/settings.png) |
-| ショートカット | HUD を呼び出す新しいキーの組み合わせを登録します。 | [設定](docs/media/settings.png) |
-| このアプリについて | バージョンとクレジットの確認、更新のチェック、自動インストールの設定ができます。 | [設定](docs/media/settings.png) |
-
-## 権限とローカルデータ
-
-| 機能 | 必要なもの |
+| 権限 | 用途 |
 | --- | --- |
-| アプリ別音量 | **macOS 14.2 以降**と、機能を有効にするときの**システムオーディオ録音**の許可。音声はメモリ上で処理し、保存しません。対応デバイスには制限があります。[音量ガイド](docs/per-app-audio.md)・[Apple の権限ガイド](https://support.apple.com/en-in/guide/mac-help/mchl2844ecab/mac) |
-| ファイルと画像 | 自分で選ぶ、貼り付ける、ドロップする項目へのアクセス。シェルフは参照を保持し、画像メモとプロフィール画像はローカルにコピーを保存します。 |
-| 更新のお知らせ | 通知の許可は任意です。許可しなくても、メニューと「このアプリについて」で更新を確認できます。 |
-| ログイン時の起動 | 先に「アプリケーション」にインストールしてください。macOS のログイン項目で承認が必要な場合があります。 |
-| 集中モードとの連携 | この統合ブランチは **macOS 11 以降**で、**アクセシビリティ**の許可と認識できるコントロールセンターの操作項目を使います。利用できない場合は、**macOS 13 以降**で設定済みのショートカットを使います。安定版 v1.0.1 のダウンロードでは、2 つのショートカットを自分で作成する必要があります。[設定手順](docs/audio-and-work-mode.md#work-mode)を参照してください。集中モードとの連携なしでもタイマーは使えます。 |
+| アクセシビリティ | 作業モードからコントロールセンターを通じて macOS の集中モードを切り替えます。許可なしでもタイマーは使えます。 |
+| システムオーディオ録音 | macOS 14.2 以降の実験的なアプリ別音量調整に使います。音声は保存しません。 |
+| オートメーション | 対応する音楽アプリの操作に使います。macOS に確認されたときに許可してください。 |
+| 通知 | 更新のお知らせとカレンダーのリマインダーに使います。 |
+| ファイルとフォルダ | 自分で選んだファイル、画像、動画を開くために使います。 |
 
-メモ、ファイル参照、プロフィール、地図のピン、イベント履歴は、この Mac に保存されます。クリップボード履歴はメモリ上だけに保持され、終了すると消えます。更新の確認とダウンロードでは GitHub に接続します。アカウントは不要です。[設定ガイド](docs/settings.md)
+権限は **システム設定 → プライバシーとセキュリティ**で確認できます。通知は専用の設定画面があります。
 
-## プロジェクトとクレジット
+<img src="docs/media/readme/en-03-functions.png" alt="機能" width="326">
 
-EndfieldHUD は **DDDuoDuo** が開発する、『アークナイツ：エンドフィールド』をモチーフにした**非公式ファンプロジェクト**です。ゲームの開発元との提携や、開発元による承認はありません。
+![HUD の画面切り替え](docs/media/readme/modules.gif)
 
-オリジナルのコードは [MIT ライセンス](LICENSE)で公開しています。ゲームの画像、ブランド素材、そのほかの第三者の素材には、それぞれの権利とライセンスが適用されます。デザインの参考元、画像、地図データ、依存ライブラリは [Credits](CREDITS.md)をご覧ください。
+| ツール | できること |
+| --- | --- |
+| メモ | 文字や絵、チェックリスト、画像、動画を追加できます。パネルをピン留めすれば、ほかの画面でも表示できます。 |
+| 一時ファイルシェルフ | ファイルをドロップしてプレビューし、そのままドラッグして取り出せます。元のファイルは移動しません。 |
+| クリップボード | 最近コピーしたテキスト、リンク、画像、ファイルを見返せます。履歴はアプリ終了時に消えます。 |
+| アーカイブ | 文書を自分のカテゴリで整理できます。文字の装飾や画像・動画にも対応しています。 |
+| リーダー | 小説や PDF を読み、しおりを付けたり拡大したりできます。 |
+| メディア編集 | 画像や動画の切り抜き、色などの調整、フィルター、ステッカーを使えます。 |
+| プロジェクション | 画面いっぱいのキャンバスに描けます。ドットの背景も選べます。 |
+| 再生中 | アルバムアートや取得できる歌詞を表示し、再生を操作できます。 |
+| 音量 | 音声デバイスを切り替え、対応する音量を調整できます。 |
+| 作業モード・カレンダー | タイマーやストップウォッチを使い、予定とリマインダーを登録できます。 |
+| マップ・ミニゲーム | オフラインの地形図を見てピンを置いたり、Merge! OrbiPom! で遊んだりできます。 |
+| 個人 ID・アカウント連携 | 自分のカードをカスタマイズできます。ゲームアカウントを連携すると、プロフィール情報や理性の回復カウントダウンを表示できます。 |
+| バッテリー・ストレージ・アクティビティモニタ | 充電状態、ディスク容量、CPU、RAM、実行中のアプリを確認できます。 |
+| アプリのショートカット | 好きな名前とアイコンでアプリを追加できます。 |
 
-[問題を報告](https://github.com/DDDuoDuo/EndfieldHUD/issues)
+![Merge! OrbiPom! のプレイ映像](docs/media/readme/minigame.gif)
+
+アカウント連携は任意です。
+
+**表示**では、テーマ、傾き、時計、アイコン、アニメーションを変更できます。HUD は英語、簡体字中国語、繁体字中国語、日本語、韓国語に対応しています。
+
+メモや設定はこの Mac に保存されます。連携したコミュニティアカウントの認証情報は macOS のキーチェーンに保存します。更新は GitHub から届きます。メニューバーか **このアプリについて**で更新の確認や設定ができます。
+
+<img src="docs/media/readme/en-04-credits.png" alt="クレジット" width="326">
+
+制作：[DDDuoDuo](https://github.com/DDDuoDuo)。『アークナイツ：エンドフィールド』、[QinAnze](https://github.com/QinAnze/zmd-charge)、[llynxxx](https://www.bilibili.com/video/BV1DBaP6yEHs/) から着想を得ています。
+
+非公式のファンプロジェクトです。ゲームの画像やブランドの権利は HYPERGRYPH および各権利者に帰属します。オリジナルのコードは [MIT ライセンス](LICENSE)で公開しています。第三者の素材やライブラリには、それぞれの利用条件が適用されます。[クレジットと出典の一覧](CREDITS.md)
+
+[不具合を報告](https://github.com/DDDuoDuo/EndfieldHUD/issues)
