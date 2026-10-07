@@ -166,6 +166,11 @@ frozen backdrop and editor implementation at
 [fresh CI run](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37689898752):
 all eleven native suites, all 78 Python tests (no runner skips), canonical
 resource verification, developer ZIP and optional unsigned MSIX format checks.
+The renderer ownership/recovery and diagnostic refinements at
+`65730c227eaa88fb2799bdf3cbf531b19f0236b4` also passed their
+[fresh CI run](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37693398026):
+all twelve native suites, all 78 Python tests with no runner skips, byte-exact
+resources, developer ZIP and optional unsigned MSIX format validation.
 The unsigned developer ZIP is 18.36 MiB downloaded and 31.00 MiB extracted. It contains no
 diagnostic images, recordings, symbols or user data. This is reviewable prototype
 packaging; consumer release and installation acceptance remain unverified.
