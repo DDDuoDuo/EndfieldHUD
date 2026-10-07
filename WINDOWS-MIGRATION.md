@@ -1,6 +1,8 @@
 # EndfieldHUD — Windows migration handoff
 
-This is the working handoff for Codex on DDDuoDuo's Windows laptop. It describes a native Windows port of the current app. **Windows implementation has not started, and no Windows build or performance result is verified yet.**
+This is the working handoff for DDDuoDuo's Windows laptop. It describes a native Windows port of the current macOS app. **The previous Windows preview was rejected. A fresh implementation is underway; no complete Windows app or stable release is verified yet.**
+
+The fresh implementation uses macOS `main` at `ca04f142185c7de40acd8523bdb563195d90a1d1` (v1.2.0 build 18). [`windows/source-authority.json`](windows/source-authority.json) pins its source and resource trees. Do not restore the rejected Windows renderer or use the raw game scene as the application reference. The old preview is preserved in Git history and a local backup, outside the new build. See [`windows/README.md`](windows/README.md) for current build scope.
 
 Keep the current HUD, functions, animations, saved data and optimizations. Replace the platform plumbing. Do not redesign the interface or silently remove a module because its Windows adapter is difficult.
 
@@ -18,7 +20,7 @@ Baseline as of **2026-10-07**:
 
 | Item | Reference |
 | --- | --- |
-| Source baseline | `fc429e63a2bead66f194ddb18ca947684de8fd76` — current main, including the refreshed localized READMEs |
+| Source baseline | `ca04f142185c7de40acd8523bdb563195d90a1d1` — macOS main, including the revised READMEs and Korean translation |
 | Released Mac version | v1.2.0, build 18 |
 | Original game interface branch | `archive/codex/endfield-watch-motion` — preserved tag, not an active branch |
 | Current app source | `Sources/`, `Resources/`, `scripts/` on this branch |

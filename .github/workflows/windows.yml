@@ -1,27 +1,27 @@
-name: Windows native build and package validation
+name: Windows clean port checks
 on:
   push:
     branches: [codex/windows-migration]
-    paths: ['windows/**', 'Sources/**', 'Resources/**', 'scripts/package-watch-resources.py', '.github/workflows/windows.yml', '.gitattributes']
+    paths: ['windows/**', 'Sources/**', 'Resources/**', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['windows/**', 'Sources/**', 'Resources/**', 'scripts/package-watch-resources.py', '.github/workflows/windows.yml', '.gitattributes']
+    paths: ['windows/**', 'Sources/**', 'Resources/**', '.github/workflows/windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: windows-feasibility-${{ github.ref }}
+  group: windows-clean-port-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  native:
-    runs-on: windows-2022
-    timeout-minutes: 25
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
-      - name: Preserve source asset and license bytes
-        shell: pwsh
-        run: git config --global core.autocrlf false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # Build the triggering immutable commit, even after the branch moves.
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
@@ -29,46 +29,15 @@ jobs:
           GIT_CONFIG_COUNT: '1'
           GIT_CONFIG_KEY_0: core.autocrlf
           GIT_CONFIG_VALUE_0: 'false'
-      - name: Attach the source branch to the exact triggering commit
-        shell: pwsh
-        env:
-          WINDOWS_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          WINDOWS_SOURCE_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
-        run: |
-          if ($env:WINDOWS_SOURCE_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid immutable Windows source commit.' }
-          if ($env:WINDOWS_SOURCE_REF -ne 'codex/windows-migration') { throw 'Windows source authority requires codex/windows-migration.' }
-          $origins = @(& git remote get-url --all origin)
-          if ($LASTEXITCODE -ne 0 -or $origins.Count -ne 1) { throw 'Checkout origin is missing or ambiguous.' }
-          $canonicalOrigin = 'https://github.com/DDDuoDuo/EndfieldHUD.git'
-          if ($origins[0] -ne $canonicalOrigin -and $origins[0] -ne 'https://github.com/DDDuoDuo/EndfieldHUD') { throw 'Checkout origin is not the authorized GitHub repository.' }
-          # Checkout uses the same HTTPS repository URL without the .git suffix.
-          # Normalize only that verified spelling; fetched refs stay untouched.
-          & git remote set-url origin $canonicalOrigin
-          if ($LASTEXITCODE -ne 0) { throw 'Could not record the canonical GitHub origin.' }
-          $checkedOut = (& git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $checkedOut -ne $env:WINDOWS_SOURCE_SHA) { throw 'Checkout differs from the triggering source commit.' }
-          & git checkout -B $env:WINDOWS_SOURCE_REF $env:WINDOWS_SOURCE_SHA
-          if ($LASTEXITCODE -ne 0) { throw 'Could not attach the exact Windows source commit to its local branch.' }
-          $attachedCommit = (& git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $attachedCommit -ne $env:WINDOWS_SOURCE_SHA) { throw 'Local Windows branch changed the triggering commit.' }
-          $attachedBranch = (& git symbolic-ref --short HEAD).Trim()
-          if ($LASTEXITCODE -ne 0 -or $attachedBranch -ne $env:WINDOWS_SOURCE_REF) { throw 'Local Windows source branch is ambiguous.' }
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - name: Build, isolated tests, byte-exact resources, developer preview
-        shell: pwsh
-        run: .\windows\packaging\build.ps1 -Python (Get-Command python.exe).Source
-      - name: Validate optional unsigned MSIX format with the Windows SDK
-        shell: pwsh
-        run: |
-          & (Get-Command python.exe).Source windows/packaging/msix_release.py --candidate --executable windows/build/x64/Release/EndfieldHUDWindows.exe --resources windows/build/x64/Release/Resources --logo-source Resources/Watch/ui_mid_ring.png
-          if ($LASTEXITCODE -ne 0) { throw 'Windows MSIX format/payload validation failed.' }
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: EndfieldHUD-Windows-x64-developer-preview
-          path: |
-            windows/dist/*
-            windows/build/x64/build-metadata.json
-          if-no-files-found: error
-          retention-days: 14
+      - name: Verify current macOS source authority
+        run: python windows/tools/check_source_authority.py
+      - name: Configure isolated core tests
+        run: cmake -S windows -B build/windows-core -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/windows-core --config Release --parallel 2
+      - name: Test synthetic data and scene models
+        run: ctest --test-dir build/windows-core -C Release --output-on-failure
+      # No preview, installer, or release is produced by a core-only check.

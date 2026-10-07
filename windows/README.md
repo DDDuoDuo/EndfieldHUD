@@ -1,55 +1,25 @@
-# Native Windows migration
+# Windows rebuild
 
-DDDuoDuo's native Windows migration has **restarted from the requested GitHub branch**, with canonical resources pinned to `4036174a3facf935260f4d0a9c63bfff33b98c37`. Milestone 1 is in progress. The complete app has not been migrated and no Windows consumer release is ready. [The migration handoff](../WINDOWS-MIGRATION.md) retains every original requirement; [the restarted progress log](../WINDOWS-PROGRESS.md) records fresh evidence and open gates. The incorrect raw-game preview release has been withdrawn to a recoverable draft.
+The previous Windows preview was rejected and removed from this build. This is
+a fresh port of the **macOS v1.2.0 build 18 application**, pinned in
+[`source-authority.json`](source-authority.json). Current macOS `Sources/` and
+`Resources/` define the UI and behavior. The raw game scene alone is not the app.
 
-The prototype builds C++20/Win32 with D3D11, DXGI, DirectComposition, Direct2D, DirectWrite and TSF. Its normal path loads the current **desktop adaptation**: canonical profile card, suppressed game-only UI/text, recycled desktop navigation, original desktop icons and five navigation languages. Native captions, header, clock and profile fixture use the source planes; the footer stays in its native screen plane through tilt. The source camera, sprites, clips, meshes, materials, fills, sorting, masks, button feedback and original cursor retain their source contracts. Complete FX/HDR/backdrop parity, matched Mac typography and profile boundary raster, module bodies, persistence and providers remain incomplete. [Desktop presentation contracts](scene/DESKTOP-SHELL.md) distinguish implemented artwork from module behavior.
+The current target builds portable scene, motion and data components with isolated
+tests. It does **not** yet produce a runnable HUD or a release candidate.
 
-## Build and preview
-
-From the repository root on Windows 11 x64:
-
-```powershell
-.\windows\packaging\build.ps1 -Python C:\path\to\python.exe
+```sh
+python windows/tools/check_source_authority.py
+cmake -S windows -B build/windows-core -DCMAKE_BUILD_TYPE=Release
+cmake --build build/windows-core --config Release
+ctest --test-dir build/windows-core -C Release --output-on-failure
 ```
 
-For a new checkout, preserve canonical bytes before Git writes files:
+Tests use synthetic fixtures and temporary directories. They do not read the
+installed Mac app's data, clipboard, account session or windows. Windows uses its
+system SQLite library; the portable tests use system SQLite on macOS/Linux.
 
-```powershell
-git clone --config core.autocrlf=false --branch codex/windows-migration https://github.com/DDDuoDuo/EndfieldHUD.git EndfieldHUD
-```
-
-The [source provenance gate](packaging/SOURCE-PROVENANCE.md) rejects newline-converted assets as well as altered or stale resources.
-
-The normal desktop retains the source default ambient animation. `--ambient-off` selects the explicit idle diagnostic case. Wheel input and source-plane scroll arrows use the source finite spring and projected viewport, including grey limit states. Precision touchpad phases and live input acceptance remain unfinished. The profile card uses the source's accent chroma replacement and normal-alpha hover plate; original source pixels remain immutable.
-
-Display placement covers the source's full monitor bounds. Windows topology notifications retain the connected current monitor, recover through the source selection policy, and update physical pointer/TSF coordinates. Isolated policy fixtures cover negative origins and mixed DPI; actual movement/unplug tests remain unverified. In `--editor-fixture`, Tab/Shift+Tab enter and leave the single in-memory editing plane. Whole-HUD keyboard traversal and live CJK/Narrator acceptance remain open.
-
-Install the Visual Studio C++ build tools, Windows SDK and CMake tools first. CMake downloads a hash-pinned zlib 1.3.2 source archive and links only its decoder statically. The script builds `windows/build/x64/Release/EndfieldHUDWindows.exe`, verifies isolated tests and byte-exact resource inventories, and prepares a developer ZIP under `windows/dist`. The chosen Windows distribution is an **unsigned portable ZIP**; no signing certificate or paid signing service is required. [Packaging details](packaging/README.md) describe dependency ownership, the portable manual update/rollback helper, honest signature/size reports and consumer acceptance gates. A consumer version is assigned only after all applicable evidence passes; signed MSIX is an optional future format.
-
-Opening the executable creates a tray activation path. Use Ctrl + backtick or its tray menu; the shortcut reports keyboard-layout requirements and conflicts in the menu. Escape leaves editing before closing; the tray Quit action confirms and closes before exit. The normal desktop omits diagnostic artwork. `--editor-fixture` explicitly enables an in-memory projected editing fixture; `--language en`, `zh-Hans`, `zh-Hant`, `ja` or `ko` selects a diagnostic navigation language. No user profile, account, clipboard history, Mac app data or existing preferences are loaded. Explicit copy/paste inside the test editor uses the standard clipboard only when requested by the user. Module labels describe the required app surface; their module bodies are not implemented at this milestone.
-
-## Reproducible isolated diagnostics
-
-Use [the live feasibility guide](tests/LIVE-FEASIBILITY.md) for the five section 3
-architecture gates: visible source comparisons, saved HUD/cursor recording,
-mixed-DPI hardware, real IME/accessibility and default ambient performance.
-Every live gate remains unverified; isolated checks below do not pass them.
-
-```powershell
-.\windows\tests\run-feasibility.ps1
-```
-
-The script runs native contracts and hardware capability probes, submits source frames to an invisible test HWND, checks 100 warmed reopen cycles, and returns to the message loop for a 61-second closed-state measurement. It writes local, ignored evidence under `windows/evidence/local`; it does not capture the desktop or start a visible helper. GPU utilization, wakeups, visible frame pacing, cold/warm visible opening latency, recording, actual IME use and Mac comparisons require separate measurements. Hardware-probe success does not establish visual or module parity.
-
-The projected editor includes native UIA Edit/Text/Value providers, scrolling and TSF marked-text display attributes. Live acceptance still must cover Chinese/Japanese/Korean IME and projected candidates; mixed-DPI monitors and unplug/recovery; a pre-opening desktop backdrop without recursive HUD capture; normal/custom cursor recording; Narrator and whole-HUD accessibility; device loss and sleep/resume; complete module/data/account/provider parity; and portable installation/update/rollback/uninstall with consent and verified hashes. The first feasibility gate remains open. Module implementation proceeds only after those architecture problems are resolved; no required module is dropped.
-
-Normal activation now prepares one bounded, memory-only frozen SDR snapshot while
-the HUD is hidden, then presents the original opening pose. A three-second
-readiness deadline, cancelled/stale result rejection and tint/vignette fallback
-keep failed capture from becoming a recursive backdrop. Captured pixels are
-discarded on close and display/device changes. The Gaussian prototype does not
-prove parity with the Mac native blur, ICC/HDR or composed-desktop freshness;
-[the backdrop contract](render/FROZEN-BACKDROP.md) records those limits. Synthetic
-diagnostics use generated pixels only and never call desktop capture. The editor
-also supports native Unicode double/triple-click selection and separate UIA text,
-value and caret/selection notifications; live IME/Narrator remains unverified.
+Completion requires the actual desktop shell, every module and Windows service,
+same data contracts, projected editing, current animation behavior, and live
+visual/input/performance checks on the test laptop. Passing core tests establishes
+none of those broader acceptance results. See [the migration requirements](../WINDOWS-MIGRATION.md).
