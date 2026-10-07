@@ -607,5 +607,13 @@ without its internal region association. Actual Shift–Command–5 recording
 remains a manual verification item; these fixtures cannot certify saved-video
 cursor appearance. The user's running HUD and personal data remain untouched.
 
+A separate short-lived AppKit probe then verified genuine tracking-area
+delivery with a stationary pointer: entering a text view or an editable/selectable
+text field selected the I-beam without clicking, and leaving restored the custom
+cursor. An own-process, window-only ScreenCaptureKit recording contained 139
+frames (84 Endfield, 55 I-beam, no unexpected/arrow frames), confirmed in both raw
+capture buffers and the decoded movie. This verifies that isolated cursor path;
+it is not a test of the full HUD through the Shift–Command–5 recorder UI.
+
 The public version stays 1.2.0. Build 16 provides a distinct signed update;
 the existing release description is preserved.

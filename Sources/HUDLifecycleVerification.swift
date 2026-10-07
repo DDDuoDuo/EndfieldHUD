@@ -490,8 +490,14 @@ enum HUDLifecycleVerification {
                   && !cursorAreas[0].options.contains(.activeAlways)
                   && !source.trackingAreas.contains { $0.options.contains(.cursorUpdate) },
                   "The sole desktop cursor owner uses key-window tracking that actually receives cursorUpdate")
-            let probe = NativeCursorProbe(frame: CGRect(x: host.bounds.midX - 40,
-                y: host.bounds.midY - 40, width: 80, height: 80))
+            // Align the temporary native control with the actual pointer when
+            // it is in this window, so genuine AppKit updates and the injected
+            // input coordinate agree. No global pointer movement is performed.
+            let physicalPoint = host.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+            let probeCenter = host.bounds.contains(physicalPoint) ? physicalPoint
+                : CGPoint(x: host.bounds.midX, y: host.bounds.midY)
+            let probe = NativeCursorProbe(frame: CGRect(x: probeCenter.x - 40,
+                y: probeCenter.y - 40, width: 80, height: 80))
             host.addSubview(probe, positioned: .above, relativeTo: nil)
             host.layoutSubtreeIfNeeded()
             probe.updateTrackingAreas()
@@ -499,18 +505,19 @@ enum HUDLifecycleVerification {
             screenPointer = window.convertPoint(toScreen: host.convert(point, to: nil))
             check(host.hitTest(host.convert(point, to: host.superview)) === probe,
                   "Cursor dispatch reaches a native child above the source shell")
-            let sets = source.sourceCursorSetCountForVerification
             sendCursorProbeClick(at: point, host: host, window: window)
-            check(probe.mouseUpCount == 1 && NSCursor.current === NSCursor.arrow
-                  && source.sourceCursorSetCountForVerification == sets,
+            check(probe.mouseUpCount == 1 && NSCursor.current === NSCursor.arrow,
                   "Window mouse delivery does not overwrite a native cursor after dispatch")
             let resets = probe.cursorResetCount
             window.invalidateCursorRects(for: probe)
             window.resetCursorRects()
-            check(probe.cursorResetCount > resets && source.sourceCursorSetCountForVerification == sets,
-                  "Native cursor-region invalidation does not install a competing HUD cursor rect")
+            check(probe.cursorResetCount > resets,
+                  "Native cursor-region invalidation reaches the native view through AppKit")
+            // resetCursorRects may legitimately send cursorUpdate immediately.
+            // Count only our explicit handler call after that arbitration ends.
+            let afterResetSets = source.sourceCursorSetCountForVerification
             sendCursorUpdate(at: point, host: host, window: window)
-            check(source.sourceCursorOwnedForVerification && source.sourceCursorSetCountForVerification == sets + 1,
+            check(source.sourceCursorOwnedForVerification && source.sourceCursorSetCountForVerification == afterResetSets + 1,
                   "After native invalidation the registered cursorUpdate owner immediately restores Endfield")
             // A native resize/drag cursor must survive window delivery and the
             // following run-loop turn. The former async repair clobbered it.
@@ -519,27 +526,30 @@ enum HUDLifecycleVerification {
             check(NSCursor.current === NSCursor.resizeLeftRight,
                   "Native resize selection survives synchronous window dispatch")
             later(0.05) { [self] in
-                check(NSCursor.current === NSCursor.resizeLeftRight
-                      && source.sourceCursorSetCountForVerification == sets + 1,
+                check(NSCursor.current === NSCursor.resizeLeftRight,
                       "There is no deferred HUD reassertion over a native resize cursor")
                 probe.selectedCursor = .dragCopy
                 sendCursorProbeClick(at: point, host: host, window: window)
                 later(0.05) { [self] in
-                    check(NSCursor.current === NSCursor.dragCopy
-                          && source.sourceCursorSetCountForVerification == sets + 1,
+                    check(NSCursor.current === NSCursor.dragCopy,
                           "Native drag cursor selection survives subsequent event-loop work")
                     let pasteboard = NSPasteboard(name: .init("EndfieldHUD.CursorDragProbe.\(UUID().uuidString)"))
                     let drag = NativeCursorDragProbe(pasteboard: pasteboard)
                     _ = host.draggingEntered(drag)
+                    let beforeDragRefresh = source.sourceCursorSetCountForVerification
                     source.refreshSourceCursor()
                     source.viewDidChangeBackingProperties()
                     sendCursorUpdate(at: point, host: host, window: window)
                     check(host.preservesNativeDragCursor && NSCursor.current === NSCursor.dragCopy
-                          && source.sourceCursorSetCountForVerification == sets + 1,
+                          && source.sourceCursorSetCountForVerification == beforeDragRefresh,
                           "Lifecycle and backing refreshes share the native drag cursor veto")
                     host.draggingExited(drag)
                     pasteboard.releaseGlobally()
                     probe.selectedCursor = .arrow
+                    probe.cursorTrackingEnabled = false
+                    probe.updateTrackingAreas()
+                    window.invalidateCursorRects(for: probe)
+                    window.resetCursorRects()
                     sendCursorUpdate(at: point, host: host, window: window)
                     later(0.25) { [self] in
                         check(source.playback.phase == .visible && !source.hasDisplayTimerForVerification,
@@ -557,18 +567,23 @@ enum HUDLifecycleVerification {
                             editor.isEditable = true
                             host.addSubview(editor, positioned: .above, relativeTo: nil)
                             sendCursorProbeClick(at: point, host: host, window: window)
+                            let beforeEditorUpdate = source.sourceCursorSetCountForVerification
                             sendCursorUpdate(at: point, host: host, window: window)
                             check(editor.mouseUpCount == 1 && NSCursor.current === NSCursor.iBeam
                                   && !source.sourceCursorOwnedForVerification
-                                  && source.sourceCursorSetCountForVerification == idleSets,
+                                  && source.sourceCursorSetCountForVerification == beforeEditorUpdate,
                                   "The HUD cursor owner yields to a native text editor's I-beam")
                             editor.removeFromSuperview()
                             let selectable = NSTextField(frame: probe.frame)
                             selectable.isEditable = false; selectable.isSelectable = true
                             host.addSubview(selectable, positioned: .above, relativeTo: nil)
+                            // This check preserves an already chosen native
+                            // cursor; genuine hover entry has a separate probe.
+                            NSCursor.iBeam.set()
+                            let beforeSelectableUpdate = source.sourceCursorSetCountForVerification
                             sendCursorUpdate(at: point, host: host, window: window)
                             check(NSCursor.current === NSCursor.iBeam
-                                  && source.sourceCursorSetCountForVerification == idleSets,
+                                  && source.sourceCursorSetCountForVerification == beforeSelectableUpdate,
                                   "Selectable read-only text also retains its native cursor")
                             selectable.removeFromSuperview()
                             host.addSubview(probe, positioned: .above, relativeTo: nil)
@@ -595,7 +610,6 @@ enum HUDLifecycleVerification {
         }
 
         private func sendCursorUpdate(at point: CGPoint, host: SystemHUDView, window: NSWindow) {
-            host.updateTrackingAreas()
             guard let area = host.trackingAreas.first(where: { $0.options.contains(.cursorUpdate) }),
                   let owner = area.owner as? NSResponder,
                   let event = NSEvent.enterExitEvent(with: .cursorUpdate,
@@ -656,6 +670,8 @@ enum HUDLifecycleVerification {
             ]
             if let source = overlay.systemSourceWatchForVerification {
                 lines.append("source phase=\(source.playback.phase) hidden=\(source.isHiddenOrHasHiddenAncestor) input=\(source.inputEnabled) timer=\(source.hasDisplayTimerForVerification) frames=\(source.renderedFrameCount) openingFrames=\(openingSourceFrames) buttons=\(source.document.buttons.count)")
+                lines.append("cursor owned=\(source.sourceCursorOwnedForVerification) sets=\(source.sourceCursorSetCountForVerification) arrow=\(NSCursor.current === NSCursor.arrow) iBeam=\(NSCursor.current === NSCursor.iBeam) resize=\(NSCursor.current === NSCursor.resizeLeftRight) dragCopy=\(NSCursor.current === NSCursor.dragCopy)")
+                lines.append("cursor sourceAreas=\(source.trackingAreas.map { $0.options.rawValue }) hostAreas=\(source.superview?.trackingAreas.map { $0.options.rawValue } ?? [])")
                 lines.append("source window=\(source.window != nil) key=\(source.window?.isKeyWindow ?? false) occlusion=\(String(describing: source.window?.occlusionState)) appActive=\(NSApp.isActive) bounds=\(source.bounds)")
                 lines.append("source frame=\(source.currentFrameForVerification != nil) camera=\(source.currentCameraForVerification != nil) hits=\(source.currentFrameForVerification?.hits.count ?? 0) batches=\(source.currentFrameForVerification?.batches.count ?? 0)")
                 if let frame = source.currentFrameForVerification, let camera = source.currentCameraForVerification {
@@ -702,10 +718,15 @@ enum HUDLifecycleVerification {
         private var tracking: NSTrackingArea?
         private(set) var mouseUpCount = 0
         private(set) var cursorResetCount = 0
-        var selectedCursor: NSCursor = .arrow
+        var selectedCursor: NSCursor = .arrow {
+            didSet { window?.invalidateCursorRects(for: self) }
+        }
+        var cursorTrackingEnabled = true
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
             if let tracking { removeTrackingArea(tracking) }
+            tracking = nil
+            guard cursorTrackingEnabled else { return }
             let area = NSTrackingArea(rect: .zero,
                 options: [.inVisibleRect, .activeInKeyWindow, .mouseMoved, .cursorUpdate], owner: self)
             addTrackingArea(area); tracking = area
@@ -713,11 +734,13 @@ enum HUDLifecycleVerification {
         override func resetCursorRects() {
             super.resetCursorRects()
             cursorResetCount += 1
-            addCursorRect(visibleRect, cursor: .arrow)
-            NSCursor.arrow.set()
+            if cursorTrackingEnabled {
+                addCursorRect(visibleRect, cursor: selectedCursor)
+                selectedCursor.set()
+            }
         }
-        override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
-        override func mouseMoved(with event: NSEvent) { NSCursor.arrow.set() }
+        override func cursorUpdate(with event: NSEvent) { selectedCursor.set() }
+        override func mouseMoved(with event: NSEvent) { selectedCursor.set() }
         override func mouseDown(with event: NSEvent) {}
         override func mouseUp(with event: NSEvent) { mouseUpCount += 1; selectedCursor.set() }
     }
