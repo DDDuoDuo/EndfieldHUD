@@ -1,0 +1,94 @@
+#include "native/renderer.hpp"
+#include "native/source_graphics.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <d3dcompiler.h>
+#include <wrl/client.h>
+#include <array>
+#include <cmath>
+#include <iostream>
+#include <span>
+using namespace endfield::native;
+using Microsoft::WRL::ComPtr;
+namespace {
+unsigned checks{};
+void check(bool value, const char* message) { ++checks; if (!value) throw std::runtime_error(message); }
+template<class F> void rejects(F f, const char* message) { bool rejected{}; try { f(); } catch(const std::exception&) { rejected=true; } check(rejected,message); }
+template<class T, std::size_t N> std::span<const std::uint8_t> bytes(const std::array<T,N>& values) {
+    return {reinterpret_cast<const std::uint8_t*>(values.data()),sizeof(T)*N};
+}
+ComPtr<ID3DBlob> compile(const char* entry, const char* target) {
+    constexpr char text[]=R"(
+struct Vertex { float4 position : TEXCOORD0; float4 color : TEXCOORD1; };
+struct Interpolated { float4 position : SV_Position; float4 color : TEXCOORD0; };
+cbuffer Fixture : register(b0) { float4 tint; };
+Interpolated vs(Vertex v) { Interpolated o; o.position=v.position; o.color=v.color; return o; }
+float4 ps(Interpolated i) : SV_Target { return i.color*tint; }
+)";
+    ComPtr<ID3DBlob> code,error;
+    const auto result=D3DCompile(text,sizeof(text)-1,nullptr,nullptr,nullptr,entry,target,D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_WARNINGS_ARE_ERRORS,0,&code,&error);
+    if(FAILED(result)) throw std::runtime_error(error?static_cast<const char*>(error->GetBufferPointer()):"Synthetic source shader compilation failed");
+    return code;
+}
+void run(const std::filesystem::path& shader) {
+    struct Window {
+        HWND value{CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,L"STATIC",L"Source graphics fixture",WS_POPUP,0,0,32,32,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr)};
+        ~Window(){ if(value) DestroyWindow(value); }
+    } window;
+    check(window.value!=nullptr && !IsWindowVisible(window.value),"Owned fixture stays hidden");
+    Renderer renderer;
+    renderer.initialize(window.value,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});
+    auto& source=renderer.sourceGraphics();
+    auto vs=compile("vs","vs_5_0"),ps=compile("ps","ps_5_0");
+    SourcePipeline pipeline;
+    pipeline.vertexBytecode={static_cast<const std::uint8_t*>(vs->GetBufferPointer()),vs->GetBufferSize()};
+    pipeline.fragmentBytecode={static_cast<const std::uint8_t*>(ps->GetBufferPointer()),ps->GetBufferSize()};
+    pipeline.attributes={{0,4,0},{1,4,16}};
+    source.setPipeline("fixture",pipeline);
+    const std::array<float,32> quad{-1,1,.5f,1,1,0,0,1, 1,1,.5f,1,1,0,0,1,
+                                    1,-1,.5f,1,1,0,0,1, -1,-1,.5f,1,1,0,0,1};
+    const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+    const std::array<float,4> tint{1,1,1,1};
+    source.setMesh("quad",1,32,bytes(quad),indices);
+    source.setUniform("tint",bytes(tint));
+    SourceDraw draw{"quad","fixture",0,6,0,{{SourceStage::fragment,0,"tint"}}, {}};
+    source.setDraws(std::span(&draw,1));
+    renderer.draw(false);
+    auto image=renderer.readback();
+    check(image.pixels[(16*32+16)*4+2]==255 && image.pixels[(16*32+16)*4+3]==255,"Original source pipeline renders retained vertex colors");
+    const auto before=source.stats();
+    rejects([&] {source.setMesh("quad",2,32,bytes(quad),std::span(indices).first(3));},"A shorter replacement cannot invalidate an active draw");
+    rejects([&] {source.setMesh("quad",2,16,bytes(quad),indices);},"A smaller stride cannot invalidate the active vertex layout");
+    check(source.stats().geometryUploads==before.geometryUploads && source.stats().payloadBytes==before.payloadBytes,"Rejected replacements preserve resources and accounting");
+    source.setMesh("quad",1,32,bytes(quad),indices);
+    source.setUniform("tint",bytes(tint));
+    for(unsigned i=0;i<20;++i) renderer.draw(false);
+    check(source.stats().geometryUploads==before.geometryUploads && source.stats().uniformUploads==before.uniformUploads && source.stats().textureUploads==before.textureUploads,"Unchanged frames do not recreate or upload GPU data");
+    const std::array<float,4> dim{.25f,1,1,1};
+    source.setUniform("tint",bytes(dim));
+    renderer.draw(false); image=renderer.readback();
+    check(std::abs(int(image.pixels[(16*32+16)*4+2])-137)<=1,"Original sRGB attachment encodes linear shader results exactly once");
+    check(source.stats().uniformAllocations==before.uniformAllocations && source.stats().uniformUploads==before.uniformUploads+1,"Changed shader constants reuse their native allocation");
+    const std::array<Vertex,4> nativeQuad{{
+        {{-1,1,.5f},{0,0},{1,1,1,1}},{{1,1,.5f},{1,0},{1,1,1,1}},
+        {{1,-1,.5f},{1,1},{1,1,1,1}},{{-1,-1,.5f},{0,1},{1,1,1,1}}}};
+    renderer.setMesh("native-caption",1,{nativeQuad,indices});
+    DrawObject overlay;overlay.sourceID="caption";overlay.meshID="native-caption";
+    overlay.linearTint={0,0,1,1};overlay.opacity=.5f;
+    overlay.masks={{endfield::core::Matrix4{}, {-1,-1,1,2}}};
+    renderer.setDrawList(std::span(&overlay,1));renderer.draw(false);image=renderer.readback();
+    auto pixel=[&](unsigned x,unsigned channel){return int(image.pixels[(16*32+x)*4+channel]);};
+    check(std::abs(pixel(8,0)-128)<=1 && std::abs(pixel(8,2)-68)<=1 && pixel(8,3)==255,
+          "Native caption surface composites over original shader output in encoded space");
+    check(pixel(24,0)==0 && std::abs(pixel(24,2)-137)<=1 && pixel(24,3)==255,
+          "Transparent native surface preserves original source pixels");
+    renderer.clearResources(); renderer.draw(false); image=renderer.readback();
+    check(source.stats().payloadBytes==0 && !source.active(),"Scene teardown releases all original resources");
+    check(image.pixels[(16*32+16)*4+3]==0,"Source teardown does not leave old content visible");
+}
+}
+int wmain(int argc,wchar_t**argv) {
+    try {check(argc==2,"Pass native/hud.hlsl");run(argv[1]);std::cout<<"Passed "<<checks<<" original graphics contracts\n";return 0;}
+    catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}
+}

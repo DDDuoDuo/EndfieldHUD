@@ -11,6 +11,7 @@
 #include <vector>
 
 namespace endfield::native {
+class SourceGraphics;
 
 enum class Driver { hardware, warpForTests };
 enum class TextureColorSpace { sRGB, linear };
@@ -110,6 +111,9 @@ public:
     void clearResources(); // also clears draw list
     void reset() noexcept;
     RendererStats stats() const noexcept;
+    // Original material path shares this exact device and presentation target.
+    // No new window, renderer timer or duplicate GPU device is created.
+    SourceGraphics& sourceGraphics();
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

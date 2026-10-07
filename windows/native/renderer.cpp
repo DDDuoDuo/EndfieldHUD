@@ -1,4 +1,5 @@
 #include "renderer.hpp"
+#include "source_graphics.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -167,6 +168,7 @@ struct Renderer::Impl {
     std::map<std::string, Texture> textures;
     Texture white;
     std::vector<Draw> draws;
+    std::unique_ptr<SourceGraphics> source;
 
     ~Impl() {
         if (target) target->SetRoot(nullptr);
@@ -444,6 +446,15 @@ void Renderer::draw(bool present) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     require(!present || !r.offscreen, "An isolated render target cannot present to the desktop");
     r.readbackReady = false;
+    const bool originalBackground = r.source && r.source->active();
+    if (originalBackground) {
+        r.source->renderTo(r.backBuffer.Get(), r.width, r.height);
+        if (r.draws.empty()) {
+            if (present) { checked(r.swapchain->Present(1, 0), "Present original HUD materials"); ++r.counters.presents; }
+            else r.readbackReady = true;
+            return;
+        }
+    }
     if (r.cameraDirty) {
         D3D11_MAPPED_SUBRESOURCE mapped{};
         checked(r.context->Map(r.cameraBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update camera uniform");
@@ -482,7 +493,10 @@ void Renderer::draw(bool present) {
     r.context->PSSetShaderResources(0, 1, &emptyResource);
     auto *output = r.outputView.Get();
     r.context->OMSetRenderTargets(1, &output, nullptr);
-    r.context->OMSetBlendState(r.replaceBlend.Get(), nullptr, UINT_MAX);
+    // Native captions/modules form a separate premultiplied encoded surface,
+    // matching the source's Core Animation layer above its Metal attachment.
+    // Preserve original shader output; only the native surface is composited.
+    r.context->OMSetBlendState(originalBackground ? r.overBlend.Get() : r.replaceBlend.Get(), nullptr, UINT_MAX);
     r.context->IASetInputLayout(nullptr);
     r.context->VSSetShader(r.compositeVS.Get(), nullptr, 0); r.context->PSSetShader(r.compositePS.Get(), nullptr, 0);
     auto *source = r.linearResource.Get();
@@ -535,6 +549,7 @@ void Renderer::clearResources() {
     if (!impl_) return;
     impl_->thread(); impl_->draws.clear(); impl_->meshes.clear(); impl_->textures.clear();
     impl_->context->ClearState(); impl_->counters.resourceBytes = 0;
+    if (impl_->source) impl_->source->clear();
 }
 void Renderer::reset() noexcept { impl_.reset(); }
 RendererStats Renderer::stats() const noexcept {
@@ -542,6 +557,11 @@ RendererStats Renderer::stats() const noexcept {
     auto result = impl_->counters;
     result.meshes = impl_->meshes.size(); result.textures = impl_->textures.size(); result.objects = impl_->draws.size();
     return result;
+}
+SourceGraphics& Renderer::sourceGraphics() {
+    require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();
+    if (!impl_->source) impl_->source = std::make_unique<SourceGraphics>(impl_->device.Get(), impl_->context.Get());
+    return *impl_->source;
 }
 
 } // namespace endfield::native
