@@ -1,4 +1,5 @@
 #include "native/source_scene.hpp"
+#include <algorithm>
 #include "core/shell_packet.hpp"
 #include "core/data/data_store.hpp"
 #include <atomic>
