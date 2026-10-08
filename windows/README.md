@@ -516,3 +516,26 @@ Swift name cases against Windows ICU15.1. Per-application WASAPI controls compil
 and pass injected worker tests; actual audio control, connected media insertion
 and video playback remain unverified/in progress. These checks are not a stable
 release or complete module migration claim.
+
+
+Snapshot71 (2026-10-08) passes93 Windows suites plus the original subsection,
+combined Notes, checklist, font-host and media-menu checks. Notes image/GIF
+insertion now uses the existing decoder worker and root deadline; source/Shelf
+menus use retained projected artwork and finite transitions. Shelf insertion
+moves an independent access lease through inspection, playback and retirement.
+The root publishes supplemental media revisions even when draw-vector addresses
+stay unchanged. Closing preserves artwork through the fade while cancelling
+playback work; completed closing clears media and deadlines.
+
+Event Log now uses its persistent owner in the isolated preview, with the same
+root timer for debounce and one lazy bounded utility worker for atomic writes.
+Rejected saves retain the latest immutable snapshot until queue space is freed.
+Shutdown joins accepted writes before destroying the window, and stale callbacks
+cannot access retired module owners. The native hidden-save test originally held
+its own diagnostic file reader open during replacement; closing that test reader
+restored the intended Windows sharing contract without changing production code.
+
+This checkpoint validates generated files and hidden render targets only. Native
+media-picker/visible image insertion, actual audio sessions, video playback and
+all remaining module bodies are still integration/desktop acceptance work. The
+clock, Work Mode and Archive additions under development are outside snapshot71.

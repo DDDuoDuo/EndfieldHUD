@@ -68,6 +68,10 @@ public:
     // editing with source defaults, even when the view retains an unsaved draft.
     bool createText(std::string id,double createdAt);
     bool createChecklist(std::string id,std::string firstItemID,double createdAt); // select; row owner starts editor
+    // Validated native media metadata from the asynchronous import worker.
+    // Original source aspect-derived size/position, one persistence boundary,
+    // then select without an editor. No file bytes or file access occurs here.
+    bool createMedia(std::string id,double createdAt,std::string reference,Point);
     enum class ChecklistAction {toggle,up,down,remove};
     bool addChecklistItem(std::string_view noteID,std::string itemID);
     bool mutateChecklistItem(std::string_view noteID,std::string_view itemID,ChecklistAction);

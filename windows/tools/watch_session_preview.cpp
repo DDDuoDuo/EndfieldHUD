@@ -1,6 +1,8 @@
 // Build-only source-shell feasibility tool. Every input is an explicit synthetic
 // export/cache. Visible launch is opt-in; benchmark never shows its owned HWND.
 #include "app/overlay_host.hpp"
+#include "app/event_log_save_queue.hpp"
+#include "native/event_log_owner.hpp"
 #include "tools/notes_preview.hpp"
 #include "tools/shelf_preview.hpp"
 #include "tools/clipboard_preview.hpp"
@@ -46,7 +48,7 @@ using ehud::data::Json;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-double now(){static const auto frequency=[] {LARGE_INTEGER value;need(QueryPerformanceFrequency(&value)!=0,"Performance frequency unavailable");return double(value.QuadPart);}();LARGE_INTEGER value;need(QueryPerformanceCounter(&value)!=0,"Performance counter unavailable");return double(value.QuadPart)/frequency;}
+double now(){return app::OverlayHost::clockNow();}
 using Clock=std::chrono::steady_clock;
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 struct COM {COM(){need(SUCCEEDED(OleInitialize(nullptr)),"OLE initialization failed");}~COM(){OleUninitialize();}};
@@ -83,6 +85,14 @@ private:
 struct PreviewWindowLifetime final {
     bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;std::unique_ptr<endfield::tools::ShelfPreview>&shelf;std::unique_ptr<endfield::tools::ClipboardPreview>&clipboard;std::unique_ptr<endfield::tools::VolumePreview>&volume;std::unique_ptr<endfield::tools::EventLogPreview>&eventLog;
     ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(notes&&renderer.stats().initialized)notes->release(renderer);if(shelf&&renderer.stats().initialized)shelf->release(renderer);if(clipboard&&renderer.stats().initialized)clipboard->release(renderer);if(volume&&renderer.stats().initialized)volume->release(renderer);if(eventLog&&renderer.stats().initialized)eventLog->release(renderer);}catch(...) {} if(detached){notes.reset();shelf.reset();clipboard.reset();volume.reset();eventLog.reset();}backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
+};
+// Accepted immutable writes finish before the HWND is destroyed. Completion
+// routes are detached first, including during exception unwinding. The picker
+// is UI-owned and never survives its window; none of these services polls.
+struct PreviewServicesLifetime final {
+    bool&ready;std::unique_ptr<app::EventLogSaveQueue>&saves;
+    std::unique_ptr<app::UtilityExecutor>&utility;std::unique_ptr<gpu::NativeShelfFilePicker>&picker;
+    ~PreviewServicesLifetime(){ready=false;picker.reset();saves.reset();utility.reset();}
 };
 struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},volumeFixture{},eventLogFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
@@ -259,12 +269,22 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     gpu::SourceCursor cursor;if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
     std::unique_ptr<BackdropQueue> backdropQueue;
     app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;std::unique_ptr<endfield::tools::NotesPreview> notes;std::unique_ptr<gpu::NativeShelfAssets>shelfAssets;std::unique_ptr<endfield::tools::ShelfPreview>shelf;std::optional<ehud::data::ShelfFileAccess>pendingShelfReveal;std::unique_ptr<gpu::NativeClipboardAssets>clipboardAssets;std::unique_ptr<endfield::tools::ClipboardPreview>clipboard;std::unique_ptr<endfield::tools::VolumePreview>volume;std::unique_ptr<endfield::tools::EventLogPreview>eventLog;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,pendingClose=false,focused=!args.visible;
+    std::unique_ptr<gpu::EventLogOwner>eventOwner;
+    std::unique_ptr<app::UtilityExecutor>utility;
+    std::unique_ptr<app::EventLogSaveQueue>eventSaves;
+    std::unique_ptr<gpu::NativeShelfFilePicker>mediaPicker;
+    core::Point mediaInsertionPoint;bool eventRefreshQueued{},stopping{};
+    constexpr UINT eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196;
+    constexpr UINT_PTR serviceGeneration=1;
     PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop,composition,notes,shelf,clipboard,volume,eventLog};
+    PreviewServicesLifetime servicesLifetime{ready,eventSaves,utility,mediaPicker};
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
-    std::vector<gpu::LayerCompositionEntry>ordered;std::vector<PublishedEntry>published;ordered.reserve(134);published.reserve(134);
+    std::vector<gpu::LayerCompositionEntry>ordered;std::vector<PublishedEntry>published;ordered.reserve(134);published.reserve(134);std::uint64_t publishedNotesRevision{};
     auto publishNative=[&]{ordered.clear();ordered.push_back({&layers,{}});if(eventLog){eventLog->upload(renderer);for(const auto&e:eventLog->entries())ordered.push_back(e);}if(volume){volume->upload(renderer);for(const auto&e:volume->entries())ordered.push_back(e);}if(clipboard){clipboard->upload(renderer);for(const auto&e:clipboard->entries())ordered.push_back(e);}if(shelf){shelf->upload(renderer);for(const auto&e:shelf->entries())ordered.push_back(e);}if(notes){notes->upload(renderer);for(const auto&e:notes->entries())ordered.push_back(e);}
-        bool changed=ordered.size()!=published.size();if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count){changed=true;break;}}
+        const auto notesRevision=notes?notes->compositionRevision():0;
+        bool changed=ordered.size()!=published.size()||notesRevision!=publishedNotesRevision;if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count){changed=true;break;}}
         if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(notes)notes->collected(renderer);if(shelf)shelf->collected(renderer);if(clipboard)clipboard->collected(renderer);if(volume)volume->collected(renderer);if(eventLog)eventLog->collected(renderer);}
+        publishedNotesRevision=notesRevision;
     };
     app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
@@ -287,10 +307,14 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         if(metrics.pixelWidth&&metrics.pixelHeight){backdropState.pixelWidth=metrics.pixelWidth;backdropState.pixelHeight=metrics.pixelHeight;}
         backdropState.lowPower=settings.lowPower;backdropState.sourceOpacity=backdropOpacity(time);backdrop.update(backdropState);
     };
-    auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);};
+    auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);if(notes)notes->setMediaActive(true,time);};
     auto demand=[&](double time){auto result=session.demand(time);if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(notes&&notes->requiresFrames(time))||(shelf&&shelf->requiresFrames(time))||(clipboard&&clipboard->requiresFrames(time))||(volume&&volume->requiresFrames(time))||(eventLog&&eventLog->requiresFrames(time));return result;};
-    auto refresh=[&](double time){if(args.visible){host.setFrameDemand(demand(time));host.invalidate();}};
-    auto close=[&](double time){if(!closing){std::cout<<"Preview close requested at "<<time<<std::endl;if(notes&&!notes->finish()){pendingClose=true;return;}pendingClose=false;if(shelf){shelf->cancelPanels();shelf->cancelInteraction();}if(clipboard)clipboard->cancelInteraction();if(volume)volume->cancelInteraction(time);if(eventLog)eventLog->cancelInteraction();host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
+    auto scheduleDeadline=[&]{if(!args.visible||!ready||stopping)return;std::optional<double>next;
+        auto include=[&](std::optional<double>value){if(value&&(!next||*value<*next))next=value;};
+        if(notes)include(notes->nextWakeTime());if(eventOwner)include(eventOwner->saveDeadline());host.setDeadline(next);
+    };
+    auto refresh=[&](double time){if(args.visible&&ready&&!stopping){host.setFrameDemand(demand(time));scheduleDeadline();host.invalidate();}};
+    auto close=[&](double time){if(!closing){std::cout<<"Preview close requested at "<<time<<std::endl;if(notes&&!notes->finish()){pendingClose=true;return;}pendingClose=false;if(mediaPicker)mediaPicker->cancel();if(notes)notes->setMediaActive(false,time,true);if(shelf){shelf->cancelPanels();shelf->cancelInteraction();}if(clipboard)clipboard->cancelInteraction();if(volume)volume->cancelInteraction(time);if(eventLog)eventLog->cancelInteraction();host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){notes->select(module,now());break;}}}
         std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (Notes preview)":shelf&&entry->target=="fileShelf"?" (File Shelf preview)":clipboard&&entry->target=="clipboard"?" (synthetic Clipboard preview)":" (module body is not installed)")<<'\n';};
     LiveProbe probe;probe.enabled=!args.liveDiagnostics.empty();
@@ -355,7 +379,36 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         else return false;refresh(time);return true;};
     callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(shelf&&session.inputEnabled()&&shelf->wheel(e,time)){refresh(time);return true;}if(clipboard&&session.inputEnabled()&&clipboard->wheel(e,time)){refresh(time);return true;}if(volume&&session.inputEnabled()&&volume->wheel(e,time)){refresh(time);return true;}if(eventLog&&session.inputEnabled()&&eventLog->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
     callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){if(!ready)return false;if(shelf&&shelf->filterKey(m))return true;const auto target=static_cast<HWND>(m.window),owner=static_cast<HWND>(host.hwnd());return (target==owner||IsChild(owner,target))&&notes&&notes->filterKey(m);};
-    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{auto stage=probe.measure(LiveProbe::message);if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}
+    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{auto stage=probe.measure(LiveProbe::message);
+        if(ready&&m.wParam==serviceGeneration){
+            if(m.message==utilityMessage){if(utility)utility->drain();if(eventSaves)eventSaves->retry();refresh(now());return 0;}
+            if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLog)eventLog->refresh();refresh(now());return 0;}
+            if(m.message==mediaPickerMessage&&mediaPicker){
+                host.suspendCursor(true);mediaPicker->handleMessage(m.wParam,m.lParam);host.suspendCursor(false);
+                if(auto result=mediaPicker->drain(m.wParam);result&&notes&&!result->canceled()){
+                    if(SUCCEEDED(result->result))notes->importMedia(result->paths,mediaInsertionPoint,now());
+                    else notes->showMediaError("无法打开所选文件",now());
+                }refresh(now());return 0;
+            }
+        }
+        if(ready&&notes&&m.message==endfield::tools::NotesPreview::mediaActionMessage){
+            if(auto action=notes->takeMediaAction(m.wParam))try{using K=endfield::tools::NotesMediaAction::Kind;
+                if(action->kind==K::chooseLocal){mediaInsertionPoint=action->workspacePoint;host.capturePointer(false);if(!mediaPicker->request())notes->showMediaError("文件选择器正忙",now());}
+                else if(action->kind==K::chooseShelf){
+                    std::vector<endfield::modules::NotesShelfChoice>choices;
+                    if(shelf)for(const auto&item:shelf->state().items()){
+                        auto extension=utf8(fs::u8path(item.lastKnownPath).extension());
+                        std::transform(extension.begin(),extension.end(),extension.begin(),[](unsigned char c){return c>='A'&&c<='Z'?char(c+32):char(c);});
+                        constexpr std::array supported{".png",".jpg",".jpeg",".gif",".heic",".heif",".tif",".tiff",".bmp",".webp",".jp2"};
+                        const bool image=!item.isDirectory&&std::find(supported.begin(),supported.end(),extension)!=supported.end();
+                        choices.push_back({item.id,item.name,item.typeDescription,image,!item.availabilityError});
+                    }
+                    notes->presentShelfMedia(std::move(choices),action->workspacePoint,now());
+                }else if(shelf)notes->importMedia(shelf->access(action->itemID),action->workspacePoint,now());
+            }catch(const std::exception&e){notes->showMediaError(e.what(),now());}
+            refresh(now());return 0;
+        }
+        if(ready&&notes&&notes->message(m,now())){if(pendingClose)close(now());refresh(now());return 0;}
         if(ready&&shelf){
             if(shelf->message(m,now())){refresh(now());return 0;}
             if(m.message==endfield::tools::ShelfPreview::actionMessage){
@@ -374,6 +427,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&shelf&&session.inputEnabled()&&shelf->key(e,now())){refresh(now());return true;}if(ready&&clipboard&&session.inputEnabled()&&clipboard->key(e,now())){refresh(now());return true;}if(ready&&volume&&session.inputEnabled()&&volume->key(e,now())){refresh(now());return true;}if(ready&&eventLog&&session.inputEnabled()&&eventLog->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){std::cout<<"Preview unhandled Escape"<<std::endl;close(now());return true;}return false;};
     callbacks.focus=[&](bool value){std::cout<<"Preview focus: "<<value<<std::endl;focused=value;if(notes)notes->focus(value);if(shelf&&!value)shelf->cancelInteraction();if(clipboard&&!value)clipboard->cancelInteraction();if(volume&&!value)volume->cancelInteraction(now());if(eventLog&&!value)eventLog->cancelInteraction();if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
     callbacks.closeRequested=[&]{std::cout<<"Preview native close request"<<std::endl;if(ready)close(now());};
+    callbacks.deadline=[&](double time){if(!ready||stopping)return;bool artwork=notes&&notes->deadline(time);if(eventSaves)eventSaves->capture(time);scheduleDeadline();if(artwork)refresh(time);};
     double diagnosticStart{};bool diagnosticEditing{},diagnosticFinished{};
     callbacks.frame=[&](double time){if(!ready)return;
         if(probe.enabled&&!diagnosticFinished){
@@ -385,7 +439,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             if(phase==3&&diagnosticEditing){auto stage=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
             if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;close(time);}
         }
-        const bool active=present(time,true);host.setFrameDemand(demand(time));if(!active&&session.phase()==core::VisibilityPhase::concealed){host.hide();host.requestStop();}};
+        const bool active=present(time,true);host.setFrameDemand(demand(time));scheduleDeadline();if(!active&&session.phase()==core::VisibilityPhase::concealed){stopping=true;if(notes)notes->setMediaActive(false,time);host.setDeadline({});host.hide();host.requestStop();}};
     app::OverlayOptions windowOptions{!args.notesData.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(args.visible){
         const auto displays=gpu::readConnectedDisplays();POINT pointer{};
@@ -409,7 +463,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     startup.mark("lower-system-backdrop");
     if(!args.notesAssets.empty()){need(bool(chromePlan),"Notes integration requires the source chrome projection");
         notesAssets=std::make_unique<gpu::NativeNotesControlsAssets>(args.notesAssets,gpu::NativeNotesControlsAssetPins{args.notesAssetsSHA,"ca04f142185c7de40acd8523bdb563195d90a1d1"});
-        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,true,args.notesFormatAssets);notes->resize(metrics);session.setHitFilter([&](std::string_view,core::Point p){return (!notes||!notes->covers(p))&&(!shelf||!shelf->covers(p))&&(!clipboard||!clipboard->covers(p))&&(!volume||!volume->covers(p))&&(!eventLog||!eventLog->covers(p));},0);startup.mark("isolated-notes-owner");}
+        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,true,args.notesFormatAssets);notes->resize(metrics);mediaPicker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{static_cast<HWND>(host.hwnd()),mediaPickerMessage,serviceGeneration},gpu::ShelfPickerLabels{"添加图片/视频","添加","添加所选文件"});session.setHitFilter([&](std::string_view,core::Point p){return (!notes||!notes->covers(p))&&(!shelf||!shelf->covers(p))&&(!clipboard||!clipboard->covers(p))&&(!volume||!volume->covers(p))&&(!eventLog||!eventLog->covers(p));},0);startup.mark("isolated-notes-owner");}
     if(!args.shelfAssets.empty()){
         const auto bytes=ehud::data::detail::readFile(args.shelfMask,128*1024);need(bytes.has_value(),"Missing original Shelf reveal samples");
         auto masks=std::make_shared<core::SubsectionMaskSampler>(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()),core::SubsectionMaskSampler::assetSHA256);
@@ -431,10 +485,15 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         clipboard=std::make_unique<endfield::tools::ClipboardPreview>(rasterizer,ro,std::move(actions),gpu::ClipboardStrings{},gpu::ClipboardAppearance{},clipboardAssets->images(),clipboardAssets->revealSamples());clipboard->resize(metrics);
     }
     if(args.eventLogFixture){
-        auto sample=std::make_shared<endfield::modules::EventLogSnapshot>();
-        for(unsigned n=0;n<32;++n){using K=endfield::modules::EventKind;sample->events.push_back({ehud::data::makeUUID(),n%2?K::shelfAdded:K::clipboardCopied,812000000.-n*30,n%2?endfield::modules::EventMetadata{{"filename","Synthetic.pdf"}}:endfield::modules::EventMetadata{{"kind","text"}}});}
-        endfield::modules::EventLogCallbacks actions{[sample]{return *sample;},[sample]{sample->events.clear();},[](double){return std::string("10-08 12:34:56");}};
-        eventLog=std::make_unique<endfield::tools::EventLogPreview>(rasterizer,gpu::LayerRasterOptions{},std::move(actions));eventLog->resize(metrics);
+        const auto window=static_cast<HWND>(host.hwnd());
+        utility=std::make_unique<app::UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");});
+        eventOwner=std::make_unique<gpu::EventLogOwner>(args.notesData,gpu::EventLogOwnerCallbacks{now,[&,window]{
+            if(!eventRefreshQueued){need(PostMessageW(window,eventChangedMessage,serviceGeneration,0)!=FALSE,"Post Event Log revision");eventRefreshQueued=true;}
+        }});
+        eventSaves=std::make_unique<app::EventLogSaveQueue>(*eventOwner,*utility);
+        for(unsigned n=0;n<32;++n){using K=endfield::modules::EventKind;eventOwner->record({ehud::data::makeUUID(),n%2?K::shelfAdded:K::clipboardCopied,812000000.-n*30,n%2?endfield::modules::EventMetadata{{"filename","Synthetic.pdf"}}:endfield::modules::EventMetadata{{"kind","text"}}});}
+        auto actions=eventOwner->callbacks([](double){return std::string("10-08 12:34:56");});
+        eventLog=std::make_unique<endfield::tools::EventLogPreview>(rasterizer,gpu::LayerRasterOptions{},std::move(actions),endfield::modules::EventLogStrings{},endfield::modules::EventLogAppearance{},eventOwner->nameCompactor());eventLog->resize(metrics);
     }
     if(args.volumeFixture){
         auto sample=std::make_shared<gpu::VolumeSnapshot>();
@@ -509,7 +568,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         Json report=Json::Object{{"scope","Isolated synthetic visible HUD, actual text service, inclusive CPU stage durations; no document text or desktop capture"},{"phases","0 opening/idle; 1 focused editor; 2 focused editor with controlled tilt; 3 after editing"},{"samples",probe.rows}};
         ehud::data::detail::replaceFile(args.liveDiagnostics,std::nullopt,report.encode(),1024*1024);
     }
-    ready=false;host.setFrameDemand({});host.setCursor(nullptr);backdrop.reset();
+    ready=false;stopping=true;host.setDeadline({});host.setFrameDemand({});if(mediaPicker)mediaPicker->cancel();if(eventSaves)eventSaves->flush(now());eventSaves.reset();utility.reset();mediaPicker.reset();host.setCursor(nullptr);backdrop.reset();
     if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
     composition.detach(renderer);if(notes){notes->finish();notes->release(renderer);notes.reset();}if(shelf){shelf->release(renderer);shelf.reset();}if(clipboard){clipboard->release(renderer);clipboard.reset();}if(volume){volume->release(renderer);volume.reset();}if(eventLog){eventLog->release(renderer);eventLog.reset();}renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();if(pendingShelfReveal)need(SUCCEEDED(gpu::revealShelfReference(std::move(*pendingShelfReveal))),"Cannot reveal Shelf reference in Explorer");return 0;
 }catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}

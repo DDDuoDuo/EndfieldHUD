@@ -1,0 +1,59 @@
+#include "native/notes_workspace.hpp"
+#include "core/data/file_shelf_store.hpp"
+#ifdef _WIN32
+#include <objbase.h>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <new>
+namespace {thread_local bool counting{};thread_local std::size_t allocations{};}
+void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
+void*operator new[](std::size_t n){return ::operator new(n);}void operator delete(void*p)noexcept{std::free(p);}void operator delete[](void*p)noexcept{std::free(p);}
+#if defined(__cpp_sized_deallocation)
+void operator delete(void*p,std::size_t)noexcept{std::free(p);}void operator delete[](void*p,std::size_t)noexcept{std::free(p);}
+#endif
+namespace n=endfield::native;namespace m=endfield::modules;namespace c=endfield::core;namespace d=ehud::data;
+namespace {
+unsigned checks{};void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
+template<class F>void rejects(F f,const char*why){bool caught{};try{f();}catch(const std::exception&){caught=true;}check(caught,why);}
+constexpr const char*gifID="00000000-0000-4000-8000-000000000091";
+constexpr const char*stillID="00000000-0000-4000-8000-000000000092";
+struct Window {HWND hwnd{};ATOM atom{};static constexpr UINT message=WM_APP+247;Window(){WNDCLASSW w{};w.lpfnWndProc=DefWindowProcW;w.hInstance=GetModuleHandleW(nullptr);w.lpszClassName=L"EndfieldOwnedMediaWorkspace";atom=RegisterClassW(&w);check(atom!=0,"Register owned media workspace fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,w.lpszClassName,L"Hidden synthetic Notes media",WS_POPUP,0,0,640,360,nullptr,nullptr,w.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Only hidden owned HWND");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
+class Sequence final:public n::NativeNotesImageDecoder::Sequence {n::NotesImageInfo info_{2,2,2,m::NotesMediaKind::gif,{600,.04},600.04};public:const n::NotesImageInfo&info()const override{return info_;}n::NotesImageFrame decode(unsigned frame)override{n::NotesImageFrame out{2,2,frame,std::vector<std::uint8_t>(16)};for(std::size_t p=0;p<16;p+=4){out.straightRGBA[p+(frame?2:0)]=255;out.straightRGBA[p+3]=255;}return out;}};
+n::NativeNotesWorkspaceStyle style(bool dark=true){n::NativeNotesWorkspaceStyle s;s.palette=m::NotesPalette::source(dark,{.98,.83,.12,1});s.editor={dark?m::NotesColor{.12,.12,.12,1}:m::NotesColor{.96,.96,.96,1},s.palette.accent};return s;}
+n::NativeNotesWorkspacePose pose(double time){n::NativeNotesWorkspacePose p;p.screenToClip=n::layerViewportProjection(640,360);p.pixelWidth=640;p.pixelHeight=360;p.time=time;return p;}
+d::Note note(const char*id,bool gif,double x){d::Note out{.id=id,.kind=d::NoteKind::image,.x=x,.y=20,.width=200,.height=150,.createdAt=0};out.media=d::makeWindowsMediaReference(gif?"C:\\owned-synthetic\\one.gif":"C:\\owned-synthetic\\two.png",gif?"one.gif":"two.png",2,2,gif?"gif":"image",gif?std::optional<double>(600.04):std::nullopt,gif?2:1);return out;}
+void await(n::NativeNotesWorkspace&w,const Window&window,double now,unsigned count){const auto end=GetTickCount64()+10000;unsigned accepted{};while(accepted<count){if(w.acceptMedia(9,now))++accepted;if(accepted==count)break;const auto current=GetTickCount64();check(current<end,"Bounded media completion wait");check(MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(end-current),QS_POSTMESSAGE,MWMO_INPUTAVAILABLE)==WAIT_OBJECT_0,"Worker uses existing owner queue");MSG msg{};while(PeekMessageW(&msg,window.hwnd,Window::message,Window::message,PM_REMOVE))check(msg.lParam==0,"No pointer payload in completion notice");}}
+void run(const std::filesystem::path&shader){Window window;n::Renderer renderer;renderer.initialize(window.hwnd,640,360,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(640,360));
+    n::NativeNotesImageDecoder decoder([](const n::NotesImageRequest&r){return n::NotesImageAccess{std::filesystem::u8path(r.path),{}};},{window.hwnd,Window::message,9},[](const n::NotesImageRequest&,n::NotesImageAccess){return std::make_unique<Sequence>();});n::NativeNotesImagePlayback playback(decoder);
+    std::size_t saves{},removes{};m::NotesState state({note(gifID,true,20),note(stillID,false,300)},{[&](const auto&){++saves;},[&](auto){++removes;}});state.setWorkspaceBounds({0,0,640,360});n::LayerRasterizer raster;n::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=1;options.imagePlayback=&playback;
+    n::NativeNotesWorkspace workspace(window.hwnd,state,raster,style(),options);n::LayerComposition composition;
+    auto publish=[&]{workspace.uploadMedia(renderer);composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Detached media/card resources retire after shared publication");};
+    workspace.updatePose(pose(0));publish();check(workspace.entries().size()==2&&workspace.entries()[0].after.size()==4,"Media cards append image/progress/grip in the shared composition");check(workspace.measurementStats().measurements==0,"Media cards never run text-note measurement");
+    // Both completions may coalesce into one notice/drain; wait for two frame bindings.
+    const auto until=GetTickCount64()+10000;for(;;){workspace.acceptMedia(9,1);publish();if(!workspace.entries()[0].after[0].textureID.empty()&&!workspace.entries()[1].after[0].textureID.empty())break;const auto now=GetTickCount64();check(now<until,"Both synthetic media cards load");MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(until-now),QS_POSTMESSAGE,MWMO_INPUTAVAILABLE);MSG msg{};while(PeekMessageW(&msg,window.hwnd,Window::message,Window::message,PM_REMOVE)){} }
+    check(workspace.mediaNextWakeTime()&&std::abs(*workspace.mediaNextWakeTime()-601)<1e-9,"GIF deadline is source delay from accepted completion");
+    renderer.draw(false);auto pixels=renderer.readback();const auto at=(std::size_t(90)*pixels.width+100)*4;check(pixels.pixels[at+2]>250&&pixels.pixels[at]<3,"Actual card quad paints first owned red image");
+    const auto rasterBefore=raster.stats().rasterizations,gpuBefore=renderer.stats().textureUploads;const auto requests=decoder.stats().requests;allocations=0;counting=true;try{for(unsigned f=0;f<120;++f){auto p=pose(2+double(f)/60);p.workspaceToScreen.values[12]=double(f)*.02;p.workspaceToScreen.values[3]=double(f)*.0000001;workspace.updatePose(p);workspace.sampleMedia(p.time);workspace.uploadMedia(renderer);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==rasterBefore&&renderer.stats().textureUploads==gpuBefore&&decoder.stats().requests==requests,"120 tilt samples allocate/reshape/raster/upload/decode nothing");
+    workspace.updatePose(pose(601));workspace.sampleMedia(601);await(workspace,window,601.2,1);const auto beforeFrame=raster.stats().rasterizations;publish();renderer.draw(false);pixels=renderer.readback();check(pixels.pixels[at]>250&&pixels.pixels[at+2]<3,"Next GIF completion updates actual shared image texture");check(raster.stats().rasterizations==beforeFrame&&renderer.stats().textureUploads==gpuBefore+1,"Steady GIF frame performs one texture upload and no card raster");
+    check(workspace.toggleMedia(gifID,601.3)&&!workspace.mediaNextWakeTime(),"Source footer toggle pauses GIF and cancels its deadline");check(workspace.scrollAt({100,90},50)&&!workspace.editor(),"Wheel over media stays consumed without entering text editor");rejects([&]{workspace.beginEditing(gifID);},"Media cannot be flattened through text editing");
+    const auto oldImage=workspace.entries()[0].after[0].textureID;workspace.setStyle(style(false));publish();check(workspace.entries()[0].after[0].textureID==oldImage,"Theme replacement borrows same retained media texture");
+    workspace.togglePin(stillID);workspace.updatePose(pose(602));workspace.setPresentation(false,true);publish();check(workspace.entries().size()==2&&!workspace.hitTest({100,90}),"Outgoing unpinned media keeps artwork without input");check(!workspace.entries()[0].after[0].textureID.empty(),"Finite outgoing GIF retains its decoded image");workspace.settleOutgoing();publish();check(workspace.entries().size()==1&&workspace.card(stillID)->placement().visible,"Pinned still card stays alive outside Notes module");
+    workspace.setMediaActive(false,603,true);workspace.sampleMedia(603.61);publish();check(workspace.entries()[0].after[0].textureID.empty()&&!workspace.mediaNextWakeTime(),"HUD hide releases visible media and expires artwork without an idle clock");workspace.setMediaActive(true,604);await(workspace,window,604.2,1);publish();check(!workspace.entries()[0].after[0].textureID.empty(),"Pinned image reloads on explicit HUD show");
+    workspace.requestDeletion(stillID);const auto token=workspace.confirmDeletionRetainingArtwork(stillID);check(token&&removes==1&&!state.note(stillID),"Deletion persists immediately before finite artwork hold");publish();check(workspace.entries().size()==1&&!workspace.hitTest({340,80}),"Deleted artwork keeps same texture but receives no input");workspace.settleDeletion(*token);publish();check(workspace.entries().empty(),"Settled deletion detaches and retires card texture safely");
+    workspace.setMediaActive(false,605);workspace.setPresentation(true);d::ShelfFileMetadata metadata;metadata.windowsPath="C:\\owned-synthetic\\leased.png";metadata.name="leased.png";std::atomic<unsigned>closed{};
+    auto lease=std::make_shared<d::ShelfFileAccess>(std::move(metadata),[&]{++closed;});std::weak_ptr<void>lifetime=lease;
+    constexpr const char*leasedID="00000000-0000-4000-8000-000000000099";const auto reference=d::makeWindowsMediaReference("C:\\owned-synthetic\\leased.png","leased.png",2,2,"image");
+    check(workspace.createMedia(leasedID,0,reference,{40,40},std::move(lease)),"Transferred Shelf lifetime enters the created media asset");publish();check(!lifetime.expired()&&closed==0,"Media asset retains independent lease without a Shelf store");workspace.setMediaActive(true,606);workspace.setStyle(style());publish();workspace.setMediaActive(false,607);check(!lifetime.expired(),"Theme replacement and hide preserve the reference for a later reload");
+    workspace.requestDeletion(leasedID);const auto leasedToken=workspace.confirmDeletionRetainingArtwork(leasedID);check(leasedToken.has_value(),"Owned leased media follows finite deletion path");publish();workspace.settleDeletion(*leasedToken);publish();
+    composition.setEntries(renderer,{});check(workspace.releaseResources(renderer),"One shared publisher detached before complete media release");check(saves==2&&removes==2&&!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Only explicit synthetic creation/pin/delete saves; no visible UI or capture");
+    const auto thread=decoder.duplicateWorkerHandle();decoder.stop();check(WaitForSingleObject(thread,10000)==WAIT_OBJECT_0,"Isolated worker stops before fixture exit");CloseHandle(thread);check(lifetime.expired()&&closed==1,"Detached retired card and completed decoder release Shelf lease exactly once");
+}
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int code{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);std::cout<<"PASS "<<checks<<" Notes media workspace checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
+#else
+int main(){return 0;}
+#endif

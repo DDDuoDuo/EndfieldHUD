@@ -12,6 +12,7 @@ struct VolumePreviewOptions {
     native::VolumeStrings strings=native::VolumeStrings::simplifiedChinese();
     native::VolumeStyle style;
     double rasterDensity{2};bool reduceMotion{};
+    native::LayerImageSource*memoryImages{}; // Borrowed shared Shell icon cache; outlives this preview.
 };
 // No audio provider/window/timer ownership: the existing shell supplies fresh
 // event snapshots, supported write callbacks, its sampled transition and one

@@ -16,7 +16,7 @@ struct VolumePreview::Impl {
     std::optional<gpu::ModuleSurfacePose>pose;bool active{},acceptsInput{},pressed{},reduced{},released{};
     double time{};unsigned eventDepth{};
     struct Event {Impl&i;Event(Impl&v,double requested):i(v){need(std::isfinite(requested),"Volume owner needs a finite clock");if(!i.eventDepth)i.time=std::max(i.time,requested);++i.eventDepth;}~Event(){--i.eventDepth;}};
-    Impl(gpu::LayerRasterizer&r,VolumePreviewOptions options):controller(std::move(options.initial),std::move(options.actions),std::move(options.strings)),scene(controller,r,[&]{gpu::LayerRasterOptions ro;ro.pixelsPerPoint=options.rasterDensity;return ro;}(),options.style),geometry(r),reduced(options.reduceMotion){
+    Impl(gpu::LayerRasterizer&r,VolumePreviewOptions options):controller(std::move(options.initial),std::move(options.actions),std::move(options.strings)),scene(controller,r,[&]{gpu::LayerRasterOptions ro;ro.pixelsPerPoint=options.rasterDensity;ro.memoryImages=options.memoryImages;return ro;}(),options.style),geometry(r),reduced(options.reduceMotion){
         need(std::isfinite(options.rasterDensity)&&options.rasterDensity>=.1&&options.rasterDensity<=16,"Invalid Volume raster density");
         gpu::LayerRasterOptions ro;ro.pixelsPerPoint=options.rasterDensity;geometry.load(empty(),ro);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::volume);scene.syncContent();composed[0]={&scene.scene(),registration.draws()};
     }

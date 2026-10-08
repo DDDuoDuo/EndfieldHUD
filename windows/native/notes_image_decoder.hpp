@@ -25,6 +25,7 @@ struct NotesImageFrame {
 struct NotesImageRequest {
     std::string key,path;std::uint64_t revision{};int maximumDimension{512};
     bool firstFrameOnly{}; // persisted still-image kind, even if file was replaced by a GIF
+    std::shared_ptr<void>accessLease; // independent lifetime only; no owner/store callbacks
     bool operator==(const NotesImageRequest&)const=default;
 };
 #ifdef _WIN32
@@ -81,6 +82,12 @@ public:
     // caller's already borrowed artwork remains valid through a close fade.
     bool setVisible(std::span<const NotesImageRequest>,bool retry=false);
     bool requestFrame(std::string_view key,unsigned index); // latest per key, <=8 total
+    // Independent bounded import ticket on this SAME worker. Validates a64px
+    // first frame plus complete metadata, then closes the file/decoder. Never
+    // interrupts visible playback or creates another worker. Latest batch wins;
+    // empty batch cancels queued/in-flight results (codec call itself may finish).
+    bool setInspections(std::span<const NotesImageRequest>);
+    std::vector<NotesImageCompletion>drainInspections(UINT_PTR routeGeneration);
     void hide();void setRoute(NotesImageRoute);
     std::vector<NotesImageCompletion>drain(UINT_PTR routeGeneration);
     void stop()noexcept;NotesImageDecoderStats stats()const;

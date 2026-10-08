@@ -123,6 +123,17 @@ void failuresAndOrder(){
     rejects([&]{State bad({low,low},g.adapter());},"Duplicate initial note IDs reject");
     rejects([&]{s.createText("not-an-id",0);},"Invalid injected identity rejects before persistence");
 }
+void mediaCreation(){
+    Fake f;State state({},f.adapter());state.setWorkspaceBounds({0,0,1000,800});
+    const auto portrait=ehud::data::makeWindowsMediaReference("C:\\owned-fixture\\portrait.png","portrait.png",100,1000);
+    check(state.createMedia(a,44,portrait,{20,30}),"Successful media import publishes one source card");
+    const auto*n=state.note(a);check(n&&n->width==162&&n->height==260&&n->x==20&&n->y==30&&n->media==portrait&&state.selection()==a&&!state.editing(),"Portrait uses pre-minimum width for source aspect height and preserves reference");check(f.writes==1,"Media import persists once without starting text editor");
+    const auto wide=ehud::data::makeWindowsMediaReference("C:\\owned-fixture\\wide.gif","wide.gif",1000,100,"gif",.3,2);
+    check(state.createMedia(b,45,wide,{900,780}),"Wide GIF metadata accepted");check(state.note(b)->width==300&&state.note(b)->height==110&&state.note(b)->x==700&&state.note(b)->y==690,"Wide source card clamps to workspace after aspect dimensions");
+    f.failWrite=true;check(!state.createMedia(c,46,portrait,{0,0})&&!state.note(c)&&state.error()&&!state.unsaved().contains(c),"Failed media persistence creates no visible or unsaved draft");
+    auto invalid=ehud::data::Json::parse(portrait);invalid["pixelWidth"]=0;rejects([&]{state.createMedia(c,46,invalid.encode(),{0,0});},"Invalid metadata rejects before source state change");
+    state.setPresentation(false);check(!state.createMedia(c,46,portrait,{0,0}),"Concealed Notes rejects stale import completion");
+}
 void sqliteIntegration(){
     const auto root=std::filesystem::canonical(std::filesystem::temp_directory_path())/("Endfield-notes-state-"+ehud::data::makeUUID());
     struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code e;std::filesystem::remove_all(path,e);}} cleanup{root};
@@ -149,4 +160,4 @@ void sourceGeometry(const std::filesystem::path& path){
     }
 }
 }
-int main(int argc,char**argv){try{check(argc<=2,"Optional explicit source geometry fixture only");createAndEdit();richHandoff();workspaceAndGesture();pinDeleteAndClose();largePayloadGesture();failuresAndOrder();sqliteIntegration();if(argc==2)sourceGeometry(argv[1]);std::cout<<checks<<" isolated Notes state checks passed; no live app data or native APIs\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{check(argc<=2,"Optional explicit source geometry fixture only");createAndEdit();richHandoff();workspaceAndGesture();pinDeleteAndClose();largePayloadGesture();failuresAndOrder();mediaCreation();sqliteIntegration();if(argc==2)sourceGeometry(argv[1]);std::cout<<checks<<" isolated Notes state checks passed; no live app data or native APIs\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -41,6 +41,13 @@ void transactions(){Fake f;AudioSessionRoutes routes;routes.update(f.records,f);
     invalid=bad.records;invalid[1].pid=43;rejected=false;try{rollback.update(invalid,bad);}catch(...){rejected=true;}check(rejected,"A process key cannot bind two PIDs");
     invalid=bad.records;invalid[0].processKey="99:200";invalid[0].pid=99;rejected=false;try{rollback.update(invalid,bad);}catch(...){rejected=true;}check(rejected&&rollback.applications()[0].id=="42:100","An existing leased session cannot be reassigned to another process before mutation");
 }
+void appearanceMetadata(){Fake f;AudioSessionRoutes routes;AudioApplicationExecutable e;e.path="C:\\explicit-synthetic\\app.exe";e.identity.objectID[0]=1;e.identity.volumeSerial=9;f.records[0].executable=e;routes.update(f.records,f);
+    check(routes.applications()[0].executable==e&&f.calls.empty(),"Captured regular-file appearance metadata flows through existing process grouping without audio writes");
+    f.records[1].executable=e;routes.update(f.records,f);check(routes.applications()[0].executable==e,"Matching process sessions share one exact icon source");
+    f.records[1].executable->identity.objectID[0]=2;routes.update(f.records,f);check(!routes.applications()[0].executable&&routes.applications()[0].available,"Conflicting process metadata removes icon without disabling valid audio control");
+    f.records[1].executable=e;routes.update(f.records,f);const auto previous=routes.applications();auto broken=f.records;broken.back().executable->path="relative.exe";bool rejected{};try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected&&routes.applications()==previous,"Malformed late executable metadata rejects before route mutation");
+    broken=f.records;broken[0].processKey.clear();broken[0].pid=0;rejected=false;try{routes.update(broken,f);}catch(const std::invalid_argument&){rejected=true;}check(rejected,"Unowned/system session cannot attach guessed executable artwork");
+}
 struct WorkerState{std::mutex mutex;std::vector<AudioSessionRecord>records{{"a","42:100",L"Fixture",42,true,true,.8f,0}};AudioSessionBackend::Wake wake;std::thread::id backendThread;unsigned reads{},opens{},closes{},pauses{},writes{};bool violation{};};
 class ThreadFake final:public AudioSessionBackend {
     std::shared_ptr<WorkerState>s;
@@ -70,4 +77,4 @@ void lifecycle(){auto state=std::make_shared<WorkerState>();std::mutex noticeMut
     check(!worker.activate(L"fixture endpoint")&&!worker.setGain("42:100",.5f),"Closed worker rejects stale queued UI commands");
 }
 }
-int main(){try{transactions();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{transactions();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

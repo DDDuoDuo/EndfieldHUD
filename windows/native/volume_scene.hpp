@@ -12,9 +12,14 @@ struct VolumeDevice {
     bool operator==(const VolumeDevice&)const=default;
 };
 enum class VolumeAppState {direct,active,preparing,stopping,failed};
+// Exact shared-cache descriptor. Only a successful instance-icon binding may
+// set this; missing metadata/failed/type-only fallback keeps source nil icon.
+struct VolumeApplicationIcon {std::string imageKey;std::uint64_t revision{};bool operator==(const VolumeApplicationIcon&)const=default;};
 struct VolumeApplication {
     std::string id,name;std::uint32_t pid{};bool available{};VolumeAppState state{VolumeAppState::direct};
     std::optional<double> gain;std::optional<std::string> error;
+    std::optional<AudioApplicationExecutable> executable;
+    std::optional<VolumeApplicationIcon> icon;
     bool operator==(const VolumeApplication&)const=default;
 };
 struct VolumeSnapshot {
@@ -88,9 +93,10 @@ public:
 private:
     struct Impl;std::unique_ptr<Impl>impl_;
 };
-// Pure mapping of the existing Windows provider. Only master volume/mute are
-// supported today. Endpoint-control selection is NOT default-device switching;
-// input, balance, headphones classification and per-app routes remain absent.
+// Pure mapping of the shared Windows provider's supported master, input,
+// balance, headphone and explicit relative application-route fields. Icons
+// remain asynchronous shared-cache bindings supplied by the presentation owner.
+// Endpoint-control selection is NOT public default-device switching.
 VolumeSnapshot volumeSnapshotFromSystemAudio(const AudioSnapshot&);
 struct VolumeStyle {bool dark{true};VolumeColor accent{250./255,212./255,31./255,1};bool operator==(const VolumeStyle&)const=default;};
 struct VolumeSurface {std::string id;core::Matrix4 local;float opacity{1};std::optional<core::Rect>clip;std::string feedback;bool rim{};};

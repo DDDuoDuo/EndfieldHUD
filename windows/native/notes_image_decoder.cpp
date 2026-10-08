@@ -36,15 +36,16 @@ std::shared_ptr<const NotesImageFrame>publish(NotesImageFrame frame,const NotesI
     std::unique_ptr<NotesImageFrame>p;try{p=std::make_unique<NotesImageFrame>(std::move(frame));}catch(...){budget->bytes.fetch_sub(bytes,std::memory_order_relaxed);throw;}
     return std::shared_ptr<const NotesImageFrame>(p.release(),[budget,bytes](const NotesImageFrame*value){delete value;budget->bytes.fetch_sub(bytes,std::memory_order_relaxed);});
 }
-struct Job {NotesImageRequest request;unsigned index{};std::uint64_t generation{};bool reopen{};};
+struct Job {NotesImageRequest request;unsigned index{};std::uint64_t generation{};bool reopen{},inspection{};};
 struct State {
     std::mutex mutex;Handle event;Provider::Resolver resolver;Provider::Factory factory;NotesImageRoute route;
-    std::vector<NotesImageRequest>visible;std::vector<Job>jobs;std::optional<Job>active;std::array<std::optional<NotesImageCompletion>,8>ready;
-    std::shared_ptr<Budget>budget=std::make_shared<Budget>();NotesImageDecoderStats stats;std::uint64_t generation{};
+    std::vector<NotesImageRequest>visible,inspections;std::vector<Job>jobs,inspectionJobs;std::optional<Job>active;std::array<std::optional<NotesImageCompletion>,8>ready,inspectionReady;
+    std::shared_ptr<Budget>budget=std::make_shared<Budget>();NotesImageDecoderStats stats;std::uint64_t generation{},inspectionGeneration{};std::size_t inspectionCompleted{};
     bool stopping{},noticePosted{};
-    State(Provider::Resolver r,Provider::Factory f):resolver(std::move(r)),factory(std::move(f)){event.value=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event.value)throw std::runtime_error("Cannot create image worker event");visible.reserve(8);jobs.reserve(8);}
+    State(Provider::Resolver r,Provider::Factory f):resolver(std::move(r)),factory(std::move(f)){event.value=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event.value)throw std::runtime_error("Cannot create image worker event");visible.reserve(8);jobs.reserve(8);inspections.reserve(8);inspectionJobs.reserve(8);}
     void clearReady(){for(auto&r:ready)r.reset();noticePosted=false;stats.completed=0;}
-    void notice(){if(!stopping&&route.owner&&!noticePosted&&stats.completed){if(PostMessageW(route.owner,route.message,route.generation,0)){noticePosted=true;++stats.notices;}}}
+    void clearInspections(){for(auto&r:inspectionReady)r.reset();inspectionCompleted=0;}
+    void notice(){if(!stopping&&route.owner&&!noticePosted&&(stats.completed||inspectionCompleted)){if(PostMessageW(route.owner,route.message,route.generation,0)){noticePosted=true;++stats.notices;}}}
 };
 struct Decoder {
     NotesImageRequest request;std::unique_ptr<Provider::Sequence>sequence;std::shared_ptr<const NotesImageInfo>info;
@@ -58,31 +59,32 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
     try{if(FAILED(apartment))throw std::runtime_error("Image worker COM initialization failed");std::map<std::string,Decoder,std::less<>>decoders;
         for(;;){if(WaitForSingleObject(state->event.value,INFINITE)!=WAIT_OBJECT_0)break;{std::lock_guard lock(state->mutex);++state->stats.wakeups;}
             for(;;){std::optional<Job>job;std::vector<NotesImageRequest>visible;bool stop{};
-                {std::lock_guard lock(state->mutex);stop=state->stopping;visible=state->visible;if(!stop&&!state->jobs.empty()){job=std::move(state->jobs.front());state->jobs.erase(state->jobs.begin());state->active=job;state->stats.inFlight=true;}}
+                {std::lock_guard lock(state->mutex);stop=state->stopping;visible=state->visible;if(!stop&&!state->jobs.empty()){job=std::move(state->jobs.front());state->jobs.erase(state->jobs.begin());state->active=job;state->stats.inFlight=true;}else if(!stop&&!state->inspectionJobs.empty()){job=std::move(state->inspectionJobs.front());state->inspectionJobs.erase(state->inspectionJobs.begin());state->active=job;state->stats.inFlight=true;}}
                 if(stop)break;
                 for(auto it=decoders.begin();it!=decoders.end();){const auto match=std::find(visible.begin(),visible.end(),it->second.request);if(match==visible.end())it=decoders.erase(it);else ++it;}
                 {std::lock_guard lock(state->mutex);state->stats.decoders=decoders.size();state->stats.cachedFrames=0;for(const auto&[key,d]:decoders){(void)key;for(const auto&f:d.cache)if(f)++state->stats.cachedFrames;}}
                 if(!job)break;
                 NotesImageCompletion result;result.key=job->request.key;result.revision=job->request.revision;bool decoded{};
-                try{if(job->reopen)decoders.erase(job->request.key);auto it=decoders.find(job->request.key);if(it==decoders.end()){
+                try{if(job->inspection){auto access=state->resolver(job->request);need(!access.path.empty(),"Media import resolver returned no path");auto sequence=state->factory?state->factory(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access));need(bool(sequence),"Media import factory returned no decoder");valid(sequence->info());result.info=std::make_shared<const NotesImageInfo>(sequence->info());result.frame=publish(sequence->decode(0),job->request,0,state->budget);decoded=true;result.result=S_OK;
+                }else{if(job->reopen)decoders.erase(job->request.key);auto it=decoders.find(job->request.key);if(it==decoders.end()){
                         Decoder d;d.request=job->request;auto access=state->resolver(job->request);need(!access.path.empty(),"Media access resolver returned no path");
                         d.sequence=state->factory?state->factory(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access));need(bool(d.sequence),"Image factory returned no decoder");valid(d.sequence->info());auto info=d.sequence->info();if(job->request.firstFrameOnly){info.kind=modules::NotesMediaKind::image;info.frameCount=1;info.frameDelays.clear();info.duration=0;}d.info=std::make_shared<const NotesImageInfo>(std::move(info));auto key=d.request.key;it=decoders.emplace(std::move(key),std::move(d)).first;
                     }
                     result.info=it->second.info;result.frame=it->second.frame(job->index,state->budget,decoded);result.result=S_OK;
                     // Still images retain only their immutable bounded pixels,
                     // never the original stream/access lease after first load.
-                    if(result.info->kind==modules::NotesMediaKind::image)it->second.sequence.reset();
+                    if(result.info->kind==modules::NotesMediaKind::image)it->second.sequence.reset();}
                 }catch(const std::bad_alloc&){result.result=E_OUTOFMEMORY;}catch(...){result.result=E_FAIL;}
                 {std::lock_guard lock(state->mutex);state->stats.inFlight=false;state->active.reset();if(decoded)++state->stats.decodes;
-                    if(state->stopping||job->generation!=state->generation){++state->stats.discarded;}else{
-                        auto slot=std::find_if(state->ready.begin(),state->ready.end(),[&](const auto&r){return r&&r->key==result.key;});if(slot==state->ready.end())slot=std::find_if(state->ready.begin(),state->ready.end(),[](const auto&r){return !r;});
-                        if(slot!=state->ready.end()){if(!*slot)++state->stats.completed;*slot=std::move(result);state->notice();}
+                    if(state->stopping||job->generation!=(job->inspection?state->inspectionGeneration:state->generation)){++state->stats.discarded;}else{
+                        auto&ready=job->inspection?state->inspectionReady:state->ready;auto slot=std::find_if(ready.begin(),ready.end(),[&](const auto&r){return r&&r->key==result.key;});if(slot==ready.end())slot=std::find_if(ready.begin(),ready.end(),[](const auto&r){return !r;});
+                        if(slot!=ready.end()){if(!*slot){if(job->inspection)++state->inspectionCompleted;else ++state->stats.completed;}*slot=std::move(result);state->notice();}
                     }}
             }
             {std::lock_guard lock(state->mutex);if(state->stopping)break;}
         }
     }catch(...){/* No codec exception crosses into a UI callback. */}
-    {std::lock_guard lock(state->mutex);state->route={};state->jobs.clear();state->visible.clear();state->active.reset();state->clearReady();state->stats.inFlight=false;state->stats.decoders=0;state->stats.cachedFrames=0;state->stopping=true;}
+    {std::lock_guard lock(state->mutex);state->route={};state->jobs.clear();state->inspectionJobs.clear();state->inspections.clear();state->clearInspections();state->visible.clear();state->active.reset();state->clearReady();state->stats.inFlight=false;state->stats.decoders=0;state->stats.cachedFrames=0;state->stopping=true;}
     state->factory={};state->resolver={};if(SUCCEEDED(apartment))CoUninitialize();{std::lock_guard lock(state->mutex);state->stats.stopped=true;}state.reset();workerGate().store(false,std::memory_order_release);return 0;
 }
 }
@@ -99,18 +101,22 @@ bool NativeNotesImageDecoder::setVisible(std::span<const NotesImageRequest>reque
     // card appeared. Preserve a pending requested frame when it is still live.
     for(const auto&r:requests){const bool retained=std::find(s.visible.begin(),s.visible.end(),r)!=s.visible.end();const auto queued=std::find_if(s.jobs.begin(),s.jobs.end(),[&](const auto&j){return j.request==r;});
         if(retry||!retained)jobs.push_back({r,0,s.generation+1,retry});else if(queued!=s.jobs.end()){auto job=*queued;job.generation=s.generation+1;jobs.push_back(std::move(job));}
-        else if(s.active&&s.active->request==r){auto job=*s.active;job.generation=s.generation+1;jobs.push_back(std::move(job));}
+        else if(s.active&&!s.active->inspection&&s.active->request==r){auto job=*s.active;job.generation=s.generation+1;jobs.push_back(std::move(job));}
         else {const auto ready=std::find_if(s.ready.begin(),s.ready.end(),[&](const auto&value){return value&&value->key==r.key&&value->revision==r.revision;});if(ready!=s.ready.end())jobs.push_back({r,(*ready)->frame?(*ready)->frame->index:0,s.generation+1,false});}}
-    ++s.generation;s.visible=std::move(visible);s.jobs=std::move(jobs);s.clearReady();++s.stats.requests;SetEvent(s.event.value);return true;
+    ++s.generation;s.visible=std::move(visible);s.jobs=std::move(jobs);s.clearReady();s.notice();++s.stats.requests;SetEvent(s.event.value);return true;
 }
 bool NativeNotesImageDecoder::requestFrame(std::string_view key,unsigned index){auto&i=*impl_;i.onThread();need(index<maximumGIFFrames,"Image frame exceeds source bound");std::lock_guard lock(i.state->mutex);auto&s=*i.state;need(!s.stopping,"Image decoder stopped");const auto visible=std::find_if(s.visible.begin(),s.visible.end(),[&](const auto&r){return r.key==key;});if(visible==s.visible.end())return false;
     auto job=std::find_if(s.jobs.begin(),s.jobs.end(),[&](const auto&j){return j.request.key==key;});if(job!=s.jobs.end()){if(job->index==index)return false;job->index=index;}else{s.jobs.push_back({*visible,index,s.generation});}++s.stats.requests;SetEvent(s.event.value);return true;
 }
+bool NativeNotesImageDecoder::setInspections(std::span<const NotesImageRequest>requests){auto&i=*impl_;i.onThread();need(requests.size()<=maximumVisible,"Media import batch limit exceeded");std::vector<NotesImageRequest>incoming(requests.begin(),requests.end());for(std::size_t n=0;n<incoming.size();++n){valid(incoming[n]);incoming[n].maximumDimension=64;incoming[n].firstFrameOnly=false;for(std::size_t k=0;k<n;++k)need(incoming[n].key!=incoming[k].key,"Repeated import identity");}
+    std::vector<Job>jobs;jobs.reserve(incoming.size());std::lock_guard lock(i.state->mutex);auto&s=*i.state;need(!s.stopping,"Image decoder stopped");if(incoming==s.inspections)return false;need(s.inspectionGeneration<std::numeric_limits<std::uint64_t>::max(),"Media import generation exhausted");for(const auto&r:incoming)jobs.push_back({r,0,s.inspectionGeneration+1,false,true});++s.inspectionGeneration;s.inspections=std::move(incoming);s.inspectionJobs=std::move(jobs);s.clearInspections();s.noticePosted=false;s.notice();++s.stats.requests;SetEvent(s.event.value);return true;
+}
+std::vector<NotesImageCompletion>NativeNotesImageDecoder::drainInspections(UINT_PTR generation){auto&i=*impl_;i.onThread();std::vector<NotesImageCompletion>results;std::lock_guard lock(i.state->mutex);auto&s=*i.state;if(s.stopping||s.route.generation!=generation)return results;results.reserve(s.inspectionCompleted);for(auto&r:s.inspectionReady)if(r){results.push_back(std::move(*r));r.reset();}s.inspectionCompleted=0;s.noticePosted=false;s.notice();return results;}
 void NativeNotesImageDecoder::hide(){(void)setVisible({});}
 void NativeNotesImageDecoder::setRoute(NotesImageRoute route){auto&i=*impl_;i.onThread();routeValid(route);std::lock_guard lock(i.state->mutex);need(!i.state->stopping,"Image decoder stopped");i.state->route=route;i.state->noticePosted=false;i.state->notice();}
-std::vector<NotesImageCompletion>NativeNotesImageDecoder::drain(UINT_PTR generation){auto&i=*impl_;i.onThread();std::vector<NotesImageCompletion>results;std::lock_guard lock(i.state->mutex);auto&s=*i.state;if(s.stopping||s.route.generation!=generation)return results;results.reserve(s.stats.completed);for(auto&r:s.ready)if(r){results.push_back(std::move(*r));r.reset();}s.stats.completed=0;s.noticePosted=false;return results;}
-void NativeNotesImageDecoder::stop()noexcept{if(!impl_||!impl_->state)return;auto&s=*impl_->state;std::lock_guard lock(s.mutex);s.route={};s.stopping=true;s.jobs.clear();s.visible.clear();s.clearReady();SetEvent(s.event.value);}
-NotesImageDecoderStats NativeNotesImageDecoder::stats()const{auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);auto result=i.state->stats;result.queued=i.state->jobs.size();result.liveFrameBytes=i.state->budget->bytes.load();return result;}
+std::vector<NotesImageCompletion>NativeNotesImageDecoder::drain(UINT_PTR generation){auto&i=*impl_;i.onThread();std::vector<NotesImageCompletion>results;std::lock_guard lock(i.state->mutex);auto&s=*i.state;if(s.stopping||s.route.generation!=generation)return results;results.reserve(s.stats.completed);for(auto&r:s.ready)if(r){results.push_back(std::move(*r));r.reset();}s.stats.completed=0;s.noticePosted=false;s.notice();return results;}
+void NativeNotesImageDecoder::stop()noexcept{if(!impl_||!impl_->state)return;auto&s=*impl_->state;std::lock_guard lock(s.mutex);s.route={};s.stopping=true;s.jobs.clear();s.inspectionJobs.clear();s.inspections.clear();s.clearInspections();s.visible.clear();s.clearReady();SetEvent(s.event.value);}
+NotesImageDecoderStats NativeNotesImageDecoder::stats()const{auto&i=*impl_;i.onThread();std::lock_guard lock(i.state->mutex);auto result=i.state->stats;result.queued=i.state->jobs.size()+i.state->inspectionJobs.size();result.liveFrameBytes=i.state->budget->bytes.load();return result;}
 HANDLE NativeNotesImageDecoder::duplicateWorkerHandle()const{impl_->onThread();HANDLE copy{};if(!DuplicateHandle(GetCurrentProcess(),impl_->worker.value,GetCurrentProcess(),&copy,SYNCHRONIZE,FALSE,0))throw std::runtime_error("Cannot duplicate image worker handle");return copy;}
 } // namespace endfield::native
 #endif

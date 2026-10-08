@@ -2,6 +2,7 @@
 #include "native/notes_scene.hpp"
 #include "native/notes_text_measure.hpp"
 #include "native/projected_editor.hpp"
+#include "native/notes_image_playback.hpp"
 #include "modules/notes_motion.hpp"
 #include "modules/notes_checklist.hpp"
 #ifdef _WIN32
@@ -17,6 +18,12 @@ struct NativeNotesWorkspaceOptions {
     std::size_t maximumRetainedCards{128};std::uint32_t maximumEditorUnits{65536};
     UINT ownerMessage{WM_APP+181};
     ITfThreadMgr* activatedTextManager{};TfClientId textClient{TF_CLIENTID_NULL}; // borrowed; never activated here
+    NativeNotesImagePlayback* imagePlayback{}; // borrowed exclusive Notes owner; outlives workspace
+    modules::NotesMediaStrings mediaStrings;
+    std::string mediaUnavailable{"Media unavailable"},videoUnavailable{"Video playback is not connected"};
+    // Pure managed-name mapping only; file access belongs to the decoder's
+    // independently owned worker resolver. No filesystem work on this thread.
+    std::function<std::optional<std::string>(std::string_view)> legacyImagePath;
 };
 struct NativeNotesWorkspacePose {
     core::Matrix4 workspaceToScreen,screenToClip;
@@ -47,7 +54,8 @@ struct NativeNotesFinishResult {bool finished{},saved{};};
 // visible/outgoing cards, never scan NotesState or copy text. The measured font
 // and style resolver drive settled lines and the same-object DWrite editor.
 // Settled attributed line metrics and edited paragraph metrics follow their
-// distinct original source paths. TODO uses plain font11 row editors; media/drawing reject when visible;
+// distinct original source paths. TODO uses plain font11 row editors. Optional
+// still/GIF playback shares the caller's decoder/deadline; drawing rejects when visible;
 // hidden unsupported records are not read/rendered. Stored text is never cut.
 // Owner appends entries() to its ONE LayerComposition and republishes whenever
 // compositionRevision changes. Removed scenes remain alive until collectRetired
@@ -85,6 +93,18 @@ public:
     bool setCardMotions(std::span<const NativeNotesCardMotion>);
     bool updatePose(const NativeNotesWorkspacePose&);
     bool requiresFrames(double time)const;
+    void connectImagePlayback(NativeNotesImagePlayback&); // once, before any media card was attached
+    // Window visibility is independent from Notes selection: pinned media
+    // stays active across module changes, but releases decoding on HUD hide.
+    // Same caller clock as updatePose; preserveArtwork is source finite .6s.
+    bool setMediaActive(bool,double time,bool preserveArtwork=false);
+    bool acceptMedia(UINT_PTR routeGeneration,double time);
+    bool sampleMedia(double time);
+    std::optional<double> mediaNextWakeTime()const;
+    bool toggleMedia(std::string_view noteID,double time);
+    // Before entries() publication. Upload only changed image frames and each
+    // card's one retained quad; pointer/tilt updates do not touch textures.
+    void uploadMedia(Renderer&);
     std::span<const LayerCompositionEntry> entries()const noexcept;
     std::uint64_t compositionRevision()const noexcept;
     // Call AFTER composition replacement. An attached scene rejects retirement
@@ -94,6 +114,8 @@ public:
     bool select(std::optional<std::string>);
     bool createText(std::string id,double createdAt);
     bool createChecklist(std::string noteID,std::string firstItemID,double createdAt);
+    bool createMedia(std::string noteID,double createdAt,std::string reference,core::Point,
+        std::shared_ptr<void> accessLease={}); // retained through inspection handoff/playback/card retirement
     bool addChecklistItem(std::string_view noteID,std::string itemID);
     bool mutateChecklistItem(std::string_view noteID,std::string_view itemID,modules::NotesState::ChecklistAction);
     bool beginEditingItem(std::string_view noteID,std::string_view itemID);

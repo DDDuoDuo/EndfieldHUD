@@ -1,4 +1,5 @@
 #pragma once
+#include "core/data/file_shelf_store.hpp"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -9,6 +10,17 @@
 #include <vector>
 
 namespace endfield::native {
+// Optional presentation metadata, captured on the existing audio worker from
+// the retained PID+creation-time process handle. The file identity describes
+// the current regular file at that process-reported executable path, not a
+// proof of which historical bytes Windows mapped into the running process.
+// No file handle, icon pixels, persistent shelf record or UI object crosses
+// into the snapshot. The shared Shell worker revalidates before extraction.
+struct AudioApplicationExecutable {
+    std::string path;ehud::data::ShelfFileIdentity identity;
+    bool operator==(const AudioApplicationExecutable&)const=default;
+};
+bool validAudioApplicationExecutable(const AudioApplicationExecutable&)noexcept;
 // Internal provider for SystemServices, not another application service. Exact
 // session IDs are backend lease keys; processKey is PID + creation-time identity.
 // A backend must never invent process ownership for multi-process/system audio.
@@ -19,6 +31,7 @@ struct AudioSessionRecord {
     bool active{},controllable{};
     std::optional<float> volume;
     std::int32_t error{};
+    std::optional<AudioApplicationExecutable> executable;
     bool operator==(const AudioSessionRecord&)const=default;
 };
 enum class AudioApplicationRouteState { direct,active,failed };
@@ -30,6 +43,7 @@ struct AudioApplicationRoute {
     AudioApplicationRouteState state{};
     std::optional<float>gain;
     std::int32_t error{};
+    std::optional<AudioApplicationExecutable> executable;
     bool operator==(const AudioApplicationRoute&)const=default;
 };
 struct AudioSessionSnapshot {

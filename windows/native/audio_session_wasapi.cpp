@@ -1,4 +1,5 @@
 #include "audio_session_worker.hpp"
+#include "native/file_shelf_files.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -8,6 +9,7 @@
 #include <audiopolicy.h>
 #include <mmdeviceapi.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -23,6 +25,13 @@ constexpr auto capacity=AudioSessionRoutes::maximumSessions;
 struct Handle{HANDLE value{};~Handle(){if(value)CloseHandle(value);}Handle()=default;Handle(const Handle&)=delete;Handle&operator=(const Handle&)=delete;};
 struct TaskString{LPWSTR value{};~TaskString(){CoTaskMemFree(value);}};
 std::string utf8(std::wstring_view text){if(text.empty()||text.size()>4096||text.find(L'\0')!=text.npos)throw std::invalid_argument("Invalid audio session identity");const int length=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0,nullptr,nullptr);if(length<=0||length>4096)throw std::invalid_argument("Invalid audio session identity encoding");std::string out(static_cast<std::size_t>(length),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),out.data(),length,nullptr,nullptr)!=length)throw std::runtime_error("Audio identity conversion failed");return out;}
+std::optional<AudioApplicationExecutable>executable(std::wstring_view path)noexcept{
+    try{if(path.empty()||path.size()>=32768||path.find(L'\0')!=path.npos)return {};const int count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),nullptr,0,nullptr,nullptr);if(count<=0||count>32768)return {};
+        std::string token(static_cast<std::size_t>(count),'\0');if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,path.data(),static_cast<int>(path.size()),token.data(),count,nullptr,nullptr)!=count)return {};
+        NativeFileShelfFiles files;auto lease=files.acquire(token);const auto&metadata=lease.metadata();if(metadata.kind!=ehud::data::ShelfFileKind::regular||metadata.isDirectory)return {};
+        return AudioApplicationExecutable{metadata.windowsPath,metadata.identity};
+    }catch(...){return {};}// Presentation failure must not disable audio control.
+}
 // Callback bodies never lock, wait, unregister, invoke owner UI or release a
 // final WASAPI reference. The closed-bit/writer-count gate lets the MTA teardown
 // wait for already-entered callbacks before draining their retained pointers.
@@ -91,7 +100,15 @@ class NativeBackend final:public AudioSessionBackend {
                 if(process->value&&GetProcessTimes(process->value,&created,&exited,&kernel,&user)){
                     const auto stamp=(std::uint64_t(created.dwHighDateTime)<<32)|created.dwLowDateTime;next.record.pid=pid;next.record.processKey=std::to_string(pid)+":"+std::to_string(stamp);next.process=std::move(process);
                     std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
-                    if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size())next.record.name=std::filesystem::path(std::wstring(path.data(),length)).stem().wstring();
+                    if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){
+                        const std::wstring_view token(path.data(),length);next.record.name=std::filesystem::path(token).stem().wstring();
+                        // Share one immutable discovery result across this exact
+                        // process identity's sessions. No metadata I/O on read,
+                        // volume events, hover, drag or native callback threads.
+                        const auto prior=std::find_if(entries.begin(),entries.end(),[&](const auto&entry){return entry.second.record.processKey==next.record.processKey;});
+                        if(prior!=entries.end())next.record.executable=prior->second.record.executable;
+                        else next.record.executable=executable(token);
+                    }
                     if(next.record.name.empty()||next.record.name.size()>4096)next.record.name=L"PID "+std::to_wstring(pid);
                     TaskString label;if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value){const std::wstring_view display(label.value);if(!display.empty()&&display.size()<=4096&&display.front()!=L'@')next.record.name=display;}
                 }

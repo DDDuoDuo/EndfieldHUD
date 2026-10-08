@@ -9,6 +9,9 @@
 #include <utility>
 
 namespace endfield::native {
+bool validAudioApplicationExecutable(const AudioApplicationExecutable&e)noexcept{
+    return ehud::data::validWindowsFilePath(e.path)&&(!e.identity.volumeUUID||ehud::data::validUUID(*e.identity.volumeUUID));
+}
 namespace {
 constexpr std::int32_t invalid=static_cast<std::int32_t>(0x80070057u),unexpected=static_cast<std::int32_t>(0x8000ffffu),notFound=static_cast<std::int32_t>(0x80070490u),changedState=static_cast<std::int32_t>(0x8000000cu);
 bool scalar(float v){return std::isfinite(v)&&v>=0&&v<=1;}
@@ -25,10 +28,11 @@ public:
     std::vector<AudioApplicationRoute>apps;
     const AudioSessionRecord*record(std::string_view id)const{const auto i=std::find_if(records.begin(),records.end(),[&](const auto&r){return r.id==id;});return i==records.end()?nullptr:&*i;}
     void rebuild(){
-        struct Group{std::size_t index{};bool active{},writable{true};};std::map<std::string,Group,std::less<>>indices;std::vector<AudioApplicationRoute>next;
+        struct Group{std::size_t index{};bool active{},writable{true},iconConflict{};};std::map<std::string,Group,std::less<>>indices;std::vector<AudioApplicationRoute>next;
         for(const auto&r:records){if(r.processKey.empty()||!r.pid)continue;auto found=indices.find(r.processKey);
-            if(found==indices.end()){indices.emplace(r.processKey,Group{next.size(),r.active,r.controllable&&r.volume.has_value()});next.push_back({r.processKey,r.name,r.pid,false,AudioApplicationRouteState::direct,{},r.error});}
-            else{auto&group=found->second;group.active=group.active||r.active;group.writable=group.writable&&r.controllable&&r.volume.has_value();if(r.error<0)next[group.index].error=r.error;}
+            if(found==indices.end()){indices.emplace(r.processKey,Group{next.size(),r.active,r.controllable&&r.volume.has_value()});next.push_back({r.processKey,r.name,r.pid,false,AudioApplicationRouteState::direct,{},r.error,r.executable});}
+            else{auto&group=found->second;group.active=group.active||r.active;group.writable=group.writable&&r.controllable&&r.volume.has_value();if(r.error<0)next[group.index].error=r.error;
+                auto&app=next[group.index];if(!group.iconConflict&&r.executable){if(app.executable&&*app.executable!=*r.executable){app.executable.reset();group.iconConflict=true;}else app.executable=r.executable;}}
         }
         for(const auto&[_,group]:indices)next[group.index].available=group.active&&group.writable;
         for(auto&a:next)if(const auto found=owned.find(a.id);found!=owned.end()){a.state=found->second.error<0?AudioApplicationRouteState::failed:AudioApplicationRouteState::active;a.gain=found->second.gain;a.error=found->second.error;}
@@ -55,7 +59,7 @@ AudioSessionRoutes&AudioSessionRoutes::operator=(AudioSessionRoutes&&)noexcept=d
 const std::vector<AudioApplicationRoute>&AudioSessionRoutes::applications()const noexcept{return impl_->apps;}
 void AudioSessionRoutes::update(std::span<const AudioSessionRecord>records,AudioSessionBackend&backend){
     if(records.size()>maximumSessions)throw std::invalid_argument("Audio session budget exceeded");std::map<std::string,std::uint32_t,std::less<>>processes;std::map<std::string,bool,std::less<>>ids;std::size_t bytes{};
-    for(const auto&r:records){if(!identity(r.id)||(!r.processKey.empty()&&!identity(r.processKey))||r.name.size()>4096||r.name.find(L'\0')!=r.name.npos||(!r.processKey.empty()&&!r.pid)||(!r.processKey.empty()&&!processes.emplace(r.processKey,r.pid).second&&processes.at(r.processKey)!=r.pid)||!ids.emplace(r.id,true).second||(r.volume&&!scalar(*r.volume)))throw std::invalid_argument("Invalid native audio session identity/state");bytes+=r.id.size()+r.processKey.size()+r.name.size()*sizeof(wchar_t);if(bytes>8*1024*1024)throw std::invalid_argument("Audio session metadata budget exceeded");}
+    for(const auto&r:records){if(!identity(r.id)||(!r.processKey.empty()&&!identity(r.processKey))||r.name.size()>4096||r.name.find(L'\0')!=r.name.npos||(!r.processKey.empty()&&!r.pid)||(!r.processKey.empty()&&!processes.emplace(r.processKey,r.pid).second&&processes.at(r.processKey)!=r.pid)||!ids.emplace(r.id,true).second||(r.volume&&!scalar(*r.volume))||(r.executable&&(r.processKey.empty()||!validAudioApplicationExecutable(*r.executable))))throw std::invalid_argument("Invalid native audio session identity/state");bytes+=r.id.size()+r.processKey.size()+r.name.size()*sizeof(wchar_t);if(r.executable)bytes+=r.executable->path.size()+(r.executable->identity.volumeUUID?r.executable->identity.volumeUUID->size():0);if(bytes>8*1024*1024)throw std::invalid_argument("Audio session metadata budget exceeded");}
     auto&i=*impl_;for(const auto&r:records)if(const auto*previous=i.record(r.id);previous&&(previous->processKey!=r.processKey||previous->pid!=r.pid))throw std::invalid_argument("Native audio session identity was reassigned");i.records.assign(records.begin(),records.end());
     for(auto owned=i.owned.begin();owned!=i.owned.end();){auto&o=owned->second;
         o.members.erase(std::remove_if(o.members.begin(),o.members.end(),[&](const auto&m){return !i.record(m.id);}),o.members.end());

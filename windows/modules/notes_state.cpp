@@ -121,6 +121,26 @@ bool NotesState::createChecklist(std::string id,std::string firstID,double creat
     item.x=origin.x+offset;item.y=origin.y+offset;item.width=228;item.height=154;item.zIndex=nextZ();item=constrained(std::move(item),workspace_);
     replace(item);(void)save(item);(void)select(item.id);++revision_;return true;
 }
+bool NotesState::createMedia(std::string id,double createdAt,std::string reference,Point point){
+    writable();if(!notesSelected_)return false;
+    if(!ehud::data::validUUID(id)||note(id)||!std::isfinite(createdAt)||!finite(point))throw std::invalid_argument("Invalid new media identity/time/position");
+    if(editing_)throw std::logic_error("Finish Notes editor before importing media");
+    if(notes_.size()>=10000)throw std::length_error("Notes record bound exceeded");
+    const auto value=ehud::data::Json::parse(reference,2*1024*1024);
+    if(value["version"].integer()!=1||value["referencePlatform"].string()!="windows"||value.contains("bookmark")||value.contains("lastKnownPath")||value.contains("isSecurityScoped"))throw std::invalid_argument("New native media requires one validated Windows locator");
+    const auto width=value["pixelWidth"].integer(),height=value["pixelHeight"].integer(),frames=value["frameCount"].integer();
+    if(width<1||height<1||width>65536||height>65536||frames<1||frames>2000)throw std::invalid_argument("Invalid imported media dimensions/count");
+    // Reuse the store's native-reference validator; preserve the original small
+    // payload including future fields rather than re-encoding it after import.
+    (void)ehud::data::makeWindowsMediaReference(value["windowsPath"].string(),value["displayName"].string(),static_cast<int>(width),static_cast<int>(height),value["kind"].string(),value["duration"].isNull()?std::optional<double>{}:value["duration"].number(),static_cast<int>(frames));
+    const auto ratio=double(height)/double(width),sourceWidth=std::min(300.,210/std::max(.2,ratio));
+    Note item{.id=std::move(id),.kind=ehud::data::NoteKind::image,.x=point.x,.y=point.y,.width=std::max(162.,sourceWidth),.height=std::max(110.,sourceWidth*ratio+50),.createdAt=createdAt};item.media=std::move(reference);
+    std::int64_t maximum=notes_.empty()?-1:notes_.front().zIndex;for(const auto&n:notes_)maximum=std::max(maximum,n.zIndex);item.zIndex=maximum<std::numeric_limits<std::int64_t>::max()?maximum+1:maximum;item=constrained(std::move(item),workspace_);
+    // Source import only publishes a note after the store accepted it. Unlike
+    // editable text creation, a failed media import is not an unsaved draft.
+    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes media import failed";++revision_;return false;}
+    error_.reset();replace(item);(void)select(item.id);++revision_;return true;
+}
 bool NotesState::addChecklistItem(std::string_view id,std::string childID){
     writable();const auto*found=note(id);if(!found||!visible(id)||found->kind!=ehud::data::NoteKind::todo)return false;
     if(editing_)throw std::logic_error("Finish Notes editor before changing checklist rows");
