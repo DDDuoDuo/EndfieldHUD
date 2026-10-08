@@ -89,7 +89,7 @@ clock-page displacement and native font appearance still need visual checks.
 The window host coalesces redraw requests and owns one cancellable wake timer.
 Hidden windows schedule no rendering work. [CI run 37723655009](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37723655009)
 passed all 27 portable suites and 35 Windows suites at commit `7695dc0`.
-The current module-artwork checkpoint passes 31 portable suites and all 40
+The current Notes integration checkpoint passes 33 portable suites and all 47
 Windows suites in a Release build on the laptop. The user has now
 confirmed the updated desktop darkening/blur, contained personal-card highlight,
 faster scrolling and pointer dragging. Display selection has a read-only Windows service and a portable policy
@@ -228,8 +228,26 @@ helper. Edge antialiasing still needs visual comparison.
 
 These foundations are not yet wired into the visible shell. Rich formatting,
 to-do, drawing and media behavior still require their actual module adapters.
-Text measurement, shared-shell editing and the module transition registration
-seams are separate integration work; no complete Notes module is claimed.
+Native font measurement, rounded projected editor clipping and registration strokes
+now compose through the same renderer. An isolated Notes workspace fixture edits
+multilingual text, retains its tilted caret through 120 closing/pointer poses
+without new layout/raster work, commits through NotesState, and reopens a fresh
+temporary SQLite store. It uses no real account or Notes data. The visible-shell
+workspace coordinator is still being connected; no complete Notes module is claimed.
+
+The source toolbar and ten menu states pass 8,667 checks against the original
+Mac layer trees. Finite section/card/menu motion uses caller time and starts no
+independent timer. Registration geometry matches 20,808 Core Graphics coverage
+samples; Core Animation edge antialiasing remains unverified. Native editor tests
+query the exact DirectWrite object used to paint glyphs, rather than guessing
+caret heights from line spacing. One CJK fallback line has a measured 0.1113-point
+baseline difference between settled and editing layouts; an original-Mac
+comparison is still required before changing that platform behavior.
+
+A later 1920×1080 hardware preflight prepared the synthetic shell in 594 ms, with
+0.68 ms average pointer preparation/submission. All concealed samples again
+recorded zero CPU time, submitted frames and armed timers. These remain single
+synthetic runs, not full-app launch, CPU-percentage or GPU-time measurements.
 
 All MSVC targets explicitly use UTF-8 source and execution encodings, including
 on Chinese-language Windows. Incremental deployment must copy changed files

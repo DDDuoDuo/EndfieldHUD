@@ -42,6 +42,9 @@ struct TextureData {
 struct PlaneMask {
     core::Matrix4 worldToLocal;
     core::Rect bounds;
+    // Circular source corner radius in the mask's own logical coordinates.
+    // Zero preserves the exact rectangle path; no per-frame mask texture.
+    double cornerRadius{};
 };
 struct PlaneShutter {
     core::Matrix4 worldToLocal;
@@ -60,11 +63,15 @@ struct DrawObject {
     core::Matrix4 world;
     std::array<float, 4> linearTint{1, 1, 1, 1};
     float opacity{1};
-    // Up to eight intersecting plane-local rectangular masks. Original source
+    // Up to eight intersecting plane-local rectangle/rounded-rectangle masks. Original source
     // stencil/soft-mask programs remain outside this plain-surface API.
     std::vector<PlaneMask> masks;
     std::optional<PlaneShutter> shutter;
 };
+// Checks retained numeric/identity data with the exact GPU-uniform rules,
+// without querying or allocating device resources. Resource existence remains
+// the owning Renderer publication check.
+void validateDrawObject(const DrawObject&);
 struct RendererStats {
     std::size_t meshes{}, textures{}, objects{}, resourceBytes{};
     std::uint64_t meshUploads{}, textureUploads{}, objectUploads{}, objectBufferAllocations{}, cameraUploads{}, drawCalls{}, presents{};

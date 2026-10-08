@@ -109,6 +109,15 @@ private:
 // references resident (or Renderer explicitly resets after a GPU failure).
 // present changes only matrices/numbers/masks, allocating nothing after upload;
 // load/content changes require upload before present. No timer/service/device.
+struct LayerCompositionEntry {
+    LayerScene* scene{};
+    // Borrowed fixed-count draw records painted immediately after this scene.
+    // Useful for native transition strokes. Their owner uploads resources first,
+    // keeps records/IDs alive and stable until replacement/detach, then retires
+    // resources itself. Numeric poses may change; IDs/count changes need setEntries.
+    // The scene's optional screen transform also applies to these records.
+    std::span<const DrawObject> after;
+};
 class LayerComposition final {
 public:
     LayerComposition()=default;
@@ -116,6 +125,7 @@ public:
     LayerComposition(const LayerComposition&)=delete;
     LayerComposition&operator=(const LayerComposition&)=delete;
     void setScenes(Renderer&,std::span<LayerScene* const> paintOrder);
+    void setEntries(Renderer&,std::span<const LayerCompositionEntry> paintOrder);
     void upload(Renderer&);
     // Empty transforms use identity for every scene; otherwise exactly one per
     // scene. Validate the whole pose before modifying any retained draw record.
@@ -124,10 +134,12 @@ public:
     std::span<const DrawObject> draws()const noexcept{return draws_;}
     std::size_t sceneCount()const noexcept{return scenes_.size();}
 private:
-    struct Entry {LayerScene* scene{};std::uint64_t structureRevision{},resourceRevision{};std::size_t begin{},count{};};
+    struct Entry {LayerScene* scene{};std::uint64_t structureRevision{},resourceRevision{};std::size_t begin{},count{};
+        std::span<const DrawObject> after;std::size_t stageBegin{};};
     std::vector<Entry> scenes_;
     std::vector<DrawObject> draws_;
     std::vector<core::Matrix4> inverseTransforms_;
+    std::vector<DrawObject> stagedAfter_;
     Renderer* renderer_{};
     void checkRenderer(Renderer&)const;
     void copyPrepared(const Entry&);

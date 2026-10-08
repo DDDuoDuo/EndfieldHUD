@@ -7,6 +7,7 @@ cbuffer Camera : register(b0) {
 struct PlaneMask {
     column_major float4x4 worldToLocal;
     float4 bounds;
+    float4 corners;
 };
 cbuffer Object : register(b1) {
     column_major float4x4 world;
@@ -47,6 +48,15 @@ float4 ScenePS(SceneVertex input) : SV_Target {
         clip(local.w - 0.0000001);
         float2 localPoint = local.xy / local.w;
         clip(float4(localPoint - masks[i].bounds.xy, masks[i].bounds.zw - localPoint));
+        [branch] if (masks[i].corners.x > 0) {
+            float radius = masks[i].corners.x;
+            float2 nearestCenter = clamp(localPoint,
+                masks[i].bounds.xy + radius, masks[i].bounds.zw - radius);
+            // Divide before squaring: valid large logical masks cannot overflow
+            // merely because radius*radius exceeds the GPU float range.
+            float2 corner = (localPoint - nearestCenter) / radius;
+            clip(1 - dot(corner, corner));
+        }
     }
     [branch] if (shutterEnabled != 0) {
         float4 local = mul(shutterWorldToLocal, input.worldPosition);

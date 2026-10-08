@@ -48,6 +48,12 @@ public:
     // returned span remains valid until the next range query or bind().
     std::span<const core::Rect> selectionRectangles(core::text::Range)const;
     std::shared_ptr<const PaintedTextLayout> painted()const noexcept;
+    // Logical ACP navigation from the exact painted DWrite glyph clusters.
+    // Built once on a new handle; arrows never reshape/allocate. These are not
+    // visual-bidi/word navigation rules. Interior ACP snaps outward; >end throws.
+    std::span<const std::uint32_t> clusterBoundaries()const;
+    std::uint32_t previousCluster(std::uint32_t acp)const;
+    std::uint32_t nextCluster(std::uint32_t acp)const;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };

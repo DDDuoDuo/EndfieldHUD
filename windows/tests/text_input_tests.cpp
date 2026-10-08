@@ -18,6 +18,41 @@ struct TestLayout final:Layout {
     std::optional<RangeBounds> bounds(Range r)const override{++layoutCalls;return RangeBounds{{double(r.start)*10,20,double(r.end-r.start)*10+(r.start==r.end?1:0),14},false};}
     std::optional<std::uint32_t> hit(Point p,bool,bool round)const override{const auto x=round?std::round(p.x/10):std::floor(p.x/10);return std::uint32_t(std::clamp(x,0.0,double(doc.text().size())));}
 };
+struct RoundedLayout final:Layout {
+    const Document&doc;RangeBounds range{{0,0,1,3},false};mutable Point lastHit;
+    explicit RoundedLayout(const Document&d):doc(d){}
+    std::uint64_t textRevision()const noexcept override{return doc.revision();}
+    std::optional<RangeBounds>bounds(Range)const override{return range;}
+    std::optional<std::uint32_t>hit(Point p,bool,bool)const override{lastHit=p;return 0u;}
+};
+void rounded(){
+    Buffer doc(u"A");RoundedLayout layout(doc);Placement p{{},{20,30,20,10},{},true,3};
+    check(validPlacement(p),"Source radius three is valid in local viewport units");auto rectangular=p;rectangular.cornerRadius=0;
+    check(p!=rectangular,"Radius change invalidates candidate placement equality");
+    for(double invalid:{-1.,5.01,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}){auto q=p;q.cornerRadius=invalid;check(!validPlacement(q),"Invalid rounded viewport rejected");}
+    for(int y=-10;y<=110;++y)for(int x=-10;x<=210;++x){
+        const Point local{20+x*.1,30+y*.1};
+        const auto cx=std::clamp(local.x,23.,37.),cy=std::clamp(local.y,33.,37.);
+        const bool expected=local.x>=20&&local.x<=40&&local.y>=30&&local.y<=40&&std::hypot(local.x-cx,local.y-cy)<=3;
+        check(projectedHit(doc,layout,local,p,false,false).has_value()==expected,"Rounded hit agrees with analytic circular corner coverage");
+    }
+    check(projectedHit(doc,layout,{18,28},p,true,true)==0u,"Drag nearest point remains available outside rounded corner");
+    near(layout.lastHit.x,3-3/std::sqrt(2.));near(layout.lastHit.y,3-3/std::sqrt(2.));
+    layout.range.bounds={0,0,.5,.5};auto r=projectedRange(doc,layout,{0,1},p);
+    check(r&&r->clipped&&r->clientBounds==Rect{},"Range wholly in clipped corner has no candidate geometry");
+    layout.range.bounds={0,0,1,3};r=projectedRange(doc,layout,{0,0},p);
+    check(r&&r->clipped,"Partially visible caret reports rounded clipping");near(r->clientBounds.x,20);near(r->clientBounds.y,33-std::sqrt(5.));near(r->clientBounds.width,1);near(r->clientBounds.height,std::sqrt(5.));
+    layout.range.bounds={3,0,10,3};r=projectedRange(doc,layout,{0,1},p);
+    check(r&&!r->clipped&&r->clientBounds==Rect{23,30,10,3},"Range outside corner arcs retains exact rectangle");
+    layout.range.bounds={0,0,20,10};r=projectedRange(doc,layout,{0,1},p);
+    check(r&&r->clipped&&r->clientBounds==p.viewport,"Whole viewport returns conservative rect with rounded clipped flag");
+    p.projection.values={1,.15,7,.22,1,12,.0008,.0005,1};
+    const auto corner=p.projection.project({20.1,30.1}),inside=p.projection.project({23,30.1});
+    check(corner&&inside&&!projectedHit(doc,layout,*corner,p,false,false)&&projectedHit(doc,layout,*inside,p,false,false),"Tilt uses the same inverse before exact rounded hit test");
+    p.scroll={2,1};layout.range.bounds={2,1,.5,.5};r=projectedRange(doc,layout,{0,1},p);
+    check(r&&r->clipped&&r->clientBounds==Rect{},"Scroll precedes rounded candidate clipping");
+    p.visible=false;check(!projectedHit(doc,layout,*inside,p,true,true),"Hidden rounded editor rejects even nearest hits");
+}
 void run(){
     Buffer doc(u"终末地 日本語 한국어 😀",200);const auto original=std::u16string(doc.text());
     check(doc.text().size()==14,"CJK and supplementary characters count UTF-16 units");
@@ -70,4 +105,4 @@ void run(){
     p.projection={};p.viewport.width=0;check(!projectedViewport(p),"Zero viewport rejected");p.viewport.width=100;p.projection.values.fill(0);check(!projectedViewport(p),"Singular projection rejected by shared math");
 }
 }
-int main(){try{run();std::cout<<"Passed "<<checks<<" projected UTF-16 text contracts\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{run();rounded();std::cout<<"Passed "<<checks<<" projected UTF-16 text contracts\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

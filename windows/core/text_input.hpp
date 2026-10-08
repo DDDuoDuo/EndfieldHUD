@@ -76,6 +76,9 @@ public:
 };
 struct Placement {
     Projection projection;Rect viewport;Point scroll;bool visible{true};
+    // Circular viewport corners in the same logical plane as painting. TSF
+    // receives conservative rectangular bounds of the rounded intersection.
+    double cornerRadius{};
     bool operator==(const Placement&)const;
 };
 struct ProjectedBounds { Rect clientBounds;bool clipped{}; };

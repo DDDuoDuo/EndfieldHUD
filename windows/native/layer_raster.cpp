@@ -239,7 +239,7 @@ struct LayerRasterizer::Impl {
     }
     static DWRITE_FONT_WEIGHT weight(const Json& font){
         const auto traits=static_cast<unsigned>(number(font["symbolicTraits"]));const auto name=string(font["postScriptName"]);
-        if(name.find("Semibold")!=std::string::npos||name.find("SemiBold")!=std::string::npos)return DWRITE_FONT_WEIGHT_SEMI_BOLD;
+        if(name==".AppleSystemUIFontDemi"||name.find("Semibold")!=std::string::npos||name.find("SemiBold")!=std::string::npos)return DWRITE_FONT_WEIGHT_SEMI_BOLD;
         if((traits&2)||name.find("Bold")!=std::string::npos)return DWRITE_FONT_WEIGHT_BOLD;
         if(name.find("Medium")!=std::string::npos)return DWRITE_FONT_WEIGHT_MEDIUM;
         if(name.find("Light")!=std::string::npos)return DWRITE_FONT_WEIGHT_LIGHT;
@@ -435,8 +435,68 @@ struct LayerRasterizer::Impl {
     }
 };
 
+struct LayerPlainTextAnalysis::Impl {
+    DWORD thread{GetCurrentThreadId()};
+    ComPtr<IDWriteFactory> factory;ComPtr<IDWriteTextFormat> format;
+    LayerPlainTextMetrics metrics;
+    std::vector<DWRITE_LINE_METRICS> lines;
+    std::vector<std::uint32_t> lengths;
+    std::uint64_t created{};
+    void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Plain text analysis used outside its creating thread");}
+};
+LayerPlainTextAnalysis::LayerPlainTextAnalysis(std::unique_ptr<Impl>impl):impl_(std::move(impl)){}
+LayerPlainTextAnalysis::~LayerPlainTextAnalysis()=default;
+const LayerPlainTextMetrics&LayerPlainTextAnalysis::metrics()const noexcept{return impl_->metrics;}
+std::uint64_t LayerPlainTextAnalysis::layoutsCreated()const noexcept{return impl_->created;}
+std::span<const std::uint32_t>LayerPlainTextAnalysis::lineLengths(std::u16string_view value,double width,std::size_t maximumLines){
+    auto&r=*impl_;r.onThread();
+    if(value.size()>std::numeric_limits<UINT32>::max()||!std::isfinite(width)||std::abs(width)>32768
+       ||maximumLines==0||maximumLines>std::numeric_limits<UINT32>::max())invalid("Plain text analysis exceeds explicit bounds");
+    for(std::size_t i=0;i<value.size();++i){const auto c=value[i];if(c>=0xd800&&c<=0xdbff){if(++i==value.size()||value[i]<0xdc00||value[i]>0xdfff)invalid("Plain text has an unmatched UTF-16 surrogate");}else if(c>=0xdc00&&c<=0xdfff)invalid("Plain text has an unmatched UTF-16 surrogate");}
+    r.lengths.clear();
+    ComPtr<IDWriteTextLayout>layout;
+    checked(r.factory->CreateTextLayout(value.empty()?L"":reinterpret_cast<const WCHAR*>(value.data()),static_cast<UINT32>(value.size()),r.format.Get(),
+        static_cast<float>(std::max(1.,width)),1e8f,layout.GetAddressOf()),"Create transient plain text analysis");++r.created;
+    UINT32 needed{};const auto probe=layout->GetLineMetrics(nullptr,0,&needed);
+    if(FAILED(probe)&&probe!=HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))checked(probe,"Count plain text lines");
+    if(needed==0||needed>maximumLines||std::size_t(needed)>value.size()+1)invalid("Plain text line index exceeds its explicit budget");
+    r.lines.resize(needed);UINT32 actual{};checked(layout->GetLineMetrics(r.lines.data(),needed,&actual),"Read plain text line lengths");
+    if(actual!=needed)invalid("Plain text line metrics changed during immutable analysis");
+    r.lengths.reserve(needed);std::size_t total{};
+    for(const auto&line:r.lines){if(line.isTrimmed||line.length>value.size()-total)invalid("Plain text analysis returned invalid or truncated lines");r.lengths.push_back(line.length);total+=line.length;}
+    if(total!=value.size())invalid("Plain text analysis did not cover the complete input");
+    // No full-height glyph image and no retained document layout. This span is
+    // just a compact UTF-16 line-length scratch buffer.
+    return r.lengths;
+}
+
 LayerRasterizer::LayerRasterizer():impl_(std::make_unique<Impl>()){}
 LayerRasterizer::~LayerRasterizer()=default;
+std::unique_ptr<LayerPlainTextAnalysis>LayerRasterizer::plainSystemTextAnalysis(const std::string&id,double size,const LayerRasterOptions&options){
+    auto&r=*impl_;r.onThread();
+    if(id.empty()||id.size()>4096||!Json::validUtf8(id)||!std::isfinite(size)||size<=0||size>2048)invalid("Invalid plain system font request");
+    const Json font=Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",".SFNS-Regular"}};
+    const Json node=Json::Object{{"id",id}};LayerRasterImage report;
+    const auto family=r.fontFamily(font,node,options,report);
+    UINT32 index{};BOOL exists{};checked(r.fonts->FindFamilyName(family.c_str(),&index,&exists),"Resolve analyzed family");
+    if(!exists)invalid("Analyzed font family is no longer installed");
+    ComPtr<IDWriteFontFamily>matchedFamily;checked(r.fonts->GetFontFamily(index,matchedFamily.GetAddressOf()),"Read analyzed family");
+    ComPtr<IDWriteFont>matched;checked(matchedFamily->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STRETCH_NORMAL,DWRITE_FONT_STYLE_NORMAL,matched.GetAddressOf()),"Match analyzed font");
+    DWRITE_FONT_METRICS nativeMetrics{};matched->GetMetrics(&nativeMetrics);
+    if(!nativeMetrics.designUnitsPerEm)invalid("Analyzed font has invalid design metrics");
+    auto analysis=std::make_unique<LayerPlainTextAnalysis::Impl>();analysis->factory=r.text;
+    auto&m=analysis->metrics;const double scale=size/nativeMetrics.designUnitsPerEm;
+    m.fontSize=size;m.ascent=nativeMetrics.ascent*scale;m.descent=nativeMetrics.descent*scale;
+    m.leading=std::max(0.,nativeMetrics.lineGap*scale);m.lineHeight=std::ceil(m.ascent+m.descent+m.leading)+1;
+    m.selectedFamily=options.fallbackFontFamily;m.fontSubstitutions=std::move(report.fontSubstitutions);
+    if(m.fontSubstitutions.empty())m.selectedFamily=".AppleSystemUIFont";
+    checked(r.text->CreateTextFormat(family.c_str(),r.fonts.Get(),DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,
+        static_cast<float>(size),L"en-us",analysis->format.GetAddressOf()),"Create shared plain system format");
+    checked(analysis->format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP),"Set plain system wrapping");
+    checked(analysis->format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,static_cast<float>(m.lineHeight),static_cast<float>(m.ascent)),"Set source-style plain line height");
+    ++r.counts.textAnalysisFormatsCreated;
+    return std::unique_ptr<LayerPlainTextAnalysis>(new LayerPlainTextAnalysis(std::move(analysis)));
+}
 std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options){
     auto& r=*impl_;r.onThread();
     if(id.empty()||id.size()>4096||!Json::validUtf8(id))invalid("Invalid retained layer ID");

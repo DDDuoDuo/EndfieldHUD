@@ -7,6 +7,17 @@ namespace endfield::native {
 struct NativeNotesSceneStats {
     std::uint64_t contentUpdates{},placementUpdates{},feedbackChanges{};
 };
+struct NativeNotesExternalEditorAppearance {
+    modules::NotesColor background,border;
+    // Source HUDNotesInteraction: opaque .12 dark / .96 light; accent border.
+    // Caller supplies appearance explicitly rather than guessing it from text.
+};
+struct NativeNotesExternalEditorSlot {
+    core::Rect localRect; // relative to card, NOT the center module
+    double cornerRadius{3},borderWidth{1};
+    // Actual editor glyph/selection clip must honor this radius. The card
+    // backing alone does not establish rounded editor-clip parity.
+};
 // Retained native artwork for one source-authored plain-text workspace card.
 // The caller owns NotesState/NotesCardPresentation, one LayerComposition and
 // its existing Renderer/clock. Nothing here publishes a draw list, creates a
@@ -18,7 +29,8 @@ struct NativeNotesSceneStats {
 // cards retain their textures when one card changes or is removed.
 class NativeNotesCardScene final {
 public:
-    NativeNotesCardScene(modules::NotesCardPresentation&,LayerRasterizer&,LayerRasterOptions);
+    NativeNotesCardScene(modules::NotesCardPresentation&,LayerRasterizer&,LayerRasterOptions,
+        std::optional<NativeNotesExternalEditorAppearance> externalEditor={});
     ~NativeNotesCardScene();
     NativeNotesCardScene(const NativeNotesCardScene&)=delete;
     NativeNotesCardScene&operator=(const NativeNotesCardScene&)=delete;
@@ -31,10 +43,22 @@ public:
     // The matrix maps saved workspace logical points to owner logical points.
     // The caller's final renderer camera applies physical DPI exactly once.
     // Ordinary pointer/closing/move samples allocate nothing after syncContent.
-    bool updatePose(const core::Matrix4& workspaceToScreen,float canvasOpacity,double time);
+    // A sampled outgoing section/card transition can explicitly remain visible
+    // while NotesState already targets hidden. No override follows target state.
+    bool updatePose(const core::Matrix4& workspaceToScreen,float canvasOpacity,double time,
+        std::optional<bool> visibilityOverride={});
     bool requiresFrames(double time)const;
     LayerScene& scene()noexcept;
     const LayerScene& scene()const noexcept;
+    // Explicit external-editor mode only. Compose this stable card scene, then
+    // the caller's editor scene with this span in LayerCompositionEntry.after.
+    // The final border borrows this card scene's already resident resources;
+    // keep the card present in the SAME composition until the editor is removed.
+    // Header/format feedback and grip are disjoint from the supported viewport.
+    // All content uses ONE transactional LayerScene load, never two partial
+    // scene replacements. Draw identity/count changes need setEntries().
+    std::span<const DrawObject> externalEditorAfterDraws()const noexcept;
+    const std::optional<NativeNotesExternalEditorSlot>& externalEditorSlot()const noexcept;
     NativeNotesSceneStats stats()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

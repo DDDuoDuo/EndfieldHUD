@@ -110,10 +110,51 @@ void contracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     check(tinyScene.scene().draws().back().sourceID.ends_with("/resizeGrip")&&tinyScene.scene().report().unsupported.empty(),"Overlapping tiny-card feedback retains exact rounded ancestor clip and grip-last order");
     const auto tinyImage=renderer.readback();const auto below=std::size_t(13)*tinyImage.rowBytes+95*4;check(tinyImage.pixels[below+3]==0,"Tiny feedback cannot leak below its source card clip");composition.detach(renderer);
 }
+void externalEditorContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
+    // Caller supplies a synthetic foreground surface, not a second editor or
+    // a claim of real TSF/rounded glyph clipping. This tests the card seam and
+    // source order around a separately retained projected editor's own scene.
+    ehud::data::Note note{.id=id1,.kind=ehud::data::NoteKind::text,.text="Visible only after editing",.x=20,.y=40,.width=210,.height=140,.createdAt=123};
+    mod::NotesState state({note},{[](const auto&){},[](auto){}});state.setWorkspaceBounds({0,0,512,256});state.beginEditing(id1);
+    mod::NotesCardPresentation presentation(id1);const auto appearance=input(note.text,192);presentation.updateContent(state,appearance);
+    gpu::LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
+    const gpu::NativeNotesExternalEditorAppearance editorAppearance{{.12,.12,.12,1},appearance.palette.accent};
+    gpu::NativeNotesCardScene card(presentation,raster,options,editorAppearance);
+    check(card.syncContent()&&card.externalEditorSlot()&&card.externalEditorAfterDraws().size()==1,"Explicit mode exposes source editor slot and one final-frame draw");
+    const auto slot=*card.externalEditorSlot();check(slot.localRect==core::Rect{9,29,192,82}&&slot.cornerRadius==3&&slot.borderWidth==1,"Source viewport, radius and border requirements remain exact and explicit");
+    check(card.scene().draws().size()==15,"Editing card and final controls/frame share one transaction and resource owner");
+    check(card.externalEditorAfterDraws()[0].sourceID.ends_with("/external-editor-border"),"Frame is exposed for publication after real editor foreground");
+    card.updatePose({},1,0);gpu::LayerComposition composition;const std::array backingOnly{gpu::LayerCompositionEntry{&card.scene(),card.externalEditorAfterDraws()}};composition.setEntries(renderer,backingOnly);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
+    check(card.scene().draws().back().opacity==0&&card.externalEditorAfterDraws()[0].opacity==1,"One resident editor frame paints only in the final supplemental slot");
+    auto image=renderer.readback();const auto at=std::size_t(80)*image.rowBytes+40*4;check(image.pixels[at+3]==255&&image.pixels[at]<40&&image.pixels[at]>20&&image.pixels[at+1]<40&&image.pixels[at+2]<40,"Source .12 opaque editor backing replaces settled note glyphs instead of duplicating them");
+    gpu::LayerScene editorForeground(raster);editorForeground.load(ehud::data::Json::Object{{"id","synthetic-editor-foreground"},{"bounds",ehud::data::Json::Array{0,0,slot.localRect.width,slot.localRect.height}},{"position",ehud::data::Json::Array{0,0}},{"anchorPoint",ehud::data::Json::Array{0,0}},{"masksToBounds",true},{"backgroundColor",ehud::data::Json::Object{{"sRGB",ehud::data::Json::Array{0,1,0,1}}}},{"children",ehud::data::Json::Array{}}},options);
+    const std::array foregroundPose{gpu::LayerPlacement{0,core::Matrix4::translation(29,69),1,{}}};editorForeground.setPlacements(foregroundPose);
+    const std::array paintOrder{gpu::LayerCompositionEntry{&card.scene(),{}},gpu::LayerCompositionEntry{&editorForeground,card.externalEditorAfterDraws()}};composition.setEntries(renderer,paintOrder);composition.present(renderer);renderer.draw(false);image=renderer.readback();
+    const auto body=std::size_t(90)*image.rowBytes+40*4,border=std::size_t(90)*image.rowBytes+29*4;
+    check(image.pixels[body+1]>240&&image.pixels[body+2]<20,"External editor foreground paints over opaque backing");
+    check(image.pixels[border+2]>100,"Final source accent frame paints above external editor foreground");
+    const auto oldContent=card.scene().contentRevision();const auto oldTextures=renderer.stats().textures;const auto oldFrame=card.externalEditorAfterDraws()[0].world;
+    auto rejected=appearance;rejected.strings.textTitle=std::string(65537,'a');presentation.updateContent(state,rejected);
+    rejects([&]{card.syncContent();},"Late raster failure in a source text leaf rejects whole single-scene transaction");
+    composition.present(renderer);renderer.draw(false);check(card.scene().contentRevision()==oldContent&&renderer.stats().textures==oldTextures&&card.externalEditorAfterDraws()[0].world==oldFrame,"Failed update preserves published scene resources, old frame metadata and supplemental order");
+    presentation.updateContent(state,appearance);card.syncContent();card.updatePose({},1,.5);composition.setEntries(renderer,paintOrder);composition.present(renderer);
+    const auto before=raster.stats();const auto resources=renderer.stats();card.setFeedback("formatColor",false,false,1);card.updatePose({},1,1.14);composition.present(renderer);
+    check(raster.stats().rasterizations==before.rasterizations&&renderer.stats().textureUploads==resources.textureUploads,"Formatting hover changes only retained feedback opacity");
+    const auto prior=raster.stats();allocations=0;counting=true;
+    try{for(unsigned frame=0;frame<120;++frame){core::Matrix4 pose;pose.values[3]=frame*.000001;card.updatePose(pose,.75f,2+frame/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==prior.rasterizations,"External editor card/overlay pointer frames allocate nothing and reraster nothing");
+    state.detachEditor();presentation.updateContent(state,appearance);card.syncContent();card.updatePose({},1,4);
+    check(!card.externalEditorSlot()&&card.externalEditorAfterDraws().empty()&&card.scene().draws().size()==6,"Leaving editing restores settled source card without abandoned supplemental frame references");
+    const std::array settled{&card.scene()};composition.setScenes(renderer,settled);composition.present(renderer);check(renderer.stats().textures==6&&renderer.stats().meshes==6,"Combined replacement retires external foreground/overlay resources after safe publication");composition.detach(renderer);
+    ehud::data::Note tiny{.id=id2,.kind=ehud::data::NoteKind::text,.text="Tiny",.width=100,.height=70,.createdAt=123};mod::NotesState tinyState({tiny},{[](const auto&){},[](auto){}});tinyState.setWorkspaceBounds({0,0,100,12});tinyState.beginEditing(id2);
+    mod::NotesCardPresentation tinyPresentation(id2);tinyPresentation.updateContent(tinyState,input("Tiny",82));gpu::NativeNotesCardScene tinyCard(tinyPresentation,raster,options,editorAppearance);
+    rejects([&]{tinyCard.syncContent();},"Unusual tiny editor/control overlap explicitly rejects unsupported order/rounded clip geometry");check(tinyCard.scene().contentRevision()==0&&!tinyCard.externalEditorSlot(),"Rejected external editor geometry preserves uninitialized scene and slot");
+    rejects([&]{gpu::NativeNotesCardScene invalid(presentation,raster,options,gpu::NativeNotesExternalEditorAppearance{{.12,.12,.12,.5},appearance.palette.accent});},"Source editor backing cannot silently become translucent");
+}
 }
 int wmain(int argc,wchar_t**argv){try{
     check(argc==2,"Pass original native HUD shader path");const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);check(SUCCEEDED(hr),"Owned fixture COM initializes");
     {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,512,256,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});gpu::LayerRasterizer raster;
-        contracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
+        contracts(renderer,raster);externalEditorContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes scene contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes scene contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

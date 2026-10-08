@@ -52,6 +52,14 @@ void run(){
     }
     auto empty=text("");raster.rasterize("empty-caption",1,empty,options);check(!raster.textLayout("empty-caption",1),"Empty source caption retains prior no-layout behavior");options.retainEmptyTextLayout=true;
     const auto emptyImage=raster.rasterize("empty-editor",1,empty,options);const auto emptyPainted=raster.textLayout("empty-editor",1);Buffer emptyDoc;LayerTextLayout emptyLayout(emptyPainted,emptyDoc);check(alpha(*emptyImage)==0&&emptyLayout.bounds({0,0})->bounds.height>0&&emptyLayout.hit({0,0},true,true)==0u,"Explicit empty editor paints no glyph but has real caret/hit layout");
+    Buffer clusterDoc(u"Ae\u0301😀B");raster.rasterize("clusters",1,text("Aé😀B"),options);LayerTextLayout clusters(raster.textLayout("clusters",1),clusterDoc);
+    check(clusters.nextCluster(1)==3&&clusters.previousCluster(3)==1,"Painted combining-mark cluster remains one editing step");
+    check(clusters.nextCluster(3)==5&&clusters.previousCluster(5)==3,"Supplementary emoji keeps both UTF-16 units");
+    check(clusters.nextCluster(2)==3&&clusters.previousCluster(2)==1&&clusters.nextCluster(4)==5&&clusters.previousCluster(4)==3,"Interior ACP snaps to surrounding painted cluster boundaries");
+    check(clusters.previousCluster(0)==0&&clusters.nextCluster(6)==6&&emptyLayout.nextCluster(0)==0,"Cluster navigation clamps only valid document endpoints");
+    rejects([&]{clusters.nextCluster(7);},"Invalid next ACP rejects");rejects([&]{clusters.previousCluster(UINT32_MAX);},"Invalid previous ACP rejects");
+    const auto* clusterStorage=clusters.clusterBoundaries().data();const auto clusterStats=raster.stats();for(unsigned n=0;n<1000;++n){check(clusters.nextCluster(1)==3&&clusters.previousCluster(5)==3,"Repeated navigation uses painted cluster positions");}
+    check(clusters.clusterBoundaries().data()==clusterStorage&&raster.stats().textLayoutsCreated==clusterStats.textLayoutsCreated,"Repeated arrows preserve cluster storage and create no layout");
     auto rich=text("Style");rich["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,5}},{"attributes",Json::Object{{"NSFont",Json::Object{{"familyName","Segoe UI"},{"postScriptName","SegoeUI-Bold"},{"pointSize",36},{"symbolicTraits",2}}},{"NSUnderline",1},{"NSStrikethrough",1}}}}};
     raster.rasterize("rich",1,rich,options);Buffer richDoc(u"Style");LayerTextLayout richLayout(raster.textLayout("rich",1),richDoc);check(richLayout.bounds({0,5})->bounds.height>start->bounds.height,"Rich font sizing in painted layout also controls caret/selection metrics");
     auto tree=text("root");tree["children"]=Json::Array{text("child")};raster.rasterize("tree",1,tree,options);check(!raster.textLayout("tree",1),"Text tree surface does not pretend to be one editor leaf");

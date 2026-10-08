@@ -12,6 +12,30 @@ bool low(char16_t c){return c>=0xdc00&&c<=0xdfff;}
 bool boundary(std::u16string_view s,std::uint32_t at){return at<=s.size()&&(at==0||at==s.size()||!high(s[at-1])||!low(s[at]));}
 bool validRange(std::u16string_view s,Range r){return r.start<=r.end&&r.end<=s.size();}
 bool finite(Rect r){return std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
+bool roundedContains(Rect r,double radius,Point p){
+    if(p.x<r.x||p.y<r.y||p.x>r.x+r.width||p.y>r.y+r.height)return false;
+    if(radius==0)return true;
+    const auto x=std::clamp(p.x,r.x+radius,r.x+r.width-radius),y=std::clamp(p.y,r.y+radius,r.y+r.height-radius);
+    return std::hypot(p.x-x,p.y-y)<=radius;
+}
+Point nearestRounded(Rect r,double radius,Point p){
+    const Point center{std::clamp(p.x,r.x+radius,r.x+r.width-radius),std::clamp(p.y,r.y+radius,r.y+r.height-radius)};
+    if(radius==0)return center;
+    const auto dx=p.x-center.x,dy=p.y-center.y,distance=std::hypot(dx,dy);
+    if(distance<=radius)return p;
+    return {center.x+dx*(radius/distance),center.y+dy*(radius/distance)};
+}
+Rect roundedIntersectionBounds(Rect r,Rect viewport,double radius){
+    if(radius==0)return r;
+    // A rounded rectangle is the inner rectangle expanded by a disk. Each
+    // extremum uses the closest available coordinate to that inner rectangle;
+    // this gives the exact local AABB without sampling or allocating a path.
+    const auto l=viewport.x+radius,t=viewport.y+radius,right=viewport.x+viewport.width-radius,bottom=viewport.y+viewport.height-radius;
+    const auto dy=std::max({t-(r.y+r.height),r.y-bottom,0.}),dx=std::max({l-(r.x+r.width),r.x-right,0.});
+    const auto extentX=std::sqrt(std::max(0.,(radius-dy)*(radius+dy))),extentY=std::sqrt(std::max(0.,(radius-dx)*(radius+dx)));
+    const auto x0=std::max(r.x,l-extentX),y0=std::max(r.y,t-extentY),x1=std::min(r.x+r.width,right+extentX),y1=std::min(r.y+r.height,bottom+extentY);
+    return x1>x0&&y1>y0?Rect{x0,y0,x1-x0,y1-y0}:Rect{};
+}
 std::optional<Rect> projectRect(const Projection& p,Rect r){
     const std::array<Point,4> corners{{{r.x,r.y},{r.x+r.width,r.y},{r.x+r.width,r.y+r.height},{r.x,r.y+r.height}}};
     double left=std::numeric_limits<double>::infinity(),top=left,right=-left,bottom=-left;
@@ -56,9 +80,10 @@ std::optional<Change> Buffer::endComposition(bool cancel){
         text_=std::move(snapshot_->text);selection_=snapshot_->selection;++revision_;}
     snapshot_.reset();composition_.reset();preparedSnapshot_.reset();return change;
 }
-bool Placement::operator==(const Placement& p)const{return projection.values==p.projection.values&&viewport==p.viewport&&scroll==p.scroll&&visible==p.visible;}
+bool Placement::operator==(const Placement& p)const{return projection.values==p.projection.values&&viewport==p.viewport&&scroll==p.scroll&&visible==p.visible&&cornerRadius==p.cornerRadius;}
 bool validPlacement(const Placement& p)noexcept{
     return finite(p.viewport)&&p.viewport.width>0&&p.viewport.height>0&&std::isfinite(p.scroll.x)&&std::isfinite(p.scroll.y)&&
+        std::isfinite(p.cornerRadius)&&p.cornerRadius>=0&&p.cornerRadius<=std::min(p.viewport.width,p.viewport.height)*.5&&
         std::all_of(p.projection.values.begin(),p.projection.values.end(),[](double v){return std::isfinite(v);});
 }
 std::optional<Rect> projectedViewport(const Placement& p){if(!validPlacement(p))return {};if(!p.visible)return Rect{};return projectRect(p.projection,p.viewport);}
@@ -67,13 +92,17 @@ std::optional<ProjectedBounds> projectedRange(const Document& doc,const Layout& 
     if(!p.visible)return ProjectedBounds{{},true};const auto bounds=layout.bounds(range);if(!bounds||!finite(bounds->bounds)||bounds->bounds.width<0||bounds->bounds.height<0)return {};
     auto r=bounds->bounds;r.x+=p.viewport.x-p.scroll.x;r.y+=p.viewport.y-p.scroll.y;if(!finite(r))return {};
     const auto left=std::max(r.x,p.viewport.x),top=std::max(r.y,p.viewport.y),right=std::min(r.x+r.width,p.viewport.x+p.viewport.width),bottom=std::min(r.y+r.height,p.viewport.y+p.viewport.height);
-    const bool clipped=bounds->clipped||left!=r.x||top!=r.y||right!=r.x+r.width||bottom!=r.y+r.height;
-    if(right<=left||bottom<=top)return ProjectedBounds{{},true};const auto projected=projectRect(p.projection,{left,top,right-left,bottom-top});
+    bool clipped=bounds->clipped||left!=r.x||top!=r.y||right!=r.x+r.width||bottom!=r.y+r.height;
+    if(right<=left||bottom<=top)return ProjectedBounds{{},true};
+    for(const auto corner:std::array<Point,4>{{{left,top},{right,top},{right,bottom},{left,bottom}}})clipped|=!roundedContains(p.viewport,p.cornerRadius,corner);
+    const auto intersection=roundedIntersectionBounds({left,top,right-left,bottom-top},p.viewport,p.cornerRadius);
+    if(intersection.width<=0||intersection.height<=0)return ProjectedBounds{{},true};
+    const auto projected=projectRect(p.projection,intersection);
     return projected?std::optional(ProjectedBounds{*projected,clipped}):std::nullopt;
 }
 std::optional<std::uint32_t> projectedHit(const Document& doc,const Layout& layout,Point client,const Placement& p,bool nearest,bool roundNearest){
     if(!validPlacement(p)||!p.visible||layout.textRevision()!=doc.revision())return {};auto local=p.projection.unproject(client);if(!local)return {};
-    if(!p.viewport.contains(*local)){if(!nearest)return {};local->x=std::clamp(local->x,p.viewport.x,p.viewport.x+p.viewport.width);local->y=std::clamp(local->y,p.viewport.y,p.viewport.y+p.viewport.height);}
+    if(!roundedContains(p.viewport,p.cornerRadius,*local)){if(!nearest)return {};*local=nearestRounded(p.viewport,p.cornerRadius,*local);}
     const auto hit=layout.hit({local->x-p.viewport.x+p.scroll.x,local->y-p.viewport.y+p.scroll.y},nearest,roundNearest);
     return hit&&*hit<=doc.text().size()?hit:std::nullopt;
 }

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <iterator>
 #include <stdexcept>
 #include <vector>
 using Microsoft::WRL::ComPtr;
@@ -34,6 +35,7 @@ std::uintptr_t PaintedTextLayout::layoutIdentity()const noexcept{return reinterp
 struct LayerTextLayout::Impl {
     DWORD thread{GetCurrentThreadId()};std::shared_ptr<const PaintedTextLayout>painted;std::uint64_t documentRevision{};
     mutable std::vector<DWRITE_HIT_TEST_METRICS>metrics;mutable std::vector<core::Rect>rectangles;mutable std::optional<core::text::Range>cachedRange;mutable bool clipped{};
+    std::vector<std::uint32_t>clusters;
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Painted text used outside its owning UI thread");}
     void query(core::text::Range r)const{
         onThread();if(cachedRange==r)return;need(r.start<=r.end&&r.end<=painted->text().size(),"Painted text ACP range exceeds its document");cachedRange.reset();rectangles.clear();clipped=false;
@@ -58,7 +60,19 @@ LayerTextLayout::LayerTextLayout(std::shared_ptr<const PaintedTextLayout>layout,
 LayerTextLayout::~LayerTextLayout()=default;
 bool LayerTextLayout::bind(std::shared_ptr<const PaintedTextLayout>layout,const core::text::Document&doc){
     auto&i=*impl_;i.onThread();need(layout&&layout->impl_->thread==i.thread&&layout->text()==doc.text(),"Painted layout UTF-16 text differs from editable document");
-    if(i.painted==layout&&i.documentRevision==doc.revision())return false;i.painted=std::move(layout);i.documentRevision=doc.revision();i.cachedRange.reset();i.rectangles.clear();return true;
+    if(i.painted==layout&&i.documentRevision==doc.revision())return false;
+    if(i.painted!=layout){
+        UINT32 count{};auto result=layout->impl_->layout->GetClusterMetrics(nullptr,0,&count);
+        need(SUCCEEDED(result)||result==HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER),"Cannot measure painted clusters");
+        need(count<=layout->text().size(),"Painted cluster count exceeds its text");
+        std::vector<DWRITE_CLUSTER_METRICS>metrics(count);std::vector<std::uint32_t>boundaries;boundaries.reserve(std::size_t(count)+1);boundaries.push_back(0);
+        if(count){checked(layout->impl_->layout->GetClusterMetrics(metrics.data(),count,&count),"Read painted glyph clusters");need(count==metrics.size(),"Painted cluster count changed unexpectedly");}
+        std::uint32_t at{};
+        for(const auto&cluster:metrics){need(cluster.length>0&&cluster.length<=layout->text().size()-at,"Invalid painted cluster length");at+=cluster.length;
+            const auto value=layout->text();need(at==value.size()||!(value[at]>=0xdc00&&value[at]<=0xdfff),"Painted cluster splits a UTF-16 pair");boundaries.push_back(at);}
+        need(at==layout->text().size(),"Painted clusters do not cover the document");i.clusters=std::move(boundaries);
+    }
+    i.painted=std::move(layout);i.documentRevision=doc.revision();i.cachedRange.reset();i.rectangles.clear();return true;
 }
 std::uint64_t LayerTextLayout::textRevision()const noexcept{return impl_->documentRevision;}
 std::span<const core::Rect>LayerTextLayout::selectionRectangles(core::text::Range range)const{impl_->query(range);return impl_->rectangles;}
@@ -73,5 +87,9 @@ std::optional<std::uint32_t>LayerTextLayout::hit(core::Point point,bool nearest,
     const auto position=std::uint64_t(metric.textPosition)+(roundNearest&&trailing?metric.length:0u);return position<=i.painted->text().size()?std::optional(std::uint32_t(position)):std::nullopt;
 }
 std::shared_ptr<const PaintedTextLayout>LayerTextLayout::painted()const noexcept{return impl_->painted;}
+std::span<const std::uint32_t>LayerTextLayout::clusterBoundaries()const{impl_->onThread();return impl_->clusters;}
+std::uint32_t LayerTextLayout::previousCluster(std::uint32_t acp)const{const auto&i=*impl_;i.onThread();need(acp<=i.painted->text().size(),"Cluster ACP exceeds document");const auto at=std::lower_bound(i.clusters.begin(),i.clusters.end(),acp);return at==i.clusters.begin()?0:*std::prev(at);}
+std::uint32_t LayerTextLayout::nextCluster(std::uint32_t acp)const{const auto&i=*impl_;i.onThread();need(acp<=i.painted->text().size(),"Cluster ACP exceeds document");const auto at=std::upper_bound(i.clusters.begin(),i.clusters.end(),acp);return at==i.clusters.end()?i.clusters.back():*at;}
+
 } // namespace endfield::native
 #endif

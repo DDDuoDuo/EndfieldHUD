@@ -134,6 +134,12 @@ void run(){
     const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="Consolas","Explicit Mac monospace source uses installed fixed-pitch fallback");
     auto proportional=text;proportional["text"]["font"]["familyName"]=".AppleSystemUIFont";proportional["text"]["font"]["postScriptName"]=".SFNS-Semibold";proportional["text"]["font"]["symbolicTraits"]=2;
     const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="Segoe UI","Proportional source is not inferred as monospace from clock usage");
+    auto demi=proportional;demi["text"]["font"]["postScriptName"]=".AppleSystemUIFontDemi";
+    const auto demiImage=raster.rasterize("source-demi",1,demi,options);
+    check(demiImage->straightRGBA==proportionalImage->straightRGBA,"Mac system Demi source face retains semibold weight despite its bold symbolic trait");
+    auto bold=proportional;bold["text"]["font"]["postScriptName"]=".SFNS-Bold";
+    const auto boldImage=raster.rasterize("source-bold",1,bold,options);
+    check(boldImage->straightRGBA!=demiImage->straightRGBA,"True bold source remains distinct from system semibold");
     auto transparent=text;transparent["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,8}},{"attributes",Json::Object{{"NSColor",rgba(1,1,1,0)}}}}};
     image=raster.rasterize("transparent-text",1,transparent,options);check(nonzeroAlpha(*image)==0,"Transparent attributed run overrides the opaque layer foreground");
     auto badRange=text;badRange["text"]["string"]="A\xF0\x9F\x8E\xAE";badRange["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,4}},{"attributes",Json::Object{}}}};

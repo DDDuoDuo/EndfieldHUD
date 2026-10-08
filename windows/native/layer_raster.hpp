@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace endfield::native {
@@ -24,6 +26,30 @@ struct LayerRasterOptions {
 };
 struct LayerRasterIssue { std::string node, feature; };
 struct LayerFontSubstitution { std::string node, requestedFamily, requestedFace, selectedFamily; };
+struct LayerPlainTextMetrics {
+    double fontSize{},ascent{},descent{},leading{},lineHeight{};
+    std::string selectedFamily;
+    std::vector<LayerFontSubstitution> fontSubstitutions;
+};
+// A reusable format borrowed from the rasterizer's existing DirectWrite factory
+// and font resolver. Each analysis layout is released after its line lengths
+// are read; this is NOT a painted editor handle. The returned span is owned by
+// this analysis object until its next call. Creating-thread use only.
+class LayerPlainTextAnalysis final {
+public:
+    ~LayerPlainTextAnalysis();
+    LayerPlainTextAnalysis(const LayerPlainTextAnalysis&)=delete;
+    LayerPlainTextAnalysis&operator=(const LayerPlainTextAnalysis&)=delete;
+    // No 65,536-unit leaf limit: string length must fit native UINT32. Width
+    // follows source max(1,width). Caller supplies its explicit line budget.
+    std::span<const std::uint32_t> lineLengths(std::u16string_view,double width,std::size_t maximumLines);
+    const LayerPlainTextMetrics& metrics()const noexcept;
+    std::uint64_t layoutsCreated()const noexcept;
+private:
+    struct Impl;std::unique_ptr<Impl>impl_;
+    explicit LayerPlainTextAnalysis(std::unique_ptr<Impl>);
+    friend class LayerRasterizer;
+};
 struct LayerRasterImage {
     core::Rect bounds; // texture edges in the input root's local point space
     unsigned width{}, height{};
@@ -36,6 +62,7 @@ struct LayerRasterStats {
     std::size_t entries{}, resourceBytes{}, decodedImages{};
     std::uint64_t rasterizations{}, cacheHits{}, textLayoutsCreated{}, imageDecodes{}, nodesDrawn{};
     std::size_t textMetadataBytes{};
+    std::uint64_t textAnalysisFormatsCreated{};
 };
 
 // Local model-layer rasterization only: no HWND, screen capture, clock, worker,
@@ -63,6 +90,11 @@ public:
     // Exact root-text leaf only. Null means missing/wrong revision, no painted
     // text layout, or a tree surface; never returns guessed child hit geometry.
     std::shared_ptr<const PaintedTextLayout> textLayout(const std::string& sourceID,std::uint64_t expectedRevision)const;
+    // Source NSFont.systemFont (regular). Same installed-family resolver/factory
+    // as source caption painting; actual substitution and selected font metrics
+    // are returned rather than guessed from average character widths.
+    std::unique_ptr<LayerPlainTextAnalysis> plainSystemTextAnalysis(const std::string& sourceID,double fontSize,
+        const LayerRasterOptions& options={});
     bool remove(const std::string& sourceID);
     void clear();
     LayerRasterStats stats() const;

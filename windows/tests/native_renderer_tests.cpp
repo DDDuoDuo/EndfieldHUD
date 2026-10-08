@@ -83,6 +83,32 @@ bool shutterContains(const endfield::core::ShutterPath& path, endfield::core::Po
     }
     return false;
 }
+void roundedCoverage(Renderer& renderer,DrawObject& object){
+    using namespace endfield::core;
+    renderer.setCamera({});object.world={};object.opacity=1;object.textureID.clear();object.shutter.reset();object.linearTint={1,0,0,1};
+    object.masks={{{},{-1,-1,2,2},.5}};
+    for(double translation:{0.,.125}){
+        object.masks[0].worldToLocal=Matrix4::translation(translation,0);
+        renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto image=renderer.readback();
+        for(unsigned y=0;y<image.height;++y)for(unsigned x=0;x<image.width;++x){
+            const double px=(x+.5)*2/image.width-1+translation,py=1-(y+.5)*2/image.height;
+            // Independent four-circle/cross coverage oracle at pixel centers.
+            const bool rect=px>=-1&&px<=1&&py>=-1&&py<=1;
+            const bool cross=std::abs(px)<=.5||std::abs(py)<=.5;
+            const bool circle=std::hypot(std::abs(px)-.5,std::abs(py)-.5)<=.5;
+            pixel(image,x,y,rect&&(cross||circle)?std::array<int,4>{0,0,255,255}:std::array<int,4>{0,0,0,0},0,"Rounded ancestor follows its own projected plane");
+        }
+    }
+    const auto before=renderer.stats();const auto saved=renderer.readback().pixels;
+    for(double radius:{-.1,1.01,std::numeric_limits<double>::quiet_NaN()}){
+        object.masks[0].cornerRadius=radius;rejects([&]{renderer.setDrawList(std::span(&object,1));},"Invalid rounded radius rejects before uniform replacement");
+    }
+    check(renderer.stats().objectUploads==before.objectUploads,"Rejected rounded mask retains GPU constants");renderer.draw(false);check(renderer.readback().pixels==saved,"Rejected corner preserves previous pixels");
+    object.masks[0].cornerRadius=.5;
+    for(unsigned i=0;i<120;++i){object.masks[0].worldToLocal=Matrix4::translation(i*.001,0);renderer.setDrawList(std::span(&object,1));}
+    const auto after=renderer.stats();check(before.meshUploads==after.meshUploads&&before.textureUploads==after.textureUploads&&before.objectBufferAllocations==after.objectBufferAllocations&&before.resourceBytes==after.resourceBytes,"Rounded-mask tilt retains resources without mask textures or buffers");
+    object.masks.clear();
+}
 void shutterCoverage(Renderer& renderer, DrawObject& object) {
     using namespace endfield::core;
     renderer.setCamera({}); object.world = {}; object.opacity = 1; object.textureID.clear();
@@ -243,6 +269,7 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     pixel(image, 24, 8, {0, 0, 255, 255}, 1, "Nested plane masks intersect");
     pixel(image, 24, 24, {0, 0, 0, 0}, 0, "Nested masks cannot reveal outside either ancestor");
 
+    roundedCoverage(renderer, red);
     shutterCoverage(renderer, red);
 
     const auto beforePointer = renderer.stats();

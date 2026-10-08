@@ -83,18 +83,38 @@ Json tree(std::span<const Layer>layers,std::span<const bool>excluded,std::size_t
 struct NativeNotesCardScene::Impl {
     struct Feedback {std::string id;std::size_t source{},surface{};double from{},target{},start{},duration{};bool active{};};
     modules::NotesCardPresentation*source;LayerScene scene;LayerRasterOptions options;
+    std::optional<NativeNotesExternalEditorAppearance>editorAppearance;
+    std::optional<NativeNotesExternalEditorSlot>editorSlot;
     std::vector<Feedback> feedback;std::vector<DrawObject> localDraws;std::vector<LayerPlacement> placements;
-    std::vector<std::vector<PlaneMask>> masks;std::uint64_t revision{},feedbackRevision{};std::optional<double>lastTime;
+    std::vector<std::vector<PlaneMask>> masks;
+    std::array<DrawObject,1>afterDraws;std::size_t borderSurface{};
+    std::uint64_t revision{},feedbackRevision{};std::optional<double>lastTime;
     NativeNotesSceneStats stats;bool posed{};Matrix priorWorld;core::Rect priorRect;float priorOpacity{};
-    Impl(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o):source(&s),scene(r),options(std::move(o)){}
+    Impl(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::optional<NativeNotesExternalEditorAppearance>external)
+        :source(&s),scene(r),options(std::move(o)),editorAppearance(external){
+        if(external)for(const auto*c:{&external->background,&external->border})for(double value:*c)need(std::isfinite(value)&&value>=0&&value<=1,"Invalid external Notes editor appearance");
+        if(external)need(external->background[3]==1,"Source Notes editor background must be opaque");
+    }
     void time(double t){need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Notes scene requires a finite monotonic caller clock");lastTime=t;}
     static double value(const Feedback&f,double t){if(!f.active||f.duration<=0)return f.target;const auto p=core::CubicTiming{0,0,.58,1}.value((t-f.start)/f.duration);return f.from+(f.target-f.from)*p;}
     bool sync(){
         need(source->contentRevision()!=0,"Initialize Notes presentation before native content");
         if(revision==source->contentRevision())return false;
-        need(!source->editor(),"Notes native editor leaf requires the separate projected editor adapter");
+        need(!source->editor()||editorAppearance,"Notes native editor leaf requires explicit external projected editor mode");
         const auto layers=source->layers();validate(layers);need(layers[0].frame.x==0&&layers[0].frame.y==0,"Notes card root must use retained local coordinates");
         const auto&bounds=layers[0].bounds;
+        std::optional<NativeNotesExternalEditorSlot>nextSlot;
+        if(const auto&leaf=source->editor()){
+            const auto r=leaf->localRect;
+            // This bounded integration has no ancestor-mask flattening fallback.
+            // Its inset viewport and all source control ink must be disjoint;
+            // unusual tiny cards require an explicit future clip/order adapter.
+            need(r.width>=6&&r.height>=6&&r.x>=3&&r.y>=3&&r.x+r.width<=bounds.width-3&&r.y+r.height<=bounds.height-3,
+                "External Notes editor requires a contained source-radius viewport");
+            auto overlaps=[&](core::Rect other){return r.x<other.x+other.width&&r.x+r.width>other.x&&r.y<other.y+other.height&&r.y+r.height>other.y;};
+            for(const auto&a:source->actions())if(!a.accessibilityOnly&&a.verb!="edit")need(!overlaps(a.localRect),"External Notes editor overlaps source controls; exact alternate ordering is required");
+            nextSlot=NativeNotesExternalEditorSlot{r,3,1};
+        }
         // LayerScene groups a rounded local tree only within this source-area
         // bound. Reject the unsupported split BEFORE replacing retained state.
         need(bounds.width>0&&bounds.height>0&&bounds.width*bounds.height<=1'048'576,"Notes card exceeds the supported retained local group area");
@@ -110,29 +130,61 @@ struct NativeNotesCardScene::Impl {
         const auto grip=std::find_if(layers.begin(),layers.end(),[](const auto&l){return l.id.ends_with("/resizeGrip");});
         need(grip!=layers.end()&&grip->kind==modules::NotesLayerKind::shape&&grip->shape.kind==modules::NotesPathKind::polyline&&!grip->shape.points.empty(),"Notes card requires its exact final resize grip");
         const auto gripIndex=static_cast<std::size_t>(grip-layers.begin());excluded[gripIndex]=true;
+        if(nextSlot)for(std::size_t i=0;i<layers.size();++i)if(layers[i].id.ends_with("/scrollThumb"))excluded[i]=true;
         for(std::size_t i=0;i<layers.size();++i)if(layers[i].parent!=Layer::noParent&&excluded[layers[i].parent])excluded[i]=true;
         auto card=tree(layers,{excluded.get(),layers.size()},0);card["opacity"]=1;card["hidden"]=false;
+        if(nextSlot){
+            Layer backing;backing.id=layers[0].id+"/external-editor-backing";backing.name="notes.external.editor.backing";
+            backing.frame=nextSlot->localRect;backing.bounds={0,0,nextSlot->localRect.width,nextSlot->localRect.height};
+            backing.cornerRadius=nextSlot->cornerRadius;backing.masksToBounds=true;backing.background=editorAppearance->background;
+            auto baseChildren=card["children"].array();baseChildren.push_back(descriptor(backing));card["children"]=std::move(baseChildren);
+        }
         Json::Array children{std::move(card)};
+        auto&decorations=children;
         for(const auto&f:next){const auto m=local(layers,f.source);
             // Bake the exact rounded card ancestor into this tiny feedback
             // bitmap. Its alpha clip survives even tiny/clamped workspaces,
             // without a full-card feedback bitmap or a rectangular substitute.
-            children.push_back(clipped(layers[f.source],m,layers[0]));
+            decorations.push_back(clipped(layers[f.source],m,layers[0]));
         }
         // Source draws the grip AFTER controls, also on tiny valid workspaces
         // where they overlap. Keep only its ink extent, not another card bitmap.
         auto min=grip->shape.points.front().point,max=min;for(const auto&p:grip->shape.points){min.x=std::min(min.x,p.point.x);min.y=std::min(min.y,p.point.y);max.x=std::max(max.x,p.point.x);max.y=std::max(max.y,p.point.y);}
         const auto inset=grip->shape.lineWidth*.5;
-        children.push_back(clipped(*grip,local(layers,gripIndex),layers[0],core::Rect{min.x-inset,min.y-inset,max.x-min.x+inset*2,max.y-min.y+inset*2}));
+        const core::Rect gripInk{min.x-inset,min.y-inset,max.x-min.x+inset*2,max.y-min.y+inset*2};
+        if(nextSlot){const auto r=nextSlot->localRect;need(!(r.x<gripInk.x+gripInk.width&&r.x+r.width>gripInk.x&&r.y<gripInk.y+gripInk.height&&r.y+r.height>gripInk.y),"External Notes editor overlaps final source resize grip");}
+        decorations.push_back(clipped(*grip,local(layers,gripIndex),layers[0],gripInk));
+        if(nextSlot){
+            const auto r=nextSlot->localRect;Layer border;border.id=layers[0].id+"/external-editor-border";border.name="notes.external.editor.border";
+            border.kind=modules::NotesLayerKind::shape;border.bounds={.5,.5,r.width-1,r.height-1};
+            border.shape.kind=modules::NotesPathKind::roundedRect;border.shape.radius=nextSlot->cornerRadius-.5;
+            border.shape.lineWidth=1;border.shape.stroke=editorAppearance->border;
+            decorations.push_back(clipped(border,Matrix::translation(r.x,r.y),layers[0],core::Rect{0,0,r.width,r.height}));
+        }
+        // Stage every adapter allocation BEFORE LayerScene's single content
+        // transaction. These known source children each produce one surface.
+        // The scene namespace uses a uint64 counter (at most34 ASCII bytes);
+        // reserve64 extra bytes and validate that contract before copying.
+        const auto count=children.size();const auto borderID=layers[0].id+"/external-editor-border";
+        std::size_t idCapacity=borderID.size()+64;for(const auto&layer:layers)idCapacity=std::max(idCapacity,layer.id.size()+64);
+        auto reserveDraw=[&](DrawObject&draw){draw.sourceID.reserve(idCapacity);draw.meshID.reserve(idCapacity);draw.textureID.reserve(idCapacity);draw.masks.reserve(8);};
+        std::vector<DrawObject> saved(count);std::vector<LayerPlacement> p(count);std::vector<std::vector<PlaneMask>> clipMasks(count);
+        for(std::size_t i=0;i<count;++i){reserveDraw(saved[i]);clipMasks[i].reserve(8);}
+        DrawObject nextAfter;std::size_t nextBorder{};if(nextSlot)reserveDraw(nextAfter);
         Json root=Json::Object{{"bounds",rect(layers[0].bounds)},{"masksToBounds",true},{"children",std::move(children)}};
         scene.load(root,options);need(scene.report().unsupported.empty(),"Notes scene has unsupported local raster or clipping state");
-        std::vector<DrawObject> saved(scene.draws().begin(),scene.draws().end());std::vector<LayerPlacement> p;p.reserve(saved.size());std::vector<std::vector<PlaneMask>> clipMasks(saved.size());
-        for(std::size_t i=0;i<saved.size();++i){clipMasks[i].reserve(8);p.push_back({i,saved[i].world,saved[i].opacity,{}});}
+        const auto draws=scene.draws();need(draws.size()==count,"Source Notes surface schema changed unexpectedly");
+        for(std::size_t i=0;i<count;++i){const auto&draw=draws[i];need(draw.sourceID.size()<=idCapacity&&draw.meshID.size()<=idCapacity&&draw.textureID.size()<=idCapacity&&draw.masks.size()<=8,"Source Notes identity/mask schema changed unexpectedly");
+            saved[i]=draw;p[i]={i,draw.world,draw.opacity,{}};
+        }
+        if(nextSlot){const auto found=scene.surfaceIndex(borderID);need(found.has_value(),"Retained Notes editor border surface is missing");nextBorder=*found;nextAfter=saved[*found];}
         for(auto&f:next){const auto found=scene.surfaceIndex(f.id);need(found.has_value(),"Retained Notes feedback surface is missing");f.surface=*found;}
-        feedback=std::move(next);localDraws=std::move(saved);placements=std::move(p);masks=std::move(clipMasks);revision=source->contentRevision();feedbackRevision=source->feedbackRevision();posed=false;++stats.contentUpdates;return true;
+        feedback=std::move(next);localDraws=std::move(saved);placements=std::move(p);masks=std::move(clipMasks);
+        afterDraws[0]=std::move(nextAfter);borderSurface=nextBorder;editorSlot=nextSlot;
+        revision=source->contentRevision();feedbackRevision=source->feedbackRevision();posed=false;++stats.contentUpdates;return true;
     }
 };
-NativeNotesCardScene::NativeNotesCardScene(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(s,r,std::move(o))){}
+NativeNotesCardScene::NativeNotesCardScene(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::optional<NativeNotesExternalEditorAppearance>editor):impl_(std::make_unique<Impl>(s,r,std::move(o),editor)){}
 NativeNotesCardScene::~NativeNotesCardScene()=default;
 bool NativeNotesCardScene::syncContent(){return impl_->sync();}
 bool NativeNotesCardScene::setFeedback(std::optional<std::string_view>verb,bool pressed,bool reduced,double time){
@@ -147,21 +199,30 @@ bool NativeNotesCardScene::setFeedback(std::optional<std::string_view>verb,bool 
     }
     i.feedbackRevision=i.source->feedbackRevision();i.posed=false;++i.stats.feedbackChanges;return true;
 }
-bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double time){
+bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double time,std::optional<bool>visibilityOverride){
     auto&i=*impl_;need(i.revision&&i.revision==i.source->contentRevision(),"Synchronize Notes content before placement");
     need(workspace.finite()&&std::isfinite(canvas)&&canvas>=0&&canvas<=1,"Invalid Notes workspace placement or opacity");
     const auto&placement=i.source->placement();const auto r=placement.workspaceRect;
     const auto world=workspace*Matrix::translation(r.x,r.y);const auto inverse=core::source::inverseSourceMatrix(world);i.time(time);
-    const auto opacityValue=placement.visible?canvas:0.f;bool animated{};for(auto&f:i.feedback){animated|=f.active;if(time>=f.start+f.duration)f.active=false;}
+    const auto opacityValue=visibilityOverride.value_or(placement.visible)?canvas:0.f;bool animated{};for(auto&f:i.feedback){animated|=f.active;if(time>=f.start+f.duration)f.active=false;}
     if(i.posed&&i.priorWorld==workspace&&i.priorRect==r&&i.priorOpacity==opacityValue&&!animated)return false;
-    for(std::size_t index=0;index<i.placements.size();++index){auto&p=i.placements[index];const auto&original=i.localDraws[index];p.world=world*original.world;p.opacity=original.opacity*opacityValue;
-        auto&m=i.masks[index];m.clear();for(const auto&mask:original.masks)m.push_back({mask.worldToLocal*inverse,mask.bounds});p.masks=m;
-    }
+    auto pose=[&](const auto&draws,auto&placements,auto&masks){for(std::size_t index=0;index<placements.size();++index){auto&p=placements[index];const auto&original=draws[index];p.world=world*original.world;p.opacity=original.opacity*opacityValue;
+        auto&m=masks[index];m.clear();for(const auto&mask:original.masks){auto placed=mask;placed.worldToLocal=mask.worldToLocal*inverse;m.push_back(placed);}p.masks=m;
+    }};
+    pose(i.localDraws,i.placements,i.masks);
     for(const auto&f:i.feedback)i.placements[f.surface].opacity=static_cast<float>(Impl::value(f,time))*opacityValue;
-    i.scene.setPlacements(i.placements);i.priorWorld=workspace;i.priorRect=r;i.priorOpacity=opacityValue;i.posed=true;++i.stats.placementUpdates;return true;
+    if(i.editorSlot){const auto&frame=i.placements[i.borderSurface];auto&after=i.afterDraws[0];after.world=frame.world;after.opacity=frame.opacity;after.masks.assign(frame.masks.begin(),frame.masks.end());
+        // One resident resource, published once as the caller's after-editor
+        // draw. Do not paint this border below glyph/selection as well.
+        i.placements[i.borderSurface].opacity=0;
+    }
+    i.scene.setPlacements(i.placements);
+    i.priorWorld=workspace;i.priorRect=r;i.priorOpacity=opacityValue;i.posed=true;++i.stats.placementUpdates;return true;
 }
 bool NativeNotesCardScene::requiresFrames(double time)const {need(std::isfinite(time),"Notes feedback time must be finite");for(const auto&f:impl_->feedback)if(f.active&&time<f.start+f.duration)return true;return false;}
 LayerScene&NativeNotesCardScene::scene()noexcept{return impl_->scene;}
 const LayerScene&NativeNotesCardScene::scene()const noexcept{return impl_->scene;}
+std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{return{impl_->afterDraws.data(),impl_->editorSlot?1u:0u};}
+const std::optional<NativeNotesExternalEditorSlot>&NativeNotesCardScene::externalEditorSlot()const noexcept{return impl_->editorSlot;}
 NativeNotesSceneStats NativeNotesCardScene::stats()const noexcept{return impl_->stats;}
 } // namespace endfield::native

@@ -58,6 +58,7 @@ std::array<float, 16> matrix(const core::Matrix4 &value) {
 struct alignas(16) MaskUniform {
     std::array<float, 16> worldToLocal;
     std::array<float, 4> bounds;
+    std::array<float, 4> corners{};
 };
 struct alignas(16) ObjectUniform {
     std::array<float, 16> world;
@@ -69,7 +70,7 @@ struct alignas(16) ObjectUniform {
     std::array<float, 16> shutterWorldToLocal{};
     std::array<std::array<float, 4>, 30> shutterEdges{};
 };
-static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 80 && sizeof(ObjectUniform) == 1280);
+static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 96 && sizeof(ObjectUniform) == 1408);
 void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
     result.shutterEnabled = 1;
     result.shutterWorldToLocal = matrix(shutter.worldToLocal);
@@ -132,6 +133,9 @@ ObjectUniform uniforms(const DrawObject &object) {
         const auto &r = mask.bounds;
         require(std::isfinite(r.x) && std::isfinite(r.y) && std::isfinite(r.width) && std::isfinite(r.height) &&
                 r.width > 0 && r.height > 0, "Invalid plane-mask rectangle");
+        require(std::isfinite(mask.cornerRadius) && mask.cornerRadius >= 0 &&
+                mask.cornerRadius <= std::min(r.width, r.height) * .5, "Invalid plane-mask corner radius");
+        result.masks[i].corners[0] = static_cast<float>(mask.cornerRadius);
         const std::array<double, 4> bounds{r.x, r.y, r.x + r.width, r.y + r.height};
         for (std::size_t j = 0; j < bounds.size(); ++j) {
             require(std::isfinite(bounds[j]) && std::abs(bounds[j]) <= std::numeric_limits<float>::max(), "Plane-mask extent exceeds GPU range");
@@ -170,6 +174,7 @@ void validatePlaneShutter(const PlaneShutter& shutter) {
     ObjectUniform candidate{};
     shutterUniforms(candidate, shutter);
 }
+void validateDrawObject(const DrawObject& object) {(void)uniforms(object);}
 
 RendererError::RendererError(std::string operation, std::int32_t code)
     : std::runtime_error(std::move(operation) + " (HRESULT " + std::to_string(code) + ")"), code_(code) {}

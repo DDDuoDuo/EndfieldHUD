@@ -89,9 +89,9 @@ void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity
     }
     auto nextMasks=masks;
     if(flag(node["masksToBounds"])&&b.width>0&&b.height>0){
-        if(nextMasks.size()<8)nextMasks.push_back({core::source::inverseSourceMatrix(world),b});
+        const auto radius=number(node["cornerRadius"]);need(radius>=0,"Invalid projected corner radius");
+        if(nextMasks.size()<8)nextMasks.push_back({core::source::inverseSourceMatrix(world),b,std::min(radius,std::min(b.width,b.height)*.5)});
         else report_.unsupported.push_back({identity,"more than eight projected clipping ancestors"});
-        if(number(node["cornerRadius"])>0)report_.unsupported.push_back({identity,"rounded clipping across separately projected children"});
     }
     if(!node["mask"].isNull()){
         const auto projected=projectLayerMask(node["mask"],world);
@@ -187,7 +187,6 @@ std::optional<std::size_t> LayerScene::surfaceIndex(std::string_view sourceID)co
 std::shared_ptr<const PaintedTextLayout> LayerScene::paintedTextLayout(std::string_view sourceID)const{
     const auto index=surfaceIndex(sourceID);if(!index)return {};
     const auto& surface=surfaces_[*index];
-    if(surface.grouped)return {};
     return rasterizer_->textLayout(surface.id,surface.imageRevision);
 }
 void LayerScene::setPlacements(std::span<const LayerPlacement> placements){
@@ -195,7 +194,7 @@ void LayerScene::setPlacements(std::span<const LayerPlacement> placements){
     for(const auto&p:placements){
         need(p.surface<surfaces_.size()&&!supplied[p.surface],"Invalid or repeated native surface index");supplied[p.surface]=true;
         need(p.world.finite()&&std::isfinite(p.opacity)&&p.opacity>=0&&p.opacity<=1&&p.masks.size()<=8,"Invalid native surface placement");
-        for(const auto&m:p.masks)need(m.worldToLocal.finite()&&std::isfinite(m.bounds.x)&&std::isfinite(m.bounds.y)&&std::isfinite(m.bounds.width)&&std::isfinite(m.bounds.height)&&m.bounds.width>0&&m.bounds.height>0,"Invalid native surface mask");
+        for(const auto&m:p.masks)need(m.worldToLocal.finite()&&std::isfinite(m.bounds.x)&&std::isfinite(m.bounds.y)&&std::isfinite(m.bounds.width)&&std::isfinite(m.bounds.height)&&m.bounds.width>0&&m.bounds.height>0&&std::isfinite(m.cornerRadius)&&m.cornerRadius>=0&&m.cornerRadius<=std::min(m.bounds.width,m.bounds.height)*.5,"Invalid native surface mask");
     }
     for(const auto&p:placements){auto&d=surfaces_[p.surface].draw;d.world=p.world;d.opacity=p.opacity;d.masks.assign(p.masks.begin(),p.masks.end());}
 }
@@ -212,7 +211,7 @@ Matrix LayerScene::validatePreparation(const Matrix& placement)const{
 void LayerScene::prepare(const Matrix& placement,const Matrix& inverse){
     for(std::size_t i=0;i<surfaces_.size();++i){const auto&source=surfaces_[i].draw;auto&draw=draws_[i];draw.world=placement*source.world;draw.opacity=source.opacity;draw.masks.resize(source.masks.size());
         draw.shutter=groupShutter_;if(draw.shutter)draw.shutter->worldToLocal=groupShutter_->worldToLocal*inverse;
-        for(std::size_t j=0;j<draw.masks.size();++j){draw.masks[j].worldToLocal=source.masks[j].worldToLocal*inverse;draw.masks[j].bounds=source.masks[j].bounds;}}
+        for(std::size_t j=0;j<draw.masks.size();++j){draw.masks[j]=source.masks[j];draw.masks[j].worldToLocal=source.masks[j].worldToLocal*inverse;}}
 }
 std::span<const DrawObject> LayerScene::prepareDraws(const Matrix& placement){
     const auto inverse=validatePreparation(placement);prepare(placement,inverse);
@@ -236,21 +235,31 @@ LayerComposition::~LayerComposition(){
     }
 }
 void LayerComposition::setScenes(Renderer& renderer,std::span<LayerScene* const> order){
+    std::vector<LayerCompositionEntry> entries;entries.reserve(order.size());
+    for(auto* scene:order)entries.push_back({scene,{}});
+    setEntries(renderer,entries);
+}
+void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompositionEntry> order){
     checkRenderer(renderer);
-    std::size_t count{};std::unordered_set<LayerScene*> unique;
+    std::size_t count{},stageCount{};std::unordered_set<LayerScene*> unique;
     std::vector<Entry> next;next.reserve(order.size());
-    for(auto*scene:order){
+    for(const auto& input:order){const auto scene=input.scene;
         need(scene&&unique.insert(scene).second,"Null or repeated scene in native composition");
         need(!scene->compositionOwner_||scene->compositionOwner_==this,"Native scene already belongs to another composition");
         need(!scene->resourceOwner_||scene->resourceOwner_==&renderer,"Native scene resources belong to another renderer");
         need(scene->draws_.size()<=Renderer::maximumObjects-count,"Combined native draw count exceeds limits");
-        next.push_back({scene,scene->revision_,scene->resourceRevision_,count,scene->draws_.size()});count+=scene->draws_.size();
+        need(input.after.size()<=Renderer::maximumObjects-count-scene->draws_.size(),"Supplemental native draw count exceeds limits");
+        next.push_back({scene,scene->revision_,scene->resourceRevision_,count,scene->draws_.size(),input.after,stageCount});
+        count+=scene->draws_.size()+input.after.size();stageCount+=input.after.size();
     }
-    std::vector<DrawObject> nextDraws;nextDraws.reserve(count);std::vector<Matrix> nextInverse(next.size());
+    std::vector<DrawObject> nextDraws,nextStage;nextDraws.reserve(count);nextStage.reserve(stageCount);std::vector<Matrix> nextInverse(next.size());
     if(!renderer_)publicationOwners.reserve(publicationOwners.size()+1);
     // Stage CPU identities/capacities before GPU mutation. The last published
     // list keeps its assets resident throughout preparation, even on failure.
-    for(const auto&entry:next)for(const auto&draw:entry.scene->draws()){nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);}
+    for(const auto&entry:next){
+        for(const auto&draw:entry.scene->draws()){nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);}
+        for(const auto&draw:entry.after){validateDrawObject(draw);nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);nextStage.push_back(draw);nextStage.back().masks.reserve(8);}
+    }
     try{
         for(const auto&entry:next)entry.scene->uploadResources(renderer);
         renderer.setDrawList(nextDraws);
@@ -267,12 +276,12 @@ void LayerComposition::setScenes(Renderer& renderer,std::span<LayerScene* const>
         old.scene->compositionOwner_=nullptr;(void)old.scene->release(renderer,false);
     }
     for(const auto&entry:next){entry.scene->compositionOwner_=this;entry.scene->collectRetiredResources(renderer);}
-    scenes_=std::move(next);draws_=std::move(nextDraws);inverseTransforms_=std::move(nextInverse);
+    scenes_=std::move(next);draws_=std::move(nextDraws);inverseTransforms_=std::move(nextInverse);stagedAfter_=std::move(nextStage);
     if(!renderer_)publicationOwners.emplace_back(&renderer,this);renderer_=&renderer;
 }
 void LayerComposition::upload(Renderer& renderer){
-    checkRenderer(renderer);std::vector<LayerScene*> order;order.reserve(scenes_.size());for(const auto&entry:scenes_)order.push_back(entry.scene);
-    setScenes(renderer,order);
+    checkRenderer(renderer);std::vector<LayerCompositionEntry> order;order.reserve(scenes_.size());for(const auto&entry:scenes_)order.push_back({entry.scene,entry.after});
+    setEntries(renderer,order);
 }
 void LayerComposition::copyPrepared(const Entry&entry){
     const auto source=entry.scene->draws();
@@ -288,8 +297,25 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
         need(scene.compositionOwner_==this&&scene.revision_==entry.structureRevision&&scene.resourceRevision_==entry.resourceRevision&&scene.uploadedRevision_==scene.resourceRevision_,"Native scene changed; upload the complete composition before presenting");
         need(scene.draws_.size()==entry.count,"Native surface bindings changed before composition upload");
     }
-    for(std::size_t i=0;i<scenes_.size();++i)inverseTransforms_[i]=scenes_[i].scene->validatePreparation(transforms.empty()?Matrix{}:transforms[i]);
-    for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);}
+    // Stage borrowed geometry before changing any scene/published CPU record.
+    // Stable IDs are content, not a per-frame opportunity to replace resources.
+    for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];const auto transform=transforms.empty()?Matrix{}:transforms[i];
+        inverseTransforms_[i]=entry.scene->validatePreparation(transform);
+        for(std::size_t j=0;j<entry.after.size();++j){const auto&input=entry.after[j];auto&stage=stagedAfter_[entry.stageBegin+j];
+            need(input.sourceID==stage.sourceID&&input.meshID==stage.meshID&&input.textureID==stage.textureID,"Supplemental draw identity changed; replace the composition entries");
+            need(input.masks.size()<=8,"Too many supplemental draw masks");
+            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;
+            if(stage.shutter)stage.shutter->worldToLocal=stage.shutter->worldToLocal*inverseTransforms_[i];
+            stage.masks.resize(input.masks.size());for(std::size_t k=0;k<input.masks.size();++k){stage.masks[k]=input.masks[k];stage.masks[k].worldToLocal=input.masks[k].worldToLocal*inverseTransforms_[i];}
+            validateDrawObject(stage);
+        }
+    }
+    for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);
+        for(std::size_t j=0;j<entry.after.size();++j){const auto&stage=stagedAfter_[entry.stageBegin+j];auto&out=draws_[entry.begin+entry.count+j];
+            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;
+            out.masks.resize(stage.masks.size());std::copy(stage.masks.begin(),stage.masks.end(),out.masks.begin());
+        }
+    }
     renderer.setDrawList(draws_);
 }
 void LayerComposition::detach(Renderer& renderer){
@@ -297,7 +323,7 @@ void LayerComposition::detach(Renderer& renderer){
     need(!publicationOwner(renderer)||publicationOwner(renderer)==this,"Cannot clear another native composition publisher");
     renderer.clearDrawList();
     for(const auto&entry:scenes_){entry.scene->compositionOwner_=nullptr;(void)entry.scene->release(renderer,false);}
-    scenes_.clear();draws_.clear();inverseTransforms_.clear();forgetPublication(this);renderer_=nullptr;
+    scenes_.clear();draws_.clear();inverseTransforms_.clear();stagedAfter_.clear();forgetPublication(this);renderer_=nullptr;
 }
 Matrix layerViewportProjection(unsigned width,unsigned height){
     need(width&&height,"Invalid native layer viewport");Matrix m;

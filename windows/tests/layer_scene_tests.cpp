@@ -138,6 +138,51 @@ void composition(Renderer&renderer,LayerRasterizer&raster,const LayerRasterOptio
     }
     check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Composition RAII cleanup releases its complete list before borrowed scenes go away");
 }
+void supplementalComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRasterOptions& options){
+    LayerScene lower(raster),upper(raster);lower.load(root({leaf("lower",1,0,0)}),options);upper.load(root({leaf("upper",0,0,1)}),options);
+    const std::array<Vertex,4> vertices{{{{8,8,0}},{{24,8,0}},{{24,24,0}},{{8,24,0}}}};
+    constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};renderer.setMesh("owned-seam-mesh",1,{vertices,indices});
+    DrawObject seam;seam.sourceID="owned-seam";seam.meshID="owned-seam-mesh";seam.linearTint={0,1,0,1};seam.masks.push_back({{},{0,0,32,32}});
+    LayerComposition composition;std::array entries{LayerCompositionEntry{&lower,std::span(&seam,1)},LayerCompositionEntry{&upper,{}}};
+    composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),16,16,{255,0,0,255});
+    check(composition.draws().size()==3&&composition.draws()[1].sourceID=="owned-seam","Native seam is inserted after its module, before the next module");
+    entries={LayerCompositionEntry{&lower,{}},LayerCompositionEntry{&upper,std::span(&seam,1)}};composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),16,16,{0,255,0,255});
+    check(!renderer.removeMesh("owned-seam-mesh"),"Borrowed seam mesh cannot retire while still published");
+    const auto before=renderer.stats();const auto rasterBefore=raster.stats();std::array transforms{endfield::core::Matrix4{},endfield::core::Matrix4{}};
+    allocations=0;counting=true;
+    try{for(unsigned i=0;i<120;++i){transforms[1]=endfield::core::Matrix4::translation(i%2,0);seam.opacity=float(i%3)/2;composition.present(renderer,transforms);}}
+    catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&renderer.stats().textureUploads==before.textureUploads&&renderer.stats().meshUploads==before.meshUploads&&raster.stats().rasterizations==rasterBefore.rasterizations,"Borrowed seam pointer/fade frames allocate and rasterize nothing");
+    seam.opacity=1;seam.shutter=PlaneShutter{endfield::core::Matrix4::scale(440./32,440./32),endfield::core::ModuleTransitionStyle::shutterKeyframe(.5,{-1,0})};
+    transforms[1]=endfield::core::Matrix4::translation(3,0);composition.present(renderer,transforms);renderer.draw(false);
+    pixel(renderer.readback(),13,16,{0,255,0,255});pixel(renderer.readback(),24,16,{255,0,0,255});
+    check(composition.draws().back().world==transforms[1]&&composition.draws().back().shutter.has_value(),"Supplemental mask and geometry share the associated scene's transform");
+    const auto previous=composition.draws()[0].world;transforms[0]=endfield::core::Matrix4::translation(3,3);seam.opacity=-1;
+    rejects([&]{composition.present(renderer,transforms);},"Invalid final supplemental draw rejects the whole pose before scene mutation");
+    check(composition.draws()[0].world==previous&&lower.draws()[0].world==previous,"Late supplemental rejection leaves earlier published scene pose unchanged");
+    seam.opacity=1;seam.sourceID="changed-seam";rejects([&]{composition.present(renderer);},"Changing borrowed source identity requires explicit entry replacement");seam.sourceID="owned-seam";
+    seam.shutter.reset();composition.upload(renderer);composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),16,16,{0,255,0,255});
+    check(composition.draws().size()==3&&composition.draws().back().sourceID=="owned-seam","Content uploads preserve supplemental ordering and identity");
+    composition.detach(renderer);check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==1,"Composition clears borrowed references but never deletes caller-owned mesh");
+    check(renderer.removeMesh("owned-seam-mesh")&&renderer.stats().meshes==0,"Owner retires seam resource after detachment");
+}
+void roundedComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRasterOptions& options){
+    auto parent=root({leaf("rounded-child",1,0,0)});parent["masksToBounds"]=true;parent["cornerRadius"]=8;
+    parent["bounds"]=Json::Array{8,8,16,16};
+    LayerScene scene(raster);scene.load(parent,options);check(scene.report().unsupported.empty()&&scene.draws().size()==1,"Rounded ancestor separates from retained child without unsupported flattening");
+    check(scene.draws()[0].masks.size()==1&&scene.draws()[0].masks[0].cornerRadius==8,"Source radius persists in projected ancestor");
+    LayerComposition composition;const std::array entries{LayerCompositionEntry{&scene,{}}};composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),8,8,{0,0,0,0});pixel(renderer.readback(),16,8,{0,0,255,255});pixel(renderer.readback(),16,16,{0,0,255,255});
+    const std::array transforms{endfield::core::Matrix4::translation(2,0)};composition.present(renderer,transforms);renderer.draw(false);
+    pixel(renderer.readback(),10,8,{0,0,0,0});pixel(renderer.readback(),18,8,{0,0,255,255});check(composition.draws()[0].masks[0].cornerRadius==8,"Combined numeric projection retains rounded clipping");
+    // Supplemental after spans must preserve the same shape through their
+    // independent retained staging path (e.g. an editor's final source frame).
+    DrawObject after=scene.draws()[0];after.sourceID="rounded-after";after.linearTint={0,0,0,1};after.opacity=0;
+    const std::array withAfter{LayerCompositionEntry{&scene,std::span(&after,1)}};composition.setEntries(renderer,withAfter);composition.present(renderer,transforms);
+    check(composition.draws().back().masks[0].cornerRadius==8,"Supplemental projection retains corner radius too");
+    auto mask=scene.draws()[0].masks[0];mask.cornerRadius=9;LayerPlacement bad{0,scene.draws()[0].world,1,std::span(&mask,1)};
+    rejects([&]{scene.setPlacements(std::span(&bad,1));},"Invalid radius rejects before source placement mutation");composition.detach(renderer);
+}
 void run(const std::filesystem::path& shader){
     Window window;Renderer renderer;renderer.initialize(window.hwnd,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});
     renderer.setCamera(layerViewportProjection(32,32));LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
@@ -214,6 +259,8 @@ void run(const std::filesystem::path& shader){
     }
     check(raster.stats().entries==0,"Scene destruction releases its final local raster");
     composition(renderer,raster,options);
+    supplementalComposition(renderer,raster,options);
+    roundedComposition(renderer,raster,options);
     check(raster.stats().entries==0,"Sibling scene destruction releases only its own retained local rasters");
     check(!IsWindowVisible(window.hwnd),"The fixture never shows or captures a desktop window");
 }
