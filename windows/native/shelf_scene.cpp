@@ -49,8 +49,15 @@ struct Compiler {
             const auto d=std::find_if(dependencies.begin(),dependencies.end(),[&](const auto&v){return v.layerID==id;});
             const auto image=std::find_if(images.begin(),images.end(),[&](const auto&v){return v.dependency.layerID==id;});
             need(d!=dependencies.end()&&image!=images.end()&&sameDependency(*d,image->dependency),"Missing or mismatched source-prepared Shelf image");
-            const auto asset=text(image->contents["asset"]),sha=text(image->contents["sha256"]);
-            need(image->contents.isObject()&&!asset.empty()&&Json::validUtf8(asset)&&sha.size()==64&&sha.find_first_not_of("0123456789abcdef")==std::string::npos,"Shelf image must provide pinned raster metadata");
+            if(image->contents.contains("memoryImage")){
+                const auto key=text(image->contents["memoryImage"]);
+                need(d->kind==modules::ShelfPresentationImage::Kind::nativeFileIcon&&image->contents.isObject()&&image->contents.object().size()==2&&
+                     !key.empty()&&key.size()<=512&&Json::validUtf8(key)&&image->contents["revision"].isNumber()&&image->contents["revision"].integer()>0,
+                     "Shelf memory artwork requires an exact native icon key/revision");
+            }else{
+                const auto asset=text(image->contents["asset"]),sha=text(image->contents["sha256"]);
+                need(image->contents.isObject()&&image->contents.object().size()==2&&!asset.empty()&&Json::validUtf8(asset)&&sha.size()==64&&sha.find_first_not_of("0123456789abcdef")==std::string::npos,"Shelf image must provide pinned raster metadata");
+            }
             node["contents"]=image->contents;node.erase("requiredSourceImage");node.erase("requiredNativeFileIcon");
         }
         const auto savedChildren=children(node);const bool splitBorder=number(node["borderWidth"])>0&&!savedChildren.empty();

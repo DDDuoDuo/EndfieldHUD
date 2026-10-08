@@ -12,6 +12,7 @@
 
 namespace endfield::native {
 class PaintedTextLayout;
+class LayerImageSource;
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
     double paddingPoints{1};
@@ -22,6 +23,10 @@ struct LayerRasterOptions {
     bool includeRootOpacity{false}, includeRootMask{false};
     bool retainEmptyTextLayout{false}; // Explicit editor option; source captions keep their existing behavior.
     std::string monospaceFallbackFontFamily{"Consolas"}; // Only explicit source fixed-pitch families/traits.
+    // Borrowed, creating-thread provider for small native icons. It outlives
+    // every rasterization using these options. Content events reference an
+    // exact immutable key/revision; pointer frames never query the provider.
+    LayerImageSource* memoryImages{};
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };

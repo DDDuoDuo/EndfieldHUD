@@ -46,6 +46,10 @@ void portable(){
     }
     for(const auto&s:plan.foreground.surfaces)if(s.id.starts_with("shelf:add")||s.id.starts_with("shelf:clear"))check(s.toolbar,"Caption siblings and highlight descendants follow the whole toolbar reveal");
     auto bad=supplied;bad.back().dependency.unavailable=true;rejects([&]{n::prepareShelfScene(source,bad);},"Native icon availability is part of exact dependency");bad=supplied;bad[0].dependency.sourceInTint=false;rejects([&]{n::prepareShelfScene(source,bad);},"Untinted Depot cannot masquerade as prepared source-in artwork");bad=supplied;bad[0].contents["sha256"]="bad";rejects([&]{n::prepareShelfScene(source,bad);},"Unpinned images reject");bad=supplied;bad.back()=bad.front();rejects([&]{n::prepareShelfScene(source,bad);},"Duplicate image dependencies reject");
+    auto memory=supplied;memory.back().contents=Json::Object{{"memoryImage","synthetic-native-icon"},{"revision",1}};
+    const auto withMemory=n::prepareShelfScene(source,memory);
+    check(leaf(withMemory.cards.back(),"shelf.card."+withMemory.cards.back().itemID+"/icon")["contents"]==memory.back().contents,"Native icon memory dependency passes unchanged into retained artwork");
+    memory.front().contents=memory.back().contents;rejects([&]{n::prepareShelfScene(source,memory);},"Native memory images cannot replace the pinned source Depot icon");
     m::FileShelfState empty({});style.depotIconAvailable=false;source.update(empty,style);const auto fallback=n::prepareShelfScene(source);check(fallback.cards.empty()&&fallback.scrollbar.surfaces.empty()&&surface(fallback.collection,"shelf.empty/folder")==0,"Actual source folder/+ fallback compiles without OS icon lookup");
     checkNear(leaf(fallback.collection,"shelf.empty/folder")["position"].array()[0].number(),165,"Empty fallback shape keeps source x");checkNear(leaf(fallback.collection,"shelf.empty/folder")["position"].array()[1].number(),88,"Empty fallback shape keeps source y");
 }

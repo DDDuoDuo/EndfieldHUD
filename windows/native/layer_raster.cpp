@@ -1,4 +1,5 @@
 #include "native/layer_raster.hpp"
+#include "native/layer_image_source.hpp"
 #include "native/layer_text_layout.hpp"
 
 #ifdef _WIN32
@@ -136,6 +137,10 @@ std::vector<const Json*> children(const Json& node) {
 struct LayerRasterizer::Impl {
     struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText; };
     struct DecodedImage { unsigned width{},height{};std::vector<std::uint8_t> premultipliedBGRA; };
+    struct ImagePixels {
+        unsigned width{},height{};std::span<const std::uint8_t> premultipliedBGRA;
+        std::shared_ptr<const LayerMemoryImage> borrowed;
+    };
     DWORD thread=GetCurrentThreadId();
     ComPtr<ID2D1Factory> d2d;ComPtr<IDWriteFactory> text;ComPtr<IDWriteFontCollection> fonts;ComPtr<IWICImagingFactory> wic;
     BCRYPT_ALG_HANDLE sha{};
@@ -245,13 +250,24 @@ struct LayerRasterizer::Impl {
         if(name.find("Light")!=std::string::npos)return DWRITE_FONT_WEIGHT_LIGHT;
         return DWRITE_FONT_WEIGHT_NORMAL;
     }
-    const DecodedImage& image(const Json& contents,const LayerRasterOptions& options){
+    ImagePixels image(const Json& contents,const LayerRasterOptions& options){
+        if(contents.contains("memoryImage")){
+            if(!contents.isObject()||contents.object().size()!=2||!contents["memoryImage"].isString()||
+               !contents["revision"].isNumber()||!options.memoryImages)
+                invalid("Memory image needs its exact key/revision and explicit provider");
+            const auto revision=contents["revision"].integer();
+            if(revision<=0)invalid("Memory image revision must be positive");
+            auto snapshot=options.memoryImages->acquire(contents["memoryImage"].string(),static_cast<std::uint64_t>(revision));
+            if(!snapshot)invalid("Memory image key/revision is missing or retired");
+            ImagePixels pixels{snapshot->width(),snapshot->height(),snapshot->premultipliedBGRA(),std::move(snapshot)};
+            return pixels;
+        }
         const auto expected=string(contents["sha256"]),relative=string(contents["asset"]);
         if(expected.size()!=64||expected.find_first_not_of("0123456789abcdef")!=std::string::npos)invalid("Intrinsic image requires SHA-256");
         const auto path=std::filesystem::path(wide(relative));
         if(options.assetRoot.empty()||path.is_absolute()||path.has_root_name()||relative.find('\\')!=std::string::npos||relative.find(':')!=std::string::npos)invalid("Image needs a confined explicit fixture path");
         for(const auto& part:path)if(part==L".."||part==L".")invalid("Image path traversal rejected");
-        if(const auto it=images.find(expected);it!=images.end())return it->second;
+        if(const auto it=images.find(expected);it!=images.end())return {it->second.width,it->second.height,it->second.premultipliedBGRA,{}};
         if(images.size()>=256)invalid("Decoded intrinsic image cache is full; clear unused content");
         const auto root=std::filesystem::canonical(options.assetRoot),file=std::filesystem::canonical(root/path);
         auto r=root.begin(),f=file.begin();for(;r!=root.end();++r,++f)if(f==file.end()||*r!=*f)invalid("Image path escapes fixture root");
@@ -271,7 +287,8 @@ struct LayerRasterizer::Impl {
         ComPtr<IWICFormatConverter> converted;checked(wic->CreateFormatConverter(converted.GetAddressOf()),"Create image format conversion");
         checked(converted->Initialize(frame.Get(),GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),"Convert intrinsic image to premultiplied BGRA");
         decoded.premultipliedBGRA.resize(byteCount);checked(converted->CopyPixels(nullptr,decoded.width*4,static_cast<UINT>(byteCount),decoded.premultipliedBGRA.data()),"Copy owned image pixels");
-        counts.resourceBytes+=byteCount;++counts.imageDecodes;return images.emplace(expected,std::move(decoded)).first->second;
+        counts.resourceBytes+=byteCount;++counts.imageDecodes;const auto& stored=images.emplace(expected,std::move(decoded)).first->second;
+        return {stored.width,stored.height,stored.premultipliedBGRA,{}};
     }
     ComPtr<ID2D1SolidColorBrush> brush(ID2D1RenderTarget* target,const Json& value,float alpha=1){
         D2D1_COLOR_F c{};ComPtr<ID2D1SolidColorBrush> result;if(color(value,c,alpha))checked(target->CreateSolidColorBrush(c,result.GetAddressOf()),"Create source color brush");return result;

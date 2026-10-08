@@ -3,11 +3,11 @@
 #include "native/layer_scene.hpp"
 
 namespace endfield::native {
-// Explicit source-prepared artwork only. This bridge never obtains file icons,
+// Explicit source-prepared artwork or caller-supplied native icon snapshots. This bridge never obtains file icons,
 // resolves locators, reads the shelf's files, or substitutes an arbitrary image.
 struct NativeShelfImage {
     modules::ShelfPresentationImage dependency;
-    ehud::data::Json contents; // confined {asset,sha256}, checked by LayerRasterizer
+    ehud::data::Json contents; // confined {asset,sha256}, or native icon {memoryImage,revision}
 };
 struct ShelfSceneSurface {
     static constexpr std::size_t none=static_cast<std::size_t>(-1);

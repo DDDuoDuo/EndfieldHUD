@@ -1,4 +1,5 @@
 #include "native/layer_raster.hpp"
+#include "native/layer_image_source.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -53,6 +54,36 @@ struct TemporaryAssets {
     TemporaryAssets(){if(!std::filesystem::create_directory(root))throw std::runtime_error("Cannot create synthetic fixture directory");}
     ~TemporaryAssets(){std::error_code error;std::filesystem::remove_all(root,error);}
 };
+void memoryImages(){
+    LayerImageSource provider;LayerRasterizer raster;LayerRasterOptions options;
+    options.pixelsPerPoint=1;options.paddingPoints=0;options.memoryImages=&provider;
+    const std::array<std::uint8_t,16> colors{255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,128};
+    auto snapshot=provider.publish("synthetic-file-icon",1,2,2,colors);
+    auto source=layer("memory-checker",16,16);source["magnificationFilter"]="nearest";
+    source["contents"]=Json::Object{{"memoryImage","synthetic-file-icon"},{"revision",1}};
+    const auto image=raster.rasterize("memory",1,source,options);
+    pixel(*image,4,4,{255,0,0,255},0,"Memory icon keeps red channel and top-left orientation");
+    pixel(*image,12,4,{0,255,0,255},0,"Memory icon keeps green channel");
+    pixel(*image,4,12,{0,0,255,255},0,"Memory icon keeps blue channel");
+    pixel(*image,12,12,{255,255,255,128},1,"Memory icon is premultiplied exactly once");
+    check(raster.stats().decodedImages==0&&raster.stats().imageDecodes==0,"Memory icon has no file decoder or duplicate decoded cache");
+    const auto reads=provider.stats().cacheHits,paints=raster.stats().rasterizations;
+    for(unsigned n=0;n<120;++n)check(raster.rasterize("memory",1,Json{},options)==image,"Pointer frames retain painted memory icon");
+    check(provider.stats().cacheHits==reads&&raster.stats().rasterizations==paints,"Pointer frames query neither image provider nor rasterizer");
+    auto missing=options;missing.memoryImages=nullptr;
+    rejects([&]{raster.rasterize("missing-provider",1,source,missing);},"Memory icon requires explicit provider");
+    source["contents"]["asset"]="should-not-be-read.png";
+    rejects([&]{raster.rasterize("mixed",1,source,options);},"Mixed memory/file descriptor cannot trigger filesystem fallback");source["contents"].erase("asset");
+    source["contents"]["revision"]=0;rejects([&]{raster.rasterize("bad-revision",1,source,options);},"Memory revision zero rejects");
+    source["contents"]["revision"]=2;rejects([&]{raster.rasterize("memory",2,source,options);},"Missing new generation rejects before painted content replacement");
+    check(raster.rasterize("memory",1,Json{},options)==image,"Failed new icon keeps prior displayed pixels");
+    std::array<std::uint8_t,16> red{};for(unsigned n=0;n<4;++n){red[n*4]=255;red[n*4+3]=255;}
+    provider.publish("synthetic-file-icon",2,2,2,red);const auto changed=raster.rasterize("memory",2,source,options);
+    pixel(*changed,12,4,{255,0,0,255},0,"New icon revision replaces only requested local artwork");
+    provider.clear();snapshot.reset();check(provider.stats().liveBytes==0,"Raster owns no redundant native icon snapshots after drawing");
+    check(raster.rasterize("memory",2,Json{},options)==changed,"Already painted snapshot survives provider cache retirement");
+    rejects([&]{raster.rasterize("retired",1,source,options);},"New raster cannot silently substitute retired image");
+}
 void run(){
     LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
     auto red=shape("half-red");red["shape"]["fillColor"]=rgba(1,0,0,.5);
@@ -178,7 +209,7 @@ void run(){
 int main(){
     const auto status=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(status)){std::cerr<<"Cannot initialize fixture COM: "<<status<<'\n';return 1;}
-    int result=0;try{run();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
+    int result=0;try{run();memoryImages();std::cout<<"PASS "<<checks<<" local layer raster checks (owned WIC bitmaps, no window/capture)\n";}
     catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';result=1;}
     CoUninitialize();return result;
 }
