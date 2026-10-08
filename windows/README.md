@@ -275,8 +275,12 @@ range/toggle selection, stable drag order, two-column scrolling, partial removal
 errors, clear confirmation and source Quick Look requests pass 15,691 checks,
 including 1,200 operations/geometry traces from the original Swift implementation.
 Windows metadata persistence and native file identity/access are now implemented
-in separate bounded adapters. Picker/OLE transfer, preview and native artwork
-remain pending. The model tests do not establish those integrations.
+in separate bounded adapters. The presentation descriptor also passes 175,453
+checks against 20 detached original Mac canvases on both macOS and Windows.
+Only eight visible cards are retained even for a 10,000-item shelf; ordinary
+scrolling preserves their local artwork. Native rendering, file icons, picker,
+preview and OLE transfer are still separate integration work. Model and descriptor
+tests do not establish those features.
 
 The current portable build passes 38 suites. The laptop passes the focused
 Notes workspace/editor and Shelf tests; the integrated Notes owner passes 470
