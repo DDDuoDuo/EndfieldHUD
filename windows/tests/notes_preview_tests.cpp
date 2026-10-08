@@ -285,6 +285,149 @@ struct CaptureRoute final {
     }
 };
 
+// Mirror the shell owner's posted frame/notification route on this fixture's
+// hidden HWND. The real NotesPreview and text store produce/consume the editor
+// notifications; no TSF manager, timer, visible host or hardware input is used.
+struct EditorQueueRoute final {
+    static constexpr UINT frameMessage = WM_APP + 0x37b;
+    static constexpr wchar_t property[] = L"EndfieldNotesPostedFrameRegression";
+    HWND hwnd;
+    Fixture& fixture;
+    WNDPROC previous{};
+    std::exception_ptr failure;
+    bool pending{}, advancePose{};
+    unsigned frames{}, notifications{}, keys{};
+
+    EditorQueueRoute(HWND h, Fixture& f) : hwnd(h), fixture(f) {
+        check(SetPropW(hwnd, property, this) != FALSE, "Owned queue callback installs");
+        previous = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(dispatch)));
+        check(previous != nullptr, "Hidden queue fixture accepts its temporary callback");
+    }
+    ~EditorQueueRoute() {
+        if (previous) SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previous));
+        RemovePropW(hwnd, property);
+        MSG message{};
+        while (PeekMessageW(&message, hwnd, frameMessage, frameMessage, PM_REMOVE)) {}
+        while (PeekMessageW(&message, hwnd, WM_APP + 181, WM_APP + 181, PM_REMOVE)) {}
+    }
+    void requestFrame() {
+        if (pending) return;
+        check(PostMessageW(hwnd, frameMessage, 0, 0) != FALSE, "Owned invalidation posts one frame");
+        pending = true;
+    }
+    void postKey(UINT message, WPARAM value) {
+        check(PostMessageW(hwnd, message, value, 0) != FALSE, "Owned synthetic keyboard event queues");
+    }
+    static LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
+        auto* self = static_cast<EditorQueueRoute*>(GetPropW(hwnd, property));
+        if (!self) return DefWindowProcW(hwnd, message, w, l);
+        try {
+            if (message == frameMessage) {
+                self->pending = false; // Same consume-before-callback order as OverlayHost.
+                ++self->frames;
+                if (self->advancePose) {
+                    // A finite deterministic sequence models sampling an active
+                    // gyro transition. Only the first frame is requested from
+                    // outside this route; a second one requires an owner echo.
+                    self->fixture.workspace.values[12] = double(self->frames) * .125;
+                    self->fixture.time += .001;
+                }
+                self->fixture.frame();
+                return 0;
+            }
+            if (message == WM_APP + 181) {
+                ++self->notifications;
+                check(self->fixture.preview->message({hwnd, message, w, l}),
+                    "Actual queued editor notification reaches its owner");
+                self->requestFrame(); // Current shell's handled-message refresh.
+                return 0;
+            }
+            if (message == WM_KEYDOWN || message == WM_CHAR) {
+                ++self->keys;
+                self->fixture.time += .001;
+                const auto kind = message == WM_CHAR ? app::KeyKind::character : app::KeyKind::down;
+                check(self->fixture.preview->key({kind, static_cast<std::uint32_t>(w)}, self->fixture.time),
+                    "Queued synthetic keyboard event reaches the actual editor");
+                self->requestFrame();
+                return 0;
+            }
+        } catch (...) { self->failure = std::current_exception(); return 0; }
+        return CallWindowProcW(self->previous, hwnd, message, w, l);
+    }
+    bool drain(unsigned& dispatched) {
+        MSG message{};
+        dispatched = 0;
+        while (dispatched < 32 && PeekMessageW(&message, hwnd, 0, 0, PM_REMOVE)) {
+            ++dispatched;
+            // Explicit WM_CHAR is already queued: translating our synthetic
+            // key messages would invent a second character event.
+            DispatchMessageW(&message);
+            if (failure) std::rethrow_exception(failure);
+        }
+        return !PeekMessageW(&message, hwnd, 0, 0, PM_NOREMOVE);
+    }
+    void resetCounts() { frames = notifications = keys = 0; }
+};
+
+void postedEditorFrames(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+    gpu::LayerRasterizer raster;
+    Fixture f(hwnd, renderer, raster, assets); // activateTextServices=false
+    const auto focus = GetFocus(), active = GetActiveWindow(), capture = GetCapture();
+    const auto note = savedNotes(f.root.path).front();
+    check(f.pointer(app::PointerKind::doubleClick, {note.x + 30, note.y + 45}),
+        "Posted-frame regression enters the actual isolated editor");
+    f.editorNotifications();
+    auto painted = [&]() -> std::shared_ptr<const gpu::PaintedTextLayout> {
+        for (const auto& entry : f.preview->entries())
+            if (auto value = entry.scene->paintedTextLayout("projected-editor-glyphs")) return value;
+        return {};
+    };
+    {
+        EditorQueueRoute route(hwnd, f);
+        unsigned dispatched{};
+        check(route.drain(dispatched), "Editor setup notifications settle within 32 actual dispatches");
+        route.resetCounts();
+        route.postKey(WM_KEYDOWN, VK_HOME);
+        route.postKey(WM_CHAR, '@');
+        route.postKey(WM_CHAR, '?');
+        route.postKey(WM_KEYDOWN, VK_LEFT);
+        check(route.drain(dispatched), "Queued text and selection changes form a finite batch");
+        check(route.keys == 4 && route.notifications == 1 && route.frames == 1,
+            "Real text/selection notifications and invalidations coalesce into one owner frame");
+        const auto edited = painted();
+        check(edited && edited->text().starts_with(u"@?"), "Queued text reaches the exact painted editor layout");
+        const auto editedText = std::u16string(edited->text());
+        route.resetCounts();
+        route.postKey(WM_KEYDOWN, VK_RIGHT);
+        check(route.drain(dispatched) && route.keys == 1 && route.notifications == 1 && route.frames == 1,
+            "A genuine selection-only notification still requests one coalesced owner frame");
+        check(painted()->layoutIdentity() == edited->layoutIdentity() && painted()->text() == editedText,
+            "Selection dispatch retains painted text and its DirectWrite layout");
+        check(savedNotes(f.root.path).front().text == note.text, "Queued editor input does not save a draft");
+        check(GetFocus() == focus && GetActiveWindow() == active && GetCapture() == capture && !IsWindowVisible(hwnd),
+            "Posted regression never activates a window, takes capture or changes native focus");
+
+        const auto* previousGlyph = f.draw("projected-editor-glyphs");
+        check(previousGlyph != nullptr, "Queued regression retains its actual glyph plane");
+        const auto previousWorld = previousGlyph->world;
+        route.resetCounts();
+        route.advancePose = true;
+        route.requestFrame(); // Exactly one external invalidation.
+        const bool settled = route.drain(dispatched);
+        if (!settled || route.frames != 1 || route.notifications != 0)
+            std::cerr << "Posted editor frame diagnostic: dispatches=" << dispatched << " frames=" << route.frames
+                << " ownerNotices=" << route.notifications << " queueEmpty=" << settled << '\n';
+        check(settled && route.frames == 1 && route.notifications == 0,
+            "Host placement must not echo an owner notification and self-generate more frames (32-dispatch bound)");
+        const auto* glyph = f.draw("projected-editor-glyphs");
+        check(glyph && coordinatesNear(glyph->world.values[12], previousWorld.values[12] + .125) &&
+            painted()->layoutIdentity() == edited->layoutIdentity(),
+            "The isolated frame still updates projected geometry while retaining its painted layout");
+    }
+    f.release();
+}
+
 void reentrantClock(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
     gpu::LayerRasterizer raster;
     Fixture f(hwnd, renderer, raster, assets);
@@ -627,6 +770,7 @@ int wmain(int argc, wchar_t** argv) {
         gpu::Renderer renderer;
         renderer.initialize(window.hwnd, 1280, 800,
             {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
+        postedEditorFrames(window.hwnd, renderer, assets);
         reentrantClock(window.hwnd, renderer, assets);
         scrollPreview(window.hwnd, renderer, assets);
         run(window.hwnd, renderer, assets);

@@ -174,6 +174,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
 }
 bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);if(i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
     for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return i.confirmationVisible&&t-i.confirmationStarted<.16;}
+bool NotesPreview::diagnosticEditing(bool enabled,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!enabled)return i.finish();if(i.state->notes().empty())return false;i.workspace->beginEditing(i.state->notes().front().id);i.focusEditor();return i.workspace->editor()!=nullptr;}
 bool NotesPreview::pointerLocked()const{return impl_->state->dragging();}
 bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput)return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
     if(i.confirmationVisible){const auto q=i.confirmationProjection.unproject(p);if(q&&i.confirmation.actionAt(*q))return true;}

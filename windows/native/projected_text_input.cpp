@@ -1,4 +1,5 @@
 #include "native/projected_text_input.hpp"
+#include "native/text_input_diagnostics.hpp"
 #ifdef _WIN32
 #include <ocidl.h>
 #include <olectl.h>
@@ -39,14 +40,14 @@ struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionS
     HRESULT write()const noexcept{const auto r=ready();return FAILED(r)?r:(lock&TS_LF_READWRITE)!=TS_LF_READWRITE?TS_E_NOLOCK:S_OK;}
     bool range(LONG a,LONG b)const noexcept{return a>=0&&b>=a&&std::uint32_t(b)<=doc->text().size();}
     void post(unsigned flags)noexcept{
-        if(!alive)return;pendingChanges|=flags;if(!posted){posted=PostMessageW(owner,message,generation,0)!=FALSE;}
+        if(!alive)return;text_input_diagnostic_detail::postAttempt(flags==layoutChange);pendingChanges|=flags;if(!posted){posted=PostMessageW(owner,message,generation,0)!=FALSE;if(posted)text_input_diagnostic_detail::newPost();}
     }
     void notifyText(Change change)noexcept{
         Keep hold(this);auto target=sink;const auto mask=sinkMask;const auto prior=adviceRevision;
         if(target&&(mask&TS_AS_TEXT_CHANGE)){auto c=nativeChange(change);target->OnTextChange(0,&c);}
         if(alive&&target&&adviceRevision==prior&&sink.Get()==target.Get()&&(mask&TS_AS_SEL_CHANGE))target->OnSelectionChange();
     }
-    void notifyLayout()noexcept{Keep hold(this);auto target=sink;if(target&&(sinkMask&TS_AS_LAYOUT_CHANGE))target->OnLayoutChange(TS_LC_CHANGE,viewCookie);}
+    void notifyLayout()noexcept{Keep hold(this);auto target=sink;if(target&&(sinkMask&TS_AS_LAYOUT_CHANGE)){text_input_diagnostic_detail::Scope diagnostic(text_input_diagnostic_detail::Operation::layout);target->OnLayoutChange(TS_LC_CHANGE,viewCookie);}}
     HRESULT rectangle(core::Rect r,RECT*out)const noexcept{
         if(r==core::Rect{}){*out={};return S_OK;}POINT origin{};if(!ClientToScreen(owner,&origin))return HRESULT_FROM_WIN32(GetLastError());
         const double left=std::floor(r.x)+origin.x,top=std::floor(r.y)+origin.y,right=std::ceil(r.x+r.width)+origin.x,bottom=std::ceil(r.y+r.height)+origin.y;
@@ -86,6 +87,7 @@ struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionS
         auto oldSink=std::move(sink);auto oldIdentity=std::move(sinkIdentity);sinkMask=0;pendingUpgrade=false;++adviceRevision;return S_OK;
     }
     HRESULT STDMETHODCALLTYPE RequestLock(DWORD flags,HRESULT*session)override{
+        text_input_diagnostic_detail::Scope diagnostic(text_input_diagnostic_detail::Operation::lock);
         if(!session)return E_INVALIDARG;*session=E_FAIL;const auto hr=ready();if(FAILED(hr))return hr;
         const auto requested=flags&TS_LF_READWRITE;
         if((flags&~(TS_LF_SYNC|TS_LF_READWRITE))||(requested!=TS_LF_READ&&requested!=TS_LF_READWRITE))return E_INVALIDARG;
@@ -162,6 +164,7 @@ struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionS
         return protect([&]{const auto at=core::text::projectedHit(*doc,*layout,{double(p.x),double(p.y)},placement,(flags&GXFPF_NEAREST)!=0,(flags&GXFPF_ROUND_NEAREST)!=0);if(!at)return TS_E_INVALIDPOINT;*out=LONG(*at);return S_OK;});
     }
     HRESULT STDMETHODCALLTYPE GetTextExt(TsViewCookie cookie,LONG a,LONG b,RECT*out,BOOL*clipped)override{
+        text_input_diagnostic_detail::Scope diagnostic(text_input_diagnostic_detail::Operation::extent);
         const auto hr=read();if(FAILED(hr))return hr;if(cookie!=viewCookie||!out||!clipped)return E_INVALIDARG;*out={};*clipped=FALSE;if(!range(a,b))return TS_E_INVALIDPOS;
         if(IsIconic(owner)||!placement.visible){*clipped=TRUE;return S_OK;}
         // Zero-length caret queries use the host's caret bounds, just as the
@@ -275,8 +278,12 @@ HRESULT ProjectedTextInput::selectFromHost(Selection selection)noexcept{
     Store::Keep hold(s);return protect([&]{s->doc->setSelection(selection);s->post(selectionChange);auto target=s->sink;if(target&&(s->sinkMask&TS_AS_SEL_CHANGE))target->OnSelectionChange();return S_OK;});
 }
 HRESULT ProjectedTextInput::setPlacement(const core::text::Placement&value)noexcept{
-    const auto hr=store_->ready();if(FAILED(hr))return hr;if(!core::text::validPlacement(value))return E_INVALIDARG;if(store_->lock)return TS_E_NOLOCK;if(store_->placement==value)return S_FALSE;
-    Store::Keep hold(store_);store_->placement=value;store_->post(layoutChange);if(store_->isFocused)store_->notifyLayout();return S_OK;
+    const auto hr=store_->ready();if(FAILED(hr))return hr;if(!core::text::validPlacement(value))return E_INVALIDARG;if(store_->lock)return TS_E_NOLOCK;if(store_->placement==value){text_input_diagnostic_detail::placement(false);return S_FALSE;}
+    text_input_diagnostic_detail::placement(true);
+    // Placement is output from the owner's current render. Notify TSF so its
+    // candidate geometry follows the text, but do not echo a work message back
+    // to that owner: it would invalidate another frame for every moving pose.
+    Store::Keep hold(store_);store_->placement=value;if(store_->isFocused)store_->notifyLayout();return S_OK;
 }
 HRESULT ProjectedTextInput::layoutChanged()noexcept{const auto hr=store_->ready();if(FAILED(hr))return hr;if(store_->lock)return TS_E_NOLOCK;if(store_->layout->textRevision()!=store_->doc->revision())return TS_E_NOLAYOUT;store_->notifyLayout();return S_OK;}
 bool ProjectedTextInput::filterKeyMessage(UINT message,WPARAM key,LPARAM data)noexcept{

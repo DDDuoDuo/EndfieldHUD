@@ -30,13 +30,13 @@ struct LayoutFixture final:Layout {
 };
 struct Sink final:ITextStoreACPSink {
     std::atomic<ULONG>refs{1};unsigned text{},selection{},layout{},locks{};std::vector<DWORD>granted;
-    TS_TEXTCHANGE last{};std::function<HRESULT(DWORD)>onLock;std::function<void()>onText;std::function<void(REFIID)>onQuery;
+    TS_TEXTCHANGE last{};std::function<HRESULT(DWORD)>onLock;std::function<void()>onText,onLayout;std::function<void(REFIID)>onQuery;
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void**out)override{if(!out)return E_POINTER;*out=nullptr;auto callback=onQuery;if(callback)callback(id);if(id!=__uuidof(IUnknown)&&id!=__uuidof(ITextStoreACPSink))return E_NOINTERFACE;*out=static_cast<ITextStoreACPSink*>(this);AddRef();return S_OK;}
     ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}
     ULONG STDMETHODCALLTYPE Release()override{const auto r=--refs;if(!r)delete this;return r;}
     HRESULT STDMETHODCALLTYPE OnTextChange(DWORD,const TS_TEXTCHANGE*c)override{++text;last=*c;if(onText)onText();return S_OK;}
     HRESULT STDMETHODCALLTYPE OnSelectionChange()override{++selection;return S_OK;}
-    HRESULT STDMETHODCALLTYPE OnLayoutChange(TsLayoutCode code,TsViewCookie cookie)override{++layout;return code==TS_LC_CHANGE&&cookie==ProjectedTextInput::viewCookie?S_OK:E_FAIL;}
+    HRESULT STDMETHODCALLTYPE OnLayoutChange(TsLayoutCode code,TsViewCookie cookie)override{++layout;if(onLayout)onLayout();return code==TS_LC_CHANGE&&cookie==ProjectedTextInput::viewCookie?S_OK:E_FAIL;}
     HRESULT STDMETHODCALLTYPE OnStatusChange(DWORD)override{return S_OK;}
     HRESULT STDMETHODCALLTYPE OnAttrsChange(LONG,LONG,ULONG,const TS_ATTRID*)override{return S_OK;}
     HRESULT STDMETHODCALLTYPE OnLockGranted(DWORD flags)override{++locks;granted.push_back(flags);return onLock?onLock(flags):S_OK;}
@@ -233,6 +233,29 @@ void run(){
     ok(store->UnadviseSink(sink.Get()),"Explicit sink unadvise releases retention");check(store->UnadviseSink(sink.Get())==CONNECT_E_NOCONNECTION,"Repeated unadvise explicit");ok(input.stop(),"Stopped field detaches host/COM lifetime");check(input.stop()==S_FALSE,"Stop is idempotent");check(store->GetEndACP(&end)==E_UNEXPECTED,"Retained interface cannot access detached document");
     // Reentrant callbacks stop or destroy the facade, while Store keeps its own
     // COM lifetime and validates host pointers again after the external call.
+    {
+        Window isolated;constexpr UINT ownerMessage=WM_APP+518;constexpr UINT_PTR ownerToken=901;
+        Buffer d(u"abc");LayoutFixture l(d);ProjectedTextInput field(isolated.handle,d,l,ownerMessage,ownerToken);auto*ts=field.textStore();
+        ComPtr<FakeManager>manager;manager.Attach(new FakeManager);ok(field.connect(*manager.Get(),1),"Host-pose fixture connects borrowed fake manager");ok(field.focus(),"Host-pose fixture focuses its fake text context");
+        ComPtr<Sink>s;s.Attach(new Sink);ok(ts->AdviseSink(__uuidof(ITextStoreACPSink),s.Get(),TS_AS_ALL_SINKS),"Host-pose fixture observes required TSF layout callbacks");
+        s->onLayout=[&]{lock(ts,s.Get(),TS_LF_READ,[&]{RECT extent{};BOOL clipped{};ok(ts->GetTextExt(ProjectedTextInput::viewCookie,0,1,&extent,&clipped),"TSF can query the current candidate extent synchronously during pose notification");check(extent.right>extent.left&&extent.bottom>extent.top,"Required pose notification exposes valid current text geometry");});};
+        Placement current{{},{0,0,100,50},{0,0},true};
+        for(unsigned frame=0;frame<8;++frame){current.projection.values[2]=double(frame);ok(field.setPlacement(current),"Owner updates a moving text plane");}
+        check(s->layout==8&&s->locks==8,"Every changed focused pose still notifies TSF and permits its geometry read lock");
+        check(messages(isolated.handle,ownerMessage,ownerToken)==0&&field.takeChanges(ownerToken)==0,"Host-originated pose changes cannot echo owner work or schedule another frame");
+        check(field.setPlacement(current)==S_FALSE&&s->layout==8,"Equal placement sends neither TSF nor owner work");
+        ok(field.layoutChanged(),"Explicit ready-layout callback remains available");check(s->layout==9&&messages(isolated.handle,ownerMessage,ownerToken)==0,"Ready-layout notification reaches TSF without an owner echo");
+        s->onLayout={};
+        ok(field.replaceFromHost({0,1},u"z"),"Genuine host text change remains queued");ok(field.selectFromHost({{1,2},ActiveEnd::end,false}),"Genuine host selection change remains queued");
+        check(messages(isolated.handle,ownerMessage,ownerToken)==1,"Text and selection work still coalesce one owner notification");const auto work=field.takeChanges(ownerToken);
+        check((work&unsigned(TextInputChange::text))&&(work&unsigned(TextInputChange::selection))&&(work&unsigned(TextInputChange::layout)),"Removing pose echo preserves real text, selection and required layout-work flags");
+        l.relayout();const auto selectionCallbacks=s->selection;lock(ts,s.Get(),TS_LF_READWRITE,[&]{TS_SELECTION_ACP selection{0,1,{TS_AE_END,FALSE}};ok(ts->SetSelection(1,&selection),"TSF-originated selection changes caller document");});
+        check(messages(isolated.handle,ownerMessage,ownerToken)==1&&field.takeChanges(ownerToken)==unsigned(TextInputChange::selection)&&s->selection==selectionCallbacks,"TSF selection work reaches owner without reflecting it back to TSF");
+        ComPtr<ITfContextOwnerCompositionSink>c;ok(ts->QueryInterface(IID_PPV_ARGS(&c)),"Owner composition protocol remains installed");ComPtr<FakeRange>r;r.Attach(new FakeRange(0,1));ComPtr<FakeView>v;v.Attach(new FakeView(r.Get()));BOOL accepted{};
+        ok(c->OnStartComposition(v.Get(),&accepted),"Genuine marked composition starts");check(accepted,"Composition is accepted");ok(c->OnEndComposition(v.Get()),"Genuine marked composition ends");
+        check(messages(isolated.handle,ownerMessage,ownerToken)==1&&field.takeChanges(ownerToken)==unsigned(TextInputChange::composition),"Composition lifecycle continues to schedule owner work");
+        ok(ts->UnadviseSink(s.Get()),"Detach host-pose fixture observer");ok(field.stop(),"Stop host-pose fixture without a visible window");
+    }
     for(bool inExtent:{false,true}){
         Buffer d(u"日本語");LayoutFixture l(d);auto field=std::make_unique<ProjectedTextInput>(window.handle,d,l,message,token+1);ComPtr<ITextStoreACP>retained=field->textStore();ComPtr<ITfContextOwnerCompositionSink>c;ok(retained.As(&c),"Reentrant fixture composition interface");
         ComPtr<FakeRange>r;r.Attach(new FakeRange(0,1));ComPtr<FakeView>v;v.Attach(new FakeView(r.Get()));if(inExtent)r->onExtent=[&]{field.reset();};else v->onRange=[&]{field.reset();};

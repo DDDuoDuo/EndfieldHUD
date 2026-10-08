@@ -27,6 +27,8 @@ public:
     bool filterKey(const app::NativeMessage&);
     bool message(const app::NativeMessage&);
     void focus(bool);
+    // Build-only automatic live profiling of the first synthetic note.
+    bool diagnosticEditing(bool enabled,double time);
     bool finish(); // false: active TSF lock; owner retries after its queued message
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();

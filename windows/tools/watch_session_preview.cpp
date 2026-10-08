@@ -9,6 +9,7 @@
 #include "native/source_cursor.hpp"
 #include "native/display_service.hpp"
 #include "native/desktop_backdrop.hpp"
+#include "native/text_input_diagnostics.hpp"
 #include "core/shell_packet.hpp"
 #include "core/watch_runtime_input.hpp"
 #include "core/data/file_io.hpp"
@@ -76,12 +77,13 @@ struct PreviewWindowLifetime final {
     bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;
     ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(notes&&renderer.stats().initialized)notes->release(renderer);}catch(...) {} if(detached)notes.reset();backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
 };
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,liveDiagnostics;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
     for(int i=4;i<argc;++i){const std::wstring_view arg=argv[i];
         if(arg==L"--visible"){need(!o.visible,"Duplicate visible mode");o.visible=true;}
+        else if(arg==L"--live-diagnostics"&&i+1<argc){need(o.liveDiagnostics.empty(),"Duplicate live diagnostic output");o.liveDiagnostics=fs::absolute(argv[++i]);}
         else if(arg==L"--coverage"){need(!o.coverage,"Duplicate coverage mode");o.coverage=true;}
         else if(arg==L"--benchmark-size"&&i+2<argc){auto dimension=[&]{const std::wstring token=argv[++i];std::size_t used{};const auto value=std::stoul(token,&used);need(used==token.size()&&value>=64&&value<=4096,"Benchmark dimensions must be 64...4096 pixels");return static_cast<std::uint32_t>(value);};o.benchmarkWidth=dimension();o.benchmarkHeight=dimension();}
         else if(arg==L"--benchmark-epoch"&&i+1<argc){const std::wstring token=argv[++i];std::size_t used{};o.benchmarkEpoch=std::stod(token,&used);need(used==token.size()&&std::isfinite(o.benchmarkEpoch)&&o.benchmarkEpoch>=0&&o.benchmarkEpoch<=1e9,"Invalid bounded synthetic epoch");}
@@ -104,6 +106,7 @@ Options options(int argc,wchar_t**argv){
     need(o.visible!=!o.report.empty(),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
     need(!o.visible||(!o.coverage&&o.benchmarkEpoch==0&&o.benchmarkWidth==1280&&o.benchmarkHeight==800),"Coverage/epoch/size overrides are hidden-test only");
+    need(o.liveDiagnostics.empty()||(o.visible&&!o.notesAssets.empty()&&!fs::exists(o.liveDiagnostics)),"Live diagnostics require visible isolated Notes and a new output");
     if(!o.report.empty())need(!fs::exists(o.report),"Benchmark output already exists");
     need(o.snapshots.empty()||!o.visible,"Owned-target snapshots are hidden benchmark only");
     if(!o.snapshots.empty())need(!fs::exists(o.snapshots),"Snapshot directory already exists");return o;
@@ -136,6 +139,31 @@ public:
     const Json::Array&rows()const noexcept{return rows_;}
 private:
     Clock::time_point previousTime_;ProcessUsage previousUsage_;Json::Array rows_;
+};
+struct LiveProbe {
+    enum Stage {frame,backdrop,sourcePose,materials,nativeLabels,notesPose,publication,draw,pointer,key,message,editTransition,count};
+    struct Timing{std::uint64_t calls{};double total{},maximum{};};
+    struct Scope {
+        Timing*value{};Clock::time_point start{};
+        Scope()noexcept=default;
+        Scope(Timing*target,Clock::time_point at)noexcept:value(target),start(at){}
+        Scope(const Scope&)=delete;Scope&operator=(const Scope&)=delete;
+        Scope(Scope&&other)noexcept:value(std::exchange(other.value,nullptr)),start(other.start){}
+        Scope&operator=(Scope&&)=delete;
+        ~Scope(){if(value){const auto ms=milliseconds(start);++value->calls;value->total+=ms;value->maximum=std::max(value->maximum,ms);}}
+    };
+    bool enabled{};int phase{-1};double phaseStart{};std::array<Timing,count> timings{};Json::Array rows;
+    Scope measure(Stage stage){return enabled?Scope{&timings[stage],Clock::now()}:Scope{};}
+    void flush(double time){if(phase<0)return;Json::Object stages;
+        constexpr std::array names{"frame","backdrop","sourcePose","materials","nativeLabels","notesPose","publication","draw","pointer","key","message","editTransition"};
+        for(unsigned i=0;i<count;++i){const auto&t=timings[i];stages[names[i]]=Json::Object{{"calls",std::int64_t(t.calls)},{"totalMS",t.total},{"meanMS",t.calls?t.total/t.calls:0},{"maxMS",t.maximum}};}
+        const auto input=gpu::textInputDiagnostics();auto timing=[](const auto&t){return Json::Object{{"calls",std::int64_t(t.calls)},{"totalMS",t.totalMilliseconds},{"maxMS",t.maximumMilliseconds}};};
+        rows.push_back(Json::Object{{"phase",phase},{"elapsedSeconds",time-phaseStart},{"stages",std::move(stages)},
+          {"input",Json::Object{{"notifyLayout",timing(input.notifyLayout)},{"requestLock",timing(input.requestLock)},{"getTextExt",timing(input.getTextExt)},
+          {"postAttempts",std::int64_t(input.postAttempts)},{"newPosts",std::int64_t(input.newPosts)},{"layoutOnlyPosts",std::int64_t(input.layoutOnlyPostAttempts)},
+          {"placementChanged",std::int64_t(input.placementChanged)},{"placementEqual",std::int64_t(input.placementEqual)},{"locksDuringLayout",std::int64_t(input.locksDuringLayout)},{"extentsDuringLayout",std::int64_t(input.extentsDuringLayout)}}}});
+    }
+    void next(int value,double time){flush(time);phase=value;phaseStart=time;timings={};gpu::setTextInputDiagnosticsEnabled(true);}
 };
 struct Snapshot {
     gpu::RendererStats renderer;gpu::SourceGraphicsStats graphics;gpu::LayerRasterStats raster;
@@ -246,29 +274,33 @@ int wmain(int argc,wchar_t**argv){try{
     auto close=[&](double time){if(!closing){if(notes&&!notes->finish()){pendingClose=true;return;}pendingClose=false;host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){notes->select(module,now());break;}}}
         std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (plain Notes preview)":" (module body is not installed)")<<'\n';};
+    LiveProbe probe;probe.enabled=!args.liveDiagnostics.empty();
     auto present=[&](double time,bool submit){
+        auto frameProbe=probe.measure(LiveProbe::frame);
         // Backdrop COM calls can dispatch nested input. Finish them before
         // borrowing a source frame, then sample the current live event time.
         // Offscreen comparisons retain their explicit synthetic timestamps.
-        updateBackdrop(time);if(args.visible)time=std::max(time,now());
-        const auto*sample=session.sample(time);if(!sample)return false;
+        {auto stage=probe.measure(LiveProbe::backdrop);updateBackdrop(time);}if(args.visible)time=std::max(time,now());
+        const app::WatchSessionFrame*sample=nullptr;{auto stage=probe.measure(LiveProbe::sourcePose);sample=session.sample(time);}if(!sample)return false;
         if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session.inputEnabled())session.setInputEnabled(true,time);
         auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;
-        materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());
-        nativeContent.update(session.actions());
+        {auto stage=probe.measure(LiveProbe::materials);materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());}
+        {auto stage=probe.measure(LiveProbe::nativeLabels);nativeContent.update(session.actions());
         for(auto&button:available)button.enabled=session.actions().contains(button.buttonID);
         const core::Rect viewport{0,0,metrics.width,metrics.height};labels.update(*sample->sourceFrame,sample->camera,viewport,available);
         // Chrome content is fixed synthetic input; opacity follows the same
         // ready/close timestamps as the source outer controller.
         const source::DesktopChromeSettings chromeSettings{viewport,settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
         if(chrome)chrome->update(*sample->sourceFrame,sample->camera,chromeSettings,static_cast<float>(canvasOpacity(time)));
-        if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,chromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);
-        publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
-        if(submit)renderer.draw(args.visible);return true;
+        }
+        const source::DesktopChromeSettings noteChromeSettings{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
+        {auto stage=probe.measure(LiveProbe::notesPose);if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,noteChromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);}
+        {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
+        if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(args.visible);}return true;
     };
     app::OverlayCallbacks callbacks;
     callbacks.resize=[&](const auto&value){metrics=value;if(notes)notes->resize(value);if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
-    callbacks.pointer=[&](const app::PointerEvent&e){if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
+    callbacks.pointer=[&](const app::PointerEvent&e){auto stage=probe.measure(LiveProbe::pointer);if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
         if(notes&&session.inputEnabled()){
             const bool handled=notes->pointer(e,time);environment.pointerLocked=notes->pointerLocked();environment.pointer=p;session.setEnvironment(environment,time);
             if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
@@ -288,11 +320,22 @@ int wmain(int argc,wchar_t**argv){try{
         else return false;refresh(time);return true;};
     callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
     callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){return ready&&notes&&notes->filterKey(m);};
-    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}return {};};
-    callbacks.key=[&](const app::KeyEvent&e){if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};
+    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{auto stage=probe.measure(LiveProbe::message);if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}return {};};
+    callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};
     callbacks.focus=[&](bool value){focused=value;if(notes)notes->focus(value);if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
     callbacks.closeRequested=[&]{if(ready)close(now());};
-    callbacks.frame=[&](double time){if(!ready)return;const bool active=present(time,true);host.setFrameDemand(demand(time));if(!active&&session.phase()==core::VisibilityPhase::concealed){host.hide();host.requestStop();}};
+    double diagnosticStart{};bool diagnosticEditing{},diagnosticFinished{};
+    callbacks.frame=[&](double time){if(!ready)return;
+        if(probe.enabled&&!diagnosticFinished){
+            if(diagnosticStart==0)diagnosticStart=time;const auto elapsed=time-diagnosticStart;
+            const int phase=elapsed<3?0:elapsed<8?1:elapsed<13?2:3;
+            if(phase!=probe.phase)probe.next(phase,time);
+            if(phase>=1&&!diagnosticEditing&&phase<3){auto stage=probe.measure(LiveProbe::editTransition);diagnosticEditing=notes->diagnosticEditing(true,time);}
+            if(phase==2){environment.pointer=core::Point{metrics.width*.5+200*std::sin(elapsed*2),metrics.height*.5+120*std::cos(elapsed*2)};session.pointerMove(environment.pointer,time);}
+            if(phase==3&&diagnosticEditing){auto stage=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
+            if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;close(time);}
+        }
+        const bool active=present(time,true);host.setFrameDemand(demand(time));if(!active&&session.phase()==core::VisibilityPhase::concealed){host.hide();host.requestStop();}};
     app::OverlayOptions windowOptions{!args.notesData.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(args.visible){
         const auto displays=gpu::readConnectedDisplays();POINT pointer{};
@@ -371,6 +414,11 @@ int wmain(int argc,wchar_t**argv){try{
         Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog.variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent.stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent.stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
             {"systemBackdropIncluded",false},{"limitations",Json::Array{"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
+    }
+    if(!args.liveDiagnostics.empty()){
+        if(probe.enabled){probe.flush(now());probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);}
+        Json report=Json::Object{{"scope","Isolated synthetic visible HUD, actual text service, inclusive CPU stage durations; no document text or desktop capture"},{"phases","0 opening/idle; 1 focused editor; 2 focused editor with controlled tilt; 3 after editing"},{"samples",probe.rows}};
+        ehud::data::detail::replaceFile(args.liveDiagnostics,std::nullopt,report.encode(),1024*1024);
     }
     ready=false;host.setFrameDemand({});host.setCursor(nullptr);backdrop.reset();
     if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");

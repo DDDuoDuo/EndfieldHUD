@@ -285,8 +285,9 @@ establish those features.
 The current portable build passes 44 suites and the clean Windows Release build
 passes all 62 registered suites. The laptop passes the focused
 Notes workspace/editor and Shelf tests; the integrated Notes owner now passes
-531 checks, including editing/settled wheel routing, queued selection notifications and synchronous capture
-notifications with an older outer callback. The first live Notes preview
+561 checks, including editing/settled wheel routing, queued selection notifications,
+owner-message feedback prevention and synchronous capture notifications with an
+older outer callback. The first live Notes preview
 crashed on dragging: capture reentry advanced a child clock before an earlier
 refresh resumed. The regression reproduces the exact previous-build failure.
 A single monotonic Notes owner clock now keeps nested events at the same instant,
@@ -326,6 +327,35 @@ fell from 30.13 to 13.46 ms. Large-viewport entry remains about 39.17 ms; unchan
 exit preparation/publication totals about 17.34 ms. These are synchronous
 CPU-side fixture stages, not displayed FPS or a real IME performance guarantee.
 The separate preview uses temporary sample data for live acceptance.
+
+The user rejected that repair's live editing performance: typing and pointer
+interaction could still stall the entire HUD. Profiling the actual visible HUD
+with Windows text services exposed a separate feedback loop: each editor pose
+update posted a layout notice to its owner, which requested another frame. The
+owner no longer receives its own placement back as new work. Required TSF
+layout notifications still keep IME candidate geometry aligned; genuine text,
+selection and composition changes still notify the owner.
+
+A bounded posted-message regression failed on the previous code: one external
+pose update generated 16 frames/16 owner notices and still had queued work after
+32 dispatches. It passes with the fix. All 62 Windows suites and 561 Notes owner
+checks pass, including eight changed poses with synchronous TSF geometry queries
+and no owner echo. The Mac source/resource authority check remains unchanged.
+
+Two 16-second visible synthetic runs on the same Windows laptop used the real
+text service and the same controlled tilt. During the five-second focused-tilt
+phase, summed CPU-stage duration fell from 4,954 to 933 ms (about 81% less).
+The first timing recorder can double-count scope entries when returned by value,
+so its call counts are not used as frame-cadence evidence. The recorder now
+transfers scope ownership explicitly; a corrected count run is pending.
+Layout-only owner posts fell from 822 to zero; all 300 changed placements in the repaired run still notified TSF. These
+are inclusive CPU timings, not GPU completion times, displayed FPS or measured
+human typing latency. No keystrokes/composition were injected into these runs.
+The user then confirmed the corrected manual preview was responsive while
+testing typing, selection, scrolling and pointer movement. Diagnostics are
+explicit opt-in, use fresh sample Notes data, record no document text or screen,
+and add no timer, worker or polling service. The normal path does not sample
+performance clocks.
 
 Very long text is not fixed by those short-text gains. At 32,768 UTF-16 units,
 typing still took about 115–163 ms: each edit builds a full layout, and committing
