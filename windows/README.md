@@ -87,10 +87,12 @@ that sibling labels, geometry, projection and masks stay unchanged. Animated
 clock-page displacement and native font appearance still need visual checks.
 
 The window host coalesces redraw requests and owns one cancellable wake timer.
-Hidden windows schedule no rendering work. The previous checkpoint passed all 34 Windows suites on the laptop. The
-current portable build passes 27 suites; new backdrop/drag changes await a fresh
-Windows build and live retest. Display selection has a read-only Windows service and a
-portable policy matching the Mac fallback behavior, with no polling. Actual
+Hidden windows schedule no rendering work. [CI run 37722741746](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37722741746)
+passed all 27 portable suites and 35 Windows suites at commit `856ee4f`.
+The updated backdrop, corrected personal-card hover and navigation dragging
+still need live laptop checks; automated passes do not verify their appearance
+or feel. Display selection has a read-only Windows service and a portable policy
+matching the Mac fallback behavior, with no polling. Actual
 display switching, visible input, cursor, IME,
 multi-monitor behavior and full-app performance still require acceptance tests.
 The host now routes an editor's consumed keys before Windows generates text
@@ -129,7 +131,7 @@ preparation with this compact path. Loading the animation library accounted for
 about 667 ms and initial native rasterization about 226 ms. This is one synthetic
 run, not a cold-start distribution or full-app launch measurement.
 
-The next input schema compiles the same animation values into a bounded,
+The current compiled input schema stores the same animation values in a bounded,
 source-pinned binary without changing evaluation. It preserves every binary64
 key, tangent, weight and ordering, and retains the JSON development path. The
 animation section shrinks from 4,378,637 to 1,991,308 bytes; the full compact input
@@ -191,6 +193,8 @@ padding texels outside the visible card. RGB, source geometry, UVs and fade stay
 unchanged. An isolated Mac reference also reproduces the original fringe, so
 this correction is intentionally excluded from Mac pixel-parity claims. It adds
 no runtime masking work and leaves the authoritative Mac source/assets untouched.
+The correction passes isolated tests and the Windows CI build; its visible result
+still needs verification on the laptop.
 
 
 Reference tools (macOS, temporary fixture data only):

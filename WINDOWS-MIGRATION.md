@@ -6,6 +6,8 @@ The fresh implementation uses macOS `main` at `ca04f142185c7de40acd8523bdb563195
 
 Keep the current HUD, functions, animations, saved data and optimizations. Replace the platform plumbing. Do not redesign the interface or silently remove a module because its Windows adapter is difficult.
 
+Automated checkpoint: [CI run 37722741746](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37722741746) passed 27 portable suites and 35 Windows suites at `856ee4f`. The source-shell preview and isolated editor are development tools; module bodies are not installed in the shell. Updated live backdrop appearance/capture, corrected card hover and navigation dragging remain unverified on the laptop. This is not a complete Windows app or release acceptance result.
+
 ## 1. Start here on the Windows laptop
 
 ```powershell
@@ -300,17 +302,17 @@ Package only runtime dependencies/assets. Exclude recordings, GIFs, raw referenc
 
 At each step report exactly what is implemented and verified, what remains unverified, and what is deferred and why. Keep a concise Windows progress log beside this handoff as implementation starts; list measured regressions and decisions. Do not reduce the original requirements to fit a milestone.
 
-### Known unresolved items before Windows work
+### Current unresolved items
 
 | Item | Current status / required decision |
 | --- | --- |
-| Compositor/backdrop | Prototype Windows.UI.Composition vs DirectComposition, recording and recursive-capture behavior. No Windows visual result yet. |
-| Projected input | Native TSF/UIA integration and transformed caret/IME still need proof. |
+| Compositor/backdrop | Native integration builds and passes automated tests. Updated live blur appearance, recording/cursor and capture behavior still need laptop verification. |
+| Projected input | Retained DirectWrite/TSF fixtures pass; the user verified Chinese typing and selection in the tilted editor. Japanese/Korean candidates, accessibility and full-module editing remain unverified. |
 | Direct tray drop | No verified equivalent for the Mac menu-bar drop target. Prototype before promising. |
 | OS Focus/DND | Restricted OS capability; timer parity required, system integration may be deferred. |
 | Media providers/lyrics/routing | Provider and codec dependent; test available Windows apps and APIs. |
 | Global account | Source support exists; live Global testing outstanding on both this handoff and the future Windows client. |
-| Architecture/installer/updater | Proposed only; no Windows package, signature or benchmark exists. |
+| Architecture/installer/updater | Native builds and automated tests pass. A complete app, installer/updater, signing and full-app performance remain unverified. |
 
 Suggested first prompt for Codex on the Windows laptop:
 
