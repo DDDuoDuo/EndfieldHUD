@@ -13,7 +13,7 @@ void need(bool value,const char* message){if(!value)throw std::invalid_argument(
 void gpuMatrix(const Matrix4& m){for(auto v:m.values)need(std::isfinite(v)&&std::abs(v)<=std::numeric_limits<float>::max(),"Module projection exceeds GPU range");}
 bool sameRect(const core::MotionRect&a,const core::MotionRect&b){return a.x==b.x&&a.y==b.y&&a.width==b.width&&a.height==b.height;}
 template<class Path>bool samePath(const Path&a,const Path&b){for(std::size_t i=0;i<a.size();++i)for(std::size_t j=0;j<a[i].size();++j)if(a[i][j].x!=b[i][j].x||a[i][j].y!=b[i][j].y)return false;return true;}
-bool sameShutter(const std::optional<PlaneShutter>&a,const std::optional<PlaneShutter>&b){return a.has_value()==b.has_value()&&(!a||(a->worldToLocal==b->worldToLocal&&samePath(a->strips,b->strips)));}
+bool sameShutter(const std::optional<PlaneShutter>&a,const std::optional<PlaneShutter>&b){return a.has_value()==b.has_value()&&(!a||(*a==*b));}
 bool sameRegistration(const std::optional<ModuleRegistrationPlacement>&a,const std::optional<ModuleRegistrationPlacement>&b){
     if(a.has_value()!=b.has_value())return false;if(!a)return true;
     return a->world==b->world&&a->parentOpacity==b->parentOpacity&&samePath(a->local.path,b->local.path)&&

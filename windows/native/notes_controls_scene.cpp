@@ -120,7 +120,7 @@ bool NativeNotesControlsScene::updatePose(const Matrix&world,float opacity,doubl
     bool active{};for(const auto&pair:i.tracks)for(const auto&t:pair)active|=t.active;
     bool sameMasks=i.previousMaskCount==ownerMasks.size();for(std::size_t n=0;sameMasks&&n<ownerMasks.size();++n)sameMasks=i.previousMasks[n].worldToLocal==ownerMasks[n].worldToLocal&&i.previousMasks[n].bounds==ownerMasks[n].bounds&&i.previousMasks[n].cornerRadius==ownerMasks[n].cornerRadius;
     // Shutter is fixed-sized numeric data. Comparison needs no heap/string work.
-    const auto sameShutter=[&]{if(i.previousShutter.has_value()!=shutter.has_value())return false;if(!shutter)return true;if(i.previousShutter->worldToLocal!=shutter->worldToLocal)return false;for(std::size_t a=0;a<shutter->strips.size();++a)for(std::size_t b=0;b<shutter->strips[a].size();++b){const auto&x=i.previousShutter->strips[a][b];const auto&y=shutter->strips[a][b];if(x.x!=y.x||x.y!=y.y)return false;}return true;};
+    const auto sameShutter=[&]{return i.previousShutter==shutter;};
     if(i.posed&&!active&&i.previousWorld==world&&i.previousOpacity==opacity&&i.previousOffsets==offsets&&sameMasks&&sameShutter()){i.lastTime=time;return false;}
     for(std::size_t n=0;n<i.surfaces.size();++n){const auto&s=i.surfaces[n];auto&p=i.placements[n];const auto move=s.toolbar==NotesControlSurface::none?0:offsets[s.toolbar];
         p.world=world*Matrix::translation(0,move)*s.local;p.opacity=s.opacity*opacity;

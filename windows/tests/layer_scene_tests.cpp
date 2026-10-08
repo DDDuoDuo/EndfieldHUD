@@ -73,7 +73,7 @@ void composition(Renderer&renderer,LayerRasterizer&raster,const LayerRasterOptio
     scene.present(renderer,poses);renderer.draw(false);
     pixel(renderer.readback(),13,16,{255,0,0,255});pixel(renderer.readback(),22,16,{0,0,255,255});
     const auto maskBefore=renderer.stats();allocations=0;counting=true;
-    try{for(unsigned i=0;i<120;++i){shutter.strips=endfield::core::ModuleTransitionStyle::shutterKeyframe(double(i)/119,{-1,0});notes.setGroupShutter(shutter);scene.present(renderer,poses);}}
+    try{for(unsigned i=0;i<120;++i){shutter.moduleStrips()=endfield::core::ModuleTransitionStyle::shutterKeyframe(double(i)/119,{-1,0});notes.setGroupShutter(shutter);scene.present(renderer,poses);}}
     catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&renderer.stats().meshUploads==maskBefore.meshUploads&&renderer.stats().textureUploads==maskBefore.textureUploads&&renderer.stats().objectBufferAllocations==maskBefore.objectBufferAllocations,"Combined shutter animation only changes fixed drawing constants");
     auto invalidShutter=shutter;invalidShutter.worldToLocal.values[0]=std::numeric_limits<double>::quiet_NaN();

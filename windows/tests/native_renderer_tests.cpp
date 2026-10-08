@@ -120,13 +120,13 @@ void shutterCoverage(Renderer& renderer, DrawObject& object) {
     for (const auto direction : {MotionPoint{-1,0}, MotionPoint{1,0}, MotionPoint{0,-1}, MotionPoint{0,1}})
         for (bool revealing : {false, true})
             for (double elapsed : {0., .003, .054, .125, .21, .299, .3}) {
-                shutter.strips = ModuleTransitionStyle::shutterAt(elapsed, direction, revealing);
+                shutter.moduleStrips() = ModuleTransitionStyle::shutterAt(elapsed, direction, revealing);
                 object.shutter = shutter;
                 renderer.setDrawList(std::span(&object, 1)); renderer.draw(false);
                 const auto image = renderer.readback();
                 for (unsigned y = 0; y < image.height; ++y) for (unsigned x = 0; x < image.width; ++x) {
                     const Point local{(x + .5) * 440 / image.width, (y + .5) * 440 / image.height};
-                    const bool covered = shutterContains(shutter.strips, local);
+                    const bool covered = shutterContains(shutter.moduleStrips(), local);
                     pixel(image, x, y, covered ? std::array<int,4>{0,0,255,255} : std::array<int,4>{0,0,0,0}, 0,
                         "Original six-strip union matches polygon coverage at every owned pixel center");
                     coveredPixels += covered ? 1u : 0u; hiddenPixels += covered ? 0u : 1u;
@@ -136,19 +136,19 @@ void shutterCoverage(Renderer& renderer, DrawObject& object) {
 
     // Keep positive-area strips even when thinner than one device pixel; only
     // truly collapsed endpoints are absent from the union's active strip set.
-    shutter = {}; shutter.strips[0] = {{{0,0},{1e-15,0},{1e-15,1},{0,1},{0,1}}};
+    shutter = {}; shutter.moduleStrips()[0] = {{{0,0},{1e-15,0},{1e-15,1},{0,1},{0,1}}};
     object.shutter = shutter; renderer.setDrawList(std::span(&object, 1)); renderer.draw(false);
     const auto thin = renderer.readback();
     check(std::all_of(thin.pixels.begin(), thin.pixels.end(), [](auto c) { return c == 0; }),
         "A positive-area subpixel strip remains valid without opening the plane");
 
     // Explicit large bevel ensures this cannot pass as a rectangle-only mask.
-    shutter = {}; shutter.strips[0] = {{{-1,-1},{.75,-1},{.75,.25},{0,1},{-1,1}}};
+    shutter = {}; shutter.moduleStrips()[0] = {{{-1,-1},{.75,-1},{.75,.25},{0,1},{-1,1}}};
     object.shutter = shutter; renderer.setDrawList(std::span(&object, 1)); renderer.draw(false);
     auto image = renderer.readback();
     pixel(image, 20, 8, {0,0,255,255}, 0, "Pentagonal bevel keeps its interior");
     pixel(image, 26, 4, {0,0,0,0}, 0, "Pentagonal bevel removes a point inside its bounding rectangle");
-    std::reverse(shutter.strips[0].begin(), shutter.strips[0].end());
+    std::reverse(shutter.moduleStrips()[0].begin(), shutter.moduleStrips()[0].end());
     object.shutter = shutter; renderer.setDrawList(std::span(&object, 1)); renderer.draw(false);
     check(renderer.readback().pixels == image.pixels, "Reversed polygon winding preserves exact shader coverage");
     shutter.worldToLocal.values[12] = .5;
@@ -160,7 +160,7 @@ void shutterCoverage(Renderer& renderer, DrawObject& object) {
     check(std::all_of(image.pixels.begin(), image.pixels.end(), [](auto c) { return c == 0; }),
         "A shutter plane behind its homogeneous camera cannot reveal pixels");
 
-    shutter = {}; shutter.strips[0] = {{{-1,-1},{1,-1},{1,1},{1,1},{-1,1}}};
+    shutter = {}; shutter.moduleStrips()[0] = {{{-1,-1},{1,-1},{1,1},{1,1},{-1,1}}};
     object.shutter = shutter; object.masks = {{Matrix4{}, {-1,-1,1,2}}};
     renderer.setDrawList(std::span(&object, 1)); renderer.draw(false); image = renderer.readback();
     pixel(image, 8, 16, {0,0,255,255}, 0, "Full-open repeated bevel edge intersects ancestor masks");
@@ -168,7 +168,7 @@ void shutterCoverage(Renderer& renderer, DrawObject& object) {
     object.masks.clear();
     const auto before = renderer.stats();
     for (unsigned i = 0; i < 120; ++i) {
-        shutter.strips = ModuleTransitionStyle::shutterAt(static_cast<double>(i) * .3 / 120, {-1,0}, true);
+        shutter.moduleStrips() = ModuleTransitionStyle::shutterAt(static_cast<double>(i) * .3 / 120, {-1,0}, true);
         shutter.worldToLocal = {}; shutter.worldToLocal.values[0] = 220; shutter.worldToLocal.values[5] = -220;
         shutter.worldToLocal.values[12] = shutter.worldToLocal.values[13] = 220;
         object.shutter = shutter; renderer.setDrawList(std::span(&object, 1)); renderer.draw(false);
@@ -184,13 +184,51 @@ void shutterCoverage(Renderer& renderer, DrawObject& object) {
     renderer.setDrawList(batch); renderer.draw(false); const auto preserved = renderer.readback().pixels;
     const auto priorUploads = renderer.stats().objectUploads;
     batch[0].opacity = .1f; batch[1].shutter = PlaneShutter{};
-    batch[1].shutter->strips[0] = {{{0,0},{1,0},{.2,.2},{1,1},{0,1}}};
+    batch[1].shutter->moduleStrips()[0] = {{{0,0},{1,0},{.2,.2},{1,1},{0,1}}};
     rejects([&] { renderer.setDrawList(batch); }, "Concave shutter rejects the complete retained update before upload");
     check(renderer.stats().objectUploads == priorUploads, "A later invalid shutter leaves earlier object uniforms untouched");
     renderer.draw(false); check(renderer.readback().pixels == preserved, "Rejected shutter batch preserves prior target pixels");
-    batch[1].shutter->strips = {}; batch[1].shutter->strips[0][0].x = std::numeric_limits<double>::quiet_NaN();
+    batch[1].shutter->moduleStrips() = {}; batch[1].shutter->moduleStrips()[0][0].x = std::numeric_limits<double>::quiet_NaN();
     rejects([&] { renderer.setDrawList(batch); }, "Nonfinite shutter vertices fail before any upload");
     renderer.setDrawList(std::span(&object, 1));
+}
+void subsectionCoverage(Renderer& renderer,DrawObject& object){
+    using namespace endfield::core;
+    renderer.setCamera({});object.world={};object.opacity=1;object.textureID.clear();object.linearTint={1,0,0,1};
+    // Original FileShelf viewport and HUDSubsectionTransition path formula.
+    // Test actual hexagonal coverage, independently using polygon ray crossing;
+    // this establishes mask geometry, not Core Animation timing equivalence.
+    Matrix4 inverse;inverse.values[0]=191;inverse.values[5]=-124;inverse.values[12]=200;inverse.values[13]=164;
+    auto pathAt=[](double progress,int direction){SubsectionShutterPath path;constexpr std::array lags{.06,.18,0.,.12};
+        for(std::size_t n=0;n<path.size();++n){const auto width=382*std::clamp(progress*1.2-lags[n],0.,1.);
+            const auto cut=std::min(5.,width*.12)*(1-progress),y=40+n*62.;
+            const auto left=direction>0?391-width:9.,right=left+width;
+            path[n]={{{left+cut,y},{right,y},{right,y+62-cut},{right-cut,y+62},{left,y+62},{left,y+cut}}};}
+        return path;};
+    const auto before=renderer.stats();std::size_t covered{},hidden{};
+    for(int direction:{-1,1})for(double progress:{0.,.013,.19,.43,.72,1.})for(bool reverse:{false,true}){
+        auto path=pathAt(progress,direction);if(reverse)for(auto& polygon:path)std::reverse(polygon.begin(),polygon.end());
+        object.shutter=PlaneShutter{inverse,path};object.masks={{{},{-1,-1,1.63,2}}};
+        renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto pixels=renderer.readback();
+        for(unsigned y=0;y<pixels.height;++y)for(unsigned x=0;x<pixels.width;++x){
+            const Point point{9+(x+.5)*382/pixels.width,40+(y+.5)*248/pixels.height};bool inside{};
+            for(const auto& strip:path){std::array<Point,6> polygon{};for(std::size_t n=0;n<polygon.size();++n)polygon[n]={strip[n].x,strip[n].y};inside|=polygonContains(polygon,point);}
+            inside=inside&&(-1+(x+.5)*2/pixels.width<=.63);
+            pixel(pixels,x,y,inside?std::array<int,4>{0,0,255,255}:std::array<int,4>{0,0,0,0},0,"Four original hexagons intersect the ancestor clip");
+            if(inside)++covered;else ++hidden;
+        }
+    }
+    check(covered&&hidden,"Subsection source paths exercise open and collapsed coverage");
+    const auto after=renderer.stats();check(after.objectBufferAllocations==before.objectBufferAllocations&&after.meshUploads==before.meshUploads&&after.textureUploads==before.textureUploads&&after.resourceBytes==before.resourceBytes,"Subsection uses the existing constant buffer without mask textures or new frame resources");
+    auto path=pathAt(.43,1);PlaneShutter a{inverse,path},b{inverse,path};check(a==b,"Retained subsection equality compares exact geometry");std::get<SubsectionShutterPath>(b.path)[0][0].x+=.1;check(a!=b,"Subsection geometry changes invalidate retained placement");
+    check(a!=PlaneShutter{inverse,ModuleTransitionStyle::shutterKeyframe(.43,{1,0})},"Mask topology participates in retained equality");
+    object.shutter=a;object.masks.clear();renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto preserved=renderer.readback().pixels;const auto uploads=renderer.stats().objectUploads;
+    auto invalid=path;invalid[0][2].x=std::numeric_limits<double>::quiet_NaN();object.shutter=PlaneShutter{inverse,invalid};
+    rejects([&]{renderer.setDrawList(std::span(&object,1));},"Nonfinite hexagon rejects before upload");
+    invalid=path;invalid[0][2]={200,71};object.shutter=PlaneShutter{inverse,invalid};
+    rejects([&]{renderer.setDrawList(std::span(&object,1));},"Concave hexagon rejects before upload");
+    check(renderer.stats().objectUploads==uploads,"Invalid subsection retains prior GPU constants");renderer.draw(false);check(renderer.readback().pixels==preserved,"Invalid subsection preserves prior target pixels");
+    object.shutter.reset();object.masks.clear();renderer.setDrawList(std::span(&object,1));
 }
 void run(HWND window, const std::filesystem::path &shader, bool composition, bool hardware) {
     Renderer renderer;
@@ -271,6 +309,7 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
 
     roundedCoverage(renderer, red);
     shutterCoverage(renderer, red);
+    subsectionCoverage(renderer, red);
 
     const auto beforePointer = renderer.stats();
     for (int i = 0; i < 120; ++i) {

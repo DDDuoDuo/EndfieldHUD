@@ -63,12 +63,25 @@ float4 ScenePS(SceneVertex input) : SV_Target {
         clip(local.w - 0.0000001);
         float3 localPoint = float3(local.xy / local.w, 1);
         bool covered = false;
-        [unroll] for (uint strip = 0; strip < 6; ++strip) {
-            if ((shutterStrips & (1u << strip)) != 0) {
-                bool inside = true;
-                [unroll] for (uint edge = 0; edge < 5; ++edge)
-                    inside = inside && dot(shutterEdges[strip * 5 + edge].xyz, localPoint) >= 0;
-                covered = covered || inside;
+        [branch] if (shutterEnabled == 2) {
+            // Original HUDSubsectionTransition: four six-vertex strips.
+            // Its 24 edges fit the existing 30-edge constant buffer.
+            [unroll] for (uint strip = 0; strip < 4; ++strip) {
+                if ((shutterStrips & (1u << strip)) != 0) {
+                    bool inside = true;
+                    [unroll] for (uint edge = 0; edge < 6; ++edge)
+                        inside = inside && dot(shutterEdges[strip * 6 + edge].xyz, localPoint) >= 0;
+                    covered = covered || inside;
+                }
+            }
+        } else {
+            [unroll] for (uint strip = 0; strip < 6; ++strip) {
+                if ((shutterStrips & (1u << strip)) != 0) {
+                    bool inside = true;
+                    [unroll] for (uint edge = 0; edge < 5; ++edge)
+                        inside = inside && dot(shutterEdges[strip * 5 + edge].xyz, localPoint) >= 0;
+                    covered = covered || inside;
+                }
             }
         }
         clip(covered ? 1 : -1);

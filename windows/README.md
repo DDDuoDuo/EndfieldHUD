@@ -278,11 +278,11 @@ Windows metadata persistence and native file identity/access are now implemented
 in separate bounded adapters. The presentation descriptor also passes 175,453
 checks against 20 detached original Mac canvases on both macOS and Windows.
 Only eight visible cards are retained even for a 10,000-item shelf; ordinary
-scrolling preserves their local artwork. Native rendering, file icons, picker,
-preview and OLE transfer are still separate integration work. Model and descriptor
-tests do not establish those features.
+scrolling preserves their local artwork. Native rendering, file icons, picker and
+preview are still separate integration work. Model and descriptor tests do not
+establish those features.
 
-The current portable build passes 38 suites. The laptop passes the focused
+The current portable build passes 40 suites. The laptop passes the focused
 Notes workspace/editor and Shelf tests; the integrated Notes owner passes 470
 checks, including queued selection notifications between mouse-down and drag.
 The live Notes preview is awaiting user acceptance.
@@ -302,13 +302,28 @@ The Windows adapter now passes 324 synthetic checks, including replacement
 rejection, Unicode paths, hard links, symbolic links, copy-lifetime teardown
 and file/directory rename blocking while leased. It requests read access to
 participate in Windows sharing rules but reads no contents or directory entries.
-No watcher, background scan or second service was added. Native transfers still
-need their own integration and tests.
+No watcher, background scan or second service was added. The copy-only OLE transfer adapter now passes a separate hidden-window Windows
+suite, including actual drop-target registration, Unicode CF_HDROP, coalesced
+notifications, cancellation and leases that survive asynchronous extraction.
+Incoming data is released before the metadata commit, and UI notices remain
+outside COM callbacks. Live Explorer drops, the picker, virtual files and direct
+tray drops are not verified or integrated.
 
 All MSVC targets explicitly use UTF-8 source and execution encodings, including
 on Chinese-language Windows. Incremental deployment must copy changed files
-with fresh timestamps (or rebuild cleanly); extracting older archive timestamps
-over a build tree can leave stale dependent objects after a C++ header changes.
+with fresh timestamps. Public C++ layout changes additionally require a clean
+build or a new build directory: reusing dependent objects produced inconsistent
+fixtures even after fresh deployment timestamps. A clean native build passed
+all nine targeted transfer/rendering/Notes suites and the 470-check Notes owner
+fixture after the mask layout changed.
+
+
+The retained mask shader now supports the source subsection’s four six-vertex
+strips alongside the existing six five-vertex module strips. Both use the same
+fixed constant buffer, with no per-frame bitmap mask. Native readback verifies
+source path coverage, both windings and ancestor clipping while preserving GPU
+resource counts. The source subsection timing and composed shelf reveal remain
+a separate adapter; this result alone is not animation parity.
 
 
 Reference tools (macOS, temporary fixture data only):

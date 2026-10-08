@@ -58,7 +58,7 @@ void synthetic(){
     const auto before=seam.stats().geometryRevision;const auto world=seam.draws()[0].world;
     auto invalid=p;invalid.local.path[5][1].y+=1;
     rejects([&]{seam.update(invalid);},"Unsupported late diagonal stroke rejects before replacing live geometry");
-    invalid=p;invalid.shutter->strips[5][1].x=std::numeric_limits<double>::quiet_NaN();
+    invalid=p;invalid.shutter->moduleStrips()[5][1].x=std::numeric_limits<double>::quiet_NaN();
     rejects([&]{seam.update(invalid);},"Invalid late shutter preserves pending stroke geometry");
     check(seam.stats().geometryRevision==before&&seam.draws()[0].world==world,"Rejected seam update preserves revision and constants");
     check(!seam.update({})&&seam.draws()[0].opacity==0&&seam.stats().geometryRevision==before,"Deactivation retains the last mesh at zero opacity");

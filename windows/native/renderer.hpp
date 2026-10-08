@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <variant>
+#include <type_traits>
 
 namespace endfield::native {
 class SourceGraphics;
@@ -51,14 +53,28 @@ struct PlaneMask {
     // Zero preserves the exact rectangle path; no per-frame mask texture.
     double cornerRadius{};
 };
+// The two original mask topologies share a fixed-size retained value. A
+// variant stores only the active path; there is no heap or duplicate geometry.
+using SubsectionShutterPath = std::array<std::array<core::MotionPoint,6>,4>;
 struct PlaneShutter {
     core::Matrix4 worldToLocal;
-    // Original HUDModuleContent six five-point paths, in wrapper-local units.
-    // Their union is intersected with the ordinary ancestor rectangle masks.
-    // Both windings and repeated/collinear endpoint vertices are supported;
-    // zero-area strips contribute no coverage. This is geometric clipping,
-    // not a claim of Core Animation edge-antialiasing equivalence.
-    core::ShutterPath strips{};
+    std::variant<core::ShutterPath,SubsectionShutterPath> path{core::ShutterPath{}};
+    PlaneShutter()=default;
+    PlaneShutter(core::Matrix4 world,core::ShutterPath value):worldToLocal(world),path(value){}
+    PlaneShutter(core::Matrix4 world,SubsectionShutterPath value):worldToLocal(world),path(value){}
+    core::ShutterPath& moduleStrips(){return std::get<core::ShutterPath>(path);}
+    const core::ShutterPath& moduleStrips()const{return std::get<core::ShutterPath>(path);}
+    // Exact six pentagons for HUDModuleContent, or four hexagons for
+    // HUDSubsectionTransition. Their union intersects ancestor rectangle masks.
+    // Both windings and repeated/collinear vertices are supported; zero-area
+    // strips contribute no coverage. Edge antialiasing parity is separate.
+    bool operator==(const PlaneShutter& other)const noexcept{
+        if(worldToLocal!=other.worldToLocal||path.index()!=other.path.index())return false;
+        return std::visit([&](const auto& value){const auto& rhs=std::get<std::decay_t<decltype(value)>>(other.path);
+            for(std::size_t n=0;n<value.size();++n)for(std::size_t k=0;k<value[n].size();++k)
+                if(value[n][k].x!=rhs[n][k].x||value[n][k].y!=rhs[n][k].y)return false;
+            return true;},path);
+    }
 };
 // Shared CPU validation for retained scene setters and final GPU publication.
 // No device, resource or allocation is needed for a valid source mask.

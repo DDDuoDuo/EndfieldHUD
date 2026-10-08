@@ -72,10 +72,11 @@ struct alignas(16) ObjectUniform {
 };
 static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 96 && sizeof(ObjectUniform) == 1408);
 void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
-    result.shutterEnabled = 1;
+    result.shutterEnabled = static_cast<std::uint32_t>(shutter.path.index())+1;
     result.shutterWorldToLocal = matrix(shutter.worldToLocal);
-    for (std::size_t strip = 0; strip < shutter.strips.size(); ++strip) {
-        const auto& polygon = shutter.strips[strip];
+    std::visit([&](const auto& strips){
+    for (std::size_t strip = 0; strip < strips.size(); ++strip) {
+        const auto& polygon = strips[strip];
         double scale = 1;
         for (const auto vertex : polygon) {
             require(std::isfinite(vertex.x) && std::isfinite(vertex.y) &&
@@ -115,6 +116,7 @@ void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
         }
         result.shutterStrips |= std::uint32_t{1} << strip;
     }
+    },shutter.path);
 }
 ObjectUniform uniforms(const DrawObject &object) {
     identity(object.sourceID);
