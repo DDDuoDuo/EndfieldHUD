@@ -185,12 +185,14 @@ struct Renderer::Impl {
         UINT indexCount{};
         std::uint64_t revision{};
         std::size_t bytes{};
+        bool groupOwned{};
     };
     struct Texture {
         ComPtr<ID3D11ShaderResourceView> view;
         TextureFilter filter{};
         std::uint64_t revision{};
         std::size_t bytes{};
+        bool groupOwned{};
     };
     struct Draw {
         std::string sourceID;
@@ -198,6 +200,18 @@ struct Renderer::Impl {
         Texture *texture{};
         ObjectUniform values{};
         ComPtr<ID3D11Buffer> constants;
+    };
+    struct NativeGroup {
+        NativeGroupTarget requested;
+        core::Rect coverage;
+        unsigned width{},height{};
+        std::size_t bytes{};
+        ComPtr<ID3D11RenderTargetView> target;
+        ComPtr<ID3D11Buffer> camera;
+        DrawObject output;
+        std::vector<Draw> draws;
+        std::vector<ObjectUniform> staged;
+        bool dirty{true};
     };
     DWORD ownerThread{GetCurrentThreadId()};
     HWND window{};
@@ -228,7 +242,29 @@ struct Renderer::Impl {
     Texture white;
     std::vector<Draw> draws;
     std::vector<ObjectUniform> stagedObjectValues;
+    std::map<std::string,std::unique_ptr<NativeGroup>> groups;
+    std::size_t groupBytes{};
     std::unique_ptr<SourceGraphics> source;
+
+    bool assignDraws(std::vector<Draw>&,std::vector<ObjectUniform>&,
+        std::span<const DrawObject>,bool localGroup);
+    bool configureGroup(std::string,const NativeGroupTarget&,std::optional<std::span<const DrawObject>>);
+    void groupDrawBudget(const NativeGroup* replaced,std::size_t count)const{
+        require(count<=Renderer::maximumObjects,"Native group draw count exceeds limits");
+        for(const auto&[id,group]:groups){(void)id;if(group.get()==replaced)continue;
+            require(group->draws.size()<=Renderer::maximumObjects-count,"Aggregate native group draw count exceeds limits");count+=group->draws.size();}
+    }
+    void renderNativeDraws(std::span<const Draw>,ID3D11RenderTargetView*,ID3D11Buffer*,unsigned,unsigned,bool);
+    bool meshReferenced(const Mesh* mesh)const{
+        for(const auto&draw:draws)if(draw.mesh==mesh)return true;
+        for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.mesh==mesh)return true;}return false;
+    }
+    bool textureReferenced(const Texture* texture)const{
+        for(const auto&draw:draws)if(draw.texture==texture)return true;
+        for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.texture==texture)return true;}return false;
+    }
+    void invalidate(const Mesh* mesh){for(auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.mesh==mesh){group->dirty=true;break;}}}
+    void invalidate(const Texture* texture){for(auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.texture==texture){group->dirty=true;break;}}}
 
     ~Impl() {
         if (target) target->SetRoot(nullptr);
@@ -411,6 +447,7 @@ void Renderer::resize(std::uint32_t width, std::uint32_t height) {
 bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData input) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
     const auto existing = r.meshes.find(sourceID);
+    require(existing==r.meshes.end()||!existing->second.groupOwned,"Native group output mesh is managed by its group");
     if (existing != r.meshes.end() && existing->second.revision == revision) return false;
     require(existing != r.meshes.end() || r.meshes.size() < maximumMeshes, "Retained mesh count exceeds bounds");
     require(!input.vertices.empty() && input.vertices.size() <= 1000000 && !input.indices.empty() &&
@@ -428,13 +465,14 @@ bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData in
     mesh.vertices = immutableBuffer(r.device.Get(), D3D11_BIND_VERTEX_BUFFER, input.vertices.data(), input.vertices.size_bytes());
     mesh.indices = immutableBuffer(r.device.Get(), D3D11_BIND_INDEX_BUFFER, input.indices.data(), input.indices.size_bytes());
     mesh.indexCount = static_cast<UINT>(input.indices.size()); mesh.revision = revision; mesh.bytes = bytes;
-    r.meshes.insert_or_assign(std::move(sourceID), std::move(mesh));
+    auto updated=r.meshes.insert_or_assign(std::move(sourceID), std::move(mesh));r.invalidate(&updated.first->second);
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + bytes; ++r.counters.meshUploads;
     return true;
 }
 bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureData input) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
     const auto existing = r.textures.find(sourceID);
+    require(existing==r.textures.end()||!existing->second.groupOwned,"Native group output texture is managed by its group");
     if (existing != r.textures.end() && existing->second.revision == revision) return false;
     require(existing != r.textures.end() || r.textures.size() < maximumTextures, "Retained texture count exceeds bounds");
     require(input.width > 0 && input.height > 0 && input.width <= 8192 && input.height <= 8192 &&
@@ -445,16 +483,23 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     const auto nativeBytes = std::size_t(input.width) * input.height * 8;
     r.budget(previousBytes, nativeBytes);
     auto texture = r.texture(input, revision);
-    r.textures.insert_or_assign(std::move(sourceID), std::move(texture));
+    auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + nativeBytes; ++r.counters.textureUploads;
     return true;
 }
-void Renderer::setDrawList(std::span<const DrawObject> objects) {
-    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<ObjectUniform>&staged,
+    std::span<const DrawObject>objects,bool localGroup){
+    auto&r=*this;
     require(objects.size() <= maximumObjects, "Retained draw count exceeds bounds");
-    bool retained = objects.size() == r.draws.size();
+    if(localGroup)for(const auto&object:objects){
+        const auto mesh=r.meshes.find(object.meshID);
+        const auto texture=r.textures.find(object.textureID);
+        require(mesh!=r.meshes.end()&&!mesh->second.groupOwned,"Native group cannot consume a group output mesh");
+        require(object.textureID.empty()||(texture!=r.textures.end()&&!texture->second.groupOwned),"Native group cannot consume a group output texture");
+    }
+    bool retained = objects.size() == activeDraws.size();
     for (std::size_t i = 0; retained && i < objects.size(); ++i) {
-        const auto &object = objects[i]; const auto &draw = r.draws[i];
+        const auto &object = objects[i]; const auto &draw = activeDraws[i];
         const auto mesh = r.meshes.find(object.meshID);
         const auto texture = r.textures.find(object.textureID);
         retained = object.sourceID == draw.sourceID && mesh != r.meshes.end() && &mesh->second == draw.mesh &&
@@ -464,21 +509,22 @@ void Renderer::setDrawList(std::span<const DrawObject> objects) {
         // Validate the complete pose before touching any active GPU constants.
         // Storage was reserved at the last structural commit. Pointer, fade and
         // clipping updates retain both the draw records and their identities.
-        r.stagedObjectValues.resize(objects.size());
-        for (std::size_t i = 0; i < objects.size(); ++i) r.stagedObjectValues[i] = uniforms(objects[i]);
-        try {
+        staged.resize(objects.size());
+        for (std::size_t i = 0; i < objects.size(); ++i) staged[i] = uniforms(objects[i]);
+        bool changed{};
+        {
             for (std::size_t i = 0; i < objects.size(); ++i) {
-                auto &draw = r.draws[i]; const auto &value = r.stagedObjectValues[i];
+                auto &draw = activeDraws[i]; const auto &value = staged[i];
                 if (std::memcmp(&value, &draw.values, sizeof(ObjectUniform)) == 0) continue;
                 D3D11_MAPPED_SUBRESOURCE mapped{};
                 checked(r.context->Map(draw.constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update retained object uniform");
                 std::memcpy(mapped.pData, &value, sizeof(ObjectUniform));
-                r.context->Unmap(draw.constants.Get(), 0); draw.values = value; ++r.counters.objectUploads;
+                r.context->Unmap(draw.constants.Get(), 0); draw.values = value; ++r.counters.objectUploads; changed=true;
             }
-        } catch (...) { reset(); throw; }
-        return;
+        }
+        return changed;
     }
-    r.stagedObjectValues.reserve(objects.size());
+    staged.reserve(objects.size());
     std::vector<Impl::Draw> next;
     next.reserve(objects.size());
     for (std::size_t i = 0; i < objects.size(); ++i) {
@@ -491,8 +537,8 @@ void Renderer::setDrawList(std::span<const DrawObject> objects) {
         draw.sourceID = object.sourceID; draw.mesh = &mesh->second;
         draw.texture = object.textureID.empty() ? &r.white : &texture->second;
         draw.values = uniforms(object);
-        if (i < r.draws.size())
-            draw.constants = r.draws[i].constants;
+        if (i < activeDraws.size())
+            draw.constants = activeDraws[i].constants;
         else {
             D3D11_BUFFER_DESC description{};
             description.ByteWidth = sizeof(ObjectUniform); description.Usage = D3D11_USAGE_DYNAMIC;
@@ -507,27 +553,158 @@ void Renderer::setDrawList(std::span<const DrawObject> objects) {
     // Validate/build the entire list before changing any currently bound
     // constants. Stable slots reuse their buffer during opacity/transform
     // animation; only changed numeric values are uploaded here, never in draw.
-    try {
-        for (std::size_t i = 0; i < std::min(next.size(), r.draws.size()); ++i)
-            if (std::memcmp(&next[i].values, &r.draws[i].values, sizeof(ObjectUniform)) != 0) {
+    {
+        for (std::size_t i = 0; i < std::min(next.size(), activeDraws.size()); ++i)
+            if (std::memcmp(&next[i].values, &activeDraws[i].values, sizeof(ObjectUniform)) != 0) {
                 D3D11_MAPPED_SUBRESOURCE mapped{};
                 checked(r.context->Map(next[i].constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update retained object uniform");
                 std::memcpy(mapped.pData, &next[i].values, sizeof(ObjectUniform));
                 r.context->Unmap(next[i].constants.Get(), 0);
                 ++r.counters.objectUploads;
             }
-    } catch (...) {
-        // Earlier slots may already have new GPU bytes. Do not leave old CPU
-        // comparisons attached to those partially updated buffers on retry.
-        reset();
-        throw;
     }
-    r.draws = std::move(next);
+    activeDraws = std::move(next);
+    return true;
+}
+void Renderer::setDrawList(std::span<const DrawObject>objects){
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();
+    try{(void)r.assignDraws(r.draws,r.stagedObjectValues,objects,false);}
+    catch(const RendererError&){reset();throw;}
+}
+bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&requested,
+    std::optional<std::span<const DrawObject>>objects){
+    identity(id);require(id.size()<=480,"Native group ID exceeds generated-identity bounds");
+    const auto&b=requested.localBounds;const auto density=requested.pixelsPerPoint;
+    require(std::isfinite(density)&&density>0&&density<=16,"Invalid native group density");
+    require(std::isfinite(b.x)&&std::isfinite(b.y)&&std::isfinite(b.width)&&std::isfinite(b.height)&&b.width>0&&b.height>0,
+        "Invalid native group local bounds");
+    const double left=std::floor(b.x*density),top=std::floor(b.y*density),right=std::ceil((b.x+b.width)*density),bottom=std::ceil((b.y+b.height)*density);
+    require(std::isfinite(left)&&std::isfinite(top)&&std::isfinite(right)&&std::isfinite(bottom)&&right>left&&bottom>top&&right-left<=8192&&bottom-top<=8192&&
+        (right-left)*(bottom-top)<=Renderer::maximumNativeGroupPixels,"Native group pixel bounds exceed limits");
+    const auto pixelWidth=static_cast<unsigned>(right-left),pixelHeight=static_cast<unsigned>(bottom-top);
+    const core::Rect coverage{left/density,top/density,pixelWidth/density,pixelHeight/density};
+    for(double value:{coverage.x,coverage.y,coverage.x+coverage.width,coverage.y+coverage.height})
+        require(std::isfinite(value)&&std::abs(value)<=std::numeric_limits<float>::max(),"Native group coverage exceeds GPU range");
+    // Complete child validation happens before target allocation or any active
+    // constants change, including combined bounds/content transactions.
+    if(objects){require(objects->size()<=Renderer::maximumObjects,"Native group draw count exceeds limits");
+        for(const auto&object:*objects){(void)uniforms(object);const auto mesh=meshes.find(object.meshID);
+            const auto texture=textures.find(object.textureID);
+            require(mesh!=meshes.end()&&!mesh->second.groupOwned,"Native group cannot consume a missing/group output mesh");
+            require(object.textureID.empty()||(texture!=textures.end()&&!texture->second.groupOwned),"Native group cannot consume a missing/group output texture");
+        }
+    }
+    const auto found=groups.find(id);
+    if(objects)groupDrawBudget(found==groups.end()?nullptr:found->second.get(),objects->size());
+    if(found!=groups.end()&&found->second->requested==requested){
+        if(!objects)return false;const auto changed=assignDraws(found->second->draws,found->second->staged,*objects,true);
+        found->second->dirty|=changed;return changed;
+    }
+    require(found!=groups.end()||groups.size()<Renderer::maximumNativeGroups,"Native group count exceeds limits");
+    auto candidate=std::make_unique<NativeGroup>();candidate->requested=requested;candidate->coverage=coverage;
+    candidate->width=pixelWidth;candidate->height=pixelHeight;candidate->bytes=std::size_t(pixelWidth)*pixelHeight*8;
+    candidate->output.sourceID="native-group:"+id;candidate->output.meshID=candidate->output.sourceID+"/quad";candidate->output.textureID=candidate->output.sourceID+"/color";
+    const bool existing=found!=groups.end();const auto previous=existing?found->second->bytes:0;
+    require(candidate->bytes<=Renderer::maximumNativeGroupBytes&&groupBytes-previous<=Renderer::maximumNativeGroupBytes-candidate->bytes,
+        "Native group aggregate target budget exceeded");
+    if(!existing){require(!meshes.contains(candidate->output.meshID)&&!textures.contains(candidate->output.textureID),"Native group generated identity collides with a retained resource");
+        require(meshes.size()<Renderer::maximumMeshes&&textures.size()<Renderer::maximumTextures,"Native group output resource count exceeds limits");}
+    constexpr std::size_t quadBytes=4*sizeof(Vertex)+6*sizeof(std::uint32_t);
+    budget(existing?previous+quadBytes+64:0,candidate->bytes+quadBytes+64);
+    // Stage all map/string allocations before any existing constants mutation.
+    std::map<std::string,Mesh>stagedMeshes;stagedMeshes.emplace(candidate->output.meshID,Mesh{});
+    std::map<std::string,Texture>stagedTextures;stagedTextures.emplace(candidate->output.textureID,Texture{});
+    std::map<std::string,std::unique_ptr<NativeGroup>>stagedGroups;
+    if(!existing)stagedGroups.emplace(id,nullptr);
+    const auto x=float(coverage.x),y=float(coverage.y),r=float(coverage.x+coverage.width),bottomPoint=float(coverage.y+coverage.height);
+    require(r>x&&bottomPoint>y,"Native group coverage collapses at GPU precision");
+    const std::array<Vertex,4>vertices{{{{x,y,0},{0,0},{1,1,1,1}},{{r,y,0},{1,0},{1,1,1,1}},{{r,bottomPoint,0},{1,1},{1,1,1,1}},{{x,bottomPoint,0},{0,1},{1,1,1,1}}}};
+    constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};auto&mesh=stagedMeshes.begin()->second;
+    mesh.vertices=immutableBuffer(device.Get(),D3D11_BIND_VERTEX_BUFFER,vertices.data(),sizeof(vertices));
+    mesh.indices=immutableBuffer(device.Get(),D3D11_BIND_INDEX_BUFFER,indices.data(),sizeof(indices));mesh.indexCount=6;mesh.bytes=quadBytes;mesh.groupOwned=true;
+    D3D11_TEXTURE2D_DESC description{};description.Width=pixelWidth;description.Height=pixelHeight;description.MipLevels=description.ArraySize=description.SampleDesc.Count=1;
+    description.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;description.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+    ComPtr<ID3D11Texture2D>targetTexture;checked(device->CreateTexture2D(&description,nullptr,&targetTexture),"Create retained native group target");
+    checked(device->CreateRenderTargetView(targetTexture.Get(),nullptr,&candidate->target),"Create retained native group target view");
+    auto&texture=stagedTextures.begin()->second;checked(device->CreateShaderResourceView(targetTexture.Get(),nullptr,&texture.view),"Create retained native group sampled output");
+    texture.filter=TextureFilter::linear;texture.bytes=candidate->bytes;texture.groupOwned=true;
+    core::Matrix4 camera;camera.values={2./coverage.width,0,0,0,0,-2./coverage.height,0,0,0,0,0,0,-1-2*coverage.x/coverage.width,1+2*coverage.y/coverage.height,0,1};
+    const auto groupCameraValues=matrix(camera);candidate->camera=immutableBuffer(device.Get(),D3D11_BIND_CONSTANT_BUFFER,groupCameraValues.data(),64);
+    if(objects){auto&destination=existing?*found->second:*candidate;(void)assignDraws(destination.draws,destination.staged,*objects,true);}
+    // Map nodes never move after installation: currently published texture and
+    // mesh pointers remain valid when their owned GPU objects are replaced.
+    if(existing){auto&destination=*found->second;
+        meshes.find(destination.output.meshID)->second=std::move(mesh);textures.find(destination.output.textureID)->second=std::move(texture);
+        destination.requested=requested;destination.coverage=coverage;destination.width=pixelWidth;destination.height=pixelHeight;destination.bytes=candidate->bytes;
+        destination.target=std::move(candidate->target);destination.camera=std::move(candidate->camera);destination.dirty=true;
+    }else{
+        stagedGroups.begin()->second=std::move(candidate);meshes.merge(stagedMeshes);textures.merge(stagedTextures);groups.merge(stagedGroups);
+    }
+    groupBytes=groupBytes-previous+std::size_t(pixelWidth)*pixelHeight*8;
+    counters.resourceBytes=counters.resourceBytes-(existing?previous+quadBytes+64:0)+std::size_t(pixelWidth)*pixelHeight*8+quadBytes+64;
+    ++counters.meshUploads;++counters.textureUploads;++counters.nativeGroupTargetAllocations;return true;
+}
+bool Renderer::configureNativeGroup(std::string id,const NativeGroupTarget&target){
+    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();try{return impl_->configureGroup(std::move(id),target,{});}catch(const RendererError&){reset();throw;}
+}
+bool Renderer::configureNativeGroup(std::string id,const NativeGroupTarget&target,std::span<const DrawObject>objects){
+    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();try{return impl_->configureGroup(std::move(id),target,objects);}catch(const RendererError&){reset();throw;}
+}
+bool Renderer::setNativeGroupDraws(const std::string&id,std::span<const DrawObject>objects){
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();const auto found=r.groups.find(id);require(found!=r.groups.end(),"Unknown native group");
+    r.groupDrawBudget(found->second.get(),objects.size());
+    try{const auto changed=r.assignDraws(found->second->draws,found->second->staged,objects,true);found->second->dirty|=changed;return changed;}
+    catch(const RendererError&){reset();throw;}
+}
+const DrawObject&Renderer::nativeGroupOutput(const std::string&id)const{
+    require(impl_!=nullptr,"Renderer is not initialized");impl_->thread();const auto found=impl_->groups.find(id);require(found!=impl_->groups.end(),"Unknown native group");return found->second->output;
+}
+bool Renderer::removeNativeGroup(const std::string&id){
+    if(!impl_)return false;auto&r=*impl_;r.thread();const auto found=r.groups.find(id);if(found==r.groups.end())return false;
+    const auto&group=*found->second;const auto mesh=r.meshes.find(group.output.meshID);
+    const auto color=r.textures.find(group.output.textureID);require(mesh!=r.meshes.end()&&color!=r.textures.end(),"Native group owned resources are missing");
+    if(r.meshReferenced(&mesh->second)||r.textureReferenced(&color->second))return false;
+    r.context->ClearState();r.counters.resourceBytes-=mesh->second.bytes+color->second.bytes+64;r.groupBytes-=group.bytes;
+    r.meshes.erase(mesh);r.textures.erase(color);r.groups.erase(found);return true;
 }
 void Renderer::setCamera(const core::Matrix4 &viewProjection) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     auto next = matrix(viewProjection);
     if (next != r.cameraValues) { r.cameraValues = next; r.cameraDirty = true; }
+}
+void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11RenderTargetView*passTarget,
+    ID3D11Buffer*passCamera,unsigned pixelWidth,unsigned pixelHeight,bool group){
+    auto&r=*this;
+    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(pixelWidth), static_cast<float>(pixelHeight), 0, 1};
+    r.context->RSSetViewports(1, &viewport); r.context->RSSetState(r.raster.Get());
+    r.context->OMSetDepthStencilState(r.noDepth.Get(), 0);
+    ID3D11ShaderResourceView *emptyResource = nullptr;
+    r.context->PSSetShaderResources(0, 1, &emptyResource);
+    auto *linear = passTarget;
+    r.context->OMSetRenderTargets(1, &linear, nullptr);
+    constexpr float clear[4]{};
+    r.context->ClearRenderTargetView(linear, clear);
+    r.context->OMSetBlendState(r.overBlend.Get(), nullptr, UINT_MAX);
+    r.context->IASetInputLayout(r.layout.Get());
+    r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    r.context->VSSetShader(r.sceneVS.Get(), nullptr, 0); r.context->PSSetShader(r.scenePS.Get(), nullptr, 0);
+    auto *camera = passCamera;
+    r.context->VSSetConstantBuffers(0, 1, &camera);
+    UINT stride = sizeof(Vertex), offset = 0;
+    for (const auto &draw : objects) {
+        if (draw.values.opacity == 0 || draw.values.tint[3] == 0) continue;
+        auto *vertices = draw.mesh->vertices.Get();
+        r.context->IASetVertexBuffers(0, 1, &vertices, &stride, &offset);
+        r.context->IASetIndexBuffer(draw.mesh->indices.Get(), DXGI_FORMAT_R32_UINT, 0);
+        auto *constants = draw.constants.Get();
+        r.context->VSSetConstantBuffers(1, 1, &constants); r.context->PSSetConstantBuffers(1, 1, &constants);
+        auto *texture = draw.texture->view.Get();
+        auto *sampler = draw.texture->filter == TextureFilter::nearest ? r.nearestSampler.Get() : r.linearSampler.Get();
+        r.context->PSSetShaderResources(0, 1, &texture); r.context->PSSetSamplers(0, 1, &sampler);
+        r.context->DrawIndexed(draw.mesh->indexCount, 0, 0); ++r.counters.drawCalls;if(group)++r.counters.nativeGroupDrawCalls;
+    }
+    r.context->PSSetShaderResources(0, 1, &emptyResource);
+    r.context->OMSetRenderTargets(0,nullptr,nullptr);
 }
 void Renderer::draw(bool present) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
@@ -549,35 +726,15 @@ void Renderer::draw(bool present) {
         r.context->Unmap(r.cameraBuffer.Get(), 0);
         r.cameraDirty = false; ++r.counters.cameraUploads;
     }
-    const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(r.width), static_cast<float>(r.height), 0, 1};
-    r.context->RSSetViewports(1, &viewport); r.context->RSSetState(r.raster.Get());
-    r.context->OMSetDepthStencilState(r.noDepth.Get(), 0);
-    ID3D11ShaderResourceView *emptyResource = nullptr;
-    r.context->PSSetShaderResources(0, 1, &emptyResource);
-    auto *linear = r.linearView.Get();
-    r.context->OMSetRenderTargets(1, &linear, nullptr);
-    constexpr float clear[4]{};
-    r.context->ClearRenderTargetView(linear, clear);
-    r.context->OMSetBlendState(r.overBlend.Get(), nullptr, UINT_MAX);
-    r.context->IASetInputLayout(r.layout.Get());
-    r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    r.context->VSSetShader(r.sceneVS.Get(), nullptr, 0); r.context->PSSetShader(r.scenePS.Get(), nullptr, 0);
-    auto *camera = r.cameraBuffer.Get();
-    r.context->VSSetConstantBuffers(0, 1, &camera);
-    UINT stride = sizeof(Vertex), offset = 0;
-    for (const auto &draw : r.draws) {
-        if (draw.values.opacity == 0 || draw.values.tint[3] == 0) continue;
-        auto *vertices = draw.mesh->vertices.Get();
-        r.context->IASetVertexBuffers(0, 1, &vertices, &stride, &offset);
-        r.context->IASetIndexBuffer(draw.mesh->indices.Get(), DXGI_FORMAT_R32_UINT, 0);
-        auto *constants = draw.constants.Get();
-        r.context->VSSetConstantBuffers(1, 1, &constants); r.context->PSSetConstantBuffers(1, 1, &constants);
-        auto *texture = draw.texture->view.Get();
-        auto *sampler = draw.texture->filter == TextureFilter::nearest ? r.nearestSampler.Get() : r.linearSampler.Get();
-        r.context->PSSetShaderResources(0, 1, &texture); r.context->PSSetSamplers(0, 1, &sampler);
-        r.context->DrawIndexed(draw.mesh->indexCount, 0, 0); ++r.counters.drawCalls;
+    for(auto&[id,group]:r.groups){(void)id;if(!group->dirty)continue;
+        const auto*texture=&r.textures.find(group->output.textureID)->second;
+        const bool visible=std::any_of(r.draws.begin(),r.draws.end(),[&](const auto&draw){return draw.texture==texture&&draw.values.opacity>0&&draw.values.tint[3]>0;});
+        if(!visible)continue;
+        r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true);
+        group->dirty=false;++r.counters.nativeGroupRenders;
     }
-    r.context->PSSetShaderResources(0, 1, &emptyResource);
+    r.renderNativeDraws(r.draws,r.linearView.Get(),r.cameraBuffer.Get(),r.width,r.height,false);
+    ID3D11ShaderResourceView*emptyResource=nullptr;
     auto *output = r.outputView.Get();
     r.context->OMSetRenderTargets(1, &output, nullptr);
     // Native captions/modules form a separate premultiplied encoded surface,
@@ -622,19 +779,19 @@ Readback Renderer::readback() {
 bool Renderer::removeMesh(const std::string &sourceID) {
     if (!impl_) return false;
     auto &r = *impl_; r.thread(); auto item = r.meshes.find(sourceID);
-    if (item == r.meshes.end() || std::any_of(r.draws.begin(), r.draws.end(), [&](const auto &draw) { return draw.mesh == &item->second; })) return false;
+    if (item == r.meshes.end() || item->second.groupOwned || r.meshReferenced(&item->second)) return false;
     r.context->ClearState(); r.counters.resourceBytes -= item->second.bytes; r.meshes.erase(item); return true;
 }
 bool Renderer::removeTexture(const std::string &sourceID) {
     if (!impl_) return false;
     auto &r = *impl_; r.thread(); auto item = r.textures.find(sourceID);
-    if (item == r.textures.end() || std::any_of(r.draws.begin(), r.draws.end(), [&](const auto &draw) { return draw.texture == &item->second; })) return false;
+    if (item == r.textures.end() || item->second.groupOwned || r.textureReferenced(&item->second)) return false;
     r.counters.resourceBytes -= item->second.bytes; r.textures.erase(item); return true;
 }
 void Renderer::clearDrawList() { if (impl_) { impl_->thread(); impl_->draws.clear(); impl_->context->ClearState(); } }
 void Renderer::clearResources() {
     if (!impl_) return;
-    impl_->thread(); impl_->draws.clear(); impl_->meshes.clear(); impl_->textures.clear();
+    impl_->thread(); impl_->draws.clear();impl_->groups.clear();impl_->groupBytes=0; impl_->meshes.clear(); impl_->textures.clear();
     impl_->context->ClearState(); impl_->counters.resourceBytes = 0;
     if (impl_->source) impl_->source->clear();
 }
@@ -643,6 +800,7 @@ RendererStats Renderer::stats() const noexcept {
     if (!impl_) return {};
     auto result = impl_->counters;
     result.meshes = impl_->meshes.size(); result.textures = impl_->textures.size(); result.objects = impl_->draws.size();
+    result.nativeGroups=impl_->groups.size();result.nativeGroupBytes=impl_->groupBytes;
     return result;
 }
 RendererDeviceInfo Renderer::deviceInfo() const {

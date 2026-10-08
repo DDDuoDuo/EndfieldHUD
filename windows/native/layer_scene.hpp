@@ -7,6 +7,7 @@
 
 namespace endfield::native {
 class LayerComposition;
+class NativeLayerGroup;
 struct LayerSceneReport {
     std::size_t sourceNodes{},surfaces{},pixelBytes{};
     std::vector<LayerRasterIssue> unsupported;
@@ -70,6 +71,7 @@ public:
     std::span<const DrawObject> draws() const noexcept {return draws_;}
 private:
     friend class LayerComposition;
+    friend class NativeLayerGroup;
     struct Surface {
         std::string id;std::shared_ptr<const LayerRasterImage> image;DrawObject draw;
         std::uint64_t imageRevision{},meshRevision{};
@@ -89,6 +91,7 @@ private:
     std::vector<Resident> uploaded_;
     Renderer* resourceOwner_{};
     LayerComposition* compositionOwner_{};
+    NativeLayerGroup* groupOwner_{};
     std::uint64_t resourceRevision_{},uploadedRevision_{};
     std::uint64_t revision_{},attempt_{};
     void append(const ehud::data::Json&,const core::Matrix4&,float,

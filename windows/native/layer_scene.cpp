@@ -168,15 +168,15 @@ bool LayerScene::release(Renderer& renderer,bool onlyRetired){
 }
 void LayerScene::collectRetiredResources(Renderer& renderer){(void)release(renderer,true);}
 bool LayerScene::releaseResources(Renderer& renderer){
-    need(!compositionOwner_,"Remove a native scene from its composition before releasing its resources");
+    need(!compositionOwner_&&!groupOwner_,"Remove a native scene from its composition/group before releasing its resources");
     return release(renderer,false);
 }
 void LayerScene::upload(Renderer& renderer){
-    need(!compositionOwner_&&!publicationOwner(renderer),"A composed renderer cannot publish an exclusive native draw list");
+    need(!compositionOwner_&&!groupOwner_&&!publicationOwner(renderer),"A composed/grouped renderer cannot publish an exclusive native draw list");
     uploadResources(renderer);renderer.setDrawList(draws_);collectRetiredResources(renderer);
 }
 void LayerScene::detach(Renderer& renderer){
-    need(!compositionOwner_&&!publicationOwner(renderer),"Detach a composed renderer through its composition owner");
+    need(!compositionOwner_&&!groupOwner_&&!publicationOwner(renderer),"Detach a composed/grouped renderer through its owner");
     need(!resourceOwner_||resourceOwner_==&renderer,"Native scene resources belong to another renderer");
     renderer.clearDrawList();(void)release(renderer,false);
 }
@@ -218,7 +218,7 @@ std::span<const DrawObject> LayerScene::prepareDraws(const Matrix& placement){
     return draws_;
 }
 void LayerScene::present(Renderer& renderer,const Matrix& placement){
-    need(!compositionOwner_&&!publicationOwner(renderer),"A composed renderer cannot publish an exclusive native draw list");
+    need(!compositionOwner_&&!groupOwner_&&!publicationOwner(renderer),"A composed/grouped renderer cannot publish an exclusive native draw list");
     renderer.setDrawList(prepareDraws(placement));
 }
 void LayerComposition::checkRenderer(Renderer& renderer)const{
@@ -246,6 +246,7 @@ void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompos
     for(const auto& input:order){const auto scene=input.scene;
         need(scene&&unique.insert(scene).second,"Null or repeated scene in native composition");
         need(!scene->compositionOwner_||scene->compositionOwner_==this,"Native scene already belongs to another composition");
+        need(!scene->groupOwner_,"Publish a retained native group's output instead of its local scene");
         need(!scene->resourceOwner_||scene->resourceOwner_==&renderer,"Native scene resources belong to another renderer");
         need(scene->draws_.size()<=Renderer::maximumObjects-count,"Combined native draw count exceeds limits");
         need(input.after.size()<=Renderer::maximumObjects-count-scene->draws_.size(),"Supplemental native draw count exceeds limits");

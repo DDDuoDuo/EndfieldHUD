@@ -39,6 +39,11 @@ struct TextureData {
     TextureColorSpace colorSpace{TextureColorSpace::sRGB};
     TextureFilter filter{TextureFilter::linear};
 };
+struct NativeGroupTarget {
+    core::Rect localBounds;
+    double pixelsPerPoint{1};
+    bool operator==(const NativeGroupTarget&)const=default;
+};
 struct PlaneMask {
     core::Matrix4 worldToLocal;
     core::Rect bounds;
@@ -76,6 +81,8 @@ struct RendererStats {
     std::size_t meshes{}, textures{}, objects{}, resourceBytes{};
     std::uint64_t meshUploads{}, textureUploads{}, objectUploads{}, objectBufferAllocations{}, cameraUploads{}, drawCalls{}, presents{};
     bool initialized{};
+    std::size_t nativeGroups{},nativeGroupBytes{};
+    std::uint64_t nativeGroupTargetAllocations{},nativeGroupRenders{},nativeGroupDrawCalls{};
 };
 struct RendererDeviceInfo {
     std::string name;
@@ -107,6 +114,8 @@ public:
     static constexpr std::size_t maximumMeshes = 4096, maximumTextures = 2048, maximumObjects = 16384;
     static constexpr std::size_t maximumResourceBytes = 512 * 1024 * 1024;
     static constexpr std::size_t maximumRenderPixels = 4096 * 4096;
+    static constexpr std::size_t maximumNativeGroups=64,maximumNativeGroupPixels=4*1024*1024,
+        maximumNativeGroupBytes=64*1024*1024;
     Renderer();
     ~Renderer();
     Renderer(const Renderer &) = delete;
@@ -122,6 +131,27 @@ public:
     void resize(std::uint32_t width, std::uint32_t height);
     bool setMesh(std::string sourceID, std::uint64_t revision, MeshData mesh);
     bool setTexture(std::string sourceID, std::uint64_t revision, TextureData texture);
+    // A local premultiplied-linear GPU pass on this same device. Its rounded
+    // pixel coverage includes the caller's overflowing shadow/ink bounds. No
+    // CPU bitmap/readback is generated; root pose/fade belongs to outputDraw.
+    // Configuration and child content are caller-owned content events. All
+    // registered IDs and object slots remain retained until explicitly removed.
+    bool configureNativeGroup(std::string id,const NativeGroupTarget&);
+    // Atomic bounds+children content transaction. Invalid children/bounds leave
+    // the previous group, output identity and published target unchanged.
+    bool configureNativeGroup(std::string id,const NativeGroupTarget&,std::span<const DrawObject>);
+    // Whole-list validation precedes mutation. Changed local constants or
+    // referenced mesh/texture replacements dirty the cached target. A group's
+    // own output resources and every other group's output are forbidden inputs
+    // (no nesting/cycles/source-material passes in this plain native API).
+    bool setNativeGroupDraws(const std::string& id,std::span<const DrawObject>);
+    // Borrowed stable IDs/local quad. Caller copies once into retained ordered
+    // publication, then changes only numeric world/opacity/masks/shutter. The
+    // reference remains valid until removeNativeGroup/clearResources/reset.
+    const DrawObject& nativeGroupOutput(const std::string& id)const;
+    // In-use output cannot be removed. Group-held local resource references
+    // likewise prevent direct mesh/texture removal until replaced/cleared.
+    bool removeNativeGroup(const std::string& id);
     // Uploads changed object constants only here. Pointer/camera updates never
     // recreate mesh/texture/object buffers or run layout/bitmap generation.
     // Failure while updating existing uniforms resets the renderer; callers

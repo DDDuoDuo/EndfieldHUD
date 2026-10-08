@@ -89,7 +89,7 @@ clock-page displacement and native font appearance still need visual checks.
 The window host coalesces redraw requests and owns one cancellable wake timer.
 Hidden windows schedule no rendering work. [CI run 37723655009](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37723655009)
 passed all 27 portable suites and 35 Windows suites at commit `7695dc0`.
-The current Notes integration checkpoint passes 33 portable suites and all 47
+The current Notes integration checkpoint passes 34 portable suites and all 52
 Windows suites in a Release build on the laptop. The user has now
 confirmed the updated desktop darkening/blur, contained personal-card highlight,
 faster scrolling and pointer dragging. Display selection has a read-only Windows service and a portable policy
@@ -248,6 +248,29 @@ A later 1920×1080 hardware preflight prepared the synthetic shell in 594 ms, wi
 0.68 ms average pointer preparation/submission. All concealed samples again
 recorded zero CPU time, submitted frames and armed timers. These remain single
 synthetic runs, not full-app launch, CPU-percentage or GPU-time measurements.
+
+Retained native menu groups now apply fade and tilt to one cached GPU surface,
+including the original overflow shadow. Group opacity is verified against
+completed-menu readback at 25%, 50% and 75%; 120 tilt/fade frames allocate no new
+CPU storage or artwork. The renderer enforces bounded group memory and retains
+unchanged source-shell output. A repeat laptop preflight after this change took
+643 ms to prepare; concealed samples again submitted no frames, armed no timer
+and recorded zero process CPU time. These are synthetic checks, not full-app
+performance acceptance.
+
+The plain Notes workspace coordinator now owns card/editor lifetime, selection,
+pinning, confirmed removal and drag/resize through one existing NotesState. It
+retains retired artwork until the shared composition stops borrowing it. Its
+pointer and card-movement tests allocate no new CPU storage after warm-up.
+Visible-shell integration, per-card creation/deletion transitions and the other
+Notes kinds remain separate work.
+
+Temporary File Shelf now has a metadata-only interaction model. Selection,
+range/toggle selection, stable drag order, two-column scrolling, partial removal
+errors, clear confirmation and source Quick Look requests pass 15,691 checks,
+including 1,200 operations/geometry traces from the original Swift implementation.
+Windows metadata persistence, file identity/access, picker/OLE transfer, preview
+and native artwork are not established by these model tests.
 
 All MSVC targets explicitly use UTF-8 source and execution encodings, including
 on Chinese-language Windows. Incremental deployment must copy changed files
