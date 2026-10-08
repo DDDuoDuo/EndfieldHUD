@@ -23,6 +23,89 @@ enum ShellPacketExporter {
         case .null: return NSNull()
         }
     }
+    static func layoutDocument(_ document: HUDSourceWatchDocument) -> [String: Any] {
+        // Export the mounted desktop document. The raw game scene omits the
+        // desktop profile and is not a substitute for these runtime bindings.
+        let components = Dictionary(uniqueKeysWithValues: document.components.map { id, records in
+            (id.rawValue, records.map { record -> [String: Any] in
+                ["id": record.id.rawValue, "type": record.type, "script": record.script as Any? ?? NSNull(),
+                 "data": record.data.mapValues(json)]
+            })
+        })
+        let buttons: [[String: Any]] = document.buttons.map { button in
+            ["node_id": button.nodeID.rawValue, "path": button.path,
+             "labels": button.labels.map { label -> [String: Any] in
+                ["node_id": label.nodeID.rawValue, "text_id": label.textID, "cn_literal": label.literal as Any? ?? NSNull()]
+             }]
+        }
+        let animators: [[String: Any]] = document.animators.map { animator in
+            ["root_node_id": animator.rootID.rawValue, "controller_name": animator.controllerName,
+             "states": animator.states.map { ["name": $0.name, "bound_clip_id": $0.clipID.rawValue] }]
+        }
+        return ["components": components,
+                "spriteByComponent": Dictionary(uniqueKeysWithValues: document.spriteByComponent.map { ($0.key.rawValue, json($0.value)) }),
+                "buttons": buttons, "animators": animators]
+    }
+    static func poseJSON(_ pose: HUDSourceWatchPose) -> [String: Any] {
+        func v2(_ v: HUDSourceVector2?) -> Any { v.map { [$0.x, $0.y] } ?? NSNull() as Any }
+        func v3(_ v: HUDSourceVector3?) -> Any { v.map { [$0.x, $0.y, $0.z] } ?? NSNull() as Any }
+        let transforms = Dictionary(uniqueKeysWithValues: pose.transforms.map { id, t in
+            (id.rawValue, ["position": v3(t.localPosition), "scale": v3(t.localScale),
+                "rotation": t.localRotation.map { [$0.x, $0.y, $0.z, $0.w] } ?? NSNull() as Any,
+                "anchored": v3(t.anchoredPosition3D), "anchorMin": v2(t.anchorMin), "anchorMax": v2(t.anchorMax),
+                "sizeDelta": v2(t.sizeDelta), "pivot": v2(t.pivot), "active": t.active.map { $0 as Any } ?? NSNull(),
+                "components": Dictionary(uniqueKeysWithValues: t.positionComponents.map { (String($0.key), $0.value) })] as [String: Any])
+        })
+        return ["transforms": transforms, "properties": Dictionary(uniqueKeysWithValues: pose.properties.map { ($0.key.rawValue, $0.value) }),
+                "unbound": pose.unboundPaths.sorted(), "unregistered": pose.unregisteredBindings.sorted()]
+    }
+    static func tintsJSON(_ values: [HUDSourceID: SIMD4<Float>]) -> [String: [Float]] {
+        Dictionary(uniqueKeysWithValues: values.map { ($0.key.rawValue, [$0.value.x, $0.value.y, $0.value.z, $0.value.w]) })
+    }
+    static func desktopSettings(_ builder: HUDSourceWatchFrameBuilder) -> [String: Any] {
+        ["hiddenNodes": builder.desktopHiddenNodes.map(\.rawValue).sorted(),
+         "properties": Dictionary(uniqueKeysWithValues: builder.desktopProperties.map { ($0.key.rawValue, $0.value) }),
+         "sprites": Dictionary(uniqueKeysWithValues: builder.desktopSprites.map { ($0.key.rawValue, $0.value) }),
+         "images": Dictionary(uniqueKeysWithValues: builder.desktopImages.map { id, image in
+            (id.rawValue, ["texture": image.texture, "size": [image.size.x, image.size.y],
+                "displaySize": image.displaySize.map { [$0.x, $0.y] } ?? NSNull() as Any] as [String: Any]) }),
+         "normalMaterialNodes": builder.desktopNormalMaterialNodes.map(\.rawValue).sorted(),
+         "graphicStyles": Dictionary(uniqueKeysWithValues: builder.desktopGraphicStyles.map { id, style in
+            (id.rawValue, ["tint": style.tint.map { [$0.x, $0.y, $0.z] } ?? NSNull() as Any, "opacity": style.opacity] as [String: Any]) })]
+    }
+    static func frameBuilderDocument(_ view: HUDSourceWatchView) throws -> [String: Any] {
+        let metadata = try view.document.renderMetadata()
+        func sprite(_ value: HUDSourceImageGeometry.Sprite) -> [String: Any] {
+            func v(_ x: SIMD4<Double>) -> [Double] { [x.x, x.y, x.z, x.w] }
+            return ["size": [value.size.x, value.size.y], "padding": v(value.padding), "border": v(value.border),
+                "outer": v(value.outer), "inner": v(value.inner), "pixelsPerUnit": value.pixelsPerUnit, "textureID": value.textureID]
+        }
+        var variants: [String: [String: String]] = [:], propertyTypes: [String: Any] = [:]
+        for base in Set(metadata.materials.keys.map(\.rawValue) + ["__ui_default"]).sorted() {
+            for clip in [false, true] { for soft in [false, true] {
+                guard let key = view.renderer.materialKey(named: base, clipRect: clip, alphaClip: false, softMask: soft) else { continue }
+                variants[base, default: [:]]["\(clip ? 1 : 0)\(soft ? 1 : 0)"] = key
+                if propertyTypes[key] == nil { propertyTypes[key] = try view.renderer.shellPacketMaterial(key)["propertyTypes"] }
+            } }
+        }
+        let profileHover: Any = view.document.desktopProfileCard.map { card in
+            ["rootID": card.scene.rootID.rawValue, "buttonIDs": card.buttonIDs.map(\.rawValue).sorted(),
+             "nodeIDs": card.scene.nodes.map { $0.id.rawValue }.sorted()] as [String: Any]
+        } ?? NSNull()
+        return ["scope": "includeDomain=false; includeSourceText=false; widgets=nil; original mounted desktop frame builder",
+            "profileHover": profileHover,
+            "sprites": Dictionary(uniqueKeysWithValues: metadata.sprites.map { ($0.key.rawValue, sprite($0.value)) }),
+            "sourceSprites": metadata.sourceSprites.mapValues(sprite),
+            "textureSizes": metadata.textureSizes.mapValues { [$0.x, $0.y] },
+            "materials": Dictionary(uniqueKeysWithValues: metadata.materials.map { ($0.key.rawValue, json($0.value)) }),
+            "materialVariants": variants, "materialPropertyTypes": propertyTypes,
+            "sourceMeshNames": Dictionary(uniqueKeysWithValues: view.renderer.sourceMeshNames.map { ($0.key.rawValue, $0.value) }),
+            "ambientRotationNodes": Set(view.document.animation.ambient.curves.filter { $0.group == "m_RotationCurves" }.flatMap(\.nodeIDs))
+                .union(HUDSourceDesktopAmbientMotion.triangleIDs(in: view.document.scene)).map(\.rawValue).sorted(),
+            "profileNodeIDs": view.document.desktopProfileCard?.scene.nodes.map { $0.id.rawValue }.sorted() ?? [],
+            "defaultSelectableTints": tintsJSON(try HUDSourceSelectableColor(document: view.document).colors(at: 0)),
+            "desktopSettings": desktopSettings(view.frameBuilder)]
+    }
     static func floatBytes(_ values: [Float]) -> Data {
         var bytes = Data(capacity: values.count * 4)
         for value in values { var word = value.bitPattern.littleEndian; withUnsafeBytes(of: &word) { bytes.append(contentsOf: $0) } }
@@ -123,7 +206,15 @@ enum ShellPacketExporter {
             materials[id] = m
         }
         func frame(_ frame: HUDSourceWatchFrameBuilder.Frame, camera: HUDSourceWatchCamera.Frame,
-                   view: HUDSourceWatchView, name: String, native: Bool) throws {
+                   view: HUDSourceWatchView, name: String, native: Bool, builderInput: [String: Any]? = nil) throws {
+            if builderInput != nil {
+                // GPU oracle only: excluded from the shipping packet graph.
+                // Submit is synchronous and this reads that exact original draw.
+                let raw = try view.renderer.shellPacketDrawable()
+                var oracle = raw.descriptor
+                oracle.merge(try blob(raw.data, path: "verification/" + name + ".raw-bgra.bin")) { _, new in new }
+                oracle["name"] = name; verificationOracles.append(oracle)
+            }
             var value = try Reference.frameJSON(frame, camera: camera, bounds: view.bounds, view: view, nativeHitQueries: native)
             var batches = value["batches"] as! [[String: Any]]
             for (i, batch) in frame.batches.enumerated() {
@@ -145,6 +236,7 @@ enum ShellPacketExporter {
             }
             value["batches"] = batches; value["gpuCamera"] = try view.renderer.shellPacketCamera()
             value["nativeOverlayStateIncluded"] = native
+            if let builderInput { value["builderInput"] = builderInput }
             if native, let root = view.layer {
                 var entries: [[String: Any]] = []
                 for (index, layer) in (root.sublayers ?? []).enumerated() where layer !== view.renderer.layer {
@@ -195,11 +287,69 @@ enum ShellPacketExporter {
                     let time = Double(step) * duration / 4
                     guard var pose = try playback.sample(at: time, canvasResolution: camera.layout.canvasSize, reduceMotion: false) else { continue }
                     view.applyDesktopButtons(to: &pose, at: 0, reduceMotion: true, forceRebuild: true)
+                    let tints = view.selectableColor.colors(at: 0, reduceMotion: true)
                     let frame = try view.frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
                         verticalNormalizedPosition: 1, desktopNavigation: navigation,
-                        selectableTints: view.selectableColor.colors(at: 0, reduceMotion: true), forceRebuild: true)
+                        selectableTints: tints, forceRebuild: true)
                     try view.renderer.shellPacketSubmit(frame.batches, time: 0)
-                    try self.frame(frame, camera: camera, view: view, name: name + "-\(phase)-\(step)", native: false)
+                    try self.frame(frame, camera: camera, view: view, name: name + "-\(phase)-\(step)", native: false,
+                        builderInput: ["pose": poseJSON(pose), "scroll": 1, "entryCount": count,
+                            "selectableTints": tintsJSON(tints), "desktopSettings": desktopSettings(view.frameBuilder)])
+                }
+            }
+            // Original seeded decorative motion, independently rebuilt at each
+            // sample so the optimized port is checked against the full builder.
+            let ambientMotion = HUDSourceDesktopAmbientMotion(animation: view.document.animation, seed: 0x5eed)
+            for (index, time) in [0.0, 0.371, 1.113].enumerated() {
+                var pose = try view.document.animation.pose(entranceTime: view.document.animation.entrance.lastKeyTime,
+                    ambientTime: nil, exitTime: nil, canvasResolution: camera.layout.canvasSize)
+                view.applyDesktopButtons(to: &pose, at: 0, reduceMotion: true, forceRebuild: true)
+                var ambient = HUDSourceWatchPose(transforms: [:]); ambientMotion.apply(at: time, to: &ambient)
+                ambientMotion.apply(at: time, to: &pose)
+                let tints = view.selectableColor.colors(at: 0, reduceMotion: true)
+                let frame = try view.frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
+                    verticalNormalizedPosition: 0.37, desktopNavigation: navigation, selectableTints: tints, forceRebuild: true)
+                try view.renderer.shellPacketSubmit(frame.batches, time: 0)
+                let input: [String: Any] = ["pose": poseJSON(pose), "ambientPose": poseJSON(ambient),
+                    "canvasResolution": [camera.layout.canvasSize.x, camera.layout.canvasSize.y],
+                    "scroll": 0.37, "entryCount": count, "selectableTints": tintsJSON(tints),
+                    "desktopSettings": desktopSettings(view.frameBuilder)]
+                try self.frame(frame, camera: camera, view: view, name: name + "-ambient-\(index)", native: false, builderInput: input)
+                if index == 2 {
+                    let tilted = HUDSourceWatchCamera.Frame(camera: camera.camera,
+                        worldRoot: try HUDSourceQuaternion(0.02, -0.04, 0.01, 0.99895).matrix() * camera.worldRoot, layout: camera.layout)
+                    let tiltedFrame = try view.frameBuilder.build(pose: pose, worldRoot: tilted.worldRoot,
+                        verticalNormalizedPosition: 0.37, desktopNavigation: navigation, selectableTints: tints, forceRebuild: true)
+                    try view.renderer.shellPacketSubmit(tiltedFrame.batches, time: 0)
+                    try self.frame(tiltedFrame, camera: tilted, view: view, name: name + "-ambient-2-tilted-0", native: false, builderInput: input)
+                }
+            }
+            // Arbitrary source animation/hover/scroll inputs. These samples run
+            // the actual builder and export its input, never interpolate a saved
+            // raster or choose a prebuilt frame for the Windows runtime.
+            let selectable = try HUDSourceSelectableColor(document: view.document)
+            for id in selectable.instanceIDs { selectable.setState(.highlighted, on: id, at: 0) }
+            let samples: [(Double, Double, Double)] = [(0.137, 0.37, 0.019), (0.419, -0.12, 0.057), (0.683, 1.11, 0.123)]
+            for (index, sample) in samples.enumerated() {
+                var pose = try view.document.animation.pose(entranceTime: sample.0, ambientTime: nil, exitTime: nil,
+                    canvasResolution: camera.layout.canvasSize)
+                view.applyDesktopButtons(to: &pose, at: 0, reduceMotion: true, forceRebuild: true)
+                let tints = selectable.colors(at: sample.2)
+                let frame = try view.frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
+                    verticalNormalizedPosition: sample.1, desktopNavigation: navigation, selectableTints: tints, forceRebuild: true)
+                try view.renderer.shellPacketSubmit(frame.batches, time: 0)
+                try self.frame(frame, camera: camera, view: view, name: name + "-arbitrary-\(index)", native: false,
+                    builderInput: ["pose": poseJSON(pose), "scroll": sample.1, "entryCount": count,
+                        "selectableTints": tintsJSON(tints), "desktopSettings": desktopSettings(view.frameBuilder)])
+                for (tiltIndex, q) in [HUDSourceQuaternion(0.02, -0.04, 0.01, 0.99895), HUDSourceQuaternion(-0.04, 0.06, -0.02, 0.9972)].enumerated() {
+                    let tilted = HUDSourceWatchCamera.Frame(camera: camera.camera,
+                        worldRoot: try q.matrix() * camera.worldRoot, layout: camera.layout)
+                    let tiltedFrame = try view.frameBuilder.build(pose: pose, worldRoot: tilted.worldRoot,
+                        verticalNormalizedPosition: sample.1, desktopNavigation: navigation, selectableTints: tints, forceRebuild: true)
+                    try view.renderer.shellPacketSubmit(tiltedFrame.batches, time: 0)
+                    try self.frame(tiltedFrame, camera: tilted, view: view, name: name + "-arbitrary-\(index)-tilted-\(tiltIndex)", native: false,
+                        builderInput: ["pose": poseJSON(pose), "scroll": sample.1, "entryCount": count,
+                            "selectableTints": tintsJSON(tints), "desktopSettings": desktopSettings(view.frameBuilder)])
                 }
             }
         }
@@ -257,11 +407,13 @@ enum ShellPacketExporter {
                 if animation == nil {
                     let data: [String: Any] = ["library": try object(view.document.library), "scene": try object(view.document.scene),
                         "runtimeRoot": json(view.document.runtimeRoot), "controllerTransitions": json(view.document.controllerTransitions),
+                        "mountedDocument": layoutDocument(view.document),
+                        "frameBuilder": try frameBuilderDocument(view),
                         "playback": ["finiteEase": "OutQuad", "openingDuration": view.document.animation.entrance.lastKeyTime,
                             "closingDuration": view.document.animation.exit.lastKeyTime, "ambientDuration": view.document.animation.ambient.lastKeyTime,
-                            "ambientCheckpointsEnabled": false] as [String: Any],
+                            "ambientCheckpointsEnabled": true] as [String: Any],
                         "limitations": ["Native overlay transition curves are not inferred from stable snapshots",
-                            "Randomized desktop ambient motion remains an explicit Mac runtime adapter", "Central module canvases are separate packets"]]
+                            "Seeded desktop ambient samples use the original source motion adapter", "Central module canvases are separate packets"]]
                     animation = try pack.jsonBlob(data, path: "animation.json")
                 }
                 view.conceal()

@@ -6,9 +6,10 @@ a fresh port of the **macOS v1.2.0 build 18 application**, pinned in
 `Resources/` define the UI and behavior. The raw game scene alone is not the app.
 
 The current target builds portable scene, motion and data components, a native
-D3D11/DirectComposition renderer, and event-driven Windows battery, clipboard and
-master-volume services. It does **not** yet produce a runnable HUD or a release
-candidate.
+D3D11/DirectComposition renderer, retained source material and label adapters,
+an event-driven window host, and Windows battery, clipboard and master-volume
+service foundations. It does **not** yet produce a complete runnable HUD or a
+release candidate.
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -48,10 +49,42 @@ allocations, frame targets, CPU models and other modules.
 
 The portable source animation evaluator has been compared with 27,641 samples
 from the original Swift curves and ten complete opening/ambient/closing poses.
-Camera tests compare the actual Mac projection at two viewport sizes. The
-animation evaluator, camera and source graphics own no timers. Full source
-layout writers, button controllers and the application host remain integration
-work.
+Camera tests compare the actual Mac projection at two viewport sizes. The source
+layout writers, finite button controllers, image geometry and Canvas clipping
+are now ported. On the Windows laptop, 36 generated frames pass 1,814,023 checks
+against the original Mac builder, including opening, closing, scrolling, hover
+and compound tilt. The expanded portable comparison also covers 44 frames and
+retained ambient motion, with 2,414,192 checks against the original builder. A
+separate image-geometry comparison verifies original Float
+positions, UVs and indices across 1,864 cases.
+
+Native caption/icon content is rasterized locally and retained while its source
+projection and masks move. The live label bridge passes 538 Windows checks,
+including initial placement, content reload, clipping and repeated pointer
+presentation without new C++ allocations or GPU resources. Local font
+substitution remains explicit; this is not
+a claim of identical Mac and Windows font rasterization. Live generated-frame
+GPU comparisons and complete module integration are still in progress. A
+sequence test exposed stale camera constants when previously hidden materials
+returned after resizing. The fix has a portable regression; its full Windows
+pixel replay is pending.
+
+Selectable hover/press colors now match 22,030 original Swift events, including
+shared targets, interrupted fades and the grouped personal-card highlight. This
+portable check is bit-exact; MSVC comparison remains pending. Ambient updates
+visit the 29 affected descendants instead of resolving all 834 source nodes.
+
+The window host coalesces redraw requests and owns one cancellable wake timer.
+Hidden windows schedule no rendering work. Its hidden-window tests and the
+other 23 Windows test suites pass on the laptop. Visible input, cursor, IME,
+multi-monitor behavior and full-app performance still require acceptance tests.
+
+A compiled original-material catalog avoids runtime JSON and shader compilation.
+Its schema preserves exact material templates, reflected field plans, textures
+and geometry across multiple original frames; older caches remain readable.
+The single-frame cache prepared in 12.5–18.9 ms on the laptop, compared with
+roughly 1.6 seconds for the development JSON path, and produced identical Windows
+readback bytes. These timings measure artwork preparation, not total startup.
 
 Reference tools (macOS, temporary fixture data only):
 
@@ -61,7 +94,8 @@ bash windows/tools/module_reference.sh build/windows-module-reference
 ```
 
 `translate_source_shaders.py`, `compile_source_shaders` and
-`replay_source_packet` form the build/verification path. Their development
+`replay_source_packet`, `compile_source_scene` and `replay_watch_frames` form the
+build/verification path. Their development
 exports, raw readbacks, compiler caches and documentation GIFs are not runtime
 assets and must not be bundled with the application.
 

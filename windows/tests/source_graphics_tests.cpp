@@ -1,14 +1,35 @@
 #include "native/renderer.hpp"
 #include "native/source_graphics.hpp"
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 #include <array>
+#include <atomic>
+#include <cstdlib>
+#include <new>
 #include <cmath>
 #include <iostream>
 #include <span>
+namespace { std::atomic<bool> countAllocations{}; std::atomic<std::size_t> allocations{}; }
+void* operator new(std::size_t size) {
+    if (countAllocations.load(std::memory_order_relaxed)) allocations.fetch_add(1, std::memory_order_relaxed);
+    if (void* value=std::malloc(size?size:1)) return value;
+    throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void* value) noexcept { std::free(value); }
+void operator delete[](void* value) noexcept { std::free(value); }
+#if defined(__cpp_sized_deallocation)
+void operator delete(void* value, std::size_t) noexcept { std::free(value); }
+void operator delete[](void* value, std::size_t) noexcept { std::free(value); }
+#endif
+
 using namespace endfield::native;
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -50,26 +71,52 @@ void run(const std::filesystem::path& shader) {
                                     1,-1,.5f,1,1,0,0,1, -1,-1,.5f,1,1,0,0,1};
     const std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
     const std::array<float,4> tint{1,1,1,1};
-    source.setMesh("quad",1,32,bytes(quad),indices);
-    source.setUniform("tint",bytes(tint));
-    SourceDraw draw{"quad","fixture",0,6,0,{{SourceStage::fragment,0,"tint"}}, {}};
+    const std::string meshID="original-watch-geometry-with-a-realistic-long-identity-retained-across-animation-frames";
+    const std::string uniformID="original-watch-material-constant-with-a-realistic-long-identity-retained-across-animation-frames";
+    source.setMesh(meshID,1,32,bytes(quad),indices);
+    source.setUniform(uniformID,bytes(tint));
+    SourceDraw draw{meshID,"fixture",0,6,0,{{SourceStage::fragment,0,uniformID}}, {}};
     source.setDraws(std::span(&draw,1));
     renderer.draw(false);
     auto image=renderer.readback();
     check(image.pixels[(16*32+16)*4+2]==255 && image.pixels[(16*32+16)*4+3]==255,"Original source pipeline renders retained vertex colors");
     const auto before=source.stats();
-    rejects([&] {source.setMesh("quad",2,32,bytes(quad),std::span(indices).first(3));},"A shorter replacement cannot invalidate an active draw");
-    rejects([&] {source.setMesh("quad",2,16,bytes(quad),indices);},"A smaller stride cannot invalidate the active vertex layout");
+    rejects([&] {source.setMesh(meshID,2,32,bytes(quad),std::span(indices).first(3));},"A shorter replacement cannot invalidate an active draw");
+    rejects([&] {source.setMesh(meshID,2,16,bytes(quad),indices);},"A smaller stride cannot invalidate the active vertex layout");
     check(source.stats().geometryUploads==before.geometryUploads && source.stats().payloadBytes==before.payloadBytes,"Rejected replacements preserve resources and accounting");
-    source.setMesh("quad",1,32,bytes(quad),indices);
-    source.setUniform("tint",bytes(tint));
+    source.setMesh(meshID,1,32,bytes(quad),indices);
+    source.setUniform(uniformID,bytes(tint));
     for(unsigned i=0;i<20;++i) renderer.draw(false);
     check(source.stats().geometryUploads==before.geometryUploads && source.stats().uniformUploads==before.uniformUploads && source.stats().textureUploads==before.textureUploads,"Unchanged frames do not recreate or upload GPU data");
     const std::array<float,4> dim{.25f,1,1,1};
-    source.setUniform("tint",bytes(dim));
+    source.setUniform(uniformID,bytes(dim));
     renderer.draw(false); image=renderer.readback();
     check(std::abs(int(image.pixels[(16*32+16)*4+2])-137)<=1,"Original sRGB attachment encodes linear shader results exactly once");
     check(source.stats().uniformAllocations==before.uniformAllocations && source.stats().uniformUploads==before.uniformUploads+1,"Changed shader constants reuse their native allocation");
+    auto moved=quad;moved[4]=.5f;moved[12]=.5f;moved[20]=.5f;moved[28]=.5f;const auto geometryBefore=source.stats();
+    auto animatedTint=dim;
+    allocations=0; countAllocations=true;
+    try {
+        for(unsigned revision=2;revision<22;++revision) {
+            animatedTint[0]=revision%2==0?.5f:.25f;
+            source.setMesh(meshID,revision,32,bytes(moved),indices);
+            source.setUniform(uniformID,bytes(animatedTint));
+            renderer.draw(false);
+        }
+    } catch(...) { countAllocations=false; throw; }
+    countAllocations=false;
+    check(allocations==0,"Animated original geometry and constants retain long resource identities without C++ heap allocation");
+    check(source.stats().uniformAllocations==geometryBefore.uniformAllocations &&
+          source.stats().uniformUploads==geometryBefore.uniformUploads+20,
+          "Changing constants during geometry animation reuse GPU capacity");
+    check(source.stats().meshBufferAllocations==geometryBefore.meshBufferAllocations&&source.stats().indexUploads==geometryBefore.indexUploads&&
+          source.stats().vertexUploads==geometryBefore.vertexUploads+20,"Repeated source vertex updates retain GPU capacity and do not reupload unchanged indices");
+    renderer.draw(false);image=renderer.readback();check(std::abs(int(image.pixels[(16*32+16)*4+2])-99)<=1,"Retained dynamic vertices preserve original color math and sRGB encoding");
+    source.setMesh(meshID,22,32,bytes(quad),indices);
+    source.setDraws({});const auto beforeShrink=source.stats();source.setMesh(meshID,23,32,bytes(quad),std::span(indices).first(3));
+    check(source.stats().meshBufferAllocations==beforeShrink.meshBufferAllocations&&source.stats().indexUploads==beforeShrink.indexUploads+1,"Smaller triangle count reuses retained index capacity after explicit draw transaction");
+    auto triangleDraw=draw;triangleDraw.indexCount=3;source.setDraws(std::span(&triangleDraw,1));
+    source.setDraws({});source.setMesh(meshID,24,32,bytes(quad),indices);source.setDraws(std::span(&draw,1));
     const std::array<Vertex,4> nativeQuad{{
         {{-1,1,.5f},{0,0},{1,1,1,1}},{{1,1,.5f},{1,0},{1,1,1,1}},
         {{1,-1,.5f},{1,1},{1,1,1,1}},{{-1,-1,.5f},{0,1},{1,1,1,1}}}};

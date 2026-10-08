@@ -33,7 +33,7 @@ struct SourceTexture {
 };
 enum class SourceStage { vertex, fragment };
 struct SourceUniformBinding { SourceStage stage; unsigned slot{}; std::string id; };
-struct SourceTextureBinding { SourceStage stage; unsigned slot{}, samplerSlot{}; std::string id; };
+struct SourceTextureBinding { SourceStage stage; unsigned slot{}, samplerSlot{}; std::string id,propertyName; };
 struct SourceDraw {
     std::string mesh, pipeline;
     unsigned firstIndex{}, indexCount{}, stencilReference{};
@@ -43,6 +43,7 @@ struct SourceDraw {
 struct SourceGraphicsStats {
     std::size_t meshes{}, textures{}, pipelines{}, uniforms{}, draws{}, payloadBytes{};
     std::uint64_t geometryUploads{}, textureUploads{}, uniformUploads{}, uniformAllocations{}, frames{};
+    std::uint64_t meshBufferAllocations{},vertexUploads{},indexUploads{};
 };
 class SourceGraphics final {
 public:
@@ -51,11 +52,11 @@ public:
     ~SourceGraphics();
     SourceGraphics(const SourceGraphics&) = delete;
     SourceGraphics& operator=(const SourceGraphics&) = delete;
-    void setMesh(std::string id, std::uint64_t revision, unsigned stride,
+    void setMesh(const std::string& id, std::uint64_t revision, unsigned stride,
                  std::span<const std::uint8_t> vertices, std::span<const std::uint32_t> indices);
     void setTexture(std::string id, std::uint64_t revision, const SourceTexture& texture);
     void setPipeline(std::string id, const SourcePipeline& pipeline);
-    void setUniform(std::string id, std::span<const std::uint8_t> bytes);
+    void setUniform(const std::string& id, std::span<const std::uint8_t> bytes);
     void setDraws(std::span<const SourceDraw> draws);
     // Source directLDR path: original sRGB attachment, depth32/stencil8 and
     // exact ordered original passes. HDR/postprocess is rejected by the loader

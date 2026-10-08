@@ -168,6 +168,7 @@ struct Renderer::Impl {
     std::map<std::string, Texture> textures;
     Texture white;
     std::vector<Draw> draws;
+    std::vector<ObjectUniform> stagedObjectValues;
     std::unique_ptr<SourceGraphics> source;
 
     ~Impl() {
@@ -392,6 +393,33 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
 void Renderer::setDrawList(std::span<const DrawObject> objects) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     require(objects.size() <= maximumObjects, "Retained draw count exceeds bounds");
+    bool retained = objects.size() == r.draws.size();
+    for (std::size_t i = 0; retained && i < objects.size(); ++i) {
+        const auto &object = objects[i]; const auto &draw = r.draws[i];
+        const auto mesh = r.meshes.find(object.meshID);
+        const auto texture = r.textures.find(object.textureID);
+        retained = object.sourceID == draw.sourceID && mesh != r.meshes.end() && &mesh->second == draw.mesh &&
+            (object.textureID.empty() ? draw.texture == &r.white : texture != r.textures.end() && &texture->second == draw.texture);
+    }
+    if (retained) {
+        // Validate the complete pose before touching any active GPU constants.
+        // Storage was reserved at the last structural commit. Pointer, fade and
+        // clipping updates retain both the draw records and their identities.
+        r.stagedObjectValues.resize(objects.size());
+        for (std::size_t i = 0; i < objects.size(); ++i) r.stagedObjectValues[i] = uniforms(objects[i]);
+        try {
+            for (std::size_t i = 0; i < objects.size(); ++i) {
+                auto &draw = r.draws[i]; const auto &value = r.stagedObjectValues[i];
+                if (std::memcmp(&value, &draw.values, sizeof(ObjectUniform)) == 0) continue;
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                checked(r.context->Map(draw.constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update retained object uniform");
+                std::memcpy(mapped.pData, &value, sizeof(ObjectUniform));
+                r.context->Unmap(draw.constants.Get(), 0); draw.values = value; ++r.counters.objectUploads;
+            }
+        } catch (...) { reset(); throw; }
+        return;
+    }
+    r.stagedObjectValues.reserve(objects.size());
     std::vector<Impl::Draw> next;
     next.reserve(objects.size());
     for (std::size_t i = 0; i < objects.size(); ++i) {

@@ -70,7 +70,7 @@ std::string readText(const std::filesystem::path& path,std::size_t maximum) {
     try {auto bytes=ehud::data::detail::readFile(path,maximum);if(!bytes)throw Error(ErrorCode::missing,"Package file is missing");return std::move(*bytes);}
     catch(const ehud::data::StoreError& error){throw Error(error.code()==ehud::data::StoreErrorCode::tooLarge?ErrorCode::tooLarge:ErrorCode::unavailable,"Package file could not be read safely");}
 }
-Json parse(std::string_view bytes) {try{return Json::parse(bytes,Package::maximumJSONBytes);}catch(...){invalid("Package JSON is invalid or too large");}}
+Json parse(std::string_view bytes,std::size_t maximum=Package::maximumJSONBytes) {try{return Json::parse(bytes,maximum);}catch(...){invalid("Package JSON is invalid or too large");}}
 bool digest(std::string_view value) {if(value.size()!=64)return false;for(const auto c:value)if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')))return false;return true;}
 unsigned pixelBytes(std::string_view format) {
     if(format=="rgba8Unorm"||format=="rgba8Unorm_srgb"||format=="bgra8Unorm"||format=="bgra8Unorm_srgb")return 4;
@@ -212,7 +212,7 @@ Package::Package(std::filesystem::path root):root_(std::move(root)) {
         object(entry);FrameDescriptor frame{string(entry["name"]),registerBlob(entry,maximumJSONBytes)};
         if(!frames_.emplace(frame.name,std::move(frame)).second)invalid("Duplicate frame name");
     }
-    animation_=registerBlob(manifest_["animation"],maximumJSONBytes);
+    animation_=registerBlob(manifest_["animation"],maximumAnimationJSONBytes);
     for(const auto& entry:array(manifest_["shaderAssets"],4096)) {auto blob=registerBlob(entry,maximumJSONBytes);(void)string(entry["sourcePath"],4096);if(!shaderAssets_.emplace(blob.file,blob).second)invalid("Duplicate shader asset");}
     if(manifest_.contains("nativeRasterAssets"))for(const auto& entry:array(manifest_["nativeRasterAssets"],2048)) {
         auto blob=registerBlob(entry);(void)integer(entry["width"],16384);(void)integer(entry["height"],16384);
@@ -316,7 +316,7 @@ BinaryData Package::loadUniformPayload(const UniformDescriptor& uniform) const {
     return read(uniform.data);
 }
 Json Package::loadAnimation() const {
-    const auto blob=read(animation_);auto document=parse(blob.storage);object(document);finiteTree(document);object(document["library"]);
+    const auto blob=read(animation_);auto document=parse(blob.storage,maximumAnimationJSONBytes);object(document);finiteTree(document);object(document["library"]);
     for(const auto& clip:array(document["library"]["clips"],4096)) {object(clip);(void)string(clip["id"]);}
     return document;
 }

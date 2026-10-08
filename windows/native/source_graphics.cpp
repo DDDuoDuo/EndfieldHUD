@@ -1,7 +1,11 @@
 #include "source_graphics.hpp"
 #include "renderer.hpp"
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -50,7 +54,8 @@ ComPtr<ID3D11Buffer> buffer(ID3D11Device* device, UINT flags, const void* bytes,
 }
 }
 struct SourceGraphics::Impl {
-    struct Mesh { ComPtr<ID3D11Buffer> vertices, indices; unsigned stride{}, indexCount{}; std::size_t bytes{}; std::uint64_t revision{}; };
+    struct Mesh { ComPtr<ID3D11Buffer> vertices, indices; unsigned stride{}, indexCount{}; std::size_t bytes{},vertexCapacity{},indexCapacity{};std::uint64_t revision{};
+        std::vector<std::uint32_t> indexData; };
     struct Texture { ComPtr<ID3D11ShaderResourceView> view; ComPtr<ID3D11SamplerState> sampler; std::size_t bytes{}; std::uint64_t revision{}; };
     struct Pipeline { ComPtr<ID3D11VertexShader> vs; ComPtr<ID3D11PixelShader> ps; ComPtr<ID3D11InputLayout> layout;
         ComPtr<ID3D11BlendState> blend; ComPtr<ID3D11DepthStencilState> depth; ComPtr<ID3D11RasterizerState> raster; unsigned vertexBytes{}; };
@@ -93,7 +98,7 @@ SourceGraphics::SourceGraphics(void* device, void* context) : impl_(std::make_un
     impl_->device = static_cast<ID3D11Device*>(device); impl_->context = static_cast<ID3D11DeviceContext*>(context);
 }
 SourceGraphics::~SourceGraphics() = default;
-void SourceGraphics::setMesh(std::string id, std::uint64_t revision, unsigned stride,
+void SourceGraphics::setMesh(const std::string& id, std::uint64_t revision, unsigned stride,
                              std::span<const std::uint8_t> vertices, std::span<const std::uint32_t> indices) {
     auto& r = *impl_; r.thread(); idCheck(id);
     auto old = r.meshes.find(id); if (old != r.meshes.end() && old->second.revision == revision) return;
@@ -111,11 +116,35 @@ void SourceGraphics::setMesh(std::string id, std::uint64_t revision, unsigned st
                  "Original mesh replacement would invalidate a retained draw");
         }
     }
-    const auto size = vertices.size_bytes() + indices.size_bytes(), previous = old == r.meshes.end() ? 0 : old->second.bytes;
-    r.budget(previous, size);
-    Impl::Mesh mesh{buffer(r.device.Get(), D3D11_BIND_VERTEX_BUFFER, vertices.data(), vertices.size_bytes()),
-        buffer(r.device.Get(), D3D11_BIND_INDEX_BUFFER, indices.data(), indices.size_bytes()), stride, static_cast<unsigned>(indices.size()), size, revision};
-    r.meshes.insert_or_assign(std::move(id), std::move(mesh)); r.counters.payloadBytes += size - previous; ++r.counters.geometryUploads;
+    const auto capacity=[](std::size_t previous,std::size_t requested){
+        if(requested<=previous)return previous;std::size_t next=std::max<std::size_t>(previous,16);
+        while(next<requested){if(next>maxBytes/2)return requested;next*=2;}return next;};
+    const auto vertexCapacity=capacity(old==r.meshes.end()?0:old->second.vertexCapacity,vertices.size_bytes());
+    const auto indexCapacity=capacity(old==r.meshes.end()?0:old->second.indexCapacity,indices.size_bytes());
+    const auto size=vertexCapacity+indexCapacity,previous=old==r.meshes.end()?0:old->second.bytes;r.budget(previous,size);
+    const bool newVertex=old==r.meshes.end()||vertexCapacity!=old->second.vertexCapacity;
+    const bool newIndex=old==r.meshes.end()||indexCapacity!=old->second.indexCapacity;
+    const bool changedIndex=old==r.meshes.end()||old->second.indexData.size()!=indices.size()||
+        !std::equal(indices.begin(),indices.end(),old->second.indexData.begin());
+    const auto allocate=[&](UINT flags,std::size_t bytes){D3D11_BUFFER_DESC desc{};desc.ByteWidth=static_cast<UINT>(bytes);desc.BindFlags=flags;
+        desc.Usage=D3D11_USAGE_DYNAMIC;desc.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;ComPtr<ID3D11Buffer> result;
+        okay(r.device->CreateBuffer(&desc,nullptr,&result),"Create retained original mesh capacity");return result;};
+    auto vertexBuffer=newVertex?allocate(D3D11_BIND_VERTEX_BUFFER,vertexCapacity):old->second.vertices;
+    auto indexBuffer=newIndex?allocate(D3D11_BIND_INDEX_BUFFER,indexCapacity):old->second.indices;
+    // Capacity is independent of current count. WRITE_DISCARD permits driver
+    // renaming while the prior submitted frame still reads its old data.
+    const auto upload=[&](ID3D11Buffer* output,const void* data,std::size_t bytes){D3D11_MAPPED_SUBRESOURCE mapped{};
+        okay(r.context->Map(output,0,D3D11_MAP_WRITE_DISCARD,0,&mapped),"Update retained original mesh bytes");
+        std::memcpy(mapped.pData,data,bytes);r.context->Unmap(output,0);};
+    std::vector<std::uint32_t> firstIndices;if(old==r.meshes.end())firstIndices.assign(indices.begin(),indices.end());
+    else if(changedIndex)old->second.indexData.reserve(indices.size()); // before GPU writes
+    upload(vertexBuffer.Get(),vertices.data(),vertices.size_bytes());if(changedIndex)upload(indexBuffer.Get(),indices.data(),indices.size_bytes());
+    if(old==r.meshes.end()){Impl::Mesh mesh;mesh.vertices=std::move(vertexBuffer);mesh.indices=std::move(indexBuffer);mesh.stride=stride;mesh.indexCount=static_cast<unsigned>(indices.size());
+        mesh.bytes=size;mesh.vertexCapacity=vertexCapacity;mesh.indexCapacity=indexCapacity;mesh.revision=revision;mesh.indexData=std::move(firstIndices);r.meshes.emplace(id,std::move(mesh));}
+    else{auto& mesh=old->second;mesh.vertices=std::move(vertexBuffer);mesh.indices=std::move(indexBuffer);mesh.stride=stride;mesh.indexCount=static_cast<unsigned>(indices.size());
+        mesh.bytes=size;mesh.vertexCapacity=vertexCapacity;mesh.indexCapacity=indexCapacity;mesh.revision=revision;if(changedIndex)mesh.indexData.assign(indices.begin(),indices.end());}
+    r.counters.payloadBytes+=size-previous;++r.counters.geometryUploads;++r.counters.vertexUploads;if(changedIndex)++r.counters.indexUploads;
+    r.counters.meshBufferAllocations+=std::uint64_t(newVertex)+std::uint64_t(newIndex);
 }
 void SourceGraphics::setTexture(std::string id, std::uint64_t revision, const SourceTexture& input) {
     auto& r = *impl_; r.thread(); idCheck(id);
@@ -191,7 +220,7 @@ void SourceGraphics::setPipeline(std::string id, const SourcePipeline& input) {
     okay(r.device->CreateRasterizerState(&raster, &pipeline.raster), "Create original raster state");
     r.pipelines.emplace(std::move(id), std::move(pipeline));
 }
-void SourceGraphics::setUniform(std::string id, std::span<const std::uint8_t> bytes) {
+void SourceGraphics::setUniform(const std::string& id, std::span<const std::uint8_t> bytes) {
     auto& r = *impl_; r.thread(); idCheck(id);
     need(!bytes.empty() && bytes.size() <= 65536 && bytes.size() % 16 == 0, "Original constant buffer must be bounded and 16-byte aligned");
     auto old = r.uniforms.find(id);
@@ -200,7 +229,7 @@ void SourceGraphics::setUniform(std::string id, std::span<const std::uint8_t> by
     const auto previous = old == r.uniforms.end() ? 0 : old->second.bytes.size(); r.budget(previous, bytes.size());
     if (old == r.uniforms.end() || previous != bytes.size()) {
         Impl::Uniform value{buffer(r.device.Get(), D3D11_BIND_CONSTANT_BUFFER, bytes.data(), bytes.size(), true), {bytes.begin(), bytes.end()}};
-        r.uniforms.insert_or_assign(std::move(id), std::move(value)); ++r.counters.uniformAllocations;
+        r.uniforms.insert_or_assign(id, std::move(value)); ++r.counters.uniformAllocations;
     } else {
         D3D11_MAPPED_SUBRESOURCE mapped{};
         okay(r.context->Map(old->second.buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update changed original constants");

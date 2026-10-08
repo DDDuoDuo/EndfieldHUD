@@ -84,6 +84,10 @@ std::string sha256(std::span<const std::uint8_t> bytes);
 class Package final {
 public:
     static constexpr std::size_t maximumJSONBytes = 16*1024*1024;
+    // Build-time mounted scene includes the original clip library plus full
+    // component metadata. Frame/manifest limits stay smaller; this is not a
+    // shipping cache or a permission to retain this JSON during animation.
+    static constexpr std::size_t maximumAnimationJSONBytes = 48*1024*1024;
     static constexpr std::size_t maximumBlobBytes = 128*1024*1024;
     static constexpr std::size_t maximumPackageBytes = 1024ull*1024*1024;
     explicit Package(std::filesystem::path explicitPackageRoot);

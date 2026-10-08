@@ -82,6 +82,7 @@ def verify(root, source_root=None):
                 assert stage['file'] in shader_paths
                 assert str(pathlib.PurePosixPath(stage['file']).with_suffix('.spv')) in shader_paths
     names, visible = set(), set()
+    builder_inputs = []
     for desc in report['frames']:
         frame = json.loads(blob(desc))
         assert desc['name'] not in names; names.add(desc['name'])
@@ -119,6 +120,12 @@ def verify(root, source_root=None):
                     name = binding['name']
                     texture = batch['textureOverrides'].get(name, material['textures'].get(name,'__white'))
                     assert texture in textures, 'Unresolved texture: '+texture
+        if 'builderInput' in frame:
+            supplied = frame['builderInput']; builder_inputs.append(supplied)
+            assert {'pose','scroll','entryCount','selectableTints','desktopSettings'} <= supplied.keys()
+            assert math.isfinite(supplied['scroll']) and supplied['entryCount'] >= 0
+            assert set(supplied['pose']['transforms']) <= nodes
+            assert all(len(v) == 4 and all(math.isfinite(x) for x in v) for v in supplied['selectableTints'].values())
         if frame['nativeOverlayStateIncluded']:
             assert frame['nativeLayers']['children']
             assert 'Endministrator' in frame['nativeProfileCaptions'] and 'UID: 1000000000' in frame['nativeProfileCaptions']
@@ -128,6 +135,46 @@ def verify(root, source_root=None):
     animation = json.loads(blob(report['animation']))
     assert animation['library']['clips'] and len(animation['scene']['nodes']) > 0
     assert animation['playback']['finiteEase'] == 'OutQuad'
+    if 'mountedDocument' in animation:
+        mounted = animation['mountedDocument']
+        node_ids = {node['id'] for node in animation['scene']['nodes']}
+        assert set(mounted['components']) <= node_ids
+        assert mounted['components'] and mounted['buttons'] and mounted['animators']
+        assert all(button['node_id'] in node_ids for button in mounted['buttons'])
+        assert all(animator['root_node_id'] in node_ids for animator in mounted['animators'])
+    if 'frameBuilder' in animation:
+        builder = animation['frameBuilder']
+        assert 'includeDomain=false' in builder['scope'] and 'includeSourceText=false' in builder['scope']
+        assert {'sprites','sourceSprites','textureSizes','materials','materialVariants','materialPropertyTypes',
+                'sourceMeshNames','profileNodeIDs','defaultSelectableTints','desktopSettings'} <= builder.keys()
+        assert builder_inputs and any('-arbitrary-' in n for n in names)
+        assert set(builder['profileNodeIDs']) <= node_ids
+        if builder.get('profileHover') is not None:
+            profile = builder['profileHover']
+            assert profile['rootID'] in profile['nodeIDs']
+            assert set(profile['nodeIDs']) == set(builder['profileNodeIDs'])
+            assert set(profile['buttonIDs']) <= set(profile['nodeIDs']) and profile['buttonIDs']
+            assert len(profile['buttonIDs']) == len(set(profile['buttonIDs']))
+        if 'ambientRotationNodes' in builder:
+            ambient_ids = set(builder['ambientRotationNodes'])
+            assert ambient_ids and ambient_ids <= node_ids
+            ambient_inputs = [v for v in builder_inputs if 'ambientPose' in v]
+            assert len(ambient_inputs) >= 4
+            for supplied in ambient_inputs:
+                ambient = supplied['ambientPose']
+                assert set(ambient['transforms']) == ambient_ids
+                assert ambient['properties'] == {} and ambient['unbound'] == [] and ambient['unregistered'] == []
+                assert all(len(value['rotation']) == 4 and value['components'] == {}
+                           and all(v is None for k, v in value.items() if k not in ('rotation', 'components'))
+                           for value in ambient['transforms'].values())
+                assert len(supplied['canvasResolution']) == 2 and all(v > 0 for v in supplied['canvasResolution'])
+        for sprite in list(builder['sprites'].values()) + list(builder['sourceSprites'].values()):
+            assert len(sprite['size']) == 2 and sprite['pixelsPerUnit'] > 0
+            assert all(len(sprite[key]) == 4 for key in ('padding','border','outer','inner'))
+            assert sprite['textureID'] in builder['textureSizes']
+        for base, variants in builder['materialVariants'].items():
+            assert set(variants) <= {'00','01','10','11'}
+            assert all(key in builder['materialPropertyTypes'] for key in variants.values())
     for raster in report['nativeRasterAssets']:
         data = blob(raster)
         assert raster['path'] == raster['file'] and data.startswith(b'\x89PNG\r\n\x1a\n')
