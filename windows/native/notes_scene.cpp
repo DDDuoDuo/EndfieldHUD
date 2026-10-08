@@ -40,7 +40,7 @@ Json descriptor(const Layer&l){
         // The existing rasterizer reports the selected installed fallback.
         out["text"]=Json::Object{{"string",l.text.text},{"fontSize",l.text.fontSize},
             {"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",l.text.semibold?".SFNS-Semibold":l.text.medium?".SFNS-Medium":".SFNS-Regular"},{"pointSize",l.text.fontSize}}},
-            {"foregroundColor",color(l.text.color)},{"alignment","left"},{"wrapped",false},
+            {"foregroundColor",color(l.text.color)},{"alignment","left"},{"wrapped",l.text.wrapped},
             {"truncation",l.text.truncateEnd?"end":"none"},{"runs",Json::Array{}}};
         if(l.text.strikethrough&&!l.text.text.empty()){std::uint32_t units{};for(unsigned char c:l.text.text)if((c&0xc0)!=0x80)units+=c>=0xf0?2:1;out["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,static_cast<double>(units)}},{"attributes",Json::Object{{"NSStrikethrough",1}}}}};}
         if(!l.text.runs.empty()){out["text"]["notesRichLine"]=true;Json::Array runs;runs.reserve(l.text.runs.size());for(const auto&r:l.text.runs)runs.push_back(notesRunDescriptor(r,l.text.color));out["text"]["runs"]=std::move(runs);}
@@ -92,12 +92,19 @@ struct NativeNotesCardScene::Impl {
     std::vector<Feedback> feedback;std::vector<DrawObject> localDraws;std::vector<LayerPlacement> placements;
     std::vector<std::vector<PlaneMask>> masks;
     std::array<DrawObject,1>afterDraws;std::size_t borderSurface{};
+    std::optional<NativeNotesMediaSlot>mediaSlot;
+    std::optional<modules::NotesMediaLayout>mediaLayout;
+    modules::NotesMediaProgressPose mediaProgress;
+    std::array<DrawObject,4>mediaDraws;
+    std::size_t gripSurface{};std::string mediaMesh,mediaTexture;unsigned mediaWidth{},mediaHeight{};
+    Renderer*mediaOwner{};bool mediaUploaded{};
     std::uint64_t revision{},feedbackRevision{};std::optional<double>lastTime;
     NativeNotesSceneStats stats;bool posed{};Matrix priorWorld;core::Rect priorRect;float priorOpacity{};
     Impl(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::optional<NativeNotesExternalEditorAppearance>external)
         :source(&s),scene(r),options(std::move(o)),editorAppearance(external){
         if(external)for(const auto*c:{&external->background,&external->border})for(double value:*c)need(std::isfinite(value)&&value>=0&&value<=1,"Invalid external Notes editor appearance");
         if(external)need(external->background[3]==1,"Source Notes editor background must be opaque");
+        for(auto&draw:mediaDraws)draw.masks.reserve(8);
     }
     void time(double t){need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Notes scene requires a finite monotonic caller clock");lastTime=t;}
     static double value(const Feedback&f,double t){if(!f.active||f.duration<=0)return f.target;const auto p=core::CubicTiming{0,0,.58,1}.value((t-f.start)/f.duration);return f.from+(f.target-f.from)*p;}
@@ -107,6 +114,8 @@ struct NativeNotesCardScene::Impl {
         need(!source->editor()||editorAppearance,"Notes native editor leaf requires explicit external projected editor mode");
         const auto layers=source->layers();validate(layers);need(layers[0].frame.x==0&&layers[0].frame.y==0,"Notes card root must use retained local coordinates");
         const auto&bounds=layers[0].bounds;
+        std::optional<modules::NotesMediaLayout>nextMedia;
+        if(const auto&media=source->media())nextMedia.emplace(bounds.width,bounds.height,media->kind,media->duration,media->legacyManagedImage);
         std::optional<NativeNotesExternalEditorSlot>nextSlot;
         if(const auto&leaf=source->editor()){
             const auto r=leaf->localRect;
@@ -184,8 +193,18 @@ struct NativeNotesCardScene::Impl {
         }
         if(nextSlot){const auto found=scene.surfaceIndex(borderID);need(found.has_value(),"Retained Notes editor border surface is missing");nextBorder=*found;nextAfter=saved[*found];}
         for(auto&f:next){const auto found=scene.surfaceIndex(f.id);need(found.has_value(),"Retained Notes feedback surface is missing");f.surface=*found;}
+        const auto nextGrip=scene.surfaceIndex(grip->id);need(nextGrip.has_value(),"Retained Notes grip surface is missing");
         feedback=std::move(next);localDraws=std::move(saved);placements=std::move(p);masks=std::move(clipMasks);
         afterDraws[0]=std::move(nextAfter);borderSurface=nextBorder;editorSlot=nextSlot;
+        gripSurface=*nextGrip;mediaLayout=std::move(nextMedia);mediaSlot.reset();
+        if(mediaLayout){mediaSlot=NativeNotesMediaSlot{mediaLayout->geometry().content,mediaLayout->geometry().hasSeek};
+            if(mediaMesh.empty())mediaMesh=localDraws.front().sourceID+"/media-quad";
+            for(unsigned n=0;n<3;++n){auto&draw=mediaDraws[n];draw.sourceID=mediaMesh+"/"+std::to_string(n);draw.meshID=mediaMesh;draw.opacity=0;draw.masks.resize(2);}
+            mediaDraws[0].textureID=mediaTexture;
+            const auto colors=mediaLayout->progressColors(source->palette());
+            for(unsigned n=1;n<3;++n){auto&draw=mediaDraws[n];for(unsigned c=0;c<4;++c){const auto v=colors[n][c];draw.linearTint[c]=static_cast<float>(c==3?v:v<=.04045?v/12.92:std::pow((v+.055)/1.055,2.4));}}
+            mediaDraws[3]=localDraws[gripSurface];
+        }
         revision=source->contentRevision();feedbackRevision=source->feedbackRevision();posed=false;++stats.contentUpdates;return true;
     }
 };
@@ -221,6 +240,20 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
         // draw. Do not paint this border below glyph/selection as well.
         i.placements[i.borderSurface].opacity=0;
     }
+    if(i.mediaSlot){
+        const auto fitted=i.mediaWidth&&i.mediaHeight?i.mediaLayout->fittedImage(i.mediaWidth,i.mediaHeight):core::Rect{};
+        const std::array rectangles{fitted,i.mediaProgress.fill,i.mediaProgress.handle};
+        for(unsigned n=0;n<3;++n){auto&draw=i.mediaDraws[n];const auto&rect=rectangles[n];
+            draw.world=world*Matrix::translation(rect.x,rect.y)*Matrix::scale(rect.width,rect.height,1);
+            const bool show=n==0?!i.mediaTexture.empty():i.mediaSlot->hasProgress;
+            draw.opacity=show?opacityValue:0;
+            draw.masks[0]={inverse,{0,0,r.width,r.height},3};
+            draw.masks[1]={inverse,n==0?i.mediaSlot->content:core::Rect{0,0,r.width,r.height},0};
+        }
+        auto&grip=i.mediaDraws[3];const auto&placement=i.placements[i.gripSurface];
+        grip.world=placement.world;grip.opacity=placement.opacity;grip.masks.assign(placement.masks.begin(),placement.masks.end());
+        i.placements[i.gripSurface].opacity=0;
+    }
     i.scene.setPlacements(i.placements);
     i.priorWorld=workspace;i.priorRect=r;i.priorOpacity=opacityValue;i.posed=true;++i.stats.placementUpdates;return true;
 }
@@ -229,5 +262,28 @@ LayerScene&NativeNotesCardScene::scene()noexcept{return impl_->scene;}
 const LayerScene&NativeNotesCardScene::scene()const noexcept{return impl_->scene;}
 std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{return{impl_->afterDraws.data(),impl_->editorSlot?1u:0u};}
 const std::optional<NativeNotesExternalEditorSlot>&NativeNotesCardScene::externalEditorSlot()const noexcept{return impl_->editorSlot;}
+void NativeNotesCardScene::setMediaTexture(std::string texture,unsigned width,unsigned height){
+    auto&i=*impl_;need(i.mediaSlot.has_value(),"Initialize media card before binding pixels");
+    need(texture.size()<=4096&&ehud::data::Json::validUtf8(texture),"Invalid borrowed media identity");
+    need(texture.empty()?(width==0&&height==0):(width>0&&height>0&&width<=65536&&height<=65536),"Invalid media pixel extent");
+    if(i.mediaTexture==texture&&i.mediaWidth==width&&i.mediaHeight==height)return;
+    i.mediaTexture=std::move(texture);i.mediaWidth=width;i.mediaHeight=height;i.mediaDraws[0].textureID=i.mediaTexture;i.posed=false;
+}
+void NativeNotesCardScene::setMediaProgress(modules::NotesMediaProgressPose progress){
+    auto&i=*impl_;need(i.mediaSlot.has_value(),"Initialize media card before progress");
+    for(const auto&r:{progress.fill,progress.handle})for(double v:{r.x,r.y,r.width,r.height})need(std::isfinite(v)&&std::abs(v)<=65536,"Invalid media progress geometry");
+    need(progress.fill.width>=0&&progress.fill.height>=0&&progress.handle.width>=0&&progress.handle.height>=0&&std::isfinite(progress.fraction)&&progress.fraction>=0&&progress.fraction<=1,"Invalid media progress extent");
+    if(i.mediaProgress.fill==progress.fill&&i.mediaProgress.handle==progress.handle&&i.mediaProgress.active==progress.active)return;
+    i.mediaProgress=progress;i.posed=false;
+}
+void NativeNotesCardScene::uploadMedia(Renderer&r){auto&i=*impl_;if(!i.mediaSlot)return;
+    need(!i.mediaOwner||i.mediaOwner==&r,"Media quad belongs to a different renderer");
+    if(i.mediaUploaded)return;
+    const std::array<Vertex,4>vertices{{{{0,0,0},{0,0}},{{1,0,0},{1,0}},{{1,1,0},{1,1}},{{0,1,0},{0,1}}}};
+    constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};r.setMesh(i.mediaMesh,1,{vertices,indices});i.mediaOwner=&r;i.mediaUploaded=true;
+}
+std::span<const DrawObject>NativeNotesCardScene::mediaDraws()const noexcept{return{impl_->mediaDraws.data(),impl_->mediaSlot&&impl_->mediaUploaded?4u:0u};}
+const std::optional<NativeNotesMediaSlot>&NativeNotesCardScene::mediaSlot()const noexcept{return impl_->mediaSlot;}
+bool NativeNotesCardScene::releaseMedia(Renderer&r){auto&i=*impl_;if(!i.mediaUploaded)return true;need(i.mediaOwner==&r,"Cannot retire another renderer's media quad");if(!r.removeMesh(i.mediaMesh))return false;i.mediaUploaded=false;i.mediaOwner=nullptr;return true;}
 NativeNotesSceneStats NativeNotesCardScene::stats()const noexcept{return impl_->stats;}
 } // namespace endfield::native

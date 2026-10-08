@@ -306,7 +306,7 @@ void ClipboardHistory::clear(bool keep_pinned) {
 namespace endfield::native {
 namespace {
 using Microsoft::WRL::ComPtr;
-constexpr unsigned topology_event = 1, volume_event = 2, battery_event = 4, clipboard_event = 8, clipboard_retry_event = 16;
+constexpr unsigned topology_event = 1, volume_event = 2, battery_event = 4, clipboard_event = 8, clipboard_retry_event = 16, application_event = 32;
 std::atomic<UINT_PTR> next_route{1};
 HRESULT last_error() noexcept {
     const auto code = GetLastError(); return code ? HRESULT_FROM_WIN32(code) : E_FAIL;
@@ -427,6 +427,7 @@ public:
     ComPtr<DeviceNotifications> device_notifications;
     ComPtr<IAudioEndpointVolume> endpoint_volume;
     ComPtr<VolumeNotifications> volume_notifications;
+    std::unique_ptr<AudioSessionWorker>session_worker;
     std::wstring selected_endpoint;
     ClipboardSequence clipboard_sequence;
     UINT owner_format{}, history_format{}, png_format{}, drop_effect_format{};
@@ -443,6 +444,7 @@ public:
         volume_registered = false; endpoint_volume.Reset(); volume_notifications.Reset();
     }
     void stop_audio() noexcept {
+        if(session_worker)try{(void)session_worker->pause();}catch(...){}
         if (audio_route) audio_route->events.cancel();
         stop_volume();
         if (device_registered && enumerator && device_notifications) enumerator->UnregisterEndpointNotificationCallback(device_notifications.Get());
@@ -452,6 +454,7 @@ public:
         if (route) route->events.cancel();
         changed = {};
         stop_audio();
+        if(session_worker){session_worker->stop();session_worker.reset();}
         if (clipboard_registered && owner) RemoveClipboardFormatListener(owner);
         clipboard_registered = false;
         if (ac_notification) UnregisterPowerSettingNotification(ac_notification);
@@ -541,6 +544,14 @@ public:
         }
         if (SUCCEEDED(status)) status = read_volume(next);
         if (FAILED(status)) { stop_volume(); next.available = false; next.volume.reset(); next.muted.reset(); next.error = static_cast<std::int32_t>(status); }
+        // One independent MTA belongs to this same service. Only topology and
+        // explicit owner actions drive it; master-volume frames never wake it.
+        next.application_supported=audio.application_supported;next.applications_paused=audio.applications_paused;next.applications=audio.applications;next.application_error=audio.application_error;
+        if(next.controlled_device_id!=audio.controlled_device_id){next.application_supported=false;next.applications_paused=true;}
+        if(!next.controlled_device_id.empty()){
+            if(!session_worker){const auto notifications=route;session_worker=std::make_unique<AudioSessionWorker>(nativeAudioSessionBackendFactory(),[notifications]{notifications->post(application_event);});}
+            if(!session_worker->activate(next.controlled_device_id)){next.application_supported=false;next.application_error=E_PENDING;}
+        }else{if(session_worker)(void)session_worker->pause();next.application_supported=false;next.applications_paused=true;}
         if (next != audio) { audio = std::move(next); notify(ServiceChange::audio); }
         return status;
     }
@@ -549,7 +560,7 @@ public:
         if (audio_active == active) return S_FALSE;
         if (!active) {
             audio_active = false; stop_audio();
-            auto next = audio; next.paused = true; next.available = false;next.can_set_balance=false;
+            auto next = audio; next.paused = true; next.available = false;next.can_set_balance=false;next.applications_paused=true;
             if (next != audio) { audio = std::move(next); notify(ServiceChange::audio); }
             return S_OK;
         }
@@ -562,6 +573,12 @@ public:
         }
         audio_active = true;
         return refresh_audio();
+    }
+    void refresh_applications(){
+        if(!owner_thread()||!session_worker)return;AudioSessionSnapshot snapshot;if(!session_worker->takeSnapshot(snapshot))return;
+        if(snapshot.endpoint!=audio.controlled_device_id)return; // An older queued endpoint cannot relabel the current binding.
+        auto next=audio;next.application_supported=snapshot.supported;next.applications_paused=snapshot.paused||!audio_active;next.applications=std::move(snapshot.applications);next.application_error=snapshot.error;
+        if(next!=audio){audio=std::move(next);notify(ServiceChange::audio);}
     }
     bool excluded_clipboard() const {
         for (const auto format : excluded_formats) if (format && IsClipboardFormatAvailable(format)) return true;
@@ -767,6 +784,7 @@ bool SystemServices::handle_message(UINT message, WPARAM wparam, LPARAM) {
                 // One message-loop retry per native change, never a polling loop.
                 try { impl_->refresh_clipboard(false); } catch (...) { /* Explicit UI refresh can retry. */ }
             }
+            if(events&application_event)impl_->refresh_applications();
         } else if (impl_->audio_route && wparam == impl_->audio_route->token) {
             const auto events = impl_->audio_route->events.drain();
             if (events & topology_event) refresh_audio();
@@ -835,6 +853,20 @@ HRESULT SystemServices::set_output_balance(float balance) {
     status=static_cast<HRESULT>(apply_audio_stereo_balance(balance,{[endpoint](unsigned n,float&v){return static_cast<std::int32_t>(endpoint->GetChannelVolumeLevelScalar(n,&v));},[endpoint](unsigned n,float v){return static_cast<std::int32_t>(endpoint->SetChannelVolumeLevelScalar(n,v,nullptr));}}));
     // Always read back changed/rollback state; no optimistic balanced value.
     (void)impl_->refresh_volume();return status;
+}
+HRESULT SystemServices::set_application_gain(std::string application,float gain){
+    if(!impl_->owner_thread())return RPC_E_WRONG_THREAD;if(!std::isfinite(gain)||gain<0||gain>1||application.empty()||application.size()>4096||application.find('\0')!=application.npos)return E_INVALIDARG;
+    if(!impl_->audio_active||!impl_->session_worker||impl_->audio.applications_paused||!impl_->audio.application_supported)return E_PENDING;
+    if(std::none_of(impl_->audio.applications.begin(),impl_->audio.applications.end(),[&](const auto&a){return a.id==application;}))return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    try{return impl_->session_worker->setGain(std::move(application),gain)?S_OK:E_PENDING;}catch(const std::bad_alloc&){return E_OUTOFMEMORY;}catch(...){return E_FAIL;}
+}
+HRESULT SystemServices::stop_application(std::string application){
+    if(!impl_->owner_thread())return RPC_E_WRONG_THREAD;if(!impl_->session_worker)return S_FALSE;
+    try{return impl_->session_worker->stopApplication(std::move(application))?S_OK:E_PENDING;}catch(const std::bad_alloc&){return E_OUTOFMEMORY;}catch(...){return E_FAIL;}
+}
+HRESULT SystemServices::stop_applications(){
+    if(!impl_->owner_thread())return RPC_E_WRONG_THREAD;if(!impl_->session_worker)return S_FALSE;
+    try{return impl_->session_worker->stopApplications()?S_OK:E_PENDING;}catch(const std::bad_alloc&){return E_OUTOFMEMORY;}catch(...){return E_FAIL;}
 }
 } // namespace endfield::native
 #endif

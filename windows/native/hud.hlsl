@@ -127,3 +127,13 @@ float4 CompositePS(CompositeVertex input) : SV_Target {
     if (alpha <= 0) return 0;
     return float4(encodeSRGB(linearPremultiplied.rgb / alpha) * alpha, alpha);
 }
+// Frame-server video surfaces are encoded straight BGRA8. Convert one texel
+// per output texel before the usual linear-premultiplied scene filtering.
+float4 MediaConvertPS(CompositeVertex input) : SV_Target {
+    float4 encoded = saturate(colorTexture.Load(int3(int2(input.position.xy), 0)));
+    float3 linearRGB = float3(
+        encoded.r <= .04045 ? encoded.r / 12.92 : pow((encoded.r + .055) / 1.055, 2.4),
+        encoded.g <= .04045 ? encoded.g / 12.92 : pow((encoded.g + .055) / 1.055, 2.4),
+        encoded.b <= .04045 ? encoded.b / 12.92 : pow((encoded.b + .055) / 1.055, 2.4));
+    return float4(linearRGB * encoded.a, encoded.a);
+}

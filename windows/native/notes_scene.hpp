@@ -1,5 +1,6 @@
 #pragma once
 #include "modules/notes_presentation.hpp"
+#include "modules/notes_media_presentation.hpp"
 #include "native/layer_scene.hpp"
 #include <memory>
 
@@ -18,7 +19,8 @@ struct NativeNotesExternalEditorSlot {
     // Actual editor glyph/selection clip must honor this radius. The card
     // backing alone does not establish rounded editor-clip parity.
 };
-// Retained native artwork for one source-authored text or checklist workspace card.
+struct NativeNotesMediaSlot { core::Rect content; bool hasProgress{}; };
+// Retained native artwork for one source-authored text, checklist or media card.
 // The caller owns NotesState/NotesCardPresentation, one LayerComposition and
 // its existing Renderer/clock. Nothing here publishes a draw list, creates a
 // device/window/editor, measures text, reads data or schedules frames.
@@ -59,6 +61,15 @@ public:
     // scene replacements. Draw identity/count changes need setEntries().
     std::span<const DrawObject> externalEditorAfterDraws()const noexcept;
     const std::optional<NativeNotesExternalEditorSlot>& externalEditorSlot()const noexcept;
+    // The media owner retains the resident texture; this card owns only one
+    // reusable quad mesh. Append mediaDraws() after scene() in the SAME publisher.
+    // Content/progress changes update identity/numeric pose, never decode/raster.
+    void setMediaTexture(std::string borrowedTextureID,unsigned pixelWidth,unsigned pixelHeight);
+    void setMediaProgress(modules::NotesMediaProgressPose);
+    void uploadMedia(Renderer&);
+    std::span<const DrawObject> mediaDraws()const noexcept;
+    const std::optional<NativeNotesMediaSlot>& mediaSlot()const noexcept;
+    bool releaseMedia(Renderer&); // after removal from shared composition
     NativeNotesSceneStats stats()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;

@@ -62,10 +62,12 @@ std::span<const gpu::LayerCompositionEntry>VolumePreview::entries(){auto&i=*impl
 void VolumePreview::collected(gpu::Renderer&r){impl_->scene.scene().collectRetiredResources(r);}
 void VolumePreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.scene().releaseResources(r)&&i.registration.releaseResources(r),"Detach Volume composition before releasing borrowed resources");i.released=true;}
 gpu::VolumeCallbacks volumeCallbacksFromSystemServices(gpu::SystemServices&service,std::function<void(bool)> activation){gpu::VolumeCallbacks c;c.setActive=std::move(activation);
-    const auto current=[&service](std::string_view id){const auto&s=service.audio();if(!s.available||s.paused)return false;return gpu::volumeSnapshotFromSystemAudio(s).outputID==id;};
+    const auto current=[&service](std::string_view id){const auto&s=service.audio();if(!s.available||s.paused)return false;const auto&endpoint=s.controlled_device_id.empty()?s.default_device_id:s.controlled_device_id;if(endpoint.size()>32767||id.size()>4096)return false;std::array<char,4096>encoded{};const auto length=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,endpoint.data(),static_cast<int>(endpoint.size()),encoded.data(),static_cast<int>(encoded.size()),nullptr,nullptr);return length>0&&std::string_view(encoded.data(),static_cast<std::size_t>(length))==id;};
     c.setVolume=[&service,current](auto endpoint,double value){return std::isfinite(value)&&value>=0&&value<=1&&current(endpoint)&&SUCCEEDED(service.set_master_volume(static_cast<float>(value)));};
     c.setMute=[&service,current](auto endpoint,bool value){return current(endpoint)&&SUCCEEDED(service.set_master_mute(value));};
-    c.setBalance=[&service,current](auto endpoint,double value){return std::isfinite(value)&&value>=-1&&value<=1&&current(endpoint)&&SUCCEEDED(service.set_output_balance(static_cast<float>(value)));};return c;
+    c.setBalance=[&service,current](auto endpoint,double value){return std::isfinite(value)&&value>=-1&&value<=1&&current(endpoint)&&SUCCEEDED(service.set_output_balance(static_cast<float>(value)));};
+    c.setAppGain=[&service](auto application,double value){return std::isfinite(value)&&value>=0&&value<=1&&SUCCEEDED(service.set_application_gain(std::string(application),static_cast<float>(value)));};
+    c.stopApp=[&service](auto application){return SUCCEEDED(service.stop_application(std::string(application)));};c.stopAllApps=[&service]{(void)service.stop_applications();};return c;
 }
 }
 #endif

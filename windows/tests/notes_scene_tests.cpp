@@ -151,10 +151,35 @@ void externalEditorContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster)
     rejects([&]{tinyCard.syncContent();},"Unusual tiny editor/control overlap explicitly rejects unsupported order/rounded clip geometry");check(tinyCard.scene().contentRevision()==0&&!tinyCard.externalEditorSlot(),"Rejected external editor geometry preserves uninitialized scene and slot");
     rejects([&]{gpu::NativeNotesCardScene invalid(presentation,raster,options,gpu::NativeNotesExternalEditorAppearance{{.12,.12,.12,.5},appearance.palette.accent});},"Source editor backing cannot silently become translucent");
 }
+void mediaContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
+    ehud::data::Note note{.id=id1,.kind=ehud::data::NoteKind::image,.x=20,.y=40,.width=210,.height=140,.createdAt=123};
+    mod::NotesState state({note},{[](const auto&){},[](auto){}});state.setWorkspaceBounds({0,0,512,256});
+    mod::NotesCardPresentation presentation(id1);mod::NotesPresentationInput in;in.palette=mod::NotesPalette::source(true,{.2,.8,.5,1});
+    auto media=std::make_shared<mod::NotesMediaCardContent>();media->kind=mod::NotesMediaKind::video;media->duration=10;media->status.state=mod::NotesMediaState::paused;in.media=media;
+    presentation.updateContent(state,in);gpu::LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
+    gpu::NativeNotesCardScene card(presentation,raster,options);card.syncContent();check(card.mediaSlot()->content==core::Rect{5,29,200,84}&&card.mediaSlot()->hasProgress,"Native media slot retains source viewport");
+    card.uploadMedia(renderer);const std::array<std::uint8_t,16>pixels{255,0,0,255,255,0,0,255,255,0,0,255,255,0,0,255};
+    renderer.setTexture("isolated-notes-image",1,{2,2,pixels,gpu::TextureColorSpace::sRGB,gpu::TextureFilter::nearest});card.setMediaTexture("isolated-notes-image",2,2);
+    mod::NotesMediaLayout layout(210,140,mod::NotesMediaKind::video,10);mod::NotesMediaProgress progress(layout);progress.update(2,{},false,false,true,false,0);card.setMediaProgress(progress.sample(0));card.updatePose({},1,0);
+    gpu::LayerComposition composition;const std::array entries{gpu::LayerCompositionEntry{&card.scene(),card.mediaDraws()}};composition.setEntries(renderer,entries);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
+    auto frame=renderer.readback();auto at=[&](unsigned x,unsigned y){return std::size_t(y)*frame.rowBytes+x*4;};
+    check(frame.pixels[at(120,100)+2]>245&&frame.pixels[at(120,100)]<10,"Borrowed resident image paints in aspect-fit slot");
+    check(frame.pixels[at(30,100)+2]<80&&frame.pixels[at(30,100)+3]==255,"Aspect-fit letterbox retains original card background");
+    check(frame.pixels[at(10,100)+3]==0&&card.scene().draws().back().opacity==0&&card.mediaDraws()[3].opacity==1,"Media respects card bounds and final grip appears only once");
+    check(!card.releaseMedia(renderer)&&!renderer.removeTexture("isolated-notes-image"),"Published media resources cannot retire while draw list refers to them");
+    const auto rasterBefore=raster.stats();const auto statsBefore=renderer.stats();allocations=0;counting=true;
+    try{for(unsigned n=0;n<120;++n){const double time=1+n/60.;progress.update(n/12.,{},false,false,true,false,time);card.setMediaProgress(progress.sample(time));core::Matrix4 pose;pose.values[3]=n*.000001;card.updatePose(pose,.8f,time);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0,"120 image tilt/progress frames allocate no CPU storage");
+    check(raster.stats().rasterizations==rasterBefore.rasterizations&&renderer.stats().textureUploads==statsBefore.textureUploads&&renderer.stats().meshUploads==statsBefore.meshUploads,"Media motion/progress retains every raster and GPU resource");
+    rejects([&]{card.setMediaTexture("bad",0,2);},"Invalid dimensions cannot change borrowed image");rejects([&]{card.setMediaProgress({{0,0,-1,2},{},0,false});},"Invalid media progress does not reach renderer");
+    card.setMediaTexture({},0,0);card.updatePose({},1,4);composition.setEntries(renderer,entries);composition.present(renderer);renderer.draw(false);frame=renderer.readback();check(frame.pixels[at(120,100)+2]<80,"Clearing a media frame leaves no stale pixels");
+    composition.detach(renderer);check(card.releaseMedia(renderer)&&renderer.removeTexture("isolated-notes-image"),"Detached card releases its mesh while image owner releases its texture");check(renderer.stats().meshes==0&&renderer.stats().textures==0,"Media teardown leaves no orphaned GPU resources");
+}
+
 }
 int wmain(int argc,wchar_t**argv){try{
     check(argc==2,"Pass original native HUD shader path");const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);check(SUCCEEDED(hr),"Owned fixture COM initializes");
     {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,512,256,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});gpu::LayerRasterizer raster;
-        contracts(renderer,raster);externalEditorContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
+        contracts(renderer,raster);externalEditorContracts(renderer,raster);mediaContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes scene contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes scene contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

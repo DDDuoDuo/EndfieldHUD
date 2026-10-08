@@ -42,7 +42,7 @@ void run(){
     check(NotesMediaLayout::decodeDimension()==512&&NotesMediaLayout::decodeDimension(9999)==768&&NotesMediaLayout::decodeDimension(-3)==32,"Source bounded decode dimensions");
     for(auto invalid:{0.,-1.,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})check(NotesMediaLayout::normalizedFrameDelay(invalid)==.1,"Source invalid GIF delay fallback");
     check(NotesMediaLayout::normalizedFrameDelay({})==.1&&NotesMediaLayout::normalizedFrameDelay(.001)==.04&&NotesMediaLayout::normalizedFrameDelay(999)==600,"Source GIF delay bounds");
-    rejects([]{NotesMediaLayout v(200,100,NotesMediaKind::video);});rejects([&]{video.fittedImage(0,10);});rejects([&]{progress.update(0,{},true,true,true,false,std::numeric_limits<double>::infinity());});
+    NotesMediaLayout pending(200,100,NotesMediaKind::video);check(pending.geometry().hasPlayback&&!pending.geometry().hasSeek,"Loading video keeps playback but has no fabricated duration or seek");rejects([&]{pending.seekSeconds(90);});rejects([&]{video.fittedImage(0,10);});rejects([&]{progress.update(0,{},true,true,true,false,std::numeric_limits<double>::infinity());});
 }
 void oracle(const char*path){std::ifstream f(path);check(bool(f),"Original media oracle readable");std::string bytes((std::istreambuf_iterator<char>(f)),{});const auto root=Json::parse(bytes);check(root["sourceSHA256"].string().size()==64,"Oracle records exact original source hash");
     for(const auto&v:root["cases"].array()){

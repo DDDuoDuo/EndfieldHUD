@@ -9,13 +9,12 @@ NotesMediaLayout::NotesMediaLayout(double w,double h,NotesMediaKind kind,std::op
     need(std::isfinite(w)&&std::isfinite(h)&&w>=10&&h>=35&&w<=65536&&h<=65536,"Invalid media card extent");
     need(kind==NotesMediaKind::image||kind==NotesMediaKind::gif||kind==NotesMediaKind::video,"Invalid media kind");
     need(!duration||(std::isfinite(*duration)&&*duration>0&&*duration<=31536000),"Invalid media duration");
-    need(kind!=NotesMediaKind::video||duration.has_value(),"Video requires duration");
     need(!legacy||kind==NotesMediaKind::image,"Legacy managed artwork is image-only");
     geometry_.legacy=legacy;
     geometry_.content={5,29,w-10,legacy?h-35:std::max(1.,h-56)};
     geometry_.footer={8,h-23,kind==NotesMediaKind::video?65:w-18,18};
     geometry_.playback={6,h-24,66,19};geometry_.hasPlayback=!legacy&&kind!=NotesMediaKind::image;
-    geometry_.seek={78,h-25,std::max(1.,w-97),20};geometry_.hasSeek=!legacy&&kind==NotesMediaKind::video;
+    geometry_.seek={78,h-25,std::max(1.,w-97),20};geometry_.hasSeek=!legacy&&kind==NotesMediaKind::video&&duration.has_value();
     geometry_.rail={geometry_.seek.x,geometry_.seek.y+9,geometry_.seek.width,2};
 }
 core::Rect NotesMediaLayout::fittedImage(unsigned w,unsigned h)const{

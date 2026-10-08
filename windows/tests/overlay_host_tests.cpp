@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string_view>
 #include <vector>
+#include <limits>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -128,6 +129,27 @@ void coalescing() {
     const auto concealed = batch.request(true);
     check(concealed && !batch.consume(*concealed, false) && !batch.pending(), "concealment drops already queued frame");
 }
+void deadlines() {
+    WakeDeadlines clock;
+    check(!clock.next(),"No module or animation work means no wake");
+    clock.setFrame(1);clock.setExternal(.25);
+    checkNear(*clock.next(),.25,"Media deadline shares earlier wake");
+    auto due=clock.takeDue(.25);
+    check(due.external&&!due.frame,"Media wake cannot advance an animation tick");
+    checkNear(*clock.next(),1,"One-shot media callback preserves animation phase");
+    check(!clock.takeDue(.25).external,"Consumed deadline cannot repeat");
+    clock.setExternal(2);due=clock.takeDue(1);
+    check(due.frame==1&&!due.external,"Animation wake leaves later media sleeping");
+    clock.setFrame(2);due=clock.takeDue(3);
+    check(due.frame==2&&due.external&&!clock.next(),"Overdue reasons coalesce once without catch-up callbacks");
+    clock.setExternal(600);clock.setFrame({});
+    checkNear(*clock.next(),600,"Long-delay GIF retains its true deadline, not a frame cadence");
+    clock.clear();check(!clock.next(),"Shutdown removes both reasons");
+    for(double invalid:{-1.,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}){
+        bool rejected{};try{clock.setExternal(invalid);}catch(const std::invalid_argument&){rejected=true;}
+        check(rejected&&!clock.next(),"Invalid deadline cannot mutate schedule");
+    }
+}
 
 #ifdef _WIN32
 void drain(OverlayHost& host) { for (unsigned i = 0; i < 8; ++i) host.pumpOnce(0); }
@@ -186,6 +208,30 @@ void hiddenStartupProcess(){
     check(WaitForSingleObject(process.value.hProcess,10000)==WAIT_OBJECT_0,"Isolated show/frame regression completes within its finite deadline");
     DWORD exit{};check(GetExitCodeProcess(process.value.hProcess,&exit)!=FALSE&&exit==0,"Hidden-startup visibility and stable-demand child contracts pass");
     check(GetThreadDesktop(GetCurrentThreadId())==original,"Regression leaves parent thread desktop untouched");
+}
+void nativeDeadlines() {
+    OverlayHost host;unsigned wakes{},frames{};
+    OverlayCallbacks callbacks;
+    callbacks.frame=[&](double){++frames;};
+    callbacks.deadline=[&](double time){++wakes;if(wakes==1)host.setDeadline(time+.005);};
+    host.create({L"Hidden deadline fixture",0,0,16,16,nullptr},callbacks);
+    host.setDeadline(OverlayHost::clockNow()+.005);
+    host.hide();
+    const auto limit=OverlayHost::clockNow()+3;
+    while(wakes<2&&OverlayHost::clockNow()<limit)host.pumpOnce(100);
+    check(wakes==2&&frames==0,"Hidden owner deadlines fire once without animation or rendering");
+    check(host.stats().externalWakes==2&&!host.stats().timerArmed,"Callback rearm uses the same timer then sleeps");
+    host.setDeadline(OverlayHost::clockNow()+600);
+    check(host.stats().timerArmed,"Long media deadline arms one sleeping timer");
+    host.setDeadline({});
+    const auto before=host.stats().timerWakes;for(unsigned k=0;k<4;++k)host.pumpOnce(0);
+    check(!host.stats().timerArmed&&host.stats().timerWakes==before,"Cancelling module work consumes stale timer signals");
+    host.setDeadline(OverlayHost::clockNow()+600);host.requestStop();
+    check(!host.stats().timerArmed&&!host.pumpOnce(0),"Shutdown cancels background deadlines");host.destroy();
+    callbacks.deadline=[&](double){throw std::runtime_error("sentinel deadline error");};
+    host.create({L"Hidden deadline failure",0,0,16,16,nullptr},callbacks);host.setDeadline(OverlayHost::clockNow());
+    bool rejected{};try{for(unsigned n=0;n<8;++n)host.pumpOnce(100);}catch(const std::runtime_error&){rejected=true;}
+    check(rejected&&!host.stats().timerArmed&&!host.pumpOnce(0),"Deadline error propagates with all host work stopped");host.destroy();
 }
 void nativeWindow() {
     OverlayHost host;
@@ -379,9 +425,9 @@ int main(int argc,char**argv) {
 #else
         (void)argc;(void)argv;
 #endif
-        scheduling(); coalescing();
+        scheduling(); coalescing(); deadlines();
 #ifdef _WIN32
-        nativeWindow(); callbackFailures();
+        nativeWindow(); callbackFailures(); nativeDeadlines();
         std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else

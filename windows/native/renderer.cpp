@@ -9,11 +9,13 @@
 #endif
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d10.h>
 #include <d3dcompiler.h>
 #include <dcomp.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <cwchar>
@@ -217,6 +219,24 @@ void validateDrawObject(const DrawObject& object) {(void)uniforms(object);}
 RendererError::RendererError(std::string operation, std::int32_t code)
     : std::runtime_error(std::move(operation) + " (HRESULT " + std::to_string(code) + ")"), code_(code) {}
 
+namespace {struct MediaBudget {std::atomic<std::size_t>bytes{};};}
+struct RendererMediaTexture::Impl {
+    std::string id;unsigned width{},height{};std::size_t bytes{};
+    std::weak_ptr<const int>epoch;std::atomic<bool>registered{true};
+    std::shared_ptr<MediaBudget>budget;
+    ComPtr<IDXGISurface>surface;
+    ComPtr<ID3D11ShaderResourceView>encoded;
+    ComPtr<ID3D11RenderTargetView>linear;
+    ~Impl(){if(budget)budget->bytes.fetch_sub(bytes,std::memory_order_relaxed);}
+};
+RendererMediaTexture::RendererMediaTexture(std::unique_ptr<Impl>impl):impl_(std::move(impl)){}
+RendererMediaTexture::~RendererMediaTexture()=default;
+bool RendererMediaTexture::valid()const noexcept{return impl_->registered.load(std::memory_order_relaxed)&&!impl_->epoch.expired();}
+unsigned RendererMediaTexture::width()const noexcept{return impl_->width;}
+unsigned RendererMediaTexture::height()const noexcept{return impl_->height;}
+const std::string&RendererMediaTexture::sourceID()const noexcept{return impl_->id;}
+void*RendererMediaTexture::targetSurface()const noexcept{return impl_->surface.Get();}
+
 struct Renderer::Impl {
     struct Mesh {
         ComPtr<ID3D11Buffer> vertices, indices;
@@ -231,6 +251,7 @@ struct Renderer::Impl {
         std::uint64_t revision{};
         std::size_t bytes{};
         bool groupOwned{};
+        bool mediaOwned{};
     };
     struct Draw {
         std::string sourceID;
@@ -253,7 +274,7 @@ struct Renderer::Impl {
     };
     DWORD ownerThread{GetCurrentThreadId()};
     HWND window{};
-    bool offscreen{};
+    bool offscreen{},mediaVideo{};
     std::uint32_t width{}, height{};
     RendererStats counters;
     bool cameraDirty{true}, readbackReady{};
@@ -268,7 +289,7 @@ struct Renderer::Impl {
     ComPtr<ID3D11RenderTargetView> outputView, linearView;
     ComPtr<ID3D11ShaderResourceView> linearResource;
     ComPtr<ID3D11VertexShader> sceneVS, compositeVS;
-    ComPtr<ID3D11PixelShader> scenePS, compositePS;
+    ComPtr<ID3D11PixelShader> scenePS, compositePS,mediaPS;
     ComPtr<ID3D11InputLayout> layout;
     ComPtr<ID3D11Buffer> cameraBuffer;
     ComPtr<ID3D11BlendState> overBlend, replaceBlend;
@@ -281,6 +302,9 @@ struct Renderer::Impl {
     std::vector<Draw> draws;
     std::vector<ObjectUniform> stagedObjectValues;
     std::map<std::string,std::unique_ptr<NativeGroup>> groups;
+    std::map<std::string,std::shared_ptr<RendererMediaTexture>>media;
+    std::shared_ptr<const int>epoch=std::make_shared<const int>(0);
+    std::shared_ptr<MediaBudget>mediaBudget=std::make_shared<MediaBudget>();
     std::size_t groupBytes{};
     std::unique_ptr<SourceGraphics> source;
 
@@ -313,7 +337,7 @@ struct Renderer::Impl {
     void thread() const { require(GetCurrentThreadId() == ownerThread, "Renderer calls must stay on its creating UI thread"); }
     void budget(std::size_t oldBytes, std::size_t newBytes) const {
         require(newBytes <= Renderer::maximumResourceBytes &&
-                counters.resourceBytes - oldBytes <= Renderer::maximumResourceBytes - newBytes,
+                counters.resourceBytes - oldBytes + mediaBudget->bytes.load(std::memory_order_relaxed) <= Renderer::maximumResourceBytes - newBytes,
                 "Retained GPU resource budget exceeded");
     }
     Texture texture(TextureData input, std::uint64_t revision) {
@@ -369,8 +393,16 @@ struct Renderer::Impl {
         require((GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_NOREDIRECTIONBITMAP) != 0,
                 "Composition window must use WS_EX_NOREDIRECTIONBITMAP");
         const D3D_FEATURE_LEVEL levels[]{D3D_FEATURE_LEVEL_11_0};
+        mediaVideo=options.mediaVideo;
+        // The explicit WARP fixture exercises owned texture conversion, not a
+        // hardware video decoder. Some installed software runtimes reject the
+        // VIDEO_SUPPORT creation flag even though their shader path works.
+        // Production hardware still requires the requested video capability;
+        // do not silently replace its device or downgrade its creation flags.
+        const bool requireVideoDriver=mediaVideo&&options.driver==Driver::hardware;
         checked(D3D11CreateDevice(nullptr, options.driver == Driver::hardware ? D3D_DRIVER_TYPE_HARDWARE : D3D_DRIVER_TYPE_WARP,
-            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, levels, 1, D3D11_SDK_VERSION, &device, nullptr, &context), "Create D3D11 device");
+            nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT|(requireVideoDriver?D3D11_CREATE_DEVICE_VIDEO_SUPPORT:0u), levels, 1, D3D11_SDK_VERSION, &device, nullptr, &context), "Create D3D11 device");
+        if(mediaVideo){ComPtr<ID3D10Multithread>multithread;checked(device.As(&multithread),"Enable shared media device thread protection");multithread->SetMultithreadProtected(TRUE);}
         if (!offscreen) {
         ComPtr<IDXGIDevice1> dxgi;
         checked(device.As(&dxgi), "Get DXGI device");
@@ -411,6 +443,7 @@ struct Renderer::Impl {
         ps = compile(options.shaderPath, "CompositePS", "ps_5_0");
         checked(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &compositeVS), "Create presentation vertex shader");
         checked(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &compositePS), "Create presentation pixel shader");
+        if(mediaVideo){ps=compile(options.shaderPath,"MediaConvertPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&mediaPS),"Create same-device media conversion shader");}
         D3D11_BUFFER_DESC camera{};
         camera.ByteWidth = 64; camera.Usage = D3D11_USAGE_DYNAMIC;
         camera.BindFlags = D3D11_BIND_CONSTANT_BUFFER; camera.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -501,7 +534,7 @@ bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData in
 bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureData input) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
     const auto existing = r.textures.find(sourceID);
-    require(existing==r.textures.end()||!existing->second.groupOwned,"Native group output texture is managed by its group");
+    require(existing==r.textures.end()||(!existing->second.groupOwned&&!existing->second.mediaOwned),"Native group/media texture is managed by its owner");
     if (existing != r.textures.end() && existing->second.revision == revision) return false;
     require(existing != r.textures.end() || r.textures.size() < maximumTextures, "Retained texture count exceeds bounds");
     require(input.width > 0 && input.height > 0 && input.width <= 8192 && input.height <= 8192 &&
@@ -515,6 +548,41 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     auto updated=r.textures.insert_or_assign(std::move(sourceID), std::move(texture));r.invalidate(&updated.first->second);
     r.counters.resourceBytes = r.counters.resourceBytes - previousBytes + nativeBytes; ++r.counters.textureUploads;
     return true;
+}
+std::shared_ptr<void>Renderer::mediaDevice()const{
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");impl_->thread();auto device=impl_->device;
+    return std::shared_ptr<void>(device.Detach(),[](void*p){static_cast<ID3D11Device*>(p)->Release();});
+}
+std::shared_ptr<RendererMediaTexture>Renderer::createMediaTexture(std::string id,unsigned w,unsigned h){
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();identity(id);
+    require(w&&h&&w<=8192&&h<=8192&&std::uint64_t(w)*h<=maximumMediaPixels,"Media target dimensions exceed bounds");
+    require(r.media.size()<maximumMediaTargets&&r.textures.size()<maximumTextures,"Media texture count exceeds bounds");
+    require(!r.textures.contains(id),"Media texture identity is already installed; explicitly retire it first");
+    const auto bytes=std::size_t(w)*h*12;const auto held=r.mediaBudget->bytes.load(std::memory_order_relaxed);
+    require(bytes<=maximumMediaBytes&&held<=maximumMediaBytes-bytes,"Media resources/borrowers exceed bounds");r.budget(0,bytes);
+    auto media=std::make_unique<RendererMediaTexture::Impl>();media->id=id;media->width=w;media->height=h;media->epoch=r.epoch;
+    D3D11_TEXTURE2D_DESC desc{};desc.Width=w;desc.Height=h;desc.MipLevels=1;desc.ArraySize=1;desc.SampleDesc.Count=1;desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+    ComPtr<ID3D11Texture2D>encoded;checked(r.device->CreateTexture2D(&desc,nullptr,&encoded),"Create bounded frame-server surface");checked(encoded.As(&media->surface),"Get owned frame-server DXGI surface");checked(r.device->CreateShaderResourceView(encoded.Get(),nullptr,&media->encoded),"Create retained frame-server view");
+    desc.Format=DXGI_FORMAT_R16G16B16A16_UNORM;ComPtr<ID3D11Texture2D>linear;checked(r.device->CreateTexture2D(&desc,nullptr,&linear),"Create retained linear media texture");checked(r.device->CreateRenderTargetView(linear.Get(),nullptr,&media->linear),"Create media conversion target");
+    Impl::Texture texture;texture.filter=TextureFilter::linear;texture.mediaOwned=true;checked(r.device->CreateShaderResourceView(linear.Get(),nullptr,&texture.view),"Create retained media scene view");
+    // Initialize both targets before publishing so no frame ever samples
+    // uninitialized GPU storage while the engine is still loading.
+    const float transparent[4]{};ComPtr<ID3D11RenderTargetView>inputView;checked(r.device->CreateRenderTargetView(encoded.Get(),nullptr,&inputView),"Initialize frame-server surface");r.context->ClearRenderTargetView(inputView.Get(),transparent);r.context->ClearRenderTargetView(media->linear.Get(),transparent);
+    std::map<std::string,Impl::Texture>stagedTexture;stagedTexture.emplace(id,std::move(texture));
+    media->bytes=bytes;media->budget=r.mediaBudget;r.mediaBudget->bytes.fetch_add(bytes,std::memory_order_relaxed);
+    auto handle=std::shared_ptr<RendererMediaTexture>(new RendererMediaTexture(std::move(media)));
+    std::map<std::string,std::shared_ptr<RendererMediaTexture>>stagedMedia;stagedMedia.emplace(std::move(id),handle);
+    r.textures.merge(stagedTexture);r.media.merge(stagedMedia);++r.counters.mediaTargetAllocations;return handle;
+}
+void Renderer::commitMediaTexture(const RendererMediaTexture&handle){
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();const auto&media=*handle.impl_;
+    require(handle.valid()&&media.epoch.lock()==r.epoch,"Stale/foreign media target cannot commit");const auto installed=r.media.find(media.id);
+    require(installed!=r.media.end()&&installed->second.get()==&handle,"Media target is no longer registered");auto texture=r.textures.find(media.id);require(texture!=r.textures.end()&&texture->second.mediaOwned,"Media texture ownership mismatch");
+    require(texture->second.revision<std::numeric_limits<std::uint64_t>::max(),"Media frame revision exhausted");
+    r.readbackReady=false;r.context->ClearState();D3D11_VIEWPORT viewport{0,0,static_cast<float>(media.width),static_cast<float>(media.height),0,1};r.context->RSSetViewports(1,&viewport);r.context->RSSetState(r.raster.Get());r.context->OMSetDepthStencilState(r.noDepth.Get(),0);r.context->OMSetBlendState(r.replaceBlend.Get(),nullptr,UINT_MAX);
+    auto*target=media.linear.Get();r.context->OMSetRenderTargets(1,&target,nullptr);r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);r.context->VSSetShader(r.compositeVS.Get(),nullptr,0);r.context->PSSetShader(r.mediaPS.Get(),nullptr,0);auto*source=media.encoded.Get();r.context->PSSetShaderResources(0,1,&source);r.context->Draw(3,0);
+    ID3D11ShaderResourceView*empty=nullptr;r.context->PSSetShaderResources(0,1,&empty);r.context->OMSetRenderTargets(0,nullptr,nullptr);
+    ++texture->second.revision;r.invalidate(&texture->second);++r.counters.mediaFrameCommits;
 }
 bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<ObjectUniform>&staged,
     std::span<const DrawObject>objects,bool localGroup){
@@ -822,12 +890,15 @@ bool Renderer::removeTexture(const std::string &sourceID) {
     if (!impl_) return false;
     auto &r = *impl_; r.thread(); auto item = r.textures.find(sourceID);
     if (item == r.textures.end() || item->second.groupOwned || r.textureReferenced(&item->second)) return false;
-    r.counters.resourceBytes -= item->second.bytes; r.textures.erase(item); return true;
+    r.context->ClearState();r.counters.resourceBytes -= item->second.bytes;
+    if(item->second.mediaOwned){auto media=r.media.find(sourceID);if(media!=r.media.end()){media->second->impl_->registered.store(false,std::memory_order_relaxed);r.media.erase(media);}}
+    r.textures.erase(item); return true;
 }
 void Renderer::clearDrawList() { if (impl_) { impl_->thread(); impl_->draws.clear(); impl_->context->ClearState(); } }
 void Renderer::clearResources() {
     if (!impl_) return;
     impl_->thread(); impl_->draws.clear();impl_->groups.clear();impl_->groupBytes=0; impl_->meshes.clear(); impl_->textures.clear();
+    for(auto&[id,media]:impl_->media){(void)id;media->impl_->registered.store(false,std::memory_order_relaxed);}impl_->media.clear();
     impl_->context->ClearState(); impl_->counters.resourceBytes = 0;
     if (impl_->source) impl_->source->clear();
 }
@@ -837,6 +908,7 @@ RendererStats Renderer::stats() const noexcept {
     auto result = impl_->counters;
     result.meshes = impl_->meshes.size(); result.textures = impl_->textures.size(); result.objects = impl_->draws.size();
     result.nativeGroups=impl_->groups.size();result.nativeGroupBytes=impl_->groupBytes;
+    result.mediaTargets=impl_->media.size();result.mediaLiveBytes=impl_->mediaBudget->bytes.load(std::memory_order_relaxed);result.resourceBytes+=result.mediaLiveBytes;
     return result;
 }
 RendererDeviceInfo Renderer::deviceInfo() const {

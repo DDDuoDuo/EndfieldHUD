@@ -47,6 +47,21 @@ private:
     bool pending_{};
 };
 
+// Two reasons share one native waitable timer. A module deadline never advances
+// animation cadence; taking an expired deadline consumes it before callbacks.
+class WakeDeadlines {
+public:
+    struct Due { std::optional<double> frame; bool external{}; };
+    void setFrame(std::optional<double>);
+    void setExternal(std::optional<double>);
+    std::optional<double> frame() const { return frame_; }
+    std::optional<double> next() const;
+    Due takeDue(double now);
+    void clear() noexcept { frame_.reset(); external_.reset(); }
+private:
+    std::optional<double> frame_, external_;
+};
+
 struct ClientMetrics {
     std::uint32_t pixelWidth{}, pixelHeight{}, dpi{96};
     double scale{1}, width{}, height{}; // logical client coordinates, top-left
@@ -96,6 +111,7 @@ struct OverlayCallbacks {
     // reserved. Returning no value leaves default handling in place.
     std::function<std::optional<std::intptr_t>(const NativeMessage&)> appMessage;
     std::function<void()> displayChanged; // notification only; no enumeration/poll
+    std::function<void(double)> deadline; // one-shot, same monotonic clock as frame
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};
@@ -107,6 +123,7 @@ struct OverlayHostStats {
     std::uint64_t frameRequests{}, framePosts{}, frames{}, timerArms{}, timerWakes{},
         timerCancels{}, pointerMessages{}, cursorSets{}, cursorReleases{};
     bool timerArmed{}, framePending{}, visible{}, focused{};
+    std::uint64_t externalWakes{};
 };
 
 // All methods and destruction belong to the creating UI thread. This is an
@@ -127,6 +144,11 @@ public:
     void show(bool activate = true);
     void hide();
     void setFrameDemand(core::FrameDemand);
+    // Caller aggregates its next media/save/countdown deadline. It shares the
+    // existing waitable timer, survives hide, and is consumed before callback.
+    // Cancel with nullopt. Stop/destroy cancel both animation and external work.
+    void setDeadline(std::optional<double> monotonicSeconds);
+    static double clockNow(); // use this epoch for frame/module deadlines
     void invalidate(); // many requests -> one deferred frame; hidden requests do nothing
     // Borrowed HCURSOR; never destroyed, hidden, or periodically reasserted.
     // Set only in WM_SETCURSOR for this active window's own client hit. Child

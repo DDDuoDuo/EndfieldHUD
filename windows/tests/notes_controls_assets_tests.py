@@ -226,14 +226,10 @@ layer.contentsGravity = .resizeAspect
                 self.blobs[path] = data
                 self.rejects(error)
 
-    def test_confined_paths_symlinks_and_duplicate_json(self):
+    def test_confined_paths_and_duplicate_json(self):
         for path in ("../outside", "/outside", "a//b", "a/./b", "C:outside", "a\\b", "a\0b"):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 builder.safe_path(self.export, path)
-        link = self.export / "link"
-        link.symlink_to(self.source, target_is_directory=True)
-        with self.assertRaisesRegex(ValueError, "symlink"):
-            builder.safe_path(self.export, "link/owned")
         with self.assertRaisesRegex(ValueError, "Duplicate JSON key"):
             builder.parse(b'{"key":1,"key":2}')
         with self.assertRaisesRegex(ValueError, "Non-JSON number"):
@@ -241,6 +237,17 @@ layer.contentsGravity = .resizeAspect
         self.put(self.export, "modules.json", b"x" * (builder.MAX_JSON + 1))
         with self.assertRaisesRegex(ValueError, "oversized"):
             self.build()
+
+    def test_symlink_confinement(self):
+        link = self.export / "link"
+        try:
+            link.symlink_to(self.source, target_is_directory=True)
+        except OSError as error:
+            if sys.platform == "win32" and getattr(error, "winerror", None) == 1314:
+                self.skipTest("This Windows test identity lacks symlink creation privilege")
+            raise
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            builder.safe_path(self.export, "link/owned")
 
     def test_failed_publication_leaves_no_partial_bundle(self):
         original = pathlib.Path.write_bytes

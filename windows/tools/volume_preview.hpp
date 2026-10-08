@@ -34,7 +34,8 @@ public:
     void collected(native::Renderer&);void release(native::Renderer&);
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };
-// Creates only supported master writers. Construction performs no API calls;
+// Creates supported master/balance and asynchronous relative app writers.
+// Construction performs no API calls;
 // each explicit user write rechecks the current controlled endpoint. Optional
 // activation belongs to the shared service owner, rather than an observer here.
 native::VolumeCallbacks volumeCallbacksFromSystemServices(native::SystemServices&,

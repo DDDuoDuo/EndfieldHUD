@@ -1,4 +1,5 @@
 #include "modules/notes_presentation.hpp"
+#include "modules/notes_media_presentation.hpp"
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -107,6 +108,24 @@ void richVisibleLines(){
     auto stale=std::make_shared<NotesMeasuredText>(*m);stale->sourceRichPayload.reset();in.measured=stale;rejects([&]{p.updateContent(s,in);},"Stale formatting measurement rejects instead of painting plain fallback");
 }
 
+void mediaCards(){
+    auto n=note();n.kind=ehud::data::NoteKind::image;n.text.clear();auto s=state(n);
+    NotesCardPresentation p(id);NotesPresentationInput in;in.palette=NotesPalette::source(true,{.9,.3,.2,1});
+    auto media=std::make_shared<NotesMediaCardContent>();media->kind=NotesMediaKind::video;media->status.state=NotesMediaState::loading;in.media=media;
+    check(p.updateContent(s,in)&&p.contentViewport()==Rect{5,29,250,84},"Media card needs no text layout and retains source content insets");
+    check(!p.editor()&&lineCount(p)==0&&p.media()==media,"Media stays a borrowed pixel slot rather than a text editor/raster");
+    check(layer(p,"/header/title").text.text=="⠿  IMAGE/VIDEO"&&layer(p,"/media/footer").text.text=="Loading media…","Source image title/loading footer stay in card");
+    check(action(p,"mediaPlayback").localRect==Rect{6,116,66,19},"Media playback uses source footer hit geometry");
+    check(p.highlights().size()==3,"Video retains source pin/delete/playback feedback");
+    media=std::make_shared<NotesMediaCardContent>(*media);media->duration=10;media->status.state=NotesMediaState::playing;in.media=media;p.updateContent(s,in);
+    check(layer(p,"/media/rail").frame==Rect{78,124,163,2}&&layer(p,"/media/footer").text.text=="Ⅱ Pause","Resolved video adds the source seek rail without enlarging card");
+    const auto content=p.contentRevision();const auto before=allocations.load();for(unsigned i=0;i<1000;++i){auto projection=s.workspaceProjection();projection.values[2]=i*.001;s.setWorkspaceProjection(projection);p.updatePlacement(s);}check(p.contentRevision()==content&&allocations.load()==before,"Media tilt does not rebuild captions, decode or allocate");
+    auto absent=in;absent.media.reset();rejects([&]{p.updateContent(s,absent);},"Unspecified media status does not silently flatten into text");check(p.contentRevision()==content,"Rejected media update retains published content");
+    media=std::make_shared<NotesMediaCardContent>();media->legacyManagedImage=true;media->legacyUnavailable=true;in.media=media;p.updateContent(s,in);
+    check(p.contentViewport()==Rect{5,29,250,105}&&layer(p,"/media/unavailable").text.wrapped,"Legacy unavailable media preserves larger image viewport and wrapped source message");
+    auto text=state(note());rejects([&]{p.updateContent(text,in);},"Media descriptor cannot attach to unrelated text card");
+}
+
 bool approximately(double a,double b){return std::abs(a-b)<1e-6;}
 Rect rect(const Json& j){const auto& a=j.array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
 NotesColor color(const Json& j){const auto& a=j["sRGB"].array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
@@ -130,4 +149,4 @@ void sourceFixture(const char* path){std::ifstream file(path);if(!file)throw std
     for(const auto& a:p.actions()){const Json* found=nullptr;for(const auto& candidate:j["actions"].array())if(candidate["id"].string()==a.id){found=&candidate;break;}check(found!=nullptr,"Source action ID exists in original NotesCanvas export");auto r=a.localRect;r.x+=60;r.y+=90;check(r==rect((*found)["rect"]),"Source workspace action rectangles match original export");}
 }
 }
-int main(int argc,char** argv){try{sourceGeometry();richVisibleLines();editPinAndPlacement();scrollingAndFeedback();invalidAndBoundary();if(argc>1)sourceFixture(argv[1]);std::cout<<checks<<" Notes presentation checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<"Notes presentation failed: "<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{sourceGeometry();mediaCards();richVisibleLines();editPinAndPlacement();scrollingAndFeedback();invalidAndBoundary();if(argc>1)sourceFixture(argv[1]);std::cout<<checks<<" Notes presentation checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<"Notes presentation failed: "<<e.what()<<'\n';return 1;}}

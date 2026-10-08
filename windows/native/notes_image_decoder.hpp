@@ -24,6 +24,7 @@ struct NotesImageFrame {
 };
 struct NotesImageRequest {
     std::string key,path;std::uint64_t revision{};int maximumDimension{512};
+    bool firstFrameOnly{}; // persisted still-image kind, even if file was replaced by a GIF
     bool operator==(const NotesImageRequest&)const=default;
 };
 #ifdef _WIN32

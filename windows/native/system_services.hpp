@@ -1,4 +1,5 @@
 #pragma once
+#include "audio_session_worker.hpp"
 
 #include <atomic>
 #include <array>
@@ -96,6 +97,9 @@ struct AudioSnapshot {
     std::optional<float> balance;
     bool can_set_balance{};
     std::int32_t input_error{};
+    bool application_supported{},applications_paused{true};
+    std::vector<AudioApplicationRoute>applications;
+    std::int32_t application_error{};
     bool operator==(const AudioSnapshot&) const = default;
 };
 // Same peak-preserving stereo math as Mac AudioVolumeMath. Unknown/nonfinite
@@ -197,6 +201,12 @@ public:
     // Public endpoint channel controls only, exactly stereo with a nonzero
     // readable peak. Unsupported/multichannel devices retain no fake balance.
     HRESULT set_output_balance(float balance);
+    // Async owner commands. Accepted writes return S_OK; their actual result is
+    // published through the existing audio-change notification and snapshot.
+    // Gain is relative to each confirmed session's preexisting mixer level.
+    HRESULT set_application_gain(std::string application,float gain);
+    HRESULT stop_application(std::string application);
+    HRESULT stop_applications();
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

@@ -25,6 +25,9 @@ struct RendererOptions {
     Driver driver{Driver::hardware};
     std::filesystem::path shaderPath;
     RenderTarget target{RenderTarget::composition};
+    // Same-device media targets/thread protection. Hardware requests video
+    // support; explicit WARP tests cover conversion/lifetime only, not decode.
+    bool mediaVideo{};
 };
 struct Vertex {
     std::array<float, 3> position{};
@@ -106,6 +109,26 @@ struct RendererStats {
     bool initialized{};
     std::size_t nativeGroups{},nativeGroupBytes{};
     std::uint64_t nativeGroupTargetAllocations{},nativeGroupRenders{},nativeGroupDrawCalls{};
+    std::size_t mediaTargets{},mediaLiveBytes{};
+    std::uint64_t mediaTargetAllocations{},mediaFrameCommits{};
+};
+// A same-device frame-server surface. The handle retains its COM resources
+// through reset/removal, but valid() then becomes false and further commits
+// reject. Owner must stop its MF engine before releasing the last handle.
+// targetSurface is a borrowed IDXGISurface*, used only on the owning UI thread
+// by IMFMediaEngine::TransferVideoFrame. No worker callback may render/commit.
+class RendererMediaTexture final {
+public:
+    ~RendererMediaTexture();
+    RendererMediaTexture(const RendererMediaTexture&)=delete;
+    RendererMediaTexture&operator=(const RendererMediaTexture&)=delete;
+    bool valid()const noexcept;
+    unsigned width()const noexcept;unsigned height()const noexcept;
+    const std::string& sourceID()const noexcept;
+    void* targetSurface()const noexcept;
+private:
+    friend class Renderer;struct Impl;explicit RendererMediaTexture(std::unique_ptr<Impl>);
+    std::unique_ptr<Impl>impl_;
 };
 struct RendererDeviceInfo {
     std::string name;
@@ -139,6 +162,8 @@ public:
     static constexpr std::size_t maximumRenderPixels = 4096 * 4096;
     static constexpr std::size_t maximumNativeGroups=64,maximumNativeGroupPixels=4*1024*1024,
         maximumNativeGroupBytes=64*1024*1024;
+    static constexpr std::size_t maximumMediaTargets=8,maximumMediaPixels=4*1024*1024,
+        maximumMediaBytes=128*1024*1024;
     Renderer();
     ~Renderer();
     Renderer(const Renderer &) = delete;
@@ -154,6 +179,15 @@ public:
     void resize(std::uint32_t width, std::uint32_t height);
     bool setMesh(std::string sourceID, std::uint64_t revision, MeshData mesh);
     bool setTexture(std::string sourceID, std::uint64_t revision, TextureData texture);
+    // AddRef-owned ID3D11Device, for the owner's MF DXGI manager. Requires the
+    // explicit mediaVideo option; multithread protection is enabled at creation.
+    // This is the existing device, never a new graphics context or clock.
+    std::shared_ptr<void> mediaDevice()const;
+    std::shared_ptr<RendererMediaTexture>createMediaTexture(std::string sourceID,unsigned width,unsigned height);
+    // GPU-only conversion from transferred encoded straight BGRA8 to retained
+    // linear-premultiplied RGBA16. No CPU copy/readback, resource allocation,
+    // mesh upload or draw-list replacement. Invoke only for a new engine frame.
+    void commitMediaTexture(const RendererMediaTexture&);
     // A local premultiplied-linear GPU pass on this same device. Its rounded
     // pixel coverage includes the caller's overflowing shadow/ink bounds. No
     // CPU bitmap/readback is generated; root pose/fade belongs to outputDraw.

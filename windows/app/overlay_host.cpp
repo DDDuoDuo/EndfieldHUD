@@ -58,6 +58,23 @@ void FrameRequestBatch::cancel() {
     pending_ = false;
     if (++generation_ == 0) ++generation_;
 }
+namespace {
+void validDeadline(std::optional<double> value) {
+    if (value && (!std::isfinite(*value) || *value < 0))
+        throw std::invalid_argument("Wake deadline requires finite nonnegative time");
+}
+}
+void WakeDeadlines::setFrame(std::optional<double> value) { validDeadline(value); frame_=value; }
+void WakeDeadlines::setExternal(std::optional<double> value) { validDeadline(value); external_=value; }
+std::optional<double> WakeDeadlines::next() const {
+    return frame_ && external_ ? std::min(*frame_,*external_) : frame_ ? frame_ : external_;
+}
+WakeDeadlines::Due WakeDeadlines::takeDue(double now) {
+    validDeadline(now); Due result;
+    if (frame_ && *frame_ <= now) { result.frame=frame_; frame_.reset(); }
+    if (external_ && *external_ <= now) { result.external=true; external_.reset(); }
+    return result;
+}
 } // namespace endfield::app
 
 #ifdef _WIN32
@@ -126,6 +143,7 @@ struct OverlayHost::Impl {
     std::shared_ptr<OverlayCallbacks> callbacks;
     core::FrameDemand demand;
     FrameWakePlan plan;
+    WakeDeadlines deadlines;
     FrameRequestBatch frames;
     ClientMetrics client;
     OverlayHostStats counts;
@@ -164,6 +182,8 @@ struct OverlayHost::Impl {
         cancelTimer();
         plan.cancel();
         frames.cancel();
+        deadlines.setFrame({});
+        if (stopped || !window) deadlines.clear();
     }
     void releaseCursor() noexcept {
         // Only undo a cursor actually installed by this host, and never replace
@@ -184,7 +204,9 @@ struct OverlayHost::Impl {
         ++counts.framePosts;
     }
     void arm(double deadline) {
-        const double remaining = std::max(0.0000001, deadline - monotonicSeconds());
+        // Windows' signed 100-ns due time also bounds extremely distant caller
+        // deadlines; a clamped native wake only rechecks the actual deadline.
+        const double remaining = std::clamp(deadline - monotonicSeconds(), 0.0000001, 86400. * 365);
         LARGE_INTEGER due{};
         due.QuadPart = -static_cast<LONGLONG>(std::ceil(remaining * 10000000));
         if (!SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) fail("SetWaitableTimer");
@@ -192,30 +214,44 @@ struct OverlayHost::Impl {
         armed = true;
         ++counts.timerArms;
     }
+    void syncTimer() {
+        const auto next=deadlines.next();
+        if (!next || !window || stopped || !ready) { cancelTimer(); return; }
+        if (armed && timerDeadline==*next) return;
+        cancelTimer(); arm(*next);
+    }
     void refreshSchedule() {
         const auto before = plan.interval();
         const auto result = plan.refresh(demand, ready && visible && window && IsWindowVisible(window) && !minimized && !stopped);
-        if (!plan.canPresent()) { cancelFrames(); return; }
-        if (!result.afterSeconds) cancelTimer();
-        else if (!armed || before != result.afterSeconds) {
-            cancelTimer();
-            arm(monotonicSeconds() + *result.afterSeconds);
-        }
+        if (!plan.canPresent()) { cancelFrames(); syncTimer(); return; }
+        if (!result.afterSeconds) deadlines.setFrame({});
+        else if (!deadlines.frame() || before != result.afterSeconds)
+            deadlines.setFrame(monotonicSeconds() + *result.afterSeconds);
+        syncTimer();
         if (result.present) postFrame();
     }
     void timerReady() {
         if (!armed) return;
         armed = false;
         ++counts.timerWakes;
-        const auto result = plan.wake();
-        if (result.present) postFrame();
-        if (result.afterSeconds && window && !stopped) {
-            const auto now = monotonicSeconds();
-            auto deadline = timerDeadline + *result.afterSeconds;
+        const auto now=monotonicSeconds();
+        const auto due=deadlines.takeDue(now);
+        if (due.frame) {
+            const auto result = plan.wake();
+            if (result.present) postFrame();
+            if (result.afterSeconds && window && !stopped) {
+            auto deadline = *due.frame + *result.afterSeconds;
             // No catch-up burst after a busy frame, sleep, resize, or debugger.
             if (deadline <= now) deadline = now + *result.afterSeconds;
-            arm(deadline);
+            deadlines.setFrame(deadline);
+            }
         }
+        if (due.external && window && !stopped) {
+            ++counts.externalWakes;
+            const auto handlers=callbacks;
+            if (handlers && handlers->deadline) handlers->deadline(now);
+        }
+        syncTimer();
     }
     void updateMetrics() {
         RECT rect{};
@@ -262,6 +298,7 @@ struct OverlayHost::Impl {
         }
         switch (message) {
         case WM_NCDESTROY:
+            deadlines.clear();
             cancelFrames();
             releaseCursor();
             ready = visible = focused = false;
@@ -485,7 +522,16 @@ void OverlayHost::hide() {
     auto& p = *impl_; p.requireThread();
     p.visible = false; p.cancelFrames(); p.releaseCursor();
     if (p.window) ShowWindow(p.window, SW_HIDE);
+    p.syncTimer();
     p.rethrow();
+}
+double OverlayHost::clockNow() { return monotonicSeconds(); }
+void OverlayHost::setDeadline(std::optional<double> deadline) {
+    auto& p=*impl_;p.requireThread();p.rethrow();
+    if (!p.window || p.stopped) throw std::logic_error("Cannot schedule an uncreated/stopped overlay");
+    if (deadline && (!p.callbacks || !p.callbacks->deadline))
+        throw std::logic_error("External wake needs its owner callback");
+    p.deadlines.setExternal(deadline);p.syncTimer();
 }
 void OverlayHost::setFrameDemand(core::FrameDemand demand) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
@@ -516,7 +562,10 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
     const auto status = MsgWaitForMultipleObjectsEx(count, count ? &p.timer : nullptr,
         timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
     if (status == WAIT_FAILED) fail("MsgWaitForMultipleObjectsEx overlay");
-    if (count && status == WAIT_OBJECT_0) p.timerReady();
+    if (count && status == WAIT_OBJECT_0) {
+        try { p.timerReady(); }
+        catch (...) { p.stopped=true;p.cancelFrames();p.releaseCursor();throw; }
+    }
     MSG message{};
     // A finite batch prevents a producer from starving the one animation clock.
     // Another pump immediately observes remaining input through INPUTAVAILABLE.

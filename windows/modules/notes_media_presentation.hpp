@@ -12,6 +12,13 @@ struct NotesMediaStatus {
     NotesMediaState state{NotesMediaState::hidden};
     std::optional<std::string> localizedError;
 };
+struct NotesMediaCardContent {
+    NotesMediaKind kind{NotesMediaKind::image};
+    std::optional<double> duration;
+    NotesMediaStatus status;
+    NotesMediaStrings strings;
+    bool legacyManagedImage{},legacyUnavailable{};
+};
 struct NotesMediaGeometry {
     core::Rect content,footer,playback,seek,rail;
     bool hasPlayback{},hasSeek{},legacy{};

@@ -4,6 +4,7 @@
 
 namespace endfield::modules {
 class NotesChecklistLayout;
+struct NotesMediaCardContent;
 using NotesColor = std::array<double,4>; // straight sRGB; no premultiplication here
 struct NotesPalette {
     NotesColor primary{},muted{},border{},card{},header{},formatPlate{},accent{};
@@ -18,6 +19,7 @@ struct NotesStrings {
     std::array<std::string,4> format{"Font size","Font","Color","Text style"};
     std::string todoTitle{"TODO"},itemPlaceholder{"New item…"},addItem{"+ Add item"};
     std::string checkItem{"Check"},uncheckItem{"Uncheck"},editItem{"Edit item"},moveUp{"Move up"},moveDown{"Move down"},removeItem{"Delete item"},addItemAction{"Add item"};
+    std::string imageTitle{"IMAGE/VIDEO"};
     bool operator==(const NotesStrings&)const=default;
 };
 // Caller-owned measurement made by the SAME text layout that will paint/edit.
@@ -43,7 +45,7 @@ struct NotesText {
     std::string text;double fontSize{};bool semibold{},truncateEnd{};
     NotesColor color{}; // system font role; actual native font parity remains external
     std::vector<core::notes::TextRun> runs; // local UTF-16 ranges, only visible line runs
-    bool medium{},strikethrough{};
+    bool medium{},strikethrough{},wrapped{};
 };
 struct NotesLayer {
     static constexpr std::size_t noParent=std::size_t(-1);
@@ -81,10 +83,11 @@ struct NotesPresentationInput {
     std::shared_ptr<const NotesMeasuredText> measured;
     double scrollOffset{};std::optional<NotesColor> editingColor;
     std::shared_ptr<const NotesChecklistLayout> checklist;
+    std::shared_ptr<const NotesMediaCardContent> media;
 };
-// Exact attachment-free text and TODO NotesCanvas local artwork. No services, clock, renderer, I/O
+// Exact text, TODO and media NotesCanvas local artwork. No services, clock, renderer, I/O
 // or center-module clip. The owner composes each card on the workspace plane.
-// Media/drawing and deletion-popup artwork are explicit separate
+// Media pixels/drawing and deletion-popup artwork are explicit separate
 // adapters, never flattened. Source visibility/deployment animations are owned
 // by the module host; this class does not invent transform interpolation.
 class NotesCardPresentation final {
@@ -112,10 +115,13 @@ public:
     std::uint64_t placementRevision()const noexcept{return placementRevision_;}
     double scrollOffset()const noexcept{return scrollOffset_;}
     core::Rect contentViewport()const noexcept{return viewport_;}
+    const std::shared_ptr<const NotesMediaCardContent>& media()const noexcept{return media_;}
+    const NotesPalette& palette()const noexcept{return palette_;}
 private:
     std::string noteID_;std::vector<NotesLayer> layers_;std::vector<NotesAction> actions_;
     std::vector<NotesHighlight> highlights_;std::optional<NotesEditorLeaf> editor_;
     std::shared_ptr<const NotesMeasuredText> measured_;std::shared_ptr<const NotesChecklistLayout> checklist_;
+    std::shared_ptr<const NotesMediaCardContent> media_;NotesPalette palette_;
     std::optional<std::string> editingItem_;
     NotesCardPlacement placement_;core::Rect viewport_;
     double width_{},height_{},scrollOffset_{};bool selected_{},pinned_{},editing_{};

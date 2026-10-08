@@ -66,7 +66,7 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
                 NotesImageCompletion result;result.key=job->request.key;result.revision=job->request.revision;bool decoded{};
                 try{if(job->reopen)decoders.erase(job->request.key);auto it=decoders.find(job->request.key);if(it==decoders.end()){
                         Decoder d;d.request=job->request;auto access=state->resolver(job->request);need(!access.path.empty(),"Media access resolver returned no path");
-                        d.sequence=state->factory?state->factory(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access));need(bool(d.sequence),"Image factory returned no decoder");valid(d.sequence->info());d.info=std::make_shared<const NotesImageInfo>(d.sequence->info());auto key=d.request.key;it=decoders.emplace(std::move(key),std::move(d)).first;
+                        d.sequence=state->factory?state->factory(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access));need(bool(d.sequence),"Image factory returned no decoder");valid(d.sequence->info());auto info=d.sequence->info();if(job->request.firstFrameOnly){info.kind=modules::NotesMediaKind::image;info.frameCount=1;info.frameDelays.clear();info.duration=0;}d.info=std::make_shared<const NotesImageInfo>(std::move(info));auto key=d.request.key;it=decoders.emplace(std::move(key),std::move(d)).first;
                     }
                     result.info=it->second.info;result.frame=it->second.frame(job->index,state->budget,decoded);result.result=S_OK;
                     // Still images retain only their immutable bounded pixels,

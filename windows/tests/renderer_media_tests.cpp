@@ -1,0 +1,41 @@
+#include "native/renderer.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <d3d11.h>
+#include <dxgi.h>
+#include <wrl/client.h>
+#include <array>
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <thread>
+using Microsoft::WRL::ComPtr;using namespace endfield::native;
+namespace {
+unsigned checks{};void check(bool v,const char*m){++checks;if(!v)throw std::runtime_error(m);}
+template<class F>void rejects(F f,const char*m){bool rejected{};try{f();}catch(const std::exception&){rejected=true;}check(rejected,m);}
+struct Window {HWND hwnd{};ATOM atom{};
+    Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldOwnedMediaTextureFixture";atom=RegisterClassW(&c);check(atom!=0,"Register owned media texture fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Hidden media target",WS_POPUP,0,0,32,32,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Owned media target remains hidden");}
+    ~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}
+};
+void pixel(const Readback&r,std::array<int,4>expected){const auto at=(std::size_t(16)*r.width+16)*4;for(unsigned c=0;c<4;++c)check(std::abs(int(r.pixels[at+c])-expected[c])<=1,"Frame-server target retains encoded color/alpha after GPU premultiplication");}
+void fill(const RendererMediaTexture&surface,std::array<std::uint8_t,4>bgra){auto*dxgi=static_cast<IDXGISurface*>(surface.targetSurface());ComPtr<ID3D11Texture2D>texture;check(SUCCEEDED(dxgi->QueryInterface(IID_PPV_ARGS(&texture))),"Retained target exposes owned texture");ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);std::vector<std::uint8_t>pixels(std::size_t(surface.width())*surface.height()*4);for(std::size_t p=0;p<pixels.size();p+=4)std::copy(bgra.begin(),bgra.end(),pixels.begin()+static_cast<std::ptrdiff_t>(p));context->UpdateSubresource(texture.Get(),0,nullptr,pixels.data(),surface.width()*4,0);}
+void run(const std::filesystem::path&shader){Window window;Renderer renderer;RendererOptions options{Driver::warpForTests,shader,RenderTarget::offscreenForTests};renderer.initialize(window.hwnd,32,32,options);rejects([&]{renderer.mediaDevice();},"Non-media hosts do not silently change device behavior");renderer.reset();options.mediaVideo=true;renderer.initialize(window.hwnd,32,32,options);
+    auto device=renderer.mediaDevice();check(device!=nullptr,"Media manager gets owned same-device handle");check((static_cast<ID3D11Device*>(device.get())->GetCreationFlags()&D3D11_CREATE_DEVICE_VIDEO_SUPPORT)==0,"Explicit software fixture validates conversion without requiring video decode support");auto media=renderer.createMediaTexture("synthetic.video",4,4);check(media->valid()&&media->width()==4&&media->height()==4&&media->sourceID()=="synthetic.video","Retained media identity and dimensions");
+    auto*surface=static_cast<IDXGISurface*>(media->targetSurface());ComPtr<ID3D11Device>surfaceDevice;check(SUCCEEDED(surface->GetDevice(IID_PPV_ARGS(&surfaceDevice)))&&surfaceDevice.Get()==device.get(),"Media engine target uses exact existing renderer device");
+    const std::array<Vertex,4>vertices{{{{-1,1,0},{0,0}},{{1,1,0},{1,0}},{{1,-1,0},{1,1}},{{-1,-1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};renderer.setMesh("quad",1,{vertices,indices});DrawObject draw;draw.sourceID="video.draw";draw.meshID="quad";draw.textureID=media->sourceID();renderer.setDrawList(std::span(&draw,1));renderer.draw(false);pixel(renderer.readback(),{0,0,0,0});
+    const auto before=renderer.stats();check(before.mediaTargets==1&&before.mediaLiveBytes==4*4*12,"Both encoded target and sampled linear texture are budgeted");
+    for(unsigned f=0;f<120;++f){const bool alternate=f%2;fill(*media,alternate?std::array<std::uint8_t,4>{128,64,200,128}:std::array<std::uint8_t,4>{0,0,255,255});renderer.commitMediaTexture(*media);renderer.draw(false);pixel(renderer.readback(),alternate?std::array<int,4>{64,32,100,128}:std::array<int,4>{0,0,255,255});}
+    const auto after=renderer.stats();check(after.mediaFrameCommits-before.mediaFrameCommits==120&&after.mediaTargetAllocations==before.mediaTargetAllocations&&after.meshUploads==before.meshUploads&&after.textureUploads==before.textureUploads&&after.objectBufferAllocations==before.objectBufferAllocations,"120 new video frames allocate no new renderer resources or CPU texture uploads");
+    rejects([&]{renderer.createMediaTexture(media->sourceID(),4,4);},"Duplicate video identity cannot orphan active handle");const std::array<std::uint8_t,4>white{255,255,255,255};rejects([&]{renderer.setTexture(media->sourceID(),20,{1,1,white});},"Ordinary upload cannot overwrite managed video target");check(!renderer.removeTexture(media->sourceID()),"Published video cannot retire while referenced");
+    bool wrongThread{};std::thread wrong([&]{try{renderer.commitMediaTexture(*media);}catch(const std::exception&){wrongThread=true;}});wrong.join();check(wrongThread,"Worker/engine callbacks cannot call renderer");
+    Renderer other;other.initialize(window.hwnd,32,32,options);rejects([&]{other.commitMediaTexture(*media);},"Foreign renderer cannot commit a borrowed surface");other.reset();
+    renderer.clearDrawList();check(renderer.removeTexture(media->sourceID())&&!media->valid(),"Explicit detach invalidates target while borrowed COM lifetime remains safe");check(renderer.stats().mediaTargets==0&&renderer.stats().mediaLiveBytes==4*4*12,"Retired borrowed resources remain charged to renderer budget");rejects([&]{renderer.commitMediaTexture(*media);},"Retired target cannot dirty a replacement identity");media.reset();check(renderer.stats().mediaLiveBytes==0,"Last borrowed target releases media allocation accounting");
+    auto stale=renderer.createMediaTexture("stale",2,2);renderer.reset();check(!stale->valid()&&stale->targetSurface()!=nullptr,"Reset invalidates epoch without dangling the borrowed COM surface");renderer.initialize(window.hwnd,32,32,options);rejects([&]{renderer.commitMediaTexture(*stale);},"Old device generation cannot commit after recreate");stale.reset();device.reset();renderer.clearResources();check(renderer.stats().resourceBytes==0,"Media teardown releases all active application-owned GPU resources");check(!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Media test never shows/presents/captures desktop");}
+}
+int wmain(int argc,wchar_t**argv){const auto com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com))return 1;int code{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);std::cout<<"PASS "<<checks<<" owned media renderer checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
+#else
+int main(){return 0;}
+#endif

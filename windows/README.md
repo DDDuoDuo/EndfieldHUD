@@ -498,3 +498,21 @@ Completion requires the actual desktop shell, every module and Windows service,
 same data contracts, projected editing, current animation behavior, and live
 visual/input/performance checks on the test laptop. Passing core tests establishes
 none of those broader acceptance results. See [the migration requirements](../WINDOWS-MIGRATION.md).
+
+The next isolated Windows checkpoint passes all 88 suites, plus the original
+subsection comparison and combined Notes, checklist and real-host font-menu
+checks. The user also confirmed font selection and scrolling work in preview20;
+the earlier intermittent disappearance has not been conclusively reproduced.
+Limited-user Windows tests skip symlink creation when the OS refuses that
+privilege; the path/JSON checks still run, and the symlink case passes on macOS.
+
+Media card artwork now accepts borrowed resident textures, preserves aspect-fit
+and clipping, and updates tilt/progress without raster or resource uploads.
+Image/GIF playback uses explicit deadlines on the host's existing waitable timer.
+The media texture bridge performs same-device conversion; its WARP test verifies
+texture lifetime/color, not hardware video decoding. Event Log persistence and
+Unicode metadata filtering are verified separately, including all 4,261 original
+Swift name cases against Windows ICU15.1. Per-application WASAPI controls compile
+and pass injected worker tests; actual audio control, connected media insertion
+and video playback remain unverified/in progress. These checks are not a stable
+release or complete module migration claim.
