@@ -9,9 +9,10 @@ The current target builds portable scene, motion and data components, a native
 D3D11/DirectComposition renderer, retained source material and label adapters,
 an event-driven window host, and Windows battery, clipboard and master-volume
 service foundations. An explicit development preview now combines the source
-shell, native captions/icons, clock and custom cursor. Module bodies are not
-installed in that preview. It does **not** yet produce a complete runnable HUD
-or a release candidate.
+shell, native captions/icons, clock and custom cursor. An optional isolated
+Notes preview adds plain-text editing, moving, resizing, pinning and confirmed
+deletion. Other module bodies and the remaining Notes kinds are not installed.
+It does **not** yet produce a complete runnable HUD or a release candidate.
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -89,8 +90,9 @@ clock-page displacement and native font appearance still need visual checks.
 The window host coalesces redraw requests and owns one cancellable wake timer.
 Hidden windows schedule no rendering work. [CI run 37723655009](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37723655009)
 passed all 27 portable suites and 35 Windows suites at commit `7695dc0`.
-The current Notes integration checkpoint passes 34 portable suites and all 52
-Windows suites in a Release build on the laptop. The user has now
+The last published checkpoint passed 34 portable suites and all 52 Windows
+suites in a Release build on the laptop. New integration results are recorded
+below; these counts do not establish full-module coverage. The user has now
 confirmed the updated desktop darkening/blur, contained personal-card highlight,
 faster scrolling and pointer dragging. Display selection has a read-only Windows service and a portable policy
 matching the Mac fallback behavior, with no polling. Actual
@@ -226,14 +228,16 @@ from Core Animation (maximum matrix error 2.67e-15); this sampler remains an
 explicit native integration API, not a change to the existing portable timing
 helper. Edge antialiasing still needs visual comparison.
 
-These foundations are not yet wired into the visible shell. Rich formatting,
-to-do, drawing and media behavior still require their actual module adapters.
+The optional plain-text preview now connects these foundations to the visible
+shell. Rich formatting, to-do, drawing and media behavior still require their
+actual module adapters.
 Native font measurement, rounded projected editor clipping and registration strokes
 now compose through the same renderer. An isolated Notes workspace fixture edits
 multilingual text, retains its tilted caret through 120 closing/pointer poses
 without new layout/raster work, commits through NotesState, and reopens a fresh
-temporary SQLite store. It uses no real account or Notes data. The visible-shell
-workspace coordinator is still being connected; no complete Notes module is claimed.
+temporary SQLite store. It uses no real account or Notes data. The connected
+workspace remains a bounded development preview; no complete Notes module is
+claimed.
 
 The source toolbar and ten menu states pass 8,667 checks against the original
 Mac layer trees. Finite section/card/menu motion uses caller time and starts no
@@ -262,15 +266,40 @@ The plain Notes workspace coordinator now owns card/editor lifetime, selection,
 pinning, confirmed removal and drag/resize through one existing NotesState. It
 retains retired artwork until the shared composition stops borrowing it. Its
 pointer and card-movement tests allocate no new CPU storage after warm-up.
-Visible-shell integration, per-card creation/deletion transitions and the other
-Notes kinds remain separate work.
+Per-card creation/deletion and section transitions now follow caller-clock
+source timing in the connected preview. Pinned cards retain their placement
+across section changes. The other Notes kinds remain separate work.
 
 Temporary File Shelf now has a metadata-only interaction model. Selection,
 range/toggle selection, stable drag order, two-column scrolling, partial removal
 errors, clear confirmation and source Quick Look requests pass 15,691 checks,
 including 1,200 operations/geometry traces from the original Swift implementation.
-Windows metadata persistence, file identity/access, picker/OLE transfer, preview
-and native artwork are not established by these model tests.
+Windows metadata persistence and native file identity/access are now implemented
+in separate bounded adapters. Picker/OLE transfer, preview and native artwork
+remain pending. The model tests do not establish those integrations.
+
+The current portable build passes 38 suites. The laptop passes the focused
+Notes workspace/editor and Shelf tests; the integrated Notes owner passes 470
+checks, including queued selection notifications between mouse-down and drag.
+The live Notes preview is awaiting user acceptance.
+
+The integrated plain Notes fixture exercises the same owner as the visible
+preview: Unicode input, drag/resize, pin/unpin, create, deletion confirmation,
+section transitions and resource teardown. Its warmed pointer/hover frames
+retain text layouts and GPU resources without C++ allocations. The original
+confirmation geometry passes 5,892 source checks, and the two prepared toolbar
+icons retain their pinned source pixels in a 4,724-byte development bundle.
+These automated checks do not replace the pending live Notes/IME check.
+
+Shelf records use native 128-bit file identities plus their volume, never a
+path-only identity guess or a reinterpreted Mac bookmark. One bounded store
+persists metadata atomically and retains access handles only while needed.
+The Windows adapter now passes 324 synthetic checks, including replacement
+rejection, Unicode paths, hard links, symbolic links, copy-lifetime teardown
+and file/directory rename blocking while leased. It requests read access to
+participate in Windows sharing rules but reads no contents or directory entries.
+No watcher, background scan or second service was added. Native transfers still
+need their own integration and tests.
 
 All MSVC targets explicitly use UTF-8 source and execution encodings, including
 on Chinese-language Windows. Incremental deployment must copy changed files

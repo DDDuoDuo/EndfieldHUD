@@ -68,6 +68,9 @@ public:
     std::span<const DrawObject> prepareDraws(const core::Matrix4& screenTransform={});
     const LayerSceneReport& report() const noexcept {return report_;}
     std::uint64_t contentRevision() const noexcept {return revision_;}
+    // Local text/image updates keep structure but change resource bindings.
+    // Owners use both revisions to republish only on content events.
+    std::uint64_t resourceRevision() const noexcept {return resourceRevision_;}
     std::span<const DrawObject> draws() const noexcept {return draws_;}
 private:
     friend class LayerComposition;

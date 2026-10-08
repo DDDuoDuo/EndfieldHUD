@@ -1,6 +1,7 @@
 // Build-only source-shell feasibility tool. Every input is an explicit synthetic
 // export/cache. Visible launch is opt-in; benchmark never shows its owned HWND.
 #include "app/overlay_host.hpp"
+#include "tools/notes_preview.hpp"
 #include "app/source_watch_session.hpp"
 #include "native/watch_presentation.hpp"
 #include "native/chrome_presentation.hpp"
@@ -72,10 +73,10 @@ private:
 // Keep all synchronous HWND teardown callbacks behind ready=false, before the
 // locals they normally borrow leave scope. Also restores DWM state on failure.
 struct PreviewWindowLifetime final {
-    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;
-    ~PreviewWindowLifetime(){ready=false;backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
+    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;
+    ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(notes&&renderer.stats().initialized)notes->release(renderer);}catch(...) {} if(detached)notes.reset();backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
 };
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur;std::string pin;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
@@ -91,9 +92,15 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--chrome"&&i+1<argc){need(o.chrome.empty(),"Duplicate chrome reference");o.chrome=fs::absolute(argv[++i]);}
         else if(arg==L"--cursor-png"&&i+1<argc){need(o.cursor.empty(),"Duplicate cursor image");o.cursor=fs::absolute(argv[++i]);}
         else if(arg==L"--watch-blur"&&i+1<argc){need(o.watchBlur.empty(),"Duplicate original WatchBlur source");o.watchBlur=fs::absolute(argv[++i]);}
+        else if(arg==L"--notes-assets"&&i+1<argc){need(o.notesAssets.empty(),"Duplicate Notes assets");o.notesAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--notes-data"&&i+1<argc){need(o.notesData.empty(),"Duplicate Notes fixture data");o.notesData=fs::absolute(argv[++i]);}
+        else if(arg==L"--notes-assets-sha"&&i+1<argc){need(o.notesAssetsSHA.empty(),"Duplicate Notes asset pin");o.notesAssetsSHA=utf8(argv[++i]);}
         else if(arg==L"--compiled-sha"&&i+1<argc){need(o.pin.empty(),"Duplicate cache pin");o.pin=utf8(argv[++i]);}
         else need(false,"Unknown or incomplete preview argument");
     }
+    need(o.notesAssets.empty()==o.notesData.empty()&&o.notesAssets.empty()==o.notesAssetsSHA.empty(),"Notes preview requires assets, independent SHA and a new data root together");
+    need(o.visible||o.notesAssets.empty(),"Notes integration is an explicitly visible test; use isolated workspace tests for hidden validation");
+    need(o.notesData.empty()||!fs::exists(o.notesData),"Notes preview data root must be new");
     need(o.visible!=!o.report.empty(),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
     need(!o.visible||(!o.coverage&&o.benchmarkEpoch==0&&o.benchmarkWidth==1280&&o.benchmarkHeight==800),"Coverage/epoch/size overrides are hidden-test only");
@@ -204,8 +211,14 @@ int wmain(int argc,wchar_t**argv){try{
     metadata=Json{};legacyTop=Json{};legacyBottom=Json{};chromeJSON=Json{};package.reset();if(runtime)runtime->releaseSetupJSON();startup.mark("release-full-reference-json");
     gpu::SourceCursor cursor;if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
     std::unique_ptr<BackdropQueue> backdropQueue;
-    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,focused=!args.visible;
-    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop};
+    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;std::unique_ptr<endfield::tools::NotesPreview> notes;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,pendingClose=false,focused=!args.visible;
+    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop,composition,notes};
+    struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
+    std::vector<gpu::LayerCompositionEntry>ordered;std::vector<PublishedEntry>published;ordered.reserve(134);published.reserve(134);
+    auto publishNative=[&]{ordered.clear();ordered.push_back({&layers,{}});if(notes){notes->upload(renderer);for(const auto&e:notes->entries())ordered.push_back(e);}
+        bool changed=ordered.size()!=published.size();if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count){changed=true;break;}}
+        if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(notes)notes->collected(renderer);}
+    };
     app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
     // sibling view, so this fades only native chrome, never source triangles
@@ -228,26 +241,34 @@ int wmain(int argc,wchar_t**argv){try{
         backdropState.lowPower=settings.lowPower;backdropState.sourceOpacity=backdropOpacity(time);backdrop.update(backdropState);
     };
     auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);};
-    auto refresh=[&](double time){if(args.visible){host.setFrameDemand(session.demand(time));host.invalidate();}};
-    auto close=[&](double time){if(!closing){canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
-    auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");std::cout<<"Source action: "<<entry->target<<" (module body is not installed)\n";};
+    auto demand=[&](double time){auto result=session.demand(time);if(notes&&result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||notes->requiresFrames(time);return result;};
+    auto refresh=[&](double time){if(args.visible){host.setFrameDemand(demand(time));host.invalidate();}};
+    auto close=[&](double time){if(!closing){if(notes&&!notes->finish()){pendingClose=true;return;}pendingClose=false;host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
+    auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){notes->select(module,now());break;}}}
+        std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (plain Notes preview)":" (module body is not installed)")<<'\n';};
     auto present=[&](double time,bool submit){
         const auto*sample=session.sample(time);updateBackdrop(time);if(!sample)return false;
         if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session.inputEnabled())session.setInputEnabled(true,time);
         auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;
         materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());
-        if(nativeContent.update(session.actions()))composition.upload(renderer);
+        nativeContent.update(session.actions());
         for(auto&button:available)button.enabled=session.actions().contains(button.buttonID);
         const core::Rect viewport{0,0,metrics.width,metrics.height};labels.update(*sample->sourceFrame,sample->camera,viewport,available);
         // Chrome content is fixed synthetic input; opacity follows the same
         // ready/close timestamps as the source outer controller.
-        if(chrome)chrome->update(*sample->sourceFrame,sample->camera,{viewport,settings.hudScale,settings.hudOffset,core::Module::power,true},static_cast<float>(canvasOpacity(time)));
-        composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
+        const source::DesktopChromeSettings chromeSettings{viewport,settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
+        if(chrome)chrome->update(*sample->sourceFrame,sample->camera,chromeSettings,static_cast<float>(canvasOpacity(time)));
+        if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,chromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);
+        publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
         if(submit)renderer.draw(args.visible);return true;
     };
     app::OverlayCallbacks callbacks;
-    callbacks.resize=[&](const auto&value){metrics=value;if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
+    callbacks.resize=[&](const auto&value){metrics=value;if(notes)notes->resize(value);if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
     callbacks.pointer=[&](const app::PointerEvent&e){if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
+        if(notes&&session.inputEnabled()){
+            const bool handled=notes->pointer(e,time);environment.pointerLocked=notes->pointerLocked();environment.pointer=p;session.setEnvironment(environment,time);
+            if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
+        }
         if(e.kind==app::PointerKind::move){environment.pointer=p;session.pointerMove(p,time);}
         else if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left){environment.pointer=p;session.pointerDown(p,time);if(session.navigationPointerActive())host.capturePointer(true);}
         else if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){environment.pointer=p;if(const auto action=session.pointerUp(p,time))activate(*action);host.capturePointer(false);}
@@ -261,12 +282,14 @@ int wmain(int argc,wchar_t**argv){try{
             }
         }
         else return false;refresh(time);return true;};
-    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready||e.horizontal)return false;const auto time=now();const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
-    callbacks.key=[&](const app::KeyEvent&e){if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};
-    callbacks.focus=[&](bool value){focused=value;if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
+    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;if(notes&&session.inputEnabled()&&notes->covers({e.x,e.y}))return true;if(e.horizontal)return false;const auto time=now();const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
+    callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){return ready&&notes&&notes->filterKey(m);};
+    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}return {};};
+    callbacks.key=[&](const app::KeyEvent&e){if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};
+    callbacks.focus=[&](bool value){focused=value;if(notes)notes->focus(value);if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
     callbacks.closeRequested=[&]{if(ready)close(now());};
-    callbacks.frame=[&](double time){if(!ready)return;const bool active=present(time,true);host.setFrameDemand(session.demand(time));if(!active&&session.phase()==core::VisibilityPhase::concealed){host.hide();host.requestStop();}};
-    app::OverlayOptions windowOptions{L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
+    callbacks.frame=[&](double time){if(!ready)return;const bool active=present(time,true);host.setFrameDemand(demand(time));if(!active&&session.phase()==core::VisibilityPhase::concealed){host.hide();host.requestStop();}};
+    app::OverlayOptions windowOptions{!args.notesData.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(args.visible){
         const auto displays=gpu::readConnectedDisplays();POINT pointer{};
         need(GetCursorPos(&pointer)!=FALSE,"Cannot locate the current display");
@@ -287,9 +310,12 @@ int wmain(int argc,wchar_t**argv){try{
         backdropState.pixelWidth=metrics.pixelWidth;backdropState.pixelHeight=metrics.pixelHeight;backdrop.initialize(host.hwnd(),backdropState,{false});
     }
     startup.mark("lower-system-backdrop");
-    materials.upload(renderer.sourceGraphics());composition.setScenes(renderer,std::array{&layers});host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
+    if(!args.notesAssets.empty()){need(bool(chromePlan),"Notes integration requires the source chrome projection");
+        notesAssets=std::make_unique<gpu::NativeNotesControlsAssets>(args.notesAssets,gpu::NativeNotesControlsAssetPins{args.notesAssetsSHA,"ca04f142185c7de40acd8523bdb563195d90a1d1"});
+        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,true);notes->resize(metrics);session.setHitFilter([&](std::string_view,core::Point p){return !notes||!notes->covers(p);},0);startup.mark("isolated-notes-owner");}
+    materials.upload(renderer.sourceGraphics());publishNative();host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=args.visible?now():args.benchmarkEpoch;session.setEnvironment(environment,start);const auto preparedMS=milliseconds(preparation);
-    std::cout<<"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n";
+    std::cout<<(notes?"Synthetic shell + bounded plain Notes integration: editing/drag/pin/delete only; other module bodies/providers and full Notes features remain. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
     if(args.visible){open(start);host.show();refresh(start);host.run();}
     else {
         auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphics().stats(),rasterizer.stats(),session.frameStats(),session.stats()};};Json::Array rows,images;
@@ -344,6 +370,6 @@ int wmain(int argc,wchar_t**argv){try{
     }
     ready=false;host.setFrameDemand({});host.setCursor(nullptr);backdrop.reset();
     if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    composition.detach(renderer);renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();return 0;
+    composition.detach(renderer);if(notes){notes->finish();notes->release(renderer);notes.reset();}renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();return 0;
 }catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}
 catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}

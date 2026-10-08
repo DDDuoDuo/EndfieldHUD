@@ -62,7 +62,7 @@ NotesControlsScenePlan prepareNotesControlsScene(const modules::NotesControls& s
     need(source.contentRevision()!=0,"Initialize Notes controls before compiling artwork");
     need(images.size()==source.images().size(),"Notes image bindings must exactly cover source dependencies");
     std::set<std::string,std::less<>>imageIDs;for(const auto&i:images)need(imageIDs.insert(i.dependency.layerID).second,"Repeated Notes image binding");
-    Compiler c{source,images};c.result.requiresGroupOpacity=text(source.artwork()["id"])=="notes.menu";
+    Compiler c{source,images};c.result.requiresGroupOpacity=text(source.artwork()["id"])=="notes.menu"||text(source.artwork()["id"])=="notes.confirmation";
     c.visit(source.artwork(),{},1,NotesControlSurface::none,0);
     need(c.result.surfaces.size()<=LayerRasterizer::maximumEntries,"Notes controls exceed retained surface capacity");
     for(std::size_t n=0;n<source.feedback().size();++n)for(bool rim:{false,true})need(std::count_if(c.result.surfaces.begin(),c.result.surfaces.end(),[&](const auto&s){return s.feedback==n&&s.rim==rim;})==1,"Source Notes feedback does not resolve exactly once");

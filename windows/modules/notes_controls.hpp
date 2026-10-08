@@ -2,8 +2,9 @@
 #include "modules/notes_presentation.hpp"
 
 namespace endfield::modules {
-enum class NotesControlsKind {center,mediaSource,font,size,special,color,shelfMedia};
+enum class NotesControlsKind {center,mediaSource,font,size,special,color,shelfMedia,deletion};
 struct NotesControlsStrings {
+    std::string cancelDeletion{"Cancel deletion"},confirmDeletion{"Confirm deletion"};
     std::string heading{"NOTES"},saveErrorPrefix{"Could not save: "},storageUnavailable{"Notes storage unavailable"};
     std::array<std::string,4> tools{"Text","TODO","Image/Video","Drawing"};
     // Original Mac labels are intentionally caller-localized. A Windows owner

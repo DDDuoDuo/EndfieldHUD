@@ -49,7 +49,7 @@ void validate(const NotesControlsInput&i){
     colorCheck(i.accent);colorCheck(i.currentColor);if(i.systemOrange)colorCheck(*i.systemOrange);
     need(std::isfinite(i.contentsScale)&&i.contentsScale>=1&&i.contentsScale<=8,"Invalid Notes control render scale");
     if(i.error){textCheck(*i.error);need(i.systemOrange.has_value(),"Notes save-error artwork requires the original owner's system orange");}
-    const auto&s=i.strings;for(const auto*p:{&s.heading,&s.saveErrorPrefix,&s.storageUnavailable,&s.chooseFile,&s.chooseShelf,&s.close,&s.currentColor,&s.mediaOnly,&s.useMedia,&s.shelfHeading})textCheck(*p);
+    const auto&s=i.strings;for(const auto*p:{&s.cancelDeletion,&s.confirmDeletion,&s.heading,&s.saveErrorPrefix,&s.storageUnavailable,&s.chooseFile,&s.chooseShelf,&s.close,&s.currentColor,&s.mediaOnly,&s.useMedia,&s.shelfHeading})textCheck(*p);
     for(const auto&v:s.tools)textCheck(v);for(const auto&v:s.traits)textCheck(v);textCheck(i.selectedValue);
     need(i.values.size()<=100000&&i.choices.size()<=100000,"Notes menu data exceeds descriptor budget");for(const auto&v:i.values)textCheck(v);
     std::set<std::string,std::less<>> ids;bool selected=!i.selectedID;
@@ -62,7 +62,21 @@ bool NotesControls::update(const NotesControlsInput&i){
     if(input_&&*input_==i)return false;validate(i);Build b;b.accent=i.accent;b.menu=i.kind!=NotesControlsKind::center;
     const auto ink=gray(i.dark?.96:.10),primary=gray(i.dark?.94:.11),muted=gray(i.dark?.65:.37),border=gray(i.dark?.72:.24,i.dark?.28:.24);
     Rect bounds{0,0,400,334};std::vector<Item> items;
-    if(!b.menu){
+    if(i.kind==NotesControlsKind::deletion){
+        // NotesCanvas.renderDeletionControls: source actions are right-aligned
+        // under the delete icon by NotesState. This descriptor is their local
+        // 56x25 artwork; the caller supplies that workspace origin and .16s rise.
+        bounds={0,0,56,25};b.root=layer("notes.confirmation",bounds);
+        for(unsigned n=0;n<2;++n){const std::string id=n?"confirmDelete":"cancelDelete";const Rect r{double(n)*31,0,25,25},local{0,0,25,25};
+            b.actions.push_back({id,n?i.strings.confirmDeletion:i.strings.cancelDeletion,r});
+            auto plate=shape(id,r,rounded(local,3),gray(i.dark?.15:.91,.98),n?i.accent:border,1);
+            b.highlight(plate,id,local,false);Json::Array path;
+            if(n)path={command("move",{{6,12}}),command("line",{{10,16}}),command("line",{{19,7}})};
+            else path={command("move",{{0,0}}),command("line",{{9,9}}),command("move",{{9,0}}),command("line",{{0,9}})};
+            auto symbol=shape(id+"/symbol",n?local:Rect{8,8,9,9},std::move(path),{},n?i.accent:primary,1);
+            symbol["shape"]["lineCap"]="round";symbol["shape"]["lineJoin"]="round";append(plate,std::move(symbol));append(b.root,std::move(plate));
+        }
+    }else if(!b.menu){
         b.root=layer("notes.controls",bounds);b.root["name"]="module.notes.canvas";b.root["allowsGroupOpacity"]=false;
         append(b.root,label("notes.controls/heading",{11,0,250,19},i.strings.heading.starts_with("//")?i.strings.heading:"// "+i.strings.heading,15,primary,true,false));
         const auto status=i.error?i.strings.saveErrorPrefix+*i.error:!i.storageAvailable?i.strings.storageUnavailable:std::string{};
@@ -122,7 +136,7 @@ bool NotesControls::setFeedback(std::optional<std::string_view> id,bool pressed,
     need(input_.has_value(),"Notes controls must exist before feedback");std::optional<std::size_t> next;
     if(id){for(std::size_t n=0;n<feedback_.size();++n)if(feedback_[n].actionID==*id){next=n;break;}need(next.has_value(),"Notes action has no enabled source highlight");}
     pressed=pressed&&next.has_value();if(hovered_==next&&pressed_==pressed&&reduceMotion_==reduce)return false;
-    const bool framed=input_->kind!=NotesControlsKind::center;
+    const bool framed=input_->kind!=NotesControlsKind::center&&input_->kind!=NotesControlsKind::deletion;
     for(std::size_t n=0;n<feedback_.size();++n){auto&f=feedback_[n];const bool active=next&&*next==n;const auto tint=active?(pressed?1.:.62):0.,rim=active?1.:framed?.28:0.;const bool changed=f.tintOpacity!=tint||f.rimOpacity!=rim;
         f.duration=changed&&!reduce?(active&&pressed?.06:.14):0;f.tintOpacity=tint;f.rimOpacity=rim;}
     hovered_=next;pressed_=pressed;reduceMotion_=reduce;++feedbackRevision_;return true;

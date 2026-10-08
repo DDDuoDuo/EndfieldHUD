@@ -308,6 +308,7 @@ At each step report exactly what is implemented and verified, what remains unver
 | --- | --- |
 | Compositor/backdrop | Native integration builds and passes automated tests. User verified live darkening/blur, card highlight and navigation scroll/drag. Recording/cursor and capture behavior still need laptop verification. |
 | Projected input | Retained DirectWrite/TSF fixtures pass; the user verified Chinese typing and selection in the tilted editor. Japanese/Korean candidates, accessibility and full-module editing remain unverified. |
+| Notes / Shelf | Plain Notes is connected to the isolated shell with native input, per-card transitions and retained artwork; live module acceptance is pending. Shelf state/persistence/file-access foundations exist; its UI and transfers remain in progress. |
 | Direct tray drop | No verified equivalent for the Mac menu-bar drop target. Prototype before promising. |
 | OS Focus/DND | Restricted OS capability; timer parity required, system integration may be deferred. |
 | Media providers/lyrics/routing | Provider and codec dependent; test available Windows apps and APIs. |

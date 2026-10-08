@@ -2,6 +2,7 @@
 #include "native/notes_scene.hpp"
 #include "native/notes_text_measure.hpp"
 #include "native/projected_editor.hpp"
+#include "modules/notes_motion.hpp"
 #ifdef _WIN32
 namespace endfield::native {
 struct NativeNotesWorkspaceStyle {
@@ -28,6 +29,14 @@ struct NativeNotesWorkspaceHit {
 struct NativeNotesWorkspaceStats {
     std::size_t cards{},visibleCards{},retiredCards{},retiredEditors{};
     std::uint64_t stateSynchronizations{},cardContentUpdates{},cardPlacementUpdates{},poseCardVisits{},editorContentUpdates{};
+    std::size_t deletingCards{};
+};
+using NativeNotesCardToken=std::uint64_t;
+struct NativeNotesCardMotion {
+    NativeNotesCardToken token{};
+    // Sample notesSectionMotion/notesCardMotion/notesMutationMotion on the
+    // OWNER'S existing clock. Scale uses the source card's center anchor.
+    modules::NotesMotionSample sample;
 };
 struct NativeNotesFinishResult {bool finished{},saved{};};
 // Short/plain Notes coordinator. It borrows ONE state, rasterizer, HWND and
@@ -60,6 +69,18 @@ public:
     bool setWorkspaceBounds(core::Rect,std::optional<core::Point> creationPoint={});
     void setPresentation(bool notesSelected,bool retainOutgoing=false);
     void settleOutgoing(); // after owner's finite section transition; no clock here
+    std::uint64_t presentationGeneration()const noexcept;
+    bool settleOutgoing(std::uint64_t generation); // stale completion leaves new transition intact
+    // Tokens survive content/theme/pose changes, but source section changes
+    // renew tokens ONLY for cards whose target visibility changes (canceling
+    // their old tracks). Pinned/unchanged cards keep their current motion.
+    std::optional<NativeNotesCardToken> cardToken(std::string_view noteID)const noexcept;
+    // Numeric patches, not a complete list: omitted cards keep their pose.
+    // Identity sample resets a track. Returns true for every accepted batch,
+    // including unchanged samples. A stale token rejects the entire batch
+    // unchanged (false); invalid/repeated/nonfinite data throws before mutation.
+    // No allocation, state scan, clock or resource upload; updatePose applies it.
+    bool setCardMotions(std::span<const NativeNotesCardMotion>);
     bool updatePose(const NativeNotesWorkspacePose&);
     bool requiresFrames(double time)const;
     std::span<const LayerCompositionEntry> entries()const noexcept;
@@ -87,6 +108,11 @@ public:
     bool requestDeletion(std::string_view);
     void cancelDeletion();
     bool confirmDeletion(std::string_view);
+    // Original source ordering: persistence/state removal first, then .20s
+    // notesCardMotion(false) artwork. No automatic timing: caller samples this
+    // returned token and settles it at completion (or immediately if reduced).
+    std::optional<NativeNotesCardToken> confirmDeletionRetainingArtwork(std::string_view);
+    bool settleDeletion(NativeNotesCardToken); // then republish + collectRetired
     std::optional<NativeNotesWorkspaceHit> hitTest(core::Point physicalClientPoint)const;
     bool setFeedback(std::string_view noteID,std::optional<std::string_view> verb,bool pressed,bool reduceMotion,double time);
     const modules::NotesCardPresentation* card(std::string_view)const noexcept;

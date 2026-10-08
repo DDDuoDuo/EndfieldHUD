@@ -22,6 +22,12 @@ const Json*find(const Json&root,std::string_view key,std::string_view value){if(
 const Json&get(const Json&root,std::string_view id){const auto*p=find(root,"id",id);check(p!=nullptr,"Named source control artwork exists");return *p;}
 Rect rect(const Json&j){const auto&a=j.array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
 void tests(){
+    { NotesControls confirm;NotesControlsInput input;input.kind=NotesControlsKind::deletion;confirm.update(input);
+      check(confirm.bounds()==Rect{0,0,56,25}&&confirm.actions().size()==2&&confirm.images().empty(),"Source confirmation has two compact controls without external images");
+      check(confirm.actionAt({1,1})=="cancelDelete"&&confirm.actionAt({32,1})=="confirmDelete"&&!confirm.actionAt({28,12}),"Confirmation gap cannot activate either action");
+      check(get(confirm.artwork(),"cancelDelete/symbol")["shape"]["lineCap"].string()=="round"&&rect(get(confirm.artwork(),"cancelDelete/symbol")["frame"])==Rect{8,8,9,9},"Source cancellation icon preserves rounded one-point stroke and inset");
+      confirm.setFeedback("confirmDelete",true,false);confirm.setFeedback({},false,false);check(confirm.feedback()[1].rimOpacity==0,"Confirmation uses source unframed highlight"); }
+
     NotesControls plan;NotesControlsInput i;check(plan.update(i),"First explicit center input constructs descriptors");
     check(plan.bounds()==Rect{0,0,400,334}&&plan.actions().size()==4&&plan.images().size()==2,"Original center contains four controls and two original icon dependencies");
     check(get(plan.artwork(),"notes.controls/heading")["text"]["string"].string()=="// NOTES","Source heading decoration retained");

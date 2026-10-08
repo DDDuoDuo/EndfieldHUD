@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <stdexcept>
 namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
@@ -31,6 +32,8 @@ gpu::NativeNotesWorkspaceStyle style(){gpu::NativeNotesWorkspaceStyle s;s.palett
 gpu::NativeNotesWorkspaceOptions options(){gpu::NativeNotesWorkspaceOptions o;o.raster.pixelsPerPoint=1;o.raster.paddingPoints=1;return o;}
 gpu::NativeNotesWorkspacePose pose(double time=0){gpu::NativeNotesWorkspacePose p;p.screenToClip=gpu::layerViewportProjection(640,360);p.pixelWidth=640;p.pixelHeight=360;p.time=time;return p;}
 data::Note note(std::string id,std::string text,double x=20,double y=20,std::int64_t z=0){return {.id=std::move(id),.kind=data::NoteKind::text,.text=std::move(text),.x=x,.y=y,.width=210,.height=140,.zIndex=z,.createdAt=123};}
+void matrixCheck(const core::Matrix4&a,const core::Matrix4&b,const char*why){for(std::size_t n=0;n<16;++n)check(std::abs(a.values[n]-b.values[n])<1e-8,why);}
+core::Matrix4 cardMotionWorld(const core::Matrix4&workspace,core::Rect rect,const mod::NotesMotionSample&sample){const auto x=rect.x+rect.width*.5,y=rect.y+rect.height*.5;return workspace*core::Matrix4::translation(x+sample.x,y+sample.y)*core::Matrix4::scale(sample.scale,sample.scale,sample.scale)*core::Matrix4::translation(-x,-y);}
 void run(HWND hwnd,gpu::Renderer&renderer){
     std::size_t saves{},removals{};std::string saved;bool failSave{},failRemove{};
     mod::NotesState state({note(one,"Actual text\n终末地 日本語 한국어 😀"),note(two,"",300,40,1)},
@@ -114,9 +117,72 @@ void boundaries(HWND hwnd){
     mod::NotesState limited({note(one,"")},{[](const auto&){},[](auto){}});auto oneCard=options();oneCard.maximumRetainedCards=1;
     {gpu::NativeNotesWorkspace workspace(hwnd,limited,raster,style(),oneCard);const auto before=limited.revision();rejects([&]{workspace.createText(two,123);},"Explicit retained capacity rejects creation before persistence");check(limited.revision()==before&&limited.notes().size()==1,"Card capacity failure preserves original records");}
 }
+void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
+    auto pinned=note(two,"Pinned sibling",350,40,1);pinned.isPinned=true;std::size_t removals{};bool failRemove{};
+    mod::NotesState state({note(one,"Editable card"),pinned},{[](const auto&){},[&](std::string_view){if(failRemove)throw std::runtime_error("Injected removal failure");++removals;}});state.setWorkspaceBounds({0,0,640,360});
+    gpu::LayerRasterizer raster;gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Motion owner collects only detached retirement");};
+    workspace.updatePose(pose());publish();const auto rect=state.card(one)->rect;auto*nativeOne=workspace.entries()[0].scene;auto*nativeTwo=workspace.entries()[1].scene;const auto initialOne=nativeOne->draws()[0].world,initialTwo=nativeTwo->draws()[0].world;
+    const auto tokenOne=*workspace.cardToken(one),tokenTwo=*workspace.cardToken(two);const auto sourceSample=mod::notesCardMotion(true,.075);
+    check(workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,sourceSample}}),"One caller-sampled card motion changes retained numbers");workspace.updatePose(pose(1));composition.present(renderer);
+    check(workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,sourceSample}}),"An unchanged valid sample remains accepted instead of canceling the caller's active track");
+    matrixCheck(workspace.entries()[0].scene->draws()[0].world,cardMotionWorld({},rect,sourceSample)*initialOne,"Card motion uses source center anchor and operation order");
+    matrixCheck(workspace.entries()[1].scene->draws()[0].world,initialTwo,"Unmentioned pinned sibling remains at its original pose");
+    check(std::abs(workspace.entries()[0].scene->draws()[0].opacity-sourceSample.opacity)<1e-6&&workspace.entries()[1].scene->draws()[0].opacity==1,"Per-card opacity does not fade sibling artwork");
+    const auto header=core::Projection::viewport(pose().screenToClip*cardMotionWorld({},rect,sourceSample),640,360).project({rect.x+12,rect.y+10});
+    check(header&&workspace.hitTest(*header)&&workspace.hitTest(*header)->noteID==one,"Inverse card hit follows the same sampled transform");
+    const auto beforeInvalid=workspace.entries()[0].scene->draws()[0].world;
+    auto invalid=sourceSample;invalid.scale=std::numeric_limits<double>::quiet_NaN();
+    rejects([&]{workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}},gpu::NativeNotesCardMotion{tokenTwo,invalid}});},"Late invalid motion rejects the whole numeric batch");
+    rejects([&]{workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}},gpu::NativeNotesCardMotion{tokenOne,sourceSample}});},"Repeated motion token rejects before mutation");
+    workspace.updatePose(pose(1));composition.present(renderer);matrixCheck(workspace.entries()[0].scene->draws()[0].world,beforeInvalid,"Invalid motion rollback preserves the first card pose");
+    workspace.beginEditing(one);publish();check(workspace.cardToken(one)==tokenOne,"Entering a field keeps the card's active source motion token");
+    workspace.updatePose(pose(1.1));composition.present(renderer);const auto editorPoint=workspace.editor()->placement().projection.project({5,5});
+    const auto expectedEditor=core::Projection::viewport(pose().screenToClip*cardMotionWorld({},rect,sourceSample)*core::Matrix4::translation(rect.x+9,rect.y+29),640,360).project({5,5});
+    check(editorPoint&&expectedEditor&&std::abs(editorPoint->x-expectedEditor->x)<1e-8&&std::abs(editorPoint->y-expectedEditor->y)<1e-8,"Editor/IME plane receives the exact same card animation and live workspace tilt");
+    const auto before=raster.stats();const auto measures=workspace.measurementStats();const auto gpuBefore=renderer.stats();const auto layout=workspace.editor()->layout().painted()->layoutIdentity();
+    allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){const auto sample=mod::notesCardMotion(true,double(n)/600);workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,sample}});auto p=pose(2+double(n)/60);p.workspaceToScreen.values[3]=double(n)*.0000008;p.workspaceToScreen.values[7]=-double(n)*.0000003;p.workspaceToScreen.values[12]=double(n)*.02;workspace.updatePose(p);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0,"120 combined finite-card/editor/tilt frames allocate no C++ storage");
+    check(raster.stats().rasterizations==before.rasterizations&&raster.stats().textLayoutsCreated==before.textLayoutsCreated&&workspace.measurementStats().measurements==measures.measurements&&renderer.stats().textureUploads==gpuBefore.textureUploads&&workspace.editor()->layout().painted()->layoutIdentity()==layout,"Card animation changes no measurement, painted editor layout, raster or texture resources");
+    check(workspace.requiresFrames(4),"Caller active card sample joins existing finite demand");
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}}});workspace.finishEditing(false);publish();workspace.updatePose(pose(4));check(!workspace.requiresFrames(4),"Identity/settled sample clears card frame demand");
+
+    workspace.setPresentation(false,true);const auto firstGeneration=workspace.presentationGeneration();const auto outgoing=*workspace.cardToken(one);
+    check(outgoing!=tokenOne&&workspace.cardToken(two)==tokenTwo,"Source section change cancels only the changing unpinned card token");
+    const auto exit=mod::notesSectionMotion(false,{1,0},.12);workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{outgoing,exit}});workspace.updatePose(pose(4.1));publish();
+    matrixCheck(nativeTwo->draws()[0].world,initialTwo,"Pinned card is stationary during another card's section transition");
+    check(!workspace.hitTest({rect.x+50,rect.y+50}),"Outgoing card cannot receive pointer input");
+    check(!workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{tokenOne,{}}}),"Canceled earlier card track cannot overwrite its section motion");
+    workspace.setPresentation(true);const auto incoming=*workspace.cardToken(one);check(incoming!=outgoing,"Interrupted section renews only that card's cancellation token");
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{incoming,mod::notesSectionMotion(true,{0,1},.1)}});workspace.updatePose(pose(4.2));publish();
+    check(!workspace.settleOutgoing(firstGeneration)&&workspace.entries().size()==2,"Stale outgoing completion cannot remove newly incoming artwork");
+    workspace.setPresentation(false,true);const auto currentGeneration=workspace.presentationGeneration(),currentToken=*workspace.cardToken(one);
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{currentToken,mod::notesSectionMotion(false,{0,1},.1)}});workspace.updatePose(pose(4.3));publish();
+    check(!workspace.settleOutgoing(firstGeneration)&&workspace.entries().size()==2,"Older completion also cannot settle a newer outgoing transition");
+    const auto measurementCount=workspace.measurementStats().measurements;auto light=style();light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};workspace.setStyle(light);publish();
+    check(workspace.cardToken(one)==currentToken&&workspace.measurementStats().measurements==measurementCount,"Appearance replacement preserves sampled token and unchanged measured text");
+    check(workspace.settleOutgoing(currentGeneration)&&workspace.entries().size()==1&&!workspace.settleOutgoing(currentGeneration),"Current completion settles once and retains only pinned note");publish();
+    check(!workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{currentToken,exit}}),"Settled outgoing pose cannot be revived by a queued sample");
+    workspace.setPresentation(true);publish();workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*workspace.cardToken(one),{}}});workspace.updatePose(pose(5));
+    state.setPresentation(false);check(workspace.syncState(),"syncState reports pure visibility/entry changes without artwork revision");publish();state.setPresentation(true);check(workspace.syncState()&&!workspace.syncState(),"Visibility restoration reports once and unchanged sync is false");publish();
+
+    workspace.requestDeletion(one);publish();const auto beforeDelete=*workspace.cardToken(one);failRemove=true;
+    check(!workspace.confirmDeletionRetainingArtwork(one)&&state.note(one)&&workspace.cardToken(one)==beforeDelete&&workspace.stats().deletingCards==0,"Failed persistence does not start deletion artwork or change its token");failRemove=false;
+    const auto deletion=workspace.confirmDeletionRetainingArtwork(one);check(deletion&&*deletion!=beforeDelete&&!state.note(one)&&removals==1&&workspace.stats().deletingCards==1&&workspace.entries().size()==2,"Deletion persists/removes state immediately while keeping exact artwork composed");
+    check(!workspace.cardToken(one)&&!workspace.hitTest({rect.x+50,rect.y+50}),"Deleted-only artwork has no live state binding or pointer input");publish();
+    const auto deleteRaster=raster.stats();const auto deleteMeasurements=workspace.measurementStats();const auto deleteGPU=renderer.stats();
+    allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){const auto sample=mod::notesCardMotion(false,.2*double(n)/119);workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*deletion,sample}});auto p=pose(6+double(n)/60);p.workspaceToScreen.values[3]=double(n)*.0000008;p.workspaceToScreen.values[12]=double(n)*.04;workspace.updatePose(p);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==deleteRaster.rasterizations&&workspace.measurementStats().measurements==deleteMeasurements.measurements&&renderer.stats().textureUploads==deleteGPU.textureUploads,"Retiring deletion follows 120 live-tilt samples without allocation or raster/upload work");
+    check(workspace.stats().deletingCards==1&&!workspace.requiresFrames(8)&&workspace.entries().size()==2,"Finished numeric fade stays retained until caller explicitly settles its token");
+    check(workspace.settleDeletion(*deletion)&&!workspace.settleDeletion(*deletion)&&workspace.stats().retiredCards==1&&workspace.stats().deletingCards==0,"Deletion token settles exactly once into normal deferred retirement");
+    rejects([&]{workspace.collectRetired(renderer);},"Settled deletion still cannot destroy a scene borrowed by prior composition");publish();
+    check(workspace.entries().size()==1&&!workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*deletion,{}}}),"Published retirement rejects all later samples of deleted artwork");
+    workspace.requestDeletion(two);publish();check(workspace.confirmDeletionRetainingArtwork(two).has_value(),"Second deletion can remain active during whole-owner teardown");publish();
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().meshes==0&&renderer.stats().textures==0,"Safe owner teardown releases still-held deletion artwork only after detach");
+}
 }
 int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native hud.hlsl path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Owned COM test apartment");
-    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);boundaries(window.hwnd);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
+    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);boundaries(window.hwnd);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes workspace owner contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes workspace owner failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif
