@@ -51,7 +51,7 @@ The portable source animation evaluator has been compared with 27,641 samples
 from the original Swift curves and ten complete opening/ambient/closing poses.
 Camera tests compare the actual Mac projection at two viewport sizes. The source
 layout writers, finite button controllers, image geometry and Canvas clipping
-are now ported. On the Windows laptop, 36 generated frames pass 1,814,023 checks
+are now ported. On the Windows laptop, 36 generated frames pass 1,814,041 checks
 against the original Mac builder, including opening, closing, scrolling, hover
 and compound tilt. The expanded portable comparison also covers 44 frames and
 retained ambient motion, with 2,414,192 checks against the original builder. A
@@ -63,20 +63,30 @@ projection and masks move. The live label bridge passes 538 Windows checks,
 including initial placement, content reload, clipping and repeated pointer
 presentation without new C++ allocations or GPU resources. Local font
 substitution remains explicit; this is not
-a claim of identical Mac and Windows font rasterization. Live generated-frame
-GPU comparisons and complete module integration are still in progress. A
-sequence test exposed stale camera constants when previously hidden materials
-returned after resizing. The fix has a portable regression; its full Windows
-pixel replay is pending.
+a claim of identical Mac and Windows font rasterization. A sequence test exposed
+stale camera constants when previously hidden materials returned after resizing.
+The corrected retained path passes all 36 sequential Windows WARP frame
+comparisons at 1280×800 and 1920×1080: at least 99.9861% of pixels differ by at
+most two levels in every channel, and the worst mean channel difference is
+0.00801 out of 255. This still excludes native labels, modules and backdrop.
 
 Selectable hover/press colors now match 22,030 original Swift events, including
 shared targets, interrupted fades and the grouped personal-card highlight. This
-portable check is bit-exact; MSVC comparison remains pending. Ambient updates
+check is bit-exact on both the portable build and MSVC. Ambient updates
 visit the 29 affected descendants instead of resolving all 834 source nodes.
 
+Header, footer and all five clock layouts now have a source-derived portable
+plan. The isolated original-source comparison covers 20 clock states, 216
+layouts and six projected poses (13,001 checks). Clock or footer content changes
+can rerasterize and upload only their own retained surface; Windows tests verify
+that sibling labels, geometry, projection and masks stay unchanged. Animated
+clock-page displacement and native font appearance still need visual checks.
+
 The window host coalesces redraw requests and owns one cancellable wake timer.
-Hidden windows schedule no rendering work. Its hidden-window tests and the
-other 23 Windows test suites pass on the laptop. Visible input, cursor, IME,
+Hidden windows schedule no rendering work. All 28 current Windows test suites
+pass on the laptop. Display selection has a read-only Windows service and a
+portable policy matching the Mac fallback behavior, with no polling. Actual
+display switching, visible input, cursor, IME,
 multi-monitor behavior and full-app performance still require acceptance tests.
 
 A compiled original-material catalog avoids runtime JSON and shader compilation.
@@ -85,6 +95,11 @@ and geometry across multiple original frames; older caches remain readable.
 The single-frame cache prepared in 12.5–18.9 ms on the laptop, compared with
 roughly 1.6 seconds for the development JSON path, and produced identical Windows
 readback bytes. These timings measure artwork preparation, not total startup.
+The multi-frame shell catalog retains 267 templates and 45 textures in
+7,392,219 bytes; the 25 MB verification catalog is not needed at runtime. The
+small catalog passes the same sequential pixel comparisons and prepared in
+28.1 ms on the laptop's latest WARP run. Driver allocations and frame targets
+are additional memory, not included in the catalog size.
 
 Reference tools (macOS, temporary fixture data only):
 

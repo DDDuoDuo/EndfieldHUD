@@ -66,6 +66,40 @@ void run(const std::filesystem::path& shader){
             check(raster.stats().entries==2,"Two scene owners may use the same source layer name safely");other.detach(renderer);
         }
         check(raster.stats().entries==1,"Destroying a detached scene releases only its own local surfaces");scene.upload(renderer);
+        auto first=leaf("clock",1,0,0),second=leaf("caption",0,0,1);
+        first["bounds"]=Json::Array{0,0,8,8};first["position"]=Json::Array{2,2};
+        second["bounds"]=Json::Array{0,0,8,8};second["position"]=Json::Array{20,20};
+        scene.load(root({first,second}),options);scene.upload(renderer);
+        const auto structureRevision=scene.contentRevision();
+        const PlaneMask clockMask{{},{0,0,16,16}};
+        const LayerPlacement clockPlacement{*scene.surfaceIndex("clock"),endfield::core::Matrix4::translation(3,3),.5f,std::span(&clockMask,1)};
+        scene.setPlacements(std::span(&clockPlacement,1));scene.present(renderer);
+        const auto unchangedCaption=scene.draws()[1];
+        const auto beforeLocalRaster=raster.stats();const auto beforeLocalGPU=renderer.stats();
+        first["backgroundColor"]=Json::Object{{"sRGB",Json::Array{0,1,0,1}}};
+        check(scene.updateLocalContent("clock",1,first,options),"A changed clock updates its retained local surface");
+        scene.upload(renderer);scene.present(renderer);renderer.draw(false);
+        pixel(renderer.readback(),6,6,{0,128,0,128});pixel(renderer.readback(),24,24,{255,0,0,255});
+        const auto afterLocalRaster=raster.stats();const auto afterLocalGPU=renderer.stats();
+        check(afterLocalRaster.rasterizations==beforeLocalRaster.rasterizations+1&&afterLocalRaster.entries==2,"A clock tick rasterizes one surface and keeps bounded local storage");
+        check(afterLocalGPU.textureUploads==beforeLocalGPU.textureUploads+1&&afterLocalGPU.meshUploads==beforeLocalGPU.meshUploads&&afterLocalGPU.objectBufferAllocations==beforeLocalGPU.objectBufferAllocations,"Clock content uploads one texture without rebuilding other labels or geometry");
+        check(scene.contentRevision()==structureRevision&&scene.draws()[0].world.values==clockPlacement.world.values&&scene.draws()[0].opacity==.5f&&scene.draws()[0].masks.size()==1&&scene.draws()[1].world.values==unchangedCaption.world.values,"Local content preserves structural bindings, placement, opacity, masks and sibling placement");
+        check(!scene.updateLocalContent("clock",1,first,options)&&raster.stats().rasterizations==afterLocalRaster.rasterizations,"The same caller content revision performs no rasterization");
+        const auto priorNodes=scene.report().sourceNodes;
+        auto wrong=first;wrong["id"]="caption";
+        bool wrongFailed=false;try{scene.updateLocalContent("clock",2,wrong,options);}catch(const std::exception&){wrongFailed=true;}
+        auto projective=leaf("projective-child",1,1,1);projective["zPosition"]=1;wrong=first;wrong["children"]=Json::Array{projective};
+        bool projectedFailed=false;try{scene.updateLocalContent("clock",2,wrong,options);}catch(const std::exception&){projectedFailed=true;}
+        wrong=first;wrong["bounds"]=Json::Array{0,0,-1,8};
+        bool emptyFailed=false;try{scene.updateLocalContent("clock",2,wrong,options);}catch(const std::exception&){emptyFailed=true;}
+        check(wrongFailed&&projectedFailed&&emptyFailed&&scene.report().sourceNodes==priorNodes,"Invalid local identity, projection or bounds leaves retained content unchanged");
+        scene.upload(renderer);scene.present(renderer);renderer.draw(false);pixel(renderer.readback(),6,6,{0,128,0,128});
+        const auto beforeResizeGPU=renderer.stats();
+        first["bounds"]=Json::Array{0,0,10,8};
+        check(scene.updateLocalContent("clock",2,first,options),"A local size change can replace only its own retained quad");scene.upload(renderer);
+        check(renderer.stats().meshUploads==beforeResizeGPU.meshUploads+1&&renderer.stats().textureUploads==beforeResizeGPU.textureUploads+1,"A changed local extent rebuilds exactly one mesh and texture");
+        for(unsigned i=3;i<103;++i){first["backgroundColor"]=Json::Object{{"sRGB",Json::Array{0,double(i%2),0,1}}};scene.updateLocalContent("clock",i,first,options);scene.upload(renderer);}
+        check(raster.stats().entries==2&&renderer.stats().textures==2&&renderer.stats().meshes==2,"Repeated local clock revisions retain bounded CPU and GPU surfaces");
         for(unsigned i=0;i<100;++i){scene.load(root({leaf("revision-"+std::to_string(i),1,0,0)}),options);scene.upload(renderer);}
         check(raster.stats().entries==1&&renderer.stats().textures==1&&renderer.stats().meshes==1,"Changing module identities releases abandoned CPU and GPU surfaces");
         scene.detach(renderer);check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Detach releases owned native resources");

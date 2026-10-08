@@ -34,6 +34,12 @@ public:
     // Resolve source IDs once when a binding plan changes, then supply numeric
     // indices on the animation path. Content and local raster bounds stay fixed.
     std::optional<std::size_t> surfaceIndex(std::string_view sourceID) const noexcept;
+    // Text/artwork changes update only their retained local surface. The caller
+    // advances contentRevision when content changes; equal revision/options is
+    // a no-op. Placement, masks and every other surface remain untouched.
+    // Call upload() after an accepted change. This is not a frame-clock method.
+    bool updateLocalContent(std::string_view sourceID,std::uint64_t contentRevision,
+        const ehud::data::Json& localContent,const LayerRasterOptions&);
     void setPlacements(std::span<const LayerPlacement>);
     // Reuses all local surfaces. Caller supplies source-derived placement,
     // including a changed camera or module transition, in top-left screen space.
@@ -42,17 +48,25 @@ public:
     std::uint64_t contentRevision() const noexcept {return revision_;}
     std::span<const DrawObject> draws() const noexcept {return draws_;}
 private:
-    struct Surface {std::string id;std::shared_ptr<const LayerRasterImage> image;DrawObject draw;};
+    struct Surface {
+        std::string id;std::shared_ptr<const LayerRasterImage> image;DrawObject draw;
+        std::uint64_t imageRevision{},meshRevision{};
+        std::optional<std::uint64_t> localRevision;
+        LayerRasterOptions options;
+        std::size_t nodeCount{};bool grouped{};
+    };
     LayerRasterizer* rasterizer_;
     std::vector<Surface> surfaces_;
     std::vector<DrawObject> draws_;
     LayerSceneReport report_;
+    std::vector<LayerRasterIssue> structuralIssues_;
     std::string namespace_;
     std::vector<std::string> rasterIDs_;
     std::vector<std::string> uploaded_;
     std::uint64_t revision_{},attempt_{};
     void append(const ehud::data::Json&,const core::Matrix4&,float,
                 const std::vector<PlaneMask>&,const LayerRasterOptions&,unsigned);
+    void rebuildReport();
 };
 // The source native layers already project into top-left viewport points.
 // This final matrix changes only those coordinates to D3D's clip space.

@@ -50,8 +50,11 @@ void LayerScene::load(const Json& root,const LayerRasterOptions& options){
     LayerScene next(*rasterizer_);next.namespace_=namespace_;next.revision_=++attempt_;
     next.append(root,{},1,{},options,0);
     next.report_.sourceNodes=count;
+    next.structuralIssues_=std::move(next.report_.unsupported);
+    next.rebuildReport();
     for(const auto&id:rasterIDs_)if(std::find(next.rasterIDs_.begin(),next.rasterIDs_.end(),id)==next.rasterIDs_.end())rasterizer_->remove(id);
     surfaces_=std::move(next.surfaces_);draws_=std::move(next.draws_);report_=std::move(next.report_);revision_=next.revision_;
+    structuralIssues_=std::move(next.structuralIssues_);
     rasterIDs_=std::move(next.rasterIDs_);next.rasterIDs_.clear();next.surfaces_.clear();
 }
 void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity,const std::vector<PlaneMask>& masks,const LayerRasterOptions& options,unsigned depth){
@@ -68,13 +71,12 @@ void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity
         const auto id=namespace_+identity;
         rasterIDs_.push_back(id);
         auto image=rasterizer_->rasterize(id,revision_,content,settings);
-        report_.unsupported.insert(report_.unsupported.end(),image->unsupported.begin(),image->unsupported.end());
-        report_.fontSubstitutions.insert(report_.fontSubstitutions.end(),image->fontSubstitutions.begin(),image->fontSubstitutions.end());
         if(image->width&&image->height){
             DrawObject draw;draw.sourceID=id;draw.meshID=id;draw.textureID=id;draw.world=world;draw.opacity=opacity;draw.masks=masks;
-            surfaces_.push_back({id,image,draw});draws_.push_back(std::move(draw));++report_.surfaces;report_.pixelBytes+=image->straightRGBA.size();
+            std::unordered_set<std::string> localIDs;std::size_t localCount{};validateIdentities(content,localIDs,localCount,0);
+            surfaces_.push_back({id,image,draw,revision_,revision_,{},settings,localCount,rasterGroup});draws_.push_back(std::move(draw));
             surfaces_.back().draw.masks.reserve(8);draws_.back().masks.reserve(8);
-        }
+        }else report_.unsupported.insert(report_.unsupported.end(),image->unsupported.begin(),image->unsupported.end());
         if(rasterGroup)return;
     }
     auto nextMasks=masks;
@@ -102,11 +104,37 @@ void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity
     const auto childWorld=world*Matrix::translation(ax,ay,az)*matrix(node["sublayerTransform"])*Matrix::translation(-ax,-ay,-az);
     for(const auto*c:ordered)append(*c,childWorld,opacity,nextMasks,options,depth+1);
 }
+void LayerScene::rebuildReport(){
+    report_.surfaces=surfaces_.size();report_.pixelBytes=0;
+    report_.unsupported=structuralIssues_;report_.fontSubstitutions.clear();
+    for(const auto& surface:surfaces_){const auto& image=*surface.image;
+        report_.pixelBytes+=image.straightRGBA.size();
+        report_.unsupported.insert(report_.unsupported.end(),image.unsupported.begin(),image.unsupported.end());
+        report_.fontSubstitutions.insert(report_.fontSubstitutions.end(),image.fontSubstitutions.begin(),image.fontSubstitutions.end());
+    }
+}
+bool LayerScene::updateLocalContent(std::string_view sourceID,std::uint64_t contentRevision,const Json& localContent,const LayerRasterOptions& options){
+    const auto index=surfaceIndex(sourceID);need(index.has_value(),"Local content has no retained surface");
+    auto& surface=surfaces_[*index];auto settings=options;settings.includeRootOpacity=false;settings.includeRootMask=true;
+    if(surface.localRevision==contentRevision&&surface.options==settings)return false;
+    need(text(localContent["id"])==sourceID,"Local content cannot replace another surface identity");
+    std::unordered_set<std::string> ids;std::size_t count{};validateIdentities(localContent,ids,count,0);
+    need(localContent2D(localContent,0)&&!flag(localContent["hidden"]),"Local content must stay in its existing visible plane");
+    need(surface.grouped||children(localContent).empty(),"A separately projected parent cannot absorb its child surfaces");
+    need(report_.sourceNodes-surface.nodeCount+count<=4096,"Updated native layer tree exceeds limits");
+    const auto token=++attempt_; // consume even a failed raster attempt
+    auto image=rasterizer_->rasterize(surface.id,token,localContent,settings);
+    need(image->width&&image->height,"Local content cannot remove its retained surface");
+    if(image->bounds!=surface.image->bounds)surface.meshRevision=token;
+    report_.sourceNodes=report_.sourceNodes-surface.nodeCount+count;
+    surface.image=std::move(image);surface.imageRevision=token;surface.localRevision=contentRevision;
+    surface.options=std::move(settings);surface.nodeCount=count;rebuildReport();return true;
+}
 void LayerScene::upload(Renderer& renderer){
     constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
     for(const auto&s:surfaces_){const auto&b=s.image->bounds;const auto x=float(b.x),y=float(b.y),right=float(b.x+b.width),bottom=float(b.y+b.height);
         const std::array<Vertex,4> vertices{{{{x,y,0},{0,0},{1,1,1,1}},{{right,y,0},{1,0},{1,1,1,1}},{{right,bottom,0},{1,1},{1,1,1,1}},{{x,bottom,0},{0,1},{1,1,1,1}}}};
-        renderer.setMesh(s.id,revision_,{vertices,indices});renderer.setTexture(s.id,revision_,{s.image->width,s.image->height,s.image->straightRGBA,TextureColorSpace::sRGB,TextureFilter::linear});
+        renderer.setMesh(s.id,s.meshRevision,{vertices,indices});renderer.setTexture(s.id,s.imageRevision,{s.image->width,s.image->height,s.image->straightRGBA,TextureColorSpace::sRGB,TextureFilter::linear});
     }
     renderer.setDrawList(draws_);
     for(const auto&id:uploaded_)if(std::none_of(surfaces_.begin(),surfaces_.end(),[&](const Surface&s){return s.id==id;})){
