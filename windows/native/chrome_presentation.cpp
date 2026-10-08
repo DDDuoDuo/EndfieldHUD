@@ -52,6 +52,20 @@ void validContent(const DesktopChromeContent&c){
     need(!c.reading||(valid(c.reading->time,128)&&valid(c.reading->date,256)),"Invalid caller-formatted chrome clock");
 }
 }
+Json desktopChromeAppearanceReference(const Json&reference,const DesktopChromeAppearance&a){
+    for(const auto c:a.effectiveAccent)need(std::isfinite(c)&&c>=0&&c<=1,"Invalid source chrome accent");
+    auto result=retainedReference(reference);const auto ink=[](std::array<double,3>rgb,double alpha=1){return Json::Object{{"sRGB",Json::Array{rgb[0],rgb[1],rgb[2],alpha}}};};
+    const auto gray=[&](double value){return ink({value,value,value});};
+    auto header=result["header"]["children"].array();need(header.size()==2&&header[0]["text"]["string"].string()=="ENDFIELDHUD"&&header[1]["text"]["string"].string()=="SYSTEM INTERFACE","Original desktop header roles changed");
+    header[0]["text"]["foregroundColor"]=gray(a.dark?.94:.12);header[1]["text"]["foregroundColor"]=gray(a.dark?.66:.39);result["header"]["children"]=std::move(header);
+    auto footer=result["footer"]["children"].array();footer[0]["text"]["foregroundColor"]=gray(a.dark?.66:.39);result["footer"]["children"]=std::move(footer);
+    auto styles=result["styles"].array();for(auto&row:styles){auto children=row["status"]["children"].array();need(children.size()==6&&children[3]["name"].string()=="hud.clock.viewport"&&children[5]["name"].string()=="hud.workMode.badge","Original clock color roles changed");
+        children[1]["shape"]["strokeColor"]=ink(a.effectiveAccent,.70);children[4]["shape"]["strokeColor"]=ink(a.effectiveAccent);children[5]["text"]["foregroundColor"]=ink(a.effectiveAccent);
+        auto pages=children[3]["children"].array();need(pages.size()==1,"Original clock page changed");auto inner=pages[0]["children"].array();need(inner.size()==3&&inner[0]["name"].string()=="hud.clock.style","Original clock artwork changed");
+        auto shapes=inner[0]["children"].array();need(shapes.size()==3,"Original clock instrument changed");shapes[0]["shape"]["strokeColor"]=ink(a.effectiveAccent,.55);shapes[2]["text"]["foregroundColor"]=ink(a.effectiveAccent);
+        inner[0]["children"]=std::move(shapes);pages[0]["children"]=std::move(inner);children[3]["children"]=std::move(pages);row["status"]["children"]=std::move(children);
+    }result["styles"]=std::move(styles);return result;
+}
 Json NativeChromePresentation::combinedReferenceRoot(const Json&nativeRoot,const Json&reference){
     referenceValid(reference);Json root=nativeRoot;auto children=root["children"].array();
     children.push_back(reference["header"]);children.push_back(statusTemplate(reference,DesktopClockStyle::digital));children.push_back(reference["footer"]["children"].array()[0]);
@@ -78,6 +92,15 @@ bool NativeChromePresentation::setContent(const DesktopChromeContent&content){
         if(layers_->updateLocalContent(footerID_,++footerRevision_,footer,options_)){changed=true;++stats_.footerRasterChanges;}
     }
     content_=content;++stats_.contentUpdates;return changed;
+}
+bool NativeChromePresentation::setAppearance(const DesktopChromeAppearance&a){
+    need(layers_->contentRevision()==sceneRevision_,"Recreate chrome bindings after structural LayerScene reload");if(appearance_==a)return false;
+    auto reference=desktopChromeAppearanceReference(reference_,a);auto footer=reference["footer"]["children"].array()[0];auto status=statusTemplate(reference,DesktopClockStyle::digital);
+    if(content_){status=statusContent(reference,artwork_.artwork(),content_->style,content_->workPhase,content_->clockHovered,statusID_);footer["text"]["string"]=DesktopClockArtworkPlan::footerText(content_->uppercaseShortcut,content_->localizedClose);}
+    bool changed=layers_->updateLocalContent(headerID_,++headerRevision_,reference["header"],options_);
+    changed=layers_->updateLocalContent(statusID_,++statusRevision_,status,options_)||changed;
+    changed=layers_->updateLocalContent(footerID_,++footerRevision_,footer,options_)||changed;
+    reference_=std::move(reference);footer_=reference_["footer"]["children"].array()[0];appearance_=a;++stats_.contentUpdates;++stats_.statusRasterChanges;++stats_.footerRasterChanges;return changed;
 }
 bool NativeChromePresentation::update(const SourceWatchFrame&frame,const CameraFrame&camera,const DesktopChromeSettings&settings,float opacity){
     need(layers_->contentRevision()==sceneRevision_,"Recreate chrome bindings after structural LayerScene reload");

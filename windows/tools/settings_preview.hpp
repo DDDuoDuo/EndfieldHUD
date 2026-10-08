@@ -29,7 +29,11 @@ public:
  void cancelInteraction(double);bool pointerLocked()const noexcept;
  modules::SettingsController&controller()noexcept;const modules::SettingsPresentation*view(core::Module)const noexcept;
  void setCustomColor(std::array<double,3>,double);void setCustomLogo(std::string,double);void showImportError(std::string,double);
- void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();void collected(native::Renderer&);void release(native::Renderer&);
+ // Legacy combined order remains the default. The shared shell uses
+ // entries(false) below pinned Notes, then modalEntries() above every module.
+ bool modalActive()const noexcept;
+ void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries(bool includeModal=true);
+ std::span<const native::LayerCompositionEntry>modalEntries();void collected(native::Renderer&);void release(native::Renderer&);
 private:struct Impl;std::unique_ptr<Impl>impl_;
 };
 #endif

@@ -2,9 +2,13 @@
 // export/cache. Visible launch is opt-in; benchmark never shows its owned HWND.
 #include "app/overlay_host.hpp"
 #include "app/event_log_save_queue.hpp"
+#include "app/settings_save_queue.hpp"
 #include "modules/hud_clock.hpp"
 #include "native/event_log_owner.hpp"
 #include "tools/notes_preview.hpp"
+#include "tools/settings_preview.hpp"
+#include "native/watch_appearance.hpp"
+#include "core/source_color.hpp"
 #include "tools/shelf_preview.hpp"
 #include "tools/clipboard_preview.hpp"
 #include "tools/volume_preview.hpp"
@@ -54,6 +58,35 @@ using ehud::data::Json;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
+std::string narrow(std::wstring_view value){if(value.empty())return {};const auto count=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);need(count>0,"Invalid Windows text");std::string out(count,'\0');need(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),out.data(),count,nullptr,nullptr)==count,"Windows text conversion failed");return out;}
+core::Language settingsLanguage(const ehud::data::Settings&value){const auto language=core::languageFromSetting(value.string("language")).value_or(core::Language::system);if(language!=core::Language::system)return language;wchar_t name[LOCALE_NAME_MAX_LENGTH]{};if(!GetUserDefaultLocaleName(name,LOCALE_NAME_MAX_LENGTH))return core::Language::english;const auto text=narrow(name);const std::array<std::string_view,1>preferred{text};return core::resolveLanguage(preferred);}
+std::string moduleCaption(std::string_view target,core::Language language,std::string_view fallback){
+    if(target=="notes")return core::localized("Notes","便笺",language);
+    if(target=="fileShelf")return core::localized("Temporary File Shelf","文件暂存架",language);
+    if(target=="clipboard")return core::localized("Clipboard Cache","剪贴板",language);
+    if(target=="volume")return core::localized("Volume","音量",language);
+    if(target=="account")return core::localized("Account Linking","账户绑定",language);
+    if(target=="nowPlaying")return core::localized("Now Playing","当前播放",language);
+    if(target=="projection")return core::localized("Projection","投影",language);
+    if(target=="reader")return core::localized("E-Reader","阅读器",language);
+    if(target=="archive")return core::localized("Archive","档案库",language);
+    if(target=="mediaAssembly")return core::localized("Media Assembly","影像加工",language);
+    if(target=="calendar")return core::localized("Calendar","日历",language);
+    if(target=="minigame")return core::localized("Closure's Minigame","可露希尔的小游戏",language);
+    if(target=="workMode")return core::localized("Work Mode","工作模式",language);
+    if(target=="eventLog")return core::localized("Event Log","事件日志",language);
+    if(target=="map")return core::localized("Map","地图",language);
+    if(target=="addApp")return core::localized("+ Add App","+ 添加应用",language);
+    if(target=="system")return core::localized("System","系统",language);
+    if(target=="display")return core::localized("Display","显示",language);
+    if(target=="hotkeys")return core::localized("Hotkeys","快捷键",language);
+    if(target=="about")return core::localized("About","关于",language);
+    if(target=="storage")return core::localized("Storage","存储",language);
+    if(target=="activityMonitor")return core::localized("Activity Monitor","活动监视器",language);
+    if(target=="power")return core::localized("Power","电源",language);
+    if(target=="profile")return core::localized("Personal Profile","个人名片",language);
+    return std::string(fallback);
+}
 double now(){return app::OverlayHost::clockNow();}
 using Clock=std::chrono::steady_clock;
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
@@ -89,23 +122,24 @@ private:
 // Keep all synchronous HWND teardown callbacks behind ready=false, before the
 // locals they normally borrow leave scope. Also restores DWM state on failure.
 struct PreviewWindowLifetime final {
-    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;std::unique_ptr<endfield::tools::ShelfPreview>&shelf;std::unique_ptr<endfield::tools::ClipboardPreview>&clipboard;std::unique_ptr<endfield::tools::VolumePreview>&volume;std::unique_ptr<endfield::tools::EventLogPreview>&eventLog;std::unique_ptr<endfield::tools::WorkModePreview>&workMode;std::unique_ptr<endfield::tools::BatteryPreview>&battery;
-    ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(workMode&&renderer.stats().initialized)workMode->release(renderer);if(battery&&renderer.stats().initialized)battery->release(renderer);if(notes&&renderer.stats().initialized)notes->release(renderer);if(shelf&&renderer.stats().initialized)shelf->release(renderer);if(clipboard&&renderer.stats().initialized)clipboard->release(renderer);if(volume&&renderer.stats().initialized)volume->release(renderer);if(eventLog&&renderer.stats().initialized)eventLog->release(renderer);}catch(...) {} if(detached){battery.reset();workMode.reset();notes.reset();shelf.reset();clipboard.reset();volume.reset();eventLog.reset();}backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
+    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;std::unique_ptr<endfield::tools::ShelfPreview>&shelf;std::unique_ptr<endfield::tools::ClipboardPreview>&clipboard;std::unique_ptr<endfield::tools::VolumePreview>&volume;std::unique_ptr<endfield::tools::EventLogPreview>&eventLog;std::unique_ptr<endfield::tools::WorkModePreview>&workMode;std::unique_ptr<endfield::tools::BatteryPreview>&battery;std::unique_ptr<endfield::tools::SettingsPreview>&settingsUI;
+    ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(settingsUI&&renderer.stats().initialized)settingsUI->release(renderer);if(workMode&&renderer.stats().initialized)workMode->release(renderer);if(battery&&renderer.stats().initialized)battery->release(renderer);if(notes&&renderer.stats().initialized)notes->release(renderer);if(shelf&&renderer.stats().initialized)shelf->release(renderer);if(clipboard&&renderer.stats().initialized)clipboard->release(renderer);if(volume&&renderer.stats().initialized)volume->release(renderer);if(eventLog&&renderer.stats().initialized)eventLog->release(renderer);}catch(...) {} if(detached){settingsUI.reset();battery.reset();workMode.reset();notes.reset();shelf.reset();clipboard.reset();volume.reset();eventLog.reset();}backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
 };
 // Accepted immutable writes finish before the HWND is destroyed. Completion
 // routes are detached first, including during exception unwinding. The picker
 // is UI-owned and never survives its window; none of these services polls.
 struct PreviewServicesLifetime final {
-    bool&ready;std::unique_ptr<app::EventLogSaveQueue>&saves;
+    bool&ready;std::unique_ptr<app::EventLogSaveQueue>&saves;std::unique_ptr<app::SettingsSaveQueue>&settingsSaves;
     std::unique_ptr<app::UtilityExecutor>&utility;std::unique_ptr<gpu::NativeShelfFilePicker>&picker;std::unique_ptr<gpu::TrayController>&tray;
-    ~PreviewServicesLifetime(){ready=false;tray.reset();picker.reset();saves.reset();utility.reset();}
+    ~PreviewServicesLifetime(){ready=false;tray.reset();picker.reset();settingsSaves.reset();saves.reset();utility.reset();}
 };
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
     for(int i=4;i<argc;++i){const std::wstring_view arg=argv[i];
-        if(arg==L"--visible"){need(!o.visible,"Duplicate visible mode");o.visible=true;}
+        if(arg==L"--settings-assets"&&i+1<argc){need(o.settingsAssets.empty(),"Duplicate Settings assets");o.settingsAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--visible"){need(!o.visible,"Duplicate visible mode");o.visible=true;}
         else if(arg==L"--live-diagnostics"&&i+1<argc){need(o.liveDiagnostics.empty(),"Duplicate live diagnostic output");o.liveDiagnostics=fs::absolute(argv[++i]);}
         else if(arg==L"--shelf-assets"&&i+1<argc){need(o.shelfAssets.empty(),"Duplicate shelf assets");o.shelfAssets=fs::absolute(argv[++i]);}
         else if(arg==L"--shelf-data"&&i+1<argc){need(o.shelfData.empty(),"Duplicate shelf data");o.shelfData=fs::absolute(argv[++i]);}
@@ -147,6 +181,7 @@ Options options(int argc,wchar_t**argv){
     need(o.residentIcons.empty()||(o.visible&&!o.notesAssets.empty()),"Resident test requires the explicitly visible isolated module fixture");
     need(!o.batteryFixture||!o.notesAssets.empty(),"Battery fixture requires shared module ownership");
     need(!o.workModeFixture||!o.notesAssets.empty(),"Work Mode fixture needs shared module/text ownership");
+    need(o.settingsAssets.empty()||!o.notesAssets.empty(),"Settings needs the shared module owner");
     need(!o.volumeFixture||!o.notesAssets.empty(),"Volume fixture requires the shared module owner");
     need(o.clipboardAssets.empty()||!o.notesAssets.empty(),"Clipboard needs the shared module owner");
     need(o.shelfAssets.empty()||!o.notesAssets.empty(),"Shelf uses the shared Notes module transition owner");
@@ -272,7 +307,9 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     app::WatchSessionNavigation sessionNavigation{catalogNavigation.fixedActions,catalogNavigation.rightActions,catalogNavigation.managedButtons};
     if(profile)if(const auto action=contentCatalog.actionForTarget("profile")){sessionNavigation.fixedActions[profile->rootID]=*action;for(const auto&id:profile->buttonIDs)sessionNavigation.fixedActions[id]=*action;}
     session.setNavigation(std::move(sessionNavigation),0);
-    gpu::NativeWatchContent nativeContent(contentCatalog,layers,rasterOptions);startup.mark("native-bindings-content-catalog");
+    std::unique_ptr<gpu::NativeWatchContent>nativeContent;std::unique_ptr<gpu::WatchAppearanceTemplates>appearanceTemplates;std::unique_ptr<gpu::NativeWatchAppearance>nativeAppearance;gpu::WatchAppearance watchAppearance;
+    if(args.settingsAssets.empty())nativeContent=std::make_unique<gpu::NativeWatchContent>(contentCatalog,layers,rasterOptions);
+    else{const auto file=args.settingsAssets/"watch-appearance"/"manifest.json";const auto bytes=ehud::data::detail::readFile(file,1024*1024);need(bytes&&packet::sha256(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()))=="1c623124d48d094e8897b89598bc6791a8d369bc51ef8bc87c928ef5915444de","Original desktop appearance pin differs");appearanceTemplates=std::make_unique<gpu::WatchAppearanceTemplates>(Json::parse(*bytes));auto ro=rasterOptions;ro.assetRoot=file.parent_path();nativeAppearance=std::make_unique<gpu::NativeWatchAppearance>(*appearanceTemplates,scene,labelPlan.bindings(),layers,rasterizer,ro);}startup.mark("native-bindings-content-catalog");
     gpu::WatchLabelPresentation labels(labelPlan,layers);std::vector<gpu::WatchButtonAvailability> available;for(const auto&id:labelPlan.buttonIDs())available.push_back({id,false,false});
     std::unique_ptr<source::DesktopChromeProjectionPlan> chromePlan;std::unique_ptr<gpu::NativeChromePresentation> chrome;
     gpu::DesktopChromeContent chromeContent;chromeContent.reading=source::DesktopClockReading{"12:34:56","WED Oct 7"};chromeContent.uppercaseShortcut="CTRL + `";chromeContent.localizedClose="Click outside to close";
@@ -284,26 +321,36 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     metadata=Json{};legacyTop=Json{};legacyBottom=Json{};chromeJSON=Json{};package.reset();if(runtime)runtime->releaseSetupJSON();startup.mark("release-full-reference-json");
     gpu::SourceCursor cursor;if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
     std::unique_ptr<BackdropQueue> backdropQueue;
-    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;std::unique_ptr<endfield::tools::NotesPreview> notes;std::unique_ptr<gpu::NativeShelfAssets>shelfAssets;std::unique_ptr<endfield::tools::ShelfPreview>shelf;std::optional<ehud::data::ShelfFileAccess>pendingShelfReveal;std::unique_ptr<gpu::NativeClipboardAssets>clipboardAssets;std::unique_ptr<endfield::tools::ClipboardPreview>clipboard;std::unique_ptr<endfield::tools::VolumePreview>volume;std::unique_ptr<endfield::tools::EventLogPreview>eventLog;std::unique_ptr<endfield::tools::WorkModePreview>workMode;std::unique_ptr<endfield::tools::BatteryPreview>battery;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,pendingClose=false,focused=!args.visible;
+    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;std::unique_ptr<endfield::tools::NotesPreview> notes;std::unique_ptr<gpu::NativeShelfAssets>shelfAssets;std::unique_ptr<endfield::tools::ShelfPreview>shelf;std::optional<ehud::data::ShelfFileAccess>pendingShelfReveal;std::unique_ptr<gpu::NativeClipboardAssets>clipboardAssets;std::unique_ptr<endfield::tools::ClipboardPreview>clipboard;std::unique_ptr<endfield::tools::VolumePreview>volume;std::unique_ptr<endfield::tools::EventLogPreview>eventLog;std::unique_ptr<endfield::tools::WorkModePreview>workMode;std::unique_ptr<endfield::tools::BatteryPreview>battery;std::unique_ptr<endfield::tools::SettingsPreview>settingsUI;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,pendingClose=false,focused=!args.visible;
     std::unique_ptr<gpu::EventLogOwner>eventOwner;
     std::unique_ptr<app::UtilityExecutor>utility;
     std::unique_ptr<app::EventLogSaveQueue>eventSaves;
+    std::unique_ptr<app::SettingsSaveQueue>settingsSaves;
     std::unique_ptr<gpu::NativeShelfFilePicker>mediaPicker;
     gpu::ApplicationIcon applicationIcon;std::unique_ptr<gpu::TrayController>tray;bool quitRequested{};
     core::Point mediaInsertionPoint;bool eventRefreshQueued{},stopping{};
     constexpr UINT eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196;
     constexpr UINT_PTR serviceGeneration=1;
-    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop,composition,notes,shelf,clipboard,volume,eventLog,workMode,battery};
-    PreviewServicesLifetime servicesLifetime{ready,eventSaves,utility,mediaPicker,tray};
+    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop,composition,notes,shelf,clipboard,volume,eventLog,workMode,battery,settingsUI};
+    PreviewServicesLifetime servicesLifetime{ready,eventSaves,settingsSaves,utility,mediaPicker,tray};
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
     std::vector<gpu::LayerCompositionEntry>ordered;std::vector<PublishedEntry>published;ordered.reserve(134);published.reserve(134);std::uint64_t publishedNotesRevision{};
-    auto publishNative=[&]{ordered.clear();ordered.push_back({&layers,{}});if(battery){battery->upload(renderer);for(const auto&e:battery->entries())ordered.push_back(e);}if(workMode){workMode->upload(renderer);for(const auto&e:workMode->entries())ordered.push_back(e);}if(eventLog){eventLog->upload(renderer);for(const auto&e:eventLog->entries())ordered.push_back(e);}if(volume){volume->upload(renderer);for(const auto&e:volume->entries())ordered.push_back(e);}if(clipboard){clipboard->upload(renderer);for(const auto&e:clipboard->entries())ordered.push_back(e);}if(shelf){shelf->upload(renderer);for(const auto&e:shelf->entries())ordered.push_back(e);}if(notes){notes->upload(renderer);for(const auto&e:notes->entries())ordered.push_back(e);}
+    auto publishNative=[&]{
+        ordered.clear();ordered.push_back({&layers,{}});
+        if(settingsUI)settingsUI->upload(renderer);if(battery)battery->upload(renderer);if(workMode)workMode->upload(renderer);if(eventLog)eventLog->upload(renderer);if(volume)volume->upload(renderer);if(clipboard)clipboard->upload(renderer);if(shelf)shelf->upload(renderer);
+        bool settingsAppended{};const auto appendModule=[&](core::Module module){const auto append=[&](auto&owner){if(owner)for(const auto&e:owner->entries())ordered.push_back(e);};switch(module){
+            case core::Module::system:case core::Module::display:case core::Module::hotkeys:case core::Module::about:if(settingsUI&&!settingsAppended){for(const auto&e:settingsUI->entries(false))ordered.push_back(e);settingsAppended=true;}break;
+            case core::Module::power:append(battery);break;case core::Module::workMode:append(workMode);break;case core::Module::eventLog:append(eventLog);break;case core::Module::volume:append(volume);break;case core::Module::clipboard:append(clipboard);break;case core::Module::fileShelf:append(shelf);break;default:break;}};
+        // The old wrapper is below the incoming wrapper, independently of the
+        // owner declaration order. Floating Notes stay above center modules.
+        if(notes){const auto&sample=notes->modulePresentation();appendModule(sample.current.module);if(sample.incoming)appendModule(sample.incoming->module);notes->upload(renderer);for(const auto&e:notes->entries())ordered.push_back(e);}
+        if(settingsUI)for(const auto&e:settingsUI->modalEntries())ordered.push_back(e);
         const auto notesRevision=notes?notes->compositionRevision():0;
         bool changed=ordered.size()!=published.size()||notesRevision!=publishedNotesRevision;if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count){changed=true;break;}}
-        if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(notes)notes->collected(renderer);if(shelf)shelf->collected(renderer);if(clipboard)clipboard->collected(renderer);if(volume)volume->collected(renderer);if(eventLog)eventLog->collected(renderer);if(workMode)workMode->collected(renderer);if(battery)battery->collected(renderer);}
+        if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(settingsUI)settingsUI->collected(renderer);if(notes)notes->collected(renderer);if(shelf)shelf->collected(renderer);if(clipboard)clipboard->collected(renderer);if(volume)volume->collected(renderer);if(eventLog)eventLog->collected(renderer);if(workMode)workMode->collected(renderer);if(battery)battery->collected(renderer);}
         publishedNotesRevision=notesRevision;
     };
-    app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;auto configuration=ehud::data::Settings::defaults();session.setSettings(settings,0);session.setEnvironment(environment,0);
+    app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;auto configuration=ehud::data::Settings::defaults();bool configurationPending=!args.settingsAssets.empty();configuration.set("launchAtLogin",false);session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
     // sibling view, so this fades only native chrome, never source triangles
     // or SourceWatch's labels. Source completion still owns window lifetime.
@@ -328,47 +375,80 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             using P=endfield::modules::WorkModePhase;const auto phase=workMode->controller().snapshot(now()).phase;
             chromeContent.workPhase=phase==P::running?source::DesktopWorkPhase::running:phase==P::paused?source::DesktopWorkPhase::paused:source::DesktopWorkPhase::idle;
         }return chrome->setContent(chromeContent);}return false;};
-    auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);if(notes)notes->setMediaActive(true,time);if(workMode)workMode->setOverlayVisible(true,time);if(args.visible&&headerClock.setActive(true,time))updateClock();};
-    auto demand=[&](double time){auto result=session.demand(time);if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(notes&&notes->requiresFrames(time))||(shelf&&shelf->requiresFrames(time))||(clipboard&&clipboard->requiresFrames(time))||(volume&&volume->requiresFrames(time))||(eventLog&&eventLog->requiresFrames(time))||(workMode&&workMode->requiresFrames(time))||(battery&&battery->requiresFrames(time));return result;};
+    auto applyConfiguration=[&](double time){
+        if(!configurationPending)return;configurationPending=false;
+        settings={configuration.boolean("reduceMotion"),configuration.boolean("ambientAnimation"),configuration.boolean("lowPowerVisualMode"),configuration.number("parallaxIntensity"),configuration.number("perspectiveIntensity"),configuration.number("hudScale"),{configuration.number("hudOffsetX"),configuration.number("hudOffsetY")}};
+        session.setSettings(settings,time);watchAppearance.language=settingsLanguage(configuration);watchAppearance.dark=configuration.string("theme")!="light";
+        if(configuration.string("theme")=="system"){DWORD light=0,size=sizeof(light);if(RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&size)==ERROR_SUCCESS)watchAppearance.dark=light==0;}
+        const auto hex=configuration.string("accentHex");for(unsigned n=0;n<3;++n)watchAppearance.accentSRGB[n]=std::stoul(hex.substr(n*2,2),nullptr,16)/255.;
+        const auto a=watchAppearance.accentSRGB;const auto effective=watchAppearance.dark?a:source::sourceBlackBlend(a,.35);const std::array<double,4>accent{effective[0],effective[1],effective[2],1};
+        backdropState.dark=watchAppearance.dark;backdropState.blurAmount=configuration.number("blurAmount");backdropState.backgroundDarkness=configuration.number("backgroundDarkness");
+        if(nativeAppearance){std::vector<gpu::WatchAppearanceEntry>entries;for(const auto&e:contentCatalog.entries())entries.push_back({e.action,e.target,moduleCaption(e.target,watchAppearance.language,e.title),"module:"+e.target,true});nativeAppearance->setEntries(entries);}
+        headerClock.setFormat(configuration.string("clockFormat")=="twelveHour"?endfield::modules::HUDClockFormat::twelveHour:endfield::modules::HUDClockFormat::twentyFourHour,time);
+        const auto clock=configuration.string("clockStyle");chromeContent.style=clock=="split"?source::DesktopClockStyle::split:clock=="dial"?source::DesktopClockStyle::dial:clock=="rail"?source::DesktopClockStyle::rail:clock=="stacked"?source::DesktopClockStyle::stacked:source::DesktopClockStyle::digital;
+        chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=endfield::modules::settingsShortcutTitle(endfield::modules::settingsShortcut(configuration));
+        if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();}
+        if(tray&&settingsUI&&!settingsUI->controller().capturingShortcut()){const auto key=endfield::modules::settingsShortcut(configuration);const gpu::TrayHotkey desired{key.modifiers,key.key};if(tray->hotkey()!=desired&&!tray->setHotkey(desired))settingsUI->controller().setExternalStatus({},core::localized("Shortcut unavailable","快捷键不可用",watchAppearance.language));}
+        if(settingsUI){settingsUI->setAppearance({watchAppearance.dark,2,accent});settingsUI->setLanguage(watchAppearance.language);settingsUI->setReduceMotion(settings.reduceMotion,time);}
+        if(battery){battery->setAppearance({watchAppearance.dark,2,watchAppearance.language,accent});battery->setReduceMotion(settings.reduceMotion,time);}
+        if(workMode){workMode->setAppearance({watchAppearance.dark,2,accent});workMode->setReduceMotion(settings.reduceMotion,time);}
+        if(eventLog){eventLog->setAppearance({watchAppearance.dark,2,accent});eventLog->setReduceMotion(settings.reduceMotion);}
+        if(clipboard){clipboard->setAppearance({watchAppearance.dark,2,accent},clipboardAssets->images());clipboard->setReduceMotion(settings.reduceMotion);}
+        if(volume){volume->setStyle({watchAppearance.dark,accent});volume->setReduceMotion(settings.reduceMotion);}
+    };
+    auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);if(settingsUI)settingsUI->setOverlayVisible(true,time);if(notes)notes->setMediaActive(true,time);if(workMode)workMode->setOverlayVisible(true,time);if(args.visible&&headerClock.setActive(true,time))updateClock();};
+    auto demand=[&](double time){auto result=session.demand(time);if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(notes&&notes->requiresFrames(time))||(shelf&&shelf->requiresFrames(time))||(clipboard&&clipboard->requiresFrames(time))||(volume&&volume->requiresFrames(time))||(eventLog&&eventLog->requiresFrames(time))||(workMode&&workMode->requiresFrames(time))||(battery&&battery->requiresFrames(time))||(settingsUI&&settingsUI->requiresFrames(time));return result;};
     auto scheduleDeadline=[&]{if(!args.visible||!ready||stopping)return;std::optional<double>next;
         auto include=[&](std::optional<double>value){if(value&&(!next||*value<*next))next=value;};
-        include(headerClock.nextDeadline());if(workMode)include(workMode->nextWakeTime());if(notes)include(notes->nextWakeTime());if(eventOwner)include(eventOwner->saveDeadline());host.setDeadline(next);
+        include(headerClock.nextDeadline());if(settingsUI)include(settingsUI->nextWakeTime(now()));if(workMode)include(workMode->nextWakeTime());if(notes)include(notes->nextWakeTime());if(eventOwner)include(eventOwner->saveDeadline());host.setDeadline(next);
     };
     auto refresh=[&](double time){if(args.visible&&ready&&!stopping){if(workMode)updateClock();host.setFrameDemand(demand(time));scheduleDeadline();host.invalidate();}};
-    auto close=[&](double time){if(!closing){std::cout<<"Preview close requested at "<<time<<std::endl;if(notes&&!notes->finish()){pendingClose=true;return;}if(workMode&&!workMode->finishEditing(false,time)){pendingClose=true;return;}pendingClose=false;headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();if(notes)notes->setMediaActive(false,time,true);if(shelf){shelf->cancelPanels();shelf->cancelInteraction();}if(clipboard)clipboard->cancelInteraction();if(volume)volume->cancelInteraction(time);if(battery)battery->cancelInteraction(time);if(eventLog)eventLog->cancelInteraction();if(workMode){workMode->cancelInteraction(time);workMode->setOverlayVisible(false,time);}host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
+    auto close=[&](double time){if(!closing){std::cout<<"Preview close requested at "<<time<<std::endl;if(notes&&!notes->finish()){pendingClose=true;return;}if(workMode&&!workMode->finishEditing(false,time)){pendingClose=true;return;}pendingClose=false;headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();if(notes)notes->setMediaActive(false,time,true);if(shelf){shelf->cancelPanels();shelf->cancelInteraction();}if(clipboard)clipboard->cancelInteraction();if(volume)volume->cancelInteraction(time);if(battery)battery->cancelInteraction(time);if(settingsUI)settingsUI->setOverlayVisible(false,time);if(eventLog)eventLog->cancelInteraction();if(workMode){workMode->cancelInteraction(time);workMode->setOverlayVisible(false,time);}host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
+    auto finishQuit=[&](double time){
+        // Flush only at an explicit shutdown boundary. A failed save retains
+        // its record and restores the Settings UI instead of silently quitting.
+        if(settingsSaves&&!settingsSaves->flush()){
+            quitRequested=false;if(settingsUI)settingsUI->controller().setStatus(settingsSaves->status().error.value_or("Unable to save settings"));if(notes)notes->select(core::Module::system,time);open(time);host.show();refresh(time);return;
+        }
+        stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
+    };
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){notes->select(module,now());break;}}}
         std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (Notes preview)":shelf&&entry->target=="fileShelf"?" (File Shelf preview)":clipboard&&entry->target=="clipboard"?" (synthetic Clipboard preview)":" (module body is not installed)")<<'\n';};
     LiveProbe probe;probe.enabled=!args.liveDiagnostics.empty();
     auto present=[&](double time,bool submit){
-        auto frameProbe=probe.measure(LiveProbe::frame);
+        auto frameProbe=probe.measure(LiveProbe::frame);applyConfiguration(time);
         // Backdrop COM calls can dispatch nested input. Finish them before
         // borrowing a source frame, then sample the current live event time.
         // Offscreen comparisons retain their explicit synthetic timestamps.
         {auto stage=probe.measure(LiveProbe::backdrop);updateBackdrop(time);}if(args.visible)time=std::max(time,now());
         const app::WatchSessionFrame*sample=nullptr;{auto stage=probe.measure(LiveProbe::sourcePose);sample=session.sample(time);}if(!sample)return false;
         if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session.inputEnabled())session.setInputEnabled(true,time);
-        auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;
+        auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;if(nativeAppearance){std::array<float,3>linear;for(unsigned n=0;n<3;++n){const auto value=watchAppearance.accentSRGB[n];linear[n]=static_cast<float>(value<=.04045?value/12.92:std::pow((value+.055)/1.055,2.4));}parameters.desktopAccentLinear=linear;}
         {auto stage=probe.measure(LiveProbe::materials);materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());}
-        {auto stage=probe.measure(LiveProbe::nativeLabels);nativeContent.update(session.actions());
-        for(auto&button:available)button.enabled=session.actions().contains(button.buttonID);
+        {auto stage=probe.measure(LiveProbe::nativeLabels);if(nativeContent)nativeContent->update(session.actions());
+        for(auto&button:available){const auto found=session.actions().find(button.buttonID);button.enabled=found!=session.actions().end();button.expandFileShelfCaption=button.enabled&&nativeAppearance&&nativeAppearance->expandsFileShelfCaption(found->second,watchAppearance.language);}
         const core::Rect viewport{0,0,metrics.width,metrics.height};labels.update(*sample->sourceFrame,sample->camera,viewport,available);
+        if(nativeAppearance){watchAppearance.selectedAction=notes?contentCatalog.actionForTarget(core::moduleIdentifier(notes->selected())).value_or(0):0;nativeAppearance->update(session.actions(),watchAppearance,labels.placements());}
         // Chrome samples once per visible second; opacity follows the same
         // ready/close timestamps as the source outer controller.
         const source::DesktopChromeSettings chromeSettings{viewport,settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
         if(chrome)chrome->update(*sample->sourceFrame,sample->camera,chromeSettings,static_cast<float>(canvasOpacity(time)));
         }
         const source::DesktopChromeSettings noteChromeSettings{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
-        {auto stage=probe.measure(LiveProbe::notesPose);if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,noteChromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);if(workMode&&notes&&chromePlan&&chromePlan->projection().center)workMode->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(battery&&notes&&chromePlan&&chromePlan->projection().center)battery->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(eventLog&&notes&&chromePlan&&chromePlan->projection().center)eventLog->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(volume&&notes&&chromePlan&&chromePlan->projection().center)volume->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(shelf&&notes&&chromePlan&&chromePlan->projection().center)shelf->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(clipboard&&notes&&chromePlan&&chromePlan->projection().center)clipboard->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);}
+        {auto stage=probe.measure(LiveProbe::notesPose);if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,noteChromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);if(settingsUI&&notes&&chromePlan&&chromePlan->projection().center)settingsUI->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(workMode&&notes&&chromePlan&&chromePlan->projection().center)workMode->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(battery&&notes&&chromePlan&&chromePlan->projection().center)battery->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(eventLog&&notes&&chromePlan&&chromePlan->projection().center)eventLog->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(volume&&notes&&chromePlan&&chromePlan->projection().center)volume->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(shelf&&notes&&chromePlan&&chromePlan->projection().center)shelf->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(clipboard&&notes&&chromePlan&&chromePlan->projection().center)clipboard->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);}
         {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
         if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(args.visible);}return true;
     };
     app::OverlayCallbacks callbacks;
-    callbacks.resize=[&](const auto&value){metrics=value;if(notes)notes->resize(value);if(shelf)shelf->resize(value);if(clipboard)clipboard->resize(value);if(volume)volume->resize(value);if(eventLog)eventLog->resize(value);if(workMode)workMode->resize(value);if(battery)battery->resize(value);if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
+    callbacks.resize=[&](const auto&value){metrics=value;if(notes)notes->resize(value);if(shelf)shelf->resize(value);if(clipboard)clipboard->resize(value);if(volume)volume->resize(value);if(eventLog)eventLog->resize(value);if(workMode)workMode->resize(value);if(battery)battery->resize(value);if(settingsUI)settingsUI->resize(value);if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
     callbacks.pointer=[&](const app::PointerEvent&e){auto stage=probe.measure(LiveProbe::pointer);if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
+        const auto settingsPointer=[&]{if(!settingsUI||!session.inputEnabled())return false;const bool handled=settingsUI->pointer(e,time);if(handled){environment.pointerLocked=settingsUI->pointerLocked();environment.pointer=p;session.setEnvironment(environment,time);if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);}return handled;};
+        if(settingsUI&&(settingsUI->modalActive()||settingsUI->pointerLocked())&&settingsPointer())return true;
         if(notes&&session.inputEnabled()){
             const bool handled=notes->pointer(e,time);environment.pointerLocked=notes->pointerLocked()||(shelf&&shelf->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
             if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
         }
+        if(settingsPointer())return true;
         if(shelf&&session.inputEnabled()){
             const bool handled=shelf->pointer(e,time);environment.pointerLocked=shelf->pointerLocked()||(notes&&notes->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
             if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
@@ -403,14 +483,15 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             }
         }
         else return false;refresh(time);return true;};
-    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(shelf&&session.inputEnabled()&&shelf->wheel(e,time)){refresh(time);return true;}if(clipboard&&session.inputEnabled()&&clipboard->wheel(e,time)){refresh(time);return true;}if(volume&&session.inputEnabled()&&volume->wheel(e,time)){refresh(time);return true;}if(eventLog&&session.inputEnabled()&&eventLog->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
-    callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){if(!ready)return false;if(shelf&&shelf->filterKey(m))return true;if(workMode&&workMode->filterKey(m))return true;const auto target=static_cast<HWND>(m.window),owner=static_cast<HWND>(host.hwnd());return (target==owner||IsChild(owner,target))&&notes&&notes->filterKey(m);};
+    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(settingsUI&&settingsUI->modalActive()&&session.inputEnabled()&&settingsUI->wheel(e,time)){refresh(time);return true;}if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(settingsUI&&session.inputEnabled()&&settingsUI->wheel(e,time)){refresh(time);return true;}if(shelf&&session.inputEnabled()&&shelf->wheel(e,time)){refresh(time);return true;}if(clipboard&&session.inputEnabled()&&clipboard->wheel(e,time)){refresh(time);return true;}if(volume&&session.inputEnabled()&&volume->wheel(e,time)){refresh(time);return true;}if(eventLog&&session.inputEnabled()&&eventLog->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
+    callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){if(!ready)return false;if(settingsUI&&(settingsUI->modalActive()||settingsUI->controller().capturingShortcut()))return false;if(shelf&&shelf->filterKey(m))return true;if(workMode&&workMode->filterKey(m))return true;const auto target=static_cast<HWND>(m.window),owner=static_cast<HWND>(host.hwnd());return (target==owner||IsChild(owner,target))&&notes&&notes->filterKey(m);};
     callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{auto stage=probe.measure(LiveProbe::message);
         if(ready&&tray&&tray->message(m.message,m.wParam,m.lParam)){
             if(const auto action=tray->takeAction()){
                 const auto time=now();
-                if(*action==gpu::TrayAction::quit){quitRequested=true;if(session.phase()==core::VisibilityPhase::concealed){stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();}else close(time);}
-                else if(*action==gpu::TrayAction::openOverlay||*action==gpu::TrayAction::workMode){
+                if(*action==gpu::TrayAction::quit){quitRequested=true;if(session.phase()==core::VisibilityPhase::concealed)finishQuit(time);else close(time);}
+                else if(*action==gpu::TrayAction::openOverlay||*action==gpu::TrayAction::workMode||*action==gpu::TrayAction::settings||*action==gpu::TrayAction::about){
+                    if(notes&&*action==gpu::TrayAction::settings)notes->select(core::Module::system,time);if(notes&&*action==gpu::TrayAction::about)notes->select(core::Module::about,time);
                     if(*action==gpu::TrayAction::workMode&&notes)notes->select(core::Module::workMode,time);
                     if(m.message==WM_HOTKEY&&focused&&session.phase()!=core::VisibilityPhase::concealed&&!closing)close(time);
                     else {if(session.phase()==core::VisibilityPhase::concealed||closing)open(time);host.show();refresh(time);}
@@ -418,7 +499,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             }return 0;
         }
         if(ready&&m.wParam==serviceGeneration){
-            if(m.message==utilityMessage){if(utility)utility->drain();if(eventSaves)eventSaves->retry();refresh(now());return 0;}
+            if(m.message==utilityMessage){if(utility)utility->drain();if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();refresh(now());return 0;}
             if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLog)eventLog->refresh();refresh(now());return 0;}
             if(m.message==mediaPickerMessage&&mediaPicker){
                 host.suspendCursor(true);mediaPicker->handleMessage(m.wParam,m.lParam);host.suspendCursor(false);
@@ -462,8 +543,8 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
                 refresh(now());return 0;
             }
         }return {};};
-    callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&shelf&&session.inputEnabled()&&shelf->key(e,now())){refresh(now());return true;}if(ready&&clipboard&&session.inputEnabled()&&clipboard->key(e,now())){refresh(now());return true;}if(ready&&volume&&session.inputEnabled()&&volume->key(e,now())){refresh(now());return true;}if(ready&&eventLog&&session.inputEnabled()&&eventLog->key(e,now())){refresh(now());return true;}if(ready&&workMode&&session.inputEnabled()&&workMode->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){std::cout<<"Preview unhandled Escape"<<std::endl;close(now());return true;}return false;};
-    callbacks.focus=[&](bool value){std::cout<<"Preview focus: "<<value<<std::endl;focused=value;if(notes)notes->focus(value);if(workMode)workMode->focus(value,now());if(shelf&&!value)shelf->cancelInteraction();if(clipboard&&!value)clipboard->cancelInteraction();if(volume&&!value)volume->cancelInteraction(now());if(eventLog&&!value)eventLog->cancelInteraction();if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
+    callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&settingsUI&&session.inputEnabled()&&(settingsUI->modalActive()||settingsUI->controller().capturingShortcut())&&settingsUI->key(e,now())){refresh(now());return true;}if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&settingsUI&&session.inputEnabled()&&settingsUI->key(e,now())){refresh(now());return true;}if(ready&&shelf&&session.inputEnabled()&&shelf->key(e,now())){refresh(now());return true;}if(ready&&clipboard&&session.inputEnabled()&&clipboard->key(e,now())){refresh(now());return true;}if(ready&&volume&&session.inputEnabled()&&volume->key(e,now())){refresh(now());return true;}if(ready&&eventLog&&session.inputEnabled()&&eventLog->key(e,now())){refresh(now());return true;}if(ready&&workMode&&session.inputEnabled()&&workMode->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){std::cout<<"Preview unhandled Escape"<<std::endl;close(now());return true;}return false;};
+    callbacks.focus=[&](bool value){std::cout<<"Preview focus: "<<value<<std::endl;focused=value;if(notes)notes->focus(value);if(workMode)workMode->focus(value,now());if(shelf&&!value)shelf->cancelInteraction();if(clipboard&&!value)clipboard->cancelInteraction();if(volume&&!value)volume->cancelInteraction(now());if(eventLog&&!value)eventLog->cancelInteraction();if(settingsUI&&!value)settingsUI->cancelInteraction(now());if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
     callbacks.applicationActive=[&](bool active){
         if(!ready||!args.visible||active||closing||session.phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
         // Source exempts its own file panels and active shelf drag/drop. Moving
@@ -473,7 +554,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         close(now());
     };
     callbacks.closeRequested=[&]{std::cout<<"Preview native close request"<<std::endl;if(ready)close(now());};
-    callbacks.deadline=[&](double time){if(!ready||stopping)return;bool artwork=notes&&notes->deadline(time);if(workMode){const auto revision=workMode->state().revision();workMode->wake(time);artwork=artwork||revision!=workMode->state().revision();}if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;if(eventSaves)eventSaves->capture(time);scheduleDeadline();if(artwork)refresh(time);};
+    callbacks.deadline=[&](double time){if(!ready||stopping)return;bool artwork=notes&&notes->deadline(time);if(settingsUI){settingsUI->wake(time);artwork=true;}if(workMode){const auto revision=workMode->state().revision();workMode->wake(time);artwork=artwork||revision!=workMode->state().revision();}if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;if(eventSaves)eventSaves->capture(time);scheduleDeadline();if(artwork)refresh(time);};
     double diagnosticStart{};bool diagnosticEditing{},diagnosticFinished{};
     callbacks.frame=[&](double time){if(!ready)return;
         if(probe.enabled&&!diagnosticFinished){
@@ -485,7 +566,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             if(phase==3&&diagnosticEditing){auto stage=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
             if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;close(time);}
         }
-        const bool active=present(time,true);if(stopping)return;host.setFrameDemand(demand(time));scheduleDeadline();if(!active&&session.phase()==core::VisibilityPhase::concealed){if(notes)notes->setMediaActive(false,time);host.hide();if(tray&&!quitRequested){scheduleDeadline();}else{stopping=true;host.setDeadline({});host.requestStop();}}};
+        const bool active=present(time,true);if(stopping)return;host.setFrameDemand(demand(time));scheduleDeadline();if(!active&&session.phase()==core::VisibilityPhase::concealed){if(notes)notes->setMediaActive(false,time);host.hide();if(tray&&!quitRequested){scheduleDeadline();}else finishQuit(time);}};
     app::OverlayOptions windowOptions{!args.notesData.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(args.visible){
         const auto displays=gpu::readConnectedDisplays();POINT pointer{};
@@ -509,7 +590,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     startup.mark("lower-system-backdrop");
     if(!args.notesAssets.empty()){need(bool(chromePlan),"Notes integration requires the source chrome projection");
         notesAssets=std::make_unique<gpu::NativeNotesControlsAssets>(args.notesAssets,gpu::NativeNotesControlsAssetPins{args.notesAssetsSHA,"ca04f142185c7de40acd8523bdb563195d90a1d1"});
-        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,args.visible,args.notesFormatAssets);notes->resize(metrics);mediaPicker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{static_cast<HWND>(host.hwnd()),mediaPickerMessage,serviceGeneration},gpu::ShelfPickerLabels{"添加图片/视频","添加","添加所选文件"});session.setHitFilter([&](std::string_view,core::Point p){return (!notes||!notes->covers(p))&&(!shelf||!shelf->covers(p))&&(!clipboard||!clipboard->covers(p))&&(!volume||!volume->covers(p))&&(!eventLog||!eventLog->covers(p))&&(!workMode||!workMode->covers(p))&&(!battery||!battery->covers(p));},0);startup.mark("isolated-notes-owner");}
+        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,args.visible,args.notesFormatAssets);notes->resize(metrics);mediaPicker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{static_cast<HWND>(host.hwnd()),mediaPickerMessage,serviceGeneration},gpu::ShelfPickerLabels{"添加图片/视频","添加","添加所选文件"});session.setHitFilter([&](std::string_view,core::Point p){return (!notes||!notes->covers(p))&&(!shelf||!shelf->covers(p))&&(!clipboard||!clipboard->covers(p))&&(!volume||!volume->covers(p))&&(!eventLog||!eventLog->covers(p))&&(!workMode||!workMode->covers(p))&&(!battery||!battery->covers(p))&&(!settingsUI||!settingsUI->covers(p));},0);startup.mark("isolated-notes-owner");}
     if(!args.shelfAssets.empty()){
         const auto bytes=ehud::data::detail::readFile(args.shelfMask,128*1024);need(bytes.has_value(),"Missing original Shelf reveal samples");
         auto masks=std::make_shared<core::SubsectionMaskSampler>(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()),core::SubsectionMaskSampler::assetSHA256);
@@ -530,9 +611,11 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.paddingPoints=1;ro.assetRoot=clipboardAssets->root();
         clipboard=std::make_unique<endfield::tools::ClipboardPreview>(rasterizer,ro,std::move(actions),gpu::ClipboardStrings{},gpu::ClipboardAppearance{},clipboardAssets->images(),clipboardAssets->revealSamples());clipboard->resize(metrics);
     }
+    if(args.eventLogFixture||!args.settingsAssets.empty()){
+        const auto window=static_cast<HWND>(host.hwnd());utility=std::make_unique<app::UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");});
+    }
     if(args.eventLogFixture){
         const auto window=static_cast<HWND>(host.hwnd());
-        utility=std::make_unique<app::UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");});
         eventOwner=std::make_unique<gpu::EventLogOwner>(args.notesData,gpu::EventLogOwnerCallbacks{now,[&,window]{
             if(!eventRefreshQueued){need(PostMessageW(window,eventChangedMessage,serviceGeneration,0)!=FALSE,"Post Event Log revision");eventRefreshQueued=true;}
         }});
@@ -569,6 +652,32 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         options.actions.setDefaultInput=[sample,changed](std::string_view id){if(std::none_of(sample->inputs.begin(),sample->inputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->inputID=id;changed();return true;};
         volume=std::make_unique<endfield::tools::VolumePreview>(rasterizer,std::move(options));volume->resize(metrics);
     }
+    if(!args.settingsAssets.empty()){
+        // Only this explicitly NEW preview data root is opened. The real app's
+        // preferences, startup registration and user icons are never touched.
+        const auto createSettings=[&](const ehud::data::Settings&loaded){
+            if(stopping)return;configuration=loaded;configuration.set("launchAtLogin",false);configurationPending=true;
+            endfield::tools::SettingsPreviewOptions options;options.initial=configuration;options.language=settingsLanguage(configuration);
+            const auto iconRoot=args.settingsAssets/"application-icons";const auto catalog=loadJSON(iconRoot/"manifest.json");
+            need(catalog["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Settings icon source differs");
+            for(const auto&icon:catalog["icons"].array())if(icon["offered"].boolean()){options.icons.push_back({icon["id"].string(),icon["title"].string()});options.images.emplace(icon["id"].string(),Json::Object{{"asset",icon["app"]["file"]},{"sha256",icon["app"]["sha256"]}});}
+            options.raster.assetRoot=iconRoot;
+            options.viewHooks.displays=[](){std::vector<endfield::modules::SettingsDisplay>result;for(const auto&d:gpu::readConnectedDisplays()){const auto id=narrow(std::wstring_view(reinterpret_cast<const wchar_t*>(d.persistentID.data()),d.persistentID.size()));const auto name=narrow(std::wstring_view(reinterpret_cast<const wchar_t*>(d.name.data()),d.name.size()));if(!id.empty())result.push_back({id,name,std::to_string(d.bounds.right-d.bounds.left)+" × "+std::to_string(d.bounds.bottom-d.bounds.top)});}return result;};
+            options.callbacks.configurationChanged=[&](const auto&value){configuration=value;configurationPending=true;};
+            options.callbacks.persist=[&](const auto&value){settingsSaves->save(value);};
+            options.callbacks.changed=[&]{if(ready&&!stopping)host.invalidate();};
+            options.callbacks.registerShortcut=[&](auto value)->std::optional<std::string>{if(tray&&tray->setHotkey(gpu::TrayHotkey{value.modifiers,value.key}))return {};return core::localized("Shortcut unavailable","快捷键不可用",settingsLanguage(configuration));};
+            options.callbacks.shortcutCapture=[&](bool capture){if(!tray)return;const auto key=endfield::modules::settingsShortcut(configuration);if(capture)tray->setHotkey({});else tray->setHotkey(gpu::TrayHotkey{key.modifiers,key.key});};
+            options.callbacks.launchAtLogin=[](bool)->std::optional<std::string>{return "Startup registration is unavailable in this isolated preview";};
+            options.callbacks.editBatteryPosition=[&]{if(notes)notes->select(core::Module::power,now());};
+            options.about.repository="https://github.com/DDDuoDuo/EndfieldHUD";
+            settingsUI=std::make_unique<endfield::tools::SettingsPreview>(rasterizer,std::move(options));settingsUI->resize(metrics);settingsUI->setOverlayVisible(session.phase()!=core::VisibilityPhase::concealed,args.visible?now():args.benchmarkEpoch);
+        };
+        settingsSaves=std::make_unique<app::SettingsSaveQueue>(args.notesData,*utility,app::SettingsSaveCallbacks{createSettings,[&]{refresh(now());}});settingsSaves->start();
+        // Hidden integration owns no frame/message loop. This explicit test
+        // preparation barrier drains the same asynchronous read before input.
+        if(!args.visible){utility->waitIdle();utility->drain();need(settingsSaves->status().loaded,"Hidden Settings initial read failed");}
+    }
     if(!args.residentIcons.empty()){
         const auto bytes=ehud::data::detail::readFile(args.residentIcons/"manifest.json",512*1024);need(bytes.has_value(),"Missing original icon roster");
         const auto catalog=Json::parse(*bytes);need(catalog["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Icon source differs from this app migration");
@@ -581,7 +690,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         need(tray->start(static_cast<HICON>(applicationIcon.handle()),L"EndfieldHUD migration preview"),"Windows could not add the preview tray icon");
         const bool shortcut=tray->setHotkey(gpu::TrayHotkey{MOD_CONTROL,VK_OEM_3});
         std::vector<gpu::TrayMenuItem>menu{{gpu::TrayAction::openOverlay,shortcut?L"打开浮层\tCtrl + `":L"打开浮层"}};
-        if(workMode)menu.push_back({gpu::TrayAction::workMode,L"工作模式"});menu.push_back({gpu::TrayAction::none,{},false,false,true});menu.push_back({gpu::TrayAction::quit,L"退出 EndfieldHUD"});tray->setMenu(std::move(menu));
+        if(!args.settingsAssets.empty())menu.push_back({gpu::TrayAction::settings,L"设置…"});if(workMode)menu.push_back({gpu::TrayAction::workMode,L"工作模式"});menu.push_back({gpu::TrayAction::none,{},false,false,true});menu.push_back({gpu::TrayAction::quit,L"退出 EndfieldHUD"});tray->setMenu(std::move(menu));
         if(!shortcut)std::cout<<"Ctrl + ` is already registered; reopen this isolated preview from its tray icon.\n";
     }
     std::cout<<(notes?"Synthetic shell with rich Notes, File Shelf and isolated Clipboard history; other modules and remaining Notes tools are not connected yet. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
@@ -634,7 +743,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         Json::Array moduleResults;
         if(args.moduleCoverage){
             double time=at(100);open(time);present(time+1,true);time+=2;
-            const std::array modules{core::Module::notes,core::Module::fileShelf,core::Module::clipboard,core::Module::volume,core::Module::eventLog,core::Module::workMode,core::Module::power};
+            std::vector modules{core::Module::notes,core::Module::fileShelf,core::Module::clipboard,core::Module::volume,core::Module::eventLog,core::Module::workMode,core::Module::power};if(settingsUI)modules.insert(modules.end(),{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about});
             std::optional<gpu::LayerRasterStats> retainedCycle;
             for(unsigned cycle=0;cycle<3;++cycle)for(const auto module:modules){
                 std::size_t scrollChanges{},peakEntries{},peakBytes{};
@@ -658,7 +767,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         }
         need(!IsWindowVisible(static_cast<HWND>(host.hwnd())),"Hidden benchmark window became visible");need(host.stats().frames==0&&!host.stats().timerArmed,"Hidden benchmark scheduled native frame work");
         Json::Array unsupported,substitutions;for(const auto&v:layers.report().unsupported)unsupported.push_back(Json::Object{{"node",v.node},{"feature",v.feature}});for(const auto&v:layers.report().fontSubstitutions)substitutions.push_back(Json::Object{{"node",v.node},{"requested",v.requestedFamily},{"selected",v.selectedFamily}});
-        Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog.variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent.stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent.stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
+        Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog.variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent?nativeContent->stats().updates:nativeAppearance->stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent?nativeContent->stats().surfaceUpdates:nativeAppearance->stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
             {"systemBackdropIncluded",false},{"limitations",Json::Array{args.moduleCoverage?"Seven module owners use synthetic data and hidden generated input; real clipboard/audio providers and desktop backdrop are excluded":"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     }
@@ -667,8 +776,8 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         Json report=Json::Object{{"scope","Isolated synthetic visible HUD, actual text service, inclusive CPU stage durations; no document text or desktop capture"},{"phases","0 opening/idle; 1 focused editor; 2 focused editor with controlled tilt; 3 after editing"},{"samples",probe.rows}};
         ehud::data::detail::replaceFile(args.liveDiagnostics,std::nullopt,report.encode(),1024*1024);
     }
-    ready=false;stopping=true;tray.reset();if(workMode)workMode->shutdown(now());host.setDeadline({});host.setFrameDemand({});if(mediaPicker)mediaPicker->cancel();if(eventSaves)eventSaves->flush(now());eventSaves.reset();utility.reset();mediaPicker.reset();host.setCursor(nullptr);backdrop.reset();
+    ready=false;stopping=true;tray.reset();if(workMode)workMode->shutdown(now());host.setDeadline({});host.setFrameDemand({});if(mediaPicker)mediaPicker->cancel();if(settingsSaves)need(settingsSaves->flush(),"Settings changes could not be saved");settingsSaves.reset();if(eventSaves)eventSaves->flush(now());eventSaves.reset();utility.reset();mediaPicker.reset();host.setCursor(nullptr);backdrop.reset();
     if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    composition.detach(renderer);if(battery){battery->release(renderer);battery.reset();}if(workMode){workMode->release(renderer);workMode.reset();}if(notes){notes->finish();notes->release(renderer);notes.reset();}if(shelf){shelf->release(renderer);shelf.reset();}if(clipboard){clipboard->release(renderer);clipboard.reset();}if(volume){volume->release(renderer);volume.reset();}if(eventLog){eventLog->release(renderer);eventLog.reset();}renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();if(pendingShelfReveal)need(SUCCEEDED(gpu::revealShelfReference(std::move(*pendingShelfReveal))),"Cannot reveal Shelf reference in Explorer");return 0;
+    composition.detach(renderer);if(battery){battery->release(renderer);battery.reset();}if(workMode){workMode->release(renderer);workMode.reset();}if(settingsUI){settingsUI->release(renderer);settingsUI.reset();}if(notes){notes->finish();notes->release(renderer);notes.reset();}if(shelf){shelf->release(renderer);shelf.reset();}if(clipboard){clipboard->release(renderer);clipboard.reset();}if(volume){volume->release(renderer);volume.reset();}if(eventLog){eventLog->release(renderer);eventLog.reset();}renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();if(pendingShelfReveal)need(SUCCEEDED(gpu::revealShelfReference(std::move(*pendingShelfReveal))),"Cannot reveal Shelf reference in Explorer");return 0;
 }catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}
 catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}

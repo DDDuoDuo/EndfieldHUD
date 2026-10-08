@@ -12,14 +12,24 @@ struct DesktopChromeContent {
     bool clockHovered{};
     bool operator==(const DesktopChromeContent&)const=default;
 };
+struct DesktopChromeAppearance {
+    bool dark{true};
+    // SystemHUDView.currentAccent: caller supplies the original light-mode
+    // GenericRGB .35 black blend, or the unchanged dark-mode selected accent.
+    std::array<double,3> effectiveAccent{250./255,212./255,31./255};
+    bool operator==(const DesktopChromeAppearance&)const=default;
+};
+// Exact source role recoloring, retaining all source tree/path/font geometry.
+core::source::Json desktopChromeAppearanceReference(const core::source::Json&,
+    const DesktopChromeAppearance&);
 struct DesktopChromePresentationStats {
     std::uint64_t contentUpdates{},statusRasterChanges{},footerRasterChanges{},placementUpdates{};
 };
 // Caller first adds the exact exported chrome local trees to the same LayerScene
 // as native source labels. No competing draw-list owner, timer, provider, wall
 // clock or I/O. Keep the original native root for nativeLabelBindingsFromExport.
-// Reference artwork uses the exporter palette; arbitrary theme remapping and
-// CATransition page displacement are deliberately not synthesized here.
+// Appearance changes recolor the exact original source roles. CATransition
+// page displacement still belongs to the separate source transition path.
 class NativeChromePresentation final {
 public:
     static core::source::Json combinedReferenceRoot(const core::source::Json& nativeRoot,
@@ -29,6 +39,7 @@ public:
     // Explicit sample/settings event. Only status/footer local content changes.
     // After true, caller invokes LayerScene::upload on its render thread.
     bool setContent(const DesktopChromeContent&);
+    bool setAppearance(const DesktopChromeAppearance&);
     // No JSON, rasterization, text layout, allocation or upload on this path.
     bool update(const core::source::SourceWatchFrame&,const core::source::CameraFrame&,
         const core::source::DesktopChromeSettings&,float canvasOpacity=1);
@@ -42,7 +53,8 @@ private:
     std::array<std::size_t,3> surfaces_{};
     core::source::DesktopClockArtworkPlan artwork_;
     std::optional<DesktopChromeContent> content_;
-    std::uint64_t statusRevision_{},footerRevision_{};
+    std::uint64_t statusRevision_{},footerRevision_{},headerRevision_{};
+    std::optional<DesktopChromeAppearance> appearance_;
     std::uint64_t sceneRevision_{};
     std::array<LayerPlacement,3> placements_;
     std::optional<std::array<core::Matrix4,3>> previousWorlds_;

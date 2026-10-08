@@ -1,14 +1,13 @@
 #include "tools/notes_format_menu.hpp"
 #ifdef _WIN32
+#include <windows.h>
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
+#include "core/source_color.hpp"
 #include "modules/notes_motion.hpp"
-#include <dwrite.h>
-#include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
 #include <charconv>
-#include <numbers>
 #include <iostream>
 
 namespace endfield::tools {
@@ -16,40 +15,15 @@ namespace {
 namespace gpu=native;namespace mod=modules;namespace rich=core::notes;namespace data=ehud::data;
 void need(bool ok,const char*why){if(!ok)throw std::runtime_error(why);}
 bool in(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
-std::string utf8(std::wstring_view s){if(s.empty())return{};const auto n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),nullptr,0,nullptr,nullptr);need(n>0,"Invalid native font name");std::string out(n,'\0');WideCharToMultiByte(CP_UTF8,0,s.data(),static_cast<int>(s.size()),out.data(),n,nullptr,nullptr);return out;}
-std::vector<std::string> fonts(){
-    Microsoft::WRL::ComPtr<IDWriteFactory> factory;need(SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(factory.GetAddressOf()))),"Create shared font catalog");
-    Microsoft::WRL::ComPtr<IDWriteFontCollection> collection;need(SUCCEEDED(factory->GetSystemFontCollection(&collection,FALSE)),"Read installed font catalog");
-    std::vector<std::string> out;out.reserve(collection->GetFontFamilyCount());
-    for(UINT32 n=0;n<collection->GetFontFamilyCount();++n){Microsoft::WRL::ComPtr<IDWriteFontFamily> family;Microsoft::WRL::ComPtr<IDWriteLocalizedStrings> names;if(FAILED(collection->GetFontFamily(n,&family))||FAILED(family->GetFamilyNames(&names)))continue;
-        UINT32 index{},length{};BOOL exists{};names->FindLocaleName(L"en-us",&index,&exists);if(!exists)index=0;if(FAILED(names->GetStringLength(index,&length))||length>1024)continue;std::wstring name(length+1,L'\0');if(FAILED(names->GetString(index,name.data(),length+1)))continue;name.resize(length);out.push_back(utf8(name));}
-    std::sort(out.begin(),out.end());out.erase(std::unique(out.begin(),out.end()),out.end());return out;
-}
-core::Point colorPoint(const rich::RGBA&c){const auto hi=std::max({c.red,c.green,c.blue}),lo=std::min({c.red,c.green,c.blue}),d=hi-lo;double h{};if(d>0){if(hi==c.red)h=std::fmod((c.green-c.blue)/d+6.,6.)/6;else if(hi==c.green)h=((c.blue-c.red)/d+2)/6;else h=((c.red-c.green)/d+4)/6;}const auto s=hi>0?d/hi:0;return {(std::cos(h*2*std::numbers::pi)*s+1)*.5,(std::sin(h*2*std::numbers::pi)*s+1)*.5};}
-rich::RGBA wheelColor(core::Point p){
-    const double x=p.x*2-1,y=p.y*2-1,h=std::fmod(std::atan2(y,x)/(2*std::numbers::pi)+1,1)*6,s=std::min(1.,std::hypot(x,y));
-    const auto sector=static_cast<int>(h);const auto f=h-sector,a=1-s,b=1-f*s,c=1-(1-f)*s;
-    std::array<double,3> rgb;
-    switch(sector){case 0:rgb={1,c,a};break;case 1:rgb={b,1,a};break;case 2:rgb={a,1,c};break;case 3:rgb={a,b,1};break;case 4:rgb={c,a,1};break;default:rgb={1,a,b};}
-    // Source NSColor(calibratedHue:) is Generic RGB, not sRGB. These source
-    // profile colorants/TRC followed by the D50-adapted sRGB matrix preserve
-    // its visibly lighter saturation. 2,091 original AppKit samples bound
-    // the channel difference to <1/255 (ColorSync interpolation differs).
-    for(auto& channel:rgb)channel=std::pow(channel,461./256.);
-    constexpr double matrix[3][3]={{1.0252632622360232,-.026296374835205007,.0013184544570922774},
-        {.019383039425659214,.9479564776870728,.03258408416900635},
-        {-.0017835291061401443,-.0014664365493774478,1.0031060531219482}};
-    std::array<double,3> result{};
-    for(unsigned r=0;r<3;++r){const double v=matrix[r][0]*rgb[0]+matrix[r][1]*rgb[1]+matrix[r][2]*rgb[2];result[r]=std::clamp(v<=.0031308?12.92*v:1.055*std::pow(v,1/2.4)-.055,0.,1.);}
-    return {result[0],result[1],result[2],1};
-}
+core::Point colorPoint(const rich::RGBA&c){return core::source::colorWheelPoint({c.red,c.green,c.blue,c.alpha});}
+rich::RGBA wheelColor(core::Point p){const auto c=core::source::colorAtWheel(p);return {c[0],c[1],c[2],c[3]};}
 }
 struct NotesFormatMenu::Impl {
     struct Menu {
         mod::NotesControls controls;mod::NotesControlsInput input;std::unique_ptr<gpu::NativeNotesControlsScene> scene;std::unique_ptr<gpu::NativeLayerGroup> group;
         core::Projection projection;core::Matrix4 world;double started{},captured{1},alpha{},scrollRemainder{};float opacity{};bool closing{},dead{},uploaded{},dirty{true},wheelDrag{},pressed{};std::size_t focused{};
     };
-    gpu::LayerRasterizer&raster;std::filesystem::path root;Apply apply;std::vector<std::unique_ptr<Menu>>menus;std::vector<gpu::LayerCompositionEntry>entries;std::optional<std::vector<std::string>>fontNames;std::optional<gpu::NativeNotesControlsImage>wheel;
+    gpu::LayerRasterizer&raster;std::filesystem::path root;Apply apply;std::vector<std::unique_ptr<Menu>>menus;std::vector<gpu::LayerCompositionEntry>entries;std::optional<gpu::NativeNotesControlsImage>wheel;
     Impl(gpu::LayerRasterizer&r,std::filesystem::path p,Apply callback):raster(r),root(std::move(p)),apply(std::move(callback)){need(bool(apply),"Notes format menu requires editor callback");menus.reserve(8);entries.reserve(8);}
     Menu*current()const{for(auto it=menus.rbegin();it!=menus.rend();++it)if(!(*it)->closing&&!(*it)->dead)return it->get();return nullptr;}
     void prepareWheel(){if(wheel)return;data::detail::validateRoot(root);constexpr std::string_view digest="244c34ad474b15c242f9bd62cbf195272cbf7b880acbeaf0021e237d6a22abd2";const auto file="raster/"+std::string(digest)+".png";const auto bytes=data::detail::readFile(root/file,128*1024);need(bytes&&core::packet::sha256({reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()})==digest,"Original Notes wheel asset missing or changed");
@@ -65,9 +39,9 @@ struct NotesFormatMenu::Impl {
 NotesFormatMenu::NotesFormatMenu(gpu::LayerRasterizer&r,std::filesystem::path root,Apply apply):impl_(std::make_unique<Impl>(r,std::move(root),std::move(apply))){}
 NotesFormatMenu::~NotesFormatMenu()=default;
 bool NotesFormatMenu::open(std::string_view verb,const rich::TextStyle&s,double t){auto&i=*impl_;mod::NotesControlsKind kind;if(verb=="formatSize")kind=mod::NotesControlsKind::size;else if(verb=="formatFont")kind=mod::NotesControlsKind::font;else if(verb=="formatColor")kind=mod::NotesControlsKind::color;else if(verb=="formatSpecial")kind=mod::NotesControlsKind::special;else return false;
-    if(kind==mod::NotesControlsKind::color)i.prepareWheel();if(kind==mod::NotesControlsKind::font&&!i.fontNames)i.fontNames=fonts();
+    if(kind==mod::NotesControlsKind::color)i.prepareWheel();
     auto m=std::make_unique<Impl::Menu>();m->input.kind=kind;m->input.traits={s.bold,s.italic,s.underline,s.strikethrough};const auto c=s.color.value_or(rich::RGBA{1,1,1,1});m->input.currentColor={c.red,c.green,c.blue,c.alpha};m->input.colorWheelSelection=colorPoint(c);m->started=t;
-    if(kind==mod::NotesControlsKind::font){m->input.values=*i.fontNames;m->input.selectedValue=s.fontName.value_or("Segoe UI");}else if(kind==mod::NotesControlsKind::size){m->input.values=mod::NotesControls::sizeValues(s.fontSize);m->input.selectedValue=std::to_string(static_cast<int>(std::round(s.fontSize)));}m->input.firstRow=mod::NotesControls::initialFirstRow(m->input.values,m->input.selectedValue);
+    if(kind==mod::NotesControlsKind::font){m->input.values=i.raster.installedFontFamilies();m->input.selectedValue=s.fontName.value_or("Segoe UI");}else if(kind==mod::NotesControlsKind::size){m->input.values=mod::NotesControls::sizeValues(s.fontSize);m->input.selectedValue=std::to_string(static_cast<int>(std::round(s.fontSize)));}m->input.firstRow=mod::NotesControls::initialFirstRow(m->input.values,m->input.selectedValue);
     m->controls.update(m->input);gpu::LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;options.assetRoot=i.root;m->scene=std::make_unique<gpu::NativeNotesControlsScene>(m->controls,i.raster,options);m->scene->syncContent(kind==mod::NotesControlsKind::color?std::span(&*i.wheel,1):std::span<const gpu::NativeNotesControlsImage>{},1);m->scene->updatePose({},1,t);m->group=std::make_unique<gpu::NativeLayerGroup>(m->scene->scene(),"notes.format",2);
     i.close(t);i.menus.push_back(std::move(m));return true;
 }

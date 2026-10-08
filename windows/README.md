@@ -13,12 +13,13 @@ shell, native captions/icons, clock and custom cursor. An optional isolated
 Notes preview adds scrollable text and rich-text editing, font/size/color/trait menus,
 checklists, moving, resizing, pinning and confirmed deletion. Temporary File Shelf,
 synthetic Clipboard history, Volume, Work Mode and Event Log use the same module transitions,
-renderer and frame clock. Their hidden integration tests pass. The five-language
-catalog is ported, but a live application-wide language preference is not connected.
-Still-image and GIF import/playback pass isolated integration checks. Video playback
-and drawing are being connected; the real Windows video decoder has not yet
-passed its first-frame test. Archive storage/category models are ported; its
-presentation is still being connected. An optional resident preview adds the
+renderer and frame clock. Their hidden integration tests pass. Settings now joins
+that shared preview, with event-driven shell captions, theme, motion, clock and
+hotkey preferences. Language changes inside every module are still being connected.
+Still-image, GIF, drawing and real Windows video import/playback pass isolated
+integration checks. Archive storage/category models and its standalone editor
+are verified; the shared application integration is still being connected.
+An optional resident preview adds the
 original icon, tray menu and Ctrl+` reopening. Other module bodies and the
 production application owner remain unfinished.
 It does **not** yet produce a complete runnable HUD or a release candidate.
@@ -601,5 +602,24 @@ hotkey brings an unfocused overlay forward on the first press. Native activation
 routing is tested; actual Alt+Tab acceptance is still pending. The concealed-tray
 Quit path also stops scheduling frames before shutdown. These fixes and standalone
 Archive/Settings owners are verified source work, not a complete Windows release.
-Live Settings integration, remaining modules/services, and full performance and
-accessibility acceptance remain in progress.
+Remaining modules/services, and full performance and accessibility acceptance
+remain in progress.
+
+Snapshot 82 plus corrections 82b/82c connects the four Settings pages to the
+same renderer, source module transitions, host clock, and utility file queue.
+Settings load/save uses the isolated preview directory; failed writes retain the
+latest settings and prevent silent quit. System/theme/language/motion changes
+update the shell on change events, without remeasuring captions during tilt.
+The native cache test covers eleven module bodies over three full cycles,
+including Settings and repeated Clipboard scrolling. It passes without growing
+the retained raster cache between completed cycles; this is not whole-app RAM,
+GPU, frame-rate or accessibility acceptance.
+
+The Windows run passed 124 of 126 registered suites. Both remaining failures
+were invalid JSON fixture construction (null instead of object), corrected and
+rerun successfully without weakening assertions. The other explicit Notes,
+media, source-transition and full hardware module checks also passed. The live
+preview now exposes the close-on-focus-loss setting for the pending Alt+Tab and
+one-press hotkey acceptance test. Real startup registration, display selection,
+custom icons, global module preferences and the full release owner still need
+integration; the isolated preview does not change the laptop's startup or data.

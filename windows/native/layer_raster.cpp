@@ -146,6 +146,7 @@ struct LayerRasterizer::Impl {
     };
     DWORD thread=GetCurrentThreadId();
     ComPtr<ID2D1Factory> d2d;ComPtr<IDWriteFactory> text;ComPtr<IDWriteFontCollection> fonts;ComPtr<IWICImagingFactory> wic;
+    std::optional<std::vector<std::string>> installedFontNames;
     BCRYPT_ALG_HANDLE sha{};
     std::map<std::string,Entry,std::less<>> entries;
     std::map<std::string,DecodedImage,std::less<>> images;
@@ -586,6 +587,44 @@ std::unique_ptr<LayerPlainTextAnalysis>LayerRasterizer::plainSystemTextAnalysis(
         for(auto&f:report.fontSubstitutions){const auto same=[&](const auto&existing){return existing.requestedFamily==f.requestedFamily&&existing.requestedFace==f.requestedFace&&existing.selectedFamily==f.selectedFamily;};if(std::none_of(metrics->fontSubstitutions.begin(),metrics->fontSubstitutions.end(),same))metrics->fontSubstitutions.push_back(std::move(f));}return family;};
     ++r.counts.textAnalysisFormatsCreated;
     return std::unique_ptr<LayerPlainTextAnalysis>(new LayerPlainTextAnalysis(std::move(analysis)));
+}
+const std::vector<std::string>&LayerRasterizer::installedFontFamilies(){
+    auto&r=*impl_;r.onThread();if(r.installedFontNames)return *r.installedFontNames;
+    std::vector<std::string> names;names.reserve(r.fonts->GetFontFamilyCount());
+    for(UINT32 n=0;n<r.fonts->GetFontFamilyCount();++n){ComPtr<IDWriteFontFamily>family;ComPtr<IDWriteLocalizedStrings>localized;
+        if(FAILED(r.fonts->GetFontFamily(n,&family))||FAILED(family->GetFamilyNames(&localized)))continue;
+        UINT32 index{},length{};BOOL exists{};localized->FindLocaleName(L"en-us",&index,&exists);if(!exists)index=0;
+        if(FAILED(localized->GetStringLength(index,&length))||length>1024)continue;
+        std::wstring value(length+1,L'\0');if(FAILED(localized->GetString(index,value.data(),length+1)))continue;value.resize(length);if(value.empty())continue;
+        const auto bytes=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
+        if(bytes<=0)invalid("Invalid installed font family name");std::string name(static_cast<std::size_t>(bytes),'\0');
+        if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),name.data(),bytes,nullptr,nullptr)!=bytes)invalid("Cannot encode installed font family name");
+        names.push_back(std::move(name));
+    }
+    std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());r.installedFontNames=std::move(names);return *r.installedFontNames;
+}
+LayerSourceTextMeasurement LayerRasterizer::measureSourceText(const std::string&id,const Json&descriptor,double width,const LayerRasterOptions&options){
+    auto&r=*impl_;r.onThread();
+    if(id.empty()||id.size()>4096||!Json::validUtf8(id)||!descriptor.isObject()||!descriptor["string"].isString()||
+       !descriptor["wrapped"].isBool()||!std::isfinite(width)||width<=0||width>3e9)invalid("Invalid source caption measurement");
+    if(!descriptor["runs"].isNull()&&(!descriptor["runs"].isArray()||!descriptor["runs"].array().empty()))invalid("Caption measurement does not flatten attributed runs");
+    const auto value=wide(descriptor["string"].string());if(value.size()>65536)invalid("Caption measurement exceeds painted UTF-16 bound");
+    const auto size=real(descriptor["fontSize"]);if(size<=0||size>2048)invalid("Invalid caption measurement font size");
+    const Json node=Json::Object{{"id",id}};LayerRasterImage report;const auto&font=descriptor["font"];
+    const auto family=r.fontFamily(font,node,options,report);const bool italic=(static_cast<unsigned>(number(font["symbolicTraits"]))&1)!=0;
+    ComPtr<IDWriteTextFormat>format;checked(r.text->CreateTextFormat(family.c_str(),r.fonts.Get(),Impl::weight(font),italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,size,L"en-us",format.GetAddressOf()),"Create source caption measurement format");
+    const bool wrapped=flag(descriptor["wrapped"]);checked(format->SetWordWrapping(wrapped?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP),"Set source caption measurement wrapping");
+    const auto ascent=real(font["ascender"]),descent=real(font["descender"]),leading=real(font["leading"]);
+    if(ascent>0&&ascent-descent+leading>0)checked(format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,ascent-descent+leading,ascent),"Preserve source caption measurement metrics");
+    ++r.counts.textAnalysisFormatsCreated;LayerSourceTextMeasurement result;result.fontSubstitutions=std::move(report.fontSubstitutions);
+    if(value.empty())return result;
+    ComPtr<IDWriteTextLayout>layout;checked(r.text->CreateTextLayout(value.data(),static_cast<UINT32>(value.size()),format.Get(),static_cast<float>(width),
+        std::numeric_limits<float>::max(),layout.GetAddressOf()),"Measure source caption with paint font resolver");++r.counts.textLayoutsCreated;
+    DWRITE_TEXT_METRICS metrics{};checked(layout->GetMetrics(&metrics),"Read measured source caption metrics");
+    result.width=wrapped?metrics.width:metrics.widthIncludingTrailingWhitespace;result.height=metrics.height;
+    if(!std::isfinite(result.width)||!std::isfinite(result.height)||result.width<0||result.height<0)invalid("Invalid measured source caption extent");
+    return result;
 }
 std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string id,std::uint64_t revision,const Json& layer,const LayerRasterOptions& options){
     auto& r=*impl_;r.onThread();

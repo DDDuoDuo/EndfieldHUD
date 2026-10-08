@@ -72,6 +72,13 @@ private:
     explicit LayerPlainTextAnalysis(std::unique_ptr<Impl>);
     friend class LayerRasterizer;
 };
+// Content-event caption measurement using the exact paint font resolver and
+// source line spacing. No image/cache entry is created, and no layout survives
+// this call. Font substitution is explicit in the result.
+struct LayerSourceTextMeasurement {
+    double width{},height{};
+    std::vector<LayerFontSubstitution> fontSubstitutions;
+};
 struct LayerRasterImage {
     core::Rect bounds; // texture edges in the input root's local point space
     unsigned width{}, height{};
@@ -123,6 +130,12 @@ public:
     // as source caption painting; actual substitution and selected font metrics
     // are returned rather than guessed from average character widths.
     std::unique_ptr<LayerPlainTextAnalysis> plainSystemTextAnalysis(const std::string& sourceID,double fontSize,
+        const LayerRasterOptions& options={});
+    // One creating-thread enumeration shared by all menu owners. The returned
+    // sorted UTF-8 catalog is stable until this rasterizer is destroyed.
+    const std::vector<std::string>& installedFontFamilies();
+    LayerSourceTextMeasurement measureSourceText(const std::string& sourceID,
+        const ehud::data::Json& textDescriptor,double width,
         const LayerRasterOptions& options={});
     bool remove(const std::string& sourceID);
     void clear();

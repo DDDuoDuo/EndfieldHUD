@@ -31,6 +31,10 @@ void run(const std::filesystem::path&referencePath,const std::filesystem::path&p
     DesktopChromeProjectionPlan projection(scene,camera,animation,DesktopChromeBindings::fromJson(reference["bindings"]));
     auto root=Json::Object{{"id","owned.chrome.fixture"},{"bounds",Json::Array{0,0,1280,800}},{"children",Json::Array{}}};
     LayerRasterizer raster;LayerScene layers(raster);LayerRasterOptions options;options.assetRoot=referencePath;
+    const auto colored=desktopChromeAppearanceReference(reference,{false,{.2,.5,.7}});
+    check(colored["header"]["bounds"]==reference["header"]["bounds"]&&colored["header"]["children"].array()[0]["text"]["string"].string()=="ENDFIELDHUD","Runtime appearance preserves literal source header and geometry");
+    const auto&headline=colored["header"]["children"].array()[0]["text"]["foregroundColor"]["sRGB"].array();check(headline[0].number()==.12&&headline[3].number()==1,"Light source header uses its original primary role");
+    for(const auto&style:colored["styles"].array()){const auto&children=style["status"]["children"].array();check(children[1]["shape"]["strokeColor"]["sRGB"].array()[3].number()==.70&&children[4]["shape"]["strokeColor"]["sRGB"].array()[1].number()==.5,"Every retained clock style/hover gets original accent roles");check(children[0]["shape"]["fillColor"]==reference["styles"].array()[style["hover"].boolean()?1:0]["status"]["children"].array()[0]["shape"]["fillColor"],"Source status stays its authored dark plate in either theme");}
     const auto combined=NativeChromePresentation::combinedReferenceRoot(root,reference);layers.load(combined,options);
     check(layers.report().surfaces==3,"Header, footer text and status retain three source local surfaces");
     check(layers.report().unsupported.empty(),"Actual source chrome layer effects are supported; font substitutions are reported separately");
@@ -43,6 +47,13 @@ void run(const std::filesystem::path&referencePath,const std::filesystem::path&p
     content.uppercaseShortcut="ALT+SPACE";check(bridge.setContent(content),"Shortcut updates the exact footer string");check(raster.stats().rasterizations==initial.rasterizations+2,"Shortcut refresh changes one local text surface");
     for(unsigned i=0;i<5;++i){content.style=static_cast<DesktopClockStyle>(i);content.clockHovered=i%2==1;content.workPhase=static_cast<DesktopWorkPhase>(i%3);bridge.setContent(content);check(layers.report().unsupported.empty(),"Each actual source clock instrument stays supported");}
     check(layers.contentRevision()==epoch,"Clock changes retain structural surface identities");
+    const auto beforeTheme=raster.stats();const auto oldDraws=layers.draws();std::array<std::string,3>sourceIDs{oldDraws[0].sourceID,oldDraws[1].sourceID,oldDraws[2].sourceID};
+    const DesktopChromeAppearance light{false,{.2,.5,.7}};check(bridge.setAppearance(light),"Source chrome accepts caller's effective theme accent");check(raster.stats().rasterizations==beforeTheme.rasterizations+3,"Appearance event updates only the three chrome surfaces");
+    const auto themed=raster.stats();allocations=0;counting=true;for(unsigned n=0;n<120;++n)bridge.setAppearance(light);counting=false;check(allocations==0&&raster.stats().rasterizations==themed.rasterizations&&raster.stats().textLayoutsCreated==themed.textLayoutsCreated,"Equal appearance causes no layout, raster or allocation");
+    for(unsigned n=0;n<3;++n)check(layers.draws()[n].sourceID==sourceIDs[n],"Appearance preserves retained source surface identities");
+    content.reading=DesktopClockReading{"14:25:16","TUE Oct 8"};check(bridge.setContent(content)&&raster.stats().rasterizations==themed.rasterizations+1,"Clock ticks after theme event still refresh only status");
+    auto bad=light;bad.effectiveAccent[1]=-1;bool rejectedColor{};try{bridge.setAppearance(bad);}catch(const std::exception&){rejectedColor=true;}check(rejectedColor&&layers.contentRevision()==epoch,"Invalid accent cannot replace source chrome structure");
+
     SourceLayout layout(scene);auto nodes=layout.resolve();SourceWatchFrame frame;frame.resolved=nodes;
     const auto&row=reference["projections"].array().back();
     for(const auto&n:row["nodes"].array()){const auto at=layout.nodeIndex(n["id"].string());check(at.has_value(),"Bound source chrome node exists");nodes[*at].worldMatrix=matrix(n["world"]);if(!n["rect"].isNull())nodes[*at].rect=SourceRect{{n["rect"]["origin"].array()[0].number(),n["rect"]["origin"].array()[1].number()},{n["rect"]["size"].array()[0].number(),n["rect"]["size"].array()[1].number()}};}
