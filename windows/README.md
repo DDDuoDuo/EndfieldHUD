@@ -282,7 +282,8 @@ scrolling preserves their local artwork. Native rendering, file icons, picker an
 preview are still separate integration work. Model and descriptor tests do not
 establish those features.
 
-The current portable build passes 40 suites. The laptop passes the focused
+The current portable build passes 41 suites and the clean Windows Release build
+passes all 59 registered suites. The laptop passes the focused
 Notes workspace/editor and Shelf tests; the integrated Notes owner passes 470
 checks, including queued selection notifications between mouse-down and drag.
 The live Notes preview is awaiting user acceptance.
@@ -317,6 +318,16 @@ fixtures even after fresh deployment timestamps. A clean native build passed
 all nine targeted transfer/rendering/Notes suites and the 470-check Notes owner
 fixture after the mask layout changed.
 
+
+The settled shelf bridge retains only visible cards and shares the module's
+projection, clips and owner clock. Static card artwork is grouped while mutable
+highlights stay separate. A distant scroll can retain two generations until the
+owner publishes replacement draws; this uses 176 card raster entries, plus
+chrome. Shared-cache capacity is checked before staging, without evicting live
+Notes/shell resources. Native tests cover scroll recycling, source paint order,
+hover/selection, failed replacement rollback and teardown. The shelf is not yet
+connected to the live preview; native icons, picker/open/preview actions and
+actual subsection/drop animation are unfinished.
 
 The retained mask shader now supports the source subsection’s four six-vertex
 strips alongside the existing six five-vertex module strips. Both use the same
