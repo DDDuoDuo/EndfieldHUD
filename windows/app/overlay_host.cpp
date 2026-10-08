@@ -311,6 +311,7 @@ struct OverlayHost::Impl {
         case WM_SETFOCUS: case WM_KILLFOCUS:
             focused = message == WM_SETFOCUS;
             if (!focused) { releaseCursor(); releaseCapture(); }
+            if(window!=target||callbacks!=handlers)return 0;
             if (ready && handlers && handlers->focus) handlers->focus(focused);
             break;
         case WM_ACTIVATEAPP:
