@@ -247,7 +247,11 @@ int wmain(int argc,wchar_t**argv){try{
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){notes->select(module,now());break;}}}
         std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (plain Notes preview)":" (module body is not installed)")<<'\n';};
     auto present=[&](double time,bool submit){
-        const auto*sample=session.sample(time);updateBackdrop(time);if(!sample)return false;
+        // Backdrop COM calls can dispatch nested input. Finish them before
+        // borrowing a source frame, then sample the current live event time.
+        // Offscreen comparisons retain their explicit synthetic timestamps.
+        updateBackdrop(time);if(args.visible)time=std::max(time,now());
+        const auto*sample=session.sample(time);if(!sample)return false;
         if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session.inputEnabled())session.setInputEnabled(true,time);
         auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;
         materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());

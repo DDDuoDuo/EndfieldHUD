@@ -282,11 +282,18 @@ scrolling preserves their local artwork. Native rendering, file icons, picker an
 preview are still separate integration work. Model and descriptor tests do not
 establish those features.
 
-The current portable build passes 41 suites and the clean Windows Release build
-passes all 59 registered suites. The laptop passes the focused
-Notes workspace/editor and Shelf tests; the integrated Notes owner passes 470
-checks, including queued selection notifications between mouse-down and drag.
-The live Notes preview is awaiting user acceptance.
+The current portable build passes 44 suites and the clean Windows Release build
+passes all 62 registered suites. The laptop passes the focused
+Notes workspace/editor and Shelf tests; the integrated Notes owner now passes
+496 checks, including queued selection notifications and synchronous capture
+notifications with an older outer callback. The first live Notes preview
+crashed on dragging: capture reentry advanced a child clock before an earlier
+refresh resumed. The regression reproduces the exact previous-build failure.
+A single monotonic Notes owner clock now keeps nested events at the same instant,
+clamps resumed older timestamps and preserves strict child-scene validation.
+Backdrop work also finishes before borrowing the current shell frame. No new
+timer, service or per-frame allocation is added. The corrected live Notes
+preview is awaiting user acceptance; automated success is not live acceptance.
 
 The integrated plain Notes fixture exercises the same owner as the visible
 preview: Unicode input, drag/resize, pin/unpin, create, deletion confirmation,
@@ -335,6 +342,33 @@ fixed constant buffer, with no per-frame bitmap mask. Native readback verifies
 source path coverage, both windings and ancestor clipping while preserving GPU
 resource counts. The source subsection timing and composed shelf reveal remain
 a separate adapter; this result alone is not animation parity.
+
+
+Native icon pixels now have one bounded in-memory owner: 24 cached snapshots,
+48 total live snapshots including borrowers, an 8 MiB cap and a 256-pixel edge
+limit. The rasterizer borrows exact immutable revisions without file decoding
+or a second retained pixel copy. The shelf accepts these only for native file
+icons; original Depot artwork still requires pinned assets. Native tests verify
+alpha, orientation, revision replacement, rollback and zero provider requests
+from 120 unchanged pointer frames. This is an input/cache foundation, not live
+file-icon integration.
+
+The Notes rich-text model passes 5,659 portable/native checks for UTF-16 ranges,
+source style capture, typing/selection changes, bounded undo and IME grouping.
+An unchanged-source Mac reference records 22 real formatting/layout cases,
+including mixed sizes, fonts, paragraph normalization and undo. Its detached
+text view creates one explicitly recorded invisible AppKit input helper; it
+never shows a window or activates the app. Native rich editing/rendering is
+not connected yet; source data must not be silently flattened to plain text.
+
+The subsection timing and transform adapter matches 666 paused original Mac
+samples in 265,584 comparisons. It also preserves authored mask keyframes.
+Intermediate mask shape is a separate problem: Core Animation normalizes the
+paths into curved contours, sometimes with five subpaths. A build-only sampled
+candidate takes 98,856 bytes for both directions and stays within 0.0142 local
+points at 394 independent holdouts. Twelve tiny topology-switch gaps and pixel
+coverage remain unverified, so this candidate is not shipped or used as a claim
+of animation parity. The settled shelf still rejects active reveal animations.
 
 
 Reference tools (macOS, temporary fixture data only):

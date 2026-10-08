@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <stdexcept>
 #include <string_view>
@@ -246,6 +247,101 @@ core::Point confirmationPoint(const data::Note& note, bool confirm) {
     return {note.x + note.width - 59 + (confirm ? 31 : 0) + 12.5, note.y + 27 + 12.5};
 }
 std::string cardID(const data::Note& note) { return "note/" + note.id + "/card"; }
+
+// Deliver the capture notification synchronously through our own hidden HWND,
+// as ReleaseCapture does. Do not take the user's real pointer capture/focus.
+struct CaptureRoute final {
+    HWND hwnd;
+    WNDPROC previous{};
+    tools::NotesPreview& preview;
+    double time;
+    unsigned delivered{};
+    std::exception_ptr failure;
+    static constexpr wchar_t property[] = L"EndfieldNotesClockRegression";
+    static LRESULT CALLBACK dispatch(HWND hwnd, UINT message, WPARAM w, LPARAM l) {
+        auto* self = static_cast<CaptureRoute*>(GetPropW(hwnd, property));
+        if (message == WM_CAPTURECHANGED && self) {
+            try {
+                ++self->delivered;
+                self->preview.pointer({app::PointerKind::captureLost, app::PointerButton::none, 0, 0, 0}, self->time);
+            } catch (...) { self->failure = std::current_exception(); }
+            return 0;
+        }
+        return self ? CallWindowProcW(self->previous, hwnd, message, w, l) : DefWindowProcW(hwnd, message, w, l);
+    }
+    CaptureRoute(HWND h, tools::NotesPreview& p, double t) : hwnd(h), preview(p), time(t) {
+        check(SetPropW(hwnd, property, this) != FALSE, "Owned capture callback installs");
+        previous = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(dispatch)));
+        check(previous != nullptr, "Owned hidden window accepts its temporary callback");
+    }
+    ~CaptureRoute() {
+        if (previous) SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previous));
+        RemovePropW(hwnd, property);
+    }
+    void send() {
+        SendMessageW(hwnd, WM_CAPTURECHANGED, 0, 0);
+        if (failure) std::rethrow_exception(failure);
+        check(delivered == 1, "Capture-loss callback finishes synchronously before the outer callback resumes");
+    }
+};
+
+void reentrantClock(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+    gpu::LayerRasterizer raster;
+    Fixture f(hwnd, renderer, raster, assets);
+    const auto nativeCapture = GetCapture();
+    auto note = savedNotes(f.root.path).front();
+    const auto* tool = f.draw("tool:text");
+    check(tool != nullptr, "Capture clock regression uses the actual Notes toolbar");
+    const auto toolbar = f.project(tool->world, {46, 15.5});
+    f.pointer(app::PointerKind::move, toolbar, app::PointerButton::none);
+    f.tick(.2);
+    // Outer mouse-up clears pressed state but keeps a hovered toolbar. The
+    // nested capture notification removes hover at a later QPC timestamp.
+    const double outer = f.time;
+    f.preview->pointer({app::PointerKind::up, app::PointerButton::left, toolbar.x, toolbar.y, 0}, outer);
+    {
+        CaptureRoute nested(hwnd, *f.preview, outer + .001);
+        nested.send();
+    }
+    check(f.preview->requiresFrames(outer), "Older outer refresh preserves the capture-loss fade instead of rejecting its timestamp");
+    f.frame(); // an already-started older frame resumes after the newer input
+    f.tick(.3);
+    check(!f.preview->requiresFrames(outer), "A stale demand query cannot restart a settled feedback animation");
+
+    const core::Point header{note.x + 32, note.y + 12};
+    check(f.pointer(app::PointerKind::down, header) && f.preview->pointerLocked(), "Clock regression starts an actual card drag");
+    const double beforeMove = f.time;
+    f.time += .02;
+    check(f.preview->pointer({app::PointerKind::move, app::PointerButton::none, header.x + 48, header.y + 31, 0}, f.time),
+        "Newer input moves the captured card before the interrupted frame resumes");
+    f.preview->update(f.workspace * f.design, f.settings, 1, beforeMove, true);
+    check(f.preview->pointerLocked(), "Old frame does not cancel the active drag");
+    check(savedNotes(f.root.path).front().x == note.x, "Reentrant drag frames keep the source commit-on-release rule");
+    f.time += .02;
+    f.preview->pointer({app::PointerKind::up, app::PointerButton::left, header.x + 48, header.y + 31, 0}, f.time);
+    {
+        CaptureRoute nested(hwnd, *f.preview, f.time + .001);
+        nested.send();
+    }
+    f.frame();
+    check(!f.preview->pointerLocked(), "Capture loss leaves no stuck card gesture");
+    auto moved = savedNotes(f.root.path).front();
+    check(moved.x == note.x + 48 && moved.y == note.y + 31 && moved.text == note.text,
+        "Nested release commits the intended position without changing note text");
+    f.time += .3;
+    f.frame();
+    f.preview->select(core::Module::map, beforeMove);
+    f.tick(core::ModuleTransitionStyle::duration + .01);
+    check(f.preview->selected() == core::Module::map && !f.preview->requiresFrames(beforeMove),
+        "Queued older module request shares the monotonic owner clock and settles");
+    for (double invalid : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        bool rejected{};
+        try { (void)f.preview->requiresFrames(invalid); } catch (const std::exception&) { rejected = true; }
+        check(rejected, "Owner still rejects nonfinite animation timestamps");
+    }
+    check(GetCapture() == nativeCapture && !IsWindowVisible(hwnd), "Clock regression never takes real input capture or shows a window");
+    f.release();
+}
 
 void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
     gpu::LayerRasterizer raster;
@@ -490,6 +586,7 @@ int wmain(int argc, wchar_t** argv) {
         gpu::Renderer renderer;
         renderer.initialize(window.hwnd, 1280, 800,
             {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
+        reentrantClock(window.hwnd, renderer, assets);
         run(window.hwnd, renderer, assets);
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

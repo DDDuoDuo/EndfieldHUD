@@ -38,6 +38,26 @@ struct NotesPreview::Impl {
     std::array<double,4>toolbarStarted{-1,-1,-1,-1};
     bool hasPose{},moduleVisible{true},moduleInput{true},focused{},editorDrag{},controlsPressed{},confirmationVisible{};
     float confirmationOpacity{};double currentTime{},confirmationStarted{};std::uint64_t outgoingGeneration{},uploadedRegistration{};
+    unsigned timeDepth{};
+    // Win32 capture/focus and TSF can synchronously reenter this owner. Nested
+    // Notes work shares the outer event instant; a resumed older callback is
+    // clamped at the boundary. Keep the strict clocks inside retained scenes.
+    double queryTime(double time) const {
+        need(std::isfinite(time),"Notes owner requires a finite clock");
+        return std::max(currentTime,time);
+    }
+    struct TimeScope {
+        Impl& owner;
+        const double time;
+        TimeScope(Impl& value,double requested):owner(value),time(value.timeDepth?
+            (need(std::isfinite(requested),"Notes owner requires a finite clock"),value.currentTime):value.queryTime(requested)) {
+            owner.currentTime=time;++owner.timeDepth;
+        }
+        ~TimeScope(){--owner.timeDepth;}
+        TimeScope(const TimeScope&)=delete;
+        TimeScope& operator=(const TimeScope&)=delete;
+    };
+
     std::optional<core::Module>pendingModule;std::optional<app::ClientMetrics>pendingResize;bool pendingCancel{},pendingFocus{};
     std::optional<std::string>hoveredNote;std::optional<core::Rect>lastConfirmationRect;
     Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf):hwnd(h),raster(r),assets(a),geometry(r){
@@ -89,7 +109,7 @@ struct NotesPreview::Impl {
         confirmationVisible=false;lastConfirmationRect.reset();return true;
     }
     bool pointer(const app::PointerEvent&e,double time){
-        if(!hasPose)return false;currentTime=time;const auto p=physical(e);
+        if(!hasPose)return false;const TimeScope event(*this,time);time=event.time;const auto p=physical(e);
         if(e.kind==app::PointerKind::captureLost){editorDrag=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();controlsPressed=false;clearHover(time);return false;}
         if(e.kind==app::PointerKind::leave){clearHover(time);return false;}
         if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){const bool handled=editorDrag||state->dragging()||controlsPressed;editorDrag=false;controlsPressed=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();const auto q=controlsProjection.unproject(p);controlScene->setFeedback(q?controls.actionAt(*q):std::nullopt,false,false,time);return handled;}
@@ -131,11 +151,11 @@ struct NotesPreview::Impl {
 };
 NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf):impl_(std::make_unique<Impl>(h,r,root,a,tsf)){}
 NotesPreview::~NotesPreview()=default;
-void NotesPreview::select(core::Module m,double t){auto&i=*impl_;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
+void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}
 void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,float opacity,double t,bool focused){
-    auto&i=*impl_;i.currentTime=t;i.focused=focused;const auto sample=i.modules.sample(t);i.change(sample.change,t);i.animate(t);i.moduleInput=sample.presentation.acceptsModuleInput;
+    auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;i.focused=focused;const auto sample=i.modules.sample(t);i.change(sample.change,t);i.animate(t);i.moduleInput=sample.presentation.acceptsModuleInput;
     const auto layout=core::source::DesktopChromeLayout::make(settings,center,{});i.workspaceWorld=center*core::source::inverseSourceMatrix(layout.designToScreen);
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);
     i.workspaceProjection=core::Projection::viewport(camera*i.workspaceWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
@@ -152,7 +172,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
     }else{i.confirmScene->updatePose({},1,t);i.confirmationOpacity=0;}
     i.hasPose=true;
 }
-bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;if(i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
+bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);if(i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
     for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return i.confirmationVisible&&t-i.confirmationStarted<.16;}
 bool NotesPreview::pointerLocked()const{return impl_->state->dragging();}
 bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput)return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
@@ -166,7 +186,7 @@ bool NotesPreview::message(const app::NativeMessage&m){auto&i=*impl_;if(m.messag
     // clears the field's active drag and any pending UTF-16 high surrogate.
     // Retry only an explicit field/window focus request held by a TSF lock.
     if(i.pendingCancel&&i.finish())i.pendingCancel=false;if(i.pendingResize){const auto value=*i.pendingResize;resize(value);}if(i.pendingModule){const auto value=*i.pendingModule;select(value,i.currentTime);}if(i.pendingFocus)i.focusEditor();return true;}
-bool NotesPreview::key(const app::KeyEvent&e,double){auto&i=*impl_;auto*editor=i.workspace->editor();if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;
+bool NotesPreview::key(const app::KeyEvent&e,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);auto*editor=i.workspace->editor();if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;
     if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)result=editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);
     else if(e.kind==app::KeyKind::down){std::optional<gpu::ProjectedEditorCommand>command;using C=gpu::ProjectedEditorCommand;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_UP:command=C::up;break;case VK_DOWN:command=C::down;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;case VK_ESCAPE:command=C::finish;break;case 'A':if(GetKeyState(VK_CONTROL)<0)command=C::selectAll;break;}if(command)result=editor->command(*command,GetKeyState(VK_SHIFT)<0);}
     if(result.finishRequested){i.workspace->finishEditing();return true;}if(result.handled)i.editSync();return result.handled;
