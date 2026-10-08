@@ -204,7 +204,7 @@ int wmain(int argc,wchar_t**argv){try{
     metadata=Json{};legacyTop=Json{};legacyBottom=Json{};chromeJSON=Json{};package.reset();if(runtime)runtime->releaseSetupJSON();startup.mark("release-full-reference-json");
     gpu::SourceCursor cursor;if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
     std::unique_ptr<BackdropQueue> backdropQueue;
-    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;app::ClientMetrics metrics;bool ready=false,closing=false,focused=!args.visible;
+    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,focused=!args.visible;
     PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop};
     app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
@@ -236,13 +236,13 @@ int wmain(int argc,wchar_t**argv){try{
         if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session.inputEnabled())session.setInputEnabled(true,time);
         auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;
         materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());
-        if(nativeContent.update(session.actions()))layers.upload(renderer);
+        if(nativeContent.update(session.actions()))composition.upload(renderer);
         for(auto&button:available)button.enabled=session.actions().contains(button.buttonID);
         const core::Rect viewport{0,0,metrics.width,metrics.height};labels.update(*sample->sourceFrame,sample->camera,viewport,available);
         // Chrome content is fixed synthetic input; opacity follows the same
         // ready/close timestamps as the source outer controller.
         if(chrome)chrome->update(*sample->sourceFrame,sample->camera,{viewport,settings.hudScale,settings.hudOffset,core::Module::power,true},static_cast<float>(canvasOpacity(time)));
-        layers.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
+        composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
         if(submit)renderer.draw(args.visible);return true;
     };
     app::OverlayCallbacks callbacks;
@@ -287,7 +287,7 @@ int wmain(int argc,wchar_t**argv){try{
         backdropState.pixelWidth=metrics.pixelWidth;backdropState.pixelHeight=metrics.pixelHeight;backdrop.initialize(host.hwnd(),backdropState,{false});
     }
     startup.mark("lower-system-backdrop");
-    materials.upload(renderer.sourceGraphics());layers.upload(renderer);host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
+    materials.upload(renderer.sourceGraphics());composition.setScenes(renderer,std::array{&layers});host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=args.visible?now():args.benchmarkEpoch;session.setEnvironment(environment,start);const auto preparedMS=milliseconds(preparation);
     std::cout<<"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n";
     if(args.visible){open(start);host.show();refresh(start);host.run();}
@@ -344,6 +344,6 @@ int wmain(int argc,wchar_t**argv){try{
     }
     ready=false;host.setFrameDemand({});host.setCursor(nullptr);backdrop.reset();
     if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    layers.detach(renderer);renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();return 0;
+    composition.detach(renderer);renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();return 0;
 }catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}
 catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}

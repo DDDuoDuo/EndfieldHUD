@@ -64,6 +64,22 @@ void composition(Renderer&renderer,LayerRasterizer&raster,const LayerRasterOptio
     const auto r1=raster.stats();const auto g1=renderer.stats();
     check(allocations==0,"Combined pointer frames allocate no CPU storage after warmup, including projected masks");
     check(r0.rasterizations==r1.rasterizations&&r0.textLayoutsCreated==r1.textLayoutsCreated&&g0.textureUploads==g1.textureUploads&&g0.meshUploads==g1.meshUploads&&g0.objectBufferAllocations==g1.objectBufferAllocations,"Combined pointer frames retain sibling raster and GPU resources");
+    PlaneShutter shutter{endfield::core::Matrix4::scale(440./32,440./32),
+        endfield::core::ModuleTransitionStyle::shutterKeyframe(.5,{-1,0})};
+    notes.setGroupShutter(shutter);scene.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),10,16,{255,0,0,255});pixel(renderer.readback(),22,16,{0,0,255,255});
+    check(!scene.draws()[0].shutter&&scene.draws()[1].shutter.has_value(),"Module shutter reaches only its own scene through the shared publisher");
+    poses={endfield::core::Matrix4{},endfield::core::Matrix4::translation(3,0)};
+    scene.present(renderer,poses);renderer.draw(false);
+    pixel(renderer.readback(),13,16,{255,0,0,255});pixel(renderer.readback(),22,16,{0,0,255,255});
+    const auto maskBefore=renderer.stats();allocations=0;counting=true;
+    try{for(unsigned i=0;i<120;++i){shutter.strips=endfield::core::ModuleTransitionStyle::shutterKeyframe(double(i)/119,{-1,0});notes.setGroupShutter(shutter);scene.present(renderer,poses);}}
+    catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&renderer.stats().meshUploads==maskBefore.meshUploads&&renderer.stats().textureUploads==maskBefore.textureUploads&&renderer.stats().objectBufferAllocations==maskBefore.objectBufferAllocations,"Combined shutter animation only changes fixed drawing constants");
+    auto invalidShutter=shutter;invalidShutter.worldToLocal.values[0]=std::numeric_limits<double>::quiet_NaN();
+    rejects([&]{notes.setGroupShutter(invalidShutter);},"Invalid group shutter fails before replacing the retained mask");
+    notes.setGroupShutter({});scene.present(renderer);
+    check(!scene.draws()[0].shutter&&!scene.draws()[1].shutter,"Clearing a completed shutter needs no scene reload or GPU allocation");
     const auto beforePose=scene.draws()[0].world;
     poses[1].values.fill(0);
     rejects([&]{scene.present(renderer,poses);},"A singular late transform rejects the entire combined pose");

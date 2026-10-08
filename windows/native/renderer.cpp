@@ -64,10 +64,57 @@ struct alignas(16) ObjectUniform {
     std::array<float, 4> tint;
     float opacity;
     std::uint32_t maskCount;
-    std::array<float, 2> padding{};
+    std::uint32_t shutterEnabled{}, shutterStrips{};
     std::array<MaskUniform, 8> masks{};
+    std::array<float, 16> shutterWorldToLocal{};
+    std::array<std::array<float, 4>, 30> shutterEdges{};
 };
-static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 80 && sizeof(ObjectUniform) == 736);
+static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 80 && sizeof(ObjectUniform) == 1280);
+void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
+    result.shutterEnabled = 1;
+    result.shutterWorldToLocal = matrix(shutter.worldToLocal);
+    for (std::size_t strip = 0; strip < shutter.strips.size(); ++strip) {
+        const auto& polygon = shutter.strips[strip];
+        double scale = 1;
+        for (const auto vertex : polygon) {
+            require(std::isfinite(vertex.x) && std::isfinite(vertex.y) &&
+                std::abs(vertex.x) <= std::numeric_limits<float>::max() &&
+                std::abs(vertex.y) <= std::numeric_limits<float>::max(), "Invalid shutter vertex");
+            scale = std::max({scale, std::abs(vertex.x), std::abs(vertex.y)});
+        }
+        // Translate the area calculation to the first vertex to avoid losing
+        // precision when a small source strip has a nonzero local origin.
+        double area = 0;
+        bool collinear = true;
+        for (std::size_t i = 1; i + 1 < polygon.size(); ++i) {
+            const auto a = polygon[i], b = polygon[i + 1], origin = polygon[0];
+            const auto cross = (a.x-origin.x)*(b.y-origin.y)-(a.y-origin.y)*(b.x-origin.x);
+            area += cross; collinear = collinear && cross == 0;
+        }
+        if (area == 0) {
+            require(collinear, "Self-intersecting zero-area shutter polygon");
+            continue; // Exact source collapsed endpoint; never a full plane.
+        }
+        const auto winding = area > 0 ? 1. : -1.;
+        const auto tolerance = scale * 8 * std::numeric_limits<float>::epsilon();
+        for (std::size_t edge = 0; edge < polygon.size(); ++edge) {
+            const auto a = polygon[edge], b = polygon[(edge + 1) % polygon.size()];
+            const auto dx = b.x-a.x, dy = b.y-a.y, length = std::hypot(dx, dy);
+            if (length == 0) continue; // Repeated full-open bevel vertex.
+            const auto nx = -dy / length * winding, ny = dx / length * winding;
+            const auto constant = -(nx*a.x+ny*a.y);
+            require(std::isfinite(constant) && std::abs(constant) <= std::numeric_limits<float>::max(),
+                "Shutter edge exceeds GPU range");
+            // Permit harmless roundoff at collinear source path-morph edges,
+            // but reject arbitrary concave/crossing paths before any upload.
+            for (const auto vertex : polygon)
+                require(nx*(vertex.x-a.x)+ny*(vertex.y-a.y) >= -tolerance, "Shutter polygon is not convex");
+            result.shutterEdges[strip*polygon.size()+edge] = {
+                static_cast<float>(nx), static_cast<float>(ny), static_cast<float>(constant), 0};
+        }
+        result.shutterStrips |= std::uint32_t{1} << strip;
+    }
+}
 ObjectUniform uniforms(const DrawObject &object) {
     identity(object.sourceID);
     require(object.masks.size() <= 8, "Too many plane masks");
@@ -91,6 +138,7 @@ ObjectUniform uniforms(const DrawObject &object) {
             result.masks[i].bounds[j] = static_cast<float>(bounds[j]);
         }
     }
+    if (object.shutter) shutterUniforms(result, *object.shutter);
     return result;
 }
 ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, const char *target) {
@@ -117,6 +165,11 @@ ComPtr<ID3D11Buffer> immutableBuffer(ID3D11Device *device, UINT binding, const v
     return buffer;
 }
 } // namespace
+
+void validatePlaneShutter(const PlaneShutter& shutter) {
+    ObjectUniform candidate{};
+    shutterUniforms(candidate, shutter);
+}
 
 RendererError::RendererError(std::string operation, std::int32_t code)
     : std::runtime_error(std::move(operation) + " (HRESULT " + std::to_string(code) + ")"), code_(code) {}

@@ -44,6 +44,10 @@ public:
     // Resolve source IDs once when a binding plan changes, then supply numeric
     // indices on the animation path. Content and local raster bounds stay fixed.
     std::optional<std::size_t> surfaceIndex(std::string_view sourceID) const noexcept;
+    // Borrow the exact immutable DirectWrite layout used for this retained
+    // text leaf. Missing/non-text/grouped surfaces return null. Content-event
+    // access only; no new layout, rasterization or resource upload is performed.
+    std::shared_ptr<const PaintedTextLayout> paintedTextLayout(std::string_view sourceID) const;
     // Text/artwork changes update only their retained local surface. The caller
     // advances contentRevision when content changes; equal revision/options is
     // a no-op. Placement, masks and every other surface remain untouched.
@@ -51,6 +55,10 @@ public:
     bool updateLocalContent(std::string_view sourceID,std::uint64_t contentRevision,
         const ehud::data::Json& localContent,const LayerRasterOptions&);
     void setPlacements(std::span<const LayerPlacement>);
+    // Caller-clock module wrapper mask. Geometry is already in this scene's
+    // world coordinates, like its ordinary plane masks. Fixed-size data only;
+    // changing/clearing it never rebuilds local artwork or resource bindings.
+    void setGroupShutter(std::optional<PlaneShutter>);
     // Reuses all local surfaces. Caller supplies source-derived placement,
     // including a changed camera or module transition, in top-left screen space.
     void present(Renderer&,const core::Matrix4& screenTransform={});
@@ -72,6 +80,7 @@ private:
     LayerRasterizer* rasterizer_;
     std::vector<Surface> surfaces_;
     std::vector<DrawObject> draws_;
+    std::optional<PlaneShutter> groupShutter_;
     LayerSceneReport report_;
     std::vector<LayerRasterIssue> structuralIssues_;
     std::string namespace_;

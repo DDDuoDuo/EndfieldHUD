@@ -184,6 +184,12 @@ std::optional<std::size_t> LayerScene::surfaceIndex(std::string_view sourceID)co
     for(std::size_t i=0;i<surfaces_.size();++i)if(std::string_view(surfaces_[i].id).substr(namespace_.size())==sourceID)return i;
     return {};
 }
+std::shared_ptr<const PaintedTextLayout> LayerScene::paintedTextLayout(std::string_view sourceID)const{
+    const auto index=surfaceIndex(sourceID);if(!index)return {};
+    const auto& surface=surfaces_[*index];
+    if(surface.grouped)return {};
+    return rasterizer_->textLayout(surface.id,surface.imageRevision);
+}
 void LayerScene::setPlacements(std::span<const LayerPlacement> placements){
     std::array<bool,4096> supplied{};
     for(const auto&p:placements){
@@ -193,13 +199,19 @@ void LayerScene::setPlacements(std::span<const LayerPlacement> placements){
     }
     for(const auto&p:placements){auto&d=surfaces_[p.surface].draw;d.world=p.world;d.opacity=p.opacity;d.masks.assign(p.masks.begin(),p.masks.end());}
 }
+void LayerScene::setGroupShutter(std::optional<PlaneShutter> shutter){
+    if(shutter)validatePlaneShutter(*shutter);
+    groupShutter_=std::move(shutter);
+}
 Matrix LayerScene::validatePreparation(const Matrix& placement)const{
     need(placement.finite(),"Invalid native layer placement");const auto inverse=core::source::inverseSourceMatrix(placement);
+    if(groupShutter_)need((groupShutter_->worldToLocal*inverse).finite(),"Invalid projected native shutter matrix");
     for(const auto&surface:surfaces_){need((placement*surface.draw.world).finite(),"Invalid projected native world matrix");for(const auto&mask:surface.draw.masks)need((mask.worldToLocal*inverse).finite(),"Invalid projected native mask matrix");}
     return inverse;
 }
 void LayerScene::prepare(const Matrix& placement,const Matrix& inverse){
     for(std::size_t i=0;i<surfaces_.size();++i){const auto&source=surfaces_[i].draw;auto&draw=draws_[i];draw.world=placement*source.world;draw.opacity=source.opacity;draw.masks.resize(source.masks.size());
+        draw.shutter=groupShutter_;if(draw.shutter)draw.shutter->worldToLocal=groupShutter_->worldToLocal*inverse;
         for(std::size_t j=0;j<draw.masks.size();++j){draw.masks[j].worldToLocal=source.masks[j].worldToLocal*inverse;draw.masks[j].bounds=source.masks[j].bounds;}}
 }
 std::span<const DrawObject> LayerScene::prepareDraws(const Matrix& placement){
@@ -266,6 +278,7 @@ void LayerComposition::copyPrepared(const Entry&entry){
     const auto source=entry.scene->draws();
     for(std::size_t i=0;i<entry.count;++i){auto&target=draws_[entry.begin+i];const auto&draw=source[i];
         target.world=draw.world;target.linearTint=draw.linearTint;target.opacity=draw.opacity;
+        target.shutter=draw.shutter;
         target.masks.resize(draw.masks.size());std::copy(draw.masks.begin(),draw.masks.end(),target.masks.begin());
     }
 }

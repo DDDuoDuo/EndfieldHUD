@@ -89,8 +89,8 @@ clock-page displacement and native font appearance still need visual checks.
 The window host coalesces redraw requests and owns one cancellable wake timer.
 Hidden windows schedule no rendering work. [CI run 37723655009](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37723655009)
 passed all 27 portable suites and 35 Windows suites at commit `7695dc0`.
-The next module-foundation checkpoint passed 29 portable suites and all 37
-Windows suites in a clean Release build on the laptop. The user has now
+The current module-artwork checkpoint passes 31 portable suites and all 40
+Windows suites in a Release build on the laptop. The user has now
 confirmed the updated desktop darkening/blur, contained personal-card highlight,
 faster scrolling and pointer dragging. Display selection has a read-only Windows service and a portable policy
 matching the Mac fallback behavior, with no polling. Actual
@@ -200,7 +200,9 @@ confirmed its visible result on the laptop.
 The compiled animation input was subsequently measured on the same Windows
 laptop at 1920×1080: total preparation fell from about 1,338 to 720 ms, and
 animation loading from 667 to 14 ms. Pointer and navigation-scroll preparation
-and submission each averaged about 0.63 ms. These are synthetic hardware-test
+and submission each averaged about 0.63 ms. A repeat after integrating the
+shared native composition prepared in 746 ms, with 0.69 ms pointer samples;
+concealed samples again submitted no frames/uploads and armed no timer. These are synthetic hardware-test
 samples, not displayed FPS, GPU duration or full-app cold-start measurements.
 
 Module integration now has caller-clock transition orchestration and an ordered
@@ -210,8 +212,24 @@ frames. Notes has a source-derived state controller for plain-text creation and
 editing, selection, pinning, confirmed deletion and drag/resize, with temporary
 SQLite tests. It preserves unsaved drafts on persistence failure; dragging
 retains geometry rather than copying the note's text/media payload each frame.
+Notes now also has plain-text presentation descriptors and a retained native
+card adapter. The original Mac fixture passes 286 presentation checks; native
+fixtures cover source feedback timing, rounded clipping, resize-grip order,
+sibling-resource retention and 120 allocation-free pointer/closing placements.
+Tiny clamped cards keep their clipping; oversized raster groups reject before
+replacing the previous valid scene. Large-card tiling remains required.
+
+The native transition mask preserves the six original pentagons on the GPU,
+intersected with existing plane clips. Caller-clock changes allocate no frame
+storage or re-rasterize content. Transform interpolation matches 1,680 samples
+from Core Animation (maximum matrix error 2.67e-15); this sampler remains an
+explicit native integration API, not a change to the existing portable timing
+helper. Edge antialiasing still needs visual comparison.
+
 These foundations are not yet wired into the visible shell. Rich formatting,
 to-do, drawing and media behavior still require their actual module adapters.
+Text measurement, shared-shell editing and the module transition registration
+seams are separate integration work; no complete Notes module is claimed.
 
 All MSVC targets explicitly use UTF-8 source and execution encodings, including
 on Chinese-language Windows. Incremental deployment must copy changed files

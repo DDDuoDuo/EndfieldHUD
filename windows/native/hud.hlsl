@@ -13,8 +13,11 @@ cbuffer Object : register(b1) {
     float4 linearTint;
     float opacity;
     uint maskCount;
-    float2 objectPadding;
+    uint shutterEnabled;
+    uint shutterStrips;
     PlaneMask masks[8];
+    column_major float4x4 shutterWorldToLocal;
+    float4 shutterEdges[30];
 };
 Texture2D<float4> colorTexture : register(t0);
 SamplerState colorSampler : register(s0);
@@ -44,6 +47,21 @@ float4 ScenePS(SceneVertex input) : SV_Target {
         clip(local.w - 0.0000001);
         float2 localPoint = local.xy / local.w;
         clip(float4(localPoint - masks[i].bounds.xy, masks[i].bounds.zw - localPoint));
+    }
+    [branch] if (shutterEnabled != 0) {
+        float4 local = mul(shutterWorldToLocal, input.worldPosition);
+        clip(local.w - 0.0000001);
+        float3 localPoint = float3(local.xy / local.w, 1);
+        bool covered = false;
+        [unroll] for (uint strip = 0; strip < 6; ++strip) {
+            if ((shutterStrips & (1u << strip)) != 0) {
+                bool inside = true;
+                [unroll] for (uint edge = 0; edge < 5; ++edge)
+                    inside = inside && dot(shutterEdges[strip * 5 + edge].xyz, localPoint) >= 0;
+                covered = covered || inside;
+            }
+        }
+        clip(covered ? 1 : -1);
     }
     float4 sampled = colorTexture.Sample(colorSampler, input.uv);
     float4 tint = input.linearColor * linearTint;

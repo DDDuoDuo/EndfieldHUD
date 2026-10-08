@@ -1,10 +1,12 @@
 #pragma once
 
 #include "core/scene.hpp"
+#include "core/motion.hpp"
 #include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -41,14 +43,27 @@ struct PlaneMask {
     core::Matrix4 worldToLocal;
     core::Rect bounds;
 };
+struct PlaneShutter {
+    core::Matrix4 worldToLocal;
+    // Original HUDModuleContent six five-point paths, in wrapper-local units.
+    // Their union is intersected with the ordinary ancestor rectangle masks.
+    // Both windings and repeated/collinear endpoint vertices are supported;
+    // zero-area strips contribute no coverage. This is geometric clipping,
+    // not a claim of Core Animation edge-antialiasing equivalence.
+    core::ShutterPath strips{};
+};
+// Shared CPU validation for retained scene setters and final GPU publication.
+// No device, resource or allocation is needed for a valid source mask.
+void validatePlaneShutter(const PlaneShutter&);
 struct DrawObject {
     std::string sourceID, meshID, textureID; // empty textureID selects opaque white
     core::Matrix4 world;
     std::array<float, 4> linearTint{1, 1, 1, 1};
     float opacity{1};
-    // Up to eight intersecting plane-local rectangular masks. Shutter polygons
-    // and source stencil/soft-mask programs are deliberately outside this API.
+    // Up to eight intersecting plane-local rectangular masks. Original source
+    // stencil/soft-mask programs remain outside this plain-surface API.
     std::vector<PlaneMask> masks;
+    std::optional<PlaneShutter> shutter;
 };
 struct RendererStats {
     std::size_t meshes{}, textures{}, objects{}, resourceBytes{};
