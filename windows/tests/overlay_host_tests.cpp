@@ -137,7 +137,7 @@ void nativeWindow() {
     std::vector<KeyEvent> keys;
     std::vector<bool> focus;
     std::vector<ClientMetrics> sizes;
-    unsigned frames = 0, closes = 0;
+    unsigned frames = 0, closes = 0, filtered=0, privateMessages=0, displayChanges=0;
     OverlayCallbacks callbacks;
     callbacks.frame = [&](double) { ++frames; };
     callbacks.pointer = [&](const auto& event) { pointer.push_back(event); return true; };
@@ -146,6 +146,10 @@ void nativeWindow() {
     callbacks.focus = [&](bool value) { focus.push_back(value); };
     callbacks.resize = [&](const auto& value) { sizes.push_back(value); };
     callbacks.closeRequested = [&] { ++closes; host.hide(); };
+    callbacks.beforeKeyTranslation=[&](const NativeMessage& event){++filtered;return event.wParam=='D';};
+    callbacks.appMessage=[&](const NativeMessage& event)->std::optional<std::intptr_t>{
+        if(event.message!=WM_APP+21)return {};check(event.wParam==123,"Private owner notification preserves generation token");++privateMessages;return 45;};
+    callbacks.displayChanged=[&]{++displayChanges;};
     const auto cursorBefore = GetCursor();
     host.create({L"Endfield owned hidden host fixture", 0, 0, 128, 96, nullptr}, callbacks);
     const auto window = static_cast<HWND>(host.hwnd());
@@ -199,6 +203,16 @@ void nativeWindow() {
     const auto beforeIME = keys.size();
     SendMessageW(window, WM_IME_ENDCOMPOSITION, 0, 0);
     check(keys.size() == beforeIME, "IME is not intercepted as a shortcut/key event");
+    PostMessageW(window,WM_KEYDOWN,'D',1|(0x20<<16));
+    PostMessageW(window,WM_KEYUP,'D',1|(0x20<<16));
+    drain(host);
+    check(filtered==2&&keys.size()==beforeIME,"IME-consumed queued keys never reach TranslateMessage or produce duplicate text");
+    OverlayHost unrelated;unrelated.create({L"Other owned hidden key target",0,0,16,16,nullptr});
+    PostMessageW(static_cast<HWND>(unrelated.hwnd()),WM_KEYDOWN,'D',1);
+    drain(host);check(filtered==2,"The owner key filter does not intercept another window's queued input");unrelated.destroy();
+    check(SendMessageW(window,WM_APP+21,123,0)==45&&privateMessages==1,"A private editor notification reaches its caller without a second message loop");
+    SendMessageW(window,WM_DISPLAYCHANGE,32,MAKELPARAM(800,600));
+    check(displayChanges==1,"Display topology changes are delivered as events without polling");
     SendMessageW(window, WM_SETFOCUS, 0, 0);
     SendMessageW(window, WM_KILLFOCUS, 0, 0);
     check(focus == std::vector<bool>{true, false}, "focus routing without requesting foreground or keyboard focus");
@@ -264,6 +278,14 @@ void callbackFailures() {
     check(captureSurvived && weak.expired(), "callback capture survives HWND destroy/recreate and releases after dispatch");
     check(host.hwnd() && !IsWindowVisible(static_cast<HWND>(host.hwnd())), "callback replacement remains hidden");
     host.destroy();
+
+    OverlayCallbacks filtering;
+    unsigned staleKeys{};
+    filtering.key=[&](const auto&){++staleKeys;return true;};
+    filtering.beforeKeyTranslation=[&](const auto&){host.destroy();OverlayCallbacks replacement;replacement.key=[&](const auto&){++staleKeys;return true;};host.create({L"Recreated inside key filter",0,0,16,16,nullptr},replacement);return false;};
+    host.create({L"Hidden key filter replacement",0,0,16,16,nullptr},filtering);
+    PostMessageW(static_cast<HWND>(host.hwnd()),WM_KEYDOWN,'D',1|(0x20<<16));drain(host);
+    check(staleKeys==0,"Destroy/recreate in pretranslation cannot deliver stale text to a replacement owner");host.destroy();
 }
 #endif
 }

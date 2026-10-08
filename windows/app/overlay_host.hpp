@@ -73,6 +73,12 @@ struct KeyEvent {
     std::uint8_t scanCode{};
     bool system{}, extended{}, alt{}, previouslyDown{};
 };
+struct NativeMessage {
+    void* window{};
+    std::uint32_t message{};
+    std::uintptr_t wParam{};
+    std::intptr_t lParam{};
+};
 struct OverlayCallbacks {
     std::function<void(double)> frame; // monotonic seconds; VisibilityClock is caller-owned
     std::function<bool(const PointerEvent&)> pointer;
@@ -81,6 +87,13 @@ struct OverlayCallbacks {
     std::function<void(bool)> focus;
     std::function<void(const ClientMetrics&)> resize;
     std::function<void()> closeRequested; // caller may animate then hide; default hides
+    // TSF must consume keys before TranslateMessage can enqueue WM_CHAR.
+    // Only queued keys for this window/its children reach this callback.
+    std::function<bool(const NativeMessage&)> beforeKeyTranslation;
+    // Module-owned WM_APP...0xBFFF notifications; the host's frame ticket is
+    // reserved. Returning no value leaves default handling in place.
+    std::function<std::optional<std::intptr_t>(const NativeMessage&)> appMessage;
+    std::function<void()> displayChanged; // notification only; no enumeration/poll
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};

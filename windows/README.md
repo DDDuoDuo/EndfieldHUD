@@ -77,7 +77,8 @@ visit the 29 affected descendants instead of resolving all 834 source nodes.
 
 Header, footer and all five clock layouts now have a source-derived portable
 plan. The isolated original-source comparison covers 20 clock states, 216
-layouts and six projected poses (13,001 checks). Clock or footer content changes
+layouts and six projected poses (13,001 checks). The native chrome adapter also
+passes 25 Windows checks using those original trees. Clock or footer content changes
 can rerasterize and upload only their own retained surface; Windows tests verify
 that sibling labels, geometry, projection and masks stay unchanged. Animated
 clock-page displacement and native font appearance still need visual checks.
@@ -88,6 +89,10 @@ pass on the laptop. Display selection has a read-only Windows service and a
 portable policy matching the Mac fallback behavior, with no polling. Actual
 display switching, visible input, cursor, IME,
 multi-monitor behavior and full-app performance still require acceptance tests.
+The host now routes an editor's consumed keys before Windows generates text
+messages, and supports coalesced private editor notifications. Hidden-window
+tests cover duplicate-text prevention, unrelated-window isolation and teardown
+inside the key filter; these are not live IME acceptance tests.
 
 A compiled original-material catalog avoids runtime JSON and shader compilation.
 Its schema preserves exact material templates, reflected field plans, textures

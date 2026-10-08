@@ -250,6 +250,11 @@ struct OverlayHost::Impl {
         // A callback may destroy/recreate this HWND. Its captured state must
         // outlive that operation, without copying/allocating functions per event.
         const auto handlers = callbacks;
+        if(message>=WM_APP&&message<=0xbfff&&message!=frameMessage&&ready&&handlers&&handlers->appMessage){
+            const auto result=handlers->appMessage({target,message,w,l});
+            if(result)return static_cast<LRESULT>(*result);
+            if(window!=target||callbacks!=handlers)return 0;
+        }
         switch (message) {
         case WM_NCDESTROY:
             cancelFrames();
@@ -293,6 +298,9 @@ struct OverlayHost::Impl {
             if (ready) postFrame();
             return 0;
         }
+        case WM_DISPLAYCHANGE:
+            if(ready&&handlers&&handlers->displayChanged)handlers->displayChanged();
+            break;
         case WM_SETFOCUS: case WM_KILLFOCUS:
             focused = message == WM_SETFOCUS;
             if (!focused) releaseCursor();
@@ -485,6 +493,19 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
     for (unsigned dispatched = 0; dispatched < 256 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++dispatched) {
         if (message.message == WM_QUIT) {
             p.exitCode = static_cast<int>(message.wParam); p.stopped = true; p.cancelFrames(); break;
+        }
+        const auto owner=p.window;
+        const auto handlers=p.callbacks;
+        const bool keyboard=message.message==WM_KEYDOWN||message.message==WM_KEYUP||
+            message.message==WM_SYSKEYDOWN||message.message==WM_SYSKEYUP;
+        if(keyboard&&(message.hwnd==owner||IsChild(owner,message.hwnd))&&handlers&&handlers->beforeKeyTranslation){
+            bool consumed{};
+            try{consumed=handlers->beforeKeyTranslation({message.hwnd,message.message,message.wParam,message.lParam});}
+            catch(...){p.stopped=true;p.cancelFrames();p.releaseCursor();throw;}
+            if(!p.window||p.stopped)break;
+            // A filter may recreate its owner. Never translate an old queued
+            // key into the replacement editor, even if Windows reuses HWND.
+            if(consumed||p.window!=owner||p.callbacks!=handlers)continue;
         }
         TranslateMessage(&message);
         DispatchMessageW(&message);
