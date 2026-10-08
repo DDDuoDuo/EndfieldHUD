@@ -87,11 +87,12 @@ that sibling labels, geometry, projection and masks stay unchanged. Animated
 clock-page displacement and native font appearance still need visual checks.
 
 The window host coalesces redraw requests and owns one cancellable wake timer.
-Hidden windows schedule no rendering work. [CI run 37722741746](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37722741746)
-passed all 27 portable suites and 35 Windows suites at commit `856ee4f`.
-The updated backdrop, corrected personal-card hover and navigation dragging
-still need live laptop checks; automated passes do not verify their appearance
-or feel. Display selection has a read-only Windows service and a portable policy
+Hidden windows schedule no rendering work. [CI run 37723655009](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37723655009)
+passed all 27 portable suites and 35 Windows suites at commit `7695dc0`.
+The next module-foundation checkpoint passed 29 portable suites and all 37
+Windows suites in a clean Release build on the laptop. The user has now
+confirmed the updated desktop darkening/blur, contained personal-card highlight,
+faster scrolling and pointer dragging. Display selection has a read-only Windows service and a portable policy
 matching the Mac fallback behavior, with no polling. Actual
 display switching, visible input, cursor, IME,
 multi-monitor behavior and full-app performance still require acceptance tests.
@@ -146,8 +147,8 @@ the hash-verified original resource. Windows wheel input uses the cached system
 line/page setting; captured pointer dragging follows the projected navigation
 plane and uses the existing bounce. Drag release cannot click a recycled button,
 stationary dragging does not add an ambient-off animation wake, and focus/hide
-teardown releases the host's own pointer capture. Live appearance and drag feel
-still require the user's next check.
+teardown releases the host's own pointer capture. The user accepted the live
+appearance and drag feel. Recording/capture behavior remains unverified.
 
 
 Runtime sprite records now keep only fields consumed by the original layout and
@@ -193,8 +194,29 @@ padding texels outside the visible card. RGB, source geometry, UVs and fade stay
 unchanged. An isolated Mac reference also reproduces the original fringe, so
 this correction is intentionally excluded from Mac pixel-parity claims. It adds
 no runtime masking work and leaves the authoritative Mac source/assets untouched.
-The correction passes isolated tests and the Windows CI build; its visible result
-still needs verification on the laptop.
+The correction passes isolated tests and the Windows CI build; the user also
+confirmed its visible result on the laptop.
+
+The compiled animation input was subsequently measured on the same Windows
+laptop at 1920×1080: total preparation fell from about 1,338 to 720 ms, and
+animation loading from 667 to 14 ms. Pointer and navigation-scroll preparation
+and submission each averaged about 0.63 ms. These are synthetic hardware-test
+samples, not displayed FPS, GPU duration or full-app cold-start measurements.
+
+Module integration now has caller-clock transition orchestration and an ordered
+native scene composition path. The latter retains unrelated module/chrome
+resources and performs no allocation or raster work on warmed placement-only
+frames. Notes has a source-derived state controller for plain-text creation and
+editing, selection, pinning, confirmed deletion and drag/resize, with temporary
+SQLite tests. It preserves unsaved drafts on persistence failure; dragging
+retains geometry rather than copying the note's text/media payload each frame.
+These foundations are not yet wired into the visible shell. Rich formatting,
+to-do, drawing and media behavior still require their actual module adapters.
+
+All MSVC targets explicitly use UTF-8 source and execution encodings, including
+on Chinese-language Windows. Incremental deployment must copy changed files
+with fresh timestamps (or rebuild cleanly); extracting older archive timestamps
+over a build tree can leave stale dependent objects after a C++ header changes.
 
 
 Reference tools (macOS, temporary fixture data only):

@@ -6,7 +6,7 @@ The fresh implementation uses macOS `main` at `ca04f142185c7de40acd8523bdb563195
 
 Keep the current HUD, functions, animations, saved data and optimizations. Replace the platform plumbing. Do not redesign the interface or silently remove a module because its Windows adapter is difficult.
 
-Automated checkpoint: [CI run 37722741746](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37722741746) passed 27 portable suites and 35 Windows suites at `856ee4f`. The source-shell preview and isolated editor are development tools; module bodies are not installed in the shell. Updated live backdrop appearance/capture, corrected card hover and navigation dragging remain unverified on the laptop. This is not a complete Windows app or release acceptance result.
+Automated checkpoint: [CI run 37723655009](https://github.com/DDDuoDuo/EndfieldHUD/actions/runs/37723655009) passed 27 portable suites and 35 Windows suites at `7695dc0`. The next module-foundation checkpoint passed 29 portable suites and all 37 Windows suites in a clean Release build on the laptop. The user verified the updated backdrop, corrected card hover, faster scrolling and navigation dragging. Recording/capture remains unverified. The source-shell preview and isolated editor are development tools; module bodies are not yet installed in the shell. This is not a complete Windows app or release acceptance result.
 
 ## 1. Start here on the Windows laptop
 
@@ -306,7 +306,7 @@ At each step report exactly what is implemented and verified, what remains unver
 
 | Item | Current status / required decision |
 | --- | --- |
-| Compositor/backdrop | Native integration builds and passes automated tests. Updated live blur appearance, recording/cursor and capture behavior still need laptop verification. |
+| Compositor/backdrop | Native integration builds and passes automated tests. User verified live darkening/blur, card highlight and navigation scroll/drag. Recording/cursor and capture behavior still need laptop verification. |
 | Projected input | Retained DirectWrite/TSF fixtures pass; the user verified Chinese typing and selection in the tilted editor. Japanese/Korean candidates, accessibility and full-module editing remain unverified. |
 | Direct tray drop | No verified equivalent for the Mac menu-bar drop target. Prototype before promising. |
 | OS Focus/DND | Restricted OS capability; timer parity required, system integration may be deferred. |

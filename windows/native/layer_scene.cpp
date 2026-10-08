@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <functional>
+#include <iterator>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -12,6 +13,12 @@ namespace endfield::native {
 namespace {
 using Json=ehud::data::Json;
 using Matrix=core::Matrix4;
+// GPU objects already belong to one UI thread. This bounded-by-live-owners
+// registry guards the single native publication slot, not scene content/state.
+// Storage changes only on attach/detach; no timer, service or cross-thread lock.
+thread_local std::vector<std::pair<Renderer*,LayerComposition*>> publicationOwners;
+LayerComposition* publicationOwner(Renderer&renderer){for(const auto&entry:publicationOwners)if(entry.first==&renderer)return entry.second;return nullptr;}
+void forgetPublication(LayerComposition*owner){publicationOwners.erase(std::remove_if(publicationOwners.begin(),publicationOwners.end(),[&](const auto&entry){return entry.second==owner;}),publicationOwners.end());}
 void need(bool ok,const char*reason){if(!ok)throw std::invalid_argument(reason);}
 double number(const Json&j,double fallback=0){if(j.isNull())return fallback;need(j.isNumber()&&std::isfinite(j.number()),"Invalid native layer number");return j.number();}
 bool flag(const Json&j,bool fallback=false){return j.isNull()?fallback:j.boolean();}
@@ -56,6 +63,7 @@ void LayerScene::load(const Json& root,const LayerRasterOptions& options){
     surfaces_=std::move(next.surfaces_);draws_=std::move(next.draws_);report_=std::move(next.report_);revision_=next.revision_;
     structuralIssues_=std::move(next.structuralIssues_);
     rasterIDs_=std::move(next.rasterIDs_);next.rasterIDs_.clear();next.surfaces_.clear();
+    ++resourceRevision_;
 }
 void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity,const std::vector<PlaneMask>& masks,const LayerRasterOptions& options,unsigned depth){
     need(depth<=64&&++report_.sourceNodes<=4096,"Native layer tree exceeds limits");
@@ -128,22 +136,49 @@ bool LayerScene::updateLocalContent(std::string_view sourceID,std::uint64_t cont
     if(image->bounds!=surface.image->bounds)surface.meshRevision=token;
     report_.sourceNodes=report_.sourceNodes-surface.nodeCount+count;
     surface.image=std::move(image);surface.imageRevision=token;surface.localRevision=contentRevision;
-    surface.options=std::move(settings);surface.nodeCount=count;rebuildReport();return true;
+    surface.options=std::move(settings);surface.nodeCount=count;rebuildReport();++resourceRevision_;return true;
 }
-void LayerScene::upload(Renderer& renderer){
+void LayerScene::uploadResources(Renderer& renderer){
+    need(!resourceOwner_||resourceOwner_==&renderer,"A native scene must release its previous renderer resources first");
+    need(renderer.stats().initialized,"Native scene resources require an initialized renderer");
+    resourceOwner_=&renderer;
     constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
     for(const auto&s:surfaces_){const auto&b=s.image->bounds;const auto x=float(b.x),y=float(b.y),right=float(b.x+b.width),bottom=float(b.y+b.height);
         const std::array<Vertex,4> vertices{{{{x,y,0},{0,0},{1,1,1,1}},{{right,y,0},{1,0},{1,1,1,1}},{{right,bottom,0},{1,1},{1,1,1,1}},{{x,bottom,0},{0,1},{1,1,1,1}}}};
-        renderer.setMesh(s.id,s.meshRevision,{vertices,indices});renderer.setTexture(s.id,s.imageRevision,{s.image->width,s.image->height,s.image->straightRGBA,TextureColorSpace::sRGB,TextureFilter::linear});
+        auto resident=std::find_if(uploaded_.begin(),uploaded_.end(),[&](const Resident&r){return r.id==s.id;});
+        if(resident==uploaded_.end()){uploaded_.push_back({s.id});resident=std::prev(uploaded_.end());}
+        renderer.setMesh(s.id,s.meshRevision,{vertices,indices});resident->mesh=true;
+        renderer.setTexture(s.id,s.imageRevision,{s.image->width,s.image->height,s.image->straightRGBA,TextureColorSpace::sRGB,TextureFilter::linear});resident->texture=true;
     }
-    renderer.setDrawList(draws_);
-    for(const auto&id:uploaded_)if(std::none_of(surfaces_.begin(),surfaces_.end(),[&](const Surface&s){return s.id==id;})){
-        renderer.removeMesh(id);renderer.removeTexture(id);
+    uploadedRevision_=resourceRevision_;
+}
+bool LayerScene::release(Renderer& renderer,bool onlyRetired){
+    need(!resourceOwner_||resourceOwner_==&renderer,"Native scene resources belong to another renderer");
+    if(!renderer.stats().initialized){uploaded_.clear();resourceOwner_=nullptr;uploadedRevision_=0;return true;}
+    bool complete=true;
+    for(auto&resident:uploaded_){
+        if(onlyRetired&&std::any_of(surfaces_.begin(),surfaces_.end(),[&](const Surface&s){return s.id==resident.id;}))continue;
+        if(resident.mesh&&renderer.removeMesh(resident.id))resident.mesh=false;
+        if(resident.texture&&renderer.removeTexture(resident.id))resident.texture=false;
+        if(resident.mesh||resident.texture)complete=false;
     }
-    uploaded_.clear();uploaded_.reserve(surfaces_.size());for(const auto&s:surfaces_)uploaded_.push_back(s.id);
+    uploaded_.erase(std::remove_if(uploaded_.begin(),uploaded_.end(),[](const Resident&r){return !r.mesh&&!r.texture;}),uploaded_.end());
+    if(uploaded_.empty()&&!onlyRetired){resourceOwner_=nullptr;uploadedRevision_=0;}
+    return complete;
+}
+void LayerScene::collectRetiredResources(Renderer& renderer){(void)release(renderer,true);}
+bool LayerScene::releaseResources(Renderer& renderer){
+    need(!compositionOwner_,"Remove a native scene from its composition before releasing its resources");
+    return release(renderer,false);
+}
+void LayerScene::upload(Renderer& renderer){
+    need(!compositionOwner_&&!publicationOwner(renderer),"A composed renderer cannot publish an exclusive native draw list");
+    uploadResources(renderer);renderer.setDrawList(draws_);collectRetiredResources(renderer);
 }
 void LayerScene::detach(Renderer& renderer){
-    renderer.clearDrawList();for(const auto&id:uploaded_){renderer.removeMesh(id);renderer.removeTexture(id);}uploaded_.clear();
+    need(!compositionOwner_&&!publicationOwner(renderer),"Detach a composed renderer through its composition owner");
+    need(!resourceOwner_||resourceOwner_==&renderer,"Native scene resources belong to another renderer");
+    renderer.clearDrawList();(void)release(renderer,false);
 }
 std::optional<std::size_t> LayerScene::surfaceIndex(std::string_view sourceID)const noexcept{
     for(std::size_t i=0;i<surfaces_.size();++i)if(std::string_view(surfaces_[i].id).substr(namespace_.size())==sourceID)return i;
@@ -158,11 +193,98 @@ void LayerScene::setPlacements(std::span<const LayerPlacement> placements){
     }
     for(const auto&p:placements){auto&d=surfaces_[p.surface].draw;d.world=p.world;d.opacity=p.opacity;d.masks.assign(p.masks.begin(),p.masks.end());}
 }
-void LayerScene::present(Renderer& renderer,const Matrix& placement){
+Matrix LayerScene::validatePreparation(const Matrix& placement)const{
     need(placement.finite(),"Invalid native layer placement");const auto inverse=core::source::inverseSourceMatrix(placement);
+    for(const auto&surface:surfaces_){need((placement*surface.draw.world).finite(),"Invalid projected native world matrix");for(const auto&mask:surface.draw.masks)need((mask.worldToLocal*inverse).finite(),"Invalid projected native mask matrix");}
+    return inverse;
+}
+void LayerScene::prepare(const Matrix& placement,const Matrix& inverse){
     for(std::size_t i=0;i<surfaces_.size();++i){const auto&source=surfaces_[i].draw;auto&draw=draws_[i];draw.world=placement*source.world;draw.opacity=source.opacity;draw.masks.resize(source.masks.size());
         for(std::size_t j=0;j<draw.masks.size();++j){draw.masks[j].worldToLocal=source.masks[j].worldToLocal*inverse;draw.masks[j].bounds=source.masks[j].bounds;}}
+}
+std::span<const DrawObject> LayerScene::prepareDraws(const Matrix& placement){
+    const auto inverse=validatePreparation(placement);prepare(placement,inverse);
+    return draws_;
+}
+void LayerScene::present(Renderer& renderer,const Matrix& placement){
+    need(!compositionOwner_&&!publicationOwner(renderer),"A composed renderer cannot publish an exclusive native draw list");
+    renderer.setDrawList(prepareDraws(placement));
+}
+void LayerComposition::checkRenderer(Renderer& renderer)const{
+    need(!renderer_||renderer_==&renderer,"A native composition belongs to another renderer");
+    need(!publicationOwner(renderer)||publicationOwner(renderer)==this,"Renderer already has another native composition publisher");
+    need(renderer.stats().initialized,"Native composition requires an initialized renderer");
+}
+LayerComposition::~LayerComposition(){
+    // Borrowed objects outlive this publication owner by contract. Its RAII
+    // cleanup removes the one list before touching any registered resources.
+    if(renderer_)try{detach(*renderer_);}catch(...){
+        for(const auto&entry:scenes_)if(entry.scene->compositionOwner_==this)entry.scene->compositionOwner_=nullptr;
+        forgetPublication(this);
+    }
+}
+void LayerComposition::setScenes(Renderer& renderer,std::span<LayerScene* const> order){
+    checkRenderer(renderer);
+    std::size_t count{};std::unordered_set<LayerScene*> unique;
+    std::vector<Entry> next;next.reserve(order.size());
+    for(auto*scene:order){
+        need(scene&&unique.insert(scene).second,"Null or repeated scene in native composition");
+        need(!scene->compositionOwner_||scene->compositionOwner_==this,"Native scene already belongs to another composition");
+        need(!scene->resourceOwner_||scene->resourceOwner_==&renderer,"Native scene resources belong to another renderer");
+        need(scene->draws_.size()<=Renderer::maximumObjects-count,"Combined native draw count exceeds limits");
+        next.push_back({scene,scene->revision_,scene->resourceRevision_,count,scene->draws_.size()});count+=scene->draws_.size();
+    }
+    std::vector<DrawObject> nextDraws;nextDraws.reserve(count);std::vector<Matrix> nextInverse(next.size());
+    if(!renderer_)publicationOwners.reserve(publicationOwners.size()+1);
+    // Stage CPU identities/capacities before GPU mutation. The last published
+    // list keeps its assets resident throughout preparation, even on failure.
+    for(const auto&entry:next)for(const auto&draw:entry.scene->draws()){nextDraws.push_back(draw);nextDraws.back().masks.reserve(8);}
+    try{
+        for(const auto&entry:next)entry.scene->uploadResources(renderer);
+        renderer.setDrawList(nextDraws);
+    }catch(...){
+        // Unpublished candidates cannot leak assets on a failed insertion.
+        // Renderer refuses to remove a still-published reference, so even an
+        // independently uploaded candidate leaves its old active list safe.
+        for(const auto&entry:next)if(std::none_of(scenes_.begin(),scenes_.end(),[&](const Entry&old){return old.scene==entry.scene;}))try{(void)entry.scene->release(renderer,false);}catch(...){}
+        throw;
+    }
+    // All old references are now gone. Do not clear the renderer list when
+    // retiring one scene: siblings share the same publication point.
+    for(const auto&old:scenes_)if(!unique.contains(old.scene)){
+        old.scene->compositionOwner_=nullptr;(void)old.scene->release(renderer,false);
+    }
+    for(const auto&entry:next){entry.scene->compositionOwner_=this;entry.scene->collectRetiredResources(renderer);}
+    scenes_=std::move(next);draws_=std::move(nextDraws);inverseTransforms_=std::move(nextInverse);
+    if(!renderer_)publicationOwners.emplace_back(&renderer,this);renderer_=&renderer;
+}
+void LayerComposition::upload(Renderer& renderer){
+    checkRenderer(renderer);std::vector<LayerScene*> order;order.reserve(scenes_.size());for(const auto&entry:scenes_)order.push_back(entry.scene);
+    setScenes(renderer,order);
+}
+void LayerComposition::copyPrepared(const Entry&entry){
+    const auto source=entry.scene->draws();
+    for(std::size_t i=0;i<entry.count;++i){auto&target=draws_[entry.begin+i];const auto&draw=source[i];
+        target.world=draw.world;target.linearTint=draw.linearTint;target.opacity=draw.opacity;
+        target.masks.resize(draw.masks.size());std::copy(draw.masks.begin(),draw.masks.end(),target.masks.begin());
+    }
+}
+void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transforms){
+    checkRenderer(renderer);need(transforms.empty()||transforms.size()==scenes_.size(),"Native composition needs exactly one transform per scene");
+    for(const auto&entry:scenes_){const auto&scene=*entry.scene;
+        need(scene.compositionOwner_==this&&scene.revision_==entry.structureRevision&&scene.resourceRevision_==entry.resourceRevision&&scene.uploadedRevision_==scene.resourceRevision_,"Native scene changed; upload the complete composition before presenting");
+        need(scene.draws_.size()==entry.count,"Native surface bindings changed before composition upload");
+    }
+    for(std::size_t i=0;i<scenes_.size();++i)inverseTransforms_[i]=scenes_[i].scene->validatePreparation(transforms.empty()?Matrix{}:transforms[i]);
+    for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);}
     renderer.setDrawList(draws_);
+}
+void LayerComposition::detach(Renderer& renderer){
+    need(!renderer_||renderer_==&renderer,"Detach native composition through its renderer owner");
+    need(!publicationOwner(renderer)||publicationOwner(renderer)==this,"Cannot clear another native composition publisher");
+    renderer.clearDrawList();
+    for(const auto&entry:scenes_){entry.scene->compositionOwner_=nullptr;(void)entry.scene->release(renderer,false);}
+    scenes_.clear();draws_.clear();inverseTransforms_.clear();forgetPublication(this);renderer_=nullptr;
 }
 Matrix layerViewportProjection(unsigned width,unsigned height){
     need(width&&height,"Invalid native layer viewport");Matrix m;

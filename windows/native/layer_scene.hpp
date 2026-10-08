@@ -6,6 +6,7 @@
 #include <string_view>
 
 namespace endfield::native {
+class LayerComposition;
 struct LayerSceneReport {
     std::size_t sourceNodes{},surfaces{},pixelBytes{};
     std::vector<LayerRasterIssue> unsupported;
@@ -31,6 +32,15 @@ public:
     // This scene owns the native draw list. Detach before replacing that list
     // with another owner; no original-material resources are removed.
     void detach(Renderer&);
+    // Resource-only path for a caller that owns a combined native draw list.
+    // Never publishes/clears that list or retires an asset referenced by it.
+    // Call collectRetiredResources after publishing the replacement list.
+    void uploadResources(Renderer&);
+    void collectRetiredResources(Renderer&);
+    // Release only this scene's unused resident assets. In-use assets remain
+    // retained; false tells the caller that its published references must first
+    // be removed. Never clears sibling draws or original-material resources.
+    bool releaseResources(Renderer&);
     // Resolve source IDs once when a binding plan changes, then supply numeric
     // indices on the animation path. Content and local raster bounds stay fixed.
     std::optional<std::size_t> surfaceIndex(std::string_view sourceID) const noexcept;
@@ -44,10 +54,14 @@ public:
     // Reuses all local surfaces. Caller supplies source-derived placement,
     // including a changed camera or module transition, in top-left screen space.
     void present(Renderer&,const core::Matrix4& screenTransform={});
+    // Updates only retained numeric drawing data; no publication or raster work.
+    // Returned span stays valid until the next load/prepare/content operation.
+    std::span<const DrawObject> prepareDraws(const core::Matrix4& screenTransform={});
     const LayerSceneReport& report() const noexcept {return report_;}
     std::uint64_t contentRevision() const noexcept {return revision_;}
     std::span<const DrawObject> draws() const noexcept {return draws_;}
 private:
+    friend class LayerComposition;
     struct Surface {
         std::string id;std::shared_ptr<const LayerRasterImage> image;DrawObject draw;
         std::uint64_t imageRevision{},meshRevision{};
@@ -62,11 +76,52 @@ private:
     std::vector<LayerRasterIssue> structuralIssues_;
     std::string namespace_;
     std::vector<std::string> rasterIDs_;
-    std::vector<std::string> uploaded_;
+    struct Resident {std::string id;bool mesh{},texture{};};
+    std::vector<Resident> uploaded_;
+    Renderer* resourceOwner_{};
+    LayerComposition* compositionOwner_{};
+    std::uint64_t resourceRevision_{},uploadedRevision_{};
     std::uint64_t revision_{},attempt_{};
     void append(const ehud::data::Json&,const core::Matrix4&,float,
                 const std::vector<PlaneMask>&,const LayerRasterOptions&,unsigned);
     void rebuildReport();
+    bool release(Renderer&,bool onlyRetired);
+    core::Matrix4 validatePreparation(const core::Matrix4&)const;
+    void prepare(const core::Matrix4&,const core::Matrix4& inverse);
+};
+
+// One caller-owned publication point for independently retained native scenes.
+// Entries are paint-ordered; each scene's existing numeric surface order stays
+// intact. Borrowed scenes, rasterizers and Renderer must outlive the composition
+// and must be detached before destruction/reset. A scene may belong to only one
+// composition. Existing exclusive upload/present/detach calls reject while owned.
+// setScenes/upload are content events: install resources, commit ONE full list,
+// then retire removed assets. An upload failure leaves old published resource
+// references resident (or Renderer explicitly resets after a GPU failure).
+// present changes only matrices/numbers/masks, allocating nothing after upload;
+// load/content changes require upload before present. No timer/service/device.
+class LayerComposition final {
+public:
+    LayerComposition()=default;
+    ~LayerComposition();
+    LayerComposition(const LayerComposition&)=delete;
+    LayerComposition&operator=(const LayerComposition&)=delete;
+    void setScenes(Renderer&,std::span<LayerScene* const> paintOrder);
+    void upload(Renderer&);
+    // Empty transforms use identity for every scene; otherwise exactly one per
+    // scene. Validate the whole pose before modifying any retained draw record.
+    void present(Renderer&,std::span<const core::Matrix4> screenTransforms={});
+    void detach(Renderer&);
+    std::span<const DrawObject> draws()const noexcept{return draws_;}
+    std::size_t sceneCount()const noexcept{return scenes_.size();}
+private:
+    struct Entry {LayerScene* scene{};std::uint64_t structureRevision{},resourceRevision{};std::size_t begin{},count{};};
+    std::vector<Entry> scenes_;
+    std::vector<DrawObject> draws_;
+    std::vector<core::Matrix4> inverseTransforms_;
+    Renderer* renderer_{};
+    void checkRenderer(Renderer&)const;
+    void copyPrepared(const Entry&);
 };
 // The source native layers already project into top-left viewport points.
 // This final matrix changes only those coordinates to D3D's clip space.

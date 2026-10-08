@@ -4,14 +4,26 @@
 #endif
 #include <windows.h>
 #include <objbase.h>
+#include <atomic>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <new>
 #include <stdexcept>
+
+namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
+void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
+void*operator new[](std::size_t n){return ::operator new(n);}void operator delete(void*p)noexcept{std::free(p);}void operator delete[](void*p)noexcept{std::free(p);}
+#if defined(__cpp_sized_deallocation)
+void operator delete(void*p,std::size_t)noexcept{std::free(p);}void operator delete[](void*p,std::size_t)noexcept{std::free(p);}
+#endif
 
 using namespace endfield::native;
 using ehud::data::Json;
 namespace {
 unsigned checks{};
 void check(bool value,const char* message){++checks;if(!value)throw std::runtime_error(message);}
+template<class F>void rejects(F&& f,const char*message){bool rejected{};try{f();}catch(const std::exception&){rejected=true;}check(rejected,message);}
 Json leaf(std::string id,double r,double g,double b){return Json::Object{
     {"id",std::move(id)},{"kind","layer"},{"class","CALayer"},{"bounds",Json::Array{0,0,16,16}},
     {"position",Json::Array{8,8}},{"anchorPoint",Json::Array{0,0}},
@@ -30,6 +42,86 @@ public:
     ~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}
     HWND hwnd{};ATOM atom{};
 };
+void composition(Renderer&renderer,LayerRasterizer&raster,const LayerRasterOptions&options){
+    LayerScene chrome(raster),notes(raster),empty(raster),candidate(raster);
+    chrome.load(root({leaf("shared-name",1,0,0)}),options);
+    auto note=leaf("shared-name",0,0,1);notes.load(root({note}),options);empty.load(root({}),options);
+    LayerComposition scene;
+    const std::array order{&chrome,&notes};scene.setScenes(renderer,order);scene.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),16,16,{255,0,0,255});
+    check(scene.sceneCount()==2&&scene.draws().size()==2&&renderer.stats().textures==2&&renderer.stats().meshes==2,"Independent sibling scenes publish one full list with namespaced resources");
+    const auto stableChrome=*chrome.surfaceIndex("shared-name");
+    const auto stableNotes=*notes.surfaceIndex("shared-name");
+    const auto r0=raster.stats();const auto g0=renderer.stats();
+    std::array poses{endfield::core::Matrix4{},endfield::core::Matrix4{}};
+    const PlaneMask mask{{},{0,0,32,32}};
+    const LayerPlacement clipped{stableNotes,notes.draws()[0].world,1,std::span(&mask,1)};
+    notes.setPlacements(std::span(&clipped,1));scene.present(renderer,poses);
+    allocations=0;counting=true;
+    try{for(unsigned i=0;i<120;++i){poses[0]=endfield::core::Matrix4::translation(i%2,0);poses[1]=endfield::core::Matrix4::translation(0,i%2);scene.present(renderer,poses);}}
+    catch(...){counting=false;throw;}
+    counting=false;
+    const auto r1=raster.stats();const auto g1=renderer.stats();
+    check(allocations==0,"Combined pointer frames allocate no CPU storage after warmup, including projected masks");
+    check(r0.rasterizations==r1.rasterizations&&r0.textLayoutsCreated==r1.textLayoutsCreated&&g0.textureUploads==g1.textureUploads&&g0.meshUploads==g1.meshUploads&&g0.objectBufferAllocations==g1.objectBufferAllocations,"Combined pointer frames retain sibling raster and GPU resources");
+    const auto beforePose=scene.draws()[0].world;
+    poses[1].values.fill(0);
+    rejects([&]{scene.present(renderer,poses);},"A singular late transform rejects the entire combined pose");
+    check(scene.draws()[0].world==beforePose&&chrome.draws()[0].world==beforePose,"Rejected combined pose leaves earlier scene drawing data unchanged");
+    scene.present(renderer);
+    const std::array reversed{&notes,&chrome};scene.setScenes(renderer,reversed);scene.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),16,16,{0,0,255,255});
+    check(chrome.surfaceIndex("shared-name")==stableChrome&&notes.surfaceIndex("shared-name")==stableNotes,"Composition reordering preserves each scene's static numeric bindings");
+    check(renderer.stats().textureUploads==g1.textureUploads&&renderer.stats().meshUploads==g1.meshUploads,"Reordering siblings publishes a new paint order without resource uploads");
+    const std::array duplicate{&chrome,&chrome};
+    rejects([&]{scene.setScenes(renderer,duplicate);},"Duplicate scene owners reject before publication or resource mutation");
+    LayerComposition another;
+    const std::array chromeOnly{&chrome};
+    rejects([&]{another.setScenes(renderer,chromeOnly);},"One scene cannot belong to two native publication owners");
+    const std::array emptyOnly{&empty};
+    rejects([&]{another.setScenes(renderer,emptyOnly);},"Disjoint scenes cannot install a second publisher on the same renderer");
+    rejects([&]{empty.upload(renderer);},"An unrelated exclusive scene cannot overwrite a composed renderer");
+    rejects([&]{empty.detach(renderer);},"An unrelated scene cannot clear a composed renderer");
+    rejects([&]{another.detach(renderer);},"An unattached publisher cannot clear another owner's list");
+    rejects([&]{chrome.present(renderer);},"Exclusive publication cannot overwrite composed siblings");
+    rejects([&]{chrome.detach(renderer);},"Exclusive detach cannot clear composed sibling references");
+    rejects([&]{chrome.releaseResources(renderer);},"Owned composed resources cannot be removed behind their publisher");
+    renderer.draw(false);pixel(renderer.readback(),16,16,{0,0,255,255});
+    candidate.load(root({leaf("invalid-draw",0,0,1)}),options);
+    auto invalid=endfield::core::Matrix4{};invalid.values[0]=std::numeric_limits<double>::max();
+    const LayerPlacement invalidDraw{0,invalid,1,{}};candidate.setPlacements(std::span(&invalidDraw,1));candidate.prepareDraws();
+    const std::array invalidOrder{&chrome,&candidate};
+    rejects([&]{scene.setScenes(renderer,invalidOrder);},"A late invalid candidate leaves the last published combined list valid");
+    check(scene.sceneCount()==2&&renderer.stats().textures==2&&renderer.stats().meshes==2,"Failed insertion releases only unpublished candidate assets");
+    renderer.draw(false);pixel(renderer.readback(),16,16,{0,0,255,255});
+    const auto beforeContent=renderer.stats();note["backgroundColor"]=Json::Object{{"sRGB",Json::Array{0,1,0,1}}};
+    notes.updateLocalContent("shared-name",1,note,options);
+    rejects([&]{scene.present(renderer);},"Changed sibling content requires explicit upload before presentation");
+    scene.upload(renderer);scene.present(renderer);renderer.draw(false);pixel(renderer.readback(),16,16,{0,0,255,255});
+    check(renderer.stats().textureUploads==beforeContent.textureUploads+1&&renderer.stats().meshUploads==beforeContent.meshUploads,"Changed note content updates only its own texture");
+    const std::array notesOnly{&notes};scene.setScenes(renderer,notesOnly);scene.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),16,16,{0,255,0,255});
+    check(renderer.stats().objects==1&&renderer.stats().textures==1&&renderer.stats().meshes==1,"Removing chrome publishes the retained note before releasing only chrome resources");
+    scene.setScenes(renderer,order);scene.present(renderer);
+    notes.load(root({leaf("replacement-note",0,0,1)}),options);notes.uploadResources(renderer);
+    check(renderer.stats().objects==2&&renderer.stats().textures==3&&renderer.stats().meshes==3,"Resource-only upload retains removed published IDs until replacement list publication");
+    notes.collectRetiredResources(renderer);
+    check(renderer.stats().textures==3&&renderer.stats().meshes==3,"Retirement refuses resources still referenced by the published list");
+    renderer.draw(false);pixel(renderer.readback(),16,16,{0,255,0,255});
+    rejects([&]{scene.present(renderer);},"Stale topology binding rejects instead of resolving an old index to a new note");
+    scene.upload(renderer);scene.present(renderer);renderer.draw(false);pixel(renderer.readback(),16,16,{255,0,0,255});
+    check(renderer.stats().textures==2&&renderer.stats().meshes==2,"Committed replacement retires the old note and keeps chrome resident");
+    const std::array withEmpty{&chrome,&empty};scene.setScenes(renderer,withEmpty);scene.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),16,16,{0,0,255,255});
+    check(scene.sceneCount()==2&&scene.draws().size()==1&&renderer.stats().textures==1,"An empty scene is a valid composed sibling with no phantom GPU resources");
+    scene.detach(renderer);
+    check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Composition detach removes its one list and releases every owned resource");
+    chrome.upload(renderer);renderer.draw(false);pixel(renderer.readback(),16,16,{0,0,255,255});chrome.detach(renderer);
+    {
+        LayerComposition lifetime;const std::array owned{&chrome,&notes};lifetime.setScenes(renderer,owned);lifetime.present(renderer);
+    }
+    check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Composition RAII cleanup releases its complete list before borrowed scenes go away");
+}
 void run(const std::filesystem::path& shader){
     Window window;Renderer renderer;renderer.initialize(window.hwnd,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});
     renderer.setCamera(layerViewportProjection(32,32));LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
@@ -105,10 +197,12 @@ void run(const std::filesystem::path& shader){
         scene.detach(renderer);check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Detach releases owned native resources");
     }
     check(raster.stats().entries==0,"Scene destruction releases its final local raster");
+    composition(renderer,raster,options);
+    check(raster.stats().entries==0,"Sibling scene destruction releases only its own retained local rasters");
     check(!IsWindowVisible(window.hwnd),"The fixture never shows or captures a desktop window");
 }
 }
 int wmain(int argc,wchar_t** argv){const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{
     if(FAILED(initialized)||argc!=2)throw std::runtime_error("Expected COM and one shader fixture path");run(std::filesystem::path(argv[1]));
     CoUninitialize();std::cout<<checks<<" layer scene checks passed\n";return 0;
-}catch(const std::exception& error){if(SUCCEEDED(initialized))CoUninitialize();std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}
+}catch(const std::exception& error){counting=false;if(SUCCEEDED(initialized))CoUninitialize();std::cerr<<"FAIL after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}
