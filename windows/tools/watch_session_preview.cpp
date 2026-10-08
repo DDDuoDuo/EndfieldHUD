@@ -57,7 +57,11 @@ public:
         if(!controller_)return;const auto operation=controller_.ShutdownQueueAsync();const auto deadline=GetTickCount64()+10000;
         while(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started){
             need(GetTickCount64()<deadline,"Source preview backdrop queue shutdown exceeded its finite deadline");
-            MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+            MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){
+                // Other publishers can keep the queue nonempty during shutdown.
+                need(GetTickCount64()<deadline,"Source preview backdrop queue shutdown exceeded its finite deadline");
+                TranslateMessage(&message);DispatchMessageW(&message);
+            }
             if(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started)MsgWaitForMultipleObjectsEx(0,nullptr,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         }
         operation.GetResults();controller_=nullptr;

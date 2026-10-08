@@ -65,7 +65,9 @@ struct Queue final {
     Queue(){check(!winrt::Windows::System::DispatcherQueue::GetForCurrentThread(),"Hidden proof owns its one isolated UI queue");DispatcherQueueOptions options{sizeof(DispatcherQueueOptions),DQTYPE_THREAD_CURRENT,DQTAT_COM_STA};hr(CreateDispatcherQueueController(options,reinterpret_cast<ABI::Windows::System::IDispatcherQueueController**>(winrt::put_abi(controller))),L"Backdrop fixture: create caller-owned DispatcherQueue");}
     void finish(){if(!controller)return;const auto operation=controller.ShutdownQueueAsync();const auto deadline=GetTickCount64()+10000;
         while(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started){
-            check(GetTickCount64()<deadline,"Caller queue shutdown is bounded");MSG m{};while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)){TranslateMessage(&m);DispatchMessageW(&m);}
+            check(GetTickCount64()<deadline,"Caller queue shutdown is bounded");MSG m{};while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)){
+                check(GetTickCount64()<deadline,"Caller queue drain preserves shutdown deadline");TranslateMessage(&m);DispatchMessageW(&m);
+            }
             if(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started)MsgWaitForMultipleObjectsEx(0,nullptr,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
         }
         operation.GetResults();controller=nullptr;
