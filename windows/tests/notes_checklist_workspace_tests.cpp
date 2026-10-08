@@ -31,7 +31,10 @@ void run(HWND hwnd){native::LayerRasterizer raster;native::NativeNotesWorkspaceO
     check(workspace.entries().size()==2&&!workspace.entries()[1].after.empty(),"One item editor composes after its card and before its retained final border");
     const auto glyph=workspace.editor()->layout().painted();const auto count=raster.stats().rasterizations;for(unsigned frame=0;frame<120;++frame){auto p=pose(4+double(frame)/60);p.workspaceToScreen.values[12]=double(frame)*.04;workspace.updatePose(p);}
     check(workspace.editor()->layout().painted()==glyph&&raster.stats().rasterizations==count,"Active row editor perspective shares retained glyph/selection/IME geometry");
-    workspace.editor()->character(0x4e2d,true);workspace.syncEditor();check(workspace.finishEditing().finished&&state.note(noteID)->items[0].text=="第一项😀中"&&state.note(noteID)->items[0].originalFields==note.items[0].originalFields,"Plain row finish persists target text and unknown item fields only");
+    workspace.editor()->character(0x4e2d,true);workspace.syncEditor();const auto beforeHistory=saves;
+    check(workspace.undo().changed&&workspace.editorDocument()->text()==u"第一项😀","TODO owner exposes Unicode undo on its existing editor");
+    check(workspace.redo().changed&&workspace.editorDocument()->text()==u"第一项😀中"&&saves==beforeHistory&&!workspace.selectionStyle()&&!workspace.editor()->richLayoutEnabled(),"TODO redo preserves plain font/layout and does not persist an intermediate draft");
+    check(workspace.finishEditing().finished&&state.note(noteID)->items[0].text=="第一项😀中"&&state.note(noteID)->items[0].originalFields==note.items[0].originalFields&&!state.note(noteID)->richText,"Plain row finish persists target text and unknown item fields only");
     check(workspace.beginEditingItem(noteID,second),"Oversized wrapped item opens its clipped source viewport");workspace.updatePose(pose(7));
     check(workspace.editor()->maximumScrollOffset()>0&&workspace.editor()->setScrollOffset(11.25),"Long row uses bounded scrollable document editor");const auto initial=state.editing()->scrollOffset;
     const auto finishScroll=workspace.editor()->scrollOffset();check(workspace.finishEditing().finished,"Long row completion returns its session scroll");

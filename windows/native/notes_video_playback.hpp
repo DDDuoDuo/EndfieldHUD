@@ -9,9 +9,11 @@
 #endif
 #include <windows.h>
 namespace endfield::native {
+struct NotesImageFrame;
 struct NotesVideoRequest {
     std::string key,path;std::uint64_t revision{};int maximumDimension{512};
     std::optional<double>duration;std::shared_ptr<void>accessLease;
+    bool workerPoster{}; // source time-zero still supplied by the existing media worker
     bool operator==(const NotesVideoRequest&)const=default;
 };
 struct NotesVideoRoute {HWND owner{};UINT message{};UINT_PTR generation{};};
@@ -37,9 +39,14 @@ struct NotesVideoDiagnostics {
 // Engine owns its asynchronous codec/audio pipeline; this facade adds no thread,
 // timer, window, file watcher or polling task. Call sample() only from the shared
 // presentation clock while requiresFrames(), or once after an accepted notice.
-// A ready-but-not-yet-decoded initial poster requests at most five seconds of
-// that existing frame clock, then exposes best-effort poster failure. Settled
-// paused/hidden records produce no continuous frame demand. nextWakeTime() uses
+// Production Notes supplies workerPoster=true and extracts its time-zero still
+// on the existing shared media worker. Waiting for that completion schedules
+// no frames, never starts playback, and does not advance the engine position.
+// Injected engines can also exercise the finite tick-poster contract; that
+// path is not a guarantee that a paused Media Engine can produce a frame.
+// Explicit seeks use bounded (5s) owner-frame demand until SEEKED and a ready
+// frame. No Play call or private clock is used to obtain a paused seek frame.
+// Settled paused/hidden records produce no continuous frame demand. nextWakeTime() uses
 // that same owner clock for original one-second progress / .6s poster retention.
 //
 // Original Notes semantics: video first opens paused; the initial poster remains
@@ -80,6 +87,12 @@ public:
     bool setVisible(std::span<const NotesVideoRequest>,double now,bool preservePoster=false);
     void hide(double now,bool preservePoster=false);
     bool accept(UINT_PTR routeGeneration,double now);
+    // Immutable worker completion; UI-thread upload only. Revision/key/visible
+    // checks discard stale results. Failure settles only the optional poster,
+    // never rejects a valid native movie. No media-engine Play/seek is used to
+    // obtain it, and no CPU image is retained by this video owner afterward.
+    bool setPoster(std::string_view key,std::uint64_t requestRevision,
+        std::uint64_t posterRevision,const NotesImageFrame*,HRESULT result=S_OK);
     bool sample(double now);
     bool play(std::string_view,double now);bool pause(std::string_view);
     bool toggle(std::string_view,double now);bool seek(std::string_view,double seconds);

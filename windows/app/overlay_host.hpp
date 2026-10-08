@@ -114,6 +114,9 @@ struct OverlayCallbacks {
     std::function<std::optional<std::intptr_t>(const NativeMessage&)> appMessage;
     std::function<void()> displayChanged; // notification only; no enumeration/poll
     std::function<void(double)> deadline; // one-shot, same monotonic clock as frame
+    // App activation differs from keyboard focus moving into an owned file
+    // dialog or editor. The owner applies its configurable close policy.
+    std::function<void(bool)> applicationActive;
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};

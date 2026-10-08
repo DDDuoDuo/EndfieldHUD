@@ -8,14 +8,17 @@
 #include "core/data/file_shelf_store.hpp"
 
 namespace endfield::tools {
+struct NotesKeyModifiers {bool control{},shift{},alt{},system{};};
 // Build-only integration owner. Requires an explicit NEW temporary data root;
 // never opens the installed application's data or any account/service.
 // Its scenes enter the caller's one composition and existing frame clock.
+// Optional initialNotes seed ONLY that new injected fixture store; no installed
+// records are read, replaced, or truncated by this build-only entry point.
 class NotesPreview final {
 public:
     NotesPreview(HWND,native::LayerRasterizer&,const std::filesystem::path& newDataRoot,
         const native::NativeNotesControlsAssets&,bool activateTextServices,
-        const std::filesystem::path& formatAssets={});
+        const std::filesystem::path& formatAssets={},std::span<const ehud::data::Note> initialNotes={});
     ~NotesPreview();
     // Shared preview-session TSF service. Other module editors borrow this
     // already activated manager and MUST be destroyed before NotesPreview.
@@ -42,7 +45,9 @@ public:
     bool covers(core::Point logicalClientPoint)const;
     bool pointer(const app::PointerEvent&,double time);
     bool wheel(const app::WheelEvent&,double time);
-    bool key(const app::KeyEvent&,double time);
+    // Defaults sample the current thread's delivered keyboard modifiers. Tests
+    // may supply an explicit snapshot without changing global keyboard state.
+    bool key(const app::KeyEvent&,double time,std::optional<NotesKeyModifiers> modifiers={});
     bool filterKey(const app::NativeMessage&);
     bool message(const app::NativeMessage&,std::optional<double> time={});
     void focus(bool);

@@ -553,7 +553,7 @@ formatting, checklists, image/GIF import and the original subsection transitions
 The user confirmed the diagnostic font-menu preview now works; the earlier
 intermittent disappearance has no confirmed root cause yet.
 
-The actual hardware video test still fails to expose its first paused frame even
+At that earlier checkpoint, the actual hardware video test failed to expose its first paused frame even
 though Windows reports loaded media. It uses a tiny synthetic silent H.264 file,
 not user media. This is an explicit unresolved gate. No stable Windows release
 is available yet, and these checks do not establish full-app performance parity.
@@ -573,11 +573,33 @@ A hidden hardware run cycles seven connected module owners three times and sends
 72 Clipboard wheel events. Actual scroll offsets move and return to the top.
 Each completed cycle retains 315 raster entries / 52,777,320 bytes, with no growth;
 these are raster-cache bytes, not whole-process RAM or GPU memory. The app exits
-with code 0. The visible preview still needs the user's Clipboard/hotkey/tray check.
+with code 0. The user subsequently confirmed Clipboard scrolling, the summon hotkey, and the tray icon are smooth and working.
 
-Paused video remains unresolved: the independent SourceReader poster test
-currently reaches end-of-stream without a first frame on the laptop. Playback
-and posters are not signed off. The new drawing owner shares the existing
+At snapshot 78, paused video was still unresolved; the later checkpoint below supersedes that gate. The new drawing owner shares the existing
 renderer, input and persistence; it creates no timer or worker. Common Notes
 preview code now compiles once and is linked by the fixtures, reducing duplicate
 build intermediates without changing runtime appearance.
+
+
+Snapshot 81 with corrections 81b/81c verifies the real silent Media Foundation
+path on the laptop: 14 worker-poster checks, 38 real decoder checks, and 160
+complete Notes video import/seek/play checks. The synthetic H.264 fixture is now
+64 × 64 (the earlier 32 × 32 frame was below the decoder's documented minimum).
+Paused seeks request the existing host clock only until the requested frame is
+available; they neither play audio nor introduce a polling timer.
+
+The full Windows run passed 120 of 122 registered suites; its two failures were
+corrected and independently rerun successfully, alongside 715 Notes-owner checks,
+70 Archive-owner checks, and 29 native Settings-safety checks. Archive tilted
+frames no longer copy unchanged draw resources. Equal Settings colors retain
+their exact endpoint instead of producing a redundant dirty frame. The original
+source feedback oracle passes 3,860 comparisons.
+
+WM_ACTIVATEAPP now distinguishes switching applications from an owned text field
+or file dialog. The shell closes on application deactivation by default and a
+hotkey brings an unfocused overlay forward on the first press. Native activation
+routing is tested; actual Alt+Tab acceptance is still pending. The concealed-tray
+Quit path also stops scheduling frames before shutdown. These fixes and standalone
+Archive/Settings owners are verified source work, not a complete Windows release.
+Live Settings integration, remaining modules/services, and full performance and
+accessibility acceptance remain in progress.

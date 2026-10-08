@@ -65,6 +65,25 @@ void run(){
     ok(editor.stop(),"Stop owned rich field");check(!IsWindowVisible(window.value),"Test never shows or activates its HWND");
 
     {
+        LayerScene plainScene(raster);notes::RichDocument plain(u"待办 😀",{},65536);auto plainStyle=style();plainStyle.fontSize=11;
+        NativeProjectedEditor field(window.value,plain,plainScene,plainStyle,options,PlainEditorFixtureCapacity{65536},WM_APP+604,3,ProjectedEditorTextMode::plainHistory);
+        check(!field.richLayoutEnabled()&&!field.selectionStyle(),"Plain history uses source plain layout without a formatting surface");
+        notes::FormatChange bold;bold.kind=notes::FormatKind::bold;check(!field.applyFormat(bold).handled&&!plain.richText(),"Plain history rejects rich formatting instead of flattening it on save");
+        const auto end=static_cast<std::uint32_t>(plain.text().size());plain.setSelection({{end,end},text::ActiveEnd::end,false});field.syncContent();
+        check(field.character('x').changed,"Plain history accepts ordinary text through same TSF host transaction");field.syncContent();
+        check(field.undo().changed,"Plain field undo uses the existing shared document history");field.syncContent();check(plain.text()==u"待办 😀"&&!plain.richText(),"Plain undo restores Unicode text and stays unformatted");
+        check(field.redo().changed,"Plain field redo uses the same history");field.syncContent();check(plain.text()==u"待办 😀x","Plain redo restores typed content exactly");
+        const auto compositionAt=static_cast<std::uint32_t>(plain.text().size());plain.beginInputTransaction();plain.replace({compositionAt,compositionAt},u"中");plain.beginComposition({compositionAt,compositionAt+1});plain.endInputTransaction();field.syncContent();
+        check(!field.undo().changed&&plain.composition().has_value(),"Plain undo cannot consume marked IME composition");plain.endComposition(false);field.syncContent();
+        check(field.undo().changed,"Committed plain IME text becomes undoable as one shared history group");field.syncContent();check(plain.text()==u"待办 😀x","Undo committed IME preserves the preceding ordinary edit");
+        ComPtr<Sink>plainSink;plainSink.Attach(new Sink);ok(field.textStore()->AdviseSink(__uuidof(ITextStoreACPSink),plainSink.Get(),TS_AS_ALL_SINKS),"Advise plain history fake sink");
+        plainSink->onLock=[&]{const auto before=plain.revision();check(!field.redo().changed&&plain.revision()==before,"Plain redo respects the same TSF write-lock guard");};HRESULT lockResult{};ok(field.textStore()->RequestLock(TS_LF_READWRITE|TS_LF_SYNC,&lockResult),"Grant plain history fake TSF lock");plainSink->onLock={};
+        ok(field.stop(),"Stop plain history field");
+        LayerScene rejectedScene(raster);notes::RichDocument imported(u"rich",notes::RichText{},65536);bool rejected{};try{NativeProjectedEditor invalid(window.value,imported,rejectedScene,plainStyle,options,PlainEditorFixtureCapacity{65536},WM_APP+605,4,ProjectedEditorTextMode::plainHistory);}catch(const std::invalid_argument&){rejected=true;}
+        check(rejected&&rejectedScene.contentRevision()==0&&imported.richText().has_value(),"Plain history cannot open or flatten an imported rich document");
+    }
+
+    {
         LayerScene importedScene(raster);notes::RichDocument imported(u"A\nB\nC",notes::RichText{},65536);
         NativeProjectedEditor field(window.value,imported,importedScene,style(),options,PlainEditorFixtureCapacity{65536},WM_APP+603,2);
         const auto b=field.layout().bounds({2,3})->bounds.y,c=field.layout().bounds({4,5})->bounds.y;

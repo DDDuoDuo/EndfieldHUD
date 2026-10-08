@@ -7,8 +7,15 @@
 #include "native/notes_drawing_scene.hpp"
 #include "modules/notes_motion.hpp"
 #include "modules/notes_checklist.hpp"
+#include <stdexcept>
 #ifdef _WIN32
 namespace endfield::native {
+// The readable stored record is valid; only this bounded native editor cannot
+// open it. Owners may report this specific recoverable condition without
+// swallowing unrelated raster/TSF/state failures or truncating the document.
+class NativeNotesEditorCapacityError final:public std::length_error {
+public:NativeNotesEditorCapacityError():std::length_error("Notes text exceeds the current editor capacity; stored text is unchanged"){}
+};
 struct NativeNotesWorkspaceStyle {
     modules::NotesPalette palette;modules::NotesStrings strings;
     NativeNotesExternalEditorAppearance editor;

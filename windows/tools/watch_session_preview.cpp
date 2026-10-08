@@ -26,6 +26,7 @@
 #include "core/shell_packet.hpp"
 #include "core/watch_runtime_input.hpp"
 #include "core/data/file_io.hpp"
+#include "core/data/data_store.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -302,7 +303,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(notes)notes->collected(renderer);if(shelf)shelf->collected(renderer);if(clipboard)clipboard->collected(renderer);if(volume)volume->collected(renderer);if(eventLog)eventLog->collected(renderer);if(workMode)workMode->collected(renderer);if(battery)battery->collected(renderer);}
         publishedNotesRevision=notesRevision;
     };
-    app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;session.setSettings(settings,0);session.setEnvironment(environment,0);
+    app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;auto configuration=ehud::data::Settings::defaults();session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
     // sibling view, so this fades only native chrome, never source triangles
     // or SourceWatch's labels. Source completion still owns window lifetime.
@@ -408,10 +409,10 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         if(ready&&tray&&tray->message(m.message,m.wParam,m.lParam)){
             if(const auto action=tray->takeAction()){
                 const auto time=now();
-                if(*action==gpu::TrayAction::quit){quitRequested=true;if(session.phase()==core::VisibilityPhase::concealed)host.requestStop();else close(time);}
+                if(*action==gpu::TrayAction::quit){quitRequested=true;if(session.phase()==core::VisibilityPhase::concealed){stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();}else close(time);}
                 else if(*action==gpu::TrayAction::openOverlay||*action==gpu::TrayAction::workMode){
                     if(*action==gpu::TrayAction::workMode&&notes)notes->select(core::Module::workMode,time);
-                    if(m.message==WM_HOTKEY&&session.phase()!=core::VisibilityPhase::concealed&&!closing)close(time);
+                    if(m.message==WM_HOTKEY&&focused&&session.phase()!=core::VisibilityPhase::concealed&&!closing)close(time);
                     else {if(session.phase()==core::VisibilityPhase::concealed||closing)open(time);host.show();refresh(time);}
                 }
             }return 0;
@@ -463,6 +464,14 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         }return {};};
     callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&shelf&&session.inputEnabled()&&shelf->key(e,now())){refresh(now());return true;}if(ready&&clipboard&&session.inputEnabled()&&clipboard->key(e,now())){refresh(now());return true;}if(ready&&volume&&session.inputEnabled()&&volume->key(e,now())){refresh(now());return true;}if(ready&&eventLog&&session.inputEnabled()&&eventLog->key(e,now())){refresh(now());return true;}if(ready&&workMode&&session.inputEnabled()&&workMode->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){std::cout<<"Preview unhandled Escape"<<std::endl;close(now());return true;}return false;};
     callbacks.focus=[&](bool value){std::cout<<"Preview focus: "<<value<<std::endl;focused=value;if(notes)notes->focus(value);if(workMode)workMode->focus(value,now());if(shelf&&!value)shelf->cancelInteraction();if(clipboard&&!value)clipboard->cancelInteraction();if(volume&&!value)volume->cancelInteraction(now());if(eventLog&&!value)eventLog->cancelInteraction();if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
+    callbacks.applicationActive=[&](bool active){
+        if(!ready||!args.visible||active||closing||session.phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
+        // Source exempts its own file panels and active shelf drag/drop. Moving
+        // keyboard focus between owned windows is not an application switch.
+        const auto picker=mediaPicker?mediaPicker->stats():gpu::ShelfPickerStats{};
+        if(picker.queued||picker.presenting||(shelf&&shelf->preservesFocusOnLoss()))return;
+        close(now());
+    };
     callbacks.closeRequested=[&]{std::cout<<"Preview native close request"<<std::endl;if(ready)close(now());};
     callbacks.deadline=[&](double time){if(!ready||stopping)return;bool artwork=notes&&notes->deadline(time);if(workMode){const auto revision=workMode->state().revision();workMode->wake(time);artwork=artwork||revision!=workMode->state().revision();}if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;if(eventSaves)eventSaves->capture(time);scheduleDeadline();if(artwork)refresh(time);};
     double diagnosticStart{};bool diagnosticEditing{},diagnosticFinished{};
@@ -476,7 +485,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             if(phase==3&&diagnosticEditing){auto stage=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
             if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;close(time);}
         }
-        const bool active=present(time,true);host.setFrameDemand(demand(time));scheduleDeadline();if(!active&&session.phase()==core::VisibilityPhase::concealed){if(notes)notes->setMediaActive(false,time);host.hide();if(tray&&!quitRequested){scheduleDeadline();}else{stopping=true;host.setDeadline({});host.requestStop();}}};
+        const bool active=present(time,true);if(stopping)return;host.setFrameDemand(demand(time));scheduleDeadline();if(!active&&session.phase()==core::VisibilityPhase::concealed){if(notes)notes->setMediaActive(false,time);host.hide();if(tray&&!quitRequested){scheduleDeadline();}else{stopping=true;host.setDeadline({});host.requestStop();}}};
     app::OverlayOptions windowOptions{!args.notesData.empty()?L"EndfieldHUD Notes preview — temporary sample data":L"EndfieldHUD source shell feasibility — synthetic data",0,0,1280,800,{}};
     if(args.visible){
         const auto displays=gpu::readConnectedDisplays();POINT pointer{};

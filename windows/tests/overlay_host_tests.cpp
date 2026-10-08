@@ -238,7 +238,7 @@ void nativeWindow() {
     std::vector<PointerEvent> pointer;
     std::vector<WheelEvent> wheel;
     std::vector<KeyEvent> keys;
-    std::vector<bool> focus;
+    std::vector<bool> focus,applicationActivation;
     std::vector<ClientMetrics> sizes;
     unsigned frames = 0, closes = 0, filtered=0, privateMessages=0, displayChanges=0;
     OverlayCallbacks callbacks;
@@ -247,6 +247,7 @@ void nativeWindow() {
     callbacks.wheel = [&](const auto& event) { wheel.push_back(event); return true; };
     callbacks.key = [&](const auto& event) { keys.push_back(event); return true; };
     callbacks.focus = [&](bool value) { focus.push_back(value); };
+    callbacks.applicationActive = [&](bool value) { applicationActivation.push_back(value); };
     callbacks.resize = [&](const auto& value) { sizes.push_back(value); };
     callbacks.closeRequested = [&] { ++closes; host.hide(); };
     callbacks.beforeKeyTranslation=[&](const NativeMessage& event){++filtered;return event.wParam=='D';};
@@ -327,6 +328,11 @@ void nativeWindow() {
     SendMessageW(window, WM_SETFOCUS, 0, 0);
     SendMessageW(window, WM_KILLFOCUS, 0, 0);
     check(focus == std::vector<bool>{true, false}, "focus routing without requesting foreground or keyboard focus");
+    check(applicationActivation.empty(),"Editor or owned-panel keyboard focus does not deactivate the application");
+    SendMessageW(window,WM_ACTIVATEAPP,FALSE,0);
+    SendMessageW(window,WM_ACTIVATEAPP,FALSE,0);
+    SendMessageW(window,WM_ACTIVATEAPP,TRUE,0);
+    check(applicationActivation==std::vector<bool>{false,true},"App switches deliver one event per transition without global hooks or polling");
     RECT suggested{4, 6, 244, 126};
     SendMessageW(window, WM_DPICHANGED, MAKEWPARAM(192, 192), reinterpret_cast<LPARAM>(&suggested));
     const auto dpi = host.metrics();

@@ -69,11 +69,11 @@ struct NotesPreview::Impl {
 
     std::optional<core::Module>pendingModule;std::optional<app::ClientMetrics>pendingResize;bool pendingCancel{},pendingFocus{};
     std::optional<std::string>hoveredNote;std::optional<core::Rect>lastConfirmationRect;
-    Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot):hwnd(h),raster(r),assets(a),geometry(r){
+    Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes):hwnd(h),raster(r),assets(a),geometry(r){
         static std::atomic<UINT_PTR>mediaOwners{1};mediaGeneration=mediaOwners.fetch_add(1);pendingImports.reserve(8);
         need(root.is_absolute()&&!std::filesystem::exists(root),"Notes preview requires a new absolute synthetic data directory");
         data::detail::validateRoot(root);need(std::filesystem::create_directory(root),"Create isolated Notes fixture directory");
-        store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;store->upsert(sample);
+        store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;if(initialNotes.empty())store->upsert(sample);else for(const auto&note:initialNotes)store->upsert(note);
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){store->remove(id);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
         if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;
@@ -138,6 +138,10 @@ struct NotesPreview::Impl {
     core::Point physical(const app::PointerEvent&e)const{return {e.x*metrics.scale,e.y*metrics.scale};}
     void clearHover(double time){workspace->updateDrawingHover({});if(hoveredNote){workspace->setFeedback(*hoveredNote,{},false,false,time);hoveredNote.reset();}controlScene->setFeedback({},false,false,time);confirmScene->setFeedback({},false,false,time);}
     void editSync(){workspace->syncEditor();}
+    bool beginField(std::string_view id,std::optional<std::string_view>item={}){
+        try{const bool changed=item?workspace->beginEditingItem(id,*item):workspace->beginEditing(id);focusEditor();return changed;}
+        catch(const gpu::NativeNotesEditorCapacityError&){setMediaError("这段文字超出当前编辑器容量，内容已保留，仍可查看和滚动。");return false;}
+    }
     void drawingStatus(){switch(workspace->drawingIssue()){case gpu::NativeNotesDrawingIssue::none:break;case gpu::NativeNotesDrawingIssue::strokeLimit:setMediaError("笔画长度已满，松开后可开始下一笔。");break;case gpu::NativeNotesDrawingIssue::drawingLimit:setMediaError("画画容量已满，请新建画画便笺。");break;}}
     bool confirmAt(core::Point p,double time,bool press){
         if(!confirmationVisible)return false;const auto q=confirmationProjection.unproject(p);const auto action=q?confirmation.actionAt(*q):std::nullopt;confirmScene->setFeedback(action,press,false,time);
@@ -183,12 +187,12 @@ struct NotesPreview::Impl {
             else if(verb=="mediaPlayback"){workspace->toggleMedia(id,time);}
             else if(verb=="delete"){workspace->requestDeletion(id);confirmationStarted=time;}
             else if(verb=="add"){if(workspace->addChecklistItem(id,data::makeUUID())){if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);focusEditor();}}
-            else if(verb.starts_with("editItem:")){workspace->beginEditingItem(id,std::string_view(verb).substr(9));focusEditor();}
+            else if(verb.starts_with("editItem:")){beginField(id,std::string_view(verb).substr(9));}
             else if(verb.starts_with("check:")||verb.starts_with("up:")||verb.starts_with("down:")||verb.starts_with("remove:")){
                 const auto colon=verb.find(':');const auto kind=verb.starts_with("check:")?mod::NotesState::ChecklistAction::toggle:verb.starts_with("up:")?mod::NotesState::ChecklistAction::up:verb.starts_with("down:")?mod::NotesState::ChecklistAction::down:mod::NotesState::ChecklistAction::remove;
                 if(workspace->mutateChecklistItem(id,std::string_view(verb).substr(colon+1),kind))if(const auto token=workspace->cardToken(id))track(*token,TrackKind::mutation,time);
             }
-            else if(verb=="edit"&&e.kind==app::PointerKind::doubleClick){workspace->beginEditing(id);focusEditor();}
+            else if(verb=="edit"&&e.kind==app::PointerKind::doubleClick){beginField(id);}
             else if(hit->kind==gpu::NativeNotesWorkspaceHit::Kind::body||verb=="edit")workspace->beginGesture(id,point,mod::NotesState::Gesture::move);
             else std::cout<<"Notes formatting requires its prepared menu assets\n";
             return true;
@@ -205,7 +209,7 @@ struct NotesPreview::Impl {
         }}workspace->select({});return false;
     }
 };
-NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot)){}
+NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot,initialNotes)){}
 NotesPreview::~NotesPreview()=default;
 ITfThreadMgr*NotesPreview::activatedTextManager()const noexcept{return impl_->manager.manager.Get();}
 TfClientId NotesPreview::textClient()const noexcept{return impl_->manager.client;}
@@ -248,7 +252,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
 }
 bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);if((i.mediaMenu&&i.mediaMenu->requiresFrames(t))||(i.formatMenu&&i.formatMenu->requiresFrames(t))||i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
     for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return i.confirmationVisible&&t-i.confirmationStarted<.16;}
-bool NotesPreview::diagnosticEditing(bool enabled,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!enabled)return i.finish();if(i.state->notes().empty())return false;i.workspace->beginEditing(i.state->notes().front().id);i.focusEditor();return i.workspace->editor()!=nullptr;}
+bool NotesPreview::diagnosticEditing(bool enabled,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!enabled)return i.finish();if(i.state->notes().empty())return false;i.beginField(i.state->notes().front().id);return i.workspace->editor()!=nullptr;}
 bool NotesPreview::pointerLocked()const{return impl_->state->dragging()||impl_->workspace->mediaSeeking()||impl_->workspace->drawingActive();}
 bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput)return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
     if(i.mediaMenu&&i.mediaMenu->contains(p))return true;
@@ -280,15 +284,15 @@ bool NotesPreview::message(const app::NativeMessage&m,std::optional<double>time)
     // clears the field's active drag and any pending UTF-16 high surrogate.
     // Retry only an explicit field/window focus request held by a TSF lock.
     if(i.pendingCancel&&i.finish())i.pendingCancel=false;if(i.pendingResize){const auto value=*i.pendingResize;resize(value);}if(i.pendingModule){const auto value=*i.pendingModule;select(value,i.currentTime);}if(i.pendingFocus)i.focusEditor();return true;}
-bool NotesPreview::key(const app::KeyEvent&e,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaMenu&&i.mediaMenu->key(e,event.time))return true;if(i.formatMenu&&i.formatMenu->key(e,event.time))return true;auto*editor=i.workspace->editor();if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;
+bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModifiers>modifiers){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaMenu&&i.mediaMenu->key(e,event.time))return true;if(i.formatMenu&&i.formatMenu->key(e,event.time))return true;auto*editor=i.workspace->editor();if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
     // Original TODO fields finish on unconsumed Return; imported/pasted line
     // breaks still remain valid data. TSF receives keys before this owner.
-    if(i.workspace->editingItemID()&&((e.kind==app::KeyKind::down&&e.value==VK_RETURN)||((e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&(e.value=='\r'||e.value=='\n')))){
+    if((e.kind==app::KeyKind::down&&e.value==VK_RETURN&&(i.workspace->editingItemID()||(keys.control&&!keys.shift&&!keys.alt&&!keys.system)))||(i.workspace->editingItemID()&&(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&(e.value=='\r'||e.value=='\n'))){
         if(i.workspace->editorDocument()->composition())return true;if(!i.workspace->finishEditing().finished)i.pendingCancel=true;return true;
     }
     if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)result=editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);
-    else if(e.kind==app::KeyKind::down&&GetKeyState(VK_CONTROL)<0&&(e.value=='Z'||e.value=='Y'))result=e.value=='Y'||GetKeyState(VK_SHIFT)<0?editor->redo():editor->undo();
-    else if(e.kind==app::KeyKind::down){std::optional<gpu::ProjectedEditorCommand>command;using C=gpu::ProjectedEditorCommand;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_UP:command=C::up;break;case VK_DOWN:command=C::down;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;case VK_ESCAPE:command=C::finish;break;case 'A':if(GetKeyState(VK_CONTROL)<0)command=C::selectAll;break;}if(command)result=editor->command(*command,GetKeyState(VK_SHIFT)<0);}
+    else if(e.kind==app::KeyKind::down&&keys.control&&(e.value=='Z'||e.value=='Y'))result=e.value=='Y'||keys.shift?editor->redo():editor->undo();
+    else if(e.kind==app::KeyKind::down){std::optional<gpu::ProjectedEditorCommand>command;using C=gpu::ProjectedEditorCommand;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_UP:command=C::up;break;case VK_DOWN:command=C::down;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;case VK_ESCAPE:command=C::finish;break;case 'A':if(keys.control)command=C::selectAll;break;}if(command)result=editor->command(*command,keys.shift);}
     if(result.finishRequested){if(i.formatMenu)i.formatMenu->close(event.time);i.workspace->finishEditing();return true;}if(result.handled)i.editSync();return result.handled;
 }
 void NotesPreview::focus(bool f){impl_->focused=f;impl_->focusEditor();if(!f){impl_->editorDrag=false;if(!impl_->finish())impl_->pendingCancel=true;}}

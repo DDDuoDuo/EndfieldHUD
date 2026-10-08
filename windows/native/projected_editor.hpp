@@ -29,6 +29,7 @@ struct ProjectedEditorStyle {
     bool operator==(const ProjectedEditorStyle&)const=default;
 };
 struct PlainEditorFixtureCapacity {std::uint32_t maximumUnits;};
+enum class ProjectedEditorTextMode {rich,plainHistory};
 enum class ProjectedEditorCommand {left,right,up,down,documentStart,documentEnd,selectAll,backspace,deleteForward,finish};
 struct ProjectedEditorResult {bool handled{},changed{},finishRequested{};};
 struct ProjectedEditorPose {
@@ -42,6 +43,8 @@ struct ProjectedEditorPose {
 // overload for Notes runs; formatting is never inferred from a plain Document.
 // Capacity is a fixture/leaf limitation (<=65536 UTF16), not a Notes storage limit.
 // The explicit RichDocument overload preserves source runs/undo/composition.
+// plainHistory uses that SAME undo/composition model with plain glyph metrics;
+// imported rich runs and formatting commands are rejected, never flattened.
 // Visual-bidi/word navigation and exact cross-platform font parity remain open.
 // No window, renderer, publisher, clock, focus stealing, clipboard or timers.
 class NativeProjectedEditor final {
@@ -49,7 +52,8 @@ public:
     NativeProjectedEditor(HWND,core::text::Document&,LayerScene&,ProjectedEditorStyle,
         LayerRasterOptions,PlainEditorFixtureCapacity,UINT ownerMessage,UINT_PTR generation);
     NativeProjectedEditor(HWND,core::notes::RichDocument&,LayerScene&,ProjectedEditorStyle,
-        LayerRasterOptions,PlainEditorFixtureCapacity,UINT ownerMessage,UINT_PTR generation);
+        LayerRasterOptions,PlainEditorFixtureCapacity,UINT ownerMessage,UINT_PTR generation,
+        ProjectedEditorTextMode=ProjectedEditorTextMode::rich);
     ~NativeProjectedEditor();
     NativeProjectedEditor(const NativeProjectedEditor&)=delete;
     NativeProjectedEditor&operator=(const NativeProjectedEditor&)=delete;

@@ -34,6 +34,7 @@ public:
     bool key(const app::KeyEvent&,double time);
     bool message(const app::NativeMessage&,double time);
     bool pointerLocked()const;
+    bool preservesFocusOnLoss()const;
     std::optional<ShelfPreviewAction> takeAction();
     bool importFiles(std::span<const std::string>,double time);
     void showError(std::string,double time);

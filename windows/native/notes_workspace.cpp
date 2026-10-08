@@ -27,7 +27,7 @@ core::Rect constrainedRect(const Note&n,core::Rect bounds){
 std::u16string utf16(std::string_view s,std::uint32_t maximum){
     need(s.size()<=static_cast<std::size_t>(INT_MAX),"Notes editor UTF-8 input exceeds native length");if(s.empty())return{};
     const auto n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),nullptr,0);
-    need(n>0,"Notes editor text is not valid UTF-8");need(static_cast<std::uint32_t>(n)<=maximum,"Notes text exceeds the explicit short-editor capacity; stored text is not truncated");
+    need(n>0,"Notes editor text is not valid UTF-8");if(static_cast<std::uint32_t>(n)>maximum)throw NativeNotesEditorCapacityError{};
     std::u16string out(static_cast<std::size_t>(n),u'\0');need(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,s.data(),static_cast<int>(s.size()),reinterpret_cast<wchar_t*>(out.data()),n)==n,"Incomplete Notes UTF-16 conversion");return out;
 }
 std::string utf8(std::u16string_view s){
@@ -52,7 +52,7 @@ struct NativeNotesWorkspace::Impl {
         std::optional<NotesImagePlaybackRequest>request;std::optional<NotesVideoRequest>videoRequest;std::string videoTexture;unsigned videoWidth{},videoHeight{};
         std::shared_ptr<const mod::NotesMediaCardContent>content;
         std::shared_ptr<const NotesImageFrame>frame;
-        std::uint64_t observedContent{},observedFrame{},observedProgress{},uploadedFrame{};bool uploaded{};
+        std::uint64_t observedContent{},observedFrame{},observedProgress{},uploadedFrame{},observedPosterContent{},observedPosterFrame{},posterSerial{};bool uploaded{};
     };
     struct Slot {
         mod::NotesCardPresentation presentation;std::unique_ptr<NativeNotesCardScene> native;std::shared_ptr<Media>media;std::shared_ptr<const mod::NotesMediaCardContent>paintedMedia;
@@ -69,11 +69,11 @@ struct NativeNotesWorkspace::Impl {
     };
     struct Field {
         std::string id;std::optional<std::string>itemID;double initialScrollOffset{};
-        std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeProjectedEditor> native;
+        std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*history{};core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeProjectedEditor> native;
         std::uint64_t initialDocumentRevision{};
         UINT_PTR generation{}; // scene/document outlive the adapter on destruction
         Field(std::string name,std::u16string value,std::optional<core::notes::RichText> formatting,std::uint32_t capacity,LayerRasterizer&r,std::optional<std::string>row={})
-            :id(std::move(name)),itemID(std::move(row)),ownedDocument(itemID?std::unique_ptr<text::Document>(std::make_unique<text::Buffer>(std::move(value),capacity)):std::unique_ptr<text::Document>(std::make_unique<core::notes::RichDocument>(std::move(value),std::move(formatting),capacity))),document(*ownedDocument),rich(dynamic_cast<core::notes::RichDocument*>(ownedDocument.get())),scene(r){initialDocumentRevision=document.revision();}
+            :id(std::move(name)),itemID(std::move(row)),ownedDocument(std::make_unique<core::notes::RichDocument>(std::move(value),std::move(formatting),capacity)),document(*ownedDocument),history(static_cast<core::notes::RichDocument*>(ownedDocument.get())),rich(itemID?nullptr:history),scene(r){initialDocumentRevision=document.revision();}
     };
     struct Drag {std::string id;core::Rect original;core::Point start;mod::NotesState::Gesture kind;};
     HWND hwnd;DWORD thread{GetCurrentThreadId()};mod::NotesState&state;LayerRasterizer&raster;
@@ -144,7 +144,9 @@ struct NativeNotesWorkspace::Impl {
         }else{need(n.imageName.has_value(),"Image card has no source reference");content->legacyManagedImage=true;if(options.legacyImagePath)path=options.legacyImagePath(*n.imageName);}
         if(path&&options.imagePlayback&&content->kind!=mod::NotesMediaKind::video){
             asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,false,asset->accessLease},content->kind};content->status.state=mod::NotesMediaState::loading;
-        }else if(path&&options.videoPlayback&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease};content->status.state=mod::NotesMediaState::loading;}else{content->status.state=mod::NotesMediaState::failed;content->status.localizedError=content->kind==mod::NotesMediaKind::video?options.videoUnavailable:options.mediaUnavailable;content->legacyUnavailable=content->legacyManagedImage;}
+        }else if(path&&options.videoPlayback&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease,options.imagePlayback!=nullptr};
+            if(options.imagePlayback)asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,true,asset->accessLease,false,true},mod::NotesMediaKind::image};
+            content->status.state=mod::NotesMediaState::loading;}else{content->status.state=mod::NotesMediaState::failed;content->status.localizedError=content->kind==mod::NotesMediaKind::video?options.videoUnavailable:options.mediaUnavailable;content->legacyUnavailable=content->legacyManagedImage;}
         asset->content=std::move(content);mediaAssets.push_back(asset);mediaUploadPending=true;return asset;
     }
     void mediaClock(double time){need(std::isfinite(time)&&time>=mediaTime,"Invalid Notes media owner clock");mediaTime=time;}
@@ -157,10 +159,18 @@ struct NativeNotesWorkspace::Impl {
     bool readMedia(){
         bool changed{},contentChanged{};
         for(auto&asset:mediaAssets){
-            if(asset->request&&options.imagePlayback){const auto*record=options.imagePlayback->find(asset->key);if(!record)continue;
+            if(asset->request&&!asset->videoRequest&&options.imagePlayback){const auto*record=options.imagePlayback->find(asset->key);if(!record)continue;
                 if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->legacyUnavailable=content->legacyManagedImage&&record->state==mod::NotesMediaState::failed;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
                 if(record->frameRevision!=asset->observedFrame){asset->frame=record->frame;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
-            }else if(asset->videoRequest&&options.videoPlayback){const auto*record=options.videoPlayback->find(asset->key);if(!record)continue;
+            }else if(asset->videoRequest&&options.videoPlayback){
+                if(asset->request&&options.imagePlayback){const auto*poster=options.imagePlayback->find(asset->key);
+                    if(poster&&((poster->state==mod::NotesMediaState::ready&&poster->frame&&poster->frameRevision!=asset->observedPosterFrame)||(poster->state==mod::NotesMediaState::failed&&poster->contentRevision!=asset->observedPosterContent))){
+                        need(asset->posterSerial<std::numeric_limits<std::uint64_t>::max(),"Video poster completion generation exhausted");
+                        options.videoPlayback->setPoster(asset->key,asset->videoRequest->revision,++asset->posterSerial,poster->frame.get(),poster->error);
+                        asset->observedPosterFrame=poster->frameRevision;asset->observedPosterContent=poster->contentRevision;
+                    }
+                }
+                const auto*record=options.videoPlayback->find(asset->key);if(!record)continue;
                 if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->duration=record->duration;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
                 if(record->frameRevision!=asset->observedFrame){asset->videoTexture=record->textureID;asset->videoWidth=record->width;asset->videoHeight=record->height;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
             }
@@ -257,7 +267,7 @@ struct NativeNotesWorkspace::Impl {
         const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});
         ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
         if(next->rich)next->native=std::make_unique<NativeProjectedEditor>(hwnd,*next->rich,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
-        else next->native=std::make_unique<NativeProjectedEditor>(hwnd,next->document,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
+        else next->native=std::make_unique<NativeProjectedEditor>(hwnd,*next->history,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation,ProjectedEditorTextMode::plainHistory);
         next->native->setScrollOffset(offset); // source select-end THEN restore session viewport
         if(options.activatedTextManager)need(SUCCEEDED(next->native->connect(*options.activatedTextManager,options.textClient)),"Cannot connect Notes field to caller TSF manager");return next;
     }
@@ -323,7 +333,7 @@ bool NativeNotesWorkspace::setMediaActive(bool active,double time,bool preserve)
 bool NativeNotesWorkspace::acceptMedia(UINT_PTR generation,double time){auto&i=*impl_;i.check();i.mediaClock(time);bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->accept(generation,time);if(i.options.videoPlayback){changed=i.options.videoPlayback->accept(generation,time)||changed;changed=i.options.videoPlayback->sample(time)||changed;}return changed?i.readMedia():false;}
 bool NativeNotesWorkspace::sampleMedia(double time){auto&i=*impl_;i.check();i.mediaClock(time);bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->sample(time);if(i.options.videoPlayback)changed=i.options.videoPlayback->sample(time)||changed;return changed?i.readMedia():false;}
 std::optional<double>NativeNotesWorkspace::mediaNextWakeTime()const{auto&i=*impl_;i.check();auto result=i.options.imagePlayback?i.options.imagePlayback->nextWakeTime():std::nullopt;if(i.options.videoPlayback){const auto video=i.options.videoPlayback->nextWakeTime();if(video&&(!result||*video<*result))result=video;}return result;}
-bool NativeNotesWorkspace::toggleMedia(std::string_view id,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!i.mediaActive)return false;bool changed{};if(s->media->request&&i.options.imagePlayback)changed=i.options.imagePlayback->toggle(s->media->key,time);else if(s->media->videoRequest&&i.options.videoPlayback)changed=i.options.videoPlayback->toggle(s->media->key,time);i.readMedia();return changed;}
+bool NativeNotesWorkspace::toggleMedia(std::string_view id,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!i.mediaActive)return false;bool changed{};if(s->media->videoRequest&&i.options.videoPlayback)changed=i.options.videoPlayback->toggle(s->media->key,time);else if(s->media->request&&i.options.imagePlayback)changed=i.options.imagePlayback->toggle(s->media->key,time);i.readMedia();return changed;}
 bool NativeNotesWorkspace::beginMediaSeek(std::string_view id,core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!s->media->videoRequest||!s->media->content->duration||!i.options.videoPlayback||!i.mediaActive)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return false;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);if(!inside(layout.geometry().seek,{point->x-s->rect.x,point->y-s->rect.y}))return false;i.mediaSeek=Impl::MediaSeek{std::string(id),layout.seekSeconds(point->x-s->rect.x)};i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
 bool NativeNotesWorkspace::updateMediaSeek(core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;auto*s=i.find(i.mediaSeek->id);if(!s||!s->media)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return true;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);i.mediaSeek->seconds=layout.seekSeconds(point->x-s->rect.x);i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
 bool NativeNotesWorkspace::endMediaSeek(double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;const auto value=std::move(*i.mediaSeek);i.mediaSeek.reset();auto*s=i.find(value.id);if(s&&s->media&&i.options.videoPlayback){i.options.videoPlayback->seek(s->media->key,value.seconds);i.readMedia();i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);}return true;}

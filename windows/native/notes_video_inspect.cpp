@@ -10,11 +10,12 @@
 #include <limits>
 #include <cmath>
 #include <stdexcept>
+#include <system_error>
 #include <utility>
 namespace endfield::native::detail {
 namespace {
 using Microsoft::WRL::ComPtr;
-void checked(HRESULT hr,const char*message){if(FAILED(hr))throw std::runtime_error(message);}
+void checked(HRESULT hr,const char*message){if(FAILED(hr))throw std::system_error(static_cast<int>(hr),std::system_category(),message);}
 struct Platform {Platform(){checked(MFStartup(MF_VERSION,MFSTARTUP_NOSOCKET),"Initialize video metadata reader");}~Platform(){MFShutdown();}};
 struct Variant {PROPVARIANT value{};~Variant(){PropVariantClear(&value);}};
 void need(bool value,const char*message){if(!value)throw std::invalid_argument(message);}

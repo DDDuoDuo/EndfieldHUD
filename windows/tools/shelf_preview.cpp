@@ -189,6 +189,7 @@ bool ShelfPreview::message(const app::NativeMessage&m,double t){auto&i=*impl_;if
     if(m.message==iconMessage&&i.icons){if(!i.icons->drain(m.wParam).empty())i.dirty=true;return true;}return false;
 }
 bool ShelfPreview::pointerLocked()const{return impl_->dragCandidate.has_value()||impl_->nativeDrag;}
+bool ShelfPreview::preservesFocusOnLoss()const{const auto&i=*impl_;const auto picker=i.picker->stats();const auto preview=i.preview->stats();return i.nativeDrag||picker.queued||picker.presenting||preview.queued||preview.active||preview.visible||i.state->dropTarget();}
 std::optional<ShelfPreviewAction>ShelfPreview::takeAction(){return std::exchange(impl_->action,{});}
 bool ShelfPreview::importFiles(std::span<const std::string>paths,double t){auto&i=*impl_;const Impl::Event event(i,t);const bool value=i.state->importFiles(paths);i.changed();return value;}
 void ShelfPreview::showError(std::string message,double t){auto&i=*impl_;const Impl::Event event(i,t);i.state->showError(std::move(message));i.changed();}

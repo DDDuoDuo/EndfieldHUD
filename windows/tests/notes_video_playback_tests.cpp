@@ -1,4 +1,5 @@
 #include "native/notes_video_playback.hpp"
+#include "native/notes_image_decoder.hpp"
 #ifdef _WIN32
 #include <d3d11.h>
 #include <dxgi.h>
@@ -14,16 +15,16 @@ namespace n=endfield::native;namespace m=endfield::modules;using Microsoft::WRL:
 namespace {
 unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}template<class F>void rejects(F f,const char*s){bool caught{};try{f();}catch(const std::exception&){caught=true;}check(caught,s);}
 struct Window {HWND hwnd{};ATOM atom{};static constexpr UINT notice=WM_APP+250;Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldOwnedNotesVideo";atom=RegisterClassW(&c);check(atom!=0,"Register owned video fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Hidden synthetic video",WS_POPUP,0,0,32,32,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Video fixture stays hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
-struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{},preloadEnded{true};unsigned frames{},opens{},seeks{};HRESULT transferError{S_OK};std::array<std::uint8_t,4>pixel{0,0,255,255};std::shared_ptr<void>lease;};
+struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{},preloadEnded{true},seekNeedsTick{},seekNoticePending{},stallSeek{};unsigned frames{},opens{},seeks{};HRESULT transferError{S_OK};std::array<std::uint8_t,4>pixel{0,0,255,255};std::shared_ptr<void>lease;};
 class Engine final:public n::NativeNotesVideoPlayback::Engine {
     std::shared_ptr<Probe>p_;
 public:explicit Engine(std::shared_ptr<Probe>p):p_(std::move(p)){}~Engine()override{stop();}
     HRESULT open(const n::NotesVideoRequest&r)override{++p_->opens;p_->lease=r.accessLease;p_->notify(n::NativeNotesVideoPlayback::ready|n::NativeNotesVideoPlayback::firstFrame|(p_->preloadEnded?n::NativeNotesVideoPlayback::ended:0u),S_OK);return S_OK;}
     HRESULT metadata(n::NotesVideoMetadata&out)override{out={4,4,10};return S_OK;}
     HRESULT play()override{p_->playing=true;p_->fresh=true;return S_OK;}HRESULT pause()override{p_->playing=false;return S_OK;}
-    HRESULT seek(double t)override{p_->position=t;++p_->seeks;p_->fresh=true;p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);return S_OK;}
+    HRESULT seek(double t)override{p_->position=t;++p_->seeks;p_->fresh=true;if(p_->seekNeedsTick)p_->seekNoticePending=true;else p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);return S_OK;}
     double currentTime()const override{return p_->position;}
-    HRESULT tick(std::int64_t&pts)override{pts=static_cast<std::int64_t>(p_->position*10000000);if(!p_->fresh)return S_FALSE;p_->fresh=false;return S_OK;}
+    HRESULT tick(std::int64_t&pts)override{if(p_->seekNoticePending){if(!p_->stallSeek){p_->seekNoticePending=false;p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);}return S_FALSE;}pts=static_cast<std::int64_t>(p_->position*10000000);if(!p_->fresh)return S_FALSE;p_->fresh=false;return S_OK;}
     HRESULT transfer(void*raw,unsigned width,unsigned height)override{if(FAILED(p_->transferError)){const auto error=p_->transferError;p_->transferError=S_OK;return error;}ComPtr<ID3D11Texture2D>texture;const auto hr=static_cast<IDXGISurface*>(raw)->QueryInterface(IID_PPV_ARGS(&texture));if(FAILED(hr))return hr;ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);if(width!=4||height!=4)return E_INVALIDARG;std::array<std::uint8_t,64>pixels;for(unsigned i=0;i<pixels.size();i+=4)std::copy(p_->pixel.begin(),p_->pixel.end(),pixels.begin()+i);context->UpdateSubresource(texture.Get(),0,nullptr,pixels.data(),16,0);++p_->frames;return S_OK;}
     void stop()noexcept override{p_->playing=false;p_->stopped=true;p_->lease.reset();}
 };
@@ -64,6 +65,33 @@ void delayedPoster(const std::filesystem::path&shader){Window window;n::Renderer
     probe->fresh=true;video.sample(.1);check(video.find("delayed.poster")->textureID=="delayed.poster.poster"&&video.stats().transfers==1&&!video.requiresFrames(),"First S_OK tick captures one poster then stops paused demand");
     video.hide(1);video.collectRetired();video.retire("delayed.poster");video.setVisible(request,2);video.accept(31,2);video.sample(7.01);const auto*r=video.find("delayed.poster");check(FAILED(r->posterError)&&r->state==m::NotesMediaState::paused&&r->textureID.empty()&&!video.requiresFrames(),"A stalled poster has a finite best-effort failure instead of idle polling");check(video.play("delayed.poster",7.1)&&video.sample(7.1)&&video.find("delayed.poster")->state==m::NotesMediaState::playing,"Poster timeout still permits explicit playback");video.hide(8);video.collectRetired();video.retire("delayed.poster");
 }
+void workerPoster(const std::filesystem::path&shader){Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});std::shared_ptr<Probe>probe;
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::notice,41},[&](auto,auto callback){probe=std::make_shared<Probe>();probe->fresh=false;probe->notify=std::move(callback);return std::make_unique<Engine>(probe);});
+    const std::array request{n::NotesVideoRequest{"worker.poster","C:\\owned-synthetic\\tiny.mp4",1,512,10,{},true}};video.setVisible(request,0);video.accept(41,0);video.sample(0);
+    check(video.find("worker.poster")->state==m::NotesMediaState::loading&&!video.requiresFrames()&&!video.nextWakeTime()&&video.stats().ticks==0&&renderer.stats().mediaTargets==0,"Worker poster waits on completion without paused native ticks, playback or GPU target");
+    n::NotesImageFrame frame{4,4,0,std::vector<std::uint8_t>(4*4*4,255)};for(std::size_t at=0;at<frame.straightRGBA.size();at+=4){frame.straightRGBA[at+1]=0;frame.straightRGBA[at+2]=0;}
+    check(!video.setPoster("worker.poster",2,1,&frame),"Different reference revision cannot publish stale worker pixels");
+    check(video.setPoster("worker.poster",1,1,&frame),"Current immutable worker frame uploads once on owner thread");const auto*r=video.find("worker.poster");
+    check(r->state==m::NotesMediaState::paused&&!r->textureID.empty()&&probe->position==0&&!probe->playing&&probe->seeks==0&&video.stats().ticks==0&&renderer.stats().mediaTargets==0&&renderer.stats().mediaLiveBytes==4*4*8,"Static poster does not advance or play native video and releases its transfer slot");
+    const auto commits=renderer.stats().mediaFrameCommits;check(!video.setPoster("worker.poster",1,1,&frame)&&renderer.stats().mediaFrameCommits==commits,"Duplicate worker completion never repeats upload");
+    probe->seekNeedsTick=true;const auto oldPoster=r->textureID;const auto oldFrames=r->frameRevision;
+    check(video.seek("worker.poster",3)&&video.requiresFrames()&&!probe->playing,"Paused seek requests owner frames before native SEEKED without starting playback");
+    video.sample(.01);check(r->pendingSeek&&r->textureID==oldPoster&&r->frameRevision==oldFrames,"Pending seek tick does not publish a stale or unready live frame");
+    video.accept(41,.02);video.sample(.02);check(!r->pendingSeek&&!video.requiresFrames()&&r->textureID=="worker.poster.live"&&!probe->playing,"Tick-driven SEEKED publishes one ready paused frame then settles");
+    video.seek("worker.poster",0);video.sample(.03);video.accept(41,.04);video.sample(.04);
+
+    const std::array<n::Vertex,4>vertices{{{{-1,1,0},{0,0}},{{1,1,0},{1,0}},{{1,-1,0},{1,1}},{{-1,-1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};renderer.setMesh("poster.quad",1,{vertices,indices});n::DrawObject draw;draw.sourceID="poster.draw";draw.meshID="poster.quad";draw.textureID=oldPoster;renderer.setDrawList(std::span(&draw,1));renderer.draw(false);const auto pixels=renderer.readback();const auto center=(16*32+16)*4;
+    check(pixels.pixels[center+2]>250&&pixels.pixels[center]<3&&pixels.pixels[center+3]>250,"Worker RGBA uses existing media color conversion and paints actual red pixels");
+    video.hide(1,true);check(!video.setPoster("worker.poster",1,2,&frame),"Hidden worker result cannot reacquire resources");video.setVisible(request,1.1);video.accept(41,1.1);check(r->state==m::NotesMediaState::loading&&!video.requiresFrames(),"Re-show preserves old artwork but reports source loading while new worker result is pending");
+    video.setPoster("worker.poster",1,2,&frame);check(r->textureID!=draw.textureID&&r->state==m::NotesMediaState::paused,"Re-extracted poster gets a retained identity without mutating published prior pixels");
+    check(!video.collectRetired(),"Old published poster remains alive until owner republishes");draw.textureID=r->textureID;renderer.setDrawList(std::span(&draw,1));check(video.collectRetired(),"Replaced poster releases after publication detaches old identity");
+    renderer.clearDrawList();video.hide(2);video.collectRetired();video.retire("worker.poster");check(renderer.stats().mediaLiveBytes==0,"Worker poster retirement clears all charged GPU bytes");
+    video.setVisible(request,3);video.accept(41,3);video.setPoster("worker.poster",1,1,&frame);probe->seekNeedsTick=true;probe->stallSeek=true;
+    video.seek("worker.poster",4);video.sample(3.1);check(video.requiresFrames(),"Unfinished native seek temporarily retains bounded demand");video.sample(8.01);
+    check(video.find("worker.poster")->state==m::NotesMediaState::failed&&!video.requiresFrames()&&!video.nextWakeTime(),"Stalled native seek becomes explicit bounded failure without a persistent frame loop");
+    video.hide(9);video.collectRetired();video.retire("worker.poster");
+
+}
 void unsupported(const std::filesystem::path&shader){Window w;n::Renderer renderer;renderer.initialize(w.hwnd,32,32,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});
     const auto path=std::filesystem::temp_directory_path()/(L"endfield-owned-invalid-video-"+std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64())+L".mp4");check(!std::filesystem::exists(path),"Invalid-media fixture never overwrites an existing file");struct Cleanup{std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove(path,error);}}cleanup{path};{std::ofstream file(path,std::ios::binary);file<<"Owned synthetic invalid container. No encoded image, video, or audio stream.";check(bool(file),"Write only bounded invalid fixture bytes");}
     {n::NativeNotesVideoPlayback video(renderer,{w.hwnd,Window::notice,9});const auto u=path.u8string();const std::array request{n::NotesVideoRequest{"invalid",std::string(reinterpret_cast<const char*>(u.data()),u.size()),1}};video.setVisible(request,0);const auto deadline=GetTickCount64()+10000;
@@ -72,7 +100,7 @@ void unsupported(const std::filesystem::path&shader){Window w;n::Renderer render
     check(!IsWindowVisible(w.hwnd)&&renderer.stats().presents==0,"Actual invalid-container check never shows or captures desktop");
 }
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyPaused(argv[1]);delayedPoster(argv[1]);workerPoster(argv[1]);unsupported(argv[1]);std::cout<<"PASS "<<checks<<" Notes video owner checks (injected video; actual invalid-container decode only, no audio)\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #else
 int main(){return 0;}
 #endif

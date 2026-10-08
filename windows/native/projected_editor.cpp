@@ -50,7 +50,7 @@ public:
 }
 struct NativeProjectedEditor::Impl {
     DWORD thread{GetCurrentThreadId()};bool alive{true},stopped{},dragging{},poseReady{},poseSet{},styleDirty{true},viewportDirty{},revealPending{};
-    BoundedDocument document;core::notes::RichDocument* rich{};bool richLayout{},normalizedParagraphs{};std::vector<text::Range> spacedParagraphs;std::u16string paragraphText;LayerScene* scene;ProjectedEditorStyle style;LayerRasterOptions options;
+    BoundedDocument document;core::notes::RichDocument* rich{};core::notes::RichDocument*history{};bool richLayout{},normalizedParagraphs{};std::vector<text::Range> spacedParagraphs;std::u16string paragraphText;LayerScene* scene;ProjectedEditorStyle style;LayerRasterOptions options;
     std::unique_ptr<LayerTextLayout> layout;std::unique_ptr<ProjectedTextInput> input;
     std::uint64_t glyphRevision{},shapeRevision{},paintRevision{},structureRevision{},paintedDocument{},adornedDocument{};
     text::Selection adornedSelection;std::optional<text::Range>adornedComposition;std::optional<char16_t>highUnit;
@@ -58,8 +58,8 @@ struct NativeProjectedEditor::Impl {
     std::array<std::array<PlaneMask,8>,4> masks;std::array<std::size_t,4> maskCounts{};
     text::Placement placement;ProjectedEditorPose pose;double scroll{},horizontal{};core::Rect caretRect;Json glyphContent;std::array<Json,4>shapeContent;
     static constexpr std::array<const char*,4> ids{"projected-editor-selection","projected-editor-glyphs","projected-editor-composition","projected-editor-caret"};
-    Impl(text::Document& d,LayerScene& s,ProjectedEditorStyle styleValue,LayerRasterOptions opts,PlainEditorFixtureCapacity capacity,core::notes::RichDocument* richValue=nullptr)
-        :document(d,capacity.maximumUnits),rich(richValue),scene(&s),style(std::move(styleValue)),options(std::move(opts)){
+    Impl(text::Document& d,LayerScene& s,ProjectedEditorStyle styleValue,LayerRasterOptions opts,PlainEditorFixtureCapacity capacity,core::notes::RichDocument* richValue=nullptr,core::notes::RichDocument* historyValue=nullptr)
+        :document(d,capacity.maximumUnits),rich(richValue),history(historyValue?historyValue:richValue),scene(&s),style(std::move(styleValue)),options(std::move(opts)){
         richLayout=rich&&rich->richText().has_value();if(rich)paragraphText=document.text();options.paddingPoints=0;options.retainEmptyTextLayout=true;options.plainTextDocument=!rich&&!style.naturalParagraphSpacingOne;options.richTextDocument=rich!=nullptr||style.naturalParagraphSpacingOne;options.textDocumentOffset={};options.retainedPlainText.reset();options.revealPlainTextPosition.reset();validate(style,options);need(s.contentRevision()==0&&s.draws().empty(),"Projected editor needs its dedicated initially empty borrowed scene");}
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Projected editor used outside its creating thread");need(alive&&!stopped,"Projected editor is stopped");}
     void current()const{onThread();need(layout&&layout->textRevision()==document.revision(),"Synchronize editor text before geometry/navigation");}
@@ -144,7 +144,7 @@ struct NativeProjectedEditor::Impl {
         // any content/pixel mutation. Owner retries after its queued change.
         if(input){const auto ready=input->setPlacement(placement);if(ready==TS_E_NOLOCK||!alive)return false;checked(ready,"Check editor layout transaction");}
         if(layout&&paintedDocument!=document.revision())revealPending=true;
-        if(!layout||paintedDocument!=document.revision()||styleDirty){build();changed=layoutChanged=true;}
+        if(!layout||paintedDocument!=document.revision()||styleDirty){if(history&&!rich)need(!history->richText(),"Plain history field cannot flatten externally formatted text");build();changed=layoutChanged=true;}
         if(revealPending){const auto selected=document.selection();const auto at=selected.activeEnd==text::ActiveEnd::start?selected.range.start:selected.range.end;const auto box=layout->bounds({at,at});
             if(box){const auto&r=box->bounds;auto next=scroll;if(r.y<next)next=r.y;else if(r.y+r.height>next+style.height)next=r.y+r.height-style.height;next=std::clamp(next,0.,maximumScroll());auto nextX=horizontal;if(style.sourceSingleLineField){if(r.x<nextX)nextX=r.x;else if(r.x+r.width>nextX+style.width)nextX=r.x+r.width-style.width;nextX=std::clamp(nextX,0.,maximumHorizontal());}viewportDirty|=next!=scroll||nextX!=horizontal;scroll=next;horizontal=nextX;}revealPending=false;}
         const bool scrolled=viewportDirty;if(viewportDirty){paintViewport();changed=true;}
@@ -178,8 +178,8 @@ NativeProjectedEditor::NativeProjectedEditor(HWND hwnd,text::Document& doc,Layer
     i.placement={core::Projection{},{0,0,i.style.width,i.style.height},{i.horizontal,i.scroll},false,i.style.cornerRadius};
     checked(i.input->setPlacement(i.placement),"Initialize concealed editor placement");
 }
-NativeProjectedEditor::NativeProjectedEditor(HWND hwnd,core::notes::RichDocument&doc,LayerScene&scene,ProjectedEditorStyle style,LayerRasterOptions options,PlainEditorFixtureCapacity capacity,UINT message,UINT_PTR generation)
-    :impl_(std::make_shared<Impl>(doc,scene,std::move(style),std::move(options),capacity,&doc)){
+NativeProjectedEditor::NativeProjectedEditor(HWND hwnd,core::notes::RichDocument&doc,LayerScene&scene,ProjectedEditorStyle style,LayerRasterOptions options,PlainEditorFixtureCapacity capacity,UINT message,UINT_PTR generation,ProjectedEditorTextMode mode)
+    :impl_([&]{need(mode==ProjectedEditorTextMode::rich||mode==ProjectedEditorTextMode::plainHistory,"Invalid projected text mode");need(mode!=ProjectedEditorTextMode::plainHistory||!doc.richText(),"Plain history mode cannot flatten imported rich text");return std::make_shared<Impl>(doc,scene,std::move(style),std::move(options),capacity,mode==ProjectedEditorTextMode::rich?&doc:nullptr,&doc);}()){
     auto&i=*impl_;i.sync();i.input=std::make_unique<ProjectedTextInput>(hwnd,i.document,*i.layout,message,generation);
     i.placement={core::Projection{},{0,0,i.style.width,i.style.height},{i.horizontal,i.scroll},false,i.style.cornerRadius};
     checked(i.input->setPlacement(i.placement),"Initialize concealed rich editor placement");
@@ -241,14 +241,14 @@ ProjectedEditorResult NativeProjectedEditor::applyFormat(const core::notes::Form
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Format source rich document");return {true,changed,false};
 }
 ProjectedEditorResult NativeProjectedEditor::undo(){
-    auto i=impl_;i->current();if(!i->rich)return {};bool changed{};
-    const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->document.text());changed=i->rich->undo();if(!changed)return {};i->revealPending=true;
+    auto i=impl_;i->current();if(!i->history)return {};bool changed{};
+    const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->document.text());changed=i->history->undo();if(!changed)return {};i->revealPending=true;
         if(before==i->document.text())return {};return text::Change{0,static_cast<std::uint32_t>(before.size()),static_cast<std::uint32_t>(i->document.text().size())};});
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Undo source rich document");return {true,changed,false};
 }
 ProjectedEditorResult NativeProjectedEditor::redo(){
-    auto i=impl_;i->current();if(!i->rich)return {};bool changed{};
-    const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->document.text());changed=i->rich->redo();if(!changed)return {};i->revealPending=true;
+    auto i=impl_;i->current();if(!i->history)return {};bool changed{};
+    const auto hr=i->input->performHostEdit([&]()->std::optional<text::Change>{const auto before=std::u16string(i->document.text());changed=i->history->redo();if(!changed)return {};i->revealPending=true;
         if(before==i->document.text())return {};return text::Change{0,static_cast<std::uint32_t>(before.size()),static_cast<std::uint32_t>(i->document.text().size())};});
     if(hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Redo source rich document");return {true,changed,false};
 }

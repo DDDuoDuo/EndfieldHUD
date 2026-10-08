@@ -9,6 +9,7 @@
 #include <dwrite.h>
 #include <winsqlite/winsqlite3.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -126,13 +127,13 @@ struct Fixture final {
     bool released{};
 
     Fixture(HWND hwnd, gpu::Renderer& r, gpu::LayerRasterizer& raster,
-            const gpu::NativeNotesControlsAssets& assets,const std::filesystem::path&formatRoot={}) : renderer(r), ownerWindow(hwnd) {
+            const gpu::NativeNotesControlsAssets& assets,const std::filesystem::path&formatRoot={},std::span<const data::Note>initialNotes={}) : renderer(r), ownerWindow(hwnd) {
         settings.viewport = {0, 0, 1280, 800};
         settings.module = core::Module::notes;
         settings.sourceShell = true;
         design = source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
         published.reserve(132);
-        preview = std::make_unique<tools::NotesPreview>(hwnd, raster, root.path, assets, false,formatRoot);
+        preview = std::make_unique<tools::NotesPreview>(hwnd, raster, root.path, assets, false,formatRoot,initialNotes);
         preview->resize({1280, 800, 96, 1, 1280, 800});
         frame();
     }
@@ -179,9 +180,9 @@ struct Fixture final {
         frame();
         return handled;
     }
-    bool key(app::KeyKind kind, std::uint32_t value) {
+    bool key(app::KeyKind kind, std::uint32_t value,std::optional<tools::NotesKeyModifiers>modifiers={}) {
         tick(.01);
-        const bool handled = preview->key({kind, value}, time);
+        const bool handled = preview->key({kind, value}, time,modifiers);
         frame();
         return handled;
     }
@@ -751,6 +752,50 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     fixture.release();
     check(raster.stats().entries == 0, "Teardown removes every preview-owned raster entry");
 }
+void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    const tools::NotesKeyModifiers control{true,false,false,false};
+    {
+        gpu::LayerRasterizer raster;data::Note note;note.text="原有中文😀";note.x=180;note.y=245;note.width=240;note.height=145;
+        const std::array initial{note};Fixture f(hwnd,renderer,raster,assets,{},initial);
+        check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Owner opens explicit short Unicode fixture");
+        check(f.key(app::KeyKind::character,'x'),"Owner receives an ordinary plain edit");
+        check(f.key(app::KeyKind::down,'Z',control),"Owner routes Ctrl+Z through shared history");
+        check(f.key(app::KeyKind::down,VK_RETURN,control),"Unmarked exact Ctrl+Return commits without a newline");
+        check(!f.draw("projected-editor-glyphs")&&savedNotes(f.root.path).front().text==note.text,"Control-return retires editor and undo preserved original plain Unicode");
+        check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Owner can edit again after control-return");
+        check(f.key(app::KeyKind::unicodeCharacter,0x4e2d),"Owner accepts another Unicode edit");
+        check(!f.key(app::KeyKind::down,VK_RETURN,tools::NotesKeyModifiers{true,true,false,false})&&f.draw("projected-editor-glyphs"),"Ctrl+Shift+Return does not accidentally finish multiline input");
+        check(f.key(app::KeyKind::down,VK_RETURN,control),"Exact commit chord still works after unhandled modified Return");
+        const auto saved=savedNotes(f.root.path).front();check(saved.text==note.text+"中"&&!saved.richText&&saved.id==note.id,"Commit saves exactly plain text with stable note metadata");f.release();
+    }
+    {
+        gpu::LayerRasterizer raster;data::Note note;note.text=std::string(65537,'a');note.x=180;note.y=245;note.width=240;note.height=145;
+        const std::array initial{note};Fixture f(hwnd,renderer,raster,assets,{},initial);
+        check(f.draw(cardID(note))&&!f.draw("projected-editor-glyphs"),"Imported text beyond editor capacity remains a readable settled card");
+        check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Oversized editor request is consumed by its existing card owner");
+        check(f.preview->mediaError().has_value()&&!f.draw("projected-editor-glyphs")&&f.preview->selected()==core::Module::notes,"Capacity refusal displays recoverable status without dismissing HUD or publishing partial editor");
+        check(savedNotes(f.root.path).front().text==note.text&&f.draw(cardID(note)),"Capacity refusal leaves full persisted data and original card artwork intact");
+        f.tick(.3); // Settle source selection motion before checking fixed plane.
+        const auto measured=raster.stats().textLayoutsCreated;
+        gpu::LayerScene*cardScene{};
+        for(const auto&entry:f.preview->entries())for(const auto&draw:entry.scene->draws())
+            if(draw.sourceID.ends_with(cardID(note)))cardScene=entry.scene;
+        check(cardScene!=nullptr,"Readable oversized card has a retained local artwork owner");
+        const auto resources=cardScene->resourceRevision(),publications=f.publications;
+        const auto cardWorld=f.draw(cardID(note))->world;
+        f.time+=.01;check(f.preview->wheel({note.x+30,note.y+45,-1,false,0,3},f.time),"Oversized note remains scrollable after declined editor entry");f.frame();
+        // Settled card line layers are grouped inside its one local raster,
+        // not published as separate composition draws. A scroll advances this
+        // group's resource revision while keeping its plane fixed. The direct
+        // workspace fixture separately checks exact offset/index retention.
+        const auto layouts=raster.stats().textLayoutsCreated-measured;
+        const auto*scrolledCard=f.draw(cardID(note));const bool retained=cardScene->resourceRevision()>resources&&f.publications==publications+1&&scrolledCard&&scrolledCard->world==cardWorld&&layouts>0&&layouts<=12&&!IsWindowVisible(hwnd);
+        if(!retained)std::cerr<<"Capacity scroll resources="<<resources<<"->"<<cardScene->resourceRevision()<<" publications="<<publications<<"->"<<f.publications<<" layouts="<<layouts<<" card="<<(scrolledCard!=nullptr)<<" fixedPlane="<<(scrolledCard&&scrolledCard->world==cardWorld)<<'\n';
+        check(retained,"Recoverable settled scrolling repaints bounded visible text in the retained card plane");
+        check(savedNotes(f.root.path).front().text==note.text&&!f.draw("projected-editor-glyphs"),"Scrolling after capacity refusal retains the complete original document without creating an editor");
+        f.release();check(raster.stats().entries==0,"Recoverable failure retires all owned artwork cleanly");
+    }
+}
 void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets,const std::filesystem::path&formatRoot){
     gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets,formatRoot);
     auto note=savedNotes(f.root.path).front();
@@ -801,6 +846,7 @@ int wmain(int argc, wchar_t** argv) {
         reentrantClock(window.hwnd, renderer, assets);
         scrollPreview(window.hwnd, renderer, assets);
         run(window.hwnd, renderer, assets);
+        editingRecovery(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

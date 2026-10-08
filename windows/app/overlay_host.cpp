@@ -354,10 +354,13 @@ struct OverlayHost::Impl {
             if(window!=target||callbacks!=handlers)return 0;
             if (ready && handlers && handlers->focus) handlers->focus(focused);
             break;
-        case WM_ACTIVATEAPP:
-            appActive = w != 0;
+        case WM_ACTIVATEAPP: {
+            const bool changed=appActive!=(w!=0);appActive = w != 0;
             if (!appActive) releaseCursor();
+            if(window!=target||callbacks!=handlers)return 0;
+            if(changed&&ready&&handlers&&handlers->applicationActive)handlers->applicationActive(appActive);
             break;
+        }
         case WM_ENABLE:
             if (!w) releaseCursor();
             break;
