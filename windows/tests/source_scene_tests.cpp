@@ -53,7 +53,7 @@ struct CacheOffsets {
         const auto sources=u32();for(unsigned i=0;i<sources;++i)for(unsigned j=0;j<4;++j)blob();
         catalogCount=cursor;const auto extra=u32();
         if(extra){blob();catalogGeometry=cursor+4;blob();catalogSource=cursor;cursor+=4;catalogWidth=cursor;}
-        else if(cursor!=file.size())throw std::runtime_error("Synthetic base cache layout scanner mismatch");
+        else {const auto dependencies=u32();for(unsigned i=0;i<dependencies;++i){blob();cursor+=4;}if(cursor!=file.size())throw std::runtime_error("Synthetic base cache layout scanner mismatch");}
     }
 };
 void put(std::string& data,unsigned offset,float value){const auto bits=std::bit_cast<std::uint32_t>(value);for(unsigned i=0;i<4;++i)data[offset+i]=static_cast<char>(bits>>(8*i));}
@@ -149,7 +149,78 @@ std::vector<std::pair<std::string,std::string>> snapshot(const gpu::SourceScene&
 std::vector<std::pair<std::string,std::string>> activeSnapshot(const gpu::SourceScene& scene){std::vector<std::pair<std::string,std::string>> out;for(const auto& u:scene.uniformPayloads())if(u.active)out.emplace_back(u.id,std::string(reinterpret_cast<const char*>(u.bytes.data()),u.bytes.size()));return out;}
 std::uint64_t geometryRevision(const gpu::SourceScene& scene,const char* id){for(const auto& g:scene.geometryPayloads())if(g.id==id)return g.revision;throw std::runtime_error("Fixture geometry missing");}
 float scalar(const std::string& data,unsigned offset){float value{};std::memcpy(&value,data.data()+offset,4);return value;}
+void desktopClosure(){
+    const auto metadata=[](Fixture&fixture,bool missing=false){
+        auto manifest=Json::parse(read(fixture.root/"shell-packet.json"));auto textures=manifest["textures"].array();
+        unsigned ordinal{};for(const char*id:{"desktop.profile.hover","sprite-texture","raw-texture","mask-texture","material-texture","unreferenced-exported"}){
+            auto texture=textures.front();texture["id"]=id;
+            auto mip=fixture.blob(std::string("texture/")+id+".bin",std::string(4,static_cast<char>(++ordinal)));mip["level"]=0;mip["width"]=1;mip["height"]=1;mip["rowBytes"]=4;
+            texture["mips"]=Json::Array{mip};texture["sampler"]["minFilter"]=1;textures.push_back(texture);
+        }
+        manifest["textures"]=textures;
+        const auto pointer=[](const char*id){return Json::Object{{"target_id",id}};};
+        // Keep each initializer shallow: MSVC's compiler heap grows sharply for
+        // a single deeply nested map/variant initializer even for small fixtures.
+        Json builder=Json::Object{};
+        builder["desktopTextureDependencies"]=Json::Array{"__white","desktop.profile.hover","sprite-texture","raw-texture","mask-texture"};
+        Json sprites=Json::Object{};
+        sprites["authored-component"]=Json::Object{{"textureID","sprite-texture"}};
+        sprites["unexported-game-component"]=Json::Object{{"textureID","not-exported-game-art"}};
+        builder["sprites"]=std::move(sprites);
+        Json sourceSprites=Json::Object{};
+        sourceSprites["explicit-sprite"]=Json::Object{{"textureID","sprite-texture"}};
+        sourceSprites["geometry-only-sprite"]=Json::Object{{"textureID","not-exported-replaced-texture"}};
+        builder["sourceSprites"]=std::move(sourceSprites);
+        Json images=Json::Object{};
+        images["initially-transparent-profile-highlight"]=Json::Object{{"texture",missing?"missing-desktop-image":"desktop.profile.hover"}};
+        Json settings=Json::Object{};settings["images"]=std::move(images);
+        settings["sprites"]=Json::Object{{"runtime-node","explicit-sprite"},{"initially-transparent-profile-highlight","geometry-only-sprite"}};
+        builder["desktopSettings"]=std::move(settings);
+        Json textureProperty=Json::Object{{"m_Texture",pointer("material-texture")}};
+        Json savedProperties=Json::Object{};
+        savedProperties["m_TexEnvs"]=Json::Array{Json::Array{"OriginalProperty",std::move(textureProperty)}};
+        Json materialData=Json::Object{{"m_SavedProperties",std::move(savedProperties)}};
+        Json material=Json::Object{{"data",std::move(materialData)}};
+        builder["materials"]=Json::Object{{"source-material",std::move(material)}};
+        Json maskTexture=Json::Object{{"id","mask-texture"}};
+        Json mask=Json::Object{{"texture",std::move(maskTexture)}};
+        Json mounted=Json::Object{};
+        mounted["spriteByComponent"]=Json::Object{{"mask-component",std::move(mask)}};
+        Json rawData=Json::Object{{"m_Texture",pointer("raw-texture")}};
+        Json raw=Json::Object{{"script","UIRawImage"},{"type","MonoBehaviour"},{"data",std::move(rawData)}};
+        Json components=Json::Object{};components["raw-node"]=Json::Array{std::move(raw)};
+        mounted["components"]=std::move(components);
+        Json animation=Json::Object{};animation["library"]=Json::Object{{"clips",Json::Array{}}};
+        animation["frameBuilder"]=std::move(builder);animation["mountedDocument"]=std::move(mounted);
+        manifest["animation"]=fixture.blob("animation.json",animation.encode());write(fixture.root/"shell-packet.json",manifest.encode());
+    };
+    Fixture fixture;metadata(fixture);gpu::SourceScene scene(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");
+    const auto before=snapshot(scene);check(scene.stats().textures==1,"A sampled frame does not incidentally load invisible dynamic textures");
+    const auto dependencies=scene.includeDesktopResources(fixture.root);
+    check(dependencies==std::vector<std::string>{"__white","desktop.profile.hover","mask-texture","raw-texture","sprite-texture"},"Source desktop/image/raw/mask closure excludes inactive material defaults and unreferenced exported textures");
+    check(scene.stats().textures==5&&scene.templates().size()==2&&scene.stats().batches==2&&snapshot(scene)==before,"Resource closure adds no fake frame, template, pose or changed UBO");
+    check(scene.includeDesktopResources(fixture.root)==dependencies&&scene.stats().textures==5,"Repeated build-time resource closure is idempotent");
+    const auto cache=fixture.root/"desktop-closure.ehscene";scene.writeCompiled(cache);gpu::SourceScene loaded(gpu::CompiledSourceScene{cache,{}});
+    const auto roundtrip=fixture.root/"desktop-closure-roundtrip.ehscene";loaded.writeCompiled(roundtrip);
+    check(loaded.stats().textures==5&&read(cache)==read(roundtrip),"Compiled cache preserves every extra original mip byte and sampler losslessly");
+    const auto encoded=read(cache);const auto dependency=encoded.rfind("sprite-texture");check(dependency!=std::string::npos,"Compiled closure retains explicit source dependency identity");
+    const auto corruptPath=fixture.root/"bad-closure.ehscene";auto invalid=encoded;invalid[dependency]='X';repairHash(invalid);write(corruptPath,invalid);
+    rejects([&]{gpu::SourceScene bad(gpu::CompiledSourceScene{corruptPath,{}});},"Hash-valid dependency must refer to an installed original texture");
+    invalid=encoded;little(invalid,dependency+std::string_view("sprite-texture").size(),1);repairHash(invalid);write(corruptPath,invalid);
+    rejects([&]{gpu::SourceScene bad(gpu::CompiledSourceScene{corruptPath,{}});},"Hash-valid dependency cannot reference absent source provenance");
+    const auto&prototype=scene.templates().front();gpu::SourceAssembledBatch entry;
+    entry.stateID="later-hover";entry.prototypeID=prototype.id;entry.state=prototype.originalState;entry.textureOverrides={{"Main","desktop.profile.hover"}};
+    check(scene.assembleFrame(std::span(&entry,1),scene.parameters())&&loaded.assembleFrame(std::span(&entry,1),loaded.parameters()),"An initially unseen profile hover uses its original resource after standalone cache load");
+    rejects([&]{scene.includeDesktopResources(fixture.root);},"Dynamic resources cannot be installed after live submission");
+    entry.textureOverrides[0].textureID="not-exported-game-art";rejects([&]{loaded.assembleFrame(std::span(&entry,1),loaded.parameters());},"Unexported game art remains an explicit live error, never a substitute texture");
+    Fixture missing;metadata(missing,true);gpu::SourceScene absent(missing.root,missing.shaders/"compiled-shaders.json","fixture");
+    rejects([&]{absent.includeDesktopResources(missing.root);},"Missing mandatory desktop replacement fails before shipping cache generation");check(absent.stats().textures==1,"Missing desktop reference leaves resources unchanged");
+    Fixture corrupt;metadata(corrupt);gpu::SourceScene damaged(corrupt.root,corrupt.shaders/"compiled-shaders.json","fixture");write(corrupt.root/"texture/raw-texture.bin","xxxx");
+    rejects([&]{damaged.includeDesktopResources(corrupt.root);},"Dynamic resource mip hash is checked before installation");check(damaged.stats().textures==1,"Late staged mip failure cannot partially install earlier textures");
+    rejects([&]{absent.includeDesktopResources(fixture.root);},"Different packet provenance cannot be spliced into an older compiled scene");
+}
 void run(){
+    desktopClosure();
     Fixture fixture;gpu::SourceScene scene(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");
     check(scene.stats().batches==2&&scene.stats().draws==2&&scene.stats().uniforms==3,"Identical world buffers are isolated per batch; compatible camera buffer shared");
     const auto cache=fixture.root/"compiled-source.ehscene";scene.writeCompiled(cache);const auto file=read(cache);
@@ -161,7 +232,7 @@ void run(){
     rejects([&]{gpu::SourceScene other(gpu::CompiledSourceScene{cache,std::string(64,'0')});},"Shipping hash pin rejects a different complete artifact");
     const auto corrupt=fixture.root/"corrupt.ehscene";
     auto badFile=file;badFile.back()^=1;write(corrupt,badFile);rejects([&]{gpu::SourceScene other(gpu::CompiledSourceScene{corrupt,{}});},"Payload corruption is rejected before decoding");
-    badFile=file;badFile[8]=4;write(corrupt,badFile);rejects([&]{gpu::SourceScene other(gpu::CompiledSourceScene{corrupt,{}});},"Unsupported compiled schema is rejected");
+    badFile=file;badFile[8]=5;write(corrupt,badFile);rejects([&]{gpu::SourceScene other(gpu::CompiledSourceScene{corrupt,{}});},"Unsupported compiled schema is rejected");
     badFile=file;badFile[12]^=1;write(corrupt,badFile);rejects([&]{gpu::SourceScene other(gpu::CompiledSourceScene{corrupt,{}});},"Inconsistent compiled payload length is rejected");
     badFile=file;badFile.push_back(0);write(corrupt,badFile);rejects([&]{gpu::SourceScene other(gpu::CompiledSourceScene{corrupt,{}});},"Trailing compiled data is rejected");
     badFile=file;badFile[84]=static_cast<char>(255);badFile[85]=static_cast<char>(255);badFile[86]=static_cast<char>(255);badFile[87]=static_cast<char>(255);repairHash(badFile);write(corrupt,badFile);

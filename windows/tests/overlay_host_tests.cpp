@@ -2,6 +2,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #ifdef _WIN32
@@ -130,6 +131,62 @@ void coalescing() {
 
 #ifdef _WIN32
 void drain(OverlayHost& host) { for (unsigned i = 0; i < 8; ++i) host.pumpOnce(0); }
+std::wstring ownObjectName(HANDLE object){
+    DWORD bytes{};GetUserObjectInformationW(object,UOI_NAME,nullptr,0,&bytes);
+    check(bytes>=sizeof(wchar_t)&&bytes<=4096,"Owned desktop/station name is bounded");
+    std::wstring result(bytes/sizeof(wchar_t),L'\0');
+    check(GetUserObjectInformationW(object,UOI_NAME,result.data(),bytes,&bytes)!=FALSE,"Read owned desktop/station identity");
+    result.resize(std::char_traits<wchar_t>::length(result.c_str()));return result;
+}
+void hiddenStartupChild(){
+    // This branch must never show a window on the user's active desktop, even
+    // if someone invokes its command-line flag outside the isolated parent.
+    check(ownObjectName(GetThreadDesktop(GetCurrentThreadId())).starts_with(L"EndfieldHUDHiddenStartup."),"Show regression runs only on its separate test desktop");
+    STARTUPINFOW startup{};startup.cb=sizeof(startup);GetStartupInfoW(&startup);
+    check((startup.dwFlags&STARTF_USESHOWWINDOW)&&startup.wShowWindow==SW_HIDE,"Owned child really inherited hidden startup state");
+    unsigned frames{},focusEvents{};OverlayCallbacks callbacks;
+    callbacks.frame=[&](double){++frames;};callbacks.focus=[&](bool){++focusEvents;};
+    OverlayHost host;host.create({L"Isolated hidden-startup gate",11,13,48,40,nullptr},callbacks);
+    const auto window=static_cast<HWND>(host.hwnd());RECT before{};check(GetWindowRect(window,&before)!=FALSE,"Read own initial rectangle");
+    const auto style=GetWindowLongPtrW(window,GWL_STYLE),extended=GetWindowLongPtrW(window,GWL_EXSTYLE);const auto focus=GetFocus(),active=GetActiveWindow();
+    auto demand=visibleDemand();host.setFrameDemand(demand);
+    check(!host.stats().framePending&&!host.stats().timerArmed,"Visible demand while hidden schedules no work");
+    host.show(false); // Must be this process's FIRST visibility request.
+    check(IsWindowVisible(window)&&host.stats().visible,"Explicit show overrides inherited STARTUPINFO SW_HIDE");
+    check(host.stats().framePending,"Completed native show wakes an already-stable frame demand");
+    RECT after{};check(GetWindowRect(window,&after)!=FALSE,"Read own shown rectangle");
+    check(EqualRect(&before,&after)!=FALSE,"Show does not reposition or resize the overlay");
+    check((GetWindowLongPtrW(window,GWL_STYLE)&~LONG_PTR(WS_VISIBLE))==(style&~LONG_PTR(WS_VISIBLE))&&GetWindowLongPtrW(window,GWL_EXSTYLE)==extended,"Show preserves borderless/composition/topmost styles");
+    check(GetFocus()==focus&&GetActiveWindow()==active&&focusEvents==0&&!host.stats().focused,"Show(false) preserves activation and keyboard focus");
+    drain(host);check(frames>0&&!host.stats().timerArmed,"Stable first frame renders without adding an idle timer");
+    host.hide();check(!IsWindowVisible(window)&&!host.stats().framePending,"Hide cancels pending presentation");
+    check(SetWindowPos(window,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE)!=FALSE,"Set test-owned topmost policy on isolated desktop");
+    host.show(false);check(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST,"Explicit reopening preserves caller-owned topmost policy");
+    drain(host);host.hide();host.destroy();
+}
+void hiddenStartupProcess(){
+    // A child bound to a new desktop cannot initialize reliably from the
+    // OpenSSH Session-0 service station. Run this explicit additional gate on
+    // an interactive station; its private desktop is NEVER switched/displayed.
+    // The normal suite still exercises every regular hidden-host contract.
+    USEROBJECTFLAGS stationFlags{};DWORD read{};DWORD session{};
+    check(GetUserObjectInformationW(GetProcessWindowStation(),UOI_FLAGS,&stationFlags,sizeof(stationFlags),&read)!=FALSE,"Read current test window-station capability");
+    check(ProcessIdToSessionId(GetCurrentProcessId(),&session)!=FALSE&&session!=0&&(stationFlags.dwFlags&WSF_VISIBLE),"--interactive-startup requires an interactive window station; Session-0 service station is unsupported");
+    const auto original=GetThreadDesktop(GetCurrentThreadId());
+    const auto name=L"EndfieldHUDHiddenStartup."+std::to_wstring(GetCurrentProcessId())+L"."+std::to_wstring(GetTickCount64());
+    const auto station=ownObjectName(GetProcessWindowStation());
+    struct Desktop {HDESK value{};~Desktop(){if(value)CloseDesktop(value);}} desktop;
+    desktop.value=CreateDesktopW(name.c_str(),nullptr,nullptr,0,GENERIC_ALL,nullptr);check(desktop.value!=nullptr,"Create separate never-switched desktop for isolated startup regression");
+    if(GetThreadDesktop(GetCurrentThreadId())!=original)check(SetThreadDesktop(original)!=FALSE,"Restore parent thread desktop after test desktop creation");
+    std::wstring path(32768,L'\0');const auto length=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));check(length>0&&length<path.size(),"Get only this test executable path");path.resize(length);
+    auto command=L"\""+path+L"\" --hidden-startup-child";auto desktopPath=station+L"\\"+name;
+    STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.lpDesktop=desktopPath.data();startup.dwFlags=STARTF_USESHOWWINDOW|STARTF_FORCEOFFFEEDBACK;startup.wShowWindow=SW_HIDE;
+    struct Process {PROCESS_INFORMATION value{};~Process(){if(value.hProcess){if(WaitForSingleObject(value.hProcess,0)==WAIT_TIMEOUT){TerminateProcess(value.hProcess,2);WaitForSingleObject(value.hProcess,1000);}CloseHandle(value.hProcess);}if(value.hThread)CloseHandle(value.hThread);}} process;
+    check(CreateProcessW(path.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process.value)!=FALSE,"Start owned hidden child on isolated desktop");
+    check(WaitForSingleObject(process.value.hProcess,10000)==WAIT_OBJECT_0,"Isolated show/frame regression completes within its finite deadline");
+    DWORD exit{};check(GetExitCodeProcess(process.value.hProcess,&exit)!=FALSE&&exit==0,"Hidden-startup visibility and stable-demand child contracts pass");
+    check(GetThreadDesktop(GetCurrentThreadId())==original,"Regression leaves parent thread desktop untouched");
+}
 void nativeWindow() {
     OverlayHost host;
     std::vector<PointerEvent> pointer;
@@ -289,11 +346,18 @@ void callbackFailures() {
 }
 #endif
 }
-int main() {
+int main(int argc,char**argv) {
     try {
+#ifdef _WIN32
+        if(argc==2&&std::string_view(argv[1])=="--hidden-startup-child"){hiddenStartupChild();return 0;}
+        if(argc==2&&std::string_view(argv[1])=="--interactive-startup"){hiddenStartupProcess();std::cout<<checks<<" isolated hidden-startup/first-frame checks passed; private desktop never switched\n";return 0;}
+#else
+        (void)argc;(void)argv;
+#endif
         scheduling(); coalescing();
 #ifdef _WIN32
         nativeWindow(); callbackFailures();
+        std::cout<<"Additional hidden-startup/first-frame gate is explicit --interactive-startup on an interactive station; it is not part of this Session-0-compatible suite.\n";
         std::cout << checks << " source scheduling and hidden native host checks passed\n";
 #else
         std::cout << checks << " portable source scheduling/coalescing checks passed; Win32 host tests require Windows\n";

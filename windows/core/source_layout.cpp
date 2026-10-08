@@ -32,6 +32,27 @@ bool sameOverride(const TransformOverride*a,const TransformOverride*b) noexcept 
     for(;left!=a->positionComponents.end();++left,++right)if(left->first!=right->first||!same(left->second,right->second))return false;
     return true;
 }
+bool sameOverrideKeyShape(const Overrides&a,const Overrides&b)noexcept {
+    if(a.size()!=b.size())return false;
+    auto left=a.begin(),right=b.begin();
+    for(;left!=a.end();++left,++right){
+        if(left->first!=right->first||left->second.positionComponents.size()!=right->second.positionComponents.size())return false;
+        auto x=left->second.positionComponents.begin(),y=right->second.positionComponents.begin();
+        for(;x!=left->second.positionComponents.end();++x,++y)if(x->first!=y->first)return false;
+    }
+    return true;
+}
+// All storage and key identities were checked before commit. Copy only scalar
+// payloads: optional/array assignments and mapped doubles cannot allocate or
+// throw. Structural changes retain the separate full-snapshot transaction.
+void copyOverridePayloads(Overrides&destination,const Overrides&source)noexcept {
+    auto out=destination.begin();
+    for(const auto&[id,value]:source){(void)id;auto&target=out++->second;
+        target.localPosition=value.localPosition;target.localScale=value.localScale;target.anchoredPosition3D=value.anchoredPosition3D;
+        target.localRotation=value.localRotation;target.sizeDelta=value.sizeDelta;target.anchorMin=value.anchorMin;target.anchorMax=value.anchorMax;target.pivot=value.pivot;target.active=value.active;
+        auto component=target.positionComponents.begin();for(const auto&[axis,number]:value.positionComponents){(void)axis;component++->second=number;}
+    }
+}
 const TransformOverride* find(const Overrides&values,std::string_view id) noexcept {
     const auto i=values.find(id);return i==values.end()?nullptr:&i->second;
 }
@@ -134,11 +155,12 @@ std::span<const ResolvedNode> IncrementalResolver::resolve(std::optional<SourceR
                                            parent?parent->worldMatrix:Matrix4{},parent?parent->activeInHierarchy:true);
         ++rebuilt;
     }
-    // Copy may allocate/throw. Do it before publishing any staged output so even
-    // allocation failure leaves the geometry and its dependency snapshot paired.
-    std::optional<Overrides> snapshot;if(snapshotChanged)snapshot.emplace(overrides);
+    // Changed scalar payloads with an unchanged key shape need no new storage.
+    // Any structural copy may throw, so prepare it before publishing geometry.
+    const bool retainedSnapshot=snapshotChanged&&initialized_&&sameOverrideKeyShape(previousOverrides_,overrides);
+    std::optional<Overrides> snapshot;if(snapshotChanged&&!retainedSnapshot)snapshot.emplace(overrides);
     for(std::size_t i=0;i<cached_.size();++i)if(dirty_[i])cached_[i]=staged_[i];
-    if(snapshot)previousOverrides_.swap(*snapshot);
+    if(snapshot)previousOverrides_.swap(*snapshot);else if(retainedSnapshot)copyOverridePayloads(previousOverrides_,overrides);
     previousRootParentRect_=rootParentRect;initialized_=true;lastRebuilt_=rebuilt;
     rebuilt_+=rebuilt;reused_+=cached_.size()-rebuilt;if(rebuilt)++revision_;
     return cached_;

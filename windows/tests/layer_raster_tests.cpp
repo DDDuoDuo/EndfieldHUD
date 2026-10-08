@@ -130,6 +130,10 @@ void run(){
     check(image->fontSubstitutions.front().selectedFamily=="Segoe UI"&&nonzeroAlpha(*image)>100,"Fallback uses the requested installed family and renders glyphs");
     before=raster.stats();for(unsigned i=0;i<120;++i)raster.rasterize("text",1,text,options);
     check(raster.stats().textLayoutsCreated==before.textLayoutsCreated&&raster.stats().rasterizations==before.rasterizations,"Repeated caption frames reuse both final pixels and retained text layout");
+    auto mono=text;mono["text"]["font"]["familyName"]=".AppleSystemUIFontMonospaced";mono["text"]["font"]["postScriptName"]=".AppleSystemUIFontMonospaced-Semibold";mono["text"]["font"]["symbolicTraits"]=17410;
+    const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="Consolas","Explicit Mac monospace source uses installed fixed-pitch fallback");
+    auto proportional=text;proportional["text"]["font"]["familyName"]=".AppleSystemUIFont";proportional["text"]["font"]["postScriptName"]=".SFNS-Semibold";proportional["text"]["font"]["symbolicTraits"]=2;
+    const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="Segoe UI","Proportional source is not inferred as monospace from clock usage");
     auto transparent=text;transparent["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,8}},{"attributes",Json::Object{{"NSColor",rgba(1,1,1,0)}}}}};
     image=raster.rasterize("transparent-text",1,transparent,options);check(nonzeroAlpha(*image)==0,"Transparent attributed run overrides the opaque layer foreground");
     auto badRange=text;badRange["text"]["string"]="A\xF0\x9F\x8E\xAE";badRange["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,4}},{"attributes",Json::Object{}}}};

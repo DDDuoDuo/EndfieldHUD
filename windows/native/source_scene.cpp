@@ -152,6 +152,7 @@ struct PreparedReplay {
     unsigned width{}, height{};
     std::map<std::string,PreparedMesh,std::less<>> meshes;
     std::map<std::string,PreparedTexture,std::less<>> textures;
+    std::map<std::string,gpu::SourceSceneProvenance,std::less<>> textureDependencies;
     std::map<std::string,PreparedPipeline,std::less<>> pipelines;
     std::map<std::string,UniformCell,std::less<>> uniforms;
     std::map<std::string,std::shared_ptr<const OriginalGeometry>,std::less<>> originalGeometry;
@@ -608,6 +609,63 @@ void SourceScene::includeTemplates(const SourceScene& other,std::string prefix) 
         copy.description.id=prefix+":"+source.description.id;const auto index=impl.prototypes.size();
         impl.prototypeIDs.emplace(copy.description.id,index);impl.descriptors.push_back(copy.description);impl.prototypes.push_back(std::move(copy));}
     for(const auto& p:other.impl_->catalogProvenance)if(std::find(impl.catalogProvenance.begin(),impl.catalogProvenance.end(),p)==impl.catalogProvenance.end())impl.catalogProvenance.push_back(p);
+    for(const auto& [id,origin]:input.textureDependencies)s.textureDependencies.emplace(id,origin);
+}
+std::vector<std::string> SourceScene::includeDesktopResources(const fs::path& packetRoot) {
+    auto& impl=*impl_;auto& scene=impl.scene;
+    require(!impl.uploadedTarget&&!impl.assembled&&scene.counters.updates==0,"Install desktop resource closure only before first upload/submission");
+    const auto root=absoluteRoot(packetRoot);packet::Package source(root);
+    require(hash(read(root/"shell-packet.json",packet::Package::maximumJSONBytes))==impl.provenance.packetSHA256,
+            "Desktop resources must match the compiled scene's source packet provenance");
+    const auto animation=source.loadAnimation();const auto& builder=animation["frameBuilder"];const auto& mounted=animation["mountedDocument"];
+    require(builder.isObject()&&mounted.isObject(),"Desktop resource closure needs original frameBuilder and mountedDocument metadata");
+    require(builder["desktopTextureDependencies"].isArray(),"Desktop resource closure needs a complete source-derived texture dependency export");
+    std::set<std::string,std::less<>> dependencies;
+    const auto reference=[&](const Json& value,bool mandatory=false){
+        if(value.isNull()&&!mandatory)return;
+        const auto id=text(value);const bool present=source.textures().contains(id);
+        require(!mandatory||present,"Desktop replacement texture is absent from exported source resources: "+id);
+        if(present){dependencies.insert(id);require(dependencies.size()<=2048,"Desktop texture closure exceeds resource bound");}
+    };
+    for(const auto& id:builder["desktopTextureDependencies"].array())reference(id,true);
+    // These are source metadata catalogs, not claims that every game asset was
+    // exported for this desktop configuration. Only packet-registered resources
+    // have validated mip/sampler descriptors available for the shipping cache.
+    for(const auto* key:{"sprites","sourceSprites"})for(const auto& [id,sprite]:builder[key].object()){
+        (void)id;reference(sprite["textureID"]);
+    }
+    const auto& settings=builder["desktopSettings"];
+    for(const auto& [node,image]:settings["images"].object()){(void)node;reference(image["texture"],true);}
+    for(const auto& [node,id]:settings["sprites"].object()){
+        (void)node;const auto& sprite=builder["sourceSprites"][text(id)];
+        require(sprite.isObject(),"Desktop replacement Sprite is absent from source metadata");
+        // An explicit desktop image replaces the Sprite's GPU texture while
+        // retaining its authored geometry/border metadata (profile background).
+        reference(sprite["textureID"],!settings["images"].contains(node));
+    }
+    // Fixed material textures are already resolved from the reflected shader
+    // bindings by prepare()/includeTemplates(). FrameBuilder only animates their
+    // numeric properties; inactive m_TexEnvs defaults are not live dependencies.
+    for(const auto& [id,sprite]:mounted["spriteByComponent"].object()){(void)id;reference(sprite["texture"]["id"]);}
+    for(const auto& [node,components]:mounted["components"].object()){
+        (void)node;for(const auto& component:components.array()){
+            const auto kind=component["script"].isString()?component["script"].string():component["type"].string();
+            if(kind=="UIRawImage"||kind=="RawImage")reference(component["data"]["m_Texture"]["target_id"]);
+        }
+    }
+    // Sprite-less source UI and null original shader properties use this exact
+    // exported source resource; never manufacture a replacement texture.
+    reference(Json("__white"),true);
+    PreparedReplay staged;std::size_t bytesTotal{};
+    for(const auto& [id,texture]:scene.textures){(void)id;for(const auto& mip:texture.levels){require(mip.storage.size()<=maximumCompiledBytes-bytesTotal,"Source texture closure exceeds retained bound");bytesTotal+=mip.storage.size();}}
+    for(const auto& id:dependencies)if(!scene.textures.contains(id)){
+        addTexture(staged,source,id);
+        for(const auto& mip:staged.textures.at(id).levels){require(mip.storage.size()<=maximumCompiledBytes-bytesTotal,"Source texture closure exceeds retained bound");bytesTotal+=mip.storage.size();}
+    }
+    require(scene.textures.size()+staged.textures.size()<=2048,"Source texture closure exceeds resource bound");
+    std::vector<std::string> result(dependencies.begin(),dependencies.end());auto declared=scene.textureDependencies;
+    for(const auto& id:dependencies)declared.emplace(id,impl.provenance);
+    scene.textures.merge(staged.textures);scene.textureDependencies.swap(declared);return result;
 }
 bool SourceScene::assembleFrame(std::span<const SourceAssembledBatch> entries,const SourceFrameParameters& params) {
     auto& impl=*impl_;auto& s=impl.scene;validate(params);require(entries.size()<=4096,"Too many live source batches");

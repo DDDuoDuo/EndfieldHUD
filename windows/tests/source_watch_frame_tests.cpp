@@ -1,3 +1,4 @@
+#include "core/watch_runtime_input.hpp"
 #include "core/source_watch_frame.hpp"
 #include "core/shell_packet.hpp"
 #include <bit>
@@ -41,20 +42,28 @@ void compare(const SourceWatchFrame&f,const packet::FrameData&expected,const pac
  check(f.diagnostics.size()==j["diagnostics"].array().size(),"Original diagnostics count");for(std::size_t i=0;i<f.diagnostics.size();++i)check(f.diagnostics[i]==j["diagnostics"].array()[i].string(),"Original diagnostics");
  check(f.resolved.size()==j["nodes"].array().size(),"Resolved original node count");for(const auto&e:j["nodes"].array()){const auto id=e["id"].string();const auto n=std::find_if(f.resolved.begin(),f.resolved.end(),[&](const auto&v){return v.node->id==id;});check(n!=f.resolved.end()&&n->activeInHierarchy==e["active"].boolean(),"Original resolved node/active");compareMatrix(n->worldMatrix,e["worldMatrix"],"Resolved world",1e-10);}
 }
-void actual(const std::filesystem::path&root){packet::Package package(std::filesystem::absolute(root));const auto data=package.loadAnimation();auto scene=SceneDefinition::fromJson(data["scene"]);auto doc=MountedLayoutDocument::fromJson(data["mountedDocument"]);auto resources=SourceWatchFrameResources::fromJson(data["frameBuilder"]);SourceWatchFrameBuilder builder(scene,doc,resources);unsigned frames{},ambientFrames{};std::optional<Pose> priorAmbient;
- for(const auto&[name,descriptor]:package.frames()){(void)descriptor;const auto oracle=package.loadFrame(name);const auto&input=oracle.metadata["builderInput"];if(input.isNull())continue;builder.setDesktopSettings(SourceDesktopFrameSettings::fromJson(input["desktopSettings"]));const auto pose=poseJSON(input["pose"]);DesktopNavigationLayout navigation(scene,doc,input["entryCount"].integer());SourceFrameTints tints;for(const auto&[id,v]:input["selectableTints"].object()){SourceFloat4 tint;for(unsigned c=0;c<4;++c)tint[c]=static_cast<float>(v.array()[c].number());tints[id]=tint;}
+void actual(const std::filesystem::path&root,const std::filesystem::path&runtimeRoot={}){packet::Package package(std::filesystem::absolute(root));const auto data=package.loadAnimation();auto referenceScene=SceneDefinition::fromJson(data["scene"]);auto referenceDoc=MountedLayoutDocument::fromJson(data["mountedDocument"]);auto referenceResources=SourceWatchFrameResources::fromJson(data["frameBuilder"]);
+ std::unique_ptr<WatchRuntimeInput> runtime;if(!runtimeRoot.empty())runtime=std::make_unique<WatchRuntimeInput>(std::filesystem::absolute(runtimeRoot));const auto&scene=runtime?runtime->scene():referenceScene;const auto&doc=runtime?runtime->document():referenceDoc;const auto&resources=runtime?runtime->resources():referenceResources;SourceWatchFrameBuilder builder(scene,doc,resources);unsigned frames{},ambientFrames{};std::optional<Pose> priorAmbient;
+ for(const auto&[name,descriptor]:package.frames()){(void)descriptor;const auto oracle=package.loadFrame(name);const auto&input=oracle.metadata["builderInput"];if(input.isNull())continue;builder.setDesktopSettings(SourceDesktopFrameSettings::fromJson(input["desktopSettings"]));const auto pose=poseJSON(input["pose"]);const double scroll=input["scroll"].number();DesktopNavigationLayout navigation(scene,doc,input["entryCount"].integer());SourceFrameTints tints;for(const auto&[id,v]:input["selectableTints"].object()){SourceFloat4 tint;for(unsigned c=0;c<4;++c)tint[c]=static_cast<float>(v.array()[c].number());tints[id]=tint;}
   if(!input["ambientPose"].isNull()){
    const auto ambient=poseJSON(input["ambientPose"]);const auto size=*vec<2>(input["canvasResolution"]);const auto revision=builder.presentationRevision();
-   const auto direct=builder.buildSettledAmbient(ambient,revision,oracle.worldRoot,size,input["scroll"].number(),&navigation,tints);
+   const auto direct=builder.buildSettledAmbient(ambient,revision,oracle.worldRoot,size,scroll,&navigation,tints);
    if(name.ends_with("-ambient-1")||name.ends_with("-ambient-2")){check(direct!=nullptr,"Original settled ambient sample uses retained source subtree");compare(*direct,oracle,package);check(builder.stats().lastAmbientResolvedNodes==29,"Actual ambient sample resolves only 29 of 834 nodes");
-    check(priorAmbient.has_value(),"Previous source ambient sample is available");const auto counters=builder.stats();const auto allocated=allocations.load();
-    for(unsigned tick=0;tick<120;++tick){const auto*sample=builder.buildSettledAmbient(tick%2?ambient:*priorAmbient,revision,oracle.worldRoot,size,input["scroll"].number(),&navigation,tints);if(!sample)throw std::runtime_error("Actual changing ambient sample rejected");}
+    check(priorAmbient.has_value(),"Previous source ambient sample is available");
+    // JSON number() uses a classic-locale stream; MSVC allocates for that
+    // validation parser. It is build-time fixture work, never an ambient tick.
+    const auto jsonBefore=allocations.load();const double parsedAgain=input["scroll"].number();const auto jsonAllocations=allocations.load()-jsonBefore;
+    check(parsedAgain==scroll,"Typed scroll input preserves exact parsed source value");
+    if(jsonAllocations)std::cerr<<"Fixture JSON number parse allocations="<<jsonAllocations<<" (excluded from retained tick interval)\n";
+    const auto counters=builder.stats();const auto allocated=allocations.load();
+    for(unsigned tick=0;tick<120;++tick){const auto*sample=builder.buildSettledAmbient(tick%2?ambient:*priorAmbient,revision,oracle.worldRoot,size,scroll,&navigation,tints);if(!sample)throw std::runtime_error("Actual changing ambient sample rejected");}
+    if(allocations.load()!=allocated)std::cerr<<"Actual changing ambient allocations="<<allocations.load()-allocated<<" / samples=120\n";
     check(allocations.load()==allocated,"120 changing actual ambient frames allocate no memory");
     check(builder.stats().ambientResolvedNodes==counters.ambientResolvedNodes+120*29&&builder.stats().layoutBuilds==counters.layoutBuilds&&builder.stats().localImageBuilds==counters.localImageBuilds,"Actual ambient updates only 29 nodes and retains local image topology/layout");++ambientFrames;}
    else check(direct==nullptr,"Changed ambient size/root/presentation rejects direct sample");
    priorAmbient=ambient;
   }
-  std::cerr<<"Comparing "<<name<<'\n';const auto beforeWorld=builder.stats().worldOnlyFrames;const auto scroll=input["scroll"].number();compare(builder.build(pose,oracle.worldRoot,scroll,&navigation,tints),oracle,package);if(name.find("-tilted-")!=std::string::npos)check(builder.stats().worldOnlyFrames==beforeWorld+1,"Tilted original oracle exercises retained world-only path");const auto first=builder.stats();const auto allocated=allocations.load();for(unsigned idle=0;idle<60;++idle)builder.build(pose,oracle.worldRoot,scroll,&navigation,tints);check(allocations.load()==allocated,"60 unchanged actual frames allocate no memory");const auto reused=builder.stats();check(reused.reusedFrames==first.reusedFrames+60&&reused.bakedGeometryBuilds==first.bakedGeometryBuilds,"Unchanged frames reuse retained output without rebuilding geometry");compare(builder.build(pose,oracle.worldRoot,scroll,&navigation,tints,true),oracle,package);++frames;
+  std::cerr<<"Comparing "<<name<<'\n';const auto beforeWorld=builder.stats().worldOnlyFrames;compare(builder.build(pose,oracle.worldRoot,scroll,&navigation,tints),oracle,package);if(name.find("-tilted-")!=std::string::npos)check(builder.stats().worldOnlyFrames==beforeWorld+1,"Tilted original oracle exercises retained world-only path");const auto first=builder.stats();const auto allocated=allocations.load();for(unsigned idle=0;idle<60;++idle)builder.build(pose,oracle.worldRoot,scroll,&navigation,tints);check(allocations.load()==allocated,"60 unchanged actual frames allocate no memory");const auto reused=builder.stats();check(reused.reusedFrames==first.reusedFrames+60&&reused.bakedGeometryBuilds==first.bakedGeometryBuilds,"Unchanged frames reuse retained output without rebuilding geometry");compare(builder.build(pose,oracle.worldRoot,scroll,&navigation,tints,true),oracle,package);++frames;
  }if(!resources.ambientRotationNodes.empty())check(ambientFrames==4,"Both viewports exercise changing original ambient samples");check(frames>0,"Actual original inputPose cases supplied");std::cout<<frames<<" original desktop builder frames compared\n";}
 void ambientSynthetic(){
  Node root;root.id="root";root.children={"decoration","button"};root.rect=RectTransform{{},{},{},{100,80},{.5,.5}};
@@ -92,6 +101,30 @@ void ambientSynthetic(){
  doc.components["decoration"].push_back({"ambient-button","MonoBehaviour","UIButton",Json::Object{}});doc.components["decoration"][0].data["m_RaycastTarget"]=true;
  SourceWatchFrameBuilder interactive(scene,doc,resources);interactive.build(full,{});check(!interactive.buildSettledAmbient(a,interactive.presentationRevision(),{},Vec2{100,80}),"Moving hit targets disable ambient-only optimization");
 }
+void slantRetention(){
+ Node root;root.id="root";root.children={"effect","cell"};root.rect=RectTransform{{},{},{},{100,80},{.5,.5}};
+ Node effect;effect.id="effect";effect.parent="root";effect.rect=RectTransform{{},{},{},{100,80},{.5,.5}};
+ Node cell;cell.id="cell";cell.parent="root";cell.rect=RectTransform{{},{},{4,6},{10,8},{.5,.5}};
+ SceneDefinition scene("root",{root,effect,cell});MountedLayoutDocument doc;
+ Json canvas(Json::Object{});canvas["m_SortingOrder"]=6080;doc.components["root"]={{"canvas","MonoBehaviour","Canvas",canvas},{"cut","MonoBehaviour","UIWatchPanelCut",Json::Object{}}};
+ Json slant=Json::parse(R"({"_bottomY":-40,"_topY":40,"_leftX":2,"_maxWidth":30,"_cells":[{"target_id":"cell"},{"target_id":"missing-cell"}],"_curve":{"m_Curve":[{"time":0,"value":0,"inSlope":1,"outSlope":1},{"time":1,"value":1,"inSlope":1,"outSlope":1}]}})");
+ doc.components["effect"]={{"slant","MonoBehaviour","UIScrollCellSlantEffect",slant}};
+ doc.components["cell"]={{"image","MonoBehaviour","UIImage",Json::Object{}}};
+ SourceWatchFrameResources resources;resources.materialVariants["__ui_default"][0]="__ui_default";resources.textureSizes["__white"]={1,1};
+ SourceWatchFrameBuilder builder(scene,doc,resources);Pose pose;builder.build(pose,{});builder.build(pose,Matrix4::translation(1,2));
+ const auto allocated=allocations.load();const auto worlds=builder.stats().worldOnlyFrames;
+ for(unsigned i=0;i<120;++i)builder.build(pose,Matrix4::translation(2+i,3+i));
+ if(allocations.load()!=allocated)std::cerr<<"Active slant pointer allocations="<<allocations.load()-allocated<<" / world-only frames="<<builder.stats().worldOnlyFrames-worlds<<'\n';
+ check(allocations.load()==allocated&&builder.stats().worldOnlyFrames==worlds+120,"Active slant plus missing cell retains pointer storage for 120 changing roots");
+ for(bool authored:{false,true}){
+  pose.transforms["effect"].active=false;if(authored)pose.transforms["cell"].anchoredPosition3D=Vec3{17,19,0};
+  builder.build(pose,{});const auto&retained=builder.build(pose,Matrix4::translation(5,9));
+  const auto local=retained.resolved[2].localMatrix,world=retained.batches[0].world;const auto mesh=retained.batches[0].geometry->mesh.positions;
+  const auto&forced=builder.build(pose,Matrix4::translation(5,9),1,nullptr,SourceWatchFrameBuilder::emptyTints(),true);
+  check(forced.resolved[2].localMatrix==local&&forced.batches[0].world==world&&forced.batches[0].geometry->mesh.positions==mesh,"Disabled slant with absent or authored override matches full original rebuild");
+  check(local==SourceLayout(scene).resolve({},pose.transforms)[2].localMatrix,"Disabled effect restores exact authored cell placement");
+ }
+}
 void synthetic(){Node root;root.id="root";root.name="root";root.rect=RectTransform{{},{},{},{100,80},{.5,.5}};SceneDefinition scene("root",{root});MountedLayoutDocument doc;Json canvas(Json::Object{});canvas["m_SortingOrder"]=6080;doc.components["root"]={{"canvas","MonoBehaviour","Canvas",canvas},{"cut","MonoBehaviour","UIWatchPanelCut",Json::Object{}},{"button","MonoBehaviour","UIButton",Json::Object{}}};Json image(Json::Object{});image["m_RaycastTarget"]=true;doc.components["root"].push_back({"image","MonoBehaviour","UIImage",image});SourceWatchFrameResources resources;resources.materialVariants["__ui_default"][0]="__ui_default";resources.textureSizes["__white"]={1,1};SourceWatchFrameBuilder builder(scene,doc,resources);const auto&f=builder.build({},{});check(f.batches.size()==1&&f.hits.size()==1,"Synthetic original UIImage produces one batch and hit");check(f.batches[0].geometry&&f.batches[0].geometry->mesh.indices==std::vector<std::uint32_t>{0,1,2,2,3,0},"Original source quad winding");const auto initial=builder.stats();const auto&shifted=builder.build({},Matrix4::translation(12,34,56));check(shifted.batches[0].world.values[12]==12&&builder.stats().worldOnlyFrames==initial.worldOnlyFrames+1,"World-only presentation updates source Canvas matrix");check(builder.stats().bakedGeometryBuilds==initial.bakedGeometryBuilds&&builder.stats().layoutBuilds==initial.layoutBuilds,"World-only Canvas movement retains local geometry and metrics");Pose transparent;transparent.properties["root"]["m_Color.a"]=0;const auto&t=builder.build(transparent,{});check(t.batches.empty()&&t.hits.size()==1,"Invisible graphic retains source raycast before alpha filtering");SourceDesktopFrameSettings settings;settings.hiddenNodes.insert("root");builder.setDesktopSettings(settings);check(builder.build({},{}).batches.empty()&&builder.build({},{}).hits.empty(),"Explicit desktop hidden nodes remove original graphics and hits");}
 }
-int main(int argc,char**argv){try{synthetic();ambientSynthetic();if(argc>1)actual(argv[1]);std::cout<<checks<<" source frame checks passed; max normalized floating error "<<maximumFloatError<<'\n';return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{synthetic();ambientSynthetic();slantRetention();check(argc<=3,"Pass original packet and optional compact runtime input");if(argc>1)actual(argv[1],argc==3?std::filesystem::path(argv[2]):std::filesystem::path{});std::cout<<checks<<" source frame checks passed; max normalized floating error "<<maximumFloatError<<'\n';return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

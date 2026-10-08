@@ -73,6 +73,44 @@ enum ShellPacketExporter {
          "graphicStyles": Dictionary(uniqueKeysWithValues: builder.desktopGraphicStyles.map { id, style in
             (id.rawValue, ["tint": style.tint.map { [$0.x, $0.y, $0.z] } ?? NSNull() as Any, "opacity": style.opacity] as [String: Any]) })]
     }
+    static func desktopTextureDependencies(_ view: HUDSourceWatchView) throws -> [String] {
+        let metadata = try view.document.renderMetadata(), builder = view.frameBuilder
+        var ids: Set<String> = ["__white"]
+        // Permanent desktop exclusions override every animation. Authored
+        // inactivity and zero alpha do not: hover/press clips can reveal them.
+        func excluded(_ id: HUDSourceID) -> Bool {
+            var current: HUDSourceID? = id
+            while let node = current {
+                if builder.desktopHiddenNodes.contains(node) { return true }
+                current = view.document.scene.node(node)?.parentID
+            }
+            return false
+        }
+        for node in view.document.scene.traversalIDs where !excluded(node) {
+            let components = view.document.components[node] ?? []
+            for component in components where component.enabled {
+                if component.kind == "UIRawImage" || component.kind == "RawImage" {
+                    ids.insert(component["m_Texture"].targetID?.rawValue ?? "__white")
+                } else if component.kind == "UIImage" || component.kind == "Image" {
+                    if let image = builder.desktopImages[node] { ids.insert(image.texture) }
+                    else if let replacement = builder.desktopSprites[node] {
+                        guard let sprite = metadata.sourceSprites[replacement] else {
+                            throw HUDSourceError.invalid("Missing desktop replacement Sprite: " + replacement)
+                        }
+                        ids.insert(sprite.textureID)
+                    } else if let sprite = metadata.sprites[component.id] { ids.insert(sprite.textureID) }
+                }
+            }
+            // The original soft-mask reads its UIImage Sprite independently of
+            // that graphic's alpha or a desktop display-texture replacement.
+            if view.document.component("UISoftMask", on: node) != nil,
+               let image = components.first(where: { $0.kind == "UIImage" }),
+               let texture = view.document.spriteByComponent[image.id]?["texture"]["id"].string {
+                ids.insert(texture)
+            }
+        }
+        return ids.sorted()
+    }
     static func frameBuilderDocument(_ view: HUDSourceWatchView) throws -> [String: Any] {
         let metadata = try view.document.renderMetadata()
         func sprite(_ value: HUDSourceImageGeometry.Sprite) -> [String: Any] {
@@ -94,6 +132,7 @@ enum ShellPacketExporter {
         } ?? NSNull()
         return ["scope": "includeDomain=false; includeSourceText=false; widgets=nil; original mounted desktop frame builder",
             "profileHover": profileHover,
+            "desktopTextureDependencies": try desktopTextureDependencies(view),
             "sprites": Dictionary(uniqueKeysWithValues: metadata.sprites.map { ($0.key.rawValue, sprite($0.value)) }),
             "sourceSprites": metadata.sourceSprites.mapValues(sprite),
             "textureSizes": metadata.textureSizes.mapValues { [$0.x, $0.y] },
@@ -122,11 +161,16 @@ enum ShellPacketExporter {
         var meshes: [String: [String: Any]] = [:], materials: [String: [String: Any]] = [:]
         var textures: [String: [String: Any]] = [:], shaders: [String: [String: Any]] = [:]
         var frames: [[String: Any]] = []
+        var desktopTemplateFrames: [String] = []
+        var catalogTemplateShapes: Set<String> = []
+        var materialTemplateShapes: [String: String] = [:]
         var verificationOracles: [[String: Any]] = []
         var writtenBlobs: [String: [String: Any]] = [:]
         let layers: ModuleReferenceLayerEncoder
-        init(_ output: URL) throws {
-            self.output = output; layers = try ModuleReferenceLayerEncoder(output: output)
+        let validationReadbacks: Bool
+        init(_ output: URL, validationReadbacks: Bool = true) throws {
+            self.output = output; self.validationReadbacks = validationReadbacks
+            layers = try ModuleReferenceLayerEncoder(output: output)
         }
         func blob(_ data: Data, path: String) throws -> [String: Any] {
             try require(!path.hasPrefix("/") && !path.split(separator: "/").contains(".."), "Unsafe packet path")
@@ -205,9 +249,29 @@ enum ShellPacketExporter {
             }
             materials[id] = m
         }
+        func templateShape(_ batch: HUDSourceMetalRenderer.Batch, renderer: HUDSourceMetalRenderer) throws -> String {
+            if materialTemplateShapes[batch.material] == nil {
+                // Includes actual shader stages, attributes, bindings, blend,
+                // depth, stencil, cull and constant material field values.
+                let material = try renderer.shellPacketMaterial(batch.material)
+                materialTemplateShapes[batch.material] = Reference.hash(try JSONSerialization.data(withJSONObject: material, options: [.sortedKeys]))
+            }
+            let stencil: Any = batch.stencilOverrides.map {
+                ["reference": Int($0.reference), "compare": $0.compare, "pass": $0.pass,
+                 "fail": $0.fail, "depthFail": $0.depthFail, "readMask": Int($0.readMask), "writeMask": Int($0.writeMask)]
+            } ?? NSNull() as Any
+            let shape: [String: Any] = ["material": batch.material,
+                "sourcePasses": materialTemplateShapes[batch.material]!,
+                "geometry": batch.mesh.hasPrefix("ui/") ? "source-dynamic-ui" : batch.mesh,
+                "uniforms": batch.uniformOverrides.mapValues(\.count), "textures": batch.textureOverrides.keys.sorted(),
+                "stencil": stencil, "colorWriteMask": batch.colorWriteMask.map { Int($0) } as Any? ?? NSNull(),
+                "indexRange": batch.indexRange.map { [$0.lowerBound, $0.upperBound] } as Any? ?? NSNull()]
+            return Reference.hash(try JSONSerialization.data(withJSONObject: shape, options: [.sortedKeys]))
+        }
         func frame(_ frame: HUDSourceWatchFrameBuilder.Frame, camera: HUDSourceWatchCamera.Frame,
-                   view: HUDSourceWatchView, name: String, native: Bool, builderInput: [String: Any]? = nil) throws {
-            if builderInput != nil {
+                   view: HUDSourceWatchView, name: String, native: Bool, builderInput: [String: Any]? = nil,
+                   templateCoverage: [String: Any]? = nil) throws {
+            if builderInput != nil && validationReadbacks {
                 // GPU oracle only: excluded from the shipping packet graph.
                 // Submit is synchronous and this reads that exact original draw.
                 let raw = try view.renderer.shellPacketDrawable()
@@ -218,6 +282,9 @@ enum ShellPacketExporter {
             var value = try Reference.frameJSON(frame, camera: camera, bounds: view.bounds, view: view, nativeHitQueries: native)
             var batches = value["batches"] as! [[String: Any]]
             for (i, batch) in frame.batches.enumerated() {
+                if name.hasSuffix("-top") || name.hasSuffix("-arbitrary-0") || name.hasSuffix("-arbitrary-2") || templateCoverage != nil {
+                    catalogTemplateShapes.insert(try templateShape(batch, renderer: view.renderer))
+                }
                 batches[i]["sourceMesh"] = batch.mesh
                 batches[i]["mesh"] = try mesh(batch, renderer: view.renderer)
                 let tint = view.renderer.shellPacketVertexColor(batch)
@@ -236,6 +303,7 @@ enum ShellPacketExporter {
             }
             value["batches"] = batches; value["gpuCamera"] = try view.renderer.shellPacketCamera()
             value["nativeOverlayStateIncluded"] = native
+            if let templateCoverage { value["templateOnly"] = true; value["templateCoverage"] = templateCoverage }
             if let builderInput { value["builderInput"] = builderInput }
             if native, let root = view.layer {
                 var entries: [[String: Any]] = []
@@ -263,14 +331,61 @@ enum ShellPacketExporter {
         }
         func stable(_ view: HUDSourceWatchView, name: String) throws {
             _ = try view.renderedImageForVerification() // waits only for this renderer's own draw; no pixels become a shell asset
-            let raw = try view.renderer.shellPacketDrawable()
-            var oracle = raw.descriptor
-            oracle.merge(try blob(raw.data, path: "verification/" + name + ".raw-bgra.bin")) { _, new in new }
-            oracle["name"] = name; verificationOracles.append(oracle)
+            if validationReadbacks {
+                let raw = try view.renderer.shellPacketDrawable()
+                var oracle = raw.descriptor
+                oracle.merge(try blob(raw.data, path: "verification/" + name + ".raw-bgra.bin")) { _, new in new }
+                oracle["name"] = name; verificationOracles.append(oracle)
+            }
             guard let frame = view.currentFrameForVerification, let camera = view.currentCameraForVerification else {
                 throw HUDSourceError.invalid("Missing actual desktop draw")
             }
             try self.frame(frame, camera: camera, view: view, name: name, native: true)
+        }
+        func desktopTemplates(_ view: HUDSourceWatchView, name: String) throws {
+            let camera = try view.cameraModel.frame(screenSize: SIMD2(Double(view.bounds.width), Double(view.bounds.height)))
+            let entries = view.desktopNavigationForVerification
+            let count = entries.indices.filter { $0 >= 4 && entries[$0].target.module?.group != .bottom }.count
+            let navigation = try HUDSourceDesktopNavigationLayout(document: view.document, entryCount: count)
+            for state in HUDSourceWatchButtonAnimation.State.allCases {
+                let buttons = try HUDSourceWatchButtonAnimation(document: view.document)
+                let selectable = try HUDSourceSelectableColor(document: view.document)
+                let tintState: HUDSourceSelectableColor.State = state == .highlighted ? .highlighted
+                    : state == .pressed ? .pressed : state == .disabled ? .disabled : .normal
+                for id in buttons.instanceIDs where buttons.state(on: id) != .disabled {
+                    buttons.setHovered(state == .highlighted || state == .pressed, on: id, at: 0)
+                    buttons.setState(state, on: id, at: 0)
+                }
+                for binding in selectable.bindings where binding.sourceInteractable {
+                    selectable.setState(tintState, on: binding.buttonNodeID, at: 0)
+                }
+                for (sample, time) in [0.0, 0.07, 0.4, 2.0].enumerated() {
+                    var pose = try view.document.animation.pose(entranceTime: view.document.animation.entrance.lastKeyTime,
+                        ambientTime: nil, exitTime: nil, canvasResolution: camera.layout.canvasSize)
+                    buttons.apply(to: &pose, at: time); view.document.applyMacButtonAvailability(to: &pose)
+                    let tints = selectable.colors(at: time)
+                    for (scrollIndex, scroll) in [1.0, 0.5, 0.0].enumerated() {
+                        let source = try view.frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
+                            verticalNormalizedPosition: scroll, desktopNavigation: navigation,
+                            selectableTints: tints, forceRebuild: true)
+                        var selected: [HUDSourceMetalRenderer.Batch] = [], pending = catalogTemplateShapes
+                        for batch in source.batches {
+                            if pending.insert(try templateShape(batch, renderer: view.renderer)).inserted { selected.append(batch) }
+                        }
+                        guard !selected.isEmpty else { continue }
+                        let subset = HUDSourceWatchFrameBuilder.Frame(resolved: source.resolved, batches: selected,
+                            hits: [], layoutReport: source.layoutReport, diagnostics: source.diagnostics,
+                            inheritedAlpha: source.inheritedAlpha)
+                        try view.renderer.shellPacketSubmit(selected, time: 0)
+                        let frameName = name + "-templates-\(state.rawValue.lowercased())-\(sample)-\(scrollIndex)"
+                        try frame(subset, camera: camera, view: view, name: frameName, native: false,
+                            templateCoverage: ["scope": "Original independent controller states exercised together for template coverage only; not a whole UI reference frame",
+                                "state": state.rawValue, "time": time, "scroll": scroll,
+                                "sourceBatchCount": source.batches.count, "retainedTemplateCount": selected.count])
+                        desktopTemplateFrames.append(frameName)
+                    }
+                }
+            }
         }
         func checkpoints(_ view: HUDSourceWatchView, name: String) throws {
             let camera = try view.cameraModel.frame(screenSize: SIMD2(Double(view.bounds.width), Double(view.bounds.height)))
@@ -357,9 +472,11 @@ enum ShellPacketExporter {
 
     static func run() throws {
         var args = Array(CommandLine.arguments.dropFirst()), output: URL?, sizes: [CGSize] = []
+        var validationReadbacks = true
         while !args.isEmpty {
             let option = args.removeFirst()
             if option == "--ui-test" || option == "--export-shell-packet" { continue }
+            if option == "--no-validation-readback" { validationReadbacks = false; continue }
             try require(!args.isEmpty, "Missing argument for " + option)
             let value = args.removeFirst()
             if option == "--output" { output = URL(fileURLWithPath: value, isDirectory: true) }
@@ -381,7 +498,7 @@ enum ShellPacketExporter {
         var profile = UserProfile(awakeningDate: Date(timeIntervalSince1970: 1_700_000_000), uid: "1000000000")
         profile.name = "Endministrator"; profile.tag = "0000"; profile.permissionLevel = 60
         profile.birthdayMonth = 1; profile.birthdayDay = 1
-        let pack = try Pack(output)
+        let pack = try Pack(output, validationReadbacks: validationReadbacks)
         var animation: [String: Any]?
         for size in sizes {
             try autoreleasepool {
@@ -394,9 +511,9 @@ enum ShellPacketExporter {
                 view.showStable(); view.layoutSubtreeIfNeeded(); view.layout(); CATransaction.flush()
                 let name = "desktop-shell-\(Int(size.width))x\(Int(size.height))"
                 try pack.stable(view, name: name + "-top")
-                // Hover is registered by the actual profile adapter but has
-                // zero alpha at rest. Preserve it for subsequent live hover.
-                for id in ["desktop.profile.avatar", "desktop.profile.background", "desktop.profile.hover"] {
+                // Capture original resources for every potentially visible
+                // desktop graphic, including initially inactive hover hints.
+                for id in try desktopTextureDependencies(view) {
                     try pack.texture(id, renderer: view.renderer)
                 }
                 try pack.checkpoints(view, name: name)
@@ -404,6 +521,7 @@ enum ShellPacketExporter {
                 var steps = 0
                 while view.scrollDesktopNavigation(1, animated: false) { steps += 1; try require(steps <= 128, "Unbounded shell scroll") }
                 try pack.stable(view, name: name + "-bottom")
+                if animation == nil { try pack.desktopTemplates(view, name: name) }
                 if animation == nil {
                     let data: [String: Any] = ["library": try object(view.document.library), "scene": try object(view.document.scene),
                         "runtimeRoot": json(view.document.runtimeRoot), "controllerTransitions": json(view.document.controllerTransitions),
@@ -434,7 +552,7 @@ enum ShellPacketExporter {
         // Raw target comparisons are validation evidence only. They are not
         // referenced by the shipping shell-packet asset graph.
         try Reference.writeJSON(["scope": "synthetic Mac renderer validation only; exclude from shipping assets",
-            "frames": pack.verificationOracles], to: output.appendingPathComponent("verification-oracles.json"))
+            "enabled": validationReadbacks, "frames": pack.verificationOracles], to: output.appendingPathComponent("verification-oracles.json"))
         try Reference.writeJSON(["schemaVersion": 1, "desktopMode": true,
             "scope": "actual Mac desktop shell draw packet; source geometry, texture mips, shaders, and separate native layers",
             "coordinates": ["matrices": "column-major arrays; column vectors", "canonicalVertices": "float32 little-endian position4 UV2 originalColor4; stride40",
@@ -447,7 +565,8 @@ enum ShellPacketExporter {
                 "clipboardAccessed": false, "nativeCursorSetCount": 0, "displayTimersAfterCleanup": 0],
             "meshes": pack.meshes.keys.sorted().map { pack.meshes[$0]! }, "textures": pack.textures.keys.sorted().map { pack.textures[$0]! },
             "materials": pack.materials.keys.sorted().map { pack.materials[$0]! }, "shaderAssets": pack.shaders.keys.sorted().map { pack.shaders[$0]! },
-            "frames": pack.frames, "animation": animation!, "modules": modules, "nativeRasterAssets": rasters,
+            "frames": pack.frames, "desktopTemplateFrames": pack.desktopTemplateFrames,
+            "animation": animation!, "modules": modules, "nativeRasterAssets": rasters,
             "nativeLayerUnsupported": pack.layers.unsupported,
             "notVerified": ["Windows renderer output", "Cross-OS font metrics/raster equality", "Native overlay transition samples",
                 "SystemHUDView central module canvases", "Live providers", "Captured backdrop/blur", "Randomized desktop ambient adapter"],

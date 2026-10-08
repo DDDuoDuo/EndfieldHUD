@@ -92,6 +92,9 @@ public:
     static constexpr std::size_t maximumPackageBytes = 1024ull*1024*1024;
     explicit Package(std::filesystem::path explicitPackageRoot);
     const Json& metadata() const noexcept { return manifest_; }
+    // Digest of the exact bytes parsed at construction, not a JSON re-encoding
+    // or a later reread of the source manifest.
+    const std::string& manifestSHA256() const noexcept { return manifestSHA256_; }
     const std::map<std::string,MeshDescriptor,std::less<>>& meshes() const noexcept { return meshes_; }
     const std::map<std::string,TextureDescriptor,std::less<>>& textures() const noexcept { return textures_; }
     const std::map<std::string,Json,std::less<>>& materials() const noexcept { return materials_; }
@@ -111,6 +114,7 @@ public:
 private:
     std::filesystem::path root_;
     Json manifest_;
+    std::string manifestSHA256_;
     std::map<std::string,Blob,std::less<>> blobs_,shaderAssets_,nativeRasters_;
     std::set<std::string,std::less<>> portablePaths_;
     std::map<std::string,MeshDescriptor,std::less<>> meshes_;

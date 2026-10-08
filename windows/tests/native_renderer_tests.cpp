@@ -80,6 +80,10 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
                             composition ? RenderTarget::composition : RenderTarget::offscreenForTests};
     renderer.initialize(window, 32, 32, options);
     check(renderer.stats().initialized, "Explicit test renderer initializes");
+    const auto beforeIdentity = renderer.stats();
+    check(!renderer.deviceInfo().name.empty(), "Diagnostic identity reports the actual selected adapter");
+    check(renderer.stats().resourceBytes == beforeIdentity.resourceBytes && renderer.stats().presents == beforeIdentity.presents,
+        "Reading adapter identity creates no retained HUD resources or frames");
     check(!IsWindowVisible(window), "The synthetic fixture window stays hidden");
     check(renderer.setMesh("fixture.quad", 1, {quad, triangles}), "First mesh revision uploads retained geometry");
     check(!renderer.setMesh("fixture.quad", 1, {quad, triangles}), "Same mesh revision does not upload again");
@@ -183,16 +187,41 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     check(renderer.stats().meshUploads == afterObjects.meshUploads && renderer.stats().objectUploads == afterObjects.objectUploads,
           "Resize retains scene geometry and object constants");
 
+    if (composition) {
+        // Exercise real swap-chain flips with nonempty retained content. Read
+        // only our target BEFORE each Present; never capture the desktop or
+        // interpret an undefined post-Present back buffer as evidence.
+        red.world = {}; red.masks.clear();
+        const auto beforePresent = renderer.stats();
+        for (unsigned frame = 0; frame < 3; ++frame) {
+            const bool isBlue = frame == 1;
+            red.linearTint = isBlue ? std::array<float, 4>{0, 0, 1, 1} : std::array<float, 4>{1, 0, 0, 1};
+            red.opacity = .5f + .25f * static_cast<float>(frame);
+            renderer.setDrawList(std::span(&red, 1)); renderer.draw(false); image = renderer.readback();
+            const int level = static_cast<int>(std::lround(red.opacity * 255));
+            pixel(image, 24, 12, {isBlue ? level : 0, 0, isBlue ? 0 : level, level}, 1,
+                  "The composition back buffer contains the expected nonempty retained fixture before presentation");
+            std::size_t covered{};
+            for (std::size_t offset = 3; offset < image.pixels.size(); offset += 4)
+                covered += image.pixels[offset] != 0 ? 1u : 0u;
+            check(covered == std::size_t(image.width) * image.height,
+                  "Every owned fixture pixel has nonzero alpha before the native flip");
+            renderer.draw(true);
+            check(renderer.stats().presents == beforePresent.presents + frame + 1 && renderer.stats().objects == 1,
+                  "The native composition path submits each nonempty retained frame");
+            rejects([&] { renderer.readback(); }, "Readback rejects an undefined post-Present back buffer");
+        }
+        check(renderer.stats().meshUploads == beforePresent.meshUploads && renderer.stats().textureUploads == beforePresent.textureUploads,
+              "Consecutive composition flips retain their mesh and texture resources");
+        check(!IsWindowVisible(window), "Nonempty composition submission never shows the test window");
+    }
+
     renderer.clearResources(); renderer.draw(false); image = renderer.readback();
     const auto empty = renderer.stats();
     check(empty.meshes == 0 && empty.textures == 0 && empty.objects == 0 && empty.resourceBytes == 0,
           "Explicit scene cleanup drops every cached application resource");
     pixel(image, 12, 12, {0, 0, 0, 0}, 0, "An empty frame clears stale content to transparent");
-    if (composition) {
-        renderer.draw(true);
-        check(renderer.stats().presents == 1, "The hidden owned window exercises the native composition Present path");
-        rejects([&] { renderer.readback(); }, "Readback cannot accidentally read an undefined post-Present back buffer");
-    } else {
+    if (!composition) {
         rejects([&] { renderer.draw(true); }, "Offscreen testing cannot present to the user desktop");
         check(renderer.stats().presents == 0, "Offscreen testing performs zero presentations");
     }

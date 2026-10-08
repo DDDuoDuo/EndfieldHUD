@@ -80,7 +80,7 @@ struct SourceWatchFrameBuilder::Impl {
     const SceneDefinition*scene;const MountedLayoutDocument*document;const SourceWatchFrameResources*resources;
     SourceDesktopFrameSettings settings;SourceLayout layout;WatchLayout writer;IncrementalResolver resolver;SourceCanvasPlan canvas;
     std::vector<NodePlan> nodes;std::vector<Graphic> graphics;std::vector<SoftPlan> softPlans;std::size_t cut{};
-    SourceWatchFrame frame;SourceWatchFrameStats counts;std::optional<Pose> previousInput,layoutInput;Pose layoutPose,beforeSlant;std::vector<ResolvedNode> beforeSlantResolved;Matrix4 previousRoot,layoutRoot;
+    SourceWatchFrame frame;SourceWatchFrameStats counts;std::optional<Pose> previousInput,layoutInput;Pose layoutPose,beforeSlant;std::vector<ResolvedNode> beforeSlantResolved;std::vector<unsigned char> slantWritten;Matrix4 previousRoot,layoutRoot;
     double previousScroll{},layoutScroll{};std::optional<std::size_t> previousEntries,layoutEntries;SourceFrameTints previousTints;
     std::vector<std::optional<Matrix4>> canvasInverse;std::vector<std::optional<SoftMask>> softMasks;
     struct AmbientNode {std::size_t index{};std::optional<std::size_t> parent;bool root{};};
@@ -96,7 +96,7 @@ struct SourceWatchFrameBuilder::Impl {
     Impl(const SceneDefinition&s,const MountedLayoutDocument&d,const SourceWatchFrameResources&r,SourceDesktopFrameSettings config)
       :scene(&s),document(&d),resources(&r),settings(std::move(config)),layout(s),writer(s,d),resolver(s),
        canvas(s,d,static_cast<std::int64_t>(d.component("Canvas",s.rootID())?number((*d.component("Canvas",s.rootID()))["m_SortingOrder"]):0)),nodes(s.nodes().size()),canvasInverse(s.nodes().size()),softMasks(s.nodes().size()) {
-        ambientSlot.resize(s.nodes().size(),noAmbient);
+        ambientSlot.resize(s.nodes().size(),noAmbient);slantWritten.resize(s.nodes().size());
         for(const auto&id:r.ambientRotationNodes)need(layout.nodeIndex(id).has_value(),"Unknown source ambient rotation node");
         for(const auto index:layout.traversalIndices()){
             const auto&node=s.nodes()[index];const auto parent=node.parent?layout.nodeIndex(*node.parent):std::nullopt;
@@ -271,7 +271,19 @@ struct SourceWatchFrameBuilder::Impl {
         // Reuse metrics, source topology, material maps and vertex buffers;
         // only the original slant writer may change Canvas-local positions.
         if(beforeSlantResolved.empty())beforeSlantResolved=layout.resolve({},beforeSlant.transforms);
-        layoutPose=beforeSlant;writer.applySlant(layoutPose,root,ResolvedView{&layout,beforeSlantResolved});
+        // Slant writes absolute local positions using beforeSlantResolved and
+        // reads only anchors/pivot, which it never changes. Keep successful
+        // cells and unrelated channels in-place rather than copying hundreds
+        // of nested component maps. A skipped cell must recover its exact
+        // baseline, including removal when no original override existed.
+        std::fill(slantWritten.begin(),slantWritten.end(),static_cast<unsigned char>(0));
+        writer.applySlant(layoutPose,root,ResolvedView{&layout,beforeSlantResolved},false,slantWritten);
+        for(const auto&id:writer.slantRootIDs())if(const auto index=layout.nodeIndex(id);index&&!slantWritten[*index]){
+            const auto baseline=beforeSlant.transforms.find(id),current=layoutPose.transforms.find(id);
+            if(baseline==beforeSlant.transforms.end()){if(current!=layoutPose.transforms.end())layoutPose.transforms.erase(current);}
+            else if(current==layoutPose.transforms.end())layoutPose.transforms.emplace(id,baseline->second);
+            else if(current->second!=baseline->second)current->second=baseline->second;
+        }
         const auto resolved=resolver.resolve({},layoutPose.transforms);const auto cutInverse=inverse(root*resolved[cut].worldMatrix);
         need(cutInverse.has_value(),"Unresolved original UIWatchPanelCut world matrix");
         for(const auto&p:softPlans)if(resolved[p.node].activeInHierarchy)softMasks[p.node]=makeSoft(p,resolved,root);
@@ -284,7 +296,7 @@ struct SourceWatchFrameBuilder::Impl {
                 const auto&mesh=g.raw?g.rawMesh:g.generator.mesh();baked(g,mesh,*node.rect,*canvasInverse[ci]*node.worldMatrix,settings.images.contains(b.sourceNodeID)&&!g.raw,false);
                 if(const auto clip=canvas.clip(index,resolved,*canvasInverse[ci])){auto&rectangle=b.uniformOverrides.at("clipRect");std::copy(clip->rectangle.begin(),clip->rectangle.end(),rectangle.begin());}
                 if(nodes[index].maskable)if(const auto mask=canvas.ancestry()[index].softMask;mask&&softMasks[*mask]){const auto&soft=*softMasks[*mask];updateMatrix(b.uniformOverrides.at("_WorldToSoftMask"),soft.worldToUnit*b.world);std::copy(soft.inner.begin(),soft.inner.end(),b.uniformOverrides.at("_InnerSoftMask").begin());std::copy(soft.innerUV.begin(),soft.innerUV.end(),b.uniformOverrides.at("_InnerSoftMaskUV").begin());}
-            }else updateMatrix(b.uniformOverrides.at("_WatchWorldToLocalMatrix"),*cutInverse);
+            }else {const auto uniform=b.uniformOverrides.find("_WatchWorldToLocalMatrix");need(uniform!=b.uniformOverrides.end(),"Retained source cut matrix is missing");updateMatrix(uniform->second,*cutInverse);}
         }
         for(auto&h:frame.hits){const auto index=*layout.nodeIndex(h.graphicID);h.world=root*resolved[index].worldMatrix;std::size_t m=0;for(const auto mask:canvas.ancestry()[index].rectMasks)if(resolved[mask].rect){need(m<h.masks.size(),"Retained hit masks changed");h.masks[m++].world=root*resolved[mask].worldMatrix;}need(m==h.masks.size(),"Retained hit mask count changed");}
         std::copy(resolved.begin(),resolved.end(),presentationResolved.begin());frame.resolved=presentationResolved;previousRoot=root;layoutRoot=root;++revision;++counts.worldOnlyFrames;return frame;
@@ -297,9 +309,12 @@ struct SourceWatchFrameBuilder::Impl {
         const bool dependenciesMatch=previousScroll==scroll&&previousEntries==entries&&previousTints==tints;
         if(staticMatch&&rotationsMatch&&previousRoot==root&&dependenciesMatch){++counts.reusedFrames;return frame;}
         if(staticMatch&&rotationsMatch&&dependenciesMatch){
-            auto retained=std::move(previousInput);previousInput.reset();
-            try{const auto&result=worldOnly(root);previousInput=std::move(retained);return result;}
-            catch(...){layoutInput.reset();throw;}
+            // Keep the immutable snapshot in place on success. MSVC's node
+            // containers allocate replacement sentinels even when moved; the
+            // old move-out/move-back transaction therefore allocated per tick.
+            // Failed updates still invalidate reuse before propagating error.
+            try{return worldOnly(root);}
+            catch(...){previousInput.reset();layoutInput.reset();throw;}
         }
         if(staticMatch&&previousRoot==root&&dependenciesMatch&&ambientSupported){
             try{return ambientFrame(input.transforms,false);}catch(...){previousInput.reset();layoutInput.reset();ambientSupported=false;++revision;throw;}

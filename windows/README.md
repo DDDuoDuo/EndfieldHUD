@@ -8,8 +8,10 @@ a fresh port of the **macOS v1.2.0 build 18 application**, pinned in
 The current target builds portable scene, motion and data components, a native
 D3D11/DirectComposition renderer, retained source material and label adapters,
 an event-driven window host, and Windows battery, clipboard and master-volume
-service foundations. It does **not** yet produce a complete runnable HUD or a
-release candidate.
+service foundations. An explicit development preview now combines the source
+shell, native captions/icons, clock and custom cursor. Module bodies are not
+installed in that preview. It does **not** yet produce a complete runnable HUD
+or a release candidate.
 
 The fresh graphics path now also runs the original Mac material programs. A
 build-only exporter captures the current desktop shell's actual geometry,
@@ -54,7 +56,8 @@ layout writers, finite button controllers, image geometry and Canvas clipping
 are now ported. On the Windows laptop, 36 generated frames pass 1,814,041 checks
 against the original Mac builder, including opening, closing, scrolling, hover
 and compound tilt. The expanded portable comparison also covers 44 frames and
-retained ambient motion, with 2,414,192 checks against the original builder. A
+retained ambient motion, with 2,414,202 checks against the original builder on
+the Windows laptop. A
 separate image-geometry comparison verifies original Float
 positions, UVs and indices across 1,864 cases.
 
@@ -84,15 +87,58 @@ that sibling labels, geometry, projection and masks stay unchanged. Animated
 clock-page displacement and native font appearance still need visual checks.
 
 The window host coalesces redraw requests and owns one cancellable wake timer.
-Hidden windows schedule no rendering work. All 28 current Windows test suites
-pass on the laptop. Display selection has a read-only Windows service and a
+Hidden windows schedule no rendering work. All 34 Windows test suites pass on the laptop; the portable build passes
+26 suites. Display selection has a read-only Windows service and a
 portable policy matching the Mac fallback behavior, with no polling. Actual
 display switching, visible input, cursor, IME,
 multi-monitor behavior and full-app performance still require acceptance tests.
 The host now routes an editor's consumed keys before Windows generates text
 messages, and supports coalesced private editor notifications. Hidden-window
 tests cover duplicate-text prevention, unrelated-window isolation and teardown
-inside the key filter; these are not live IME acceptance tests.
+inside the key filter; these are not live IME acceptance tests. An initial live
+test also exposed a visibility ordering bug: `WM_SHOWWINDOW` arrives before
+native visibility changes, so the stable frame gate could remain asleep. The
+host now refreshes that gate after showing completes. An explicit
+`overlay_host_tests --interactive-startup` check uses a separate, never-switched
+desktop to verify hidden-startup behavior and delivery of the first frame. It
+passed on the laptop, and the corrected visible editor reported a presented
+frame. Chinese typing/selection were subsequently verified by the user.
+
+The projected editor now shares the actual retained DirectWrite layout that
+painted its text with caret, selection, pointer hits and TSF. Hidden native
+fixtures verify multilingual text, three tilted poses, composition contracts,
+cache replacement and 120 pointer updates without new text layouts or raster
+work. The explicit text preview keeps its sample document in memory.
+The user verified Chinese typing and selection stayed aligned in the visible
+tilted editor. Japanese/Korean candidate-window behavior still needs live testing.
+
+The assembled shell's hardware test uses the laptop's RTX 5060 adapter, confirmed
+from the created rendering device. In one 1280×800 offscreen run, pointer and
+scroll preparation/submission averaged about 1.06 ms and 0.95 ms respectively.
+Concealed samples submitted no frames or GPU uploads and armed no window timer.
+These are CPU-side test samples, not measured GPU duration, displayed FPS, or
+full-app CPU percentages. The development loader still took about 2.85 seconds;
+its large verification JSON has now been replaced by a compact, hashed input
+option. That input totals 8.71 MB, including the native artwork. A portable
+allocation probe reduced loader peak requested heap from 104.69 MB to 33.72 MB;
+A 1920×1080 hardware preflight measured about 1.34 seconds for total
+preparation with this compact path. Loading the animation library accounted for
+about 667 ms and initial native rasterization about 226 ms. This is one synthetic
+run, not a cold-start distribution or full-app launch measurement.
+
+Runtime sprite records now keep only fields consumed by the original layout and
+clip logic. An isolated C++ allocation probe measured 23,305,962 fewer retained
+bytes (22.23 MiB), with all source comparisons unchanged. Settled pointer and
+ambient frame tests also allocate no new C++ memory after warm-up on MSVC.
+Driver allocations, native surfaces and allocator overhead are additional.
+Windows numeric reads avoid constructing a locale stream for each value;
+original decimal tokens, integer IDs and range behavior remain preserved.
+
+The build-only content exporter also captures five languages, light/dark themes,
+selected captions and recycled shortcut slots directly from unchanged Mac code.
+The default matrix deduplicates to 348 local trees (about 891 KB of descriptors).
+Arbitrary new custom labels, images and accents still need a source-equivalent
+runtime fitting path; the finite reference catalog does not establish that.
 
 A compiled original-material catalog avoids runtime JSON and shader compilation.
 Its schema preserves exact material templates, reflected field plans, textures
@@ -100,11 +146,21 @@ and geometry across multiple original frames; older caches remain readable.
 The single-frame cache prepared in 12.5–18.9 ms on the laptop, compared with
 roughly 1.6 seconds for the development JSON path, and produced identical Windows
 readback bytes. These timings measure artwork preparation, not total startup.
-The multi-frame shell catalog retains 267 templates and 45 textures in
-7,392,219 bytes; the 25 MB verification catalog is not needed at runtime. The
-small catalog passes the same sequential pixel comparisons and prepared in
-28.1 ms on the laptop's latest WARP run. Driver allocations and frame targets
-are additional memory, not included in the catalog size.
+The complete desktop catalog retains 268 templates and 66 textures in
+8,364,314 bytes. The first live hover attempt exposed artwork absent from the
+sampled-frame export. The exporter now derives the full texture dependency set
+from nonpermanently-hidden source image components and desktop replacements,
+including authored inactive/zero-alpha nodes. The compiler keeps these declared
+resources with their source provenance and rejects incomplete inventories.
+A template-only record from the original hover controller also retains the
+clipped hint material that opening/closing frame samples do not activate; it
+adds 10,487 bytes without duplicating a complete frame.
+The native 1920×1080 hardware preflight passed 20 irregular opening times and
+19 source hit-tested hover/press points, plus pointer, navigation-scroll, closing
+and concealed stages. Hidden native backdrop tests passed 12,173 checks for
+creation and restoration of caller-established state; backdrop visual parity
+and capture behavior remain unverified. Driver allocations and frame targets are additional memory,
+not included in the catalog size.
 
 Reference tools (macOS, temporary fixture data only):
 

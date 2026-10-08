@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <map>
 #include <utility>
@@ -585,6 +586,21 @@ RendererStats Renderer::stats() const noexcept {
     auto result = impl_->counters;
     result.meshes = impl_->meshes.size(); result.textures = impl_->textures.size(); result.objects = impl_->draws.size();
     return result;
+}
+RendererDeviceInfo Renderer::deviceInfo() const {
+    require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();
+    ComPtr<IDXGIDevice> device; checked(impl_->device.As(&device), "Read renderer DXGI device");
+    ComPtr<IDXGIAdapter> adapter; checked(device->GetAdapter(&adapter), "Read selected renderer adapter");
+    DXGI_ADAPTER_DESC description{}; checked(adapter->GetDesc(&description), "Read selected renderer identity");
+    description.Description[127] = 0;
+    const auto length = static_cast<int>(std::wcslen(description.Description));
+    const auto bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, description.Description, length, nullptr, 0, nullptr, nullptr);
+    require(bytes > 0, "Selected renderer adapter has no valid name");
+    std::string name(static_cast<std::size_t>(bytes), '\0');
+    require(WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, description.Description, length, name.data(), bytes, nullptr, nullptr) == bytes,
+        "Cannot encode selected renderer adapter name");
+    return {std::move(name), description.VendorId, description.DeviceId,
+        static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory)};
 }
 SourceGraphics& Renderer::sourceGraphics() {
     require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();

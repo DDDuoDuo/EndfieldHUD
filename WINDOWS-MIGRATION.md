@@ -115,7 +115,7 @@ Define platform interfaces outside drawing code. Use a single app state, module 
 Before porting every module, demonstrate on Windows:
 
 1. A transparent overlay with the current source circle/buttons, one exact opening/closing sequence, live tilt and correct irregular-shape hits.
-2. A frozen desktop backdrop without capturing the HUD into itself, and correct visible recording of the HUD/custom cursor.
+2. The current desktop shell's live blurred backdrop without capturing the HUD into itself, and correct visible recording of the HUD/custom cursor.
 3. Mixed-DPI monitor selection and pointer coordinates, including moving/unplugging a screen.
 4. A tilted text editor with Chinese/Japanese/Korean IME, caret/selection and keyboard access; font inventory/fallback and CJK/emoji layout comparisons against the Mac baseline.
 5. No renderer/game/media loop while closed, bounded RAM after repeated reopen, and smooth frame pacing while animating.
@@ -138,7 +138,7 @@ Use the existing staged runtime inventory rather than bundling every extraction 
 
 ### Backdrop and cursor
 
-The Mac backdrop excludes the HUD and windows above it. Full-display Windows capture can include the HUD and produce recursive blur. Prototype a pre-opening desktop snapshot, a guarded rare refresh, or a compositor backdrop with comparable visuals. [Windows capture documentation](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture) does not establish the same arbitrary z-order exclusion as the Mac implementation. Treat exact backdrop behavior as an unresolved prototype item.
+The authoritative build-18 desktop shell uses `HUDBackgroundBlurView` / `NSVisualEffectView` with `.hudWindow`, `.behindWindow` and `.active`. Its opacity follows `blurAmount`, and low-power mode hides that view. `HUDSourceWatchView.canCaptureDesktopBackdrop` explicitly returns false in desktop mode; the separate original-game capture branch is not this app's normal backdrop. Preserve the shell's live blur, brightness, theme, vignette and transition behavior through the Windows compositor where possible. Windows 11's [system backdrop API](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwm_systembackdrop_type) offers a desktop-acrylic material, but that API alone does not prove equivalent opacity controls or visuals. This remains a native feasibility check; do not replace the current behavior with constant screen capture or silently introduce a frozen snapshot. Full-display capture can include the HUD and cause recursive blur.
 
 Do not permanently exclude the HUD from capture: users need to record demonstrations. Preserve the event-driven cursor ownership in [HUDRenderedCursor.swift](Sources/HUDRenderedCursor.swift). Choose and test a single native/custom-drawn cursor path; restore the normal cursor on close, focus loss and native dialogs. No polling timer that repeatedly forces or hides the cursor. Verify Windows built-in recording and the saved video: no alternating arrows, duplicate cursor or missing HUD. [Native cursor capture controls](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.graphicscapturesession.iscursorcaptureenabled?view=winrt-26100) apply to the capture session, not every external recorder.
 

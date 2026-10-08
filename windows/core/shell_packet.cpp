@@ -158,7 +158,11 @@ BinaryData Package::read(const Blob& blob) const {
 
 Package::Package(std::filesystem::path root):root_(std::move(root)) {
     try{ehud::data::detail::validateRoot(root_);}catch(const ehud::data::StoreError&){invalid("Package root must be explicit, absolute and ordinary");}
-    manifest_=parse(readText(path("shell-packet.json"),maximumJSONBytes));object(manifest_);
+    {
+        const auto bytes=readText(path("shell-packet.json"),maximumJSONBytes);
+        manifest_=parse(bytes);manifestSHA256_=sha256({reinterpret_cast<const std::uint8_t*>(bytes.data()),bytes.size()});
+    }
+    object(manifest_);
     if(!manifest_["schemaVersion"].isNumber()||integer(manifest_["schemaVersion"],INT32_MAX)!=1)throw Error(ErrorCode::unsupportedVersion,"Unsupported shell packet schema");
     if(!boolean(manifest_["desktopMode"]))invalid("Package is not a desktop source fixture");
     object(manifest_["coordinates"]);object(manifest_["fixture"]);finiteTree(manifest_);

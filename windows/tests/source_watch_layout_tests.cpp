@@ -28,6 +28,19 @@ MountedLayoutDocument syntheticDocument(bool reverse=false,bool fit=false){
     add(d,"text","UIText",Json::Object{});Json fitter(Json::Object{});fitter["m_HorizontalFit"]=2;fitter["m_VerticalFit"]=2;add(d,"text","ContentSizeFitter",fitter);if(fit)add(d,"group","ContentSizeFitter",fitter);
     add(d,"root","GridLayoutGroup",Json::Object{});return d;
 }
+void spriteProjection(){
+    Json value=Json::parse(R"({"components":{},"buttons":[],"spriteByComponent":{"image":{"id":"source-sprite","name":"sample","bindings":[1,2,3],"decoded_render_mesh":{"vertices":[1,2,3]},"raw_sprite":{"m_Border":{"x":1,"y":2,"z":3,"w":4,"archive":99},"m_Rect":{"x":7,"y":9,"width":32,"height":64},"m_PixelsToUnits":100,"m_RD":{"large":"unused"}},"texture":{"id":"source-texture","asset_paths":["not-a-runtime-file"]}}}})");
+    const auto document=MountedLayoutDocument::fromJson(value);const auto&sprite=document.spriteByComponent.at("image");
+    check(sprite["id"].string()=="source-sprite"&&sprite["name"].string()=="sample"&&sprite["texture"]["id"].string()=="source-texture","Runtime sprite retains exact bound identities");
+    check(sprite["raw_sprite"]["m_Rect"]==value["spriteByComponent"]["image"]["raw_sprite"]["m_Rect"]&&sprite["raw_sprite"]["m_PixelsToUnits"].number()==100,"Runtime sprite preserves rect and pixels-per-unit");
+    for(const auto*axis:{"x","y","z","w"})check(sprite["raw_sprite"]["m_Border"][axis]==value["spriteByComponent"]["image"]["raw_sprite"]["m_Border"][axis],"Runtime sprite preserves each border channel");
+    check(!sprite.contains("bindings")&&!sprite.contains("decoded_render_mesh")&&!sprite["raw_sprite"].contains("m_RD")&&!sprite["raw_sprite"]["m_Border"].contains("archive")&&!sprite["texture"].contains("asset_paths"),"Runtime sprite excludes all unused archive subtrees");
+    auto malformed=value;malformed["spriteByComponent"]["image"]["raw_sprite"]["m_Rect"]["width"]="broken";rejects([&]{MountedLayoutDocument::fromJson(malformed);},"Malformed retained numeric field rejected");
+    malformed=value;malformed["spriteByComponent"]["image"]["texture"]=Json::Array{1};rejects([&]{MountedLayoutDocument::fromJson(malformed);},"Malformed retained texture reference rejected");
+    malformed=value;malformed["spriteByComponent"]["image"]=42;rejects([&]{MountedLayoutDocument::fromJson(malformed);},"Nonobject sprite record rejected");
+    value["spriteByComponent"]["image"]=Json::Object{};const auto missing=MountedLayoutDocument::fromJson(value);check(missing.spriteByComponent.at("image")["raw_sprite"]["m_Rect"].isNull(),"Absent optional sprite metadata preserves source fallback lookup");
+    check(sprite["raw_sprite"]["m_Rect"]["width"].number()==32,"Typed document owns projected metadata independently of input JSON");
+}
 void analytic(){
     auto scene=syntheticScene();auto document=syntheticDocument();WatchLayout layout(scene,document);Pose pose;pose.transforms["a"].localPosition=Vec3{99,88,7};pose.transforms["a"].positionComponents[2]=13;
     auto report=layout.apply(pose);const auto&a=pose.transforms.at("a"),&b=pose.transforms.at("b");
@@ -99,4 +112,4 @@ void actual(const std::filesystem::path&root,const std::optional<std::filesystem
     std::cout<<scene.nodes().size()<<" mounted nodes, "<<document.buttons.size()<<" source buttons; Swift oracle "<<(oraclePath?"compared":"not supplied")<<'\n';
 }
 }
-int main(int argc,char**argv){try{analytic();scrolling();if(argc>1)actual(argv[1],argc>2?std::optional<std::filesystem::path>(argv[2]):std::nullopt);std::cout<<std::setprecision(8)<<"Maximum relative error "<<maximumRelativeError<<"\n";std::cout<<checks<<" source Watch layout checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{spriteProjection();analytic();scrolling();if(argc>1)actual(argv[1],argc>2?std::optional<std::filesystem::path>(argv[2]):std::nullopt);std::cout<<std::setprecision(8)<<"Maximum relative error "<<maximumRelativeError<<"\n";std::cout<<checks<<" source Watch layout checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

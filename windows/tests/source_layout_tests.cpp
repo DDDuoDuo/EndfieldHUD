@@ -94,10 +94,10 @@ void analytic(){
     rejects([&]{retained.resolve({},invalid);},"Late invalid sibling rejects complete staged update");
     sameNodes(retained.nodes(),saved);check(retained.revision()==revision&&retained.rebuiltNodeCount()==rebuilt&&retained.reusedNodeCount()==reused&&retained.lastRebuiltNodeCount()==last,"Rejected update leaves counters and prior snapshot unchanged");
     retained.resolve({},overrides);check(retained.lastRebuiltNodeCount()==0,"Valid request after rejected update reuses last good inputs");
-    auto insufficientMemory=overrides;insufficientMemory["rect"].sizeDelta=Vec2{250,100};
+    auto insufficientMemory=overrides;insufficientMemory["rect"].sizeDelta=Vec2{250,100};insufficientMemory["new-structural-key"].active=true;
     bool memoryRejected=false;failAllocation=true;
     try{retained.resolve({},insufficientMemory);}catch(const std::bad_alloc&){memoryRejected=true;}catch(...){failAllocation=false;throw;}
-    failAllocation=false;check(memoryRejected,"Override snapshot allocation failure is observable");
+    failAllocation=false;check(memoryRejected,"Structural override snapshot allocation failure is observable");
     sameNodes(retained.nodes(),saved);check(retained.revision()==revision&&retained.nodes().data()==storage,"Allocation failure cannot publish staged geometry or replace retained storage");
     invalid=overrides;invalid["child"].positionComponents[3]=1;rejects([&]{retained.resolve({},invalid);},"Invalid scalar axis rejected before array access");
     invalid=overrides;invalid["rect"].localRotation=Quaternion{};rejects([&]{retained.resolve({},invalid);},"Zero quaternion transaction rejected");
@@ -109,6 +109,36 @@ void analytic(){
     // anchor layout cannot be hidden by a later finite translation override.
     invalid.clear();invalid["rect"].anchorMax=Vec2{nan,1};invalid["rect"].localPosition=Vec3{};
     rejects([&]{retained.resolve({},invalid);},"Nonfinite rect is rejected even with finite explicit position");
+}
+void changingPayloads(){
+    const auto scene=fixture();SourceLayout full(scene);IncrementalResolver retained(scene);
+    Overrides pose;pose["rect"].positionComponents[2]=0;pose["sibling"].active=true;
+    pose["unknown"].localPosition=Vec3{std::numeric_limits<double>::quiet_NaN(),0,0};
+    retained.resolve({},pose);
+    for(unsigned i=0;i<40;++i){
+        auto&t=pose.at("rect");t.localPosition=i%2?std::optional<Vec3>{{3.,double(i),7.}}:std::nullopt;
+        t.anchoredPosition3D=Vec3{double(i),2,3};t.sizeDelta=Vec2{double(i)+10,40};
+        t.localScale=Vec3{1,double(i)+1,1};t.localRotation=Quaternion{0,0,.2,1};
+        t.anchorMin=Vec2{.1,.2};t.anchorMax=Vec2{.7,.8};t.pivot=Vec2{.3,.4};
+        t.positionComponents.at(2)=i%2?-0.:0.;pose.at("sibling").active=i%2?std::optional<bool>(false):std::nullopt;
+        const auto count=allocations.load();failAllocation=true;
+        try{retained.resolve({},pose);}catch(...){failAllocation=false;throw;}
+        failAllocation=false;check(allocations.load()==count,"Same-key scalar and optional changes do not allocate");
+        sameNodes(retained.nodes(),full.resolve({},pose));
+    }
+    const auto saved=std::vector<ResolvedNode>(retained.nodes().begin(),retained.nodes().end());
+    const auto revision=retained.revision(),rebuilt=retained.rebuiltNodeCount(),reused=retained.reusedNodeCount();
+    auto invalid=pose;invalid.at("rect").sizeDelta=Vec2{200,100};invalid.at("sibling").localPosition=Vec3{std::numeric_limits<double>::quiet_NaN(),0,0};
+    rejects([&]{retained.resolve({},invalid);},"Same-key late invalid sibling rejects before committing any payload");
+    sameNodes(retained.nodes(),saved);check(retained.revision()==revision&&retained.rebuiltNodeCount()==rebuilt&&retained.reusedNodeCount()==reused,"Same-key rejection preserves geometry, snapshots and counters");
+    retained.resolve({},pose);check(retained.lastRebuiltNodeCount()==0,"Retry after same-key failure reuses last successful inputs");
+    auto structural=pose;structural.at("rect").positionComponents[0]=4;
+    bool failed=false;failAllocation=true;try{retained.resolve({},structural);}catch(const std::bad_alloc&){failed=true;}catch(...){failAllocation=false;throw;}
+    failAllocation=false;check(failed,"Adding nested axis key preserves fallible snapshot transaction");sameNodes(retained.nodes(),saved);
+    retained.resolve({},structural);sameNodes(retained.nodes(),full.resolve({},structural));
+    structural.at("rect").positionComponents.erase(2);retained.resolve({},structural);sameNodes(retained.nodes(),full.resolve({},structural));
+    structural.erase("rect");retained.resolve({},structural);sameNodes(retained.nodes(),full.resolve({},structural));
+    check(retained.lastRebuiltNodeCount()==2,"Missing override key restores the complete source branch");
 }
 Json loadJSON(const std::filesystem::path&p){std::ifstream input(p,std::ios::binary);check(bool(input),"Swift oracle opens");const std::string bytes((std::istreambuf_iterator<char>(input)),{});return Json::parse(bytes,32*1024*1024);}
 void compareMatrix(const Matrix4& actual,const Json& expected){check(expected.array().size()==16,"Oracle matrix column-major width");for(unsigned i=0;i<16;++i)near(actual.values[i],expected.array()[i].number(),"Original Swift matrix parity");}
@@ -138,4 +168,4 @@ void actualPacket(const std::filesystem::path&root,const std::optional<std::file
     std::cout<<definition.nodes().size()<<" source nodes; ambient rebuilds "<<retained.lastRebuiltNodeCount()<<"; Swift oracle "<<(oraclePath?"compared":"not supplied")<<'\n';
 }
 }
-int main(int argc,char**argv){try{analytic();if(argc>1)actualPacket(argv[1],argc>2?std::optional<std::filesystem::path>(argv[2]):std::nullopt);std::cout<<checks<<" source layout checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{analytic();changingPayloads();if(argc>1)actualPacket(argv[1],argc>2?std::optional<std::filesystem::path>(argv[2]):std::nullopt);std::cout<<checks<<" source layout checks passed\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

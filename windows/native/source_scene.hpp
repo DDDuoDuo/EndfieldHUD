@@ -102,7 +102,7 @@ struct SourceAssembledBatch {
 class SourceScene final {
 public:
     static constexpr std::size_t maximumCompiledBytes=128*1024*1024;
-    static constexpr unsigned compiledSchemaVersion=3;
+    static constexpr unsigned compiledSchemaVersion=4;
     SourceScene(std::filesystem::path explicitPacketRoot,std::filesystem::path compiledShaderManifest,std::string frameName);
     explicit SourceScene(CompiledSourceScene);
     ~SourceScene();
@@ -122,6 +122,20 @@ public:
     // another validated SourceScene; its prototype namespace is explicit.
     // No runtime disk read or guessed unknown-material fallback occurs here.
     void includeTemplates(const SourceScene&,std::string explicitNamespace);
+    // Build-only texture closure for the exported desktop resource inventory.
+    // Reads source frameBuilder image/sprite and mounted raw-image /
+    // soft-mask references, independent of a sampled frame's alpha/visibility.
+    // Shader-bound material defaults already belong to the exact templates;
+    // inactive material properties do not become extra texture dependencies.
+    // Desktop replacement images/sprites must exist when used as GPU textures.
+    // Broader original game-only
+    // catalog references are included only when exported in this packet. This
+    // does not authorize making unexported game widgets visible at runtime.
+    // The packet manifest must match this scene's primary provenance exactly.
+    // Stages and validates all new raw mips before mutation; returns the sorted
+    // exported dependency IDs (including any already installed). No new poses,
+    // templates, pipelines or runtime I/O are introduced.
+    std::vector<std::string> includeDesktopResources(const std::filesystem::path& explicitPacketRoot);
     // Complete typed submission. Input validation finishes before mutation.
     // Existing slots/resources are reused; adding a stable identity may create
     // retained mesh/UBO slots, but never compiles/creates a shader or texture.

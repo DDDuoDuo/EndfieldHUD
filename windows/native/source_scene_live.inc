@@ -64,7 +64,8 @@ void validateState(const gpu::SourceAssembledBatch& input,const BatchPrototype& 
     for(const auto& original:prototype.description.originalState.uniformOverrides){const auto found=std::find_if(input.state.uniformOverrides.begin(),input.state.uniformOverrides.end(),[&](const auto& v){return v.name==original.name;});
         require(found!=input.state.uniformOverrides.end()&&found->value.size()==original.value.size(),"Live frame omitted a source-authored override");}
     require(input.textureOverrides.size()<=64,"Too many live source textures");
-    for(std::size_t i=0;i<input.textureOverrides.size();++i){const auto& value=input.textureOverrides[i];require(s.textures.contains(value.textureID),"Live texture resource not installed");
+    for(std::size_t i=0;i<input.textureOverrides.size();++i){const auto& value=input.textureOverrides[i];
+        if(!s.textures.contains(value.textureID))throw std::invalid_argument("Live texture resource not installed: "+value.textureID+" for "+input.stateID+"/"+value.name);
         for(std::size_t j=0;j<i;++j)require(value.name!=input.textureOverrides[j].name,"Duplicate live texture override");bool found=false;
         for(const auto& draw:prototype.draws)for(const auto& binding:draw.textures)found|=binding.propertyName==value.name;require(found,"Live texture has no original reflected property");}
     if(input.stencilReference)require(*input.stencilReference<=255,"Invalid live stencil reference");

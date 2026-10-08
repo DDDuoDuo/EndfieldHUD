@@ -10,8 +10,18 @@ namespace ehud::data {
 namespace {
 [[noreturn]] void invalid() { throw std::invalid_argument("Invalid or oversized JSON"); }
 double finiteNumber(std::string_view token) {
-    // Classic locale avoids both user locale coercion and a process-global
-    // setlocale mutation. This also supports macOS SDKs lacking double from_chars.
+    // MSVC's classic-locale stream allocates for every numeric access. Use its
+    // locale-independent, allocation-free parser for ordinary finite values.
+    // Keep the old range handling (including underflow) and SDK fallback; the
+    // original decimal token still owns persistence/ID round-trip semantics.
+#if defined(_MSC_VER) || (defined(_GLIBCXX_RELEASE) && _GLIBCXX_RELEASE >= 11)
+    double parsed{};
+    const auto converted=std::from_chars(token.data(),token.data()+token.size(),parsed,std::chars_format::general);
+    if(converted.ec==std::errc{} && converted.ptr==token.data()+token.size() && std::isfinite(parsed)) return parsed;
+    if(converted.ec!=std::errc::result_out_of_range) invalid();
+#endif
+    // Older Apple SDKs lack floating-point from_chars. Never mutate process
+    // locale or coerce a stored token through a locale-specific decimal point.
     std::istringstream input{std::string(token)};
     input.imbue(std::locale::classic());double value{};input>>std::noskipws>>value;
     if(input.fail() || input.peek()!=std::char_traits<char>::eof() || !std::isfinite(value)) invalid();

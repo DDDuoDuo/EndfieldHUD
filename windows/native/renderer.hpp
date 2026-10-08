@@ -55,9 +55,17 @@ struct RendererStats {
     std::uint64_t meshUploads{}, textureUploads{}, objectUploads{}, objectBufferAllocations{}, cameraUploads{}, drawCalls{}, presents{};
     bool initialized{};
 };
+struct RendererDeviceInfo {
+    std::string name;
+    std::uint32_t vendorID{}, deviceID{};
+    std::uint64_t dedicatedVideoBytes{}, sharedSystemBytes{}; // adapter capacities, not this app's usage
+};
 struct Readback {
     std::uint32_t width{}, height{}, rowBytes{};
-    // BGRA8 encoded-sRGB premultiplied bytes from this application's own target.
+    // BGRA8 encoded-sRGB bytes from this application's own target. Native
+    // surfaces are premultiplied; original-source passes retain their authored
+    // blend output, which may include emissive RGB beyond alpha. Do not clamp
+    // or unpremultiply that source output when comparing raw references.
     std::vector<std::uint8_t> pixels;
 };
 class RendererError : public std::runtime_error {
@@ -111,6 +119,9 @@ public:
     void clearResources(); // also clears draw list
     void reset() noexcept;
     RendererStats stats() const noexcept;
+    // Explicit diagnostic query only; never called by the frame loop. The
+    // selected adapter may differ from another GPU installed in the laptop.
+    RendererDeviceInfo deviceInfo() const;
     // Original material path shares this exact device and presentation target.
     // No new window, renderer timer or duplicate GPU device is created.
     SourceGraphics& sourceGraphics();

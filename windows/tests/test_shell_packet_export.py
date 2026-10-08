@@ -15,6 +15,42 @@ def load(path):
     return json.loads(path.read_text(encoding="utf-8"), parse_constant=invalid)
 
 
+def desktop_texture_dependencies(animation):
+    builder, mounted = animation['frameBuilder'], animation['mountedDocument']
+    settings = builder['desktopSettings']
+    nodes = {n['id']: n for n in animation['scene']['nodes']}
+    parents = {child: n['id'] for n in nodes.values() for child in n.get('child_ids', [])}
+    hidden = set(settings['hiddenNodes'])
+    def excluded(node):
+        while node in nodes:
+            if node in hidden:
+                return True
+            node = parents.get(node)
+        return False
+    ids = {'__white'}
+    for node, components in mounted['components'].items():
+        if excluded(node):
+            continue
+        for component in components:
+            data, kind = component['data'], component.get('script') or component['type']
+            if not data.get('m_Enabled', True):
+                continue
+            if kind in ('RawImage', 'UIRawImage'):
+                ids.add(data.get('m_Texture', {}).get('target_id') or '__white')
+            elif kind in ('Image', 'UIImage'):
+                if node in settings['images']:
+                    ids.add(settings['images'][node]['texture'])
+                elif node in settings['sprites']:
+                    ids.add(builder['sourceSprites'][settings['sprites'][node]]['textureID'])
+                elif component['id'] in builder['sprites']:
+                    ids.add(builder['sprites'][component['id']]['textureID'])
+        if any((c.get('script') or c['type']) == 'UISoftMask' and c['data'].get('m_Enabled', True) for c in components):
+            image = next((c for c in components if (c.get('script') or c['type']) == 'UIImage'), None)
+            if image is not None and image['id'] in mounted['spriteByComponent']:
+                ids.add(mounted['spriteByComponent'][image['id']]['texture']['id'])
+    return ids
+
+
 def verify(root, source_root=None):
     root = root.resolve()
     report = load(root/'shell-packet.json')
@@ -82,6 +118,13 @@ def verify(root, source_root=None):
                 assert stage['file'] in shader_paths
                 assert str(pathlib.PurePosixPath(stage['file']).with_suffix('.spv')) in shader_paths
     names, visible = set(), set()
+    template_names, template_shapes = [], set()
+    def template_shape(batch):
+        return json.dumps({'material': materials[batch['material']],
+            'geometry': 'source-dynamic-ui' if batch['sourceMesh'].startswith('ui/') else batch['sourceMesh'],
+            'uniforms': {key: len(value) for key, value in batch['uniformOverrides'].items()},
+            'textures': sorted(batch['textureOverrides']), 'stencil': batch.get('stencil'),
+            'colorWriteMask': batch.get('colorWriteMask'), 'indexRange': batch.get('indexRange')}, sort_keys=True)
     builder_inputs = []
     for desc in report['frames']:
         frame = json.loads(blob(desc))
@@ -90,6 +133,15 @@ def verify(root, source_root=None):
         assert len(nodes) == len(frame['nodes']) and nodes
         assert [b['index'] for b in frame['batches']] == list(range(len(frame['batches'])))
         assert frame['gpuCamera']['sceneColorMode'] == 'directLDR'
+        template_only = frame.get('templateOnly', False)
+        if template_only:
+            template_names.append(desc['name'])
+            assert frame['nativeOverlayStateIncluded'] is False and 'builderInput' not in frame
+            coverage = frame['templateCoverage']
+            assert coverage['state'] in ('Normal', 'Highlighted', 'Pressed', 'Disabled')
+            assert coverage['retainedTemplateCount'] == len(frame['batches']) > 0
+            assert coverage['sourceBatchCount'] >= coverage['retainedTemplateCount']
+        baseline_template = desc['name'].startswith('desktop-shell-1280x800-') and desc['name'].endswith(('-top', '-arbitrary-0', '-arbitrary-2'))
         for batch in frame['batches']:
             assert batch['mesh'] in meshes and batch['material'] in materials
             assert batch['sourceMesh'] == meshes[batch['mesh']]['sourceMesh']
@@ -98,6 +150,11 @@ def verify(root, source_root=None):
             if batch['indexRange'] is not None:
                 a,b = batch['indexRange']; assert 0 <= a < b <= meshes[batch['mesh']]['indexCount']
             material = materials[batch['material']]
+            if template_only or baseline_template:
+                shape = template_shape(batch)
+                if template_only:
+                    assert shape not in template_shapes, 'Redundant desktop template retained'
+                template_shapes.add(shape)
             for uniform in batch['uniforms']:
                 data = blob(uniform['payload'])
                 assert len(data) == uniform['byteCount']
@@ -131,6 +188,10 @@ def verify(root, source_root=None):
             assert 'Endministrator' in frame['nativeProfileCaptions'] and 'UID: 1000000000' in frame['nativeProfileCaptions']
             visible.update(n['target'] for n in frame['nativeNavigation'] if n['verifiedHitPoint'] is not None)
     assert visible == {m['id'] for m in report['modules']} and len(visible) == 24
+    if 'desktopTemplateFrames' in report:
+        assert report['desktopTemplateFrames'] == template_names
+        assert len(template_names) == len(set(template_names)) <= 64
+        assert '__ui_default_clip' in materials, 'Original hover template material was omitted'
     assert any('-opening-' in n for n in names) and any('-closing-' in n for n in names)
     animation = json.loads(blob(report['animation']))
     assert animation['library']['clips'] and len(animation['scene']['nodes']) > 0
@@ -149,6 +210,14 @@ def verify(root, source_root=None):
                 'sourceMeshNames','profileNodeIDs','defaultSelectableTints','desktopSettings'} <= builder.keys()
         assert builder_inputs and any('-arbitrary-' in n for n in names)
         assert set(builder['profileNodeIDs']) <= node_ids
+        if 'desktopTextureDependencies' in builder:
+            dependencies = builder['desktopTextureDependencies']
+            assert dependencies == sorted(desktop_texture_dependencies(animation))
+            assert set(dependencies) <= textures.keys(), 'Potential live desktop texture was not exported'
+            # This source hover graphic is authored inactive and absent from
+            # the original frozen frames, but is revealed by button animation.
+            hover = 'CAB-b0b39b6e8de72f174d57a79fadd6af3b:2717747845825510916'
+            assert hover in dependencies
         if builder.get('profileHover') is not None:
             profile = builder['profileHover']
             assert profile['rootID'] in profile['nodeIDs']

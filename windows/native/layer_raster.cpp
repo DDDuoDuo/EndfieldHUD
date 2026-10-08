@@ -1,4 +1,5 @@
 #include "native/layer_raster.hpp"
+#include "native/layer_text_layout.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -133,7 +134,7 @@ std::vector<const Json*> children(const Json& node) {
 }
 
 struct LayerRasterizer::Impl {
-    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts; };
+    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText; };
     struct DecodedImage { unsigned width{},height{};std::vector<std::uint8_t> premultipliedBGRA; };
     DWORD thread=GetCurrentThreadId();
     ComPtr<ID2D1Factory> d2d;ComPtr<IDWriteFactory> text;ComPtr<IDWriteFontCollection> fonts;ComPtr<IWICImagingFactory> wic;
@@ -222,9 +223,16 @@ struct LayerRasterizer::Impl {
         UINT32 index{};BOOL exists=FALSE;auto selected=wide(family);
         if(!selected.empty())checked(fonts->FindFamilyName(selected.c_str(),&index,&exists),"Resolve source font family");
         if(!exists){
-            selected=wide(options.fallbackFontFamily);checked(fonts->FindFamilyName(selected.c_str(),&index,&exists),"Resolve explicit fallback font");
+            const auto postscript=string(font["postScriptName"]);
+            // NSFontMonoSpaceTrait is 1<<10 in the current macOS SDK. Known
+            // private/public fixed-pitch families keep their typography class;
+            // proportional system fonts and unknown requests keep the caller's
+            // normal fallback, without guessing from their role in the HUD.
+            const bool fixedPitch=(static_cast<unsigned>(number(font["symbolicTraits"]))&(1u<<10))!=0||family=="Menlo"||family=="Monaco"||family=="SF Mono"||family==".AppleSystemUIFontMonospaced"||family.starts_with(".SFNSMono")||postscript.starts_with("Menlo-")||postscript.starts_with("SFMono-")||postscript.starts_with(".SFNSMono")||postscript.starts_with(".AppleSystemUIFontMonospaced-");
+            const auto& fallbackFamily=fixedPitch?options.monospaceFallbackFontFamily:options.fallbackFontFamily;
+            selected=wide(fallbackFamily);checked(fonts->FindFamilyName(selected.c_str(),&index,&exists),"Resolve explicit fallback font");
             if(!exists)invalid("Configured fallback font is not installed");
-            LayerFontSubstitution fallback{string(node["id"],"unnamed"),family,string(font["postScriptName"]),options.fallbackFontFamily};
+            LayerFontSubstitution fallback{string(node["id"],"unnamed"),family,postscript,fallbackFamily};
             if(std::none_of(result.fontSubstitutions.begin(),result.fontSubstitutions.end(),[&](const auto& f){return f.node==fallback.node&&f.requestedFamily==fallback.requestedFamily&&f.requestedFace==fallback.requestedFace;}))result.fontSubstitutions.push_back(std::move(fallback));
         }
         return selected;
@@ -271,7 +279,7 @@ struct LayerRasterizer::Impl {
     void drawText(ID2D1RenderTarget* target,const Json& node,const LayerRasterOptions& options,LayerRasterImage& result,
                   std::vector<ComPtr<IDWriteTextLayout>>& layouts,float opacity){
         const auto& descriptor=node["text"];const auto bounds=rectangle(node["bounds"]);const auto value=wide(string(descriptor["string"]));
-        if(value.empty()||bounds.width<=0||bounds.height<=0)return;
+        if((value.empty()&&!options.retainEmptyTextLayout)||bounds.width<=0||bounds.height<=0)return;
         if(value.size()>65536)invalid("Text layout exceeds its UTF-16 limit");
         const auto family=fontFamily(descriptor["font"],node,options,result);const auto size=real(descriptor["fontSize"],12);
         if(size<=0||size>2048)invalid("Text size exceeds its range");
@@ -460,11 +468,24 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     for(std::size_t i=0;i<bytes;i+=4){const unsigned a=bgra[i+3];result->straightRGBA[i+3]=static_cast<std::uint8_t>(a);
         for(unsigned c=0;c<3;++c)result->straightRGBA[i+c]=a?static_cast<std::uint8_t>(std::min(255u,(unsigned(bgra[i+2-c])*255u+a/2)/a)):0;
     }
-    r.counts.resourceBytes=r.counts.resourceBytes-previous+bytes;++r.counts.rasterizations;
-    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts)});return result;
+    std::shared_ptr<const PaintedTextLayout> painted;
+    // Editor geometry currently follows the rectangular DWrite viewport only.
+    // Keep rendering nonrectangular masks, but do not fabricate matching hits
+    // for those surfaces until the caller supplies that exact clip topology.
+    const bool simpleTextClip=(!options.includeRootMask||layer["mask"].isNull())
+        &&(!flag(layer["masksToBounds"])||real(layer["cornerRadius"])==0);
+    const bool textLeaf=string(layer["kind"])=="text"&&(layer["children"].isNull()||array(layer["children"],maximumNodes).empty())&&simpleTextClip&&result->complete();
+    if(textLeaf&&layouts.size()==1){const auto value=wide(string(layer["text"]["string"]));std::u16string original;original.reserve(value.size());for(auto unit:value)original.push_back(static_cast<char16_t>(unit));
+        painted=std::shared_ptr<const PaintedTextLayout>(new PaintedTextLayout(layouts[0].Get(),std::move(original),revision,rectangle(layer["bounds"])));}
+    const auto oldMetadata=old==r.entries.end()||!old->second.paintedText?0:old->second.paintedText->text().size()*sizeof(char16_t);
+    const auto newMetadata=painted?painted->text().size()*sizeof(char16_t):0;
+    if(newMetadata>maximumTextMetadataBytes-(r.counts.textMetadataBytes-oldMetadata))invalid("Retained editor text metadata exceeds its bound");
+    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted)});
+    r.counts.resourceBytes=r.counts.resourceBytes-previous+bytes;r.counts.textMetadataBytes=r.counts.textMetadataBytes-oldMetadata+newMetadata;++r.counts.rasterizations;return result;
 }
-bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();r.entries.erase(it);return true;}
-void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;}
+std::shared_ptr<const PaintedTextLayout>LayerRasterizer::textLayout(const std::string&id,std::uint64_t revision)const{const auto&r=*impl_;r.onThread();const auto found=r.entries.find(id);return found!=r.entries.end()&&found->second.revision==revision?found->second.paintedText:nullptr;}
+bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->text().size()*sizeof(char16_t);r.entries.erase(it);return true;}
+void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;r.counts.textMetadataBytes=0;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();return result;}
 } // namespace endfield::native
 #endif

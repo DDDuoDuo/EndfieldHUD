@@ -9,6 +9,10 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <bit>
+#include <cmath>
+#include <locale>
+#include <sstream>
 
 using namespace ehud::data;
 namespace {
@@ -50,6 +54,19 @@ void jsonTests() {
     check(value["text"].string()=="😀简体繁體日本한국","Surrogate pair and international text decode");
     check(Json::parse(encoded)==value,"Lossless JSON value roundtrip");
     check(Json::parse("9223372036854775807").integer()==std::numeric_limits<std::int64_t>::max(),"Signed integer boundary exact");
+    // Fast native conversion must retain the classic-locale stream's value and
+    // range behavior, while persistence keeps the original decimal spelling.
+    for(const char* token:{"0","-0","0.1","-0.33333333333333331","812345678.12500001",
+        "18446744073709551615","1.7976931348623157e308","2.2250738585072014e-308",
+        "4.9406564584124654e-324","1e-999","-1e-999","1e999","-1e999"}) {
+        std::istringstream baseline{token};baseline.imbue(std::locale::classic());double expected{};
+        baseline>>std::noskipws>>expected;
+        const bool accepted=!baseline.fail()&&baseline.peek()==std::char_traits<char>::eof()&&std::isfinite(expected);
+        if(!accepted){rejectsJson([&]{(void)Json::parse(token);},"Fast numeric conversion preserves range rejection");continue;}
+        const auto parsed=Json::parse(token);
+        check(std::bit_cast<std::uint64_t>(parsed.number())==std::bit_cast<std::uint64_t>(expected),"Native numeric conversion preserves exact IEEE value and signed zero");
+        check(parsed.encode()==token,"Fast numeric access never rewrites stored decimal token");
+    }
     rejectsJson([]{(void)Json::parse("{\"id\":1,\"id\":2}");},"Duplicate keys rejected");
     rejectsJson([]{(void)Json::parse("\"\\uD800\"");},"Unpaired surrogate rejected");
     rejectsJson([]{(void)Json::parse("[01]");},"Leading numeric zero rejected");

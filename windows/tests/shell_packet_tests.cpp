@@ -61,7 +61,12 @@ void hashes(){
     check(sha256(bytes(std::string(1'000'000,'a')))=="cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0","SHA256 million-a vector");
 }
 void normal(){
-    Fixture fixture;fixture.finish();Package package(fixture.root);
+    Fixture fixture;fixture.finish();
+    const auto originalManifest=" \n"+fixture.manifest.encode(Package::maximumJSONBytes)+"\n";
+    write(fixture.root/"shell-packet.json",originalManifest);Package package(fixture.root);
+    check(package.manifestSHA256()==sha256(bytes(originalManifest)),"package pin hashes exact parsed bytes including JSON whitespace");
+    fixture.save();
+    check(package.manifestSHA256()==sha256(bytes(originalManifest))&&package.manifestSHA256()!=sha256(bytes(fixture.manifest.encode(Package::maximumJSONBytes))),"package pin is an immutable construction snapshot despite later manifest changes");
     check(package.meshes().size()==1&&package.materials().size()==1&&package.textures().size()==1,"package descriptors indexed");
     const auto mesh=package.loadMesh("mesh-1");check(mesh.vertices.size()==3&&mesh.indices==std::vector<std::uint32_t>{0,1,2},"mesh float32-LE and indices loaded");
     check(mesh.vertices[2].position[0]==2&&mesh.vertices[0].position[3]==1&&mesh.vertices[0].color[1]==0.5f,"native position W and original color retained");

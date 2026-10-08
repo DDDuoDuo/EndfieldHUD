@@ -12,6 +12,25 @@ double number(const Json&v,double fallback=0){return v.isNumber()?v.number():fal
 bool flag(const Json&v,bool fallback=false){return v.isBool()?v.boolean():v.isNumber()?v.number()!=0:fallback;}
 std::string text(const Json&v){return v.isString()?v.string():std::string{};}
 std::optional<std::string> target(const Json&v){return v["target_id"].isString()?std::optional(v["target_id"].string()):std::nullopt;}
+// Runtime consumers use only sprite layout metrics and the soft-mask texture
+// identity. Archival bindings, decoded meshes, physics and PNG provenance stay
+// in the build packet instead of being copied into every UIImage component.
+Json runtimeSprite(const Json&value){
+    need(value.isObject(),"Invalid mounted sprite record");Json out(Json::Object{});
+    for(const auto*key:{"id","name"})if(value.contains(key)){need(value[key].isString()||value[key].isNull(),"Invalid mounted sprite identity");out[key]=value[key];}
+    const auto&raw=value["raw_sprite"];need(raw.isObject()||raw.isNull(),"Invalid mounted raw sprite metadata");Json projected(Json::Object{});
+    auto numericObject=[](const Json&source,std::initializer_list<const char*>keys){
+        need(source.isObject()||source.isNull(),"Invalid mounted sprite metric object");Json result(Json::Object{});
+        for(const auto*key:keys)if(source.contains(key)){need(source[key].isNumber()||source[key].isNull(),"Invalid mounted sprite metric");result[key]=source[key];}return result;
+    };
+    if(raw.contains("m_Border"))projected["m_Border"]=numericObject(raw["m_Border"],{"x","y","z","w"});
+    if(raw.contains("m_Rect"))projected["m_Rect"]=numericObject(raw["m_Rect"],{"x","y","width","height"});
+    if(raw.contains("m_PixelsToUnits")){need(raw["m_PixelsToUnits"].isNumber()||raw["m_PixelsToUnits"].isNull(),"Invalid mounted sprite pixels-per-unit");projected["m_PixelsToUnits"]=raw["m_PixelsToUnits"];}
+    if(raw.isObject())out["raw_sprite"]=std::move(projected);
+    const auto&texture=value["texture"];need(texture.isObject()||texture.isNull(),"Invalid mounted sprite texture reference");
+    if(texture.contains("id")){need(texture["id"].isString()||texture["id"].isNull(),"Invalid mounted sprite texture identity");out["texture"]=Json::Object{{"id",texture["id"]}};}
+    return out;
+}
 const TransformOverride* overrideFor(const Pose&p,std::string_view id){const auto i=p.transforms.find(id);return i==p.transforms.end()?nullptr:&i->second;}
 }
 bool WatchComponent::enabled() const {return flag(data["m_Enabled"],true);}
@@ -21,7 +40,7 @@ MountedLayoutDocument MountedLayoutDocument::fromJson(const Json&value){
         need(++records<=1000000,"Too many mounted components");WatchComponent c;c.id=text(record["id"]);c.type=text(record["type"]);
         if(record["script"].isString())c.script=text(record["script"]);c.data=record["data"];need(!c.id.empty()&&c.data.isObject(),"Invalid mounted component");result.components[id].push_back(std::move(c));
     }
-    for(const auto&[id,spriteValue]:value["spriteByComponent"].object())result.spriteByComponent.emplace(id,spriteValue);
+    for(const auto&[id,spriteValue]:value["spriteByComponent"].object()){need(!id.empty(),"Missing mounted sprite component identity");result.spriteByComponent.emplace(id,runtimeSprite(spriteValue));}
     for(const auto&b:value["buttons"].array()){
         WatchButton button{text(b["node_id"]),text(b["path"]),{}};need(!button.nodeID.empty(),"Missing mounted button identity");
         for(const auto&label:b["labels"].array())if(text(label["text_id"])!="ui_common_new_eng"&&label["cn_literal"].isString()){button.captionID=text(label["node_id"]);break;}
@@ -280,7 +299,7 @@ struct WatchLayout::Impl {
             report.scroll=ScrollInfo{scene->nodes()[index].id,*contentID,*viewportID,hidden,number(c["m_ScrollSensitivity"],1),normalized};report.unverifiedCustomComponents.insert("UIScrollRect.elasticInertiaAndSmoothScrollScheduling");
         }
     }
-    void slant(const WatchComponent&effect,std::size_t index,ResolvedView resolved,const Matrix4&worldRoot,Pose&pose,bool forceRebuild){
+    void slant(const WatchComponent&effect,std::size_t index,ResolvedView resolved,const Matrix4&worldRoot,Pose&pose,bool forceRebuild,std::span<unsigned char>written={}){
         const auto*self=resolved.node(scene->nodes()[index].id);if(!self)return;const auto inv=inverse(worldRoot*self->worldMatrix);if(!inv)return;
         std::optional<Slant> rebuilt;const Slant*configuration{};
         if(!forceRebuild){const auto i=slants.find(effect.id);if(i!=slants.end()){if(const auto*error=std::get_if<std::exception_ptr>(&i->second))std::rethrow_exception(*error);configuration=&std::get<Slant>(i->second);}}
@@ -289,7 +308,7 @@ struct WatchLayout::Impl {
             const auto parentInverse=inverse(worldRoot*parent->worldMatrix);if(!parentInverse)continue;const auto world=translation(worldRoot*cell->worldMatrix);const auto y=transform(*inv,world)[1];
             const auto time=std::clamp((y-configuration->bottom)/configuration->range,0.,1.);const auto value=configuration->curve.sample(time);if(!value)continue;
             const auto x=configuration->left+*value*configuration->width;const auto desiredX=transform(worldRoot*self->worldMatrix,{x,0,0,1})[0];const auto destination=transform(*parentInverse,{desiredX,world[1],world[2],1});
-            setLocal(*layout.nodeIndex(id),destination,parent->rect,pose);
+            const auto cellIndex=*layout.nodeIndex(id);setLocal(cellIndex,destination,parent->rect,pose);if(!written.empty())written[cellIndex]=1;
         }
     }
 };
@@ -314,10 +333,11 @@ WatchLayout::Report WatchLayout::apply(Pose&pose,double normalized,const Matrix4
     for(const auto index:p.customIDs)if(resolved.nodes[index].activeInHierarchy){const auto i=p.document->components.find(p.scene->nodes()[index].id);if(i!=p.document->components.end())for(const auto&c:i->second)if(c.enabled()&&(c.kind()=="UIStepScrollList"||c.kind()=="GridLayoutGroup"||c.kind()=="NotchAdapter"))report.unverifiedCustomComponents.insert(std::string(c.kind()));}
     return report;
 }
-void WatchLayout::applySlant(Pose&pose,const Matrix4&worldRoot,std::optional<ResolvedView>before,bool forceRebuild){
+void WatchLayout::applySlant(Pose&pose,const Matrix4&worldRoot,std::optional<ResolvedView>before,bool forceRebuild,std::span<unsigned char>written){
     auto&p=*impl_;p.force=forceRebuild;p.invalidateRects();std::vector<ResolvedNode> full;ResolvedView resolved;
+    need(written.empty()||written.size()==p.scene->nodes().size(),"Slant written-cell flag width differs from source scene");
     if(before)resolved=*before;else{full=p.layout.resolve({},pose.transforms);resolved={&p.layout,full};}
-    for(const auto index:p.slantIDs){const auto*node=resolved.node(p.scene->nodes()[index].id);if(node&&node->activeInHierarchy)p.slant(*p.component("UIScrollCellSlantEffect",index),index,resolved,worldRoot,pose,forceRebuild);}
+    for(const auto index:p.slantIDs){const auto*node=resolved.node(p.scene->nodes()[index].id);if(node&&node->activeInHierarchy)p.slant(*p.component("UIScrollCellSlantEffect",index),index,resolved,worldRoot,pose,forceRebuild,written);}
 }
 double WatchLayout::scrolledPosition(double current,double delta,const std::optional<ScrollInfo>&info) noexcept {return std::isfinite(current)&&std::isfinite(delta)&&info&&info->hiddenLength>0?std::clamp(current+delta*info->sensitivity/info->hiddenLength,0.,1.):current;}
 std::optional<std::size_t> WatchLayout::scrollResolutionNodeCount(std::string_view id) const noexcept {const auto i=impl_->layout.nodeIndex(id);return i&&!impl_->scrollChains[*i].empty()?std::optional(impl_->scrollChains[*i].size()):std::nullopt;}

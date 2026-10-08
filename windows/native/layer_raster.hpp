@@ -9,6 +9,7 @@
 #include <vector>
 
 namespace endfield::native {
+class PaintedTextLayout;
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
     double paddingPoints{1};
@@ -17,6 +18,8 @@ struct LayerRasterOptions {
     // The caller owns the root's placement, perspective, opacity and mask.
     // Child placement/opacity/masks are part of the local retained content.
     bool includeRootOpacity{false}, includeRootMask{false};
+    bool retainEmptyTextLayout{false}; // Explicit editor option; source captions keep their existing behavior.
+    std::string monospaceFallbackFontFamily{"Consolas"}; // Only explicit source fixed-pitch families/traits.
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };
@@ -32,6 +35,7 @@ struct LayerRasterImage {
 struct LayerRasterStats {
     std::size_t entries{}, resourceBytes{}, decodedImages{};
     std::uint64_t rasterizations{}, cacheHits{}, textLayoutsCreated{}, imageDecodes{}, nodesDrawn{};
+    std::size_t textMetadataBytes{};
 };
 
 // Local model-layer rasterization only: no HWND, screen capture, clock, worker,
@@ -49,12 +53,16 @@ class LayerRasterizer final {
 public:
     static constexpr std::size_t maximumEntries = 256, maximumResourceBytes = 256 * 1024 * 1024;
     static constexpr std::size_t maximumPixels = 4096 * 4096, maximumNodes = 4096;
+    static constexpr std::size_t maximumTextMetadataBytes = 16 * 1024 * 1024;
     LayerRasterizer();
     ~LayerRasterizer();
     LayerRasterizer(const LayerRasterizer&) = delete;
     LayerRasterizer& operator=(const LayerRasterizer&) = delete;
     std::shared_ptr<const LayerRasterImage> rasterize(std::string sourceID, std::uint64_t revision,
         const ehud::data::Json& layer, const LayerRasterOptions& options = {});
+    // Exact root-text leaf only. Null means missing/wrong revision, no painted
+    // text layout, or a tree surface; never returns guessed child hit geometry.
+    std::shared_ptr<const PaintedTextLayout> textLayout(const std::string& sourceID,std::uint64_t expectedRevision)const;
     bool remove(const std::string& sourceID);
     void clear();
     LayerRasterStats stats() const;

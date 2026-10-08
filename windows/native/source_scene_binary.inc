@@ -1,6 +1,6 @@
 // Private typed SourceScene codec. Included in source_scene.cpp's anonymous
 // namespace so the on-disk format cannot bypass the retained scene contracts.
-// Layout v1/v2/v3: EHSRC001 + u32 version + u64 payload bytes +64 ASCII SHA-256;
+// Layout v1/v2/v3/v4: EHSRC001 + u32 version + u64 payload bytes +64 ASCII SHA-256;
 // payload consists of bounded little-endian fields, with no paths/JSON. The
 // enclosing shipping manifest may pin the complete artifact for authenticity.
 constexpr std::size_t compiledHeaderBytes=84;
@@ -167,6 +167,16 @@ std::string saveCompiled(const PreparedReplay& scene,const gpu::SourceSceneProve
         w.count(p.cells.size(),256);for(const auto& [id,c]:p.cells){w.identity(id);saveCell(w,c);}
         w.count(p.draws.size(),32);for(const auto& d:p.draws)saveDraw(w,d);
     }
+    // Version4 declares source-metadata texture dependencies which need not be
+    // visible in any sampled template (for example an initially transparent
+    // profile hover). Keep the unused-resource check strict for all other data.
+    w.count(scene.textureDependencies.size(),2048);
+    for(const auto& [id,origin]:scene.textureDependencies){
+        require(scene.textures.contains(id),"Declared desktop texture has no retained original mip data");
+        const auto found=std::find(catalogProvenance.begin(),catalogProvenance.end(),origin);
+        require(found!=catalogProvenance.end(),"Declared desktop texture source provenance missing");
+        w.identity(id);w.count(static_cast<std::size_t>(found-catalogProvenance.begin()),4095);
+    }
     BinaryWriter file;file.raw("EHSRC001");file.u32(gpu::SourceScene::compiledSchemaVersion);file.u64(w.data.size());file.raw(hash(w.data));file.raw(w.data);return std::move(file.data);
 }
 LoadedSourceScene loadCompiled(std::string_view file) {
@@ -281,6 +291,12 @@ LoadedSourceScene loadCompiled(std::string_view file) {
             require(usedCells.size()==p.cells.size(),"Compiled catalog contains unused uniform cells");loaded.extra.push_back(std::move(p));}
         require(usedSources.size()==loaded.catalogProvenance.size(),"Compiled catalog contains unused source provenance");
     }else loaded.catalogProvenance.push_back(provenance);
+    if(version>=4){
+        const auto dependencies=r.count(2048,9);
+        for(unsigned i=0;i<dependencies;++i){const auto id=r.identity();const auto origin=r.bounded(static_cast<unsigned>(loaded.catalogProvenance.size()-1));
+            require(s.textures.contains(id)&&s.textureDependencies.emplace(id,loaded.catalogProvenance[origin]).second,"Missing/duplicate compiled desktop texture dependency");usedTextures.insert(id);
+        }
+    }
     require(usedOriginals.size()==s.originalGeometry.size(),"Compiled asset includes unused source geometry");
     require(usedPipelines.size()==s.pipelines.size()&&usedTextures.size()==s.textures.size(),"Compiled asset contains unused shader resources");
     require(r.remaining()==0,"Compiled source data has trailing bytes");visibleDraws(s);loaded.scene=std::move(s);return loaded;

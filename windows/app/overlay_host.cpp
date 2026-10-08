@@ -452,8 +452,22 @@ ClientMetrics OverlayHost::metrics() const { impl_->requireThread(); return impl
 void OverlayHost::show(bool activate) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
     if (!p.window || p.stopped) throw std::logic_error("Cannot show stopped/uncreated overlay");
-    ShowWindow(p.window, activate ? SW_SHOW : SW_SHOWNOACTIVATE);
-    if (activate) SetForegroundWindow(p.window);
+    const auto window=p.window;
+    // An explicit owner request must not inherit a launcher's STARTUPINFO
+    // SW_HIDE. Preserve geometry, style and topmost status; show(false) also
+    // preserves keyboard focus and activation.
+    const UINT flags=SWP_SHOWWINDOW|SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|(activate?0u:SWP_NOACTIVATE);
+    if(!SetWindowPos(window,nullptr,0,0,0,0,flags))fail("Show owned overlay");
+    p.rethrow();
+    if(p.window==window&&!p.stopped){
+        // WM_SHOWWINDOW precedes completed native visibility. A refresh in
+        // that callback can still see IsWindowVisible=false, so rebuild the
+        // gate now or a stable preexisting demand can remain asleep forever.
+        p.visible=IsWindowVisible(window)!=FALSE;
+        p.minimized=IsIconic(window)!=FALSE;
+        p.refreshSchedule();
+        if(activate&&p.visible)SetForegroundWindow(window);
+    }
     p.rethrow();
 }
 void OverlayHost::hide() {

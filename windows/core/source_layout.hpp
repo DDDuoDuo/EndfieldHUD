@@ -50,7 +50,8 @@ private:
 // One result per node, no history or timers. Changed branches are staged before
 // committing, including the input snapshot and counters. An invalid update
 // leaves every previously returned node unchanged. Unchanged resolves allocate
-// nothing; changed resolves may allocate only the new override-map snapshot.
+// nothing; changing values with the same override/component keys also allocate
+// nothing. Structural changes may allocate a new override-map snapshot.
 // Returned spans remain valid until destruction, and their contents change only
 // after a successful resolve. The object is intended for its owner render thread.
 class IncrementalResolver final {

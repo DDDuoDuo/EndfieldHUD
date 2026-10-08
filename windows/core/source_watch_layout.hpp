@@ -17,6 +17,8 @@ struct WatchButton {std::string nodeID,path;std::optional<std::string> captionID
 // including the components merged from the desktop profile's mounted prefab.
 struct MountedLayoutDocument {
     std::map<std::string,std::vector<WatchComponent>,std::less<>> components;
+    // Runtime projection only: identity, raw sprite border/rect/PPU and texture
+    // ID. Full archival/decoded sprite records remain build-time packet data.
     std::map<std::string,Json,std::less<>> spriteByComponent;
     std::vector<WatchButton> buttons;
     static MountedLayoutDocument fromJson(const Json&);
@@ -71,7 +73,11 @@ public:
                  const DesktopNavigationLayout* desktopNavigation=nullptr,
                  const SlantMapping& slantMapping={},
                  const std::function<void(const Pose&)>& beforeSlant={},bool forceRebuild=false);
-    void applySlant(Pose&,const Matrix4& worldRoot, std::optional<ResolvedView> resolvedBeforeSlant={},bool forceRebuild=false);
+    // Optional caller-owned flags use immutable SceneDefinition node indices.
+    // Only cells successfully written receive 1; caller clears flags before a
+    // pass. This lets the retained renderer restore skipped baseline channels.
+    void applySlant(Pose&,const Matrix4& worldRoot, std::optional<ResolvedView> resolvedBeforeSlant={},bool forceRebuild=false,
+                    std::span<unsigned char> writtenCells={});
     static double scrolledPosition(double current,double delta,const std::optional<ScrollInfo>&) noexcept;
     std::optional<std::size_t> scrollResolutionNodeCount(std::string_view id) const noexcept;
     std::span<const std::string> slantRootIDs() const noexcept;
