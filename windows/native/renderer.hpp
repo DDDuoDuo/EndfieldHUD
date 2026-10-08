@@ -88,6 +88,20 @@ struct PlaneAlphaMask {
     std::string textureID; // caller-owned resident texture; sampled alpha only
     bool operator==(const PlaneAlphaMask&)const=default;
 };
+// Numeric angular clip for a resident path/raster. Angles use the mask-local
+// +X axis with positive rotation toward +Y (clockwise in flipped HUD space).
+// Sweep is [0, 2*pi]; endpoints are straight radial butt cuts, antialiased in
+// screen derivatives. This is a clip, not a substitute stroke generator.
+struct AngularMask {
+    core::Matrix4 worldToLocal;
+    core::Point center;
+    double startAngle{},sweepAngle{};
+    // Optional exact source curve tangent: n.x*(x-center.x) +
+    // n.y*(y-center.y) + offset >= 0 keeps the endpoint's inside half-plane.
+    // Normal must be finite/nonzero. Omitted uses the radial end butt cut.
+    std::optional<std::array<double,3>> endPlane;
+    bool operator==(const AngularMask&)const=default;
+};
 struct DrawObject {
     std::string sourceID, meshID, textureID; // empty textureID selects opaque white
     core::Matrix4 world;
@@ -98,6 +112,7 @@ struct DrawObject {
     std::vector<PlaneMask> masks;
     std::optional<PlaneShutter> shutter;
     std::optional<PlaneAlphaMask> alphaMask; // intersects ordinary masks/shutter
+    std::optional<AngularMask> angularMask; // no texture or tessellation
 };
 // Checks retained numeric/identity data with the exact GPU-uniform rules,
 // without querying or allocating device resources. Resource existence remains
@@ -162,7 +177,7 @@ public:
     static constexpr std::size_t maximumRenderPixels = 4096 * 4096;
     static constexpr std::size_t maximumNativeGroups=64,maximumNativeGroupPixels=4*1024*1024,
         maximumNativeGroupBytes=64*1024*1024;
-    static constexpr std::size_t maximumMediaTargets=8,maximumMediaPixels=4*1024*1024,
+    static constexpr std::size_t maximumMediaTargets=16,maximumMediaPixels=4*1024*1024,
         maximumMediaBytes=128*1024*1024;
     Renderer();
     ~Renderer();
@@ -188,6 +203,13 @@ public:
     // linear-premultiplied RGBA16. No CPU copy/readback, resource allocation,
     // mesh upload or draw-list replacement. Invoke only for a new engine frame.
     void commitMediaTexture(const RendererMediaTexture&);
+    // Keep the already committed linear pixels under the same texture ID,
+    // without copying/recreating them. Retires the frame-server target slot and
+    // invalidates future commits. The caller stops its engine first, then drops
+    // its borrowed target handle. Pixels and any still-borrowed encoded surface
+    // remain charged to the existing media byte ceiling until individually
+    // released. Safe while the texture is published; no draw-list replacement.
+    void retainMediaPoster(const RendererMediaTexture&);
     // A local premultiplied-linear GPU pass on this same device. Its rounded
     // pixel coverage includes the caller's overflowing shadow/ink bounds. No
     // CPU bitmap/readback is generated; root pose/fade belongs to outputDraw.

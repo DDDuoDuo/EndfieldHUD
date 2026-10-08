@@ -1,0 +1,1329 @@
+{
+  "icons": [
+    {
+      "app": {
+        "file": "endfield-app.png",
+        "height": 64,
+        "sha256": "fa50aabd01850c5602550b5fd838a9f65ffb759f4378de44bee4301a41bc5bf5",
+        "template": false,
+        "width": 64
+      },
+      "id": "endfield",
+      "offered": true,
+      "title": "Endfield",
+      "tray": {
+        "file": "endfield-tray.png",
+        "height": 40,
+        "sha256": "62e0dfe2ca74846895027a636f61b8ceba647dd5183598dff7c27e90ef3e07db",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "battery-app.png",
+        "height": 128,
+        "sha256": "7edcf0c5878ed1d764b4f7c2c746856855fbde80566100865008de23696070de",
+        "template": false,
+        "width": 128
+      },
+      "id": "battery",
+      "offered": true,
+      "title": "Battery",
+      "tray": {
+        "file": "battery-tray.png",
+        "height": 40,
+        "sha256": "13c0d8b875736316f49088dbeb74717d241c57e24dd673ae7f161dd536ba6df8",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "originium-app.png",
+        "height": 128,
+        "sha256": "80e222cfd348aba33dc182b952063cde3673666dd22d63ab8ae9d317109ed63f",
+        "template": false,
+        "width": 128
+      },
+      "id": "originium",
+      "offered": false,
+      "title": "Originium",
+      "tray": {
+        "file": "originium-tray.png",
+        "height": 40,
+        "sha256": "3b6bc1acd9ef76d53f26a6834c3ddbdffe4c2065edf7df745ed77788d7f42dd6",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "orundum-app.png",
+        "height": 128,
+        "sha256": "10e39821a0ee059479c21c15fe8da5ee93c50012e135920ded45ec452931a168",
+        "template": false,
+        "width": 128
+      },
+      "id": "orundum",
+      "offered": false,
+      "title": "Orundum",
+      "tray": {
+        "file": "orundum-tray.png",
+        "height": 40,
+        "sha256": "0ec89aecff78791d2606d26e58af516a7fa20a4480f44d79864a0d653fa3af28",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "perlica-app.png",
+        "height": 64,
+        "sha256": "851837b39a8fce8ba3210b9963ccc3c69c1d2e3cbf5eb7bc2497832c4a0403c8",
+        "template": false,
+        "width": 64
+      },
+      "id": "perlica",
+      "offered": true,
+      "title": "Perlica",
+      "tray": {
+        "file": "perlica-tray.png",
+        "height": 40,
+        "sha256": "a0bcfb8af76952e36379f09b82f30c3ea0b7853e33fd8a4db25bf1fd6c29a3b3",
+        "template": false,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "rhodesIsland-app.png",
+        "height": 64,
+        "sha256": "33b9bf4162db88f8d26d1aafaf2a2479212e80f635fa95df6673c67d74411c7b",
+        "template": false,
+        "width": 64
+      },
+      "id": "rhodesIsland",
+      "offered": true,
+      "title": "Rhodes Island",
+      "tray": {
+        "file": "rhodesIsland-tray.png",
+        "height": 40,
+        "sha256": "7ceb58852c9db867fd025a184fe7c9faa3f2416dc16f15790145b1882418ca87",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "babel-app.png",
+        "height": 64,
+        "sha256": "6ee7b57cf192863b42c6542baf12408e17d544a0bfb3d8d465f7b357eac2153d",
+        "template": false,
+        "width": 64
+      },
+      "id": "babel",
+      "offered": true,
+      "title": "Babel",
+      "tray": {
+        "file": "babel-tray.png",
+        "height": 40,
+        "sha256": "4172e07d71e5217e50c32c2d4136422307d730e29f48d7bfa8ff74c0bb3061a4",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "rhineLab-app.png",
+        "height": 64,
+        "sha256": "4891e273f6d19db9b692dd8ebf7ab398c28c72ea05d008608283cf272ec7560b",
+        "template": false,
+        "width": 64
+      },
+      "id": "rhineLab",
+      "offered": true,
+      "title": "Rhine Lab",
+      "tray": {
+        "file": "rhineLab-tray.png",
+        "height": 40,
+        "sha256": "d7c6ed716f38be0121052d2980a8db3ca7a9d7fbfb8760864be6fd426c364fae",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "blacksteel-app.png",
+        "height": 64,
+        "sha256": "58858c7556a2a8d72dee6704f1b28abcb7aa27933e307cb6b8691f810c2c14e4",
+        "template": false,
+        "width": 64
+      },
+      "id": "blacksteel",
+      "offered": true,
+      "title": "Blacksteel",
+      "tray": {
+        "file": "blacksteel-tray.png",
+        "height": 40,
+        "sha256": "fadb0b2331025ab392f05b0e877aa05d256ba897fda2364033a0ed251ce2d5bd",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "penguinLogistics-app.png",
+        "height": 64,
+        "sha256": "7db76df9ed4a86f1828b40d13256b544aa35451303807cd41a59befe631ba84c",
+        "template": false,
+        "width": 64
+      },
+      "id": "penguinLogistics",
+      "offered": true,
+      "title": "Penguin Logistics",
+      "tray": {
+        "file": "penguinLogistics-tray.png",
+        "height": 40,
+        "sha256": "62cfcaccc9906326a0c372525f58c0546a0d7df26cfe5399a2ecf1a05f3cd893",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ddd-app.png",
+        "height": 64,
+        "sha256": "a630b3f33142d8cf2a5afcd843f0ab94cd25746a105fdf07f6de8aaab2322aa4",
+        "template": false,
+        "width": 64
+      },
+      "id": "ddd",
+      "offered": true,
+      "title": "D.D.D.",
+      "tray": {
+        "file": "ddd-tray.png",
+        "height": 40,
+        "sha256": "08e20e7f3f0a2dead0dd2e4ce1388565f26a815761032f9919914c76f2cd671c",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "eliteOps-app.png",
+        "height": 64,
+        "sha256": "2d45d0be60d5ceee3c03c1222b16801dbfa16d872e263dc0d555324d5862c048",
+        "template": false,
+        "width": 64
+      },
+      "id": "eliteOps",
+      "offered": true,
+      "title": "Elite Operators",
+      "tray": {
+        "file": "eliteOps-tray.png",
+        "height": 40,
+        "sha256": "acbf0caf7c7c94be9829b4723217548cb4300917647ebe091052ce79ba651351",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "alphaFour-app.png",
+        "height": 64,
+        "sha256": "10c85ddeae9265da14558dd3d01dec76df8663d1fbb723909b09dabb1f2f30b6",
+        "template": false,
+        "width": 64
+      },
+      "id": "alphaFour",
+      "offered": true,
+      "title": "Reserve Team A4",
+      "tray": {
+        "file": "alphaFour-tray.png",
+        "height": 40,
+        "sha256": "2bfaf75637a05dd940087e4a8ce161155f6bac3a236065bbd95686bfafe3f302",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "alphaSix-app.png",
+        "height": 64,
+        "sha256": "4783f2725ce64f60dcece1545d9dd2d216e943013a1a824a223970cd561b1796",
+        "template": false,
+        "width": 64
+      },
+      "id": "alphaSix",
+      "offered": true,
+      "title": "Reserve Team A6",
+      "tray": {
+        "file": "alphaSix-tray.png",
+        "height": 40,
+        "sha256": "11bb0255bed6032161e051d8aca8058925128d1f81ec3779744751ee981b439a",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "humanResources-app.png",
+        "height": 64,
+        "sha256": "aee5e68b8b380f32211dcec82bcbd6cebf3c2a0bcec93f6beddaa5b95ba6cdf9",
+        "template": false,
+        "width": 64
+      },
+      "id": "humanResources",
+      "offered": true,
+      "title": "Human Resources",
+      "tray": {
+        "file": "humanResources-tray.png",
+        "height": 40,
+        "sha256": "3c26a436974bc909c6f32a539552957afbc4b62f3c6f358ff9b56c02135e7a5e",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "sweep-app.png",
+        "height": 64,
+        "sha256": "37df5505573142b53fccfd6eb667d032aea3f110fda49261e8e28c7e5e895a84",
+        "template": false,
+        "width": 64
+      },
+      "id": "sweep",
+      "offered": true,
+      "title": "S.W.E.E.P.",
+      "tray": {
+        "file": "sweep-tray.png",
+        "height": 40,
+        "sha256": "a6e67db2f5ba0d5ac86b9d673feb259d89c28d94b1ebe5e30dbf90d1b0ffebba",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "projectRed-app.png",
+        "height": 64,
+        "sha256": "05f36c537405c4deb7483c06bcbe61a3cae1fc52c12b1791b395819b86808c8d",
+        "template": false,
+        "width": 64
+      },
+      "id": "projectRed",
+      "offered": true,
+      "title": "Project Red",
+      "tray": {
+        "file": "projectRed-tray.png",
+        "height": 40,
+        "sha256": "39c8702a81029ea160a23a283a2d50d56d6f899174946c3f1b2cb9a788dc63b7",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "rimBilliton-app.png",
+        "height": 64,
+        "sha256": "2e59594b779d7c13036531ffa2be68730bff6eeac9794a6335e43bd35a90df30",
+        "template": false,
+        "width": 64
+      },
+      "id": "rimBilliton",
+      "offered": true,
+      "title": "Rim Billiton",
+      "tray": {
+        "file": "rimBilliton-tray.png",
+        "height": 40,
+        "sha256": "78207bfb250c7a8709a892607fe4b80bb08586f6a9b76ef0d079ccf4752690ff",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "kjerag-app.png",
+        "height": 64,
+        "sha256": "a9cb083c5bcfb06ff943f29791ffcbbe6163e6b8493931d62ba9a0e63f5546c9",
+        "template": false,
+        "width": 64
+      },
+      "id": "kjerag",
+      "offered": true,
+      "title": "Kjerag",
+      "tray": {
+        "file": "kjerag-tray.png",
+        "height": 40,
+        "sha256": "0b7d36dc8f0e6bbd7b7218e460a207c8a9aabcdf422ebc18395b910c539296c4",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ursusStudents-app.png",
+        "height": 64,
+        "sha256": "bbe3d84d201731b256353e1bf0bd467b57f154fa27c66298216b6449e50baff5",
+        "template": false,
+        "width": 64
+      },
+      "id": "ursusStudents",
+      "offered": true,
+      "title": "Ursus Student Group",
+      "tray": {
+        "file": "ursusStudents-tray.png",
+        "height": 40,
+        "sha256": "01b5f35c3f584e0a42922881ded9be70842517e64c7762466ed64624a23f4f5f",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "obsidianFestival-app.png",
+        "height": 64,
+        "sha256": "bbf4bdecc871b24995aa95233a4d81eb813cc9725492d48df9702cd1c9d2496f",
+        "template": false,
+        "width": 64
+      },
+      "id": "obsidianFestival",
+      "offered": true,
+      "title": "Obsidian Festival",
+      "tray": {
+        "file": "obsidianFestival-tray.png",
+        "height": 40,
+        "sha256": "72c78db75b3e1e12ce95bce79faf1075dbbe1852858b23e9dd6e593911bcf7ca",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "dossoles-app.png",
+        "height": 64,
+        "sha256": "ab0f6de399e2e57d8cd415e1be85fa859d1f028a1a0d5600be1511a495a3a43a",
+        "template": false,
+        "width": 64
+      },
+      "id": "dossoles",
+      "offered": true,
+      "title": "Dossoles",
+      "tray": {
+        "file": "dossoles-tray.png",
+        "height": 40,
+        "sha256": "e0b8fc2c5fb2e5dab9afda813fcd8a4774089e8335a80b4a348689cf1b1b9269",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "contingencyContract-app.png",
+        "height": 64,
+        "sha256": "8d04c8f23cceeb92831e55e674a19e6372475dd6ad45487ff905fcc4bba8f49b",
+        "template": false,
+        "width": 64
+      },
+      "id": "contingencyContract",
+      "offered": true,
+      "title": "Contingency Contract",
+      "tray": {
+        "file": "contingencyContract-tray.png",
+        "height": 40,
+        "sha256": "be66ffd0573949bca2ff80ee70c266704de1aa91b481ea7685c653ee1f253c4c",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ambienceSynesthesia-app.png",
+        "height": 64,
+        "sha256": "dcacd256299bb7c9395e61e3d4fae41c97644e0abdb837a9b9a6e05c1e792305",
+        "template": false,
+        "width": 64
+      },
+      "id": "ambienceSynesthesia",
+      "offered": true,
+      "title": "Ambience Synesthesia",
+      "tray": {
+        "file": "ambienceSynesthesia-tray.png",
+        "height": 40,
+        "sha256": "715262b9eabae09d72727d1886f970174c34b96679280626023d1d21dede7e31",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "coralCoast-app.png",
+        "height": 64,
+        "sha256": "c721a5a4a7c99b157d6f820d92a0d8e7237d0b383b5869cdfce4b2a13edfaee5",
+        "template": false,
+        "width": 64
+      },
+      "id": "coralCoast",
+      "offered": true,
+      "title": "Coral Coast",
+      "tray": {
+        "file": "coralCoast-tray.png",
+        "height": 40,
+        "sha256": "c00f8ca1c56bfb4ddb3885be4cbd6f8dd5b996d67fe8aa6122ab1533db901b1f",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "vitafield-app.png",
+        "height": 64,
+        "sha256": "9d57a4db1ece134ff89b5c7b54a2c4e056b45030707a50514a16ef67bbf770dd",
+        "template": false,
+        "width": 64
+      },
+      "id": "vitafield",
+      "offered": true,
+      "title": "Vitafield",
+      "tray": {
+        "file": "vitafield-tray.png",
+        "height": 40,
+        "sha256": "b57a5564d879e09a42c0027101d18928c70f1b9cd00c7dd499f02ff62a59848e",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ccBarrenland-app.png",
+        "height": 64,
+        "sha256": "fb0646042847381552852d8a6cef980396329bcf9b1d033670b07c1355c0f1eb",
+        "template": false,
+        "width": 64
+      },
+      "id": "ccBarrenland",
+      "offered": true,
+      "title": "Contingency Contract: Barrenland",
+      "tray": {
+        "file": "ccBarrenland-tray.png",
+        "height": 40,
+        "sha256": "b6f6e0d1eb51268e5e7663b9e80fb1308b7bba3ec958da825689adddbab3b1b4",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ccPyrite-app.png",
+        "height": 64,
+        "sha256": "82d9d945f7c2016f795faf612536e7a1523312a44314a39cfa9291f978f84a4a",
+        "template": false,
+        "width": 64
+      },
+      "id": "ccPyrite",
+      "offered": true,
+      "title": "Contingency Contract: Pyrite",
+      "tray": {
+        "file": "ccPyrite-tray.png",
+        "height": 40,
+        "sha256": "072efe6355d9158391f022f8861ff05e7934bf272d3857353f8e284aa006801c",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ccCinder-app.png",
+        "height": 64,
+        "sha256": "edfbc104618059aee6117ccb6911c96363399c649b168c91ec60aa413b661dcd",
+        "template": false,
+        "width": 64
+      },
+      "id": "ccCinder",
+      "offered": true,
+      "title": "Contingency Contract: Cinder",
+      "tray": {
+        "file": "ccCinder-tray.png",
+        "height": 40,
+        "sha256": "250514a7297407accbcf5dbcc40e7958cb1140adc0ab1e913d38d3be1b1d8375",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ccLeadSeal-app.png",
+        "height": 64,
+        "sha256": "4f8f67a4e02f90d2adf4b5f7d1fdfe07f8e273774c582bdde4b1aaa4711bd27c",
+        "template": false,
+        "width": 64
+      },
+      "id": "ccLeadSeal",
+      "offered": true,
+      "title": "Contingency Contract: Lead Seal",
+      "tray": {
+        "file": "ccLeadSeal-tray.png",
+        "height": 40,
+        "sha256": "680d11830aa1721581287b14960d8bf642a099999cd9a9c0d97a94108eecb94a",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ccSpectrum-app.png",
+        "height": 64,
+        "sha256": "e377445850dac71130486521c1ef9e4ea8858cb54aee6f65ef76af0399fb5e54",
+        "template": false,
+        "width": 64
+      },
+      "id": "ccSpectrum",
+      "offered": true,
+      "title": "Contingency Contract: Spectrum",
+      "tray": {
+        "file": "ccSpectrum-tray.png",
+        "height": 40,
+        "sha256": "1d5effb691472caaa0e196e73840f9a8a89692051c32eaa2b66a69590965e482",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "ccPineSoot-app.png",
+        "height": 64,
+        "sha256": "54b486913f506c7ca554fc7a5ac0f23c99f38ade0fc6a9391152d6b62fa83552",
+        "template": false,
+        "width": 64
+      },
+      "id": "ccPineSoot",
+      "offered": true,
+      "title": "Contingency Contract: Pine Soot",
+      "tray": {
+        "file": "ccPineSoot-tray.png",
+        "height": 40,
+        "sha256": "fc35f09b48703afef26b0be122dcae20da9768b215ab3603ca6ec03f9b9abfcf",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "rhodesKitchen-app.png",
+        "height": 64,
+        "sha256": "c51b600ecfbd601eb0268efd0e7fad1a2e5679a754918e81a30be49670164459",
+        "template": false,
+        "width": 64
+      },
+      "id": "rhodesKitchen",
+      "offered": true,
+      "title": "Rhodes Kitchen",
+      "tray": {
+        "file": "rhodesKitchen-tray.png",
+        "height": 40,
+        "sha256": "8aa172f913f0f69795a8c0ed7e7cc4c043939094d63e5d023b2d75dc94818b04",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "cambrian-app.png",
+        "height": 64,
+        "sha256": "af0f96f1b87dd0f5c2751de9efa268d0d50b30b94a87281e9400d6cf5d947788",
+        "template": false,
+        "width": 64
+      },
+      "id": "cambrian",
+      "offered": true,
+      "title": "Cambrian",
+      "tray": {
+        "file": "cambrian-tray.png",
+        "height": 40,
+        "sha256": "60a1da460e9d8a69bcbe4a6784299808738f574c4397f50008f5005136c01321",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "marthe-app.png",
+        "height": 64,
+        "sha256": "e4a16ea39aa3dd097800d2d0d536ec0b5b01abf16d21a70e65fe28cfbe20d699",
+        "template": false,
+        "width": 64
+      },
+      "id": "marthe",
+      "offered": true,
+      "title": "Marthe",
+      "tray": {
+        "file": "marthe-tray.png",
+        "height": 40,
+        "sha256": "3a8e43a6cce1136035337de3b1d4de2515f099cb3ba821a570bb30ade2b93a35",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "icefieldMessenger-app.png",
+        "height": 64,
+        "sha256": "18c46247237cf7b3bffeae2fbc49066bd7fcb56ff330a9271c8c2e38ea2b5338",
+        "template": false,
+        "width": 64
+      },
+      "id": "icefieldMessenger",
+      "offered": true,
+      "title": "Icefield Messenger",
+      "tray": {
+        "file": "icefieldMessenger-tray.png",
+        "height": 40,
+        "sha256": "b699f925a66b2629c468026be3d9eddedba764f78c92f7434f6e2cea77021108",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameOperator-app.png",
+        "height": 64,
+        "sha256": "075f329fc0ab752b90d451717cb3e5b53c3e6db11d7c8aa97462f56cd28c34b9",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameOperator",
+      "offered": true,
+      "title": "Operator",
+      "tray": {
+        "file": "gameOperator-tray.png",
+        "height": 40,
+        "sha256": "69084de91b8debd07b9a833660ea1614d55088a93051d2d011b08b7192785c36",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameDepot-app.png",
+        "height": 64,
+        "sha256": "39755f8a9e162e0bd968954b6ec897cabe16d633029ba0fe82f21354c467da76",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameDepot",
+      "offered": true,
+      "title": "Depot",
+      "tray": {
+        "file": "gameDepot-tray.png",
+        "height": 40,
+        "sha256": "b4cac4e3870f1c52bb0c33b362e7ecb61fbd5dca21dd7fb483743021aa0d5556",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameGuide-app.png",
+        "height": 64,
+        "sha256": "5dc076a65ddc2675355a1c507d1d0cf0a4d0d14a95ec06215ad3f94904e34d0b",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameGuide",
+      "offered": true,
+      "title": "Guide",
+      "tray": {
+        "file": "gameGuide-tray.png",
+        "height": 40,
+        "sha256": "8536a7b0a803595eb2dcd07f2adf195b6552c08f9ffc0782173ad7b190b8240d",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameHeadhunt-app.png",
+        "height": 64,
+        "sha256": "fa46c7fcf1ad51a66db03b0c69c1c30cfee613309c123e06a1c1988dc6d3b264",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameHeadhunt",
+      "offered": true,
+      "title": "Headhunt",
+      "tray": {
+        "file": "gameHeadhunt-tray.png",
+        "height": 40,
+        "sha256": "39e1b7f10da9b4c2f5dc89caadfa1f03ca103f67b05a2a2c3354d472dc3e8fdd",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameInfo-app.png",
+        "height": 64,
+        "sha256": "dac0a7fc5d76d35a086180408cfc1ecc04564cb13951a2ac6ef58cddfd465c60",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameInfo",
+      "offered": true,
+      "title": "Info",
+      "tray": {
+        "file": "gameInfo-tray.png",
+        "height": 40,
+        "sha256": "ae94f9b12e2afc59646016582a5ca409b73b53fa259aa2e297cb16080cf33633",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameMission-app.png",
+        "height": 64,
+        "sha256": "f46a1f1feb45cc1020ee040103a647a9894259462df6157df496346dd0e33a69",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameMission",
+      "offered": true,
+      "title": "Mission",
+      "tray": {
+        "file": "gameMission-tray.png",
+        "height": 40,
+        "sha256": "e00131d6e36d057eeecd21a8a75501b8fbc90542b18f7e547033285698dfe5b1",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameOperationalManual-app.png",
+        "height": 64,
+        "sha256": "e139fd3675ee883de160e70e4b49d61086eabc41386bb3753b8cf5f5d14d56fe",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameOperationalManual",
+      "offered": true,
+      "title": "Operational Manual",
+      "tray": {
+        "file": "gameOperationalManual-tray.png",
+        "height": 40,
+        "sha256": "7519048ef39e6ae26ed7c933f5864916a6365a6b79854ab8d25c8308087694c0",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameProtocolPass-app.png",
+        "height": 64,
+        "sha256": "1b2fe9a4f93a55f0dc4b08a86e7b07dc2456b60101737daed7a1084c45ed0b07",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameProtocolPass",
+      "offered": true,
+      "title": "Protocol Pass",
+      "tray": {
+        "file": "gameProtocolPass-tray.png",
+        "height": 40,
+        "sha256": "030e2df9f97b612afe9c497eb8ca70de42c99301db2b44f8e2f6e0c08e23b0db",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameRegion-app.png",
+        "height": 64,
+        "sha256": "f2ccf189cebdb7ef69b9f892376271e06214eb927c04b627bddd37605fe970f5",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameRegion",
+      "offered": true,
+      "title": "Region",
+      "tray": {
+        "file": "gameRegion-tray.png",
+        "height": 40,
+        "sha256": "8eafaa5368a9410b8f309d7a183af7b187a14405fd6df8b2512ea1ef0223bab7",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameStore-app.png",
+        "height": 64,
+        "sha256": "a33830571109e388fc8cfc00e5fd657e866446b2ee043a0c646f3d14dc7c0cdf",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameStore",
+      "offered": true,
+      "title": "Store",
+      "tray": {
+        "file": "gameStore-tray.png",
+        "height": 40,
+        "sha256": "f5b523463cfec49db0ed3bdbd44dc86a155e2047fe245c43f106753725e0eb55",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameStory-app.png",
+        "height": 64,
+        "sha256": "d5569eb7bfb538eba1b1435439dd29183301abf0d4194c3074ceaf6c2e01eb39",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameStory",
+      "offered": true,
+      "title": "Story",
+      "tray": {
+        "file": "gameStory-tray.png",
+        "height": 40,
+        "sha256": "6ea16aad9b03d373a390b2f163de1043933681db9f2ab483c0d099cd6f30854e",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameArchive-app.png",
+        "height": 64,
+        "sha256": "2c4a997d8c4c56850f00b749a7b5a9b6490d39ee8cb60bc3aedd26db6027efeb",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameArchive",
+      "offered": true,
+      "title": "Archive",
+      "tray": {
+        "file": "gameArchive-tray.png",
+        "height": 40,
+        "sha256": "fb5a8ec732687b0e99d9c756d6eff2c340d5059f35596c15e8e0c73aa093b03e",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameAIC-app.png",
+        "height": 64,
+        "sha256": "56cca05949bdc817fb5baf4ddc9b93b5a0640ab0859c9c5b0a1ec09309473e94",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameAIC",
+      "offered": true,
+      "title": "AIC",
+      "tray": {
+        "file": "gameAIC-tray.png",
+        "height": 40,
+        "sha256": "faacca9871ec98ce5d7f231108d94448cbf962f2095edd6b58701491caf5bd4a",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameFactory-app.png",
+        "height": 64,
+        "sha256": "0185b814f6ec1278d6031041b79a0166b6c4416dd5a651146a65ab8efb9024e5",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameFactory",
+      "offered": true,
+      "title": "Factory",
+      "tray": {
+        "file": "gameFactory-tray.png",
+        "height": 40,
+        "sha256": "58c63f5d033e77e43a3634ff955d64ab7d197012a568edddaab73befdc692587",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameEnvironmentMonitoring-app.png",
+        "height": 64,
+        "sha256": "0f2b5cd240e3da9f5f7fa548eec36bed6d17fb866819ceff3219e33ed09e0ff7",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameEnvironmentMonitoring",
+      "offered": true,
+      "title": "Environment Monitoring",
+      "tray": {
+        "file": "gameEnvironmentMonitoring-tray.png",
+        "height": 40,
+        "sha256": "5a7707bc9383c4319f99f44f9246df864fbe2403c691dad4b56163d3534574df",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameGear-app.png",
+        "height": 64,
+        "sha256": "a93fd52cad0589bff5d190fbb02228df24984648215a79391ba1cbea2b0dd786",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameGear",
+      "offered": true,
+      "title": "Gear",
+      "tray": {
+        "file": "gameGear-tray.png",
+        "height": 40,
+        "sha256": "95bbd72b6b9b8e491c1c64c732554cbd609876dd1df0c46de8218082519b6fb4",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameWeapon-app.png",
+        "height": 64,
+        "sha256": "1ee9221e9775686bbd1ce1c5c099e85b5770a7f7c140201934cb0225d8e0a9cd",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameWeapon",
+      "offered": true,
+      "title": "Weapon",
+      "tray": {
+        "file": "gameWeapon-tray.png",
+        "height": 40,
+        "sha256": "14db0611f9cc71d453894fac36d57d9affc791453eed831321a1bc97c704f67e",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameWorldMap-app.png",
+        "height": 64,
+        "sha256": "23ecd4c929ba45f1869f756dc4b9e5204eff626f79925b90056cf84192f983a5",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameWorldMap",
+      "offered": true,
+      "title": "World Map",
+      "tray": {
+        "file": "gameWorldMap-tray.png",
+        "height": 40,
+        "sha256": "4769a13c6ec5cceba28596698b08ead41ecb9440cf2a870a69e9297bfd70b953",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameDijiang-app.png",
+        "height": 64,
+        "sha256": "e7698edfd0dc078d1f3ca471424063e4b726d1ed7e7a8a73a8528f02bfb3e42d",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameDijiang",
+      "offered": true,
+      "title": "Dijiang",
+      "tray": {
+        "file": "gameDijiang-tray.png",
+        "height": 40,
+        "sha256": "ec7d8cca9feb242360d57000f6a115c363d0282d89e95712590f98fcfcdbb7ab",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameValleyIV-app.png",
+        "height": 64,
+        "sha256": "f573c552a2fe19d00ba54eeb15a37d88078e08b8e495ad9f83789567cbb8fd47",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameValleyIV",
+      "offered": true,
+      "title": "Valley IV",
+      "tray": {
+        "file": "gameValleyIV-tray.png",
+        "height": 40,
+        "sha256": "790eef7665993eafd22be2476d74920f3862eff9894d1130a5e0c1d5587ba5ef",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameWuling-app.png",
+        "height": 64,
+        "sha256": "adf561fd6cc330e1f390e5220b9826d84c7138ec6949e6cec26ad47f56b6f5c3",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameWuling",
+      "offered": true,
+      "title": "Wuling",
+      "tray": {
+        "file": "gameWuling-tray.png",
+        "height": 40,
+        "sha256": "21d69c357031d808206f4d6ad9c6b62153dbd1c962e0217557f5b1dbe5d9e5e9",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameMedal-app.png",
+        "height": 64,
+        "sha256": "1896d6c99900ccf40ae47964a37a8d988d5e78c04168e3c5c4bc0bf524c00447",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameMedal",
+      "offered": true,
+      "title": "Medal",
+      "tray": {
+        "file": "gameMedal-tray.png",
+        "height": 40,
+        "sha256": "b0d3b9374e19ce1a3c436e59b0b6408073036b232e05a9ff092307b38f772058",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gamePower-app.png",
+        "height": 64,
+        "sha256": "6a051c046a53cdb6d6fb786a381a4528e527925710a01d1c12c43e0f728a29e0",
+        "template": false,
+        "width": 64
+      },
+      "id": "gamePower",
+      "offered": true,
+      "title": "Power",
+      "tray": {
+        "file": "gamePower-tray.png",
+        "height": 40,
+        "sha256": "e64e566a75ed595cf4fe7e4a0f84b520d04456748e4ef407fb77966480b3f114",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameSanity-app.png",
+        "height": 64,
+        "sha256": "1afaaac39014350b8606cd182e368dfc6703bc4c0c2b90a883349798b9252aa2",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameSanity",
+      "offered": true,
+      "title": "Sanity",
+      "tray": {
+        "file": "gameSanity-tray.png",
+        "height": 40,
+        "sha256": "388344823ada9da94afa64fd7fdffcbc514fade290782a4e65e27f9cd1774a07",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameOrigeometry-app.png",
+        "height": 64,
+        "sha256": "8f4a3390c85aa8f3db16153b765ed1f5435937b9dc58ac257b2a46fe6bb6c02c",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameOrigeometry",
+      "offered": true,
+      "title": "Origeometry",
+      "tray": {
+        "file": "gameOrigeometry-tray.png",
+        "height": 40,
+        "sha256": "9b272f2d84a32c142faaf60d0a08617d5105d00287d4c2c12a6fc8e542f80116",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameOroberyl-app.png",
+        "height": 64,
+        "sha256": "987a11d63e17d02678413bb209c1045b45c45772936c232d08c0a2210e44ab18",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameOroberyl",
+      "offered": true,
+      "title": "Oroberyl",
+      "tray": {
+        "file": "gameOroberyl-tray.png",
+        "height": 40,
+        "sha256": "b0af2a75b2d707a27625c284631185ca4592e0f75c6932796e147b360ea5b3d4",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameCredits-app.png",
+        "height": 64,
+        "sha256": "03e497694989cfe9e02bc549e9f539a8ab9d1f3249bed1f37d04a3e720db50d5",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameCredits",
+      "offered": true,
+      "title": "Credits",
+      "tray": {
+        "file": "gameCredits-tray.png",
+        "height": 40,
+        "sha256": "ffac4da927475ae35efab0612716ea0ec315df332d0e896df796e6ea4e958890",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameBaker-app.png",
+        "height": 64,
+        "sha256": "2276c446990106d5d79669aed3910ffb395d7433cc1296be7bd30bd65a2eb055",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameBaker",
+      "offered": true,
+      "title": "Baker",
+      "tray": {
+        "file": "gameBaker-tray.png",
+        "height": 40,
+        "sha256": "0d17d61a3ebbc232181b64b8e62e979d678589d5d88b1a2c3f642af4a76ab6f2",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameExclamationMark-app.png",
+        "height": 64,
+        "sha256": "16347706090de489f2520cf37a6612c8bbed9fbc4097ac25c517c529dfe4a468",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameExclamationMark",
+      "offered": true,
+      "title": "Exclamation Mark",
+      "tray": {
+        "file": "gameExclamationMark-tray.png",
+        "height": 40,
+        "sha256": "9bc0d8db7e45be566a551e87ce961e7a3d7e1c861301ffdefcfcf56404023427",
+        "template": true,
+        "width": 40
+      }
+    },
+    {
+      "app": {
+        "file": "gameStrength-app.png",
+        "height": 64,
+        "sha256": "e969a6335383cee5102f54b95f809e3d011e6c46c5c7eaca41cb44633d0e6e52",
+        "template": false,
+        "width": 64
+      },
+      "id": "gameStrength",
+      "offered": true,
+      "title": "Strength",
+      "tray": {
+        "file": "gameStrength-tray.png",
+        "height": 40,
+        "sha256": "0cbb2aed9ea65cf8e6188b3645f1dde257c740e83b8daa213a775ca42ac5ffaa",
+        "template": true,
+        "width": 40
+      }
+    }
+  ],
+  "method": "Unchanged HUDApplicationIcon/EndfieldGameIcon rendering; detached resource resolver and English title lookup; no window or application activation",
+  "sourceAssets": {
+    "Resources/AppIconSources/EndfieldWiki/AIC_Icon.png": "8a8a34bb48a10687caaa61386382b12551fd1d2587d9c0b5e58f22dd23df13b9",
+    "Resources/AppIconSources/EndfieldWiki/Archive_Icon.png": "ab7934c5fe2a774d0cf7b970876f576bbb6397ca94c477d93fcf4ce7b76ed440",
+    "Resources/AppIconSources/EndfieldWiki/Baker_Icon.png": "f1ace87336ac90a08431039921f77351729da6ee0ec8ed38a67d826f1229ad62",
+    "Resources/AppIconSources/EndfieldWiki/Credits_icon.png": "cdc2c300c0689c084eb05b4b50177bb5649fdef341d6a7ac22bb041cdf0de067",
+    "Resources/AppIconSources/EndfieldWiki/Depot_icon.png": "41f9a002dcc84117907751576c791239705d21a286b6df0d31ae34c8af4705d3",
+    "Resources/AppIconSources/EndfieldWiki/Dijiang_Icon.png": "48bc72b08f1408a34e25917cd5d3d7b379214b30b223c77b39e9474b6d4824b2",
+    "Resources/AppIconSources/EndfieldWiki/Environment_Monitoring.png": "c2bddf1785f8b391fbc906c3185515247a45465125cb3ad4b9d828ee7d25c961",
+    "Resources/AppIconSources/EndfieldWiki/Exclamation_mark_map_icon.png": "fe78845043e5f35f9d94c1e4b746890fa24a044574561a78a85dc9caeb124716",
+    "Resources/AppIconSources/EndfieldWiki/Factory_icon.png": "18e7b5dd484bfc848860d6698e644eecc2abb9769c5e7f276f1a070d7eaf644d",
+    "Resources/AppIconSources/EndfieldWiki/Gear_icon.png": "f4017deede3dd94a0688ef9f65b2306682b3fcda0717c5f9575aea7d83cdc95a",
+    "Resources/AppIconSources/EndfieldWiki/Guide_icon.png": "e23c4499bd3d1af0573db20fd9bc4103828566eb53faf37ab1de9bf9d6f0ae8b",
+    "Resources/AppIconSources/EndfieldWiki/Headhunt_icon.png": "63cd92c41c0afd432175fbba4efddb1372b4548be817a0eb1b3552707f86626b",
+    "Resources/AppIconSources/EndfieldWiki/Info_icon.png": "7dc4eaff4dc0438fb1a77440d09e06e56ad283f67586b0222862c448ef23554e",
+    "Resources/AppIconSources/EndfieldWiki/Medal_Icon.png": "dbee388881229d081e607700e0c35bcc8e3f753c3543be1f96d700e5ddc4665b",
+    "Resources/AppIconSources/EndfieldWiki/Mission_Icon.png": "2c011a796902d8fc0c53b0aad4dc87b75a078c2a2261c2f22a34aaf6259f8143",
+    "Resources/AppIconSources/EndfieldWiki/Operational_Manual_icon.png": "389a2c7d5eb9908a8b0dd3fcea1baaa8ad68d838174b6c21a7d05d1d006b07b1",
+    "Resources/AppIconSources/EndfieldWiki/Operator_icon.png": "e07d1db4cb377d422e6733f05c93d3617a838a68c72c2c743fe82f486c6308f5",
+    "Resources/AppIconSources/EndfieldWiki/Origeometry_icon.png": "ccfa2f6f629ce612d84c33b9717f471faf9a093c5fe302f4720d34b06df989c9",
+    "Resources/AppIconSources/EndfieldWiki/Oroberyl_icon.png": "580a5cc24458e3a53941f21181e269d022baf6ba97ad8de287d24398ea8048f7",
+    "Resources/AppIconSources/EndfieldWiki/Power_icon.png": "c1f59f467bac8d1c014427c92d34938e924d4f4818dec0330b0a6e6ed6f9b1f1",
+    "Resources/AppIconSources/EndfieldWiki/PP_icon.png": "617a1d1ef9535071fdde92ac71ffd271254b92400e36cd00465033596d0ed1e6",
+    "Resources/AppIconSources/EndfieldWiki/Region_icon.png": "d65910fb49e47a666fb476301efe5b6fd372b812ee076c79a5c2c5fbfec37394",
+    "Resources/AppIconSources/EndfieldWiki/Sanity_icon.png": "d614e98c66fc5209fa5f31c75798e3796d4e4eab67f0081fdeac865ec0a821b2",
+    "Resources/AppIconSources/EndfieldWiki/Store_icon.png": "569cf597bf7b4816a6ec4965b2fc84ad11c996df825d3da6af979fcb18aa512e",
+    "Resources/AppIconSources/EndfieldWiki/Story_icon.png": "8c7e816877bd58569e5ca835057446efcc94de422f9bfe13a5ddb1e7ac68a81c",
+    "Resources/AppIconSources/EndfieldWiki/STR.png": "9ab5df33dee05e593471c960b0a6923ce2edd3d1b1b98dc726f1d2a0d9e5581f",
+    "Resources/AppIconSources/EndfieldWiki/Valley_IV_icon.png": "14e84178bc7441b28935aa0423eebf698cb32005adc174b2b217e225a08fd665",
+    "Resources/AppIconSources/EndfieldWiki/Weapon_icon.png": "5e07b3897b149284afb204ea69458e6e9477f4a7b2667bd277e8590d51990b18",
+    "Resources/AppIconSources/EndfieldWiki/World_Map_Icon.png": "a9382bcfa7f39453dadcca14c725a967a12f59f0922868ca23dea4ff6a22ed1b",
+    "Resources/AppIconSources/EndfieldWiki/Wuling_icon.png": "555acc5e2ec0fd9f2fe28b2f6edc14c27b6c5774ae43fbd1744c55a659523386",
+    "Resources/AppIconSources/Factions/alphaFour.png": "b734b629ce08e1ef9cb0ea1d53016aee65574ba8c8b5c2de8d72f7e5923fdde4",
+    "Resources/AppIconSources/Factions/alphaSix.png": "1d073b3801dac7b92915d772fc6927d616069edaa02bb00f86766c6f7c862a50",
+    "Resources/AppIconSources/Factions/ambienceSynesthesia.png": "a231789d90b02a9d60dd0dbfbdd3ba5251468199b24937f453dff74702042cb0",
+    "Resources/AppIconSources/Factions/babel.png": "8b0f4c279b5c803d16e411f134ca84e47722be9920d4e3f7f7bf427e1afe7c51",
+    "Resources/AppIconSources/Factions/blacksteel.png": "250f35d79d19cf24d8f418c1d66760b7053e9ce2b10de5de7eaacba1291ff823",
+    "Resources/AppIconSources/Factions/cambrian.png": "01710dbb6d221f05c98b1c45e7552df7d1f7b9215115eef2f67f2ef78e9b096f",
+    "Resources/AppIconSources/Factions/ccBarrenland.png": "36324a0fe9eb69c7efe3cda58b36c4ee120a75346c42c82d498615d6dafa7fd3",
+    "Resources/AppIconSources/Factions/ccCinder.png": "33f951616129325a528fabe1490e154aadff9105e7046315e7421a0195d2986f",
+    "Resources/AppIconSources/Factions/ccLeadSeal.png": "d54f0751c9a75c3978c8c9059f77a0ba0c05773d0050a83cd22a01c93309999c",
+    "Resources/AppIconSources/Factions/ccPineSoot.png": "1f643bb472aaef096e06e976b9bd50b70c0baa1aac276be6816259e4efb638fd",
+    "Resources/AppIconSources/Factions/ccPyrite.png": "df72de74139a3fd3090f6ec9edd53896c007b51f5f6f6a5c6aa02d35f6e0ed55",
+    "Resources/AppIconSources/Factions/ccSpectrum.png": "51a9a0328eb7ad65ac59fb554df328913230fddc12b7375ccaa073d202a26f72",
+    "Resources/AppIconSources/Factions/contingencyContract.png": "da55fdcbfb8ebdf265c3db28baa24dc857e90d84334e6b0b3298b560c0d8388b",
+    "Resources/AppIconSources/Factions/coralCoast.png": "c938cfa429ffa3e63001f5eaab21d45635a435439f03908116e8cd6c1b65d331",
+    "Resources/AppIconSources/Factions/ddd.png": "0e69f7c6a811155160ab4f7b85af0ae6e9f614238150efc2bcf6a4e37c5f498a",
+    "Resources/AppIconSources/Factions/dossoles.png": "f82c544836f08d44bc87a8a0da365f9c5de4c5d66dbee5a8809db77ab2f15fa7",
+    "Resources/AppIconSources/Factions/eliteOps.png": "471f3e6b3c0aa3c2667a9bc5b1fe62d04986be64695b33f8d954c9aad21aa1c1",
+    "Resources/AppIconSources/Factions/humanResources.png": "2f6d2faeb366bc562a44d49622360c61472d78781cec907663bcbf8b1afb8a5b",
+    "Resources/AppIconSources/Factions/icefieldMessenger.png": "6a44d82d3f06b34b0c57ffcacef1c4d4cc2c65d35275c42834537cc81f3a797a",
+    "Resources/AppIconSources/Factions/kjerag.png": "a1df364938949a4e627c5d1d8ded8f344ba7ff3dd1c0225b6b697b12dfde7c4d",
+    "Resources/AppIconSources/Factions/marthe.png": "7d9e407646d18254b8c7e90e908a388bb961af988ebbe64cd84405bbe2506914",
+    "Resources/AppIconSources/Factions/obsidianFestival.png": "adb8f007c3ea72c432a2c60f747d6da35a13f28b7a69f67adf6368910d0ce1a9",
+    "Resources/AppIconSources/Factions/penguinLogistics.png": "9924ae5895891e5731f73a9aa3797f656b57ae7962beaadeebf520271af02c9f",
+    "Resources/AppIconSources/Factions/projectRed.png": "348452aa94bfdddb2991f8bf9e2642d46831b959df1db24bf04f12615b8f10d9",
+    "Resources/AppIconSources/Factions/rhineLab.png": "2d7a1359352856cab08535db443aec38daa0505eb57bd71eda729cc6e79dc91d",
+    "Resources/AppIconSources/Factions/rhodesKitchen.png": "4f7ab658c24b13e18f085b0eaa503f51b493bbadc34a7c811bb2a3601ff61e12",
+    "Resources/AppIconSources/Factions/rimBilliton.png": "cff36dacc2ac41f62bf9d8d0ed35fe62f6ef488fcff2567a99ab8bd7c7836ec6",
+    "Resources/AppIconSources/Factions/sweep.png": "608fb97ba53682c2ece7e3657ebc8822b6ce3230b7f224cd58aa47e151e20c6a",
+    "Resources/AppIconSources/Factions/ursusStudents.png": "ad22226530ff96eaa14bb0a97c109becc3eac9d59a08bf12b103e338be9e78eb",
+    "Resources/AppIconSources/Factions/vitafield.png": "d143ea48b7a4104a55a8e4a08ec58d1537165508314a35574416b766d7921bf1",
+    "Resources/AppIconSources/Perlica.png": "5727ee11c860099fa962c34c8ffa68455ebc9d5508a5e99ec9c17d62f5110120",
+    "Resources/AppIconSources/RhodesIsland.png": "8b341bc7286bf404123c8a10e183a83fefc9fd72c8fc30a124416800385574d4",
+    "Resources/EndfieldIndustriesSource.png": "dd5468819ce5cff39cc5d8063ca3248b4f57a2addc0d8d97b5384c8871cd3db3"
+  },
+  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceCode": {
+    "Sources/HUDApplicationIcon.swift": "ebbc2e9751f24058e5882b6a2a603e5448bfb1b0b0f204c175ec8aee827e5312",
+    "Sources/EndfieldGameIcon.swift": "9763996185a3094faf77290e5930e5f4cc18e221d10dd4e5012adb2ea1dc3f95"
+  }
+}

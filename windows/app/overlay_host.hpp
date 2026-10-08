@@ -107,8 +107,10 @@ struct OverlayCallbacks {
     // Only queued keys for this window, its children or root-owned native
     // panels reach this callback. Route by NativeMessage.window before TSF.
     std::function<bool(const NativeMessage&)> beforeKeyTranslation;
-    // Module-owned WM_APP...0xBFFF notifications; the host's frame ticket is
-    // reserved. Returning no value leaves default handling in place.
+    // Module-owned WM_APP...0xBFFF, registered Shell notifications, WM_HOTKEY,
+    // WM_POWERBROADCAST and WM_CLIPBOARDUPDATE; frame tickets stay reserved.
+    // Returning no value leaves default handling in place. These routes add no
+    // service registrations and work while the overlay is hidden.
     std::function<std::optional<std::intptr_t>(const NativeMessage&)> appMessage;
     std::function<void()> displayChanged; // notification only; no enumeration/poll
     std::function<void(double)> deadline; // one-shot, same monotonic clock as frame

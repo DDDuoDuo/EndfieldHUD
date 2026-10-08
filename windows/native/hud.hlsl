@@ -22,6 +22,9 @@ cbuffer Object : register(b1) {
     column_major float4x4 alphaWorldToLocal;
     float4 alphaBounds;
     float4 alphaControl;
+    column_major float4x4 angularWorldToLocal;
+    float4 angularCenterControl;
+    float4 angularNormals;
 };
 Texture2D<float4> colorTexture : register(t0);
 SamplerState colorSampler : register(s0);
@@ -101,6 +104,24 @@ float4 ScenePS(SceneVertex input) : SV_Target {
         clip(float4(alphaPoint - alphaBounds.xy, alphaBounds.zw - alphaPoint));
         float2 uv = (alphaPoint-alphaBounds.xy)/(alphaBounds.zw-alphaBounds.xy);
         opacityFactor *= saturate(alphaMaskTexture.Sample(alphaMaskSampler,uv).a);
+    }
+    [branch] if (angularCenterControl.z != 0) {
+        [branch] if (angularCenterControl.z == 1) {
+            opacityFactor = 0;
+        } else if (angularCenterControl.z != 4) {
+            float4 local = mul(angularWorldToLocal, input.worldPosition);
+            clip(local.w - 0.0000001);
+            float2 angularPoint = local.xy / local.w - angularCenterControl.xy;
+            float2 distance = float2(dot(angularNormals.xy, angularPoint), dot(angularNormals.zw, angularPoint) + angularCenterControl.w);
+            float2 coverage = saturate(distance / max(fwidth(distance), 0.0000001) + 0.5);
+            // For a narrow arc the two butt-edge pixel coverages may overlap;
+            // subtract that overlap instead of leaving a half-visible zero arc.
+            bool opposed = dot(angularNormals.xy, angularNormals.zw) < 0;
+            float angularCoverage = angularCenterControl.z == 2
+                ? (opposed ? saturate(coverage.x + coverage.y - 1) : min(coverage.x, coverage.y))
+                : (opposed ? saturate(coverage.x + coverage.y) : max(coverage.x, coverage.y));
+            opacityFactor *= angularCoverage;
+        }
     }
     return float4(sampled.rgb * tint.rgb * opacityFactor, sampled.a * opacityFactor);
 }

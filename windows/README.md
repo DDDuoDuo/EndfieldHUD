@@ -12,12 +12,15 @@ service foundations. An explicit development preview now combines the source
 shell, native captions/icons, clock and custom cursor. An optional isolated
 Notes preview adds scrollable text and rich-text editing, font/size/color/trait menus,
 checklists, moving, resizing, pinning and confirmed deletion. Temporary File Shelf,
-synthetic Clipboard history, Volume and Event Log use the same module transitions,
+synthetic Clipboard history, Volume, Work Mode and Event Log use the same module transitions,
 renderer and frame clock. Their hidden integration tests pass. The five-language
 catalog is ported, but a live application-wide language preference is not connected.
-Image/GIF decoding is verified separately; media insertion/playback and drawing
-are still being connected. Other module bodies and the production application
-owner remain unfinished.
+Still-image and GIF import/playback pass isolated integration checks. Video playback
+and drawing are being connected; the real Windows video decoder has not yet
+passed its first-frame test. Archive storage/category models are ported; its
+presentation is still being connected. An optional resident preview adds the
+original icon, tray menu and Ctrl+` reopening. Other module bodies and the
+production application owner remain unfinished.
 It does **not** yet produce a complete runnable HUD or a release candidate.
 
 The fresh graphics path now also runs the original Mac material programs. A
@@ -539,3 +542,18 @@ This checkpoint validates generated files and hidden render targets only. Native
 media-picker/visible image insertion, actual audio sessions, video playback and
 all remaining module bodies are still integration/desktop acceptance work. The
 clock, Work Mode and Archive additions under development are outside snapshot71.
+
+## October 8 integration checkpoint
+
+The fresh Windows Release build passed all 103 automated suites. This includes
+Work Mode's original countdown/stopwatch behavior, the clock, tilted single-line
+text fields, Archive category/storage compatibility, all 66 original icon assets,
+and tray/hotkey lifecycle tests. Separate owned-window tests passed Notes rich
+formatting, checklists, image/GIF import and the original subsection transitions.
+The user confirmed the diagnostic font-menu preview now works; the earlier
+intermittent disappearance has no confirmed root cause yet.
+
+The actual hardware video test still fails to expose its first paused frame even
+though Windows reports loaded media. It uses a tiny synthetic silent H.264 file,
+not user media. This is an explicit unresolved gate. No stable Windows release
+is available yet, and these checks do not establish full-app performance parity.

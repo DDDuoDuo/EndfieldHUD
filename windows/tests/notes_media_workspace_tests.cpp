@@ -52,8 +52,21 @@ void run(const std::filesystem::path&shader){Window window;n::Renderer renderer;
     composition.setEntries(renderer,{});check(workspace.releaseResources(renderer),"One shared publisher detached before complete media release");check(saves==2&&removes==2&&!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Only explicit synthetic creation/pin/delete saves; no visible UI or capture");
     const auto thread=decoder.duplicateWorkerHandle();decoder.stop();check(WaitForSingleObject(thread,10000)==WAIT_OBJECT_0,"Isolated worker stops before fixture exit");CloseHandle(thread);check(lifetime.expired()&&closed==1,"Detached retired card and completed decoder release Shelf lease exactly once");
 }
+void manyCards(const std::filesystem::path&shader){
+    Window window;n::Renderer renderer;renderer.initialize(window.hwnd,640,360,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests});renderer.setCamera(n::layerViewportProjection(640,360));
+    n::NativeNotesImageDecoder decoder([](const n::NotesImageRequest&r){return n::NotesImageAccess{std::filesystem::u8path(r.path),{}};},{window.hwnd,Window::message,9},[](const n::NotesImageRequest&,n::NotesImageAccess){return std::make_unique<Sequence>();});n::NativeNotesImagePlayback playback(decoder);
+    std::vector<d::Note>records;for(unsigned i=0;i<9;++i){const auto id=d::makeUUID();records.push_back(note(id.c_str(),i%2==0,double(i)*12+20));}const auto saved=records;unsigned mutations{};
+    m::NotesState state(records,{[&](const auto&){++mutations;},[&](auto){++mutations;}});state.setWorkspaceBounds({0,0,640,360});n::LayerRasterizer raster;n::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=1;options.imagePlayback=&playback;
+    n::NativeNotesWorkspace workspace(window.hwnd,state,raster,style(),options);n::LayerComposition composition;workspace.updatePose(pose(0));
+    auto publish=[&]{workspace.uploadMedia(renderer);composition.setEntries(renderer,workspace.entries());composition.present(renderer);workspace.collectRetired(renderer);};
+    const auto limit=GetTickCount64()+10000;for(;;){workspace.acceptMedia(9,1);publish();std::size_t loaded{};for(const auto&e:workspace.entries())if(!e.after.empty()&&!e.after[0].textureID.empty())++loaded;if(loaded==9)break;const auto now=GetTickCount64();check(now<limit,"Existing nine-card media collection fully loads through one bounded worker");MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(limit-now),QS_POSTMESSAGE,MWMO_INPUTAVAILABLE);MSG message{};while(PeekMessageW(&message,window.hwnd,Window::message,Window::message,PM_REMOVE)){} }
+    check(workspace.entries().size()==9&&std::equal(state.notes().begin(),state.notes().end(),saved.begin(),saved.end())&&mutations==0,"Opening compatible media data neither rejects a ninth card nor rewrites stored records");
+    check(decoder.stats().decoders<=8&&decoder.stats().cachedFrames<=24,"Nine rendered cards still use the original bounded decoder/cache budget");
+    workspace.setMediaActive(false,2);publish();composition.setEntries(renderer,{});check(workspace.releaseResources(renderer),"Many-card artwork retires after shared publisher detaches");const auto done=decoder.duplicateWorkerHandle();decoder.stop();check(WaitForSingleObject(done,10000)==WAIT_OBJECT_0,"Large collection releases the same single worker");CloseHandle(done);
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int code{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);std::cout<<"PASS "<<checks<<" Notes media workspace checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
+
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int code{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);manyCards(argv[1]);std::cout<<"PASS "<<checks<<" Notes media workspace checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
 #else
 int main(){return 0;}
 #endif

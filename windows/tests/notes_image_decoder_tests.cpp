@@ -40,6 +40,34 @@ void generations(){Window w;auto probe=std::make_shared<Probe>();probe->block=tr
     const auto decoded=decoder.stats().decodes;decoder.requestFrame(latest[0].key,2);auto cached=collect(decoder,w,4,1);check(decoder.stats().decodes==decoded&&cached.front().frame->index==2,"Three-frame LRU reuses immutable frame without WIC work");
     decoder.requestFrame(latest[0].key,0);collect(decoder,w,4,1);check(decoder.stats().decodes==decoded+1,"Fourth GIF frame evicts oldest rather than retaining unbounded movie");
     const auto borrowed=results.front().frame;decoder.hide();decoder.setRoute({});stop(decoder);check(probe->opens==probe->closes&&borrowed->straightRGBA[0]==1,"Hide/stop closes every access while borrowed finite artwork remains valid");}
+void manyReferences(){
+    Window w;auto probe=std::make_shared<Probe>();probe->block=true;
+    n::NativeNotesImageDecoder decoder(resolver(probe),w.route(6),factory(probe));
+    std::vector<n::NotesImageRequest>requests;for(unsigned i=0;i<24;++i)requests.push_back(request(100+i));
+    check(decoder.setVisible(requests),"Twenty-four stored image references do not become an eight-card limit");
+    check(WaitForSingleObject(probe->entered.value,10000)==WAIT_OBJECT_0,"Large collection enters only one worker codec");
+    const auto blocked=decoder.stats();check(blocked.queued==7&&blocked.pending==16&&blocked.inFlight,"Only eight active/queued jobs materialize; remaining references are lightweight metadata");
+    SetEvent(probe->release.value);auto images=collect(decoder,w,6,24);
+    std::sort(images.begin(),images.end(),[](const auto&a,const auto&b){return a.key<b.key;});
+    for(std::size_t i=0;i<images.size();++i)check(SUCCEEDED(images[i].result)&&images[i].frame&&(!i||images[i-1].key!=images[i].key),"Each visible reference completes once without dropping or duplicating later cards");
+    check(decoder.stats().decoders<=8&&decoder.stats().cachedFrames<=24&&probe->opens-probe->closes<=8,"Codec/frame LRU remains bounded independently of stored reference count");
+    const auto opens=probe->opens.load();decoder.requestFrame(requests.front().key,3);const auto reopened=collect(decoder,w,6,1);
+    check(reopened.front().frame->index==3&&probe->opens==opens+1,"Evicted GIF reopens at its requested frame instead of resetting playback to zero");
+    std::vector<n::NotesImageRequest>imports;for(unsigned i=0;i<25;++i)imports.push_back(request(200+i));
+    decoder.setInspections(imports);for(const auto&r:requests)decoder.requestFrame(r.key,2);
+    std::size_t inspected{},played{};bool sawMixed{};const auto deadline=GetTickCount64()+10000;
+    while(inspected<imports.size()||played<requests.size()){
+        for(const auto&v:decoder.drain(6)){check(SUCCEEDED(v.result)&&v.frame&&v.frame->index==2,"Large active GIF collection preserves requested frames");++played;}
+        for(const auto&v:decoder.drainInspections(6)){check(SUCCEEDED(v.result)&&v.frame&&v.frame->index==0,"Large import batch validates every reference without creating another worker");++inspected;}
+        if(played&&inspected&&played<requests.size()&&inspected<imports.size())sawMixed=true;
+        const auto stats=decoder.stats();check(stats.queued+stats.completed+stats.inspectionCompleted+(stats.inFlight?1u:0u)<=8,"Playback/import results share one bounded work window");
+        if(inspected==imports.size()&&played==requests.size())break;
+        const auto now=GetTickCount64();check(now<deadline,"Fair import and playback complete within owned fixture deadline");
+        MsgWaitForMultipleObjectsEx(0,nullptr,static_cast<DWORD>(deadline-now),QS_POSTMESSAGE,MWMO_INPUTAVAILABLE);MSG message{};while(PeekMessageW(&message,w.hwnd,Window::notice,Window::notice,PM_REMOVE)){}
+    }
+    check(sawMixed,"Import and active playback make interleaved progress without starvation");
+    decoder.setInspections({});decoder.hide();stop(decoder);check(probe->opens==probe->closes,"Large collection closes all independent codec leases");
+}
 void blockedStop(){Window w;auto probe=std::make_shared<Probe>();probe->block=true;auto decoder=std::make_unique<n::NativeNotesImageDecoder>(resolver(probe),w.route(5),factory(probe));const std::array one{request(90)};decoder->setVisible(one);check(WaitForSingleObject(probe->entered.value,10000)==WAIT_OBJECT_0,"Shutdown fixture enters bounded fake codec");Handle done(decoder->duplicateWorkerHandle());auto begin=GetTickCount64();decoder.reset();check(GetTickCount64()-begin<1000,"Facade destruction does not join blocked decoder");rejects([&]{n::NativeNotesImageDecoder another(resolver(probe),{},factory(probe));},"A blocked stopped codec cannot accumulate process workers");SetEvent(probe->release.value);check(WaitForSingleObject(done.value,10000)==WAIT_OBJECT_0&&probe->opens==probe->closes,"Worker cleanup remains safe after owner destruction");MSG msg{};check(!PeekMessageW(&msg,w.hwnd,Window::notice,Window::notice,PM_REMOVE),"No completion sent after owner route clears");}
 std::string utf8(const std::filesystem::path&p){auto s=p.u8string();return {reinterpret_cast<const char*>(s.data()),s.size()};}
 void write(const std::filesystem::path&path,std::span<const std::uint8_t>bytes){std::ofstream stream(path,std::ios::binary);stream.write(reinterpret_cast<const char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));check(bool(stream),"Write only newly owned tiny image fixture");}
@@ -57,7 +85,7 @@ void wic(){Window w;const auto root=std::filesystem::temp_directory_path()/("end
         if(index==3)check(pixel(f,0,1)[3]==0&&pixel(f,3,2)==std::array<std::uint8_t,4>{0,255,0,255},"GIF restore-background clears exactly disposed subrect and draws next frame");}
     const auto old=results.front().frame;decoder.hide();stop(decoder);check(probe->opens==probe->closes&&old->straightRGBA.size()==16,"Media file access closed while immutable borrowed pixels survive decoder");check(!IsWindowVisible(w.hwnd),"No native decode fixture displays UI");}
 }
-int main(){try{generations();blockedStop();wic();std::cout<<"PASS "<<checks<<" native Notes image checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{generations();manyReferences();blockedStop();wic();std::cout<<"PASS "<<checks<<" native Notes image checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){std::cout<<"Windows WIC/worker fixture requires Windows; not executed on this platform\n";return 0;}
 #endif

@@ -121,6 +121,44 @@ void alphaCoverage(Renderer& renderer,DrawObject& object){
     const std::array<std::uint8_t,4>opaque{0,0,0,255};renderer.setTexture("alpha.fixture",2,{1,1,opaque,TextureColorSpace::linear});object.masks.clear();object.alphaMask->bounds={-1,-1,2,2};object.alphaMask->worldToLocal={};renderer.setDrawList(std::span(&object,1));renderer.draw(false);pixel(renderer.readback(),16,16,{0,0,255,255},0,"Replacing resident alpha bytes updates stable draw references");
     object.alphaMask.reset();renderer.setDrawList(std::span(&object,1));check(renderer.removeTexture("alpha.fixture"),"Mask retires after publication stops referencing it");
 }
+void angularCoverage(Renderer& renderer,DrawObject& object){
+    using namespace endfield::core;constexpr double pi=3.1415926535897932384626433832795;
+    renderer.setCamera({});object.world={};object.opacity=1;object.textureID.clear();object.shutter.reset();object.alphaMask.reset();object.masks.clear();object.linearTint={1,0,0,1};
+    renderer.setDrawList(std::span(&object,1));renderer.draw(false);const auto unmasked=renderer.readback().pixels;
+    object.angularMask=AngularMask{{},{0,0},-.5*pi,2*pi};renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+    check(renderer.readback().pixels==unmasked,"Full angular sweep preserves every original pixel exactly");
+    object.angularMask->sweepAngle=0;renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+    auto image=renderer.readback();check(std::all_of(image.pixels.begin(),image.pixels.end(),[](auto c){return c==0;}),"Zero angular sweep is empty without a half-visible seam");
+    for(double start:{-.5*pi,0.,.37,2.7})for(double sweep:{.09*pi,.5*pi,pi,1.7*pi}){
+        object.angularMask=AngularMask{{},{0,0},start,sweep};renderer.setDrawList(std::span(&object,1));renderer.draw(false);image=renderer.readback();
+        for(unsigned y=0;y<image.height;++y)for(unsigned x=0;x<image.width;++x){
+            const double px=(x+.5)*2/image.width-1,py=1-(y+.5)*2/image.height;
+            double angle=std::fmod(std::atan2(py,px)-start+4*pi,2*pi);
+            // Compare only points >2 pixels from either butt edge. Fractional
+            // boundary pixels use derivative AA, whose exact coverage is tested
+            // below independently at a half-pixel translated cardinal edge.
+            const auto end=start+sweep;const double a=-std::sin(start)*px+std::cos(start)*py,b=std::sin(end)*px-std::cos(end)*py;
+            if(std::abs(a)<.13||std::abs(b)<.13)continue;
+            pixel(image,x,y,angle<sweep?std::array<int,4>{0,0,255,255}:std::array<int,4>{0,0,0,0},0,"Angular clipping follows signed source-local angles for narrow/wide wrapped sweeps");
+        }
+    }
+    object.angularMask=AngularMask{Matrix4::translation(-1./32,0),{0,0},-.5*pi,pi};
+    renderer.setDrawList(std::span(&object,1));renderer.draw(false);image=renderer.readback();
+    pixel(image,16,8,{0,0,128,128},1,"Translated angular butt edge antialiases RGB and alpha together");
+    pixel(image,24,8,{0,0,255,255},0,"Angular butt edge retains its interior");
+    object.angularMask=AngularMask{{},{0,0},-.5*pi,pi,std::array<double,3>{1,0,-.25}};
+    renderer.setDrawList(std::span(&object,1));renderer.draw(false);pixel(renderer.readback(),17,8,{0,0,0,0},0,"Explicit source cubic tangent offsets the butt cut without moving ring geometry");pixel(renderer.readback(),24,8,{0,0,255,255},0,"Exact endpoint plane preserves stroke interior");
+    object.masks={{{},{-1,-1,2,1}}};renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+    pixel(renderer.readback(),24,8,{0,0,0,0},0,"Angular mask intersects ordinary ancestor clip");object.masks.clear();
+    const auto stats=renderer.stats();for(unsigned i=0;i<120;++i){object.angularMask->sweepAngle=double(i+1)*2*pi/120;renderer.setDrawList(std::span(&object,1));}
+    check(renderer.stats().meshUploads==stats.meshUploads&&renderer.stats().textureUploads==stats.textureUploads&&renderer.stats().objectBufferAllocations==stats.objectBufferAllocations&&renderer.stats().resourceBytes==stats.resourceBytes,"Changing arc angle retains resident resources and constant buffers");
+    renderer.draw(false);const auto saved=renderer.readback().pixels;const auto uploads=renderer.stats().objectUploads;
+    for(double invalid:{-1.,2*pi+.01,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}){auto bad=object;bad.angularMask->sweepAngle=invalid;rejects([&]{renderer.setDrawList(std::span(&bad,1));},"Invalid angular sweep rejects transactionally");}
+    {auto invalid=object;invalid.angularMask->endPlane=std::array<double,3>{0,0,0};rejects([&]{renderer.setDrawList(std::span(&invalid,1));},"Degenerate source endpoint rejects before allocation");}
+    auto bad=object;bad.angularMask->center.x=std::numeric_limits<double>::quiet_NaN();rejects([&]{renderer.setDrawList(std::span(&bad,1));},"Invalid angular center rejects before upload");
+    renderer.draw(false);check(renderer.readback().pixels==saved&&renderer.stats().objectUploads==uploads,"Rejected arc keeps previous constants/pixels");
+    object.angularMask.reset();renderer.setDrawList(std::span(&object,1));renderer.draw(false);check(renderer.readback().pixels==unmasked,"Removing angular mask restores default pixels exactly");
+}
 void roundedCoverage(Renderer& renderer,DrawObject& object){
     using namespace endfield::core;
     renderer.setCamera({});object.world={};object.opacity=1;object.textureID.clear();object.shutter.reset();object.linearTint={1,0,0,1};
@@ -346,6 +384,7 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     pixel(image, 24, 24, {0, 0, 0, 0}, 0, "Nested masks cannot reveal outside either ancestor");
 
     alphaCoverage(renderer, red);
+    angularCoverage(renderer, red);
     roundedCoverage(renderer, red);
     shutterCoverage(renderer, red);
     subsectionCoverage(renderer, red);

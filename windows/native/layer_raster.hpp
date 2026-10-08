@@ -79,6 +79,8 @@ struct LayerRasterImage {
     std::vector<LayerRasterIssue> unsupported;
     std::vector<LayerFontSubstitution> fontSubstitutions;
     core::Point textDocumentOffset{}; // effective offset after optional caret reveal
+    core::Point textContentInset{}; // source single-line field, otherwise zero
+    double textDocumentWidth{}; // finite logical document; independent of bitmap
     bool complete() const noexcept { return unsupported.empty(); }
 };
 struct LayerRasterStats {

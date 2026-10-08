@@ -24,13 +24,15 @@ public:
     core::Rect viewport()const noexcept;
     bool isDocumentLayout()const noexcept;
     double documentHeight()const noexcept;
+    double documentWidth()const noexcept;
+    core::Point contentInset()const noexcept;
     core::Point initialPaintOffset()const noexcept;
     std::size_t metadataBytes()const noexcept;
     std::uintptr_t layoutIdentity()const noexcept; // diagnostics, not a COM interface
 private:
     friend class LayerRasterizer;friend class LayerTextLayout;
     PaintedTextLayout(IDWriteTextLayout*,std::u16string,std::uint64_t,core::Rect,bool,
-        const ehud::data::Json&,core::Point);
+        const ehud::data::Json&,core::Point,core::Point,double);
     IDWriteTextLayout* nativeLayout()const noexcept;
     bool matchesPlainStyle(const ehud::data::Json&,core::Rect)const;
     const DocumentTextLines& lines()const noexcept;

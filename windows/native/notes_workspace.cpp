@@ -117,9 +117,8 @@ struct NativeNotesWorkspace::Impl {
     }
     void unregister(Slot&s){if(s.tokenIndex<tokenCapacity&&tokenSlots[s.tokenIndex]==&s)tokenSlots[s.tokenIndex]=nullptr;}
     void preflight(core::Rect bounds,bool notesSelected)const{
-        std::size_t newSlots{},visibleMedia{};
-        for(const auto&n:state.notes())if(notesSelected||n.isPinned){presentationRecord(n);if(mediaRecord(n))++visibleMedia;geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(!existing)++newSlots;}
-        need(visibleMedia<=NativeNotesImageDecoder::maximumVisible,"At most eight visible Notes media cards are supported by the shared decoder");
+        std::size_t newSlots{};
+        for(const auto&n:state.notes())if(notesSelected||n.isPinned){presentationRecord(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(!existing)++newSlots;}
         need(slots.size()+deletingCards.size()+retiredCards.size()+newSlots<=options.maximumRetainedCards,"Notes retained-card capacity reached; retire detached cards before adding more");
     }
     std::shared_ptr<Media>mediaFor(Slot&s,const Note&n){
@@ -330,8 +329,7 @@ bool NativeNotesWorkspace::createChecklist(std::string id,std::string firstID,do
     Note prototype{.id=id,.kind=ehud::data::NoteKind::todo,.width=228,.height=154,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()),true);i.finishRequired();const bool changed=i.state.createChecklist(id,firstID,createdAt);if(!changed)return false;i.sync();beginEditingItem(id,firstID);return true;
 }
 bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::string reference,core::Point point,std::shared_ptr<void>access){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;
-    const auto visible=std::count_if(i.state.notes().begin(),i.state.notes().end(),[](const auto&n){return mediaRecord(n);});
-    need(visible<NativeNotesImageDecoder::maximumVisible,"Retire or hide media before importing more visible cards");need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
     // Source aspect-derived media dimensions are at most300x260 before the
     // workspace cap. Validate that upper bound before the persistence boundary.
     Note prototype{.id=id,.kind=ehud::data::NoteKind::image,.width=300,.height=260,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()));

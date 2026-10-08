@@ -1,0 +1,39 @@
+#include "native/notes_video_playback.hpp"
+#include "native/notes_image_decoder.hpp"
+#include "core/shell_packet.hpp"
+#ifdef _WIN32
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <iostream>
+namespace n=endfield::native;namespace m=endfield::modules;
+namespace {
+unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
+struct Window {HWND hwnd{};ATOM atom{};static constexpr UINT message=WM_APP+251;Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldOwnedSilentVideoDecode";atom=RegisterClassW(&c);check(atom!=0,"Register owned decode fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Hidden synthetic silent video",WS_POPUP,0,0,32,32,nullptr,nullptr,c.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Video decode fixture stays hidden");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
+std::string pathUTF8(const std::filesystem::path&p){const auto bytes=p.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
+void run(const std::filesystem::path&shader,const std::filesystem::path&fixture){
+    // The only accepted media is this authored 1.2s,12-frame,32x32 H.264 file.
+    // It contains red then blue video and NO audio stream. No user media is read.
+    std::ifstream file(fixture,std::ios::binary);std::array<std::uint8_t,1736>bytes{};file.read(reinterpret_cast<char*>(bytes.data()),static_cast<std::streamsize>(bytes.size()));
+    check(file&&file.peek()==std::char_traits<char>::eof()&&endfield::core::packet::sha256(bytes)=="a388d90f0a024dea0735f15322269e740ccb725977b58681e32591cfeb4807a1","Only pinned owned silent video fixture may be decoded");
+    Window window;n::Renderer renderer;renderer.initialize(window.hwnd,32,32,{n::Driver::hardware,shader,n::RenderTarget::offscreenForTests,true});
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::message,11});const auto start=GetTickCount64();auto now=[&]{return double(GetTickCount64()-start)/1000.;};
+    const std::array request{n::NotesVideoRequest{"silent.fixture",pathUTF8(std::filesystem::absolute(fixture)),1,512}};video.setVisible(request,now());
+    const auto*r=video.find("silent.fixture");
+    auto await=[&](auto predicate,const char*why){const auto deadline=GetTickCount64()+10000;for(;;){const auto time=now();video.accept(11,time);video.sample(time);if(r->state==m::NotesMediaState::failed)throw std::runtime_error(std::string(why)+"; Media Engine HRESULT="+std::to_string(static_cast<std::int32_t>(r->error)));if(predicate())return;const auto tick=GetTickCount64();if(tick>=deadline){const auto native=video.diagnostics("silent.fixture");const auto stats=video.stats();std::cerr<<"MF diagnostic state="<<int(r->state)<<" error="<<r->error<<" posterError="<<r->posterError<<" content="<<r->contentRevision<<" frames="<<r->frameRevision<<" nativeSize="<<r->nativeWidth<<"x"<<r->nativeHeight<<" hasTexture="<<!r->textureID.empty()<<" wantsPlayback="<<r->wantsPlayback<<" demandsFrames="<<video.requiresFrames()<<" notices="<<stats.notices<<" acceptedEvents="<<stats.events<<" transfers="<<stats.transfers<<" ticks="<<stats.ticks<<" nativeReady="<<native.readyState<<" nativeNetwork="<<native.networkState<<" nativeVideo="<<native.hasVideo<<" nativePaused="<<native.paused<<" nativeSeeking="<<native.seeking<<" nativeError="<<native.errorCode<<" extended="<<native.error<<" lastEvent="<<native.lastEvent<<" eventCounts=";for(unsigned i=0;i<native.eventCounts.size();++i)if(native.eventCounts[i])std::cerr<<(i<32?i:i-32+1000)<<":"<<native.eventCounts[i]<<",";std::cerr<<'\n';}check(tick<deadline,why);const auto wait=video.requiresFrames()?16u:static_cast<unsigned>(deadline-tick);MsgWaitForMultipleObjectsEx(0,nullptr,wait,QS_POSTMESSAGE,MWMO_INPUTAVAILABLE);MSG message{};while(PeekMessageW(&message,window.hwnd,Window::message,Window::message,PM_REMOVE))check(message.lParam==0,"Real codec posts only a generation token");}};
+    await([&]{return r->state==m::NotesMediaState::paused&&!r->textureID.empty();},"Real Media Engine produces a paused first poster");
+    check(r->nativeWidth==32&&r->nativeHeight==32&&r->duration&&std::abs(*r->duration-1.2)<.02,"Actual codec returns fixture dimensions and duration");check(!video.requiresFrames()&&!video.nextWakeTime()&&renderer.stats().mediaTargets==1,"Paused decoded video has no continuous deadline/frame demand");
+    const std::array<n::Vertex,4>vertices{{{{-1,1,0},{0,0}},{{1,1,0},{1,0}},{{1,-1,0},{1,1}},{{-1,-1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};renderer.setMesh("fixture.quad",1,{vertices,indices});n::DrawObject draw;draw.sourceID="fixture.draw";draw.meshID="fixture.quad";
+    auto pixel=[&]{draw.textureID=r->textureID;renderer.setDrawList(std::span(&draw,1));renderer.draw(false);const auto pixels=renderer.readback();const auto at=(std::size_t(16)*32+16)*4;return std::array<unsigned,4>{pixels.pixels[at],pixels.pixels[at+1],pixels.pixels[at+2],pixels.pixels[at+3]};};
+    const auto poster=pixel();check(poster[2]>220&&poster[0]<40&&poster[3]>250,"Own application target contains decoded red poster pixels");
+    check(video.seek("silent.fixture",.9),"Paused source video accepts an exact requested seek");await([&]{return !r->pendingSeek&&r->textureID=="silent.fixture.live"&&!video.requiresFrames();},"Native seek completes and exposes its new paused frame");const auto sought=pixel();check(sought[0]>220&&sought[2]<40,"Actual seek reaches blue frames without reading the desktop");
+    video.seek("silent.fixture",0);await([&]{return !r->pendingSeek&&!video.requiresFrames();},"Native seek returns to first frame");const auto transfers=video.stats().transfers,allocations=renderer.stats().mediaTargetAllocations;video.play("silent.fixture",now());await([&]{return video.stats().transfers>=transfers+2;},"Actual silent video playback delivers successive frames");video.pause("silent.fixture");check(!video.requiresFrames()&&!video.nextWakeTime()&&renderer.stats().mediaTargetAllocations==allocations,"Paused native playback cancels demand and reuses the same live target");
+    video.hide(now(),true);const auto held=pixel();check(held[2]>220&&held[0]<40,"Closing returns to original red poster, never the last live blue frame");renderer.clearDrawList();video.hide(now(),false);video.sample(now()+.61);check(video.collectRetired()&&video.retire("silent.fixture")&&renderer.stats().mediaLiveBytes==0,"Decoded pipeline releases both surfaces after explicit owner detach");check(!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Positive codec test uses only hidden owned render-target readback, with no audio");
+
+}
+}
+int wmain(int argc,wchar_t**argv){const auto com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com))return 1;int code{};try{check(argc==3,"Pass native/hud.hlsl and owned silent MP4 fixture");run(argv[1],argv[2]);std::cout<<"PASS "<<checks<<" real silent Media Engine decode checks\n";}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
+#else
+int main(){return 0;}
+#endif

@@ -17,6 +17,10 @@ public:
         const native::NativeNotesControlsAssets&,bool activateTextServices,
         const std::filesystem::path& formatAssets={});
     ~NotesPreview();
+    // Shared preview-session TSF service. Other module editors borrow this
+    // already activated manager and MUST be destroyed before NotesPreview.
+    ITfThreadMgr*activatedTextManager()const noexcept;
+    TfClientId textClient()const noexcept;
     static constexpr UINT mediaActionMessage=WM_APP+190,mediaNoticeMessage=WM_APP+191;
     std::optional<NotesMediaAction>takeMediaAction(UINT_PTR generation);
     bool importMedia(std::span<const std::string> explicitPaths,core::Point,double time);

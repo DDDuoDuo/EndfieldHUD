@@ -44,6 +44,7 @@ struct NotesImageDecoderStats {
     std::size_t queued{},completed{},decoders{},cachedFrames{},liveFrameBytes{};
     std::uint64_t requests{},decodes{},notices{},discarded{},wakeups{};
     bool inFlight{},stopped{};
+    std::size_t pending{},inspectionCompleted{}; // lightweight waiting metadata / ready import results
 };
 // App-lifetime shared serial decoder: no window, timer, polling or renderer.
 // All facade calls are owner-thread, except immutable result use. The caller
@@ -61,7 +62,7 @@ struct NotesImageDecoderStats {
 // repeated opens accumulating hung workers. Stop never joins or invokes UI.
 class NativeNotesImageDecoder final {
 public:
-    static constexpr std::size_t maximumVisible=8,maximumGIFFrames=2000,
+    static constexpr std::size_t maximumQueued=8,maximumCachedDecoders=8,maximumGIFFrames=2000,
         maximumInputBytes=128*1024*1024,maximumInputPixels=64000000,
         maximumLiveFrameBytes=96*1024*1024;
     using Resolver=std::function<NotesImageAccess(const NotesImageRequest&)>;
@@ -78,11 +79,14 @@ public:
     NativeNotesImageDecoder(const NativeNotesImageDecoder&)=delete;
     NativeNotesImageDecoder&operator=(const NativeNotesImageDecoder&)=delete;
     // Latest visible generation replaces queued/results jobs. Matching active
-    // decoders retain their bounded cache. Empty input releases on the worker;
+    // decoders retain an eight-sequence LRU cache. Visible metadata is not an
+    // eight-card storage limit: work/refill and result delivery are bounded.
+    // Empty input releases on the worker;
     // caller's already borrowed artwork remains valid through a close fade.
     bool setVisible(std::span<const NotesImageRequest>,bool retry=false);
-    bool requestFrame(std::string_view key,unsigned index); // latest per key, <=8 total
-    // Independent bounded import ticket on this SAME worker. Validates a64px
+    bool requestFrame(std::string_view key,unsigned index); // latest per key; fair bounded work window
+    // Independent import batch on this SAME worker. At most eight decoded
+    // jobs/results are outstanding across playback and imports. Validates a64px
     // first frame plus complete metadata, then closes the file/decoder. Never
     // interrupts visible playback or creates another worker. Latest batch wins;
     // empty batch cancels queued/in-flight results (codec call itself may finish).

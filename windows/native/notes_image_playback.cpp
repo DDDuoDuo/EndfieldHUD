@@ -9,7 +9,7 @@ namespace {using State=modules::NotesMediaState;void need(bool v,const char*m){i
 struct NativeNotesImagePlayback::Impl {
     NativeNotesImageDecoder*decoder;DWORD owner=GetCurrentThreadId();std::map<std::string,NotesImagePlaybackRecord,std::less<>>records;
     std::vector<NotesImagePlaybackRecord*>visible,fading;std::vector<NotesImagePlaybackRequest>requests;
-    explicit Impl(NativeNotesImageDecoder&d):decoder(&d){visible.reserve(8);requests.reserve(8);fading.reserve(maximumRetainedRecords);}
+    explicit Impl(NativeNotesImageDecoder&d):decoder(&d){visible.reserve(8);requests.reserve(8);fading.reserve(128);}
     void check()const{need(owner==GetCurrentThreadId(),"Media playback belongs to its owner thread");}
     static void clock(double now){need(std::isfinite(now),"Nonfinite media owner clock");}
     NotesImagePlaybackRecord*find(std::string_view key){auto it=records.find(key);return it==records.end()?nullptr:&it->second;}
@@ -20,9 +20,9 @@ struct NativeNotesImagePlayback::Impl {
 };
 NativeNotesImagePlayback::NativeNotesImagePlayback(NativeNotesImageDecoder&d):impl_(std::make_unique<Impl>(d)){}
 NativeNotesImagePlayback::~NativeNotesImagePlayback(){if(impl_){try{impl_->decoder->hide();}catch(...){}}}
-bool NativeNotesImagePlayback::setVisible(std::span<const NotesImagePlaybackRequest>incoming,double now,bool preserve){auto&i=*impl_;i.check();Impl::clock(now);need(incoming.size()<=NativeNotesImageDecoder::maximumVisible,"Visible media capacity exceeded");
+bool NativeNotesImagePlayback::setVisible(std::span<const NotesImagePlaybackRequest>incoming,double now,bool preserve){auto&i=*impl_;i.check();Impl::clock(now);
     if(std::equal(incoming.begin(),incoming.end(),i.requests.begin(),i.requests.end()))return false;
-    std::size_t additions{};std::vector<NotesImageRequest>decode;decode.reserve(incoming.size());for(const auto&r:incoming){need(r.kind==modules::NotesMediaKind::image||r.kind==modules::NotesMediaKind::gif,"Image playback requires still/GIF reference");if(const auto*old=i.find(r.image.key))need(old->kind==r.kind||old->request!=r.image,"Changing media kind requires a new request revision");else ++additions;decode.push_back(r.image);decode.back().firstFrameOnly=r.kind==modules::NotesMediaKind::image;}need(i.records.size()+additions<=maximumRetainedRecords,"Retire hidden media records before exceeding owner capacity");
+    std::vector<NotesImageRequest>decode;decode.reserve(incoming.size());for(const auto&r:incoming){need(r.kind==modules::NotesMediaKind::image||r.kind==modules::NotesMediaKind::gif,"Image playback requires still/GIF reference");if(const auto*old=i.find(r.image.key))need(old->kind==r.kind||old->request!=r.image,"Changing media kind requires a new request revision");decode.push_back(r.image);decode.back().firstFrameOnly=r.kind==modules::NotesMediaKind::image;}
     std::vector<NotesImagePlaybackRequest>requests(incoming.begin(),incoming.end());
     // Complete decoder batch validation happens before any current playback
     // state is hidden/reset. No file is opened synchronously by this method.

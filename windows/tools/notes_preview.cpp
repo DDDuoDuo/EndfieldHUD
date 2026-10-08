@@ -92,7 +92,7 @@ struct NotesPreview::Impl {
         // sRGB value was read from AppKit, rather than a substituted warning tint.
         input.systemOrange=mod::NotesColor{1,159./255.,10./255.,1};controls.update(input);controlScene->syncContent(assets.imagesFor(controls),1);mediaError=std::move(value);return true;}
     bool beginImport(std::span<const std::string>paths,core::Point point,std::shared_ptr<void>lease={}){if(!mediaActive||!state->notesSelected()||paths.empty())return false;need(std::isfinite(point.x)&&std::isfinite(point.y),"Media import requires a finite insertion point");
-    const auto existing=std::count_if(state->notes().begin(),state->notes().end(),[](const auto&n){return n.kind==data::NoteKind::image;});if(paths.size()>8||static_cast<std::size_t>(existing)+paths.size()>8){setMediaError("当前预览最多同时显示 8 张媒体便笺");return false;}for(const auto&path:paths)if(!data::validWindowsFilePath(path)){setMediaError("媒体路径无效，文件未被添加");return false;}if(!finish())return false;startImageWorker();
+    if(paths.size()>10000-state->notes().size()){setMediaError("便笺记录数量已达到上限");return false;}for(const auto&path:paths)if(!data::validWindowsFilePath(path)){setMediaError("媒体路径无效，文件未被添加");return false;}if(!finish())return false;startImageWorker();
     std::vector<Impl::Import>pending;std::vector<gpu::NotesImageRequest>requests;pending.reserve(paths.size());requests.reserve(paths.size());need(importSerial!=std::numeric_limits<std::uint64_t>::max(),"Media import generation exhausted");const auto serial=importSerial+1;for(std::size_t n=0;n<paths.size();++n){const auto key="notes.import."+std::to_string(mediaGeneration)+"."+std::to_string(serial)+"."+std::to_string(n);pending.push_back({key,paths[n],{},E_PENDING,lease});requests.push_back({key,paths[n],serial,64,false,lease});}imageDecoder->setInspections(requests);pendingImports=std::move(pending);importSerial=serial;importPoint=point;setMediaError({});return true;
     }
     void cancelImport(){pendingImports.clear();if(imageDecoder)imageDecoder->setInspections({});}
@@ -197,6 +197,8 @@ struct NotesPreview::Impl {
 };
 NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot)){}
 NotesPreview::~NotesPreview()=default;
+ITfThreadMgr*NotesPreview::activatedTextManager()const noexcept{return impl_->manager.manager.Get();}
+TfClientId NotesPreview::textClient()const noexcept{return impl_->manager.client;}
 std::optional<NotesMediaAction>NotesPreview::takeMediaAction(UINT_PTR generation){auto&i=*impl_;if(generation!=i.mediaGeneration)return{};auto result=std::move(i.mediaAction);i.mediaAction.reset();return result;}
 bool NotesPreview::importMedia(std::span<const std::string>paths,core::Point point,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.beginImport(paths,point);}
 bool NotesPreview::importMedia(data::ShelfFileAccess access,core::Point point,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!access.open()||access.metadata().isDirectory){i.setMediaError("暂存架媒体无法读取，文件未被添加");return false;}
@@ -237,7 +239,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
 bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);if((i.mediaMenu&&i.mediaMenu->requiresFrames(t))||(i.formatMenu&&i.formatMenu->requiresFrames(t))||i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
     for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return i.confirmationVisible&&t-i.confirmationStarted<.16;}
 bool NotesPreview::diagnosticEditing(bool enabled,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!enabled)return i.finish();if(i.state->notes().empty())return false;i.workspace->beginEditing(i.state->notes().front().id);i.focusEditor();return i.workspace->editor()!=nullptr;}
-bool NotesPreview::pointerLocked()const{return impl_->state->dragging()||(impl_->mediaMenu&&impl_->mediaMenu->acceptsInput());}
+bool NotesPreview::pointerLocked()const{return impl_->state->dragging();}
 bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput)return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
     if(i.mediaMenu&&i.mediaMenu->contains(p))return true;
     if(i.formatMenu&&i.formatMenu->contains(p))return true;

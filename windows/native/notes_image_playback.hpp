@@ -23,7 +23,6 @@ struct NotesImagePlaybackRecord {
 // The host arms nextWakeTime on its SAME waitable timer as HUD animation.
 class NativeNotesImagePlayback final {
 public:
-    static constexpr std::size_t maximumRetainedRecords=128;
     explicit NativeNotesImagePlayback(NativeNotesImageDecoder&);
     ~NativeNotesImagePlayback();
     NativeNotesImagePlayback(const NativeNotesImagePlayback&)=delete;

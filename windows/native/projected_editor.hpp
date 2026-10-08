@@ -5,6 +5,7 @@
 #include "native/projected_text_input.hpp"
 #ifdef _WIN32
 namespace endfield::native {
+enum class ProjectedEditorAlignment {natural,left,center,right};
 struct ProjectedEditorStyle {
     double width{},height{},fontSize{12};
     // Both zero uses native field spacing. Notes supplies measured source-style
@@ -14,6 +15,17 @@ struct ProjectedEditorStyle {
     std::array<double,4> textColor{1,1,1,1},caretColor{1,1,1,1};
     std::array<double,4> selectionColor{.2,.4,.7,.5},compositionColor{1,1,1,1};
     double cornerRadius{}; // caller source viewport radius; shared GPU/hit/TSF clip
+    // Defaults retain Notes artwork/layout. No-wrap prevents soft wrapping; it
+    // neither filters newlines nor truncates the caller's document to one line.
+    ProjectedEditorAlignment alignment{ProjectedEditorAlignment::natural};
+    bool wrapped{true};
+    // Archive uses natural font metrics plus one point between every line.
+    // This is distinct from Notes' explicit uniform lineHeight/baseline mode.
+    bool naturalParagraphSpacingOne{};
+    // Source HUDProjectedTextEditor.configureSingleLine: three-point horizontal
+    // inset, selected-font vertical centering, finite growing document width.
+    // The caller still routes Return/Tab and owns single-line input semantics.
+    bool sourceSingleLineField{};
     bool operator==(const ProjectedEditorStyle&)const=default;
 };
 struct PlainEditorFixtureCapacity {std::uint32_t maximumUnits;};
@@ -65,6 +77,9 @@ public:
     bool scrollBy(double);
     double scrollOffset()const noexcept;
     double maximumScrollOffset()const noexcept;
+    bool setHorizontalScrollOffset(double);
+    double horizontalScrollOffset()const noexcept;
+    double maximumHorizontalScrollOffset()const noexcept;
     // Explicit reveal is also available; ordinary command/character/TSF text
     // edits coalesce reveal into their next sync. Manual scroll cancels pending
     // reveal (including an unchanged restore). Pointer-down never reveals.

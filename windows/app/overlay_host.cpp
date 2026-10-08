@@ -291,7 +291,8 @@ struct OverlayHost::Impl {
         // A callback may destroy/recreate this HWND. Its captured state must
         // outlive that operation, without copying/allocating functions per event.
         const auto handlers = callbacks;
-        if(message>=WM_APP&&message<=0xbfff&&message!=frameMessage&&ready&&handlers&&handlers->appMessage){
+        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE;
+        if(ownerNotice&&ready&&handlers&&handlers->appMessage){
             const auto result=handlers->appMessage({target,message,w,l});
             if(result)return static_cast<LRESULT>(*result);
             if(window!=target||callbacks!=handlers)return 0;

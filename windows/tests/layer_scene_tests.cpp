@@ -227,6 +227,12 @@ void roundedComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRa
     DrawObject after=scene.draws()[0];after.sourceID="rounded-after";after.linearTint={0,0,0,1};after.opacity=0;
     const std::array withAfter{LayerCompositionEntry{&scene,std::span(&after,1)}};composition.setEntries(renderer,withAfter);composition.present(renderer,transforms);
     check(composition.draws().back().masks[0].cornerRadius==8,"Supplemental projection retains corner radius too");
+    after.angularMask=AngularMask{{},{16,16},0,1.2,std::array<double,3>{1,0,-2}};
+    composition.present(renderer,transforms);const auto&arc=composition.draws().back().angularMask;
+    check(arc&&arc->center.x==16&&arc->sweepAngle==1.2&&arc->endPlane==after.angularMask->endPlane&&arc->worldToLocal.values[12]==-2,"Supplemental angular mask retains source tangent and follows shared projection");
+    after.angularMask->sweepAngle=-1;rejects([&]{composition.present(renderer,transforms);},"Invalid angular input rejects before combined pose publication");
+    check(composition.draws().back().angularMask->sweepAngle==1.2,"Rejected source arc preserves complete previous composition");after.angularMask.reset();composition.present(renderer,transforms);check(!composition.draws().back().angularMask,"Removing angular mask clears retained supplemental state");
+
     auto mask=scene.draws()[0].masks[0];mask.cornerRadius=9;LayerPlacement bad{0,scene.draws()[0].world,1,std::span(&mask,1)};
     rejects([&]{scene.setPlacements(std::span(&bad,1));},"Invalid radius rejects before source placement mutation");composition.detach(renderer);
 }

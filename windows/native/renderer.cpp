@@ -79,8 +79,10 @@ struct alignas(16) ObjectUniform {
     std::array<std::array<float, 4>, 30> shutterEdges{};
     std::array<float,16> alphaWorldToLocal{};
     std::array<float,4> alphaBounds{},alphaControl{};
+    std::array<float,16> angularWorldToLocal{};
+    std::array<float,4> angularCenterControl{},angularNormals{};
 };
-static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 96 && sizeof(ObjectUniform) == 1504);
+static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 96 && sizeof(ObjectUniform) == 1600);
 void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
     result.shutterEnabled = static_cast<std::uint32_t>(shutter.path.index())+1;
     result.shutterWorldToLocal = matrix(shutter.worldToLocal);
@@ -162,6 +164,26 @@ ObjectUniform uniforms(const DrawObject &object) {
         for(unsigned k=0;k<4;++k){require(std::isfinite(bounds[k])&&std::abs(bounds[k])<=std::numeric_limits<float>::max(),"Alpha-mask bounds exceed GPU range");result.alphaBounds[k]=static_cast<float>(bounds[k]);}
         require(result.alphaBounds[2]>result.alphaBounds[0]&&result.alphaBounds[3]>result.alphaBounds[1],"Alpha-mask bounds collapse at GPU precision");result.alphaControl[0]=1;
     }
+    if(object.angularMask){const auto& mask=*object.angularMask;
+        constexpr double tau=6.283185307179586476925286766559;
+        require(std::isfinite(mask.startAngle)&&std::isfinite(mask.sweepAngle)&&mask.sweepAngle>=0&&mask.sweepAngle<=tau,"Invalid angular-mask angles");
+        require(std::isfinite(mask.center.x)&&std::isfinite(mask.center.y)&&std::abs(mask.center.x)<=std::numeric_limits<float>::max()&&std::abs(mask.center.y)<=std::numeric_limits<float>::max(),"Invalid angular-mask center");
+        result.angularWorldToLocal=matrix(mask.worldToLocal);
+        // Reduce before adding sweep, so a large finite caller angle cannot
+        // discard all endpoint precision or overflow.
+        const double start=std::remainder(mask.startAngle,tau),end=start+mask.sweepAngle;
+        result.angularNormals={static_cast<float>(-std::sin(start)),static_cast<float>(std::cos(start)),static_cast<float>(std::sin(end)),static_cast<float>(-std::cos(end))};
+        // mode: 1 empty, 2 intersection, 3 union, 4 full. Exact endpoints never
+        // depend on rounded sin/cos or derivatives of a degenerate wedge.
+        const float mode=mask.sweepAngle==0?1.f:mask.sweepAngle==tau?4.f:mask.sweepAngle<=tau*.5?2.f:3.f;
+        result.angularCenterControl={static_cast<float>(mask.center.x),static_cast<float>(mask.center.y),mode,0};
+        if(mask.endPlane){const auto& p=*mask.endPlane;
+            for(double value:p)require(std::isfinite(value),"Invalid angular endpoint plane");
+            const double length=std::hypot(p[0],p[1]);require(std::isfinite(length)&&length>0,"Degenerate angular endpoint plane");
+            const double offset=p[2]/length;require(std::isfinite(offset)&&std::abs(offset)<=std::numeric_limits<float>::max(),"Angular endpoint offset exceeds GPU range");
+            result.angularNormals[2]=static_cast<float>(p[0]/length);result.angularNormals[3]=static_cast<float>(p[1]/length);result.angularCenterControl[3]=static_cast<float>(offset);
+        }
+    }
     return result;
 }
 ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, const char *target) {
@@ -219,7 +241,13 @@ void validateDrawObject(const DrawObject& object) {(void)uniforms(object);}
 RendererError::RendererError(std::string operation, std::int32_t code)
     : std::runtime_error(std::move(operation) + " (HRESULT " + std::to_string(code) + ")"), code_(code) {}
 
-namespace {struct MediaBudget {std::atomic<std::size_t>bytes{};};}
+namespace {
+struct MediaBudget {std::atomic<std::size_t>bytes{};};
+struct RetainedMediaBytes {
+    std::shared_ptr<MediaBudget>budget;std::size_t bytes{};
+    ~RetainedMediaBytes(){if(budget)budget->bytes.fetch_sub(bytes,std::memory_order_relaxed);}
+};
+}
 struct RendererMediaTexture::Impl {
     std::string id;unsigned width{},height{};std::size_t bytes{};
     std::weak_ptr<const int>epoch;std::atomic<bool>registered{true};
@@ -252,6 +280,7 @@ struct Renderer::Impl {
         std::size_t bytes{};
         bool groupOwned{};
         bool mediaOwned{};
+        std::shared_ptr<RetainedMediaBytes>mediaPoster;
     };
     struct Draw {
         std::string sourceID;
@@ -583,6 +612,20 @@ void Renderer::commitMediaTexture(const RendererMediaTexture&handle){
     auto*target=media.linear.Get();r.context->OMSetRenderTargets(1,&target,nullptr);r.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);r.context->VSSetShader(r.compositeVS.Get(),nullptr,0);r.context->PSSetShader(r.mediaPS.Get(),nullptr,0);auto*source=media.encoded.Get();r.context->PSSetShaderResources(0,1,&source);r.context->Draw(3,0);
     ID3D11ShaderResourceView*empty=nullptr;r.context->PSSetShaderResources(0,1,&empty);r.context->OMSetRenderTargets(0,nullptr,nullptr);
     ++texture->second.revision;r.invalidate(&texture->second);++r.counters.mediaFrameCommits;
+}
+void Renderer::retainMediaPoster(const RendererMediaTexture&handle){
+    require(impl_&&impl_->mediaVideo,"Renderer was not initialized for same-device media");auto&r=*impl_;r.thread();auto&media=*handle.impl_;
+    require(handle.valid()&&media.epoch.lock()==r.epoch,"Stale/foreign media target cannot retain pixels");const auto installed=r.media.find(media.id);
+    require(installed!=r.media.end()&&installed->second.get()==&handle,"Media target is no longer registered");auto texture=r.textures.find(media.id);
+    require(texture!=r.textures.end()&&texture->second.mediaOwned&&!texture->second.mediaPoster,"Media texture ownership mismatch");
+    // Allocate the tiny accounting record before changing ownership. No GPU
+    // object, pixel copy or shader work occurs. The SRV remains exactly the one
+    // referenced by existing draws/groups. An external encoded-surface borrower
+    // keeps its separate four bytes/pixel charge until its handle is released.
+    auto retained=std::make_shared<RetainedMediaBytes>();retained->budget=r.mediaBudget;
+    retained->bytes=std::size_t(media.width)*media.height*8;media.bytes-=retained->bytes;
+    texture->second.mediaPoster=std::move(retained);media.registered.store(false,std::memory_order_relaxed);
+    media.linear.Reset();r.media.erase(installed);
 }
 bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<ObjectUniform>&staged,
     std::span<const DrawObject>objects,bool localGroup){

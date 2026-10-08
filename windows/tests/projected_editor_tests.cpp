@@ -269,7 +269,103 @@ void scrolling(Renderer&renderer,HWND hwnd){
     check(allocations==0&&raster.stats().rasterizations==frozen.rasterizations&&renderer.stats().textureUploads==gpu.textureUploads,"Scrolled editing pose frames allocate, reshape and upload nothing");
     ok(store->UnadviseSink(sink.Get()),"Detach scroll fixture sink");ok(editor.stop(),"Stop scroll fixture");composition.detach(renderer);
 }
+void singleLineField(Renderer&renderer,HWND hwnd){
+    LayerRasterizer raster;LayerScene scene(raster);Buffer doc(u"30:00",65536);
+    ProjectedEditorStyle style;style.width=312;style.height=68;style.fontSize=46;style.fontFace=".SFNS-Medium";style.alignment=ProjectedEditorAlignment::center;style.wrapped=false;style.sourceSingleLineField=true;style.cornerRadius=4;
+    LayerRasterOptions options;options.pixelsPerPoint=1;NativeProjectedEditor editor(hwnd,doc,scene,style,options,{65536},WM_APP+129,99);
+    auto* layout=reinterpret_cast<IDWriteTextLayout*>(editor.layout().painted()->layoutIdentity());
+    ComPtr<IDWriteFontCollection> fonts;ok(layout->GetFontCollection(0,fonts.GetAddressOf()),"Read font collection from painted field");UINT32 nameLength{};ok(layout->GetFontFamilyNameLength(0,&nameLength),"Read painted field family length");
+    std::wstring family(nameLength+1,L'\0');ok(layout->GetFontFamilyName(0,family.data(),nameLength+1),"Read painted field family");UINT32 index{};BOOL exists{};ok(fonts->FindFamilyName(family.c_str(),&index,&exists),"Resolve actual painted family");check(exists!=FALSE,"Painted family exists in the retained collection");
+    ComPtr<IDWriteFontFamily>fontFamily;ok(fonts->GetFontFamily(index,fontFamily.GetAddressOf()),"Read painted family metrics");DWRITE_FONT_WEIGHT weight{};DWRITE_FONT_STYLE slant{};FLOAT em{};
+    ok(layout->GetFontWeight(0,&weight),"Read actual painted weight");ok(layout->GetFontStyle(0,&slant),"Read actual painted slant");ok(layout->GetFontSize(0,&em),"Read actual painted em");ComPtr<IDWriteFont>font;ok(fontFamily->GetFirstMatchingFont(weight,DWRITE_FONT_STRETCH_NORMAL,slant,font.GetAddressOf()),"Read selected field font");
+    DWRITE_FONT_METRICS fontMetrics{};font->GetMetrics(&fontMetrics);check(fontMetrics.designUnitsPerEm>0,"Selected font metrics have a valid em");
+    const Point inset{3,std::max(0.,(style.height-(double(fontMetrics.ascent)+fontMetrics.descent+fontMetrics.lineGap)*em/fontMetrics.designUnitsPerEm)*.5)};
+    const auto painted=editor.layout().painted();check(painted->contentInset()==inset&&painted->documentWidth()==style.width&&painted->documentHeight()==style.height,"Source field uses three-point inset, selected-font centering and fixed visible height");
+    DWRITE_TEXT_METRICS metrics{};ok(layout->GetMetrics(&metrics),"Inspect same field logical extent");check(layout->GetMaxWidth()==306&&layout->GetTextAlignment()==DWRITE_TEXT_ALIGNMENT_CENTER,"Finite field container preserves source centered alignment");
+    const auto actual=readPaintedMetrics(editor.layout());const auto caret=editor.layout().bounds({0,0})->bounds;
+    check(std::abs(caret.x-actual.caret.x-inset.x)<.0001&&std::abs(caret.y-actual.caret.y-inset.y)<.0001,"Caret uses the exact painted glyph inset and baseline");
+    ComPtr<FakeManager>manager;manager.Attach(new FakeManager);ok(editor.connect(*manager.Get(),7),"Field borrows fake activated manager");ok(editor.focus(true),"Focus isolated field");ComPtr<Sink>sink;sink.Attach(new Sink);auto*store=editor.textStore();ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_SEL_CHANGE|TS_AS_LAYOUT_CHANGE),"Observe field geometry without real IME activation");
+    ProjectedEditorPose pose;pose.localToScreen=Matrix4::translation(25,35);pose.localToScreen.values[3]=.00005;pose.localToScreen.values[7]=-.00002;pose.screenToClip=layerViewportProjection(512,256);pose.pixelWidth=512;pose.pixelHeight=256;pose.ownerFocused=true;editor.setPose(pose);
+    LayerComposition composition;const std::array scenes{&scene};composition.setScenes(renderer,scenes);renderer.setCamera(pose.screenToClip);
+    auto sync=[&]{editor.syncContent();editor.setPose(pose);composition.upload(renderer);composition.present(renderer);};
+    const std::u16string longText=u"中文😀e\u0301 12345678901234567890123456789012345678901234567890";doc.replace({0,5},longText);editor.syncContent();editor.command(ProjectedEditorCommand::documentEnd);sync();
+    layout=reinterpret_cast<IDWriteTextLayout*>(editor.layout().painted()->layoutIdentity());ok(layout->GetMetrics(&metrics),"Inspect grown same-layout field extent");const auto expectedWidth=std::max(style.width,std::ceil(double(metrics.widthIncludingTrailingWhitespace))+11);
+    check(editor.layout().painted()->documentWidth()==expectedWidth&&layout->GetMaxWidth()==static_cast<float>(expectedWidth-6)&&editor.maximumHorizontalScrollOffset()==expectedWidth-style.width,"Long text grows finite document/container widths with exact source padding");
+    check(doc.text()==longText&&editor.scrollOffset()==0&&editor.maximumScrollOffset()==0&&editor.horizontalScrollOffset()>0&&editor.placement().scroll.x==editor.horizontalScrollOffset(),"Long field reveals horizontally without truncation or vertical scrolling");
+    check(scene.report().pixelBytes<style.width*style.height*4+4096,"Logical field expansion retains only fixed viewport and ink-sized adornment pixels");
+    const auto end=static_cast<std::uint32_t>(doc.text().size());RECT extent{};BOOL clipped{};locked(store,sink.Get(),[&]{ok(store->GetTextExt(ProjectedTextInput::viewCookie,LONG(end),LONG(end),&extent,&clipped),"Read grown field candidate rectangle");});
+    const auto projected=projectedRange(doc,editor.layout(),{end,end},editor.placement());POINT origin{};check(ClientToScreen(hwnd,&origin)&&projected&&projected->clientBounds.width>0&&extent.left==LONG(std::floor(projected->clientBounds.x))+origin.x&&extent.top==LONG(std::floor(projected->clientBounds.y))+origin.y,"Field glyph, caret and TSF extent apply inset/horizontal scroll/perspective once");
+    const auto identity=editor.layout().painted()->layoutIdentity(),layoutCount=raster.stats().textLayoutsCreated;const auto rasterCount=raster.stats().rasterizations;
+    check(editor.setHorizontalScrollOffset(23.125)&&editor.placement().scroll==Point{23.125,0},"Fractional horizontal scroll updates shared projection");composition.upload(renderer);composition.present(renderer);
+    check(editor.layout().painted()->layoutIdentity()==identity&&raster.stats().textLayoutsCreated==layoutCount&&raster.stats().rasterizations==rasterCount+1,"Horizontal scrolling repaints one fixed viewport with no reshape");
+    const auto revision=scene.resourceRevision();locked(store,sink.Get(),[&]{check(!editor.setHorizontalScrollOffset(30),"TSF lock declines horizontal scroll before mutation");});check(editor.horizontalScrollOffset()==23.125&&scene.resourceRevision()==revision,"Locked horizontal scroll preserves pixels and placement");
+    rejects([&]{editor.setHorizontalScrollOffset(std::numeric_limits<double>::infinity());},"Nonfinite field offset rejects");
+    editor.command(ProjectedEditorCommand::documentEnd);check(!editor.setHorizontalScrollOffset(23.125),"Equal explicit field restore cancels pending caret reveal");sync();check(editor.horizontalScrollOffset()==23.125,"Manual field restore wins over pending navigation");
+    const Point logical{100,inset.y+actual.caret.height*.5};const auto pointer=editor.placement().projection.project(logical);check(pointer&&editor.pointerDown(*pointer).handled,"Field hit testing reaches painted ACP after fractional scroll");sync();
+    const Point drag{180,logical.y};const auto dragPoint=editor.placement().projection.project(drag);const auto expectedHit=editor.layout().hit({drag.x+editor.horizontalScrollOffset(),drag.y},true,true);check(dragPoint&&expectedHit&&editor.pointerDrag(*dragPoint).handled&&doc.selection().range.end==*expectedHit,"Field selection drag uses current horizontal offset exactly once");editor.pointerUp();sync();
+    editor.command(ProjectedEditorCommand::documentStart);sync();check(editor.horizontalScrollOffset()<23.125,"Document-start navigation reveals the leading source inset");
+    const auto frozen=raster.stats();const auto gpu=renderer.stats();allocations=0;counting=true;try{for(unsigned k=0;k<120;++k){pose.localToScreen.values[3]=double(k)*.000001;editor.setPose(pose);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==frozen.rasterizations&&renderer.stats().textureUploads==gpu.textureUploads,"Expanded field tilt retains glyph/layout/texture resources with zero frame allocations");
+    auto bad=style;bad.wrapped=true;rejects([&]{editor.setStyle(bad);},"Single-line source field rejects contradictory wrapping");bad=style;bad.lineHeight=50;bad.baseline=40;rejects([&]{editor.setStyle(bad);},"Single-line source field uses selected-font metrics rather than uniform Notes spacing");
+    ok(store->UnadviseSink(sink.Get()),"Detach field fake sink");ok(editor.stop(),"Stop field context");composition.detach(renderer);
+    // maximumNumberOfLines=1 is a display/layout rule, not data truncation.
+    LayerScene breakScene(raster);Buffer breaks(u"first\nsecond",1024);NativeProjectedEditor breakEditor(hwnd,breaks,breakScene,style,options,{1024},WM_APP+130,100);
+    check(breakEditor.layout().painted()->text()==breaks.text()&&breakEditor.maximumScrollOffset()==0,"Source one-line display retains all caller hard-break text");
+    const auto second=breakEditor.layout().bounds({6,12});check(second&&second->clipped&&second->bounds.height==0,"Second explicit line is excluded from source single-line visible range geometry");
+    check(breakEditor.layout().bounds({0,5})->bounds.height>0,"Source first line remains painted and selectable");ok(breakEditor.stop(),"Stop hard-break source field fixture");LayerScene emptyScene(raster);Buffer empty({},1024);NativeProjectedEditor emptyEditor(hwnd,empty,emptyScene,style,options,{1024},WM_APP+131,101);emptyEditor.setPose(pose);const auto blankPoint=emptyEditor.placement().projection.project({style.width-8,8});check(blankPoint&&emptyEditor.pointerDown(*blankPoint).handled&&empty.selection().range==Range{0,0},"Empty field inset accepts insertion without fabricated glyph bounds");emptyEditor.pointerUp();ok(emptyEditor.stop(),"Stop empty source field fixture");check(!IsWindowVisible(hwnd),"Field fixture uses no visible window or actual text service");
+}
+
+void sourceStyles(HWND hwnd){
+    // Inspect only the very same retained object used for painting/hit/TSF.
+    // No second shaping engine or fabricated character-width measurement.
+    LayerRasterizer raster;LayerScene scene(raster);Buffer doc(u"1234567890123456789012345678901234567890",1024);
+    ProjectedEditorStyle style;style.width=80;style.height=180;style.fontSize=20;
+    LayerRasterOptions options;options.pixelsPerPoint=1;
+    NativeProjectedEditor editor(hwnd,doc,scene,style,options,{1024},WM_APP+125,95);
+    auto* native=reinterpret_cast<IDWriteTextLayout*>(editor.layout().painted()->layoutIdentity());
+    const auto defaultMetrics=readPaintedMetrics(editor.layout());
+    check(native->GetTextAlignment()==DWRITE_TEXT_ALIGNMENT_LEADING&&native->GetWordWrapping()==DWRITE_WORD_WRAPPING_WRAP&&defaultMetrics.lines.size()>1,"Default Notes text retains natural/leading alignment and soft wrapping");
+    const auto original=editor.layout().painted();const auto count=raster.stats().textLayoutsCreated;
+    auto explicitDefaults=style;explicitDefaults.alignment=ProjectedEditorAlignment::natural;explicitDefaults.wrapped=true;explicitDefaults.naturalParagraphSpacingOne=false;
+    check(!editor.setStyle(explicitDefaults)&&!editor.syncContent()&&editor.layout().painted()==original&&raster.stats().textLayoutsCreated==count,"Explicit default fields keep existing Notes painted layout unchanged");
+    auto centered=style;centered.alignment=ProjectedEditorAlignment::center;centered.wrapped=false;
+    check(editor.setStyle(centered),"Changing alignment/wrapping marks the source field style dirty");
+    check(editor.syncContent(),"Dirty source alignment/wrapping rebuilds its one painted layout");
+    native=reinterpret_cast<IDWriteTextLayout*>(editor.layout().painted()->layoutIdentity());
+    const auto centeredMetrics=readPaintedMetrics(editor.layout());
+    check(native->GetTextAlignment()==DWRITE_TEXT_ALIGNMENT_CENTER&&native->GetWordWrapping()==DWRITE_WORD_WRAPPING_NO_WRAP&&centeredMetrics.lines.size()==1&&editor.layout().painted()->text()==doc.text(),"Actual painted Work Mode layout centers and disables soft wrapping without truncating its document");
+    const auto centeredHandle=editor.layout().painted();auto invalid=centered;invalid.alignment=static_cast<ProjectedEditorAlignment>(99);
+    rejects([&]{editor.setStyle(invalid);},"Unsupported alignment rejects before scene or document mutation");
+    check(editor.layout().painted()==centeredHandle&&doc.text().size()==40,"Rejected alignment preserves painted handle and full document");
+    // Hard line breaks remain caller-owned even in a no-wrap field.
+    Buffer breaks(u"first\nsecond",1024);LayerScene breakScene(raster);NativeProjectedEditor breakEditor(hwnd,breaks,breakScene,centered,options,{1024},WM_APP+126,96);
+    check(readPaintedMetrics(breakEditor.layout()).lines.size()==2&&breaks.text()==u"first\nsecond","No-wrap does not silently remove explicit caller newlines");
+
+    namespace notes=endfield::core::notes;
+    const std::u16string mixed=u"small\nBIG\n中文😀";notes::TextStyle regular,big;big.fontSize=48;big.bold=true;
+    notes::RichText attributed;attributed.runs={{0,6,regular,{}},{6,4,big,{}},{10,static_cast<std::uint32_t>(mixed.size()-10),regular,{}}};
+    notes::RichDocument rich(mixed,attributed,1024);rich.setSelection({{1,8},ActiveEnd::end,false});const auto importedPayload=rich.richText();const auto importedSelection=rich.selection();const auto importedRevision=rich.revision();LayerScene richScene(raster);auto richStyle=style;richStyle.width=300;richStyle.height=200;richStyle.fontSize=12;
+    NativeProjectedEditor richEditor(hwnd,rich,richScene,richStyle,options,{1024},WM_APP+127,97);
+    const auto imported=readPaintedMetrics(richEditor.layout());check(imported.method==DWRITE_LINE_SPACING_METHOD_DEFAULT&&imported.lines.size()==3,"Imported Notes rich layout starts with natural mixed-font metrics");
+    std::array<Rect,3> oldCarets{};const std::array<std::uint32_t,3> starts{0,6,10};
+    for(std::size_t n=0;n<starts.size();++n){native=reinterpret_cast<IDWriteTextLayout*>(richEditor.layout().painted()->layoutIdentity());FLOAT x{},y{};DWRITE_HIT_TEST_METRICS hit{};ok(native->HitTestTextPosition(starts[n],FALSE,&x,&y,&hit),"Inspect imported painted native caret");oldCarets[n]=richEditor.layout().bounds({starts[n],starts[n]})->bounds;check(std::abs(oldCarets[n].y-double(y))<.0001,"Notes imported text adds no unrequested paragraph spacing");}
+    auto archive=richStyle;archive.naturalParagraphSpacingOne=true;
+    check(richEditor.setStyle(archive)&&richEditor.syncContent(),"Archive requests natural metrics plus one-point paragraph spacing");
+    const auto spaced=readPaintedMetrics(richEditor.layout());
+    check(spaced.method==DWRITE_LINE_SPACING_METHOD_DEFAULT&&spaced.lines.size()==imported.lines.size(),"Archive preserves natural mixed-font line heights instead of uniform Notes metrics");
+    for(std::size_t n=0;n<starts.size();++n){const auto caret=richEditor.layout().bounds({starts[n],starts[n]})->bounds;check(std::abs(caret.y-oldCarets[n].y-double(n))<.0001&&caret.x==oldCarets[n].x&&caret.height==oldCarets[n].height&&spaced.lines[n].height==imported.lines[n].height,"Archive paint and caret apply exactly one additional point per preceding line");}
+    auto conflicted=archive;conflicted.lineHeight=20;conflicted.baseline=15;
+    rejects([&]{richEditor.setStyle(conflicted);},"Natural Archive spacing rejects contradictory uniform metrics");
+    check(rich.text()==mixed&&rich.richText()==importedPayload&&rich.selection()==importedSelection&&rich.revision()==importedRevision,"Layout-only options preserve the normalized rich payload, selection and document revision");
+    // Plain date/category fields use the same paragraph map with zero runs.
+    Buffer plain(u"alpha\nbeta",1024);LayerScene plainScene(raster);auto plainStyle=richStyle;plainStyle.naturalParagraphSpacingOne=true;
+    NativeProjectedEditor plainEditor(hwnd,plain,plainScene,plainStyle,options,{1024},WM_APP+128,98);
+    native=reinterpret_cast<IDWriteTextLayout*>(plainEditor.layout().painted()->layoutIdentity());FLOAT x{},y{};DWRITE_HIT_TEST_METRICS hit{};ok(native->HitTestTextPosition(6,FALSE,&x,&y,&hit),"Inspect plain Archive native caret");
+    check(std::abs(plainEditor.layout().bounds({6,6})->bounds.y-double(y)-1)<.0001,"Plain Archive field shares painted one-point spacing and caret mapping");
+    auto defaults=richStyle;check(plainEditor.setStyle(defaults)&&plainEditor.syncContent(),"Owner can restore ordinary plain Notes spacing");native=reinterpret_cast<IDWriteTextLayout*>(plainEditor.layout().painted()->layoutIdentity());ok(native->HitTestTextPosition(6,FALSE,&x,&y,&hit),"Inspect restored plain native caret");check(std::abs(plainEditor.layout().bounds({6,6})->bounds.y-double(y))<.0001,"Restoring default mode removes only requested extra spacing");
+    ok(plainEditor.stop(),"Stop plain spacing fixture");ok(richEditor.stop(),"Stop rich spacing fixture");ok(breakEditor.stop(),"Stop no-wrap fixture");ok(editor.stop(),"Stop default-style fixture");check(!IsWindowVisible(hwnd),"Source-style fixtures remain hidden and activate no real input service");
+}
 
 }
-int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);sourceStyles(window.hwnd);singleLineField(renderer,window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

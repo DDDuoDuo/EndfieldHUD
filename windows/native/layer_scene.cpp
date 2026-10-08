@@ -317,7 +317,7 @@ void LayerComposition::copyPrepared(const Entry&entry){
     const auto source=entry.scene->draws();
     for(std::size_t i=0;i<entry.count;++i){auto&target=draws_[entry.begin+i];const auto&draw=source[i];
         target.world=draw.world;target.linearTint=draw.linearTint;target.opacity=draw.opacity;
-        target.shutter=draw.shutter;target.alphaMask=draw.alphaMask;
+        target.shutter=draw.shutter;target.alphaMask=draw.alphaMask;target.angularMask=draw.angularMask;
         target.masks.resize(draw.masks.size());std::copy(draw.masks.begin(),draw.masks.end(),target.masks.begin());
     }
 }
@@ -334,16 +334,17 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
         for(std::size_t j=0;j<entry.after.size();++j){const auto&input=entry.after[j];auto&stage=stagedAfter_[entry.stageBegin+j];
             need(input.sourceID==stage.sourceID&&input.meshID==stage.meshID&&input.textureID==stage.textureID,"Supplemental draw identity changed; replace the composition entries");
             need(input.masks.size()<=8,"Too many supplemental draw masks");
-            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;stage.alphaMask=input.alphaMask;
+            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;stage.alphaMask=input.alphaMask;stage.angularMask=input.angularMask;
             if(stage.shutter)stage.shutter->worldToLocal=stage.shutter->worldToLocal*inverseTransforms_[i];
             if(stage.alphaMask)stage.alphaMask->worldToLocal=stage.alphaMask->worldToLocal*inverseTransforms_[i];
+            if(stage.angularMask)stage.angularMask->worldToLocal=stage.angularMask->worldToLocal*inverseTransforms_[i];
             stage.masks.resize(input.masks.size());for(std::size_t k=0;k<input.masks.size();++k){stage.masks[k]=input.masks[k];stage.masks[k].worldToLocal=input.masks[k].worldToLocal*inverseTransforms_[i];}
             validateDrawObject(stage);
         }
     }
     for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);
         for(std::size_t j=0;j<entry.after.size();++j){const auto&stage=stagedAfter_[entry.stageBegin+j];auto&out=draws_[entry.begin+entry.count+j];
-            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;out.alphaMask=stage.alphaMask;
+            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;out.alphaMask=stage.alphaMask;out.angularMask=stage.angularMask;
             out.masks.resize(stage.masks.size());std::copy(stage.masks.begin(),stage.masks.end(),out.masks.begin());
         }
     }
