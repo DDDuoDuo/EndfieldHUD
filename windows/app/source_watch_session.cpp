@@ -27,6 +27,10 @@ struct SourceWatchSession::Impl {
     std::vector<std::pair<std::string_view,std::string_view>> animatorButtons;
     std::vector<std::string_view> availableButtons,hiddenDecorations;
     DesktopScrollMotion scrollMotion;double scrollPosition{1};std::optional<double> bindingPosition;
+    struct NavigationDrag {Point start;Projection plane;double lastLocalY{},hiddenLength{};bool active{};};
+    std::optional<NavigationDrag> navigationDrag;
+    void cancelDrag(double time){if(navigationDrag&&navigationDrag->active){scrollMotion.gesture(0,navigationDrag->hiddenLength,time,GesturePhase::ended,GesturePhase::none,settings.reduceMotion);scrollPosition=scrollMotion.position();}navigationDrag.reset();}
+
     bool input{},hidden{true};std::optional<double> clock,heldTime;
     std::uint64_t lifecycleToken{},poseGeneration{},buttonGeneration{};std::optional<std::uint64_t> completion;std::optional<Vec2> poseCanvas;
     std::optional<Pose> finalPose;Pose ambientPose;
@@ -133,28 +137,66 @@ SourceWatchSession::SourceWatchSession(const SceneDefinition&s,const MountedLayo
 SourceWatchSession::~SourceWatchSession()=default;
 void SourceWatchSession::setSettings(WatchSessionSettings value,double time){need(valid(value),"Invalid Watch session settings");auto&p=*impl_;const auto at=p.advance(time);if(!at||p.settings==value)return;p.settings=value;
     if(value.reduceMotion){p.scrollMotion.reset(p.scrollMotion.target(),*at);p.scrollPosition=p.scrollMotion.position();p.gyro.retarget({},*at,p.cameraModel.gyro().duration,true);}p.invalidatePose();}
-void SourceWatchSession::setEnvironment(WatchSessionEnvironment value,double time){need(valid(value),"Invalid Watch presentation environment");auto&p=*impl_;if(!p.advance(time)||p.environment==value)return;if(p.environment.viewport!=value.viewport)p.invalidatePose();p.environment=value;}
-void SourceWatchSession::setInputEnabled(bool value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||p.input==value)return;p.input=value;if(!value){p.hovered.reset();p.pressed.reset();p.updateStates(*at);}p.lastHit.reset();}
+void SourceWatchSession::setEnvironment(WatchSessionEnvironment value,double time){need(valid(value),"Invalid Watch presentation environment");auto&p=*impl_;if(!p.advance(time)||p.environment==value)return;if(p.environment.viewport!=value.viewport){p.cancelDrag(*p.clock);p.invalidatePose();}p.environment=value;}
+void SourceWatchSession::setInputEnabled(bool value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||p.input==value)return;p.input=value;if(!value){p.cancelDrag(*at);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}p.lastHit.reset();}
 void SourceWatchSession::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;p.baseSettings=value;p.appliedSettings=std::move(value);for(const auto&id:p.hoverFeedback.sideEdgeIDs())p.appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;
     for(const auto&id:p.navigationInput.managedButtons){if(p.actions.contains(id))p.appliedSettings.hiddenNodes.erase(id);else p.appliedSettings.hiddenNodes.insert(id);}p.builder.setDesktopSettings(p.appliedSettings);p.lastHit.reset();}
 void SourceWatchSession::setNavigation(WatchSessionNavigation value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||(p.hasNavigation&&p.navigationInput==value))return;
     for(const auto&[id,action]:value.fixedActions){(void)action;need(p.scene.node(id),"Navigation action node is absent");}for(const auto&id:value.managedButtons)need(p.scene.node(id),"Managed source button is absent");
     std::unique_ptr<DesktopNavigationLayout> navigation;if(!value.rightActions.empty())navigation=std::make_unique<DesktopNavigationLayout>(p.scene,p.document,static_cast<std::int64_t>(value.rightActions.size()));
     if(value.rightActions.size()!=p.navigationInput.rightActions.size()){p.scrollPosition=1;p.scrollMotion.reset(1,*at);}
-    p.navigationInput=std::move(value);p.navigation=std::move(navigation);p.hasNavigation=true;p.refreshBindings(*at,true);
+    p.cancelDrag(*at);p.navigationInput=std::move(value);p.navigation=std::move(navigation);p.hasNavigation=true;p.refreshBindings(*at,true);
 }
 void SourceWatchSession::setHitFilter(HitFilter filter,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.filter=std::move(filter);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}
 std::uint64_t SourceWatchSession::open(double time,std::uint64_t seed,bool held){auto&p=*impl_;const auto at=p.advance(time);if(!at)return p.lifecycleToken;
-    ++p.lifecycleToken;p.completion.reset();p.hidden=false;p.heldTime=held?at:std::nullopt;p.ambient=DesktopAmbientMotion(p.animation,seed);p.selectable.reset(*at);p.hovered.reset();p.pressed.reset();p.invalidatePose();
+    p.cancelDrag(*at);++p.lifecycleToken;p.completion.reset();p.hidden=false;p.heldTime=held?at:std::nullopt;p.ambient=DesktopAmbientMotion(p.animation,seed);p.selectable.reset(*at);p.hovered.reset();p.pressed.reset();p.invalidatePose();
     if(!held){p.buttons.reset(*at,p.settings.reduceMotion);p.playback.open(*at,p.settings.reduceMotion);p.updateStates(*at);if(p.settings.reduceMotion)p.completion=p.lifecycleToken;}else p.playback.open(*at,false);return p.lifecycleToken;
 }
 bool SourceWatchSession::releaseOpening(std::uint64_t token,double time){auto&p=*impl_;if(token!=p.lifecycleToken||!p.heldTime||p.hidden||p.playback.phase()!=VisibilityPhase::opening||!std::isfinite(time))return false;const auto at=*p.advance(time);p.heldTime.reset();p.buttons.reset(at,p.settings.reduceMotion);p.playback.open(at,p.settings.reduceMotion);p.updateStates(at);if(p.settings.reduceMotion)p.completion=p.lifecycleToken;return true;}
 void SourceWatchSession::showStable(double time,std::uint64_t seed){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();if(p.playback.phase()==VisibilityPhase::concealed){p.ambient=DesktopAmbientMotion(p.animation,seed);p.selectable.reset(*at);}p.hidden=false;p.heldTime.reset();p.playback.showStable(*at);p.invalidatePose();}
 void SourceWatchSession::close(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.scrollPosition=p.scrollMotion.position();setInputEnabled(false,*at);p.playback.close(*at,p.settings.reduceMotion);p.invalidatePose();if(p.playback.phase()==VisibilityPhase::concealed){p.hidden=true;p.hasFrame=false;p.completion=p.lifecycleToken;}}
-void SourceWatchSession::conceal(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.playback.conceal();p.input=false;p.hovered.reset();p.pressed.reset();p.hidden=true;p.gyro.stop(*at);p.hasFrame=false;p.finalPose.reset();p.invalidatePose();}
-void SourceWatchSession::pointerMove(std::optional<Point> point,double time){need(!point||finite(*point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.environment.pointer=point;const auto next=point?p.hit(*point):std::nullopt;if(next!=p.hovered){p.hovered=next;p.updateStates(*at);}}
-void SourceWatchSession::pointerDown(Point point,double time){need(finite(point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.environment.pointer=point;p.pressed=p.hit(point);p.hovered=p.pressed;p.updateStates(*at);}
-std::optional<WatchActivation> SourceWatchSession::pointerUp(Point point,double time){need(finite(point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return {};p.environment.pointer=point;const auto released=p.hit(point),down=p.pressed;p.pressed.reset();p.hovered=released;p.updateStates(*at);return down&&released==down?p.perform(*down,*at,point):std::nullopt;}
+void SourceWatchSession::conceal(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.playback.conceal();p.navigationDrag.reset();p.input=false;p.hovered.reset();p.pressed.reset();p.hidden=true;p.gyro.stop(*at);p.hasFrame=false;p.finalPose.reset();p.invalidatePose();}
+void SourceWatchSession::pointerMove(std::optional<Point> point,double time){
+    need(!point||finite(*point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.environment.pointer=point;
+    if(point&&p.navigationDrag){auto&drag=*p.navigationDrag;
+        if(const auto local=drag.plane.unproject(*point)){
+            if(!drag.active&&std::hypot(point->x-drag.start.x,point->y-drag.start.y)>=5){
+                drag.active=true;p.pressed.reset();p.hovered.reset();p.updateStates(*at);
+                p.scrollMotion.gesture(0,drag.hiddenLength,*at,GesturePhase::began,GesturePhase::none,p.settings.reduceMotion);
+            }
+            if(drag.active){p.scrollMotion.gesture(-(local->y-drag.lastLocalY)/drag.hiddenLength,drag.hiddenLength,*at,GesturePhase::changed,GesturePhase::none,p.settings.reduceMotion);p.scrollPosition=p.scrollMotion.position();drag.lastLocalY=local->y;return;}
+        }
+    }
+    const auto next=point?p.hit(*point):std::nullopt;if(next!=p.hovered){p.hovered=next;p.updateStates(*at);}
+}
+void SourceWatchSession::pointerDown(Point point,double time){
+    need(finite(point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.cancelDrag(*at);p.environment.pointer=point;p.pressed=p.hit(point);p.hovered=p.pressed;p.updateStates(*at);
+    if(!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame)return;
+    const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||info->hiddenLength<=0)return;
+    const auto*node=p.resolved(info->viewportID);if(!node||!node->rect||!p.insidePlane(point,*node,*node->rect))return;
+    const auto plane=Projection::viewport(p.rendered.camera.projection*p.rendered.camera.view*p.rendered.camera.worldRoot*node->worldMatrix,p.environment.viewport[0],p.environment.viewport[1]);
+    if(const auto local=plane.unproject(point))p.navigationDrag=Impl::NavigationDrag{point,plane,local->y,info->hiddenLength,false};
+}
+std::optional<WatchActivation> SourceWatchSession::pointerUp(Point point,double time){
+    need(finite(point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return {};
+    pointerMove(point,*at);const bool dragged=p.navigationDrag&&p.navigationDrag->active;p.cancelDrag(*at);
+    p.environment.pointer=point;const auto released=p.hit(point),down=p.pressed;p.pressed.reset();p.hovered=released;p.updateStates(*at);
+    return !dragged&&down&&released==down?p.perform(*down,*at,point):std::nullopt;
+}
+bool SourceWatchSession::navigationPointerActive()const noexcept{return impl_->navigationDrag.has_value();}
+bool SourceWatchSession::navigationDragging()const noexcept{return impl_->navigationDrag&&impl_->navigationDrag->active;}
+bool SourceWatchSession::wheel(Point point,double steps,std::uint32_t lines,double time){
+    need(finite(point)&&std::isfinite(steps),"Invalid native wheel input");auto&p=*impl_;
+    if(lines==0||!p.hasFrame)return false;
+    // A captured drag owns navigation until release. Mixing a wheel spring
+    // into that direct gesture would disable its gesture state mid-drag.
+    if(p.navigationDrag&&p.navigationDrag->active)return true;
+    const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||info->hiddenLength<=0)return false;
+    const auto*node=p.resolved(info->viewportID);if(!node||!node->rect)return false;
+    const double units=p.unitsPerPoint(*node,*node->rect),page=node->rect->size[1]/std::max(.0001,units);
+    const double distance=lines==UINT32_MAX?page:std::min(page,double(lines)*10.);
+    return scroll(point,steps*distance,true,GesturePhase::none,GesturePhase::none,time);
+}
 std::optional<WatchActivation> SourceWatchSession::activate(std::string_view id,double time){auto&p=*impl_;const auto at=p.advance(time);return at?p.perform(id,*at,{}):std::nullopt;}
 bool SourceWatchSession::scroll(Point point,double delta,bool precise,GesturePhase phase,GesturePhase momentum,double time){need(finite(point)&&std::isfinite(delta),"Invalid Watch scroll input");auto&p=*impl_;const auto at=p.advance(time);if(!at||!p.input||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame)return false;
     const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||!(info->hiddenLength>0))return false;const auto*node=p.resolved(info->viewportID);if(!node||!node->rect)return false;
@@ -188,13 +230,13 @@ const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;
     const bool interactive=p.input&&p.playback.phase()==VisibilityPhase::visible&&p.environment.onScreen;
     const auto revision=p.builder.presentationRevision();std::optional<std::string_view> next;
     if(p.lastHit&&p.lastHit->point==p.environment.pointer&&p.lastHit->revision==revision&&p.lastHit->interactive==interactive)next=p.hovered;
-    else if(interactive&&p.environment.pointer)next=p.hit(*p.environment.pointer,true);
+    else if(interactive&&p.environment.pointer&&!(p.navigationDrag&&p.navigationDrag->active))next=p.hit(*p.environment.pointer,true);
     if(next!=p.hovered){p.hovered=next;p.updateStates(time);const auto&updated=p.selectable.colors(time,reduce);p.refreshStyles(updated);
         p.makePose(*visibility,camera.layout.canvasSize,time,reduce,false);p.rendered.sourceFrame=&p.builder.build(*p.finalPose,camera.worldRoot,p.scrollPosition,p.navigation.get(),updated);++p.stats.hoverRebuilds;}
     p.lastHit=Impl::HitQuery{p.environment.pointer,p.builder.presentationRevision(),interactive};++p.stats.samples;return &p.rendered;
     }catch(...){conceal(*at);throw;}
 }
-FrameDemand SourceWatchSession::demand(double time){auto&p=*impl_;if(!std::isfinite(time)||p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed)return {};const auto sampleTime=std::max(time,p.clock.value_or(time));const bool finite=p.playback.phase()!=VisibilityPhase::visible||p.gyro.isAnimating()||p.buttons.requiresFrames(sampleTime)||p.selectable.requiresFrames(sampleTime)||p.scrollMotion.requiresFrames();
+FrameDemand SourceWatchSession::demand(double time){auto&p=*impl_;if(!std::isfinite(time)||p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed)return {};const auto sampleTime=std::max(time,p.clock.value_or(time));const bool finite=p.playback.phase()!=VisibilityPhase::visible||p.gyro.isAnimating()||p.buttons.requiresFrames(sampleTime)||p.selectable.requiresFrames(sampleTime)||(p.scrollMotion.requiresFrames()&&!(p.navigationDrag&&p.navigationDrag->active));
     return {p.playback.phase(),!p.hidden&&p.environment.presented,p.environment.onScreen,p.environment.canAdvanceTransition,p.heldTime.has_value(),finite,p.settings.ambientEnabled,p.settings.reduceMotion,p.settings.lowPower};}
 VisibilityPhase SourceWatchSession::phase()const noexcept{return impl_->playback.phase();}
 std::uint64_t SourceWatchSession::generation()const noexcept{return impl_->lifecycleToken;}

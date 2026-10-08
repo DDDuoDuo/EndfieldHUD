@@ -667,6 +667,38 @@ std::vector<std::string> SourceScene::includeDesktopResources(const fs::path& pa
     for(const auto& id:dependencies)declared.emplace(id,impl.provenance);
     scene.textures.merge(staged.textures);scene.textureDependencies.swap(declared);return result;
 }
+SourceProfileHoverMaskReport SourceScene::maskDesktopProfileHoverOutline(const fs::path& packetRoot) {
+    auto& impl=*impl_;auto& scene=impl.scene;
+    require(!impl.uploadedTarget&&!impl.assembled&&scene.counters.updates==0,"Mask profile artwork only before first upload/submission");
+    const auto root=absoluteRoot(packetRoot);packet::Package source(root);
+    require(source.manifestSHA256()==impl.provenance.packetSHA256,"Profile artwork must match the scene's source packet provenance");
+    constexpr const char* hoverID="desktop.profile.hover";
+    constexpr const char* backgroundID="desktop.profile.background";
+    require(scene.textures.contains(hoverID)&&scene.textures.contains(backgroundID),"Install original profile textures before masking the hover outline");
+    PreparedReplay staged;addTexture(staged,source,hoverID);addTexture(staged,source,backgroundID);
+    auto& hover=staged.textures.at(hoverID);const auto& background=staged.textures.at(backgroundID);
+    require(hover.description.pixelFormat=="rgba8Unorm_srgb"&&background.description.pixelFormat=="rgba8Unorm_srgb"&&
+            hover.levels.size()==1&&background.levels.size()==1,"Profile outline correction requires original single-level straight RGBA8-sRGB artwork");
+    const auto& h=hover.description.mips.front();const auto& b=background.description.mips.front();
+    require(h.width==b.width&&h.height==b.height&&h.rowBytes==b.rowBytes&&h.rowBytes==h.width*4,
+            "Profile hover and background must have identical texel mapping");
+    SourceProfileHoverMaskReport report{hash(hover.levels.front().storage),hash(background.levels.front().storage),{},h.width,h.height};
+    auto& output=hover.levels.front().storage;const auto& mask=background.levels.front().storage;
+    // HUDSourceProfileArtwork.texturePixels explicitly unpremultiplies RGB;
+    // the source UI shader premultiplies once after sampling. Keep that palette
+    // intact and change only alpha. No gamma operation belongs on coverage.
+    for(std::size_t alpha=3;alpha<output.size();alpha+=4){
+        const auto before=static_cast<unsigned char>(output[alpha]);
+        const auto coverage=static_cast<unsigned char>(mask[alpha]);
+        const auto after=static_cast<unsigned char>((unsigned(before)*coverage+127)/255);
+        report.changedAlphaPixels+=after!=before;report.clearedFringePixels+=before!=0&&after==0;
+        output[alpha]=static_cast<char>(after);
+    }
+    report.maskedSHA256=hash(output);hover.description.mips.front().bytes=hover.levels.front().bytes();
+    // All validation/allocation above is staged; committing one owned texture
+    // cannot affect any source geometry or partially alter the installed image.
+    scene.textures.at(hoverID)=std::move(hover);return report;
+}
 bool SourceScene::assembleFrame(std::span<const SourceAssembledBatch> entries,const SourceFrameParameters& params) {
     auto& impl=*impl_;auto& s=impl.scene;validate(params);require(entries.size()<=4096,"Too many live source batches");
     std::vector<SourceAssembledBatch> converted;std::vector<std::vector<std::uint8_t>> convertedVertices;

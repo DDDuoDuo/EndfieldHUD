@@ -145,6 +145,32 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
         if(allocations||session.stats().fullPoses!=pointerPoses)std::cerr<<"Actual pointer allocations="<<allocations<<" full poses="<<session.stats().fullPoses-pointerPoses<<" world-only="<<session.frameStats().worldOnlyFrames-pointerStats.worldOnlyFrames<<'\n';
         check(allocations==0&&session.stats().fullPoses==pointerPoses,"Actual changing pointer frames reuse the settled pose with no heap allocations");
         check(session.frameStats().layoutBuilds==pointerStats.layoutBuilds&&session.frameStats().localImageBuilds==pointerStats.localImageBuilds&&session.frameStats().worldOnlyFrames>pointerStats.worldOnlyFrames,"Actual pointer motion retains layout and local image topology");
+        env.pointerLocked=true;env.pointer.reset();session.setEnvironment(env,20);session.setInputEnabled(true,20);session.setScrollPosition(.5,20);session.sample(20);
+        const auto*scrollFrame=session.currentFrame();const auto scrollInfo=*scrollFrame->sourceFrame->layoutReport.scroll;
+        const ResolvedNode*scrollNode=nullptr;for(const auto&node:scrollFrame->sourceFrame->resolved)if(node.node->id==scrollInfo.viewportID)scrollNode=&node;
+        check(scrollNode&&scrollNode->rect,"Navigation viewport is available for native input checks");
+        const auto plane=Projection::viewport(scrollFrame->camera.projection*scrollFrame->camera.view*scrollFrame->camera.worldRoot*scrollNode->worldMatrix,env.viewport[0],env.viewport[1]);
+        const auto scrollPoint=plane.project({scrollNode->rect->origin[0]+scrollNode->rect->size[0]*.5,scrollNode->rect->origin[1]+scrollNode->rect->size[1]*.5});
+        check(scrollPoint.has_value(),"Navigation plane projects into the owned viewport");
+        check(!session.wheel(*scrollPoint,-1,0,20)&&session.scrollPosition()==.5,"Windows disabled wheel setting does not scroll");
+        check(session.wheel(*scrollPoint,-1,3,20),"Windows wheel accepts configured line count");session.sample(21);const double threeLineTravel=.5-session.scrollPosition();
+        session.setScrollPosition(.5,21);session.sample(21);session.wheel(*scrollPoint,-1,1,21);session.sample(22);
+        checkNear(threeLineTravel,3*(.5-session.scrollPosition()),1e-6,"System line count scales wheel movement without changing spring timing");
+        session.setScrollPosition(.5,22);session.sample(22);session.wheel(*scrollPoint,-1,UINT32_MAX,22);session.sample(23);
+        check(.5-session.scrollPosition()>threeLineTravel,"Windows page-scroll setting advances farther than three lines");
+        session.setScrollPosition(.5,23);session.sample(23);session.pointerDown(*scrollPoint,23);
+        check(session.navigationPointerActive()&&!session.navigationDragging(),"Press inside navigation starts a drag candidate");
+        session.pointerMove(Point{scrollPoint->x,scrollPoint->y-2},23.01);check(!session.navigationDragging(),"Small click jitter does not become a drag");
+        const Point draggedPoint{scrollPoint->x,scrollPoint->y-90};session.pointerMove(draggedPoint,23.02);session.sample(23.02);
+        check(session.navigationDragging()&&!session.pressed()&&session.scrollPosition()<.5,"Dragging upward follows the original plane and cancels pressed button");
+        const auto heldPosition=session.scrollPosition();check(session.wheel(draggedPoint,-1,3,23.1)&&session.navigationDragging()&&session.scrollPosition()==heldPosition,"Captured drag consumes wheel without starting an unfinished spring");
+        session.sample(23.5);check(!FrameDemandGate{}.refresh(session.demand(23.5)).timerInterval,"Stationary pointer drag needs only input-driven frames when ambient motion is off");
+        check(!session.pointerUp(draggedPoint,23.51)&&!session.navigationPointerActive(),"Releasing a navigation drag cannot activate a recycled button");
+        session.pointerDown(*scrollPoint,24);session.pointerMove(Point{scrollPoint->x,scrollPoint->y+6000},24.01);session.sample(24.01);
+        check(session.scrollPosition()<=1+DesktopScrollMotion::gestureEdgeTravel/scrollInfo.hiddenLength,"Dragging overscroll remains within original bounce extent");
+        session.setInputEnabled(false,24.02);check(!session.navigationPointerActive(),"Focus/input loss cancels captured navigation drag");session.sample(26);
+        check(session.scrollPosition()>=0&&session.scrollPosition()<=1,"Released overscroll settles within navigation limits");
+
     }
     std::cout<<frames<<" original macOS session checkpoints compared\n";
 }

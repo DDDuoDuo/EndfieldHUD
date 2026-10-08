@@ -7,6 +7,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("runtime_builder", pathlib.Path(__file__).parents[1] / "tools/build_watch_runtime_input.py")
@@ -113,6 +114,56 @@ class RuntimeBuildTests(unittest.TestCase):
         for path in self.output.rglob("*"):
             if path.is_file():
                 self.assertEqual(path.read_bytes(), (other / path.relative_to(self.output)).read_bytes())
+
+    def compiler(self):
+        path = self.root.parent / "explicit-compiler"
+        path.write_bytes(b"unit-test compiler placeholder; never executed")
+        return path
+
+    @staticmethod
+    def compiled_empty(args, **kwargs):
+        # Mock only process execution. The builder must still validate the
+        # real envelope, bind source identity and publish bounded descriptors.
+        payload = (0).to_bytes(4, "little")
+        header = (b"EHANIM01" + (1).to_bytes(4, "little") + (0x01020304).to_bytes(4, "little") +
+                  len(payload).to_bytes(8, "little") + bytes.fromhex(args[2]) + hashlib.sha256(payload).digest())
+        pathlib.Path(args[3]).write_bytes(header + payload)
+        return mock.Mock(returncode=0, stderr="", stdout="")
+
+    def test_compiled_library_manifest_and_no_json_duplicate(self):
+        with mock.patch.object(builder.subprocess, "run", side_effect=self.compiled_empty) as run:
+            builder.build(self.root, self.output, animation_compiler=self.compiler())
+        manifest = json.loads((self.output / "runtime-input.json").read_text())
+        self.assertEqual(manifest["schemaVersion"], 2)
+        descriptor = manifest["parts"]["library"]
+        self.assertEqual(descriptor["encoding"], "endfield-animation-v1")
+        self.assertEqual(descriptor["file"], "parts/library.ehanim")
+        self.assertFalse((self.output / "parts/library.json").exists())
+        data = (self.output / descriptor["file"]).read_bytes()
+        self.assertEqual(data[24:56].hex(), manifest["sourcePins"]["sourceManifestSHA256"])
+        self.assertEqual(descriptor["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(run.call_count, 1)
+
+    def test_compiler_failure_and_wrong_pin_are_atomic(self):
+        compiler = self.compiler()
+        def invalid(args, **kwargs):
+            result = self.compiled_empty(args, **kwargs)
+            path = pathlib.Path(args[3])
+            data = bytearray(path.read_bytes())
+            data[24] ^= 1
+            path.write_bytes(data)
+            return result
+        for effect, reason in ((lambda *a, **k: mock.Mock(returncode=1, stderr="invalid key"), "rejected"),
+                               (invalid, "unpinned envelope")):
+            with mock.patch.object(builder.subprocess, "run", side_effect=effect):
+                with self.assertRaisesRegex(ValueError, reason):
+                    builder.build(self.root, self.output, animation_compiler=compiler)
+            self.assertFalse(self.output.exists())
+            self.assertEqual(list(self.root.parent.glob("output.tmp-*")), [])
+
+    def test_missing_explicit_compiler_rejected(self):
+        with self.assertRaisesRegex(ValueError, "compiler executable"):
+            builder.build(self.root, self.output, animation_compiler=self.root / "missing")
 
 
 if __name__ == "__main__":

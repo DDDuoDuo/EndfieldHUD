@@ -387,6 +387,29 @@ enum ShellPacketExporter {
                 }
             }
         }
+        func profileHover(_ view: HUDSourceWatchView, name: String) throws {
+            guard let profile = view.document.desktopProfileCard else { throw HUDSourceError.invalid("Missing desktop profile") }
+            let camera = try view.cameraModel.frame(screenSize: SIMD2(Double(view.bounds.width), Double(view.bounds.height)))
+            let entries = view.desktopNavigationForVerification
+            let count = entries.indices.filter { $0 >= 4 && entries[$0].target.module?.group != .bottom }.count
+            let navigation = try HUDSourceDesktopNavigationLayout(document: view.document, entryCount: count)
+            let selectable = try HUDSourceSelectableColor(document: view.document)
+            selectable.setState(.highlighted, on: profile.scene.rootID, at: 0, reduceMotion: true)
+            let tints = selectable.colors(at: 0, reduceMotion: true)
+            let feedback = HUDSourceDesktopHoverFeedback(document: view.document, selectable: selectable)
+            for (id, opacity) in feedback.opacities(selectableTints: tints) {
+                view.frameBuilder.desktopGraphicStyles[id] = .init(opacity: opacity)
+            }
+            var pose = try view.document.animation.pose(entranceTime: view.document.animation.entrance.lastKeyTime,
+                ambientTime: nil, exitTime: nil, canvasResolution: camera.layout.canvasSize)
+            view.applyDesktopButtons(to: &pose, at: 0, reduceMotion: true, forceRebuild: true)
+            let rendered = try view.frameBuilder.build(pose: pose, worldRoot: camera.worldRoot,
+                verticalNormalizedPosition: 1, desktopNavigation: navigation, selectableTints: tints, forceRebuild: true)
+            try view.renderer.shellPacketSubmit(rendered.batches, time: 0)
+            try frame(rendered, camera: camera, view: view, name: name + "-profile-hover", native: false,
+                builderInput: ["pose": poseJSON(pose), "scroll": 1, "entryCount": count,
+                    "selectableTints": tintsJSON(tints), "desktopSettings": desktopSettings(view.frameBuilder)])
+        }
         func checkpoints(_ view: HUDSourceWatchView, name: String) throws {
             let camera = try view.cameraModel.frame(screenSize: SIMD2(Double(view.bounds.width), Double(view.bounds.height)))
             let entries = view.desktopNavigationForVerification
@@ -473,10 +496,12 @@ enum ShellPacketExporter {
     static func run() throws {
         var args = Array(CommandLine.arguments.dropFirst()), output: URL?, sizes: [CGSize] = []
         var validationReadbacks = true
+        var profileHoverReference = false
         while !args.isEmpty {
             let option = args.removeFirst()
             if option == "--ui-test" || option == "--export-shell-packet" { continue }
             if option == "--no-validation-readback" { validationReadbacks = false; continue }
+            if option == "--profile-hover-reference" { profileHoverReference = true; continue }
             try require(!args.isEmpty, "Missing argument for " + option)
             let value = args.removeFirst()
             if option == "--output" { output = URL(fileURLWithPath: value, isDirectory: true) }
@@ -488,7 +513,7 @@ enum ShellPacketExporter {
         }
         guard let output else { throw HUDSourceError.invalid("Missing --output") }
         try require(CommandLine.arguments.contains("--ui-test"), "Isolated --ui-test mode required")
-        if sizes.isEmpty { sizes = [CGSize(width: 1280, height: 800), CGSize(width: 1920, height: 1080)] }
+        if sizes.isEmpty { sizes = profileHoverReference ? [CGSize(width: 1280, height: 800)] : [CGSize(width: 1280, height: 800), CGSize(width: 1920, height: 1080)] }
         NSApplication.shared.setActivationPolicy(.prohibited); NSApp.appearance = NSAppearance(named: .darkAqua)
         L10n.language = .english
         var configuration = AppConfiguration.defaults
@@ -516,12 +541,15 @@ enum ShellPacketExporter {
                 for id in try desktopTextureDependencies(view) {
                     try pack.texture(id, renderer: view.renderer)
                 }
-                try pack.checkpoints(view, name: name)
-                view.refreshPointerForVerification()
-                var steps = 0
-                while view.scrollDesktopNavigation(1, animated: false) { steps += 1; try require(steps <= 128, "Unbounded shell scroll") }
-                try pack.stable(view, name: name + "-bottom")
-                if animation == nil { try pack.desktopTemplates(view, name: name) }
+                if profileHoverReference { try pack.profileHover(view, name: name) }
+                else {
+                    try pack.checkpoints(view, name: name)
+                    view.refreshPointerForVerification()
+                    var steps = 0
+                    while view.scrollDesktopNavigation(1, animated: false) { steps += 1; try require(steps <= 128, "Unbounded shell scroll") }
+                    try pack.stable(view, name: name + "-bottom")
+                    if animation == nil { try pack.desktopTemplates(view, name: name) }
+                }
                 if animation == nil {
                     let data: [String: Any] = ["library": try object(view.document.library), "scene": try object(view.document.scene),
                         "runtimeRoot": json(view.document.runtimeRoot), "controllerTransitions": json(view.document.controllerTransitions),
@@ -554,6 +582,7 @@ enum ShellPacketExporter {
         try Reference.writeJSON(["scope": "synthetic Mac renderer validation only; exclude from shipping assets",
             "enabled": validationReadbacks, "frames": pack.verificationOracles], to: output.appendingPathComponent("verification-oracles.json"))
         try Reference.writeJSON(["schemaVersion": 1, "desktopMode": true,
+            "profileHoverReference": profileHoverReference,
             "scope": "actual Mac desktop shell draw packet; source geometry, texture mips, shaders, and separate native layers",
             "coordinates": ["matrices": "column-major arrays; column vectors", "canonicalVertices": "float32 little-endian position4 UV2 originalColor4; stride40",
                 "indices": "uint32 little-endian", "uv": "unaltered source UVs; do not flip texture rows again",

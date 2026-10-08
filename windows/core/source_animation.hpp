@@ -61,6 +61,11 @@ public:
           std::vector<std::string> nodeIDs, std::vector<Key> keys,
           std::optional<int> classID = {}, int preInfinity = 2, int postInfinity = 2);
     static Curve fromJson(const Json& value);
+    // Compiled source input already has scalar channels. Validate the same
+    // source key structure without recreating temporary vector-valued keys.
+    static Curve fromChannels(std::string group, std::string path, std::string attribute,
+                              std::vector<std::string> nodeIDs, std::vector<ScalarCurve> channels,
+                              std::optional<int> classID = {}, int preInfinity = 2, int postInfinity = 2);
     std::optional<Value> sample(double time) const noexcept;
     const std::string& group() const noexcept { return group_; }
     const std::string& path() const noexcept { return path_; }
@@ -69,6 +74,7 @@ public:
     std::optional<int> classID() const noexcept { return classID_; }
     std::span<const ScalarCurve> channels() const noexcept { return channels_; }
 private:
+    Curve() = default;
     std::string group_, path_, attribute_;
     std::vector<std::string> nodes_;
     std::optional<int> classID_;

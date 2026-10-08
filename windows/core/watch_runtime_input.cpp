@@ -1,4 +1,5 @@
 #include "core/watch_runtime_input.hpp"
+#include "core/source_animation_binary.hpp"
 #include "core/shell_packet.hpp"
 #include "core/data/file_io.hpp"
 #include <algorithm>
@@ -27,13 +28,17 @@ struct Loader {
     std::filesystem::path root;Json manifest;WatchRuntimeInput::Stage stage;std::size_t total{};
     explicit Loader(std::filesystem::path r,WatchRuntimeInput::Stage callback):root(std::move(r)),stage(std::move(callback)){
         ehud::data::detail::validateRoot(root);const auto bytes=ehud::data::detail::readFile(confined(root,"runtime-input.json"),256*1024);need(bytes.has_value(),"Missing runtime input manifest");manifest=Json::parse(*bytes,256*1024);
-        need(manifest["format"].isString()&&manifest["format"].string()=="endfield-watch-runtime-input"&&manifest["schemaVersion"].integer()==1,"Unsupported runtime input schema");
+        const auto version=manifest["schemaVersion"].integer();
+        need(manifest["format"].isString()&&manifest["format"].string()=="endfield-watch-runtime-input"&&(version==1||version==2),"Unsupported runtime input schema");
         need(manifest["sourcePins"].isObject()&&manifest["sourcePins"]["sourceManifestSHA256"].isString()&&sha(manifest["sourcePins"]["sourceManifestSHA256"].string()),"Missing or invalid runtime source manifest SHA-256");
         constexpr std::array<std::string_view,9> roles{"scene","mountedDocument","library","runtimeRoot","frameBuilder","controllerTransitions","nativeTop","nativeBottom","chrome"};
         need(manifest["parts"].isObject()&&manifest["parts"].object().size()>=8&&manifest["parts"].object().size()<=9,"Incomplete runtime parts");
         for(const auto&[role,value]:manifest["parts"].object()){
             need(std::find(roles.begin(),roles.end(),role)!=roles.end(),"Unknown runtime part");
-            descriptor(value,8*mib);need(value["file"].string()=="parts/"+role+".json","Runtime part path does not match role");
+            descriptor(value,8*mib);
+            const bool compiled=role=="library"&&version==2;
+            need(compiled?(value["encoding"].isString()&&value["encoding"].string()=="endfield-animation-v1"):!value.contains("encoding"),"Unsupported runtime part encoding");
+            need(value["file"].string()=="parts/"+role+(compiled?".ehanim":".json"),"Runtime part path does not match role");
         }
         for(std::size_t i=0;i<8;++i)need(manifest["parts"].contains(roles[i]),"Missing required runtime part");
         need(total<=32*mib,"Runtime JSON exceeds aggregate bound");
@@ -77,7 +82,11 @@ struct WatchRuntimeInput::Impl {
         Loader loader(std::move(path),std::move(callback));root=loader.root;sourceManifestSHA256=loader.manifest["sourcePins"]["sourceManifestSHA256"].string();
         scene=std::make_unique<SceneDefinition>(SceneDefinition::fromJson(loader.part("scene")));loader.mark("runtime-scene");
         {const auto mounted=loader.part("mountedDocument");document=std::make_unique<MountedLayoutDocument>(MountedLayoutDocument::fromJson(mounted));animators=AnimatorBinding::fromJson(mounted["animators"]);buttons=mounted["buttons"];}loader.mark("runtime-mounted-document");
-        library=std::make_unique<Library>(Library::fromJson(loader.part("library")));loader.mark("runtime-animation-library");
+        if(loader.manifest["schemaVersion"].integer()==2){
+            const auto bytes=loader.read(loader.manifest["parts"]["library"]);
+            library=std::make_unique<Library>(decodeAnimationLibrary({reinterpret_cast<const std::uint8_t*>(bytes.data()),bytes.size()},sourceManifestSHA256));
+        }else library=std::make_unique<Library>(Library::fromJson(loader.part("library")));
+        loader.mark("runtime-animation-library");
         camera=std::make_unique<SourceCamera>(loader.part("runtimeRoot"));loader.mark("runtime-camera");
         {const auto value=loader.part("frameBuilder");resources=SourceWatchFrameResources::fromJson(value);desktop=SourceDesktopFrameSettings::fromJson(value["desktopSettings"]);profile=DesktopHoverProfile::fromJson(value["profileHover"]);}loader.mark("runtime-frame-resources");
         transitions=loader.part("controllerTransitions");top=loader.part("nativeTop");bottom=loader.part("nativeBottom");if(loader.manifest["parts"].contains("chrome"))chrome=loader.part("chrome");loader.mark("runtime-native-setup");

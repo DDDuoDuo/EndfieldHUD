@@ -24,7 +24,9 @@ struct Temporary {
 Json manifest(){Json::Object parts;for(const auto*role:{"scene","mountedDocument","library","runtimeRoot","frameBuilder","controllerTransitions","nativeTop","nativeBottom"})parts[role]=Json::Object{{"file",std::string("parts/")+role+".json"},{"bytes",2},{"sha256",std::string(64,'0')}};return Json::Object{{"format","endfield-watch-runtime-input"},{"schemaVersion",1},{"sourcePins",Json::Object{{"sourceManifestSHA256",std::string(64,'0')}}},{"parts",std::move(parts)},{"rasterAssets",Json::Array{}}};}
 template<class Edit>void rejected(Edit edit,std::string_view reason){Temporary temp;auto value=manifest();edit(value,temp.root);write(temp.root/"runtime-input.json",value.encode());bool correct=false;try{source::WatchRuntimeInput input(temp.root);}catch(const std::exception&e){correct=std::string_view(e.what()).find(reason)!=std::string_view::npos;}check(correct,"Reject malformed compact input for the intended reason");}
 void guards(){
-    rejected([](auto&v,const auto&){v["schemaVersion"]=2;},"Unsupported runtime input schema");
+    rejected([](auto&v,const auto&){v["schemaVersion"]=3;},"Unsupported runtime input schema");
+    rejected([](auto&v,const auto&){v["schemaVersion"]=2;},"Unsupported runtime part encoding");
+    rejected([](auto&v,const auto&){v["parts"]["library"]["encoding"]="endfield-animation-v1";},"Unsupported runtime part encoding");
     rejected([](auto&v,const auto&){v.erase("sourcePins");},"runtime source manifest SHA-256");
     rejected([](auto&v,const auto&){v["sourcePins"].erase("sourceManifestSHA256");},"runtime source manifest SHA-256");
     rejected([](auto&v,const auto&){v["sourcePins"]["sourceManifestSHA256"]=0;},"runtime source manifest SHA-256");

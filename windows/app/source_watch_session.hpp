@@ -72,6 +72,10 @@ public:
     void pointerMove(std::optional<core::Point>,double time);
     void pointerDown(core::Point,double time);
     std::optional<WatchActivation> pointerUp(core::Point,double time);
+    bool navigationPointerActive()const noexcept;
+    bool navigationDragging()const noexcept;
+    // Native wheel settings: lines per detent; UINT32_MAX means one viewport.
+    bool wheel(core::Point,double steps,std::uint32_t linesPerStep,double time);
     std::optional<WatchActivation> activate(std::string_view buttonID,double time); // same clipped source hit/cooldown checks
     // Wheel deltas are logical points. Exact Mac nonprecise factor (10), plane
     // scale, viewport ownership and gesture/momentum continuation are retained.

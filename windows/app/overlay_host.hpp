@@ -64,6 +64,7 @@ struct WheelEvent {
     double x{}, y{}, steps{}; // one wheel detent = 1, fractions retained
     bool horizontal{};
     std::uint32_t modifiers{};
+    std::uint32_t linesPerStep{3}; // cached OS setting; UINT32_MAX is page scrolling
 };
 enum class KeyKind { down, up, character, unicodeCharacter };
 struct KeyEvent {
@@ -130,6 +131,7 @@ public:
     // Set only in WM_SETCURSOR for this active window's own client hit. Child
     // controls/nonclient regions/default IME routing remain native.
     void setCursor(void* cursor);
+    void capturePointer(bool capture); // own HWND only, released on hide/focus loss
     void suspendCursor(bool suspended); // bracket native dialogs/OLE drag sessions
     // false means stop/destroy/WM_QUIT. INFINITE is the ordinary idle wait.
     // The pump dispatches this thread's messages, as required for child/IME windows.

@@ -2,7 +2,8 @@
 """Compile an explicit synthetic Mac export to bounded, source-derived runtime inputs.
 
 This is a build tool. It never opens a HUD, user store, network or desktop. Output
-must be new. Decimal tokens survive verbatim; no float round-trip is permitted.
+must be new. JSON decimal tokens survive verbatim. An optional explicit compiler
+stores the existing typed animation parser's exact binary64 values in schema 2.
 GPU programs/textures remain the separate compiled scene, pinned by its caller.
 """
 import argparse
@@ -11,6 +12,7 @@ import json
 import pathlib
 import re
 import shutil
+import subprocess
 import tempfile
 
 
@@ -136,11 +138,14 @@ def referenced_rasters(value):
     return result
 
 
-def build(packet_root, output, chrome=None):
+def build(packet_root, output, chrome=None, animation_compiler=None):
     root = pathlib.Path(packet_root).absolute()
     target = pathlib.Path(output).absolute()
     if root.is_symlink() or not root.is_dir() or target.exists() or target.is_symlink():
         fail("Explicit source directory and new output directory required")
+    compiler = pathlib.Path(animation_compiler).absolute() if animation_compiler else None
+    if compiler and (compiler.is_symlink() or not compiler.is_file()):
+        fail("Explicit ordinary animation compiler executable required")
     manifest_bytes = read(root, "shell-packet.json", 16 * 1024 * 1024)
     manifest = parse(manifest_bytes)
     animation_bytes = blob(root, manifest["animation"], 48 * 1024 * 1024)
@@ -196,7 +201,7 @@ def build(packet_root, output, chrome=None):
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = pathlib.Path(tempfile.mkdtemp(prefix=target.name + ".tmp-", dir=target.parent))
     try:
-        output_manifest = {"format": "endfield-watch-runtime-input", "schemaVersion": 1,
+        output_manifest = {"format": "endfield-watch-runtime-input", "schemaVersion": 2 if compiler else 1,
                            "sourcePins": pins, "parts": {}, "rasterAssets": []}
         total = 0
         for role, value in sorted(parts.items()):
@@ -207,7 +212,28 @@ def build(packet_root, output, chrome=None):
             path = safe_path(staging, file)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
+            if compiler and role == "library":
+                binary_file = "parts/library.ehanim"
+                binary_path = safe_path(staging, binary_file)
+                result = subprocess.run([str(compiler), str(path), pins["sourceManifestSHA256"], str(binary_path)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+                if result.returncode:
+                    fail("Animation compiler rejected source input: " + result.stderr.strip())
+                data = read(staging, binary_file, 8 * 1024 * 1024)
+                # The typed compiler validates the payload; bind the fixed
+                # envelope here before publishing a new runtime manifest.
+                if (len(data) < 88 or data[:8] != b"EHANIM01" or
+                        data[8:12] != (1).to_bytes(4, "little") or
+                        data[12:16] != (0x01020304).to_bytes(4, "little") or
+                        int.from_bytes(data[16:24], "little") != len(data) - 88 or
+                        data[24:56].hex() != pins["sourceManifestSHA256"] or
+                        data[56:88].hex() != digest(data[88:])):
+                    fail("Animation compiler produced an invalid or unpinned envelope")
+                path.unlink()
+                file = binary_file
             output_manifest["parts"][role] = {"file": file, "bytes": len(data), "sha256": digest(data)}
+            if compiler and role == "library":
+                output_manifest["parts"][role]["encoding"] = "endfield-animation-v1"
             total += len(data)
         if total > 32 * 1024 * 1024:
             fail("Runtime JSON exceeds aggregate bound")
@@ -239,5 +265,6 @@ if __name__ == "__main__":
     parser.add_argument("packet_root")
     parser.add_argument("new_output")
     parser.add_argument("--chrome")
+    parser.add_argument("--animation-compiler", help="Explicit compiled compile_source_animation executable; emits schema 2")
     args = parser.parse_args()
-    print(json.dumps(build(args.packet_root, args.new_output, args.chrome), sort_keys=True))
+    print(json.dumps(build(args.packet_root, args.new_output, args.chrome, args.animation_compiler), sort_keys=True))

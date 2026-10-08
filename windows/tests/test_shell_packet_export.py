@@ -54,6 +54,7 @@ def desktop_texture_dependencies(animation):
 def verify(root, source_root=None):
     root = root.resolve()
     report = load(root/'shell-packet.json')
+    profile_reference = report.get('profileHoverReference', False)
     assert report['schemaVersion'] == 1 and report['desktopMode'] is True
     assert report['unresolvedTextures'] == []
     assert report['isolation'] == {'windowCreated': False, 'persistentStoresCreated': False,
@@ -187,12 +188,18 @@ def verify(root, source_root=None):
             assert frame['nativeLayers']['children']
             assert 'Endministrator' in frame['nativeProfileCaptions'] and 'UID: 1000000000' in frame['nativeProfileCaptions']
             visible.update(n['target'] for n in frame['nativeNavigation'] if n['verifiedHitPoint'] is not None)
-    assert visible == {m['id'] for m in report['modules']} and len(visible) == 24
+    if profile_reference:
+        assert names and all(name.endswith(('-top', '-profile-hover')) for name in names)
+        assert len([name for name in names if name.endswith('-top')]) == len([name for name in names if name.endswith('-profile-hover')])
+    else:
+        assert visible == {m['id'] for m in report['modules']} and len(visible) == 24
     if 'desktopTemplateFrames' in report:
         assert report['desktopTemplateFrames'] == template_names
         assert len(template_names) == len(set(template_names)) <= 64
-        assert '__ui_default_clip' in materials, 'Original hover template material was omitted'
-    assert any('-opening-' in n for n in names) and any('-closing-' in n for n in names)
+        if not profile_reference:
+            assert '__ui_default_clip' in materials, 'Original hover template material was omitted'
+    if not profile_reference:
+        assert any('-opening-' in n for n in names) and any('-closing-' in n for n in names)
     animation = json.loads(blob(report['animation']))
     assert animation['library']['clips'] and len(animation['scene']['nodes']) > 0
     assert animation['playback']['finiteEase'] == 'OutQuad'
@@ -208,7 +215,7 @@ def verify(root, source_root=None):
         assert 'includeDomain=false' in builder['scope'] and 'includeSourceText=false' in builder['scope']
         assert {'sprites','sourceSprites','textureSizes','materials','materialVariants','materialPropertyTypes',
                 'sourceMeshNames','profileNodeIDs','defaultSelectableTints','desktopSettings'} <= builder.keys()
-        assert builder_inputs and any('-arbitrary-' in n for n in names)
+        assert builder_inputs and (profile_reference or any('-arbitrary-' in n for n in names))
         assert set(builder['profileNodeIDs']) <= node_ids
         if 'desktopTextureDependencies' in builder:
             dependencies = builder['desktopTextureDependencies']
@@ -228,7 +235,8 @@ def verify(root, source_root=None):
             ambient_ids = set(builder['ambientRotationNodes'])
             assert ambient_ids and ambient_ids <= node_ids
             ambient_inputs = [v for v in builder_inputs if 'ambientPose' in v]
-            assert len(ambient_inputs) >= 4
+            if not profile_reference:
+                assert len(ambient_inputs) >= 4
             for supplied in ambient_inputs:
                 ambient = supplied['ambientPose']
                 assert set(ambient['transforms']) == ambient_ids

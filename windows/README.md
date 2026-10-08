@@ -87,8 +87,9 @@ that sibling labels, geometry, projection and masks stay unchanged. Animated
 clock-page displacement and native font appearance still need visual checks.
 
 The window host coalesces redraw requests and owns one cancellable wake timer.
-Hidden windows schedule no rendering work. All 34 Windows test suites pass on the laptop; the portable build passes
-26 suites. Display selection has a read-only Windows service and a
+Hidden windows schedule no rendering work. The previous checkpoint passed all 34 Windows suites on the laptop. The
+current portable build passes 27 suites; new backdrop/drag changes await a fresh
+Windows build and live retest. Display selection has a read-only Windows service and a
 portable policy matching the Mac fallback behavior, with no polling. Actual
 display switching, visible input, cursor, IME,
 multi-monitor behavior and full-app performance still require acceptance tests.
@@ -102,7 +103,9 @@ host now refreshes that gate after showing completes. An explicit
 `overlay_host_tests --interactive-startup` check uses a separate, never-switched
 desktop to verify hidden-startup behavior and delivery of the first frame. It
 passed on the laptop, and the corrected visible editor reported a presented
-frame. Chinese typing/selection were subsequently verified by the user.
+frame. Chinese typing/selection were subsequently verified by the user. The first
+assembled shell was also visible; user feedback identified missing backdrop,
+profile highlight overflow and insufficient navigation scrolling.
 
 The projected editor now shares the actual retained DirectWrite layout that
 painted its text with caret, selection, pointer hits and TSF. Hidden native
@@ -125,6 +128,25 @@ A 1920×1080 hardware preflight measured about 1.34 seconds for total
 preparation with this compact path. Loading the animation library accounted for
 about 667 ms and initial native rasterization about 226 ms. This is one synthetic
 run, not a cold-start distribution or full-app launch measurement.
+
+The next input schema compiles the same animation values into a bounded,
+source-pinned binary without changing evaluation. It preserves every binary64
+key, tangent, weight and ordering, and retains the JSON development path. The
+animation section shrinks from 4,378,637 to 1,991,308 bytes; the full compact input
+is 6,329,209 bytes. In a same-process Mac test, animation loading fell from about
+132 to 3.2 ms and full input loading from 218 to 87 ms. These exclude GPU/window
+setup and are not Windows launch measurements. Exact library checks, all 44
+source frames and 26 session checkpoints pass with both input schemas.
+
+The live preview now connects the Windows backdrop using the original source
+fade, 75% blur and 63% darkness. It requires explicit `--watch-blur` pointing to
+the hash-verified original resource. Windows wheel input uses the cached system
+line/page setting; captured pointer dragging follows the projected navigation
+plane and uses the existing bounce. Drag release cannot click a recycled button,
+stationary dragging does not add an ambient-off animation wake, and focus/hide
+teardown releases the host's own pointer capture. Live appearance and drag feel
+still require the user's next check.
+
 
 Runtime sprite records now keep only fields consumed by the original layout and
 clip logic. An isolated C++ allocation probe measured 23,305,962 fewer retained
@@ -161,6 +183,15 @@ and concealed stages. Hidden native backdrop tests passed 12,173 checks for
 creation and restoration of caller-established state; backdrop visual parity
 and capture behavior remain unverified. Driver allocations and frame targets are additional memory,
 not included in the catalog size.
+
+One requested Windows-only artwork correction is explicit at build time:
+`compile_source_scene --profile-hover-outline-mask` multiplies the straight-alpha
+hover texture by its original card background alpha, eliminating 3,528 faint
+padding texels outside the visible card. RGB, source geometry, UVs and fade stay
+unchanged. An isolated Mac reference also reproduces the original fringe, so
+this correction is intentionally excluded from Mac pixel-parity claims. It adds
+no runtime masking work and leaves the authoritative Mac source/assets untouched.
+
 
 Reference tools (macOS, temporary fixture data only):
 

@@ -248,6 +248,9 @@ void nativeWindow() {
     checkNear(wheel[0].y, 36 / scale, "wheel Y conversion");
     checkNear(wheel[0].steps, .5, "precision wheel fraction retained");
     checkNear(wheel[1].steps, -1, "horizontal wheel direction retained");
+    UINT systemLines=3,systemChars=3;SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&systemLines,0);SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS,0,&systemChars,0);
+    check(wheel[0].linesPerStep==systemLines&&wheel[1].linesPerStep==systemChars,"Native wheel preserves cached system line/page settings");
+
     SendMessageW(window, WM_KEYDOWN, 'A', 2 | (0x1e << 16) | (1ull << 30));
     SendMessageW(window, WM_KEYUP, 'A', 1 | (0x1e << 16) | (1ull << 31));
     SendMessageW(window, WM_CHAR, 0x4e2d, 1);
@@ -343,6 +346,23 @@ void callbackFailures() {
     host.create({L"Hidden key filter replacement",0,0,16,16,nullptr},filtering);
     PostMessageW(static_cast<HWND>(host.hwnd()),WM_KEYDOWN,'D',1|(0x20<<16));drain(host);
     check(staleKeys==0,"Destroy/recreate in pretranslation cannot deliver stale text to a replacement owner");host.destroy();
+
+    for(UINT message:{UINT(WM_KILLFOCUS),UINT(WM_SHOWWINDOW)}){
+        bool replaced=false;unsigned staleFocus=0;
+        OverlayCallbacks captureCallbacks;
+        captureCallbacks.focus=[&](bool){++staleFocus;};
+        captureCallbacks.pointer=[&](const PointerEvent&e){
+            if(e.kind==PointerKind::captureLost&&!replaced){replaced=true;host.destroy();host.create({L"Hidden capture replacement",0,0,16,16,nullptr});}
+            return true;
+        };
+        host.create({L"Hidden captured lifecycle fixture",0,0,16,16,nullptr},captureCallbacks);
+        const auto captured=static_cast<HWND>(host.hwnd());SetCapture(captured);
+        check(GetCapture()==captured,"Capture test owns only its hidden fixture HWND");
+        SendMessageW(captured,message,0,0);
+        check(replaced&&staleFocus==0,"Capture release cannot deliver stale focus handlers after HWND recreation");
+        check(host.hwnd()&&!host.stats().timerArmed&&!IsWindowVisible(static_cast<HWND>(host.hwnd())),"Recreated capture owner remains hidden and idle");host.destroy();
+    }
+
 }
 #endif
 }

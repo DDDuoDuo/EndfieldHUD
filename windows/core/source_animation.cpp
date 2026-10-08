@@ -1,5 +1,6 @@
 #include "core/source_animation.hpp"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -187,6 +188,23 @@ Curve Curve::fromJson(const Json& value) {
     else if (!value["raw"]["classID"].isNull()) classID=integer(value["raw"]["classID"]);
     return Curve(value["group"].string(),value["path"].string(),value["attribute"].string(),std::move(nodes),std::move(keys),
                  classID,integer(body["m_PreInfinity"]),integer(body["m_PostInfinity"]));
+}
+Curve Curve::fromChannels(std::string group,std::string path,std::string attribute,std::vector<std::string> nodes,
+                          std::vector<ScalarCurve> channels,std::optional<int> classID,int preInfinity,int postInfinity) {
+    need(nodes.size()<=maximumNodes&&preInfinity==2&&postInfinity==2,"Empty curve or unsupported infinity mode");
+    need(group=="m_FloatCurves"||group=="m_PositionCurves"||group=="m_ScaleCurves"||group=="m_RotationCurves","Unsupported source curve group");
+    const auto kind=group=="m_FloatCurves"?ValueKind::scalar:group=="m_RotationCurves"?ValueKind::quaternion:ValueKind::vector3;
+    const unsigned count=kind==ValueKind::scalar?1:kind==ValueKind::quaternion?4:3;
+    need(channels.size()==count,"Mismatched source curve components");
+    for(const auto& node:nodes)need(!node.empty()&&node.size()<=4096,"Invalid source identity");
+    const auto first=channels.front().keys();
+    for(const auto& channel:channels){
+        const auto keys=channel.keys();need(keys.size()==first.size(),"Mismatched source channel key counts");
+        for(std::size_t i=0;i<keys.size();++i)
+            need(std::bit_cast<std::uint64_t>(keys[i].time)==std::bit_cast<std::uint64_t>(first[i].time)&&keys[i].weightedMode==first[i].weightedMode,"Mismatched source channel key structure");
+    }
+    Curve result;result.group_=std::move(group);result.path_=std::move(path);result.attribute_=std::move(attribute);
+    result.nodes_=std::move(nodes);result.classID_=classID;result.kind_=kind;result.channels_=std::move(channels);return result;
 }
 std::optional<Value> Curve::sample(double time) const noexcept {
     Value value{kind_,{}};

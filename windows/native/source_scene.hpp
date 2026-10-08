@@ -58,6 +58,11 @@ struct SourceGeometryPayload {
 struct SourceFieldSchema {std::string name;unsigned offset{},components{};bool isColor{},dynamic{};};
 struct SourceBufferSchema {SourceStage stage;unsigned slot{};std::size_t byteCount{};std::vector<SourceFieldSchema> fields;};
 struct SourceTextureProperty {std::string name,textureID;SourceStage stage;unsigned textureSlot{},samplerSlot{};};
+struct SourceProfileHoverMaskReport {
+    std::string hoverSHA256,backgroundSHA256,maskedSHA256;
+    unsigned width{},height{};
+    std::size_t changedAlphaPixels{},clearedFringePixels{};
+};
 struct SourcePassTemplate {
     std::string pipelineID;unsigned vertexStride{},stencilReference{};
     std::vector<SourceAttribute> attributes;
@@ -136,6 +141,13 @@ public:
     // exported dependency IDs (including any already installed). No new poses,
     // templates, pipelines or runtime I/O are introduced.
     std::vector<std::string> includeDesktopResources(const std::filesystem::path& explicitPacketRoot);
+    // Explicit, build-only Windows appearance correction requested for the
+    // profile hover: multiply its straight-alpha texture by the original card
+    // alpha at identical texels. RGB, dimensions, samplers, meshes, UVs and fade
+    // remain unchanged. This is intentionally not Mac pixel parity. Original
+    // pinned packet bytes are reloaded each call, making the transform idempotent.
+    // Requires both desktop textures installed, before upload/live submission.
+    SourceProfileHoverMaskReport maskDesktopProfileHoverOutline(const std::filesystem::path& explicitPacketRoot);
     // Complete typed submission. Input validation finishes before mutation.
     // Existing slots/resources are reused; adding a stable identity may create
     // retained mesh/UBO slots, but never compiles/creates a shader or texture.
@@ -147,7 +159,8 @@ public:
     bool updateGeometry(std::string_view stateID,const SourceImageGeometryView&,std::optional<SourceIndexRange> = {});
     // Build-only explicit export. Existing output is rejected; used raw mips,
     // programs, geometry and ordered field plans are preserved losslessly,
-    // including explicitly installed catalogs. Runtime snapshots are rejected.
+    // including explicitly installed catalogs and any explicit build-only
+    // artwork correction. Runtime snapshots are rejected.
     void writeCompiled(const std::filesystem::path& newAbsoluteOutput) const;
     // CPU-only retained update. A complete, stable batch span is required.
     // World/color/visibility and submitted GPU camera/time are authoritative.

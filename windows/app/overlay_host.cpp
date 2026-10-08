@@ -134,6 +134,9 @@ struct OverlayHost::Impl {
     bool ready{}, visible{}, minimized{}, focused{}, stopped{}, armed{},
         mouseTracking{}, cursorSuspended{}, cursorOwned{}, appActive{true};
     unsigned menuDepth{}, sizeMoveDepth{};
+    UINT wheelLines{3},wheelChars{3};
+    void refreshWheelSettings(){SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&wheelLines,0);SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS,0,&wheelChars,0);}
+    void releaseCapture(){if(window&&GetCapture()==window)ReleaseCapture();}
     int exitCode{};
 
     ~Impl() {
@@ -279,7 +282,8 @@ struct OverlayHost::Impl {
             return 0;
         case WM_SHOWWINDOW:
             visible = w != 0;
-            if (!visible) { mouseTracking = false; releaseCursor(); }
+            if (!visible) { mouseTracking = false; releaseCursor(); releaseCapture(); }
+            if(window!=target||callbacks!=handlers)return 0;
             if (ready) refreshSchedule();
             break;
         case WM_SIZE:
@@ -298,12 +302,15 @@ struct OverlayHost::Impl {
             if (ready) postFrame();
             return 0;
         }
+        case WM_SETTINGCHANGE:
+            if(w==0||w==SPI_SETWHEELSCROLLLINES||w==SPI_SETWHEELSCROLLCHARS)refreshWheelSettings();
+            break;
         case WM_DISPLAYCHANGE:
             if(ready&&handlers&&handlers->displayChanged)handlers->displayChanged();
             break;
         case WM_SETFOCUS: case WM_KILLFOCUS:
             focused = message == WM_SETFOCUS;
-            if (!focused) releaseCursor();
+            if (!focused) { releaseCursor(); releaseCapture(); }
             if (ready && handlers && handlers->focus) handlers->focus(focused);
             break;
         case WM_ACTIVATEAPP:
@@ -364,7 +371,7 @@ struct OverlayHost::Impl {
             if (!ScreenToClient(target, &point)) fail("Wheel ScreenToClient");
             const WheelEvent event{point.x / client.scale, point.y / client.scale,
                 static_cast<double>(GET_WHEEL_DELTA_WPARAM(w)) / WHEEL_DELTA,
-                message == WM_MOUSEHWHEEL, static_cast<std::uint32_t>(GET_KEYSTATE_WPARAM(w))};
+                message == WM_MOUSEHWHEEL, static_cast<std::uint32_t>(GET_KEYSTATE_WPARAM(w)),message==WM_MOUSEHWHEEL?wheelChars:wheelLines};
             const bool handled = ready && handlers && handlers->wheel && handlers->wheel(event);
             if (window != target) return 0;
             if (ready) postFrame();
@@ -422,6 +429,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
             p.timer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_MODIFY_STATE | SYNCHRONIZE);
         if (!p.timer) fail("CreateWaitableTimerEx overlay");
     }
+    p.refreshWheelSettings();
     p.callbacks = std::make_shared<OverlayCallbacks>(std::move(callbacks));
     p.demand = {}; p.plan.cancel(); p.client = {}; p.counts = {};
     p.stopped = p.ready = p.visible = p.minimized = p.focused = p.mouseTracking = false;
@@ -483,6 +491,11 @@ void OverlayHost::setFrameDemand(core::FrameDemand demand) {
     p.refreshSchedule();
 }
 void OverlayHost::invalidate() { auto& p = *impl_; p.requireThread(); p.rethrow(); p.postFrame(); }
+void OverlayHost::capturePointer(bool capture) {
+    auto&p=*impl_;p.requireThread();p.rethrow();
+    if(capture&&p.window&&IsWindowVisible(p.window))SetCapture(p.window);
+    else if(!capture)p.releaseCapture();
+}
 void OverlayHost::setCursor(void* cursor) {
     auto& p = *impl_; p.requireThread(); p.rethrow();
     if (p.cursor == cursor) return;

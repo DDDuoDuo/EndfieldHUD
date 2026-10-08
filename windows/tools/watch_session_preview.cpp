@@ -7,6 +7,7 @@
 #include "native/watch_content.hpp"
 #include "native/source_cursor.hpp"
 #include "native/display_service.hpp"
+#include "native/desktop_backdrop.hpp"
 #include "core/shell_packet.hpp"
 #include "core/watch_runtime_input.hpp"
 #include "core/data/file_io.hpp"
@@ -21,6 +22,10 @@
 #endif
 #include <windows.h>
 #include <psapi.h>
+#include <dwmapi.h>
+#include <DispatcherQueue.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.System.h>
 
 namespace fs=std::filesystem;
 namespace core=endfield::core;
@@ -36,9 +41,39 @@ double now(){static const auto frequency=[] {LARGE_INTEGER value;need(QueryPerfo
 using Clock=std::chrono::steady_clock;
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 struct COM {COM(){need(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");}~COM(){CoUninitialize();}};
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots;std::string pin;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+// The native backdrop borrows the caller's one UI queue. Creating its controller
+// on this UI thread adds no worker or private animation clock. It outlives HWND
+// and composition cleanup, including exception unwinding.
+class BackdropQueue final {
+public:
+    BackdropQueue(){
+        if(winrt::Windows::System::DispatcherQueue::GetForCurrentThread())return;
+        DispatcherQueueOptions value{sizeof(DispatcherQueueOptions),DQTYPE_THREAD_CURRENT,DQTAT_COM_STA};
+        const auto result=CreateDispatcherQueueController(value,reinterpret_cast<ABI::Windows::System::IDispatcherQueueController**>(winrt::put_abi(controller_)));
+        if(FAILED(result))throw winrt::hresult_error(result,L"Source preview: create caller-owned backdrop DispatcherQueue");
+    }
+    ~BackdropQueue(){try{finish();}catch(...) {}}
+    void finish(){
+        if(!controller_)return;const auto operation=controller_.ShutdownQueueAsync();const auto deadline=GetTickCount64()+10000;
+        while(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started){
+            need(GetTickCount64()<deadline,"Source preview backdrop queue shutdown exceeded its finite deadline");
+            MSG message{};while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+            if(operation.Status()==winrt::Windows::Foundation::AsyncStatus::Started)MsgWaitForMultipleObjectsEx(0,nullptr,50,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+        }
+        operation.GetResults();controller_=nullptr;
+    }
+private:
+    winrt::Windows::System::DispatcherQueueController controller_{nullptr};
+};
+// Keep all synchronous HWND teardown callbacks behind ready=false, before the
+// locals they normally borrow leave scope. Also restores DWM state on failure.
+struct PreviewWindowLifetime final {
+    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;
+    ~PreviewWindowLifetime(){ready=false;backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
+};
+struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur;std::string pin;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
-    need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage]");
+    need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
     for(int i=4;i<argc;++i){const std::wstring_view arg=argv[i];
         if(arg==L"--visible"){need(!o.visible,"Duplicate visible mode");o.visible=true;}
@@ -51,16 +86,26 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--snapshots"&&i+1<argc){need(o.snapshots.empty(),"Duplicate snapshot directory");o.snapshots=fs::absolute(argv[++i]);}
         else if(arg==L"--chrome"&&i+1<argc){need(o.chrome.empty(),"Duplicate chrome reference");o.chrome=fs::absolute(argv[++i]);}
         else if(arg==L"--cursor-png"&&i+1<argc){need(o.cursor.empty(),"Duplicate cursor image");o.cursor=fs::absolute(argv[++i]);}
+        else if(arg==L"--watch-blur"&&i+1<argc){need(o.watchBlur.empty(),"Duplicate original WatchBlur source");o.watchBlur=fs::absolute(argv[++i]);}
         else if(arg==L"--compiled-sha"&&i+1<argc){need(o.pin.empty(),"Duplicate cache pin");o.pin=utf8(argv[++i]);}
         else need(false,"Unknown or incomplete preview argument");
     }
     need(o.visible!=!o.report.empty(),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
+    need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
     need(!o.visible||(!o.coverage&&o.benchmarkEpoch==0&&o.benchmarkWidth==1280&&o.benchmarkHeight==800),"Coverage/epoch/size overrides are hidden-test only");
     if(!o.report.empty())need(!fs::exists(o.report),"Benchmark output already exists");
     need(o.snapshots.empty()||!o.visible,"Owned-target snapshots are hidden benchmark only");
     if(!o.snapshots.empty())need(!fs::exists(o.snapshots),"Snapshot directory already exists");return o;
 }
 Json loadJSON(const fs::path&file){const auto bytes=ehud::data::detail::readFile(file,32*1024*1024);need(bytes.has_value(),"Explicit reference JSON is missing");return Json::parse(*bytes,32*1024*1024);}
+gpu::DesktopBackdropAnimation loadWatchBlur(const fs::path&file){
+    const auto bytes=ehud::data::detail::readFile(file,1024*1024);need(bytes.has_value(),"Explicit original WatchBlur source is missing");
+    const std::span<const std::uint8_t> raw{reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()};
+    // Authoritative Mac Resources/WatchSource/Scene/watch-blur.json, unmodified.
+    // No oracle sample, screenshot or hand-authored approximation is substituted.
+    need(packet::sha256(raw)=="87767f77fe5845150e0dc675771cc6adc792075cbbd8fb6d41f405e6db931464","WatchBlur source hash differs from the authoritative Mac resource");
+    return gpu::DesktopBackdropAnimation::fromSource(Json::parse(*bytes,1024*1024));
+}
 struct ProcessUsage {double cpuSeconds{};std::uint64_t privateBytes{},workingBytes{},peakWorkingBytes{};};
 ProcessUsage processUsage(){
     FILETIME created,exited,kernel,user;need(GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)!=0,"Process CPU counters unavailable");
@@ -103,6 +148,7 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
 }
 int wmain(int argc,wchar_t**argv){try{
     const auto args=options(argc,argv);COM com;const auto preparation=Clock::now();StartupStages startup;
+    std::optional<gpu::DesktopBackdropAnimation> backdropAnimation;if(!args.watchBlur.empty())backdropAnimation=loadWatchBlur(args.watchBlur);startup.mark("original-backdrop-animation");
     std::unique_ptr<source::WatchRuntimeInput> runtime;std::unique_ptr<packet::Package> package;
     Json metadata,legacyTop,legacyBottom,chromeJSON;std::optional<source::SceneDefinition> legacyScene;
     std::optional<source::MountedLayoutDocument> legacyDocument;std::optional<source::Library> legacyLibrary;
@@ -153,19 +199,36 @@ int wmain(int argc,wchar_t**argv){try{
     // cursor before that application-local handle is destroyed.
     metadata=Json{};legacyTop=Json{};legacyBottom=Json{};chromeJSON=Json{};package.reset();if(runtime)runtime->releaseSetupJSON();startup.mark("release-full-reference-json");
     gpu::SourceCursor cursor;if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
-    app::OverlayHost host;gpu::Renderer renderer;app::ClientMetrics metrics;bool ready=false,closing=false,focused=!args.visible;
+    std::unique_ptr<BackdropQueue> backdropQueue;
+    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;app::ClientMetrics metrics;bool ready=false,closing=false,focused=!args.visible;
+    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop};
     app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
     // sibling view, so this fades only native chrome, never source triangles
     // or SourceWatch's labels. Source completion still owns window lifetime.
     double canvasOpenedAt{},canvasClosedAt{},canvasCapturedOpacity{1};
     auto canvasOpacity=[&](double time){return source::DesktopChromeTiming::opacity(!closing,time-(closing?canvasClosedAt:canvasOpenedAt),canvasCapturedOpacity,settings.reduceMotion);};
+    auto backdropOpacity=[&](double time){
+        if(session.phase()==core::VisibilityPhase::concealed)return 0.;
+        if(settings.reduceMotion)return closing?0.:1.;
+        need(backdropAnimation.has_value(),"Visible backdrop lost its immutable original timing");
+        return closing?backdropAnimation->exit.alpha(time-canvasClosedAt):backdropAnimation->entrance.alpha(time-canvasOpenedAt);
+    };
+    // Current Mac AppConfiguration defaults: blur75%, brightness37% (darkness
+    // 63%). The native adapter retains the original tint/radial descriptor; its
+    // Windows system host material remains an explicit visual-parity gate.
+    gpu::DesktopBackdropState backdropState{0,0,true,false,.75,.63,0};
+    auto updateBackdrop=[&](double time){
+        if(!args.visible)return; // Visible initialization must complete before any frame.
+        if(metrics.pixelWidth&&metrics.pixelHeight){backdropState.pixelWidth=metrics.pixelWidth;backdropState.pixelHeight=metrics.pixelHeight;}
+        backdropState.lowPower=settings.lowPower;backdropState.sourceOpacity=backdropOpacity(time);backdrop.update(backdropState);
+    };
     auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);};
     auto refresh=[&](double time){if(args.visible){host.setFrameDemand(session.demand(time));host.invalidate();}};
     auto close=[&](double time){if(!closing){canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");std::cout<<"Source action: "<<entry->target<<" (module body is not installed)\n";};
     auto present=[&](double time,bool submit){
-        const auto*sample=session.sample(time);if(!sample)return false;
+        const auto*sample=session.sample(time);updateBackdrop(time);if(!sample)return false;
         if(focused&&sample->visibility.phase==core::VisibilityPhase::visible&&!session.inputEnabled())session.setInputEnabled(true,time);
         auto parameters=materials.parameters();parameters.camera=sample->gpuCamera;parameters.timeSeconds=sample->shaderTime;parameters.width=metrics.pixelWidth;parameters.height=metrics.pixelHeight;
         materialPresentation.update(*sample->sourceFrame,parameters);materials.flush(renderer.sourceGraphics());
@@ -182,12 +245,19 @@ int wmain(int argc,wchar_t**argv){try{
     callbacks.resize=[&](const auto&value){metrics=value;if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
     callbacks.pointer=[&](const app::PointerEvent&e){if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
         if(e.kind==app::PointerKind::move){environment.pointer=p;session.pointerMove(p,time);}
-        else if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left){environment.pointer=p;session.pointerDown(p,time);}
-        else if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){environment.pointer=p;if(const auto action=session.pointerUp(p,time))activate(*action);}
+        else if((e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)&&e.button==app::PointerButton::left){environment.pointer=p;session.pointerDown(p,time);if(session.navigationPointerActive())host.capturePointer(true);}
+        else if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){environment.pointer=p;if(const auto action=session.pointerUp(p,time))activate(*action);host.capturePointer(false);}
         else if(e.kind==app::PointerKind::leave){environment.pointer.reset();session.pointerMove({},time);}
-        else if(e.kind==app::PointerKind::captureLost){session.setInputEnabled(false,time);if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);}
+        else if(e.kind==app::PointerKind::captureLost){
+            // Normal pointerUp has already cleared its drag/press before our
+            // intentional ReleaseCapture sends this notification. Preserve its
+            // hover; cancel only unfinished ownership lost to another action.
+            if(session.navigationPointerActive()||session.pressed()){
+                session.setInputEnabled(false,time);if(focused&&session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);
+            }
+        }
         else return false;refresh(time);return true;};
-    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready||e.horizontal)return false;const auto time=now();const bool handled=session.scroll({e.x,e.y},e.steps,false,core::GesturePhase::none,core::GesturePhase::none,time);if(handled)refresh(time);return handled;};
+    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready||e.horizontal)return false;const auto time=now();const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
     callbacks.key=[&](const app::KeyEvent&e){if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};
     callbacks.focus=[&](bool value){focused=value;if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
     callbacks.closeRequested=[&]{if(ready)close(now());};
@@ -206,6 +276,13 @@ int wmain(int argc,wchar_t**argv){try{
     if(!args.visible){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;}
     host.create(windowOptions,std::move(callbacks));metrics=host.metrics();startup.mark("hidden-window");
     renderer.initialize(host.hwnd(),metrics.pixelWidth,metrics.pixelHeight,{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,args.visible?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests});startup.mark("renderer-device-target");const auto deviceInfo=renderer.deviceInfo();
+    if(args.visible){
+        backdropQueue=std::make_unique<BackdropQueue>();
+        const BOOL known=FALSE;const auto result=DwmSetWindowAttribute(static_cast<HWND>(host.hwnd()),DWMWA_USE_HOSTBACKDROPBRUSH,&known,sizeof(known));
+        if(FAILED(result))throw winrt::hresult_error(result,L"Source preview: establish owned HWND's disabled original host-backdrop flag");
+        backdropState.pixelWidth=metrics.pixelWidth;backdropState.pixelHeight=metrics.pixelHeight;backdrop.initialize(host.hwnd(),backdropState,{false});
+    }
+    startup.mark("lower-system-backdrop");
     materials.upload(renderer.sourceGraphics());layers.upload(renderer);host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=args.visible?now():args.benchmarkEpoch;session.setEnvironment(environment,start);const auto preparedMS=milliseconds(preparation);
     std::cout<<"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n";
@@ -258,8 +335,11 @@ int wmain(int argc,wchar_t**argv){try{
         need(!IsWindowVisible(static_cast<HWND>(host.hwnd())),"Hidden benchmark window became visible");need(host.stats().frames==0&&!host.stats().timerArmed,"Hidden benchmark scheduled native frame work");
         Json::Array unsupported,substitutions;for(const auto&v:layers.report().unsupported)unsupported.push_back(Json::Object{{"node",v.node},{"feature",v.feature}});for(const auto&v:layers.report().fontSubstitutions)substitutions.push_back(Json::Object{{"node",v.node},{"requested",v.requestedFamily},{"selected",v.selectedFamily}});
         Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog.variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent.stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent.stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
-            {"limitations",Json::Array{"No module bodies, providers, persistence, backdrop, user input or screen capture","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
+            {"systemBackdropIncluded",false},{"limitations",Json::Array{"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     }
-    host.setCursor(nullptr);layers.detach(renderer);renderer.reset();host.destroy();return 0;
-}catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}
+    ready=false;host.setFrameDemand({});host.setCursor(nullptr);backdrop.reset();
+    if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
+    layers.detach(renderer);renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();return 0;
+}catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}
+catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}

@@ -219,8 +219,69 @@ void desktopClosure(){
     rejects([&]{damaged.includeDesktopResources(corrupt.root);},"Dynamic resource mip hash is checked before installation");check(damaged.stats().textures==1,"Late staged mip failure cannot partially install earlier textures");
     rejects([&]{absent.includeDesktopResources(fixture.root);},"Different packet provenance cannot be spliced into an older compiled scene");
 }
+void profileHoverOutline(){
+    Fixture fixture;
+    auto manifest=Json::parse(read(fixture.root/"shell-packet.json"));auto textures=manifest["textures"].array();
+    const std::array<unsigned char,8> hoverAlpha{0,1,2,97,10,255,255,128},backgroundAlpha{0,4,4,255,206,128,255,1};
+    std::string hover,background,expected;
+    for(std::size_t i=0;i<hoverAlpha.size();++i){
+        for(const auto channel:{255,230,26}){hover.push_back(char(channel));expected.push_back(char(channel));background.push_back(char(50+i));}
+        hover.push_back(char(hoverAlpha[i]));background.push_back(char(backgroundAlpha[i]));
+        expected.push_back(char((unsigned(hoverAlpha[i])*backgroundAlpha[i]+127)/255));
+    }
+    const auto add=[&](const char*id,const std::string&data){
+        auto texture=textures.front();texture["id"]=id;texture["width"]=8;texture["pixelFormat"]="rgba8Unorm_srgb";texture["sRGB"]=true;
+        auto mip=fixture.blob(std::string("texture/")+id+".bin",data);mip["level"]=0;mip["width"]=8;mip["height"]=1;mip["rowBytes"]=32;
+        texture["mips"]=Json::Array{mip};texture["sampler"]["minFilter"]=1;texture["sampler"]["magFilter"]=1;textures.push_back(std::move(texture));
+    };
+    add("desktop.profile.hover",hover);add("desktop.profile.background",background);manifest["textures"]=textures;
+    Json builder=Json::Object{};builder["desktopTextureDependencies"]=Json::Array{"__white","desktop.profile.hover","desktop.profile.background"};
+    Json animation=Json::Object{};animation["library"]=Json::Object{{"clips",Json::Array{}}};
+    builder["sprites"]=Json::Object{};builder["sourceSprites"]=Json::Object{};
+    builder["desktopSettings"]=Json::Object{{"images",Json::Object{}},{"sprites",Json::Object{}}};
+    animation["frameBuilder"]=std::move(builder);
+    animation["mountedDocument"]=Json::Object{{"spriteByComponent",Json::Object{}},{"components",Json::Object{}}};
+    manifest["animation"]=fixture.blob("animation.json",animation.encode());write(fixture.root/"shell-packet.json",manifest.encode());
+    gpu::SourceScene scene(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");
+    rejects([&]{scene.maskDesktopProfileHoverOutline(fixture.root);},"Profile correction requires explicitly installed originals");
+    (void)scene.includeDesktopResources(fixture.root);const auto uniforms=snapshot(scene);const auto params=scene.parameters();
+    std::vector<std::string> geometry;
+    for(const auto& g:scene.geometryPayloads())geometry.emplace_back(reinterpret_cast<const char*>(g.vertices.data()),g.vertices.size());
+    const auto correction=scene.maskDesktopProfileHoverOutline(fixture.root);
+    check(correction.hoverSHA256==packet::sha256(bytes(hover))&&correction.backgroundSHA256==packet::sha256(bytes(background)),"Correction reports exact pinned original pixel hashes");
+    check(correction.maskedSHA256==packet::sha256(bytes(expected)),"Straight RGB palette is byte-exact while every alpha is the rounded original coverage product");
+    check(correction.width==8&&correction.height==1&&correction.changedAlphaPixels==5&&correction.clearedFringePixels==2,"Transparent padding clears, opaque edges remain and antialiased coverage is bounded");
+    check(snapshot(scene)==uniforms,"Profile correction does not change color uniforms or animation state");
+    const auto after=scene.geometryPayloads();bool unchanged=after.size()==geometry.size();
+    for(std::size_t i=0;unchanged&&i<after.size();++i)unchanged=std::string(reinterpret_cast<const char*>(after[i].vertices.data()),after[i].vertices.size())==geometry[i];
+    check(unchanged,"Profile correction leaves all mesh positions, UVs, vertex colors and geometry revisions unchanged");
+    const auto cache=fixture.root/"masked.ehscene";scene.writeCompiled(cache);const auto saved=read(cache);
+    check(saved.find(expected)!=std::string::npos&&saved.find(hover)==std::string::npos,"Shipping cache contains corrected pixel bytes instead of original hover pixels");
+    gpu::SourceScene loaded(gpu::CompiledSourceScene{cache,{}});const auto roundtrip=fixture.root/"roundtrip.ehscene";loaded.writeCompiled(roundtrip);
+    check(read(roundtrip)==saved,"Corrected textures retain exact mip/sampler bytes through cache load and write");
+    const auto repeated=scene.maskDesktopProfileHoverOutline(fixture.root);const auto repeatedCache=fixture.root/"repeated.ehscene";scene.writeCompiled(repeatedCache);
+    check(repeated.maskedSHA256==correction.maskedSHA256&&read(repeatedCache)==saved,"Repeated compiler transform is idempotent from pinned source bytes");
+    write(fixture.root/"texture/desktop.profile.background.bin",std::string(background.size(),'x'));
+    rejects([&]{scene.maskDesktopProfileHoverOutline(fixture.root);},"Corrupted original mask is rejected before correction");
+    const auto failedCache=fixture.root/"after-rejection.ehscene";scene.writeCompiled(failedCache);
+    check(read(failedCache)==saved,"Rejected correction leaves the installed texture and geometry intact");
+    auto states=std::vector<gpu::SourceBatchState>(scene.batches().begin(),scene.batches().end());states.front().world.values[12]=10;(void)scene.update(states,params);
+    rejects([&]{scene.maskDesktopProfileHoverOutline(fixture.root);},"Artwork compiler transform cannot run during live rendering");
+    auto& badBackground=textures.back();badBackground["width"]=7;
+    auto badMip=fixture.blob("texture/desktop.profile.background.bin",background.substr(0,28));badMip["level"]=0;badMip["width"]=7;badMip["height"]=1;badMip["rowBytes"]=28;
+    badBackground["mips"]=Json::Array{badMip};manifest["textures"]=textures;write(fixture.root/"shell-packet.json",manifest.encode());
+    gpu::SourceScene mismatched(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");(void)mismatched.includeDesktopResources(fixture.root);
+    const auto beforeMismatch=fixture.root/"before-mismatch.ehscene";mismatched.writeCompiled(beforeMismatch);
+    rejects([&]{mismatched.maskDesktopProfileHoverOutline(fixture.root);},"Different dimensions reject instead of guessing an outline UV mapping");
+    const auto afterMismatch=fixture.root/"after-mismatch.ehscene";mismatched.writeCompiled(afterMismatch);
+    check(read(beforeMismatch)==read(afterMismatch),"Unsupported mapping cannot partially modify texture bytes");
+    badBackground["pixelFormat"]="rgba8Unorm";badBackground["sRGB"]=false;manifest["textures"]=textures;write(fixture.root/"shell-packet.json",manifest.encode());
+    gpu::SourceScene wrongFormat(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");(void)wrongFormat.includeDesktopResources(fixture.root);
+    rejects([&]{wrongFormat.maskDesktopProfileHoverOutline(fixture.root);},"Unknown color storage rejects instead of guessing premultiplied or straight alpha");
+}
 void run(){
     desktopClosure();
+    profileHoverOutline();
     Fixture fixture;gpu::SourceScene scene(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");
     check(scene.stats().batches==2&&scene.stats().draws==2&&scene.stats().uniforms==3,"Identical world buffers are isolated per batch; compatible camera buffer shared");
     const auto cache=fixture.root/"compiled-source.ehscene";scene.writeCompiled(cache);const auto file=read(cache);
