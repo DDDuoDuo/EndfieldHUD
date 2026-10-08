@@ -11,8 +11,8 @@
 #include <new>
 #include <stdexcept>
 
-namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
-void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
+namespace {std::atomic<bool>counting{},failNextAllocation{};std::atomic<std::size_t>allocations{};}
+void*operator new(std::size_t n){if(failNextAllocation.exchange(false))throw std::bad_alloc();if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
 void*operator new[](std::size_t n){return ::operator new(n);}void operator delete(void*p)noexcept{std::free(p);}void operator delete[](void*p)noexcept{std::free(p);}
 #if defined(__cpp_sized_deallocation)
 void operator delete(void*p,std::size_t)noexcept{std::free(p);}void operator delete[](void*p,std::size_t)noexcept{std::free(p);}
@@ -166,6 +166,53 @@ void supplementalComposition(Renderer& renderer,LayerRasterizer& raster,const La
     composition.detach(renderer);check(renderer.stats().objects==0&&renderer.stats().textures==0&&renderer.stats().meshes==1,"Composition clears borrowed references but never deletes caller-owned mesh");
     check(renderer.removeMesh("owned-seam-mesh")&&renderer.stats().meshes==0,"Owner retires seam resource after detachment");
 }
+void retainedResourceComposition(Renderer&renderer,LayerRasterizer&raster,const LayerRasterOptions&options){
+    LayerScene field(raster),sibling(raster);const std::string id="retained-long-text-identity-for-resource-only-updates";
+    auto text=leaf(id,1,0,0);text["kind"]="text";text["class"]="CATextLayer";text["bounds"]=Json::Array{0,0,8,20};text["position"]=Json::Array{2,2};
+    text["text"]=Json::Object{{"string","A"},{"fontSize",5},{"alignment","left"},{"wrapped",true},{"truncation","none"},{"foregroundColor",Json::Object{{"sRGB",Json::Array{1,1,1,1}}}}};
+    auto background=leaf("sibling",0,0,1);background["position"]=Json::Array{20,20};background["bounds"]=Json::Array{0,0,8,8};
+    background["kind"]="text";background["class"]="CATextLayer";background["text"]=text["text"];background["text"]["foregroundColor"]=Json::Object{{"sRGB",Json::Array{0,0,1,1}}};
+    field.load(root({text}),options);sibling.load(root({background}),options);
+    const std::array<Vertex,4> vertices{{{{26,2,0}},{{30,2,0}},{{30,6,0}},{{26,6,0}}}};constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};renderer.setMesh("retained-after-mesh",1,{vertices,indices});
+    DrawObject after;after.sourceID="retained-after";after.meshID="retained-after-mesh";after.linearTint={0,1,0,1};
+    const PlaneMask mask{{},{0,0,32,32},2};LayerPlacement fieldPose{0,field.draws()[0].world,1,std::span(&mask,1)};field.setPlacements(std::span(&fieldPose,1));
+    LayerComposition composition;std::array order{LayerCompositionEntry{&field,{}},LayerCompositionEntry{&sibling,std::span(&after,1)}};composition.setEntries(renderer,order);composition.present(renderer);
+    const auto*storage=composition.draws().data();const auto*fieldIdentity=composition.draws()[0].sourceID.data();const auto*siblingIdentity=composition.draws()[1].sourceID.data();
+    const auto initial=renderer.stats();const auto siblingDraw=composition.draws()[1];const auto siblingRaster=sibling.paintedTextLayout("sibling");
+    check(siblingRaster!=nullptr,"Sibling retains an actual painted text layout");
+    allocations=0;counting=true;try{for(unsigned n=0;n<120;++n)composition.setEntries(renderer,order);}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&composition.draws().data()==storage&&renderer.stats().textureUploads==initial.textureUploads&&renderer.stats().meshUploads==initial.meshUploads,"Warm unchanged exact entries allocate and upload nothing");
+    text["text"]["string"]="B";text["backgroundColor"]=Json::Object{{"sRGB",Json::Array{0,1,0,1}}};field.updateLocalContent(id,1,text,options);composition.setEntries(renderer,order);
+    check(composition.draws().data()==storage&&composition.draws()[0].sourceID.data()==fieldIdentity&&composition.draws()[1].sourceID.data()==siblingIdentity,"Same-size text update retains the combined records and sibling identities");
+    check(renderer.stats().textureUploads==initial.textureUploads+1&&renderer.stats().meshUploads==initial.meshUploads&&renderer.stats().objectBufferAllocations==initial.objectBufferAllocations&&renderer.stats().objectUploads==initial.objectUploads,"Resource-only text change uploads one texture without publishing sibling object uniforms");
+    renderer.draw(false);pixel(renderer.readback(),6,19,{0,255,0,255});pixel(renderer.readback(),24,24,{255,0,0,255});
+    check(composition.draws()[0].masks.size()==1&&composition.draws()[0].masks[0].cornerRadius==2&&composition.draws()[1].world==siblingDraw.world&&sibling.paintedTextLayout("sibling")==siblingRaster,"Resource replacement preserves masks and sibling placement/layout handles");
+    const auto beforeBounds=renderer.stats();text["bounds"]=Json::Array{0,0,14,20};field.updateLocalContent(id,2,text,options);composition.setEntries(renderer,order);
+    check(composition.draws().data()==storage&&renderer.stats().meshUploads==beforeBounds.meshUploads+1&&renderer.stats().textureUploads==beforeBounds.textureUploads+1,"Changed text bounds replace one map-stable quad and texture without rebuilding the draw list");
+    renderer.draw(false);pixel(renderer.readback(),13,19,{0,255,0,255});
+    DrawObject replacement=after;replacement.opacity=.5f;auto replacementOrder=order;replacementOrder[1].after=std::span(&replacement,1);
+    allocations=0;counting=true;try{composition.setEntries(renderer,replacementOrder);}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&composition.draws().data()==storage,"Identical supplemental IDs may rebind borrowed storage without allocating");
+    after.opacity=0;composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),28,4,{0,128,0,128});
+    check(composition.draws().back().opacity==.5f,"Present reads the newly committed supplemental storage instead of its previous owner");
+    DrawObject invalid=replacement;invalid.opacity=-1;auto invalidOrder=order;invalidOrder[1].after=std::span(&invalid,1);const auto failedGPU=renderer.stats();
+    rejects([&]{composition.setEntries(renderer,invalidOrder);},"Late invalid supplemental numbers reject before changing borrowed spans");composition.present(renderer);
+    check(composition.draws().back().opacity==.5f&&renderer.stats().textureUploads==failedGPU.textureUploads,"Rejected supplemental update leaves prior ownership and resources usable");
+    text["text"]["string"]="C";field.updateLocalContent(id,3,text,options);const auto pendingGPU=renderer.stats();
+    rejects([&]{composition.setEntries(renderer,invalidOrder);},"Late invalid supplemental data prevents earlier changed texture upload");
+    check(renderer.stats().textureUploads==pendingGPU.textureUploads,"Whole-entry preflight precedes all changed-scene uploads");
+    rejects([&]{composition.present(renderer);},"Rejected resource update does not advance committed entry revision");
+    bool allocationFailed{};failNextAllocation=true;try{composition.setEntries(renderer,replacementOrder);}catch(const std::bad_alloc&){allocationFailed=true;}catch(...){failNextAllocation=false;throw;}failNextAllocation=false;
+    check(allocationFailed&&composition.draws().data()==storage&&renderer.stats().textures==2&&renderer.stats().meshes==3,"Injected upload allocation failure keeps published identities and resident siblings");
+    rejects([&]{composition.present(renderer);},"Failed upload leaves prior revision gate closed until successful retry");
+    composition.setEntries(renderer,replacementOrder);composition.present(renderer);check(composition.draws().back().opacity==.5f,"Resource upload retry preserves supplemental owner and exact order");
+    text["text"]["string"]="D";field.updateLocalContent(id,4,text,options);field.uploadResources(renderer);const auto residentGPU=renderer.stats();
+    allocations=0;counting=true;try{composition.setEntries(renderer,replacementOrder);}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&renderer.stats().textureUploads==residentGPU.textureUploads&&composition.draws().data()==storage,"Already uploaded local content advances composition revision without allocation or duplicate uploads");composition.present(renderer);
+    auto renamed=replacement;renamed.sourceID="retained-after-renamed";auto renamedOrder=replacementOrder;renamedOrder[1].after=std::span(&renamed,1);composition.setEntries(renderer,renamedOrder);
+    check(composition.draws().data()!=storage&&composition.draws().back().sourceID==renamed.sourceID,"Changed supplemental identity retains the structural transactional fallback");
+    composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==1&&renderer.stats().objects==0,"Fast resource updates preserve normal borrowed retirement lifecycle");check(renderer.removeMesh("retained-after-mesh"),"Caller can retire supplemental mesh only after composition detach");
+}
 void roundedComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRasterOptions& options){
     auto parent=root({leaf("rounded-child",1,0,0)});parent["masksToBounds"]=true;parent["cornerRadius"]=8;
     parent["bounds"]=Json::Array{8,8,16,16};
@@ -260,6 +307,7 @@ void run(const std::filesystem::path& shader){
     check(raster.stats().entries==0,"Scene destruction releases its final local raster");
     composition(renderer,raster,options);
     supplementalComposition(renderer,raster,options);
+    retainedResourceComposition(renderer,raster,options);
     roundedComposition(renderer,raster,options);
     check(raster.stats().entries==0,"Sibling scene destruction releases only its own retained local rasters");
     check(!IsWindowVisible(window.hwnd),"The fixture never shows or captures a desktop window");

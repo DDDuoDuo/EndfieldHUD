@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <stdexcept>
 using Microsoft::WRL::ComPtr;
@@ -235,6 +236,40 @@ void run(Renderer&renderer,HWND hwnd){
     check(!IsWindowVisible(hwnd),"Fixture never displays a window or changes real IME profile");
     LayerScene rejected(raster);Buffer longDoc(std::u16string(65,u'x'),1024);rejects([&]{NativeProjectedEditor bad(hwnd,longDoc,rejected,style,options,{64},WM_APP+122,92);},"Oversized initial field rejects explicitly with document intact");check(longDoc.text().size()==65&&rejected.contentRevision()==0,"Rejected construction does not truncate data or replace borrowed scene");
 }
+void scrolling(Renderer&renderer,HWND hwnd){
+    LayerRasterizer raster;LayerScene scene(raster);std::u16string value;for(unsigned k=0;k<240;++k)value+=u"中文输入与选择 日本語 한국어 😀\n";Buffer doc(value,65536);
+    ProjectedEditorStyle style;style.width=180;style.height=80;style.fontSize=12;style.lineHeight=18;style.baseline=13;style.cornerRadius=3;
+    LayerRasterOptions options;options.pixelsPerPoint=1;NativeProjectedEditor editor(hwnd,doc,scene,style,options,{65536},WM_APP+124,94);
+    ComPtr<FakeManager>manager;manager.Attach(new FakeManager);ok(editor.connect(*manager.Get(),7),"Scrollable editor borrows isolated manager");ok(editor.focus(true),"Focus isolated scrollable field");
+    ComPtr<Sink>sink;sink.Attach(new Sink);auto*store=editor.textStore();ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_SEL_CHANGE|TS_AS_LAYOUT_CHANGE),"Observe scrolled geometry with fake TSF sink");
+    check(validPlacement(editor.placement())&&!editor.placement().visible,"Pre-pose editor has a valid concealed TSF plane");
+    const auto unposedRevision=scene.resourceRevision();const auto unposedRaster=raster.stats().rasterizations;
+    locked(store,sink.Get(),[&]{check(!editor.scrollBy(25)&&!editor.syncContent(),"TSF lock declines scroll and sync before first projected pose");});
+    check(editor.scrollOffset()==0&&scene.resourceRevision()==unposedRevision&&raster.stats().rasterizations==unposedRaster,"Pre-pose locked scroll cannot mutate viewport pixels or offset");
+    check(editor.setScrollOffset(23.125)&&editor.placement().scroll.y==23.125&&!editor.placement().visible,"Unlocked initial restore updates only concealed document geometry");
+    check(editor.setScrollOffset(0),"Restore original top before first visible pose");
+    ProjectedEditorPose pose;pose.localToScreen=Matrix4::translation(30,40);pose.localToScreen.values[3]=.00007;pose.localToScreen.values[7]=-.00002;pose.screenToClip=layerViewportProjection(512,256);pose.pixelWidth=512;pose.pixelHeight=256;pose.ownerFocused=true;editor.setPose(pose);
+    LayerComposition composition;const std::array scenes{&scene};composition.setScenes(renderer,scenes);renderer.setCamera(pose.screenToClip);
+    auto sync=[&]{editor.syncContent();editor.setPose(pose);composition.upload(renderer);composition.present(renderer);};
+    const auto end=static_cast<std::uint32_t>(doc.text().size());check(editor.maximumScrollOffset()>3000&&editor.scrollOffset()==0,"Long Chinese document starts at preserved top offset");
+    check(scene.report().pixelBytes<180*80*4+2048,"Empty adornments and caret retain only ink-sized pixels");
+    editor.command(ProjectedEditorCommand::documentEnd);check(!editor.setScrollOffset(0),"Initial restore clears pending end reveal even at equal offset");sync();check(editor.scrollOffset()==0,"Session offset restore wins over initial selection-at-end");
+    editor.command(ProjectedEditorCommand::documentEnd);sync();check(editor.scrollOffset()>0&&editor.placement().scroll.y==editor.scrollOffset(),"Keyboard navigation reveals caret and updates shared placement");
+    const auto visible=projectedRange(doc,editor.layout(),{end,end},editor.placement());check(visible&&visible->clientBounds.height>0,"Revealed final empty line has a projected caret");
+    const auto identity=editor.layout().painted()->layoutIdentity(),beforeLayouts=raster.stats().textLayoutsCreated;const auto viewportBytes=scene.report().pixelBytes;
+    for(unsigned k=1;k<=12;++k){check(editor.setScrollOffset(double(k)*23.125),"Fractional logical scrolling accepted");composition.upload(renderer);composition.present(renderer);check(editor.layout().painted()->layoutIdentity()==identity&&editor.placement().scroll.y==double(k)*23.125,"Glyph, hit and candidate geometry share exact retained layout and offset");}
+    check(raster.stats().textLayoutsCreated==beforeLayouts&&scene.report().pixelBytes<=viewportBytes+2048,"Scroll shapes no text and retains bounded viewport artwork");
+    const auto scroll=editor.scrollOffset();const auto resourceRevision=scene.resourceRevision();const auto bytes=raster.stats().resourceBytes;locked(store,sink.Get(),[&]{check(!editor.scrollBy(25),"TSF write lock declines scroll before painting");});check(editor.scrollOffset()==scroll&&scene.resourceRevision()==resourceRevision&&raster.stats().resourceBytes==bytes,"Locked scroll keeps pixels and projection together");
+    rejects([&]{editor.scrollBy(std::numeric_limits<double>::infinity());},"Nonfinite wheel offset rejects");
+    check(editor.setScrollOffset(0),"Return to first line for projected selection");sync();const auto first=editor.layout().selectionRectangles({0,1}).front();const auto click=editor.placement().projection.project({first.x+first.width*.1,first.y+first.height*.5});check(click&&editor.pointerDown(*click).handled,"Scrolled pointer uses exact document ACP");sync();const auto outside=editor.placement().projection.project({first.x+first.width*.5,style.height+100});check(outside&&editor.pointerDrag(*outside).handled,"Drag outside viewport reaches later document lines");sync();editor.pointerUp();check(editor.scrollOffset()>0&&doc.selection().range.end>1,"Event-driven drag reveal advances beyond viewport-clamped hit");
+    editor.command(ProjectedEditorCommand::documentEnd);sync();editor.character(u'文');sync();const auto typing=raster.stats();editor.character(u'字');sync();check(raster.stats().textLayoutsCreated==typing.textLayoutsCreated+1&&raster.stats().rasterizations==typing.rasterizations+1,"Typing with unchanged caret metrics paints one viewport, not four full images");
+    const auto caretRaster=raster.stats().rasterizations;editor.command(ProjectedEditorCommand::left);sync();check(raster.stats().rasterizations==caretRaster,"Collapsed caret navigation moves numeric quad without rasterizing");
+    const auto selected=doc.selection().range.start;RECT actual{};BOOL clipped{};locked(store,sink.Get(),[&]{ok(store->GetTextExt(ProjectedTextInput::viewCookie,LONG(selected),LONG(selected),&actual,&clipped),"TSF reads actual scrolled caret");});const auto expected=projectedRange(doc,editor.layout(),{selected,selected},editor.placement());POINT origin{};check(ClientToScreen(hwnd,&origin)&&expected&&actual.top==LONG(std::floor(expected->clientBounds.y))+origin.y,"Candidate extent applies fractional scroll and perspective exactly once");
+    const auto frozen=raster.stats();const auto gpu=renderer.stats();allocations=0;counting=true;try{for(unsigned k=0;k<120;++k){pose.localToScreen.values[3]=double(k)*.000001;editor.setPose(pose);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==frozen.rasterizations&&renderer.stats().textureUploads==gpu.textureUploads,"Scrolled editing pose frames allocate, reshape and upload nothing");
+    ok(store->UnadviseSink(sink.Get()),"Detach scroll fixture sink");ok(editor.stop(),"Stop scroll fixture");composition.detach(renderer);
 }
-int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+
+}
+int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

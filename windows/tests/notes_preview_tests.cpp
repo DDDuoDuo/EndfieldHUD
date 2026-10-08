@@ -343,6 +343,46 @@ void reentrantClock(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesCo
     f.release();
 }
 
+void scrollPreview(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
+    gpu::LayerRasterizer raster;
+    Fixture f(hwnd, renderer, raster, assets);
+    const auto note = savedNotes(f.root.path).front();
+    const core::Point body{note.x + 30, note.y + 45};
+    auto wheel = [&](double steps) {
+        f.time += .01;
+        const bool handled = f.preview->wheel({body.x,body.y,steps,false,0,3},f.time);
+        f.frame();
+        return handled;
+    };
+    renderer.draw(false);const auto top = renderer.readback();
+    check(wheel(-1), "Actual Notes wheel routes to the nonediting card");
+    renderer.draw(false);const auto lower = renderer.readback();
+    check(top.pixels != lower.pixels, "Forwarded wheel visibly reveals different note lines");
+    check(savedNotes(f.root.path).front().text == note.text, "View scrolling never edits stored note text");
+    check(f.pointer(app::PointerKind::doubleClick,body), "Scrolled note enters projected editing");
+    auto painted = [&]() -> std::shared_ptr<const gpu::PaintedTextLayout> {
+        for(const auto& entry:f.preview->entries())if(auto value=entry.scene->paintedTextLayout("projected-editor-glyphs"))return value;
+        return {};
+    };
+    const auto initial = painted();check(bool(initial),"Scrollable editor publishes its measured text layout");
+    const auto identity = initial->layoutIdentity();
+    const auto layouts = raster.stats().textLayoutsCreated;
+    check(wheel(-1),"Actual Notes wheel reaches the projected editor");
+    check(painted()->layoutIdentity() == identity && raster.stats().textLayoutsCreated == layouts,
+        "Editing scroll reuses the exact glyph/hit/IME layout without reshaping");
+    // Moderate finite wheel events reach the lower bound without crossing the
+    // horizon of a tilted plane or fabricating an unbounded input displacement.
+    for(unsigned n=0;n<12;++n)check(wheel(-1),"Editor consumes scrolling through and at the lower limit");
+    const auto atLimit=raster.stats().rasterizations;
+    check(wheel(-1)&&raster.stats().rasterizations==atLimit,"Extra wheel at the limit creates no new artwork");
+    check(wheel(1),"Editor can scroll back upward");
+    check(savedNotes(f.root.path).front().text == note.text,"Editing viewport motion does not save the draft");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Scrolled editor finishes normally");
+    check(savedNotes(f.root.path).front().text == note.text,"Finishing unchanged scrolled text preserves stored content");
+    check(!f.preview->wheel({1270,790,-1,false,0,3},f.time),"Wheel outside Notes remains available to its owner");
+    f.release();
+}
+
 void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAssets& assets) {
     gpu::LayerRasterizer raster;
     Fixture fixture(hwnd, renderer, raster, assets);
@@ -373,6 +413,7 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     const core::Point textPoint{original.x + 30, original.y + 45};
     check(fixture.preview->covers(textPoint), "Projected note body participates in shell input occlusion");
     check(fixture.pointer(app::PointerKind::doubleClick, textPoint), "Actual double-click enters the plain projected field");
+    check(fixture.key(app::KeyKind::down, VK_HOME), "Explicit Home moves the source end-selected editor to the insertion test start");
     check(fixture.composition.sceneCount() == 4 && fixture.matching("projected-editor-glyphs", true) == 1,
         "Entering edit publishes one actual glyph surface after its card");
     check(fixture.matching("external-editor-border", true) == 1,
@@ -587,6 +628,7 @@ int wmain(int argc, wchar_t** argv) {
         renderer.initialize(window.hwnd, 1280, 800,
             {gpu::Driver::warpForTests, argv[1], gpu::RenderTarget::offscreenForTests});
         reentrantClock(window.hwnd, renderer, assets);
+        scrollPreview(window.hwnd, renderer, assets);
         run(window.hwnd, renderer, assets);
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

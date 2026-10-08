@@ -241,6 +241,7 @@ void LayerComposition::setScenes(Renderer& renderer,std::span<LayerScene* const>
 }
 void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompositionEntry> order){
     checkRenderer(renderer);
+    if(updateRetainedResources(renderer,order))return;
     std::size_t count{},stageCount{};std::unordered_set<LayerScene*> unique;
     std::vector<Entry> next;next.reserve(order.size());
     for(const auto& input:order){const auto scene=input.scene;
@@ -279,6 +280,29 @@ void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompos
     for(const auto&entry:next){entry.scene->compositionOwner_=this;entry.scene->collectRetiredResources(renderer);}
     scenes_=std::move(next);draws_=std::move(nextDraws);inverseTransforms_=std::move(nextInverse);stagedAfter_=std::move(nextStage);
     if(!renderer_)publicationOwners.emplace_back(&renderer,this);renderer_=&renderer;
+}
+bool LayerComposition::updateRetainedResources(Renderer& renderer,std::span<const LayerCompositionEntry> order){
+    if(renderer_!=&renderer||publicationOwner(renderer)!=this||order.size()!=scenes_.size()||renderer.stats().objects!=draws_.size())return false;
+    auto sameIdentity=[](const DrawObject&a,const DrawObject&b){return a.sourceID==b.sourceID&&a.meshID==b.meshID&&a.textureID==b.textureID;};
+    // Match the complete structure before allocating candidate lists. Resource
+    // revisions may differ; immutable identities/ordering may not. In
+    // particular, equal counts alone are insufficient after a scene reload.
+    for(std::size_t n=0;n<order.size();++n){const auto&input=order[n];const auto&entry=scenes_[n];const auto*scene=input.scene;
+        if(scene!=entry.scene||scene->compositionOwner_!=this||scene->groupOwner_||scene->resourceOwner_!=&renderer||scene->revision_!=entry.structureRevision||scene->draws_.size()!=entry.count||input.after.size()!=entry.after.size())return false;
+        for(std::size_t j=0;j<entry.count;++j)if(!sameIdentity(scene->draws_[j],draws_[entry.begin+j]))return false;
+        for(std::size_t j=0;j<input.after.size();++j)if(!sameIdentity(input.after[j],stagedAfter_[entry.stageBegin+j]))return false;
+    }
+    // Keep malformed late supplemental updates from partially uploading an
+    // earlier scene. Numeric changes themselves are committed by present().
+    for(std::size_t n=0;n<order.size();++n){for(const auto&draw:order[n].scene->draws_)validateDrawObject(draw);for(const auto&draw:order[n].after)validateDrawObject(draw);}
+    for(const auto&entry:scenes_)if(entry.scene->uploadedRevision_!=entry.scene->resourceRevision_)entry.scene->uploadResources(renderer);
+    // Renderer retains pointers to std::map Mesh/Texture values. Its
+    // insert_or_assign replacements preserve those addresses even when the
+    // local image bounds change, so no draw list/object buffer republish is
+    // required. Commit borrowed spans/revisions only after every upload passes;
+    // failed uploads leave prior ownership and identities available for retry.
+    for(std::size_t n=0;n<order.size();++n){scenes_[n].resourceRevision=order[n].scene->resourceRevision_;scenes_[n].after=order[n].after;}
+    return true;
 }
 void LayerComposition::upload(Renderer& renderer){
     checkRenderer(renderer);std::vector<LayerCompositionEntry> order;order.reserve(scenes_.size());for(const auto&entry:scenes_)order.push_back({entry.scene,entry.after});

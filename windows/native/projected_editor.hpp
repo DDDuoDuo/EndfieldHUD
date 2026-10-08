@@ -23,12 +23,12 @@ struct ProjectedEditorPose {
     unsigned pixelWidth{},pixelHeight{};
     float opacity{1};bool visible{true},ownerFocused{},caretVisible{true};
 };
-// Reusable short plain-text field, explicitly a bounded integration stage.
+// Reusable bounded plain-text document with a fixed visible raster viewport.
 // Caller-owned Document, dedicated EMPTY LayerScene/rasterizer, HWND and shared
 // activated TSF manager outlive this UI-thread adapter. A caller must explicitly
 // reject rich Notes before construction; no formatting is captured/flattened.
 // Capacity is a fixture/leaf limitation (<=65536 UTF16), not a Notes storage limit.
-// Long-document viewport/global-ACP and visual-bidi/word navigation are deferred.
+// Rich text and visual-bidi/word navigation remain separate integration work.
 // No window, renderer, publisher, clock, focus stealing, clipboard or timers.
 class NativeProjectedEditor final {
 public:
@@ -53,6 +53,18 @@ public:
     // Same world/camera drive glyphs, adornments, pointer and TSF geometry.
     // No raster/JSON/text measurement/allocation on unchanged-document frames.
     bool setPose(const ProjectedEditorPose&);
+    // Logical document points, positive downward. Requires synchronized text.
+    // Repaints only viewport pixels from the same DWrite layout and refreshes
+    // the current pose/TSF placement; caller uploads/presents changed resources.
+    // A locked TSF transaction declines scrolling before any paint mutation.
+    bool setScrollOffset(double);
+    bool scrollBy(double);
+    double scrollOffset()const noexcept;
+    double maximumScrollOffset()const noexcept;
+    // Explicit reveal is also available; ordinary command/character/TSF text
+    // edits coalesce reveal into their next sync. Manual scroll cancels pending
+    // reveal (including an unchanged restore). Pointer-down never reveals.
+    bool revealCaret();
     ProjectedEditorResult command(ProjectedEditorCommand,bool extend=false);
     ProjectedEditorResult character(std::uint32_t value,bool unicodeScalar=false);
     // Client PHYSICAL pixels. Host owns actual focus/capture. Call syncContent

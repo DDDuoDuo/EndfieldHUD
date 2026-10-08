@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -27,6 +28,13 @@ struct LayerRasterOptions {
     // every rasterization using these options. Content events reference an
     // exact immutable key/revision; pointer frames never query the provider.
     LayerImageSource* memoryImages{};
+    // Explicit plain editor leaf: shape the whole bounded document, but paint
+    // only this leaf's fixed bounds. Repainting a scroll may borrow the exact
+    // immutable layout; text/format changes must supply a new handle instead.
+    bool plainTextDocument{};
+    core::Point textDocumentOffset{};
+    std::shared_ptr<const PaintedTextLayout> retainedPlainText;
+    std::optional<std::uint32_t> revealPlainTextPosition;
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };
@@ -61,6 +69,7 @@ struct LayerRasterImage {
     std::vector<std::uint8_t> straightRGBA; // sRGB bytes, top-left rows, tight stride width*4
     std::vector<LayerRasterIssue> unsupported;
     std::vector<LayerFontSubstitution> fontSubstitutions;
+    core::Point textDocumentOffset{}; // effective offset after optional caret reveal
     bool complete() const noexcept { return unsupported.empty(); }
 };
 struct LayerRasterStats {

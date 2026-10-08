@@ -49,7 +49,7 @@ struct NativeNotesWorkspace::Impl {
         core::Rect rect;bool selected{},pinned{},editing{},visible{},outgoing{},deleted{};
         NativeNotesCardToken token{};std::size_t tokenIndex{tokenCapacity};mod::NotesMotionSample motion;
         core::Matrix4 effectiveWorkspace;core::Projection hitProjection;
-        std::size_t ordinal{};bool initialized{};
+        std::size_t ordinal{};bool initialized{};double scrollOffset{};
         explicit Slot(std::string id):presentation(std::move(id)){}
     };
     struct Field {
@@ -107,9 +107,10 @@ struct NativeNotesWorkspace::Impl {
         if(s.initialized&&s.visible!=c->visible){s.motion={};issueToken(s);}
         const bool edit=field&&field->id==n.id;const auto measurement=measure(n.id,n,c->rect,force?nullptr:s.measurement);
         const bool content=force||!s.initialized||s.measurement!=measurement||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
-        bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;input.measured=measurement->presentationText(measurement);s.presentation.updateContent(state,input);
+        bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;input.measured=measurement->presentationText(measurement);input.scrollOffset=s.scrollOffset;s.presentation.updateContent(state,input);
             if(!s.native)s.native=std::make_unique<NativeNotesCardScene>(s.presentation,raster,options.raster,style.editor);
             s.native->syncContent();s.measurement=measurement;++stats.cardContentUpdates;++compositionRevision;
+            if(!edit)s.scrollOffset=s.presentation.scrollOffset();
         }else if(s.presentation.updatePlacement(state)){moved=true;++stats.cardPlacementUpdates;}
         s.rect=c->rect;s.selected=c->selected;s.pinned=c->pinned;s.visible=c->visible;s.editing=edit;s.ordinal=ordinal;s.initialized=true;return content||moved;
     }
@@ -151,12 +152,17 @@ struct NativeNotesWorkspace::Impl {
         plain(n);geometry(r,true);need(retiredFields.size()<options.maximumRetainedCards,"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
         auto value=utf16(n.text,options.maximumEditorUnits);auto measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);
         auto next=std::make_unique<Field>(n.id,std::move(value),options.maximumEditorUnits,raster);next->generation=generation+1;
+        const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});
         ProjectedEditorStyle e;e.width=r.width-18;e.height=std::max(1.,r.height-58);e.fontSize=12;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
         next->native=std::make_unique<NativeProjectedEditor>(hwnd,next->document,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
+        // Source selects the end before restoring the session viewport. A
+        // restored offset must not be replaced by initial caret revelation.
+        next->native->setScrollOffset(find(n.id)?find(n.id)->scrollOffset:0);
         if(options.activatedTextManager)need(SUCCEEDED(next->native->connect(*options.activatedTextManager,options.textClient)),"Cannot connect Notes field to caller TSF manager");return next;
     }
     NativeNotesFinishResult finish(bool commit){
-        check();editorOwnership();if(!field)return {true,true};if(FAILED(field->native->stop()))return {false,false};
+        check();editorOwnership();if(!field)return {true,true};const auto offset=field->native->scrollOffset();if(FAILED(field->native->stop()))return {false,false};
+        if(auto*s=find(field->id))s->scrollOffset=offset;
         const auto value=commit?utf8(field->document.text()):std::string{};bool saved=true;if(commit)saved=state.finishEditing(value);else state.detachEditor();
         retiredFields.push_back(std::move(field));sync();return {true,saved};
     }
@@ -173,6 +179,9 @@ bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*imp
     // when NotesState already marks those unpinned cards target-hidden.
     decltype(i.slots) replacements;for(const auto&[id,s]:i.slots){auto next=std::make_unique<Impl::Slot>(id);next->outgoing=s->outgoing;next->motion=s->motion;next->token=s->token;next->tokenIndex=s->tokenIndex;next->measurement=s->measurement;replacements.emplace(id,std::move(next));}
     i.finishRequired();
+    // Finishing may have captured a newer editor offset than the staged
+    // replacement. The settled refresh below clamps it to the h-37 viewport.
+    for(auto&[id,s]:replacements)if(const auto*old=i.find(id))s->scrollOffset=old->scrollOffset;
     // The appearance is constructor-owned by each card adapter. Keep old
     // scenes alive for the caller's one composition replacement.
     for(auto&[id,s]:i.slots)i.retiredCards.push_back(std::move(s));i.slots=std::move(replacements);for(auto&[id,s]:i.slots)i.tokenSlots[s->tokenIndex]=s.get();i.style=std::move(style);i.synchronized=0;i.sync();return true;
@@ -251,6 +260,35 @@ std::optional<NativeNotesWorkspaceHit>NativeNotesWorkspace::hitTest(core::Point 
         return NativeNotesWorkspaceHit{id,"select",NativeNotesWorkspaceHit::Kind::body,*p};}return{};
 }
 bool NativeNotesWorkspace::setFeedback(std::string_view id,std::optional<std::string_view>verb,bool pressed,bool reduced,double time){auto&i=*impl_;i.check();need(std::isfinite(time)&&(!i.lastTime||time>=*i.lastTime),"Invalid Notes feedback clock");auto*s=i.find(id);if(!s||!s->visible)return false;const bool changed=s->native->setFeedback(verb,pressed,reduced,time);i.lastTime=time;if(i.pose)i.pose->time=time;return changed;}
+bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
+    auto&i=*impl_;i.check();
+    if(!std::isfinite(point.x)||!std::isfinite(point.y)||!std::isfinite(delta)||!std::isfinite(point.y+delta))return false;
+    need(i.synchronized==i.state.revision(),"Synchronize Notes before scrolling");
+    if(!i.pose||i.pose->opacity==0)return false;
+    for(auto it=i.active.rbegin();it!=i.active.rend();++it){auto*s=*it;
+        if(!s->visible||s->outgoing||s->deleted||s->motion.opacity==0)continue;
+        const auto from=s->hitProjection.unproject(point);if(!from||!inside(s->rect,*from))continue;
+        // A covered card never bubbles a wheel to the shell, including while
+        // its geometry is being dragged or when no content can scroll.
+        if(delta==0||i.drag||i.state.dragging())return true;
+        const auto to=s->hitProjection.unproject({point.x,point.y+delta});if(!to)return true;
+        const auto localDelta=to->y-from->y;if(!std::isfinite(localDelta))return true;
+        if(i.field&&i.field->id==s->presentation.noteID()){
+            // A queued TSF write may precede its owner synchronization. Do not
+            // use old geometry or reenter a text lock just to handle a wheel.
+            if(i.field->native->layout().textRevision()!=i.field->document.revision())return true;
+            if(i.field->native->scrollBy(localDelta)){s->scrollOffset=i.field->native->scrollOffset();++i.compositionRevision;++i.stats.editorContentUpdates;if(i.pose)i.applyPose(*i.pose);}
+            return true;
+        }
+        need(s->measurement!=nullptr,"Visible Notes card has no retained measurement");
+        const auto maximum=std::max(0.,s->measurement->measured.height-std::max(1.,s->rect.height-37));
+        const auto next=std::clamp(s->scrollOffset+localDelta,0.,maximum);if(next==s->scrollOffset)return true;
+        mod::NotesPresentationInput input;input.palette=i.style.palette;input.strings=i.style.strings;input.measured=s->measurement->presentationText(s->measurement);input.scrollOffset=next;
+        s->presentation.updateContent(i.state,input);s->native->syncContent();s->scrollOffset=s->presentation.scrollOffset();++i.stats.cardContentUpdates;++i.compositionRevision;
+        if(i.pose)i.applyPose(*i.pose);return true;
+    }
+    return false;
+}
 const mod::NotesCardPresentation*NativeNotesWorkspace::card(std::string_view id)const noexcept{const auto*s=impl_->find(id);return s?&s->presentation:nullptr;}
 NativeNotesWorkspaceStats NativeNotesWorkspace::stats()const noexcept{auto result=impl_->stats;result.cards=impl_->slots.size();result.visibleCards=impl_->active.size();result.retiredCards=impl_->retiredCards.size();result.retiredEditors=impl_->retiredFields.size();result.deletingCards=impl_->deletingCards.size();return result;}
 NativeNotesTextMeasureStats NativeNotesWorkspace::measurementStats()const{impl_->check();return impl_->measurer.stats();}

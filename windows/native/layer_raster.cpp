@@ -293,11 +293,33 @@ struct LayerRasterizer::Impl {
     ComPtr<ID2D1SolidColorBrush> brush(ID2D1RenderTarget* target,const Json& value,float alpha=1){
         D2D1_COLOR_F c{};ComPtr<ID2D1SolidColorBrush> result;if(color(value,c,alpha))checked(target->CreateSolidColorBrush(c,result.GetAddressOf()),"Create source color brush");return result;
     }
+    core::Point textOffset(IDWriteTextLayout*layout,const LayerRasterOptions& options,core::Rect bounds){
+        auto offset=options.textDocumentOffset;if(!options.plainTextDocument)return offset;
+        DWRITE_TEXT_METRICS metrics{};checked(layout->GetMetrics(&metrics),"Read bounded document extent");
+        if(!std::isfinite(metrics.top)||!std::isfinite(metrics.height)||metrics.height<0)invalid("Invalid text document extent");
+        const auto maximum=std::max(0.,std::ceil(double(metrics.top)+metrics.height)+1-bounds.height);
+        offset.y=std::min(offset.y,maximum);
+        if(options.revealPlainTextPosition){FLOAT x{},y{};DWRITE_HIT_TEST_METRICS hit{};checked(layout->HitTestTextPosition(*options.revealPlainTextPosition,FALSE,&x,&y,&hit),"Resolve document caret before painting");
+            const auto bottom=double(y)+std::max(1.,double(hit.height));if(y<offset.y)offset.y=y;else if(bottom>offset.y+bounds.height)offset.y=bottom-bounds.height;offset.y=std::clamp(offset.y,0.,maximum);}
+        return offset;
+    }
     void drawText(ID2D1RenderTarget* target,const Json& node,const LayerRasterOptions& options,LayerRasterImage& result,
                   std::vector<ComPtr<IDWriteTextLayout>>& layouts,float opacity){
-        const auto& descriptor=node["text"];const auto bounds=rectangle(node["bounds"]);const auto value=wide(string(descriptor["string"]));
+        const auto& descriptor=node["text"];const auto bounds=rectangle(node["bounds"]);
+        if(options.retainedPlainText){
+            const auto& retained=*options.retainedPlainText;
+            if(!retained.matchesPlainStyle(descriptor,bounds))invalid("Retained plain layout differs from its text or format");
+            if(options.revealPlainTextPosition&&*options.revealPlainTextPosition>retained.text().size())invalid("Reveal ACP exceeds document");
+            result.textDocumentOffset=textOffset(retained.nativeLayout(),options,bounds);
+            auto foreground=brush(target,descriptor["foregroundColor"],opacity);
+            target->PushAxisAlignedClip(rect(bounds),D2D1_ANTIALIAS_MODE_ALIASED);
+            if(foreground)target->DrawTextLayout(D2D1::Point2F(static_cast<float>(bounds.x-result.textDocumentOffset.x),static_cast<float>(bounds.y-result.textDocumentOffset.y)),retained.nativeLayout(),foreground.Get(),D2D1_DRAW_TEXT_OPTIONS_NONE);
+            target->PopAxisAlignedClip();layouts.push_back(retained.nativeLayout());return;
+        }
+        const auto value=wide(string(descriptor["string"]));
         if((value.empty()&&!options.retainEmptyTextLayout)||bounds.width<=0||bounds.height<=0)return;
         if(value.size()>65536)invalid("Text layout exceeds its UTF-16 limit");
+        if(options.revealPlainTextPosition&&*options.revealPlainTextPosition>value.size())invalid("Reveal ACP exceeds document");
         const auto family=fontFamily(descriptor["font"],node,options,result);const auto size=real(descriptor["fontSize"],12);
         if(size<=0||size>2048)invalid("Text size exceeds its range");
         const auto italic=(static_cast<unsigned>(number(descriptor["font"]["symbolicTraits"]))&1)!=0;
@@ -315,7 +337,7 @@ struct LayerRasterizer::Impl {
             DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER,0,0};checked(format->SetTrimming(&trimming,ellipsis.Get()),"Set text trimming");
         }else if(truncation!="none")issue(result,node,"unsupported text truncation: "+truncation);
         ComPtr<IDWriteTextLayout> layout;checked(text->CreateTextLayout(value.data(),static_cast<UINT32>(value.size()),format.Get(),
-            static_cast<float>(bounds.width),static_cast<float>(bounds.height),layout.GetAddressOf()),"Create retained source text layout");++counts.textLayoutsCreated;
+            static_cast<float>(bounds.width),options.plainTextDocument?std::numeric_limits<float>::max():static_cast<float>(bounds.height),layout.GetAddressOf()),"Create retained source text layout");++counts.textLayoutsCreated;
         if(!descriptor["runs"].isNull())for(const auto& run:array(descriptor["runs"],4096)){
             const auto& r=array(run["utf16Range"],2);if(r.size()!=2)invalid("Invalid UTF-16 run range");
             const double start=number(r[0]),length=number(r[1]);if(start<0||length<0||std::floor(start)!=start||std::floor(length)!=length||start+length>value.size())invalid("Text run exceeds UTF-16 string");
@@ -339,8 +361,11 @@ struct LayerRasterizer::Impl {
                 else issue(result,node,"unsupported text attribute: "+key);
             }
         }
+        result.textDocumentOffset=textOffset(layout.Get(),options,bounds);
         auto foreground=brush(target,descriptor["foregroundColor"],opacity);
-        if(foreground)target->DrawTextLayout(D2D1::Point2F(static_cast<float>(bounds.x),static_cast<float>(bounds.y)),layout.Get(),foreground.Get(),D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if(options.plainTextDocument)target->PushAxisAlignedClip(rect(bounds),D2D1_ANTIALIAS_MODE_ALIASED);
+        if(foreground)target->DrawTextLayout(D2D1::Point2F(static_cast<float>(bounds.x-result.textDocumentOffset.x),static_cast<float>(bounds.y-result.textDocumentOffset.y)),layout.Get(),foreground.Get(),options.plainTextDocument?D2D1_DRAW_TEXT_OPTIONS_NONE:D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        if(options.plainTextDocument)target->PopAxisAlignedClip();
         layouts.push_back(std::move(layout));
     }
     void draw(ID2D1RenderTarget* target,const Json& node,const Matrix& world,const Matrix& pixels,
@@ -519,10 +544,17 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     if(id.empty()||id.size()>4096||!Json::validUtf8(id))invalid("Invalid retained layer ID");
     if(!std::isfinite(options.pixelsPerPoint)||options.pixelsPerPoint<.25||options.pixelsPerPoint>4
        ||!std::isfinite(options.paddingPoints)||options.paddingPoints<0||options.paddingPoints>64)invalid("Invalid local raster scale/padding");
+    if(!std::isfinite(options.textDocumentOffset.x)||!std::isfinite(options.textDocumentOffset.y)||options.textDocumentOffset.x!=0||options.textDocumentOffset.y<0||options.textDocumentOffset.y>3e9)invalid("Invalid plain document offset");
+    if(options.plainTextDocument&&string(layer["kind"])=="text"){
+        if((!layer["children"].isNull()&&!array(layer["children"],maximumNodes).empty())||!flag(layer["text"]["wrapped"])||string(layer["text"]["truncation"],"none")!="none"||(!layer["text"]["runs"].isNull()&&!array(layer["text"]["runs"],4096).empty()))invalid("Document viewport requires one plain wrapped text leaf");
+        if(options.revealPlainTextPosition&&*options.revealPlainTextPosition>65536)invalid("Invalid reveal ACP");
+    }else if(options.retainedPlainText||options.revealPlainTextPosition||options.textDocumentOffset!=core::Point{})invalid("Retained document painting requires an explicit plain text leaf");
     const auto old=r.entries.find(id);
+    if(options.retainedPlainText&&(old==r.entries.end()||old->second.paintedText!=options.retainedPlainText))invalid("Borrowed text layout must belong to this retained surface");
+    if(options.retainedPlainText&&(old->second.options.fallbackFontFamily!=options.fallbackFontFamily||old->second.options.monospaceFallbackFontFamily!=options.monospaceFallbackFontFamily))invalid("Borrowed text layout has different font resolver options");
     if(old!=r.entries.end()&&old->second.revision==revision&&old->second.options==options){++r.counts.cacheHits;return old->second.image;}
     if(old==r.entries.end()&&r.entries.size()>=maximumEntries)invalid("Retained layer cache is full; remove unused source IDs");
-    auto result=std::make_shared<LayerRasterImage>();std::size_t visited=0;
+    auto result=std::make_shared<LayerRasterImage>();if(options.retainedPlainText)result->fontSubstitutions=old->second.image->fontSubstitutions;std::size_t visited=0;
     auto bounds=r.measure(layer,Matrix::Identity(),*result,visited,0);
     bounds.x-=options.paddingPoints;bounds.y-=options.paddingPoints;bounds.width+=options.paddingPoints*2;bounds.height+=options.paddingPoints*2;
     const double w=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.width)*options.pixelsPerPoint),h=std::ceil(std::max(1.0/options.pixelsPerPoint,bounds.height)*options.pixelsPerPoint);
@@ -552,16 +584,17 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     const bool simpleTextClip=(!options.includeRootMask||layer["mask"].isNull())
         &&(!flag(layer["masksToBounds"])||real(layer["cornerRadius"])==0);
     const bool textLeaf=string(layer["kind"])=="text"&&(layer["children"].isNull()||array(layer["children"],maximumNodes).empty())&&simpleTextClip&&result->complete();
-    if(textLeaf&&layouts.size()==1){const auto value=wide(string(layer["text"]["string"]));std::u16string original;original.reserve(value.size());for(auto unit:value)original.push_back(static_cast<char16_t>(unit));
-        painted=std::shared_ptr<const PaintedTextLayout>(new PaintedTextLayout(layouts[0].Get(),std::move(original),revision,rectangle(layer["bounds"])));}
-    const auto oldMetadata=old==r.entries.end()||!old->second.paintedText?0:old->second.paintedText->text().size()*sizeof(char16_t);
-    const auto newMetadata=painted?painted->text().size()*sizeof(char16_t):0;
+    if(textLeaf&&layouts.size()==1&&options.retainedPlainText)painted=options.retainedPlainText;
+    else if(textLeaf&&layouts.size()==1){const auto value=wide(string(layer["text"]["string"]));std::u16string original;original.reserve(value.size());for(auto unit:value)original.push_back(static_cast<char16_t>(unit));
+        painted=std::shared_ptr<const PaintedTextLayout>(new PaintedTextLayout(layouts[0].Get(),std::move(original),revision,rectangle(layer["bounds"]),options.plainTextDocument,layer["text"],result->textDocumentOffset));}
+    const auto oldMetadata=old==r.entries.end()||!old->second.paintedText?0:old->second.paintedText->metadataBytes();
+    const auto newMetadata=painted?painted->metadataBytes():0;
     if(newMetadata>maximumTextMetadataBytes-(r.counts.textMetadataBytes-oldMetadata))invalid("Retained editor text metadata exceeds its bound");
     r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted)});
     r.counts.resourceBytes=r.counts.resourceBytes-previous+bytes;r.counts.textMetadataBytes=r.counts.textMetadataBytes-oldMetadata+newMetadata;++r.counts.rasterizations;return result;
 }
 std::shared_ptr<const PaintedTextLayout>LayerRasterizer::textLayout(const std::string&id,std::uint64_t revision)const{const auto&r=*impl_;r.onThread();const auto found=r.entries.find(id);return found!=r.entries.end()&&found->second.revision==revision?found->second.paintedText:nullptr;}
-bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->text().size()*sizeof(char16_t);r.entries.erase(it);return true;}
+bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->metadataBytes();r.entries.erase(it);return true;}
 void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;r.counts.textMetadataBytes=0;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();return result;}
 } // namespace endfield::native

@@ -46,61 +46,87 @@ public:
 };
 }
 struct NativeProjectedEditor::Impl {
-    DWORD thread{GetCurrentThreadId()};bool alive{true},stopped{},dragging{},poseReady{},styleDirty{true};
+    DWORD thread{GetCurrentThreadId()};bool alive{true},stopped{},dragging{},poseReady{},poseSet{},styleDirty{true},viewportDirty{},revealPending{};
     BoundedDocument document;LayerScene* scene;ProjectedEditorStyle style;LayerRasterOptions options;
     std::unique_ptr<LayerTextLayout> layout;std::unique_ptr<ProjectedTextInput> input;
     std::uint64_t glyphRevision{},shapeRevision{},paintRevision{},structureRevision{},paintedDocument{},adornedDocument{};
     text::Selection adornedSelection;std::optional<text::Range>adornedComposition;std::optional<char16_t>highUnit;
     std::array<std::size_t,4> surfaces{};std::array<DrawObject,4> originals;std::array<LayerPlacement,4> placements;
     std::array<std::array<PlaneMask,8>,4> masks;std::array<std::size_t,4> maskCounts{};
-    text::Placement placement;ProjectedEditorPose pose;
+    text::Placement placement;ProjectedEditorPose pose;double scroll{};core::Rect caretRect;Json glyphContent;std::array<Json,4>shapeContent;
     static constexpr std::array<const char*,4> ids{"projected-editor-selection","projected-editor-glyphs","projected-editor-composition","projected-editor-caret"};
     Impl(text::Document& d,LayerScene& s,ProjectedEditorStyle styleValue,LayerRasterOptions opts,PlainEditorFixtureCapacity capacity)
         :document(d,capacity.maximumUnits),scene(&s),style(std::move(styleValue)),options(std::move(opts)){
-        options.paddingPoints=0;options.retainEmptyTextLayout=true;validate(style,options);need(s.contentRevision()==0&&s.draws().empty(),"Projected editor needs its dedicated initially empty borrowed scene");}
+        options.paddingPoints=0;options.retainEmptyTextLayout=true;options.plainTextDocument=true;options.textDocumentOffset={};options.retainedPlainText.reset();options.revealPlainTextPosition.reset();validate(style,options);need(s.contentRevision()==0&&s.draws().empty(),"Projected editor needs its dedicated initially empty borrowed scene");}
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Projected editor used outside its creating thread");need(alive&&!stopped,"Projected editor is stopped");}
     void current()const{onThread();need(layout&&layout->textRevision()==document.revision(),"Synchronize editor text before geometry/navigation");}
     Json base(unsigned slot)const{return Json::Object{{"id",ids[slot]},{"class","CAShapeLayer"},{"kind","shape"},{"bounds",Json::Array{0,0,style.width,style.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"opacity",1},{"children",Json::Array{}}};}
     Json glyph()const{auto out=base(1);out["class"]="CATextLayer";out["kind"]="text";out["text"]=Json::Object{{"string",utf8(document.text())},{"fontSize",style.fontSize},{"font",Json::Object{{"familyName",style.fontFamily},{"postScriptName",style.fontFace},{"pointSize",style.fontSize}}},{"foregroundColor",rgba(style.textColor)},{"alignment","natural"},{"wrapped",true},{"truncation","none"},{"runs",Json::Array{}}};if(style.lineHeight>0){out["text"]["font"]["ascender"]=style.baseline;out["text"]["font"]["descender"]=style.baseline-style.lineHeight;out["text"]["font"]["leading"]=0;}return out;}
-    Json adornment(unsigned slot,text::Range range)const{auto out=base(slot);Json::Array commands;
-        if(layout)for(auto r:layout->selectionRectangles(range)){if(slot==2){r.y+=std::max(0.,r.height-1);r.height=1;}rectanglePath(commands,r);}
+    Json adornment(unsigned slot,text::Range range)const{auto out=base(slot);out["bounds"]=Json::Array{0,0,0,0};Json::Array commands;
+        if(slot==3){if(caretRect.height>0)rectanglePath(commands,{0,0,1,caretRect.height});}
+        else if(layout&&range.start!=range.end)for(auto r:layout->selectionRectangles(range)){
+            if(slot==2){r.y+=std::max(0.,r.height-1);r.height=1;}
+            r.y-=scroll;const auto x=std::max(0.,r.x),y=std::max(0.,r.y),right=std::min(style.width,r.x+r.width),bottom=std::min(style.height,r.y+r.height);
+            if(right>x&&bottom>y)rectanglePath(commands,{x,y,right-x,bottom-y});}
         const auto& c=slot==0?style.selectionColor:slot==2?style.compositionColor:style.caretColor;
         out["shape"]=Json::Object{{"path",std::move(commands)},{"fillColor",rgba(c)},{"strokeColor",nullptr},{"fillRule","non-zero"}};return out;}
+    LayerRasterOptions glyphOptions(bool reuse)const{auto out=options;out.textDocumentOffset={0,scroll};if(reuse)out.retainedPlainText=layout->painted();else if(revealPending){const auto selected=document.selection();out.revealPlainTextPosition=selected.activeEnd==text::ActiveEnd::start?selected.range.start:selected.range.end;}return out;}
+    double maximumScroll()const noexcept{return layout?std::max(0.,layout->painted()->documentHeight()-style.height):0;}
+    void paintViewport(){scene->updateLocalContent(ids[1],++glyphRevision,glyphContent,glyphOptions(true));viewportDirty=false;++paintRevision;}
     void build(){
-        need(document.text().size()<=document.maximumUnits(),"Caller text exceeds explicitly bounded editor capacity");
+        need(document.text().size()<=document.maximumUnits(),"Caller text exceeds explicitly bounded editor capacity");glyphContent=glyph();
         if(!layout){
-            Json::Array children;children.push_back(adornment(0,{}));children.push_back(glyph());children.push_back(adornment(2,{}));children.push_back(adornment(3,{}));
+            Json::Array children;for(unsigned k=0;k<4;++k){if(k==1)children.push_back(glyphContent);else{shapeContent[k]=adornment(k,{});children.push_back(shapeContent[k]);}}
             scene->load(Json::Object{{"bounds",Json::Array{0,0,style.width,style.height}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"masksToBounds",true},{"children",std::move(children)}},options);
             need(scene->report().unsupported.empty(),"Projected editor scene contains unsupported local effects");structureRevision=scene->contentRevision();
-            for(unsigned i=0;i<4;++i){const auto surface=scene->surfaceIndex(ids[i]);need(surface.has_value(),"Projected editor surface is missing");surfaces[i]=*surface;originals[i]=scene->draws()[*surface];need(originals[i].masks.size()==1&&originals[i].masks[0].bounds==core::Rect{0,0,style.width,style.height}&&originals[i].masks[0].worldToLocal==core::Matrix4{},"Editor leaves must share their one root viewport mask");maskCounts[i]=originals[i].masks.size();}
+            for(unsigned k=0;k<4;++k){const auto surface=scene->surfaceIndex(ids[k]);need(surface.has_value(),"Projected editor surface is missing");surfaces[k]=*surface;originals[k]=scene->draws()[*surface];need(originals[k].masks.size()==1&&originals[k].masks[0].bounds==core::Rect{0,0,style.width,style.height}&&originals[k].masks[0].worldToLocal==core::Matrix4{},"Editor leaves must share their one root viewport mask");maskCounts[k]=originals[k].masks.size();}
             layout=std::make_unique<LayerTextLayout>(scene->paintedTextLayout(ids[1]),document);
         }else{
             need(scene->contentRevision()==structureRevision,"Borrowed editor scene was replaced externally");
-            scene->updateLocalContent(ids[1],++glyphRevision,glyph(),options);layout->bind(scene->paintedTextLayout(ids[1]),document);
+            scene->updateLocalContent(ids[1],++glyphRevision,glyphContent,glyphOptions(false));layout->bind(scene->paintedTextLayout(ids[1]),document);
         }
+        scroll=layout->painted()->initialPaintOffset().y;viewportDirty=false;revealPending=false;
         paintedDocument=document.revision();styleDirty=false;adornedDocument=0;++paintRevision;
     }
     bool sync(){
-        onThread();bool changed{};if(!layout||paintedDocument!=document.revision()||styleDirty){build();changed=true;}
+        onThread();bool changed{},layoutChanged{};
+        // An equal placement is a no-op, but still checks the TSF lock before
+        // any content/pixel mutation. Owner retries after its queued change.
+        if(input){const auto ready=input->setPlacement(placement);if(ready==TS_E_NOLOCK||!alive)return false;checked(ready,"Check editor layout transaction");}
+        if(layout&&paintedDocument!=document.revision())revealPending=true;
+        if(!layout||paintedDocument!=document.revision()||styleDirty){build();changed=layoutChanged=true;}
+        if(revealPending){const auto selected=document.selection();const auto at=selected.activeEnd==text::ActiveEnd::start?selected.range.start:selected.range.end;const auto box=layout->bounds({at,at});
+            if(box){const auto&r=box->bounds;auto next=scroll;if(r.y<next)next=r.y;else if(r.y+r.height>next+style.height)next=r.y+r.height-style.height;next=std::clamp(next,0.,maximumScroll());viewportDirty|=next!=scroll;scroll=next;}revealPending=false;}
+        const bool scrolled=viewportDirty;if(viewportDirty){paintViewport();changed=true;}
         const auto selection=document.selection();const auto composition=document.composition();
-        if(adornedDocument!=document.revision()||selection!=adornedSelection||composition!=adornedComposition){
-            ++shapeRevision;scene->updateLocalContent(ids[0],shapeRevision,adornment(0,selection.range),options);
-            scene->updateLocalContent(ids[2],shapeRevision,adornment(2,composition.value_or(text::Range{})),options);
-            const auto at=selection.activeEnd==text::ActiveEnd::start?selection.range.start:selection.range.end;scene->updateLocalContent(ids[3],shapeRevision,adornment(3,{at,at}),options);
-            adornedDocument=document.revision();adornedSelection=selection;adornedComposition=composition;++paintRevision;changed=true;
+        if(scrolled||adornedDocument!=document.revision()||selection!=adornedSelection||composition!=adornedComposition){
+            const auto at=selection.activeEnd==text::ActiveEnd::start?selection.range.start:selection.range.end;
+            const auto box=layout->bounds({at,at});caretRect=box?box->bounds:core::Rect{};
+            for(unsigned slot:{0u,2u,3u}){auto content=adornment(slot,slot==0?selection.range:composition.value_or(text::Range{}));
+                if(content!=shapeContent[slot]){scene->updateLocalContent(ids[slot],++shapeRevision,content,options);shapeContent[slot]=std::move(content);++paintRevision;}}
+            adornedDocument=document.revision();adornedSelection=selection;adornedComposition=composition;changed=true;
         }
-        if(changed){poseReady=false;if(input)checked(input->layoutChanged(),"Notify current painted editor layout");}return changed;
+        if(changed)poseReady=false;
+        // Selection/composition notifications already came from the text store.
+        // Only a new glyph layout needs another TSF layout invalidation.
+        if(input){bool placementNotified{};if(placement.scroll.y!=scroll){auto next=placement;next.scroll={0,scroll};const auto hr=input->setPlacement(next);if(!alive)return changed;checked(hr,"Update scrolled candidate geometry");placement=next;placementNotified=hr==S_OK;}
+            if(layoutChanged&&!placementNotified)checked(input->layoutChanged(),"Notify current painted editor layout");}return changed;
     }
-    ProjectedEditorResult select(std::uint32_t target,bool extend){
+    ProjectedEditorResult select(std::uint32_t target,bool extend,bool reveal=true){
         if(document.composition())return {};const auto old=document.selection();const auto anchor=extend?(old.activeEnd==text::ActiveEnd::start?old.range.end:old.range.start):target;
         const text::Selection next{{std::min(anchor,target),std::max(anchor,target)},target<anchor?text::ActiveEnd::start:text::ActiveEnd::end,false};
-        const auto hr=input->selectFromHost(next);if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Select projected editor text");return {true,next!=old,false};
+        const auto hr=input->selectFromHost(next);if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Select projected editor text");revealPending|=reveal;return {true,next!=old,false};
     }
-    ProjectedEditorResult replace(text::Range range,std::u16string_view value){const auto hr=input->replaceFromHost(range,value);if(hr==E_INVALIDARG||hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Edit projected document");return {true,true,false};}
+    ProjectedEditorResult replace(text::Range range,std::u16string_view value){const auto hr=input->replaceFromHost(range,value);if(hr==E_INVALIDARG||hr==TS_E_NOLOCK||hr==TS_E_READONLY)return {true,false,false};checked(hr,"Edit projected document");revealPending=true;return {true,true,false};}
 };
 NativeProjectedEditor::NativeProjectedEditor(HWND hwnd,text::Document& doc,LayerScene& scene,ProjectedEditorStyle style,LayerRasterOptions options,PlainEditorFixtureCapacity capacity,UINT message,UINT_PTR generation)
     :impl_(std::make_shared<Impl>(doc,scene,std::move(style),std::move(options),capacity)){
     auto& i=*impl_;i.sync();i.input=std::make_unique<ProjectedTextInput>(hwnd,i.document,*i.layout,message,generation);
+    // Session offsets may be restored before the first projected pose. Keep a
+    // valid, concealed candidate plane so that those updates still honor TSF
+    // transaction locks without exposing fabricated screen coordinates.
+    i.placement={core::Projection{},{0,0,i.style.width,i.style.height},{0,i.scroll},false,i.style.cornerRadius};
+    checked(i.input->setPlacement(i.placement),"Initialize concealed editor placement");
 }
 NativeProjectedEditor::~NativeProjectedEditor(){auto i=impl_;if(!i)return;if(GetCurrentThreadId()!=i->thread)std::terminate();i->alive=false;i->input.reset();}
 HRESULT NativeProjectedEditor::connect(ITfThreadMgr& manager,TfClientId client)noexcept{auto i=impl_;if(GetCurrentThreadId()!=i->thread)return RPC_E_WRONG_THREAD;return i->input->connect(manager,client);}
@@ -114,21 +140,33 @@ bool NativeProjectedEditor::setStyle(const ProjectedEditorStyle& style){auto i=i
 bool NativeProjectedEditor::setPose(const ProjectedEditorPose& pose){
     auto i=impl_;i->current();need(i->scene->contentRevision()==i->structureRevision,"Editor scene structure was replaced");need(pose.localToScreen.finite()&&pose.screenToClip.finite()&&pose.pixelWidth>0&&pose.pixelHeight>0&&std::isfinite(pose.opacity)&&pose.opacity>=0&&pose.opacity<=1,"Invalid projected editor pose");
     const auto inverse=core::source::inverseSourceMatrix(pose.localToScreen);
-    const text::Placement placement{core::Projection::viewport(pose.screenToClip*pose.localToScreen,pose.pixelWidth,pose.pixelHeight),{0,0,i->style.width,i->style.height},{0,0},pose.visible,i->style.cornerRadius};
+    const text::Placement placement{core::Projection::viewport(pose.screenToClip*pose.localToScreen,pose.pixelWidth,pose.pixelHeight),{0,0,i->style.width,i->style.height},{0,i->scroll},pose.visible,i->style.cornerRadius};
     if(i->poseReady&&i->pose.localToScreen==pose.localToScreen&&i->pose.screenToClip==pose.screenToClip&&i->pose.pixelWidth==pose.pixelWidth&&i->pose.pixelHeight==pose.pixelHeight&&i->pose.opacity==pose.opacity&&i->pose.visible==pose.visible&&i->pose.ownerFocused==pose.ownerFocused&&i->pose.caretVisible==pose.caretVisible)return false;
     const auto placementResult=i->input->setPlacement(placement);if(!i->alive)return false;checked(placementResult,"Update projected editor candidate plane");
     const auto selection=i->document.selection();const bool selectionVisible=selection.range.start!=selection.range.end;
-    for(unsigned k=0;k<4;++k){auto& out=i->placements[k];out.surface=i->surfaces[k];out.world=pose.localToScreen*i->originals[k].world;out.opacity=pose.visible?pose.opacity:0;
+    for(unsigned k=0;k<4;++k){auto& out=i->placements[k];out.surface=i->surfaces[k];out.world=pose.localToScreen*i->originals[k].world;if(k==3)out.world=out.world*core::Matrix4::translation(i->caretRect.x,i->caretRect.y-i->scroll);out.opacity=pose.visible?pose.opacity:0;
         if((k==0&&!selectionVisible)||(k==2&&!i->document.composition())||(k==3&&(!pose.ownerFocused||!pose.caretVisible||selectionVisible)))out.opacity=0;
         for(std::size_t m=0;m<i->maskCounts[k];++m){i->masks[k][m]=i->originals[k].masks[m];i->masks[k][m].cornerRadius=i->style.cornerRadius;i->masks[k][m].worldToLocal=i->masks[k][m].worldToLocal*inverse;}out.masks={i->masks[k].data(),i->maskCounts[k]};}
-    i->scene->setPlacements(i->placements);i->placement=placement;i->pose=pose;i->poseReady=true;return true;
+    i->scene->setPlacements(i->placements);i->placement=placement;i->pose=pose;i->poseReady=i->poseSet=true;return true;
 }
+bool NativeProjectedEditor::setScrollOffset(double offset){
+    auto i=impl_;i->current();need(std::isfinite(offset),"Invalid editor document offset");i->revealPending=false;const auto next=std::clamp(offset,0.,i->maximumScroll());if(next==i->scroll)return false;
+    const auto oldPlacement=i->placement;const auto oldScroll=i->scroll;const bool hadPose=i->poseSet;
+    {auto nextPlacement=oldPlacement;nextPlacement.scroll={0,next};const auto hr=i->input->setPlacement(nextPlacement);if(hr==TS_E_NOLOCK||!i->alive)return false;checked(hr,"Scroll projected editor candidate plane");i->placement=nextPlacement;}
+    i->scroll=next;i->viewportDirty=true;
+    try{i->sync();if(hadPose&&i->alive)setPose(i->pose);}catch(...){i->scroll=oldScroll;i->viewportDirty=true;i->poseReady=false;if(i->alive){i->input->setPlacement(oldPlacement);i->placement=oldPlacement;}throw;}return true;
+}
+bool NativeProjectedEditor::scrollBy(double delta){need(std::isfinite(delta),"Invalid editor scroll delta");return setScrollOffset(impl_->scroll+delta);}
+double NativeProjectedEditor::scrollOffset()const noexcept{return impl_->scroll;}
+double NativeProjectedEditor::maximumScrollOffset()const noexcept{return impl_->maximumScroll();}
+bool NativeProjectedEditor::revealCaret(){auto i=impl_;i->onThread();i->revealPending=true;const bool changed=i->sync();if(changed&&i->poseSet&&i->alive)setPose(i->pose);return changed;}
+
 ProjectedEditorResult NativeProjectedEditor::command(ProjectedEditorCommand command,bool extend){
     auto i=impl_;i->onThread();i->highUnit.reset();
     if(command==ProjectedEditorCommand::finish){if(i->document.composition()){const auto hr=i->input->cancelComposition();if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Cancel unconsumed IME composition");return {true,true,false};}return {true,false,true};}
     if(i->document.composition())return {};i->current();const auto selection=i->document.selection();auto range=selection.range;const auto at=selection.activeEnd==text::ActiveEnd::start?range.start:range.end;
     switch(command){
-    case ProjectedEditorCommand::selectAll:{const auto n=std::uint32_t(i->document.text().size());const auto hr=i->input->selectFromHost({{0,n},text::ActiveEnd::end,false});if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Select entire bounded editor");return {true,true,false};}
+    case ProjectedEditorCommand::selectAll:{const auto n=std::uint32_t(i->document.text().size());const auto hr=i->input->selectFromHost({{0,n},text::ActiveEnd::end,false});if(hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Select entire bounded editor");i->revealPending=true;return {true,true,false};}
     case ProjectedEditorCommand::left:case ProjectedEditorCommand::right:{const bool left=command==ProjectedEditorCommand::left;const auto target=!extend&&range.start!=range.end?(left?range.start:range.end):(left?i->layout->previousCluster(at):i->layout->nextCluster(at));return i->select(target,extend);}
     case ProjectedEditorCommand::documentStart:return i->select(0,extend);
     case ProjectedEditorCommand::documentEnd:return i->select(std::uint32_t(i->document.text().size()),extend);
@@ -142,8 +180,13 @@ ProjectedEditorResult NativeProjectedEditor::character(std::uint32_t value,bool 
     if(scalar){i->highUnit.reset();if(value>0x10ffff||(value>=0xd800&&value<=0xdfff))return {true,false,false};if(value>0xffff){const auto v=value-0x10000;units={char16_t(0xd800+(v>>10)),char16_t(0xdc00+(v&1023))};size=2;}else{units[0]=value=='\r'?u'\n':char16_t(value);size=1;}}
     else {if(value>0xffff)return {true,false,false};const auto unit=char16_t(value);if(high(unit)){i->highUnit=unit;return {true,false,false};}if(low(unit)){if(!i->highUnit)return {true,false,false};units={*i->highUnit,unit};size=2;i->highUnit.reset();}else{i->highUnit.reset();units[0]=unit=='\r'?u'\n':unit;size=1;}}
     return i->replace(i->document.selection().range,{units.data(),size});}
-ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set editor pose before pointer input");if(i->document.composition())return {};const auto at=text::projectedHit(i->document,*i->layout,point,i->placement,false,true);if(!at)return {};i->dragging=true;return i->select(*at,extend);}
-ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto i=impl_;i->current();if(!i->dragging||i->document.composition())return {};const auto at=text::projectedHit(i->document,*i->layout,point,i->placement,true,true);return at?i->select(*at,true):ProjectedEditorResult{};}
+ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set editor pose before pointer input");if(i->document.composition())return {};const auto at=text::projectedHit(i->document,*i->layout,point,i->placement,false,true);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
+ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto i=impl_;i->current();if(!i->dragging||i->document.composition()||!i->poseReady||!i->placement.visible)return {};
+    // Source text view passes the actual unprojected point outside its viewport
+    // to document hit-testing, then reveals the resulting active selection.
+    const auto local=i->placement.projection.unproject(point);if(!local)return {};
+    const auto at=i->layout->hit({local->x-i->placement.viewport.x,local->y-i->placement.viewport.y+i->scroll},true,true);return at?i->select(*at,true):ProjectedEditorResult{};}
+
 void NativeProjectedEditor::pointerUp()noexcept{if(GetCurrentThreadId()==impl_->thread)impl_->dragging=false;}
 const LayerTextLayout&NativeProjectedEditor::layout()const{return *impl_->layout;}
 const text::Placement&NativeProjectedEditor::placement()const noexcept{return impl_->placement;}

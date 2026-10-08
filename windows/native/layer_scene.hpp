@@ -131,6 +131,11 @@ public:
     LayerComposition(const LayerComposition&)=delete;
     LayerComposition&operator=(const LayerComposition&)=delete;
     void setScenes(Renderer&,std::span<LayerScene* const> paintOrder);
+    // Exact same scene/surface/resource identities reuse the published list:
+    // only changed scenes upload resources, and retained CPU lists allocate
+    // nothing. Supplemental storage may change with identical IDs/counts;
+    // its numeric values, like scene poses, take effect in present(). Structural
+    // changes still stage and publish a complete transactional replacement.
     void setEntries(Renderer&,std::span<const LayerCompositionEntry> paintOrder);
     void upload(Renderer&);
     // Empty transforms use identity for every scene; otherwise exactly one per
@@ -148,6 +153,7 @@ private:
     std::vector<DrawObject> stagedAfter_;
     Renderer* renderer_{};
     void checkRenderer(Renderer&)const;
+    bool updateRetainedResources(Renderer&,std::span<const LayerCompositionEntry>);
     void copyPrepared(const Entry&);
 };
 // The source native layers already project into top-left viewport points.

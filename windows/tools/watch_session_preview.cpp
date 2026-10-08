@@ -286,7 +286,7 @@ int wmain(int argc,wchar_t**argv){try{
             }
         }
         else return false;refresh(time);return true;};
-    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;if(notes&&session.inputEnabled()&&notes->covers({e.x,e.y}))return true;if(e.horizontal)return false;const auto time=now();const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
+    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
     callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){return ready&&notes&&notes->filterKey(m);};
     callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}return {};};
     callbacks.key=[&](const app::KeyEvent&e){if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};

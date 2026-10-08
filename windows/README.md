@@ -10,7 +10,7 @@ D3D11/DirectComposition renderer, retained source material and label adapters,
 an event-driven window host, and Windows battery, clipboard and master-volume
 service foundations. An explicit development preview now combines the source
 shell, native captions/icons, clock and custom cursor. An optional isolated
-Notes preview adds plain-text editing, moving, resizing, pinning and confirmed
+Notes preview adds scrollable plain-text editing, moving, resizing, pinning and confirmed
 deletion. Other module bodies and the remaining Notes kinds are not installed.
 It does **not** yet produce a complete runnable HUD or a release candidate.
 
@@ -285,15 +285,16 @@ establish those features.
 The current portable build passes 44 suites and the clean Windows Release build
 passes all 62 registered suites. The laptop passes the focused
 Notes workspace/editor and Shelf tests; the integrated Notes owner now passes
-496 checks, including queued selection notifications and synchronous capture
+531 checks, including editing/settled wheel routing, queued selection notifications and synchronous capture
 notifications with an older outer callback. The first live Notes preview
 crashed on dragging: capture reentry advanced a child clock before an earlier
 refresh resumed. The regression reproduces the exact previous-build failure.
 A single monotonic Notes owner clock now keeps nested events at the same instant,
 clamps resumed older timestamps and preserves strict child-scene validation.
 Backdrop work also finishes before borrowing the current shell frame. No new
-timer, service or per-frame allocation is added. The corrected live Notes
-preview is awaiting user acceptance; automated success is not live acceptance.
+timer, service or per-frame allocation is added. The user subsequently verified
+dragging, Chinese typing, pinning, section changes and deletion. Editing delayed
+the whole HUD, and note scrolling was missing; those failures are tracked below.
 
 The integrated plain Notes fixture exercises the same owner as the visible
 preview: Unicode input, drag/resize, pin/unpin, create, deletion confirmation,
@@ -301,7 +302,37 @@ section transitions and resource teardown. Its warmed pointer/hover frames
 retain text layouts and GPU resources without C++ allocations. The original
 confirmation geometry passes 5,892 source checks, and the two prepared toolbar
 icons retain their pinned source pixels in a 4,724-byte development bundle.
-These automated checks do not replace the pending live Notes/IME check.
+These automated checks do not replace live acceptance of editing latency and scrolling.
+
+The Notes repair routes wheel input through the current tilted card plane,
+retains fractional offsets per session, and preserves them when entering/leaving
+editing. Scrolling repaints only the viewport using the same DirectWrite layout
+as hits, selection and IME geometry; it neither rewrites SQLite nor creates a
+new layout. Typing reveals the caret. At scroll limits, repeated wheel events
+create no artwork and do not leak to the navigation behind Notes. The editor's
+visible scroll thumb remains a separate source-parity task.
+
+Caret moves now update numeric placement, while empty selection/composition
+artwork is reused. A resource-only composition update retains sibling draw
+records and uploads only changed surfaces. Texture conversion fast paths use a
+512-byte table and preserve every tested RGB/alpha byte result, including
+partial alpha; no worker, timer or polling service was added.
+
+A six-sample synthetic Windows WARP comparison on the same laptop measured
+large-viewport (602×242 points, 2× raster) short-text typing at about 49.26 →
+6.16 ms mean. Caret-only movement fell from about 37 ms to below 0.2 ms, with no
+layout, raster or texture upload. In the small 222×87 viewport, unchanged entry
+fell from 30.13 to 13.46 ms. Large-viewport entry remains about 39.17 ms; unchanged
+exit preparation/publication totals about 17.34 ms. These are synchronous
+CPU-side fixture stages, not displayed FPS or a real IME performance guarantee.
+The separate preview uses temporary sample data for live acceptance.
+
+Very long text is not fixed by those short-text gains. At 32,768 UTF-16 units,
+typing still took about 115–163 ms: each edit builds a full layout, and committing
+changed text rebuilds its complete line index. The current 65,536-unit plain
+fixture limit is explicit and never truncates stored text. Incremental long-text
+layout, native rich editing and full source document capacity remain required;
+card entry/exit still rebuilds its changed local artwork synchronously.
 
 Shelf records use native 128-bit file identities plus their volume, never a
 path-only identity guess or a reinterpreted Mac bookmark. One bounded store

@@ -46,6 +46,12 @@ const std::array<double, 256> &linearSRGBBytes() {
     }();
     return values;
 }
+const std::array<std::uint16_t,256>& opaqueSRGB16Bytes(){
+    // One 512-byte table, with exactly the former double/lround conversion.
+    static const auto values=[] {std::array<std::uint16_t,256> result{};const auto&linear=linearSRGBBytes();
+        for(std::size_t i=0;i<result.size();++i)result[i]=static_cast<std::uint16_t>(std::lround(linear[i]*65535));return result;}();
+    return values;
+}
 std::array<float, 16> matrix(const core::Matrix4 &value) {
     std::array<float, 16> result{};
     for (std::size_t i = 0; i < result.size(); ++i) {
@@ -172,6 +178,27 @@ ComPtr<ID3D11Buffer> immutableBuffer(ID3D11Device *device, UINT binding, const v
 }
 } // namespace
 
+namespace detail {
+// Shared by the real upload path and byte-exact tests; deliberately not part
+// of the public renderer API. Output aliases neither the encoded input nor GPU
+// storage. Partial alpha keeps the original operation order and rounding.
+void prepareTextureRGBA16(std::span<const std::uint8_t> input,TextureColorSpace colorSpace,std::span<std::uint16_t> output){
+    require(input.size()%4==0&&output.size()==input.size(),"Invalid native texture conversion span");
+    require(colorSpace==TextureColorSpace::sRGB||colorSpace==TextureColorSpace::linear,"Invalid native texture color space");
+    const bool sRGB=colorSpace==TextureColorSpace::sRGB;
+    const auto*opaque=sRGB?opaqueSRGB16Bytes().data():nullptr;
+    const auto*linear=sRGB?linearSRGBBytes().data():nullptr;
+    for(std::size_t pixel=0;pixel<input.size();pixel+=4){const auto alphaByte=input[pixel+3];
+        if(alphaByte==0){output[pixel]=output[pixel+1]=output[pixel+2]=output[pixel+3]=0;continue;}
+        if(alphaByte==255){for(std::size_t channel=0;channel<3;++channel){const auto encoded=input[pixel+channel];output[pixel+channel]=sRGB?opaque[encoded]:static_cast<std::uint16_t>(unsigned(encoded)*257u);}output[pixel+3]=65535;continue;}
+        const double alpha=alphaByte/255.0;
+        for(std::size_t channel=0;channel<3;++channel){const auto encoded=input[pixel+channel];const double value=sRGB?linear[encoded]:encoded/255.0;
+            output[pixel+channel]=static_cast<std::uint16_t>(std::lround(value*alpha*65535));}
+        output[pixel+3]=static_cast<std::uint16_t>(std::lround(alpha*65535));
+    }
+}
+} // namespace detail
+
 void validatePlaneShutter(const PlaneShutter& shutter) {
     ObjectUniform candidate{};
     shutterUniforms(candidate, shutter);
@@ -285,16 +312,7 @@ struct Renderer::Impl {
         // straight RGB/alpha and multiplying afterwards creates dark borders
         // against transparent texels. Conversion happens only on replacement.
         std::vector<std::uint16_t> premultiplied(input.straightRGBA.size());
-        for (std::size_t pixel = 0; pixel < input.straightRGBA.size(); pixel += 4) {
-            const double alpha = input.straightRGBA[pixel + 3] / 255.0;
-            for (std::size_t channel = 0; channel < 3; ++channel) {
-                const auto encoded = input.straightRGBA[pixel + channel];
-                const double value = input.colorSpace == TextureColorSpace::sRGB
-                    ? linearSRGBBytes()[encoded] : encoded / 255.0;
-                premultiplied[pixel + channel] = static_cast<std::uint16_t>(std::lround(value * alpha * 65535));
-            }
-            premultiplied[pixel + 3] = static_cast<std::uint16_t>(std::lround(alpha * 65535));
-        }
+        detail::prepareTextureRGBA16(input.straightRGBA,input.colorSpace,premultiplied);
         D3D11_TEXTURE2D_DESC description{};
         description.Width = input.width; description.Height = input.height;
         description.MipLevels = description.ArraySize = description.SampleDesc.Count = 1;

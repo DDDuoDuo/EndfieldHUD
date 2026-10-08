@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 using namespace endfield::native;
@@ -68,6 +69,29 @@ void run(){
     bool wrongThread{};std::thread t([&]{try{richLayout.bounds({0,1});}catch(const std::logic_error&){wrongThread=true;}});t.join();check(wrongThread,"Painted COM layout cannot be used from foreign thread");
     raster.clear();check(raster.stats().textMetadataBytes==0,"Clear releases cached UTF-16 metadata accounting");check(richLayout.bounds({0,5}).has_value(),"Existing retained rich layout survives clear");
 }
+void documentViewport(){
+    LayerRasterizer raster;LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=0;options.retainEmptyTextLayout=true;options.plainTextDocument=true;
+    std::string value="TOP\n";std::u16string logical=u"TOP\n";for(unsigned k=0;k<300;++k){value+="中文 日本語 한국어 😀 paragraph\n";logical+=u"中文 日本語 한국어 😀 paragraph\n";}value+="END\n";logical+=u"END\n";
+    auto descriptor=text(value.c_str(),160,60);descriptor["text"]["wrapped"]=true;Buffer doc(logical,65536);
+    const auto image=raster.rasterize("document",1,descriptor,options);const auto painted=raster.textLayout("document",1);LayerTextLayout layout(painted,doc);
+    check(image->width==160&&image->height==60&&image->straightRGBA.size()==160*60*4,"Long document allocates only visible viewport pixels");
+    check(painted->isDocumentLayout()&&painted->documentHeight()>1000&&painted->initialPaintOffset()==Point{},"Full document extent is separate from viewport bitmap");
+    const auto end=static_cast<std::uint32_t>(logical.size());const auto caret=layout.bounds({end,end});check(caret&&caret->bounds.y>60&&!caret->clipped,"Document caret below viewport is not prematurely clipped");
+    Placement placement{{},{0,0,160,60},{0,0},true};const auto hidden=projectedRange(doc,layout,{end,end},placement);check(hidden&&hidden->clipped&&hidden->clientBounds.height==0,"Unscrolled projected end remains hidden");
+    options.retainedPlainText=painted;const auto before=raster.stats();for(unsigned k=1;k<=12;++k){options.textDocumentOffset={0,double(k)*17.25};const auto part=raster.rasterize("document",k+1,descriptor,options);check(part->width==160&&part->height==60&&part->textDocumentOffset==options.textDocumentOffset,"Fractional scroll preserves bounded viewport dimensions and logical offset");check(raster.textLayout("document",k+1)==painted,"Scroll keeps the identical immutable painted DWrite handle");}
+    check(raster.stats().textLayoutsCreated==before.textLayoutsCreated&&raster.stats().resourceBytes==before.resourceBytes,"Scroll never reshapes or grows retained pixels");
+    auto invalid=descriptor;invalid["text"]["string"]="different";rejects([&]{raster.rasterize("document",30,invalid,options);},"Borrowed layout rejects changed text instead of painting stale glyphs");invalid=descriptor;invalid["text"]["fontSize"]=30;rejects([&]{raster.rasterize("document",31,invalid,options);},"Borrowed layout rejects changed font style");check(raster.textLayout("document",13)==painted,"Rejected retained repaint preserves published layout");
+    const auto guarded=raster.stats();auto fallback=options;fallback.fallbackFontFamily="Arial";rejects([&]{raster.rasterize("document",32,descriptor,fallback);},"Retained layout rejects a changed proportional fallback resolver");
+    fallback=options;fallback.monospaceFallbackFontFamily="Courier New";rejects([&]{raster.rasterize("document",33,descriptor,fallback);},"Retained layout rejects a changed fixed-pitch fallback resolver");
+    check(raster.textLayout("document",13)==painted&&raster.stats().rasterizations==guarded.rasterizations&&raster.stats().textLayoutsCreated==guarded.textLayoutsCreated,"Fallback mismatch rejects before paint or layout mutation");
+    options.retainedPlainText.reset();options.textDocumentOffset={0,0};options.revealPlainTextPosition=end;const auto revealed=raster.rasterize("revealed",1,descriptor,options);const auto newPainted=raster.textLayout("revealed",1);LayerTextLayout newLayout(newPainted,doc);placement.scroll=newPainted->initialPaintOffset();const auto shown=projectedRange(doc,newLayout,{end,end},placement);
+    check(revealed->textDocumentOffset.y>0&&shown&&shown->clientBounds.height>0,"New layout resolves bottom caret reveal before its one viewport paint");check(raster.stats().textLayoutsCreated==before.textLayoutsCreated+1,"Reveal does not create a second DWrite layout");
+    const auto local=newLayout.bounds({end,end})->bounds;check(newLayout.hit({local.x,local.y+local.height*.5},true,true)==end,"Final empty line caret remains addressable in document coordinates");
+    options.revealPlainTextPosition=end+1;rejects([&]{raster.rasterize("bad-acp",1,descriptor,options);},"Reveal position beyond UTF16 rejects");
+    options.revealPlainTextPosition.reset();auto rich=descriptor;rich["text"]["runs"]=Json::Array{Json::Object{}};rejects([&]{raster.rasterize("rich-document",1,rich,options);},"Plain viewport does not silently flatten rich runs");
+    auto invalidOffset=options;invalidOffset.textDocumentOffset.y=std::numeric_limits<double>::infinity();rejects([&]{raster.rasterize("bad-offset",1,descriptor,invalidOffset);},"Nonfinite document offset rejects before raster");
 }
-int main(){const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(initialized)){std::cerr<<"Cannot initialize owned test COM apartment\n";return 1;}int result{};try{run();std::cout<<"Passed "<<checks<<" painted text layout contracts\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
+
+}
+int main(){const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(initialized)){std::cerr<<"Cannot initialize owned test COM apartment\n";return 1;}int result{};try{run();documentViewport();std::cout<<"Passed "<<checks<<" painted text layout contracts\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
 #endif

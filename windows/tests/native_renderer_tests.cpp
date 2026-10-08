@@ -16,6 +16,11 @@
 #include <string>
 
 using namespace endfield::native;
+// Internal implementation seam: exercise the exact bytes supplied to D3D,
+// rather than an 8-bit readback that could hide a changed 16-bit rounding bit.
+namespace endfield::native::detail {
+void prepareTextureRGBA16(std::span<const std::uint8_t>,TextureColorSpace,std::span<std::uint16_t>);
+}
 namespace {
 unsigned checks{};
 void check(bool condition, const char *message) {
@@ -73,6 +78,22 @@ void pixel(const Readback &image, unsigned x, unsigned y, std::array<int, 4> bgr
 }
 double encoded(double linear) {
     return linear <= .0031308 ? linear * 12.92 : 1.055 * std::pow(linear, 1.0 / 2.4) - .055;
+}
+void textureByteConversion(){
+    std::array<std::uint8_t,256*4> input{};std::array<std::uint16_t,256*4> output{};
+    for(auto space:{TextureColorSpace::sRGB,TextureColorSpace::linear})for(unsigned alpha=0;alpha<256;++alpha){
+        for(unsigned value=0;value<256;++value){const auto at=value*4;input[at]=static_cast<std::uint8_t>(value);input[at+1]=static_cast<std::uint8_t>(255-value);input[at+2]=static_cast<std::uint8_t>((value*73u+19u)%256u);input[at+3]=static_cast<std::uint8_t>(alpha);}
+        output.fill(12345);detail::prepareTextureRGBA16(input,space,output);
+        for(std::size_t at=0;at<input.size();at+=4){const double a=input[at+3]/255.0;
+            for(std::size_t channel=0;channel<3;++channel){const double e=input[at+channel]/255.0;
+                const double linear=space==TextureColorSpace::sRGB?(e<=.04045?e/12.92:std::pow((e+.055)/1.055,2.4)):e;
+                const auto expected=static_cast<std::uint16_t>(std::lround(linear*a*65535));
+                check(output[at+channel]==expected,alpha==0?"Every transparent RGB byte produces exact zero associated color":alpha==255?"Every opaque RGB byte matches the original 16-bit conversion":"Partial-alpha fallback matches every original RGB-byte result");}
+            check(output[at+3]==static_cast<std::uint16_t>(std::lround(a*65535)),"Alpha conversion remains byte-for-byte unchanged");
+        }
+    }
+    output.fill(12345);rejects([&]{detail::prepareTextureRGBA16(std::span(input).first(3),TextureColorSpace::sRGB,output);},"Malformed conversion spans reject before writing");
+    check(std::all_of(output.begin(),output.end(),[](auto value){return value==12345;}),"Rejected conversion preserves output bytes");
 }
 bool shutterContains(const endfield::core::ShutterPath& path, endfield::core::Point point) {
     // Independent polygon/ray crossing oracle, not the shader's half spaces.
@@ -401,6 +422,7 @@ int wmain(int argc, wchar_t **argv) {
     if (FAILED(com)) { std::cerr << "COM initialization failed\n"; return 1; }
     int result = 0;
     try {
+        textureByteConversion();
         check(argc >= 2 && argc <= 4, "Pass fresh native/hud.hlsl and optional --composition / --hardware");
         bool composition = false, hardware = false;
         for (int i = 2; i < argc; ++i) {

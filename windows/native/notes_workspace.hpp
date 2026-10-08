@@ -114,6 +114,13 @@ public:
     std::optional<NativeNotesCardToken> confirmDeletionRetainingArtwork(std::string_view);
     bool settleDeletion(NativeNotesCardToken); // then republish + collectRetired
     std::optional<NativeNotesWorkspaceHit> hitTest(core::Point physicalClientPoint)const;
+    // Positive-down physical client displacement, mapped through the top
+    // card's CURRENT sampled projection. True means consumed, including at
+    // bounds/zero delta/during a card gesture; nonfinite input returns false.
+    // Scroll positions are session-only. Changed settled content reuses its
+    // measured line index and rebuilds only viewport-bounded card artwork;
+    // no text measurement, persistence, timer or full-document bitmap.
+    bool scrollAt(core::Point physicalClientPoint,double physicalDeltaY);
     bool setFeedback(std::string_view noteID,std::optional<std::string_view> verb,bool pressed,bool reduceMotion,double time);
     const modules::NotesCardPresentation* card(std::string_view)const noexcept;
     NativeNotesWorkspaceStats stats()const noexcept;

@@ -63,7 +63,7 @@ struct NotesPreview::Impl {
     Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf):hwnd(h),raster(r),assets(a),geometry(r){
         need(root.is_absolute()&&!std::filesystem::exists(root),"Notes preview requires a new absolute synthetic data directory");
         data::detail::validateRoot(root);need(std::filesystem::create_directory(root),"Create isolated Notes fixture directory");
-        store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀";sample.width=240;sample.height=145;sample.x=180;sample.y=245;store->upsert(sample);
+        store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;store->upsert(sample);
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){store->remove(id);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
         if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;
@@ -180,6 +180,21 @@ bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose|
     if(i.workspace->hitTest(p))return true;if(i.moduleVisible){const auto q=i.controlsProjection.unproject(p);if(q&&i.controls.actionAt(*q))return true;}return false;
 }
 bool NotesPreview::pointer(const app::PointerEvent&e,double t){return impl_->pointer(e,t);}
+bool NotesPreview::wheel(const app::WheelEvent&e,double t){
+    auto&i=*impl_;const Impl::TimeScope event(i,t);
+    if(!covers({e.x,e.y}))return false;
+    // Consume wheel input on Notes controls/menus and at scroll limits so it
+    // cannot reach the navigation behind them. Native wheel units remain a
+    // platform preference; the workspace inverse preserves fractional motion.
+    if(e.horizontal||!std::isfinite(e.steps)||e.steps==0||e.linesPerStep==0)return true;
+    const core::Point point{e.x*i.metrics.scale,e.y*i.metrics.scale};
+    if(i.confirmationVisible){const auto q=i.confirmationProjection.unproject(point);if(q&&i.confirmation.actionAt(*q))return true;}
+    const auto hit=i.workspace->hitTest(point);if(!hit)return true;
+    const auto*card=i.workspace->card(hit->noteID);if(!card)return true;
+    const double distance=e.linesPerStep==UINT32_MAX?card->contentViewport().height:12.*e.linesPerStep;
+    i.workspace->scrollAt(point,-e.steps*distance*i.metrics.scale);
+    return true;
+}
 bool NotesPreview::filterKey(const app::NativeMessage&m){auto*e=impl_->workspace->editor();return e&&e->filterKeyMessage(m.message,m.wParam,m.lParam);}
 bool NotesPreview::message(const app::NativeMessage&m){auto&i=*impl_;if(m.message!=WM_APP+181)return false;if(i.workspace->takeEditorChanges(m.wParam))i.editSync();
     // Selection/layout notifications are not focus transitions: refocusing

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/text_input.hpp"
+#include "core/data/json.hpp"
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -20,10 +21,17 @@ public:
     std::uint64_t sourceRevision()const noexcept;
     core::Point drawingOrigin()const noexcept;
     core::Rect viewport()const noexcept;
+    bool isDocumentLayout()const noexcept;
+    double documentHeight()const noexcept;
+    core::Point initialPaintOffset()const noexcept;
+    std::size_t metadataBytes()const noexcept;
     std::uintptr_t layoutIdentity()const noexcept; // diagnostics, not a COM interface
 private:
     friend class LayerRasterizer;friend class LayerTextLayout;
-    PaintedTextLayout(IDWriteTextLayout*,std::u16string,std::uint64_t,core::Rect);
+    PaintedTextLayout(IDWriteTextLayout*,std::u16string,std::uint64_t,core::Rect,bool,
+        const ehud::data::Json&,core::Point);
+    IDWriteTextLayout* nativeLayout()const noexcept;
+    bool matchesPlainStyle(const ehud::data::Json&,core::Rect)const;
     struct Impl;std::unique_ptr<Impl> impl_;
 };
 // Caller-owned Layout for ProjectedTextInput. Bind only on a content/revision
@@ -32,8 +40,9 @@ private:
 // Selection/caret artwork, pointer hits and IME use this same painted layout.
 // Bind/projection changes never create/rasterize another DWrite layout.
 // The first bridge is for editor leaf surfaces, bounded to 65,536 UTF-16 units.
-// Long document viewport layout and nonrectangular/tree clips remain explicit
-// integration work; no truncation or fabricated hit geometry is used here.
+// Document handles return complete document coordinates; the caller's Placement
+// applies viewport clipping and scroll exactly once. Caption handles retain
+// their original finite layout-box clipping.
 class LayerTextLayout final:public core::text::Layout {
 public:
     LayerTextLayout(std::shared_ptr<const PaintedTextLayout>,const core::text::Document&);

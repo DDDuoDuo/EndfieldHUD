@@ -22,6 +22,7 @@ public:
     bool pointerLocked()const;
     bool covers(core::Point logicalClientPoint)const;
     bool pointer(const app::PointerEvent&,double time);
+    bool wheel(const app::WheelEvent&,double time);
     bool key(const app::KeyEvent&,double time);
     bool filterKey(const app::NativeMessage&);
     bool message(const app::NativeMessage&);

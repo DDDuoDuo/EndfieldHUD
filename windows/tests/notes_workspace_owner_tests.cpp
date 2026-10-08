@@ -117,6 +117,60 @@ void boundaries(HWND hwnd){
     mod::NotesState limited({note(one,"")},{[](const auto&){},[](auto){}});auto oneCard=options();oneCard.maximumRetainedCards=1;
     {gpu::NativeNotesWorkspace workspace(hwnd,limited,raster,style(),oneCard);const auto before=limited.revision();rejects([&]{workspace.createText(two,123);},"Explicit retained capacity rejects creation before persistence");check(limited.revision()==before&&limited.notes().size()==1,"Card capacity failure preserves original records");}
 }
+void scrolling(HWND hwnd,gpu::Renderer&renderer){
+    std::string text;for(unsigned n=0;n<48;++n)text+="Line "+std::to_string(n)+" 终末地 😀\n";
+    std::size_t saves{},removals{};
+    mod::NotesState state({note(one,text),note(two,"No overflow",40,40,1)},
+        {[&](const data::Note&){++saves;},[&](std::string_view){++removals;}});
+    state.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
+    gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Scroll replacement retires only detached resources");};
+    auto p=pose();p.screenToClip=p.screenToClip*core::Matrix4::scale(1.5,1.5);p.workspaceToScreen.values[3]=.00045;p.workspaceToScreen.values[7]=-.0002;p.workspaceToScreen.values[12]=8;
+    workspace.updatePose(p);publish();
+    const auto baseProjection=core::Projection::viewport(p.screenToClip*p.workspaceToScreen,640,360);
+    const auto overlap=baseProjection.project({60,60});check(overlap.has_value(),"Synthetic overlapped card projects");
+    const auto initialRaster=raster.stats();const auto initialMeasures=workspace.measurementStats();const auto initialRevision=state.revision();
+    check(workspace.scrollAt(*overlap,24)&&workspace.card(one)->scrollOffset()==0&&workspace.card(two)->scrollOffset()==0,"Top no-overflow card consumes wheel without scrolling card underneath");
+    check(raster.stats().rasterizations==initialRaster.rasterizations&&state.revision()==initialRevision&&saves==0,"No-overflow wheel performs no artwork or persistence work");
+    workspace.select(std::string(one));publish();
+    const auto rect=state.card(one)->rect;const mod::NotesMotionSample motion{.x=2,.y=3,.scale=.87,.opacity=1};
+    workspace.setCardMotions(std::array{gpu::NativeNotesCardMotion{*workspace.cardToken(one),motion}});workspace.updatePose(p);
+    const auto projection=core::Projection::viewport(p.screenToClip*cardMotionWorld(p.workspaceToScreen,rect,motion),640,360);
+    const auto point=projection.project({rect.x+60,rect.y+65});check(point.has_value(),"Tilted animated card scroll point projects");
+    const auto start=projection.unproject(*point),end=projection.unproject({point->x,point->y+13.25});check(start&&end,"Wheel endpoints invert through actual card tilt/scale");
+    const auto expected=end->y-start->y;const auto beforeWheel=state.revision(),savedBefore=saves;
+    check(workspace.scrollAt(*point,13.25)&&std::abs(workspace.card(one)->scrollOffset()-expected)<1e-9,"Fractional physical wheel uses current effective per-card projection");
+    check(workspace.measurementStats().measurements==initialMeasures.measurements&&state.revision()==beforeWheel&&saves==savedBefore&&removals==0,"Changed settled wheel retains measured index and never persists");publish();
+    const auto savedOffset=workspace.card(one)->scrollOffset();workspace.beginEditing(one);publish();
+    check(std::abs(workspace.editor()->scrollOffset()-savedOffset)<1e-9,"Entering editor restores prior session offset after selecting document end");
+    check(workspace.editorDocument()->selection().range.end==workspace.editorDocument()->text().size(),"Source initial editor selection remains document end");
+    const auto layout=workspace.editor()->layout().painted()->layoutIdentity();const auto editorMeasures=workspace.measurementStats().measurements;
+    const auto editorRevision=state.revision();const auto editorSaves=saves;const auto editorText=state.note(one)->text;
+    check(workspace.scrollAt(*point,6.125),"Editing card consumes a fractional wheel without ending its draft");
+    const auto end2=projection.unproject({point->x,point->y+6.125});check(end2&&std::abs(workspace.editor()->scrollOffset()-(savedOffset+end2->y-start->y))<1e-8,"Editor viewport receives the same card-local delta");
+    check(workspace.editor()&&workspace.editor()->layout().painted()->layoutIdentity()==layout&&workspace.measurementStats().measurements==editorMeasures,"Editor wheel reuses the painted layout and settled measurement");
+    check(state.revision()==editorRevision&&saves==editorSaves&&state.note(one)->text==editorText,"Editor wheel does not save a draft or mutate NotesState");publish();
+    workspace.editor()->setScrollOffset(workspace.editor()->maximumScrollOffset());workspace.syncEditor();
+    check(workspace.finishEditing().finished,"Explicit finish captures editor session offset");publish();
+    const auto settledMaximum=workspace.card(one)->measuredText()->height-workspace.card(one)->contentViewport().height;
+    check(std::abs(workspace.card(one)->scrollOffset()-settledMaximum)<1e-8,"Finishing clamps editor offset to the taller settled h-37 viewport");
+    workspace.beginEditing(one);publish();check(std::abs(workspace.editor()->scrollOffset()-settledMaximum)<1e-8,"Reopening preserves settled scroll position rather than revealing end");
+    workspace.finishEditing(false);publish();
+    for(unsigned n=0;n<16&&workspace.card(one)->scrollOffset()>0;++n)workspace.scrollAt(*point,-250);
+    check(workspace.card(one)->scrollOffset()==0,"Upward scroll clamps to first visible line");publish();
+    const auto boundRaster=raster.stats();const auto boundMeasures=workspace.measurementStats();const auto boundRevision=workspace.compositionRevision(),boundState=state.revision();const auto boundSaves=saves;
+    allocations=0;counting=true;for(unsigned n=0;n<120;++n)workspace.scrollAt(*point,-.5);counting=false;
+    check(allocations==0&&raster.stats().rasterizations==boundRaster.rasterizations&&workspace.measurementStats().measurements==boundMeasures.measurements&&workspace.compositionRevision()==boundRevision,"Repeated bounded wheel events allocate, measure and rasterize nothing");
+    check(state.revision()==boundState&&saves==boundSaves,"Bounded wheel does not touch persistence or record revision");
+    check(!workspace.scrollAt({std::numeric_limits<double>::quiet_NaN(),0},1)&&!workspace.scrollAt(*point,std::numeric_limits<double>::infinity())&&!workspace.scrollAt({-1000,-1000},5),"Invalid or uncovered wheel input leaves Notes untouched");
+    workspace.beginGesture(one,{rect.x+10,rect.y+10},mod::NotesState::Gesture::move);publish();const auto gestureSaves=saves,gestureRevision=state.revision();
+    check(workspace.scrollAt(*point,10)&&workspace.card(one)->scrollOffset()==0&&state.revision()==gestureRevision&&saves==gestureSaves,"Active card drag consumes wheel without content movement or saving");workspace.endGesture();publish();
+    check(workspace.scrollAt(*point,13.25),"Session scroll resumes after gesture");const auto retained=workspace.card(one)->scrollOffset();
+    workspace.togglePin(one);workspace.setPresentation(false);workspace.updatePose(p);publish();check(std::abs(workspace.card(one)->scrollOffset()-retained)<1e-8,"Pinned cross-tab card retains its session offset");
+    auto light=style();light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};workspace.setStyle(light);publish();
+    check(std::abs(workspace.card(one)->scrollOffset()-retained)<1e-8,"Theme replacement retains session scroll state");
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Scrollable owner releases its bounded resources after detach");
+}
 void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
     auto pinned=note(two,"Pinned sibling",350,40,1);pinned.isPinned=true;std::size_t removals{};bool failRemove{};
     mod::NotesState state({note(one,"Editable card"),pinned},{[](const auto&){},[&](std::string_view){if(failRemove)throw std::runtime_error("Injected removal failure");++removals;}});state.setWorkspaceBounds({0,0,640,360});
@@ -182,7 +236,7 @@ void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
 }
 }
 int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native hud.hlsl path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Owned COM test apartment");
-    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);boundaries(window.hwnd);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
+    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes workspace owner contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes workspace owner failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif
