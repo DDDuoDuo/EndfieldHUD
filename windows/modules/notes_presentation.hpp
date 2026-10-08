@@ -20,6 +20,7 @@ struct NotesStrings {
     std::string todoTitle{"TODO"},itemPlaceholder{"New item…"},addItem{"+ Add item"};
     std::string checkItem{"Check"},uncheckItem{"Uncheck"},editItem{"Edit item"},moveUp{"Move up"},moveDown{"Move down"},removeItem{"Delete item"},addItemAction{"Add item"};
     std::string imageTitle{"IMAGE/VIDEO"};
+    std::string drawingTitle{"DRAWING"},drawingColor{"Drawing color"};
     bool operator==(const NotesStrings&)const=default;
 };
 // Caller-owned measurement made by the SAME text layout that will paint/edit.
@@ -84,6 +85,7 @@ struct NotesPresentationInput {
     double scrollOffset{};std::optional<NotesColor> editingColor;
     std::shared_ptr<const NotesChecklistLayout> checklist;
     std::shared_ptr<const NotesMediaCardContent> media;
+    std::optional<NotesColor> drawingColor; // caller-owned brush setting, separate from text style
 };
 // Exact text, TODO and media NotesCanvas local artwork. No services, clock, renderer, I/O
 // or center-module clip. The owner composes each card on the workspace plane.
@@ -117,6 +119,7 @@ public:
     core::Rect contentViewport()const noexcept{return viewport_;}
     const std::shared_ptr<const NotesMediaCardContent>& media()const noexcept{return media_;}
     const NotesPalette& palette()const noexcept{return palette_;}
+    bool drawing()const noexcept{return drawing_;}
 private:
     std::string noteID_;std::vector<NotesLayer> layers_;std::vector<NotesAction> actions_;
     std::vector<NotesHighlight> highlights_;std::optional<NotesEditorLeaf> editor_;
@@ -125,7 +128,7 @@ private:
     std::optional<std::string> editingItem_;
     NotesCardPlacement placement_;core::Rect viewport_;
     double width_{},height_{},scrollOffset_{};bool selected_{},pinned_{},editing_{};
-    bool initialized_{},pressed_{},reduceMotion_{};std::optional<std::size_t> feedback_;
+    bool initialized_{},pressed_{},reduceMotion_{},drawing_{};std::optional<std::size_t> feedback_;
     std::uint64_t contentRevision_{},placementRevision_{},feedbackRevision_{};
 };
 } // namespace endfield::modules

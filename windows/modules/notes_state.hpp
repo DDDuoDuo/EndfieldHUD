@@ -8,6 +8,7 @@
 #include <span>
 
 namespace endfield::modules {
+class NotesDrawing;
 // Validates the complete stored UTF-8/v1 payload; never truncates or flattens.
 std::optional<core::notes::RichText> decodeNotesRichText(std::string_view text,const std::optional<std::string>& payload);
 // Source: NotesStore.swift NotesGeometry and NotesCanvas.swift. This controller
@@ -68,6 +69,8 @@ public:
     // editing with source defaults, even when the view retains an unsaved draft.
     bool createText(std::string id,double createdAt);
     bool createChecklist(std::string id,std::string firstItemID,double createdAt); // select; row owner starts editor
+    bool createDrawing(std::string id,double createdAt);
+    bool commitDrawing(std::string_view noteID,const NotesDrawing&); // one commit per completed gesture
     // Validated native media metadata from the asynchronous import worker.
     // Original source aspect-derived size/position, one persistence boundary,
     // then select without an editor. No file bytes or file access occurs here.

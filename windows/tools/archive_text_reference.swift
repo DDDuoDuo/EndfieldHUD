@@ -16,7 +16,8 @@ import AppKit
                          ("Ａ", "ａ"), ("Ａ", "A"), ("ﬀ", "ff"), ("σ", "ς"),
                          ("ᾲ", "ὰι"), ("\u{200B} test ", "test"), ("K", "k")]
             let font = NSFont.systemFont(ofSize: 10, weight: .medium)
-            let captions = ["全部", "未分类", "Category 0", "Category 13", "分类中文 / 긴 이름", "A very long name"]
+            let captions = ["All", "Uncategorized", "全部", "未分类", "分类中文 / 긴 이름", "A very long name"]
+                + (0...14).map { "Category \($0)" }
             let result: [String: Any] = [
                 "schemaVersion": 1,
                 "text": texts.map { ["text": $0, "characters": $0.count,

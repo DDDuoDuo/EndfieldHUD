@@ -31,13 +31,15 @@ struct NotesVideoDiagnostics {
     // Slots 0..31 are native events 0..31; slots 32..63 are 1000..1031.
     std::array<std::uint64_t,64>eventCounts{};
     unsigned lastEvent{},readyState{},networkState{},errorCode{};
-    HRESULT error{S_OK};bool hasVideo{},paused{},seeking{};
+    HRESULT error{S_OK};bool hasVideo{},paused{},seeking{};double currentTime{};
 };
 // Existing-device video frame-server, not a second renderer or clock. Media
 // Engine owns its asynchronous codec/audio pipeline; this facade adds no thread,
 // timer, window, file watcher or polling task. Call sample() only from the shared
 // presentation clock while requiresFrames(), or once after an accepted notice.
-// Paused/hidden records produce no continuous frame demand. nextWakeTime() uses
+// A ready-but-not-yet-decoded initial poster requests at most five seconds of
+// that existing frame clock, then exposes best-effort poster failure. Settled
+// paused/hidden records produce no continuous frame demand. nextWakeTime() uses
 // that same owner clock for original one-second progress / .6s poster retention.
 //
 // Original Notes semantics: video first opens paused; the initial poster remains
@@ -45,13 +47,16 @@ struct NotesVideoDiagnostics {
 // Hide stops/releases the native engine, preserves time/play intent, and exposes
 // only the poster through finite concealment. Owner must detach retired texture
 // IDs from its composition before collectRetired()/retire() can release them.
+// All visible reference metadata is accepted. At most eight engines run at
+// once; paused engines yield their resident posters to queued work. More than
+// eight simultaneous play requests wait for a slot; they are not discarded.
 // MF codec availability/color/deinterlacing differences remain native-platform
 // limitations. Only explicit filesystem references are accepted. Native engine
 // Shutdown may synchronously enter a codec; an in-process hung third-party codec
 // cannot be forcibly canceled. This facade does not add a teardown worker.
 class NativeNotesVideoPlayback final {
 public:
-    static constexpr std::size_t maximumVisible=8,maximumRetained=128;
+    static constexpr std::size_t maximumEngines=8; // scheduling bound, not a stored/visible card limit
     enum Event:std::uint32_t {ready=1,firstFrame=2,seeked=4,ended=8,failure=16};
     using Notify=std::function<void(std::uint32_t,HRESULT)>;
     // Narrow injected native-engine boundary for owned deterministic fixtures.

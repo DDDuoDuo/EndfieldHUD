@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <unordered_set>
 namespace endfield::native {
-namespace detail {std::unique_ptr<NativeNotesImageDecoder::Sequence>makeNotesWICSequence(const NotesImageRequest&,NotesImageAccess);}
+namespace detail {std::unique_ptr<NativeNotesImageDecoder::Sequence>makeNotesWICSequence(const NotesImageRequest&,NotesImageAccess);std::unique_ptr<NativeNotesImageDecoder::Sequence>makeNotesVideoPosterSequence(const NotesImageRequest&,NotesImageAccess);NotesImageInfo inspectNotesVideoFile(NotesImageAccess);}
 namespace {
 using Provider=NativeNotesImageDecoder;
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
@@ -24,10 +24,11 @@ std::atomic<bool>&workerGate(){static auto*p=new std::atomic<bool>{false};return
 void routeValid(NotesImageRoute r){if(!r.owner){need(!r.message&&!r.generation,"Empty image route must be fully empty");return;}
     DWORD process{};need(IsWindow(r.owner)&&GetWindowThreadProcessId(r.owner,&process)==GetCurrentThreadId()&&process==GetCurrentProcessId(),"Image route must be an owned same-thread window");
     need(r.message>=WM_APP&&r.message<0xC000&&r.generation,"Invalid image completion route");}
-void valid(const NotesImageRequest&r){need(!r.key.empty()&&r.key.size()<=512&&r.key.find('\0')==std::string::npos&&ehud::data::Json::validUtf8(r.key)&&r.revision,"Invalid image request identity");need(ehud::data::validWindowsFilePath(r.path),"Image request requires explicit native path");}
-void valid(const NotesImageInfo&i){need(i.pixelWidth&&i.pixelHeight&&i.pixelWidth<=65536&&i.pixelHeight<=65536&&std::uint64_t(i.pixelWidth)*i.pixelHeight<=Provider::maximumInputPixels,"Image dimensions exceed source bounds");
+void valid(const NotesImageRequest&r){need(!r.key.empty()&&r.key.size()<=512&&r.key.find('\0')==std::string::npos&&ehud::data::Json::validUtf8(r.key)&&r.revision,"Invalid image request identity");need(ehud::data::validWindowsFilePath(r.path),"Image request requires explicit native path");need(!r.videoPoster||!r.allowVideoInspection,"Poster extraction cannot be a metadata inspection");}
+void valid(const NotesImageInfo&i){need(i.pixelWidth&&i.pixelHeight&&i.pixelWidth<=65536&&i.pixelHeight<=65536&&(i.kind==modules::NotesMediaKind::video||std::uint64_t(i.pixelWidth)*i.pixelHeight<=Provider::maximumInputPixels),"Image dimensions exceed source bounds");
     need(i.frameCount&&i.frameCount<=Provider::maximumGIFFrames,"Image frame count exceeds source bounds");
-    need(i.kind==modules::NotesMediaKind::image||i.kind==modules::NotesMediaKind::gif,"Image worker cannot decode video");
+    need(i.kind==modules::NotesMediaKind::image||i.kind==modules::NotesMediaKind::gif||i.kind==modules::NotesMediaKind::video,"Unsupported media metadata kind");
+    if(i.kind==modules::NotesMediaKind::video)need(i.frameCount==1&&i.frameDelays.empty()&&std::isfinite(i.duration)&&i.duration>0&&i.duration<=31536000,"Invalid movie metadata");
     need(i.kind!=modules::NotesMediaKind::image||(i.frameCount==1&&i.frameDelays.empty()&&i.duration==0),"Still image has animation metadata");
     if(i.kind==modules::NotesMediaKind::gif){need(i.frameDelays.size()==i.frameCount,"GIF delays do not match frame count");double duration{};for(auto delay:i.frameDelays){need(std::isfinite(delay)&&delay>=.04&&delay<=600,"Invalid GIF delay");duration+=delay;}need(duration==i.duration,"GIF duration does not match source delay sum");}}
 struct Budget {std::atomic<std::size_t>bytes{};};
@@ -86,14 +87,18 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
                 {std::lock_guard lock(state->mutex);state->stats.decoders=decoders.size();state->stats.cachedFrames=0;for(const auto&[key,d]:decoders){(void)key;for(const auto&f:d.cache)if(f)++state->stats.cachedFrames;}}
                 if(!job)break;
                 NotesImageCompletion result;result.key=job->request.key;result.revision=job->request.revision;bool decoded{};
-                try{if(job->inspection){auto access=state->resolver(job->request);need(!access.path.empty(),"Media import resolver returned no path");auto sequence=state->factory?state->factory(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access));need(bool(sequence),"Media import factory returned no decoder");valid(sequence->info());result.info=std::make_shared<const NotesImageInfo>(sequence->info());result.frame=publish(sequence->decode(0),job->request,0,state->budget);decoded=true;result.result=S_OK;
+                try{if(job->inspection){auto access=state->resolver(job->request);need(!access.path.empty(),"Media import resolver returned no path");std::unique_ptr<Provider::Sequence>sequence;
+                    try{sequence=state->factory?state->factory(job->request,access):detail::makeNotesWICSequence(job->request,access);}
+                    catch(const std::bad_alloc&){throw;}
+                    catch(...){if(!job->request.allowVideoInspection)throw;auto info=detail::inspectNotesVideoFile(std::move(access));valid(info);result.info=std::make_shared<const NotesImageInfo>(std::move(info));result.result=S_OK;}
+                    if(sequence){valid(sequence->info());need(sequence->info().kind!=modules::NotesMediaKind::video,"Video frames do not use image decoding");result.info=std::make_shared<const NotesImageInfo>(sequence->info());result.frame=publish(sequence->decode(0),job->request,0,state->budget);decoded=true;result.result=S_OK;}
                 }else{if(job->reopen)decoders.erase(job->request.key);auto it=decoders.find(job->request.key);if(it==decoders.end()){
                         // A hidden/replaced decoder is pruned above; a still-visible
                         // least-recently-used sequence may also be reopened later.
                         // Only its codec/cache is evicted, never owner playback state.
                         if(decoders.size()>=Provider::maximumCachedDecoders){const auto oldest=std::min_element(decoders.begin(),decoders.end(),[](const auto&a,const auto&b){return a.second.used<b.second.used;});decoders.erase(oldest);}
                         Decoder d;d.request=job->request;auto access=state->resolver(job->request);need(!access.path.empty(),"Media access resolver returned no path");
-                        d.sequence=state->factory?state->factory(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access));need(bool(d.sequence),"Image factory returned no decoder");valid(d.sequence->info());auto info=d.sequence->info();if(job->request.firstFrameOnly){info.kind=modules::NotesMediaKind::image;info.frameCount=1;info.frameDelays.clear();info.duration=0;}d.info=std::make_shared<const NotesImageInfo>(std::move(info));auto key=d.request.key;it=decoders.emplace(std::move(key),std::move(d)).first;
+                        d.sequence=state->factory?state->factory(job->request,std::move(access)):(job->request.videoPoster?detail::makeNotesVideoPosterSequence(job->request,std::move(access)):detail::makeNotesWICSequence(job->request,std::move(access)));need(bool(d.sequence),"Image factory returned no decoder");valid(d.sequence->info());auto info=d.sequence->info();if(job->request.firstFrameOnly){info.kind=modules::NotesMediaKind::image;info.frameCount=1;info.frameDelays.clear();info.duration=0;}d.info=std::make_shared<const NotesImageInfo>(std::move(info));auto key=d.request.key;it=decoders.emplace(std::move(key),std::move(d)).first;
                     }
                     it->second.used=++decoderUse;result.info=it->second.info;result.frame=it->second.frame(job->index,state->budget,decoded);result.result=S_OK;
                     // Still images retain only their immutable bounded pixels,
@@ -119,7 +124,7 @@ NativeNotesImageDecoder::NativeNotesImageDecoder(Resolver resolver,NotesImageRou
     try{auto state=std::make_shared<State>(std::move(resolver),std::move(factory));state->route=route;auto argument=std::make_unique<std::shared_ptr<State>>(state);const auto thread=_beginthreadex(nullptr,0,worker,argument.get(),0,nullptr);if(!thread)throw std::runtime_error("Cannot start image worker");argument.release();impl_->worker.value=reinterpret_cast<HANDLE>(thread);impl_->state=std::move(state);}catch(...){workerGate().store(false);throw;}
 }
 NativeNotesImageDecoder::~NativeNotesImageDecoder(){stop();}
-bool NativeNotesImageDecoder::setVisible(std::span<const NotesImageRequest>requests,bool retry){auto&i=*impl_;i.onThread();std::unordered_set<std::string_view>identities;identities.reserve(requests.size());for(const auto&r:requests){valid(r);need(identities.insert(r.key).second,"Duplicate media identity");}
+bool NativeNotesImageDecoder::setVisible(std::span<const NotesImageRequest>requests,bool retry){auto&i=*impl_;i.onThread();std::unordered_set<std::string_view>identities;identities.reserve(requests.size());for(const auto&r:requests){valid(r);need(!r.allowVideoInspection,"Video metadata ticket cannot enter image playback");need(identities.insert(r.key).second,"Duplicate media identity");}
     std::vector<NotesImageRequest>visible(requests.begin(),requests.end());std::vector<State::Pending>pending(requests.size());
     std::lock_guard lock(i.state->mutex);auto&s=*i.state;need(!s.stopping,"Image decoder stopped");if(!retry&&visible==s.visible)return false;need(s.generation<std::numeric_limits<std::uint64_t>::max(),"Image generation exhausted");
     std::unordered_map<std::string_view,std::size_t>previous;previous.reserve(s.visible.size());for(std::size_t n=0;n<s.visible.size();++n)previous.emplace(s.visible[n].key,n);
@@ -142,7 +147,7 @@ bool NativeNotesImageDecoder::requestFrame(std::string_view key,unsigned index){
     else{auto&pending=s.pending[static_cast<std::size_t>(visible-s.visible.begin())];if(pending.index==index)return false;pending={index,false};}
     s.pump();++s.stats.requests;SetEvent(s.event.value);return true;
 }
-bool NativeNotesImageDecoder::setInspections(std::span<const NotesImageRequest>requests){auto&i=*impl_;i.onThread();std::vector<NotesImageRequest>incoming(requests.begin(),requests.end());std::unordered_set<std::string_view>identities;identities.reserve(incoming.size());for(auto&r:incoming){valid(r);r.maximumDimension=64;r.firstFrameOnly=false;need(identities.insert(r.key).second,"Repeated import identity");}
+bool NativeNotesImageDecoder::setInspections(std::span<const NotesImageRequest>requests){auto&i=*impl_;i.onThread();std::vector<NotesImageRequest>incoming(requests.begin(),requests.end());std::unordered_set<std::string_view>identities;identities.reserve(incoming.size());for(auto&r:incoming){valid(r);need(!r.videoPoster,"Poster extraction uses the visible still-image queue");r.maximumDimension=64;r.firstFrameOnly=false;need(identities.insert(r.key).second,"Repeated import identity");}
     std::lock_guard lock(i.state->mutex);auto&s=*i.state;need(!s.stopping,"Image decoder stopped");if(incoming==s.inspections)return false;need(s.inspectionGeneration<std::numeric_limits<std::uint64_t>::max(),"Media import generation exhausted");++s.inspectionGeneration;s.inspections=std::move(incoming);s.inspectionCursor=0;std::erase_if(s.jobs,[](const auto&job){return job.inspection;});s.clearInspections();s.pump();s.noticePosted=false;s.notice();++s.stats.requests;SetEvent(s.event.value);return true;
 }
 std::vector<NotesImageCompletion>NativeNotesImageDecoder::drainInspections(UINT_PTR generation){auto&i=*impl_;i.onThread();std::vector<NotesImageCompletion>results;std::lock_guard lock(i.state->mutex);auto&s=*i.state;if(s.stopping||s.route.generation!=generation)return results;results.reserve(s.inspectionCompleted);for(auto&r:s.inspectionReady)if(r){results.push_back(std::move(*r));r.reset();}s.inspectionCompleted=0;s.noticePosted=false;s.pump();if(!s.jobs.empty())SetEvent(s.event.value);s.notice();return results;}

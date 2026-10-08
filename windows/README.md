@@ -557,3 +557,27 @@ The actual hardware video test still fails to expose its first paused frame even
 though Windows reports loaded media. It uses a tiny synthetic silent H.264 file,
 not user media. This is an explicit unresolved gate. No stable Windows release
 is available yet, and these checks do not establish full-app performance parity.
+
+
+The next checkpoint (snapshot 78 plus its shared-cache test correction) passes
+all 116 Windows suites, the source subsection comparison, and the connected
+Notes formatting, checklist, image/GIF and drawing-owner checks. Battery artwork
+matches 51,814 detached original-source comparisons; Settings and Archive artwork
+have independent native tests but are not connected to the live shell yet.
+
+The user confirmed Work Mode is smooth. Clipboard scrolling then exposed a
+whole-application graphics-cache count limit that its standalone test missed.
+The count ceiling now accommodates retained shell/module artwork and replacement
+generations; the 256 MiB byte ceiling is unchanged and no slots are preallocated.
+A hidden hardware run cycles seven connected module owners three times and sends
+72 Clipboard wheel events. Actual scroll offsets move and return to the top.
+Each completed cycle retains 315 raster entries / 52,777,320 bytes, with no growth;
+these are raster-cache bytes, not whole-process RAM or GPU memory. The app exits
+with code 0. The visible preview still needs the user's Clipboard/hotkey/tray check.
+
+Paused video remains unresolved: the independent SourceReader poster test
+currently reaches end-of-stream without a first frame on the laptop. Playback
+and posters are not signed off. The new drawing owner shares the existing
+renderer, input and persistence; it creates no timer or worker. Common Notes
+preview code now compiles once and is linked by the fixtures, reducing duplicate
+build intermediates without changing runtime appearance.

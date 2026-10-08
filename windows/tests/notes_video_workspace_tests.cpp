@@ -1,0 +1,52 @@
+#include "native/notes_workspace.hpp"
+#ifdef _WIN32
+#include <d3d11.h>
+#include <dxgi.h>
+#include <wrl/client.h>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
+#include <iostream>
+#include <new>
+namespace n=endfield::native;namespace m=endfield::modules;namespace c=endfield::core;namespace d=ehud::data;using Microsoft::WRL::ComPtr;
+namespace {std::atomic<std::size_t>allocations{};thread_local bool counting{};}
+void*operator new(std::size_t size){if(counting)++allocations;if(auto*p=std::malloc(size?size:1))return p;throw std::bad_alloc();}void operator delete(void*p)noexcept{std::free(p);}void operator delete(void*p,std::size_t)noexcept{std::free(p);}void*operator new[](std::size_t size){return ::operator new(size);}void operator delete[](void*p)noexcept{::operator delete(p);}void operator delete[](void*p,std::size_t)noexcept{::operator delete(p);}
+namespace {
+unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}
+constexpr const char*noteID="00000000-0000-4000-8000-000000000076";
+struct Window {HWND hwnd{};ATOM atom{};static constexpr UINT message=WM_APP+252;Window(){WNDCLASSW w{};w.lpfnWndProc=DefWindowProcW;w.hInstance=GetModuleHandleW(nullptr);w.lpszClassName=L"EndfieldOwnedVideoWorkspace";atom=RegisterClassW(&w);check(atom!=0,"Register owned video workspace");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,w.lpszClassName,L"Hidden injected movie",WS_POPUP,0,0,640,360,nullptr,nullptr,w.hInstance,nullptr);check(hwnd&&!IsWindowVisible(hwnd),"No visible media workspace or user input");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}};
+struct Probe {n::NativeNotesVideoPlayback::Notify notify;std::string key;double position{};bool fresh{true};unsigned seeks{},stops{},frames{};};
+class Engine final:public n::NativeNotesVideoPlayback::Engine {std::shared_ptr<Probe>p_;public:explicit Engine(std::shared_ptr<Probe>p):p_(std::move(p)){}HRESULT open(const n::NotesVideoRequest&r)override{p_->key=r.key;p_->notify(n::NativeNotesVideoPlayback::ready|n::NativeNotesVideoPlayback::firstFrame,S_OK);return S_OK;}HRESULT metadata(n::NotesVideoMetadata&out)override{out={2,2,10};return S_OK;}HRESULT play()override{return S_OK;}HRESULT pause()override{return S_OK;}HRESULT seek(double t)override{p_->position=t;p_->fresh=true;++p_->seeks;p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);return S_OK;}double currentTime()const override{return p_->position;}HRESULT tick(std::int64_t&time)override{time=static_cast<std::int64_t>(p_->position*10000000);if(!p_->fresh)return S_FALSE;p_->fresh=false;return S_OK;}HRESULT transfer(void*raw,unsigned w,unsigned h)override{if(w!=2||h!=2)return E_INVALIDARG;ComPtr<ID3D11Texture2D>texture;const auto hr=static_cast<IDXGISurface*>(raw)->QueryInterface(IID_PPV_ARGS(&texture));if(FAILED(hr))return hr;ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);constexpr std::array<std::uint8_t,16>red{0,0,255,255,0,0,255,255,0,0,255,255,0,0,255,255};context->UpdateSubresource(texture.Get(),0,nullptr,red.data(),8,0);++p_->frames;return S_OK;}void stop()noexcept override{++p_->stops;}};
+n::NativeNotesWorkspacePose pose(double time){n::NativeNotesWorkspacePose p;p.screenToClip=n::layerViewportProjection(640,360);p.pixelWidth=640;p.pixelHeight=360;p.time=time;return p;}
+void run(const std::filesystem::path&shader){
+    Window window;n::Renderer renderer;renderer.initialize(window.hwnd,640,360,{n::Driver::warpForTests,shader,n::RenderTarget::offscreenForTests,true});renderer.setCamera(n::layerViewportProjection(640,360));auto probe=std::make_shared<Probe>();
+    n::NativeNotesVideoPlayback video(renderer,{window.hwnd,Window::message,17},[&](auto,auto notify){probe->notify=std::move(notify);return std::make_unique<Engine>(probe);});
+    d::Note note{.id=noteID,.kind=d::NoteKind::image,.x=20,.y=20,.width=200,.height=150,.createdAt=0};note.media=d::makeWindowsMediaReference("C:\\owned-synthetic\\video.mp4","video.mp4",2,2,"video",10,1);unsigned saves{};
+    m::NotesState state({note},{[&](const auto&){++saves;},[&](auto){++saves;}});state.setWorkspaceBounds({0,0,640,360});n::LayerRasterizer raster;n::NativeNotesWorkspaceStyle style;style.palette=m::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};n::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=1;options.videoPlayback=&video;
+    n::NativeNotesWorkspace workspace(window.hwnd,state,raster,style,options);n::LayerComposition composition;
+    std::optional<std::uint64_t> publishedRevision;std::size_t publications{};
+    auto publish=[&]{workspace.uploadMedia(renderer);const auto revision=workspace.compositionRevision();if(!publishedRevision||*publishedRevision!=revision){composition.setEntries(renderer,workspace.entries());publishedRevision=revision;++publications;}composition.present(renderer);workspace.collectRetired(renderer);};
+    workspace.updatePose(pose(0));workspace.acceptMedia(17,0);publish();check(workspace.entries().size()==1&&workspace.entries()[0].after.size()==4&&!workspace.entries()[0].after[0].textureID.empty(),"Source movie card borrows actual retained poster in shared composition");
+    renderer.draw(false);const auto pixels=renderer.readback();const auto offset=(std::size_t(90)*pixels.width+100)*4;check(pixels.pixels[offset+2]>250&&pixels.pixels[offset]<3,"Injected movie paints owned red pixels through original card geometry");check(!workspace.requiresFrames(0)&&!workspace.mediaNextWakeTime(),"Initially paused video card needs no permanent frame or deadline");
+    check(workspace.toggleMedia(noteID,1)&&workspace.requiresFrames(1),"Source footer starts same-device playback");workspace.sampleMedia(1);publish();
+    const auto posterBinding=workspace.entries()[0].after[0].textureID;const auto priorPublication=workspace.compositionRevision();const auto priorPublicationCount=publications;
+    check(posterBinding.ends_with(".poster"),"Play without a decoded tick keeps the already published poster");
+    probe->fresh=true;workspace.sampleMedia(1.001);workspace.uploadMedia(renderer);
+    check(workspace.entries()[0].after[0].textureID!=posterBinding&&workspace.compositionRevision()>priorPublication,"Delayed first live frame signals structural texture rebinding to the owner");
+    publish();check(publications==priorPublicationCount+1&&publishedRevision==workspace.compositionRevision(),"Production owner revision comparison republishes the delayed texture binding");const auto resources=renderer.stats();const auto rasters=raster.stats().rasterizations;
+    allocations=0;counting=true;try{for(unsigned f=0;f<120;++f){const auto time=1.01+double(f)/60;probe->position=double(f)/60;probe->fresh=true;workspace.sampleMedia(time);auto p=pose(time);p.workspaceToScreen.values[12]=double(f)*.01;workspace.updatePose(p);publish();}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&renderer.stats().mediaTargetAllocations==resources.mediaTargetAllocations&&renderer.stats().textureUploads==resources.textureUploads&&raster.stats().rasterizations==rasters,"120 live-video/tilt frames retain layouts, texture bindings, resources and CPU storage");
+    workspace.toggleMedia(noteID,3.1);publish();auto tilted=pose(3.2);tilted.workspaceToScreen=c::Matrix4::translation(3,4)*c::Matrix4::scale(.93,.9);tilted.workspaceToScreen.values[3]=.00005;workspace.updatePose(tilted);
+    const auto projection=c::Projection::viewport(tilted.screenToClip*tilted.workspaceToScreen,640,360);m::NotesMediaLayout layout(200,150,m::NotesMediaKind::video,10);const auto seek=layout.geometry().seek;
+    auto rail=[&](double fraction){const auto point=projection.project({20+seek.x+seek.width*fraction,20+seek.y+seek.height*.5});check(point.has_value(),"Original perspective projects media rail");return *point;};const auto seeks=probe->seeks;
+    check(workspace.beginMediaSeek(noteID,rail(.25),3.2)&&workspace.mediaSeeking(),"Projected source rail starts owner gesture");check(workspace.updateMediaSeek(rail(.75),3.3)&&probe->seeks==seeks&&saves==0,"Pointer drag changes only preview; no repeated native seek or persistence");
+    check(workspace.endMediaSeek(3.4)&&!workspace.mediaSeeking()&&probe->seeks==seeks+1&&std::abs(probe->position-7.5)<1e-8,"Pointer-up submits exactly one perspective-correct source seek");workspace.acceptMedia(17,3.4);publish();check(!workspace.requiresFrames(3.4),"Paused seek settles without a continuing rendering clock");
+    workspace.setPresentation(false,true);publish();check(workspace.entries().size()==1&&!workspace.hitTest(rail(.5))&&!workspace.toggleMedia(noteID,3.5),"Outgoing movie preserves poster but rejects input");workspace.sampleMedia(4.1);workspace.settleOutgoing();publish();check(workspace.entries().empty()&&!workspace.mediaNextWakeTime()&&saves==0,"Section close clears movie demand without modifying its reference");
+    composition.setEntries(renderer,{});check(workspace.releaseResources(renderer)&&renderer.stats().mediaLiveBytes==0,"Detach precedes retirement of same-device media surfaces");check(!IsWindowVisible(window.hwnd)&&renderer.stats().presents==0,"Movie workspace test uses no real files, sound, desktop capture or visible window");
+}
+}
+int wmain(int argc,wchar_t**argv){const auto com=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(com))return 1;int code{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);std::cout<<"PASS "<<checks<<" Notes movie workspace checks\n";}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';code=1;}CoUninitialize();return code;}
+#else
+int main(){return 0;}
+#endif

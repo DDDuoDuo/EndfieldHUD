@@ -16,7 +16,7 @@ void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
 bool inside(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
 bool validRect(core::Rect r){return std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&r.width>0&&r.height>0&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
 bool mediaRecord(const Note&n){return n.kind==ehud::data::NoteKind::image&&!n.drawing;}
-void presentationRecord(const Note&n){need(!n.drawing&&(mediaRecord(n)||((n.kind==ehud::data::NoteKind::text||n.kind==ehud::data::NoteKind::todo)&&!n.imageName&&!n.media)),"Notes drawing presentation is not connected; stored record is untouched");}
+void presentationRecord(const Note&n){need((n.kind==ehud::data::NoteKind::drawing&&!n.media&&!n.imageName)||( !n.drawing&&(mediaRecord(n)||((n.kind==ehud::data::NoteKind::text||n.kind==ehud::data::NoteKind::todo)&&!n.imageName&&!n.media))),"Unsupported Notes payload combination; stored record is untouched");}
 void textRecord(const Note&n){need((n.kind==ehud::data::NoteKind::text||n.kind==ehud::data::NoteKind::todo)&&!n.imageName&&!n.media&&!n.drawing&&(n.kind==ehud::data::NoteKind::todo||n.items.empty()),"Notes workspace supports attachment-free text and checklist records only; other payloads remain untouched");}
 core::Rect constrainedRect(const Note&n,core::Rect bounds){
     // Reuse the source geometry algorithm without copying the record's text,
@@ -36,12 +36,12 @@ std::string utf8(std::u16string_view s){
     std::string out(static_cast<std::size_t>(n),'\0');need(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,reinterpret_cast<const wchar_t*>(s.data()),static_cast<int>(s.size()),out.data(),n,nullptr,nullptr)==n,"Incomplete Notes UTF-8 conversion");return out;
 }
 void validateStyle(const NativeNotesWorkspaceStyle&s){
-    for(const auto*c:{&s.palette.primary,&s.palette.muted,&s.palette.border,&s.palette.card,&s.palette.header,&s.palette.formatPlate,&s.palette.accent,&s.editor.background,&s.editor.border,&s.selectionColor,&s.compositionColor})for(double v:*c)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Notes workspace color");
+    for(const auto*c:{&s.palette.primary,&s.palette.muted,&s.palette.border,&s.palette.card,&s.palette.header,&s.palette.formatPlate,&s.palette.accent,&s.editor.background,&s.editor.border,&s.selectionColor,&s.compositionColor,&s.eraserColor})for(double v:*c)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Notes workspace color");
     need(s.editor.background[3]==1,"Source Notes editor backing must be opaque");
-    for(const auto*t:{&s.strings.textTitle,&s.strings.placeholder,&s.strings.pin,&s.strings.unpin,&s.strings.remove,&s.strings.edit,&s.strings.select,&s.strings.grow,&s.strings.shrink,&s.strings.todoTitle,&s.strings.itemPlaceholder,&s.strings.addItem,&s.strings.checkItem,&s.strings.uncheckItem,&s.strings.editItem,&s.strings.moveUp,&s.strings.moveDown,&s.strings.removeItem,&s.strings.addItemAction,&s.strings.imageTitle})need(ehud::data::Json::validUtf8(*t),"Invalid Notes localized text");
+    for(const auto*t:{&s.strings.textTitle,&s.strings.placeholder,&s.strings.pin,&s.strings.unpin,&s.strings.remove,&s.strings.edit,&s.strings.select,&s.strings.grow,&s.strings.shrink,&s.strings.todoTitle,&s.strings.itemPlaceholder,&s.strings.addItem,&s.strings.checkItem,&s.strings.uncheckItem,&s.strings.editItem,&s.strings.moveUp,&s.strings.moveDown,&s.strings.removeItem,&s.strings.addItemAction,&s.strings.imageTitle,&s.strings.drawingTitle,&s.strings.drawingColor})need(ehud::data::Json::validUtf8(*t),"Invalid Notes localized text");
     for(const auto&t:s.strings.format)need(ehud::data::Json::validUtf8(t),"Invalid Notes format label");
 }
-bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor;}
+bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor&&a.eraserColor==b.eraserColor;}
 void validMotion(const mod::NotesMotionSample&s){need(std::isfinite(s.x)&&std::isfinite(s.y)&&std::abs(s.x)<=1'000'000&&std::abs(s.y)<=1'000'000&&std::isfinite(s.scale)&&s.scale>0&&s.scale<=1024&&std::isfinite(s.opacity)&&s.opacity>=0&&s.opacity<=1,"Invalid Notes card motion sample");}
 }
 struct NativeNotesWorkspace::Impl {
@@ -49,16 +49,18 @@ struct NativeNotesWorkspace::Impl {
     struct Media {
         std::optional<std::string>payload,legacyName;std::string key;
         std::shared_ptr<void>accessLease;
-        std::optional<NotesImagePlaybackRequest>request;
+        std::optional<NotesImagePlaybackRequest>request;std::optional<NotesVideoRequest>videoRequest;std::string videoTexture;unsigned videoWidth{},videoHeight{};
         std::shared_ptr<const mod::NotesMediaCardContent>content;
         std::shared_ptr<const NotesImageFrame>frame;
-        std::uint64_t observedContent{},observedFrame{},uploadedFrame{};bool uploaded{};
+        std::uint64_t observedContent{},observedFrame{},observedProgress{},uploadedFrame{};bool uploaded{};
     };
     struct Slot {
         mod::NotesCardPresentation presentation;std::unique_ptr<NativeNotesCardScene> native;std::shared_ptr<Media>media;std::shared_ptr<const mod::NotesMediaCardContent>paintedMedia;
         std::shared_ptr<const NativeNotesTextMeasurement> measurement;
         struct Row {std::shared_ptr<const NativeNotesTextMeasurement>text,display;};
         std::map<std::string,Row,std::less<>>rowMeasurements;std::shared_ptr<const mod::NotesChecklistLayout>checklist;
+        std::optional<mod::NotesMediaProgress>mediaProgress;
+        std::unique_ptr<NativeNotesDrawingScene>drawingScene;std::shared_ptr<mod::NotesDrawing>drawing;std::optional<std::string>drawingPayload;std::uint64_t drawingRevision{};
         core::Rect rect;bool selected{},pinned{},editing{},visible{},outgoing{},deleted{};
         NativeNotesCardToken token{};std::size_t tokenIndex{tokenCapacity};mod::NotesMotionSample motion;
         core::Matrix4 effectiveWorkspace;core::Projection hitProjection;
@@ -84,13 +86,17 @@ struct NativeNotesWorkspace::Impl {
     core::Projection projection;std::optional<double>lastTime;std::uint64_t synchronized{},compositionRevision{},measureRevision{},motionSerial{},presentationGeneration{1};UINT_PTR generation{};
     NativeNotesWorkspaceStats stats;
     std::vector<std::shared_ptr<Media>>mediaAssets;std::vector<Slot*>mediaSlots;
-    std::vector<NotesImagePlaybackRequest>mediaRequests;
+    std::vector<NotesImagePlaybackRequest>mediaRequests;std::vector<NotesVideoRequest>videoRequests;
+    struct MediaSeek {std::string id;double seconds{};};std::optional<MediaSeek>mediaSeek;
     bool mediaActive{true},mediaUploadPending{};Renderer*mediaRenderer{};
     std::uint64_t mediaSerial{},mediaOwnerID{};double mediaTime{};
     std::optional<std::pair<std::string,std::shared_ptr<void>>>newMediaLease;
+    struct DrawingGesture {std::string id;mod::NotesDrawing drawing;mod::DrawingStroke stroke;bool erased{};};
+    std::optional<DrawingGesture>drawingGesture;Slot*brushSlot{};std::optional<core::Point>brushPhysical;
+    mod::NotesColor drawingColor{.98,.83,.12,1};double drawingWidth{8};bool erasing{};std::uint64_t drawingSerial{};NativeNotesDrawingIssue drawingIssue{};
     Impl(HWND h,mod::NotesState&s,LayerRasterizer&r,NativeNotesWorkspaceStyle st,NativeNotesWorkspaceOptions o):hwnd(h),state(s),raster(r),style(std::move(st)),options(std::move(o)),measurer(r){
         static std::atomic<std::uint64_t>nextMediaOwner{1};mediaOwnerID=nextMediaOwner.fetch_add(1);
-        mediaRequests.reserve(8);mediaSlots.reserve(options.maximumRetainedCards);mediaAssets.reserve(options.maximumRetainedCards);
+        mediaRequests.reserve(8);videoRequests.reserve(8);mediaSlots.reserve(options.maximumRetainedCards);mediaAssets.reserve(options.maximumRetainedCards);
         for(const auto*t:{&options.mediaStrings.loading,&options.mediaStrings.play,&options.mediaStrings.pause,&options.mediaStrings.playAction,&options.mediaStrings.pauseAction,&options.mediaStrings.unavailable,&options.mediaUnavailable,&options.videoUnavailable})need(ehud::data::Json::validUtf8(*t),"Invalid localized media text");
         need(IsWindow(hwnd)!=FALSE,"Notes workspace requires an owned live HWND");need(!state.editing(),"Attach Notes workspace before entering an editor");validateStyle(style);
         need(options.maximumRetainedCards>0&&options.maximumRetainedCards<=1024&&options.maximumEditorUnits>0&&options.maximumEditorUnits<=65536,"Invalid explicit Notes workspace capacities");
@@ -118,7 +124,7 @@ struct NativeNotesWorkspace::Impl {
     void unregister(Slot&s){if(s.tokenIndex<tokenCapacity&&tokenSlots[s.tokenIndex]==&s)tokenSlots[s.tokenIndex]=nullptr;}
     void preflight(core::Rect bounds,bool notesSelected)const{
         std::size_t newSlots{};
-        for(const auto&n:state.notes())if(notesSelected||n.isPinned){presentationRecord(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(!existing)++newSlots;}
+        for(const auto&n:state.notes())if(notesSelected||n.isPinned){presentationRecord(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(n.kind==ehud::data::NoteKind::drawing&&n.drawing&&(!existing||existing->drawingPayload!=n.drawing))(void)mod::NotesDrawing(*n.drawing);if(!existing)++newSlots;}
         need(slots.size()+deletingCards.size()+retiredCards.size()+newSlots<=options.maximumRetainedCards,"Notes retained-card capacity reached; retire detached cards before adding more");
     }
     std::shared_ptr<Media>mediaFor(Slot&s,const Note&n){
@@ -138,22 +144,34 @@ struct NativeNotesWorkspace::Impl {
         }else{need(n.imageName.has_value(),"Image card has no source reference");content->legacyManagedImage=true;if(options.legacyImagePath)path=options.legacyImagePath(*n.imageName);}
         if(path&&options.imagePlayback&&content->kind!=mod::NotesMediaKind::video){
             asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,false,asset->accessLease},content->kind};content->status.state=mod::NotesMediaState::loading;
-        }else{content->status.state=mod::NotesMediaState::failed;content->status.localizedError=content->kind==mod::NotesMediaKind::video?options.videoUnavailable:options.mediaUnavailable;content->legacyUnavailable=content->legacyManagedImage;}
+        }else if(path&&options.videoPlayback&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease};content->status.state=mod::NotesMediaState::loading;}else{content->status.state=mod::NotesMediaState::failed;content->status.localizedError=content->kind==mod::NotesMediaKind::video?options.videoUnavailable:options.mediaUnavailable;content->legacyUnavailable=content->legacyManagedImage;}
         asset->content=std::move(content);mediaAssets.push_back(asset);mediaUploadPending=true;return asset;
     }
     void mediaClock(double time){need(std::isfinite(time)&&time>=mediaTime,"Invalid Notes media owner clock");mediaTime=time;}
+    void progress(Slot&s,bool animated){
+        if(!s.media||!s.media->videoRequest||!options.videoPlayback||!s.mediaProgress)return;
+        const auto*r=options.videoPlayback->find(s.media->key);if(!r)return;
+        const auto preview=mediaSeek&&mediaSeek->id==s.presentation.noteID()?std::optional<double>(mediaSeek->seconds):std::nullopt;
+        s.mediaProgress->update(r->pendingSeek.value_or(r->currentTime),preview,animated,r->state==mod::NotesMediaState::playing,s.visible&&mediaActive,false,mediaTime);
+    }
     bool readMedia(){
-        if(!options.imagePlayback)return false;bool changed{},contentChanged{};
-        for(auto&asset:mediaAssets){if(!asset->request)continue;const auto*record=options.imagePlayback->find(asset->key);if(!record)continue;
-            if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->legacyUnavailable=content->legacyManagedImage&&record->state==mod::NotesMediaState::failed;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
-            if(record->frameRevision!=asset->observedFrame){asset->frame=record->frame;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
+        bool changed{},contentChanged{};
+        for(auto&asset:mediaAssets){
+            if(asset->request&&options.imagePlayback){const auto*record=options.imagePlayback->find(asset->key);if(!record)continue;
+                if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->legacyUnavailable=content->legacyManagedImage&&record->state==mod::NotesMediaState::failed;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
+                if(record->frameRevision!=asset->observedFrame){asset->frame=record->frame;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
+            }else if(asset->videoRequest&&options.videoPlayback){const auto*record=options.videoPlayback->find(asset->key);if(!record)continue;
+                if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->duration=record->duration;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
+                if(record->frameRevision!=asset->observedFrame){asset->videoTexture=record->textureID;asset->videoWidth=record->width;asset->videoHeight=record->height;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
+            }
         }
-        if(contentChanged){for(auto*s:mediaSlots){if(s->deleted)continue;const auto*n=state.note(s->presentation.noteID());if(n)refresh(*s,*n,s->ordinal);}rebuildEntries();if(pose)applyPose(*pose);}
-        return changed;
+        if(contentChanged){for(auto*s:mediaSlots){if(s->deleted)continue;const auto*n=state.note(s->presentation.noteID());if(n)refresh(*s,*n,s->ordinal);}rebuildEntries();}
+        for(auto*s:mediaSlots)if(s->media->videoRequest&&options.videoPlayback){const auto*r=options.videoPlayback->find(s->media->key);if(r&&r->progressRevision!=s->media->observedProgress){s->media->observedProgress=r->progressRevision;progress(*s,true);changed=true;}}
+        if(changed&&pose)applyPose(*pose);return changed;
     }
     bool syncMediaVisibility(bool preserve=false){
-        if(!options.imagePlayback)return false;mediaRequests.clear();if(mediaActive)for(auto*s:mediaSlots)if(s->visible&&!s->deleted&&s->media->request)mediaRequests.push_back(*s->media->request);
-        const bool changed=options.imagePlayback->setVisible(mediaRequests,mediaTime,preserve);if(changed)readMedia();return changed;
+        mediaRequests.clear();videoRequests.clear();if(mediaActive)for(auto*s:mediaSlots)if(s->visible&&!s->deleted){if(s->media->request)mediaRequests.push_back(*s->media->request);if(s->media->videoRequest)videoRequests.push_back(*s->media->videoRequest);}
+        bool changed{};if(options.imagePlayback)changed=options.imagePlayback->setVisible(mediaRequests,mediaTime,preserve)||changed;if(options.videoPlayback)changed=options.videoPlayback->setVisible(videoRequests,mediaTime,preserve)||changed;if(changed)readMedia();return changed;
     }
     std::shared_ptr<const NativeNotesTextMeasurement>measure(std::string_view id,const Note&n,core::Rect r,const std::shared_ptr<const NativeNotesTextMeasurement>&old={}){
         const std::string_view value=n.text.empty()?std::string_view(style.strings.placeholder):std::string_view(n.text);
@@ -175,17 +193,19 @@ struct NativeNotesWorkspace::Impl {
         }
         auto layout=std::make_shared<mod::NotesChecklistLayout>(n.id,r.width,r.height,inputs);s.rowMeasurements=std::move(next);return layout;
     }
-    mod::NotesPresentationInput presentationInput(const Slot&s)const{mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(s.measurement)input.measured=s.measurement->presentationText(s.measurement);input.checklist=s.checklist;input.scrollOffset=s.scrollOffset;input.editingColor=s.editingColor;if(s.media)input.media=s.media->content;return input;}
+    mod::NotesPresentationInput presentationInput(const Slot&s)const{mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(s.measurement)input.measured=s.measurement->presentationText(s.measurement);input.checklist=s.checklist;input.scrollOffset=s.scrollOffset;input.editingColor=s.editingColor;input.drawingColor=drawingColor;if(s.media)input.media=s.media->content;return input;}
     bool refresh(Slot&s,const Note&n,std::size_t ordinal,bool force=false){
         const auto c=state.card(n.id);need(c.has_value(),"Notes card disappeared during content synchronization");presentationRecord(n);geometry(c->rect,field&&field->id==n.id);
         if(s.initialized&&s.visible!=c->visible){s.motion={};issueToken(s);}
-        const auto media=mediaFor(s,n);const bool edit=field&&field->id==n.id;const bool todo=n.kind==ehud::data::NoteKind::todo;const auto measurement=(todo||media)?std::shared_ptr<const NativeNotesTextMeasurement>{}:measure(n.id,n,c->rect,force?nullptr:s.measurement);
+        const auto media=mediaFor(s,n);const bool edit=field&&field->id==n.id;const bool todo=n.kind==ehud::data::NoteKind::todo;const bool drawing=n.kind==ehud::data::NoteKind::drawing;const auto measurement=(todo||media||drawing)?std::shared_ptr<const NativeNotesTextMeasurement>{}:measure(n.id,n,c->rect,force?nullptr:s.measurement);
         const auto checklist=todo?measureChecklist(s,n,c->rect,force):std::shared_ptr<const mod::NotesChecklistLayout>{};
+        if(drawing&&(!s.drawing||s.drawingPayload!=n.drawing)){auto value=std::make_shared<mod::NotesDrawing>(n.drawing?mod::NotesDrawing(*n.drawing):mod::NotesDrawing{});s.drawing=std::move(value);s.drawingPayload=n.drawing;s.drawingRevision=++drawingSerial;}
+        if(drawing){if(!s.drawingScene)s.drawingScene=std::make_unique<NativeNotesDrawingScene>(raster,options.raster);if(s.drawingScene->setCompleted(*s.drawing,s.drawingRevision,{c->rect.width,c->rect.height}))++compositionRevision;}
         std::optional<mod::NotesColor> editingColor;if(edit&&field->rich){const auto color=field->rich->selectionStyle().color;if(color)editingColor=mod::NotesColor{color->red,color->green,color->blue,color->alpha};}
         const bool content=force||(media&&s.paintedMedia!=media->content)||s.media!=media||s.editingColor!=editingColor||!s.initialized||s.measurement!=measurement||s.checklist!=checklist||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
-        bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(measurement)input.measured=measurement->presentationText(measurement);input.checklist=checklist;input.scrollOffset=s.scrollOffset;input.editingColor=editingColor;if(media)input.media=media->content;s.presentation.updateContent(state,input);
+        bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(measurement)input.measured=measurement->presentationText(measurement);input.checklist=checklist;input.scrollOffset=s.scrollOffset;input.editingColor=editingColor;input.drawingColor=drawingColor;if(media)input.media=media->content;s.presentation.updateContent(state,input);
             if(!s.native)s.native=std::make_unique<NativeNotesCardScene>(s.presentation,raster,options.raster,style.editor);
-            s.native->syncContent();s.measurement=measurement;s.checklist=checklist;s.media=media;s.paintedMedia=media?media->content:nullptr;if(media)mediaUploadPending=true;++stats.cardContentUpdates;++compositionRevision;
+            s.native->syncContent();if(media&&media->videoRequest){s.mediaProgress.emplace(mod::NotesMediaLayout(c->rect.width,c->rect.height,mod::NotesMediaKind::video,media->content->duration));}else s.mediaProgress.reset();s.measurement=measurement;s.checklist=checklist;s.media=media;s.paintedMedia=media?media->content:nullptr;if(media){mediaUploadPending=true;progress(s,false);}++stats.cardContentUpdates;++compositionRevision;
             if(!edit)s.scrollOffset=s.presentation.scrollOffset();
         }else if(s.presentation.updatePlacement(state)){moved=true;++stats.cardPlacementUpdates;}
         s.rect=c->rect;s.selected=c->selected;s.pinned=c->pinned;s.visible=c->visible;s.editing=edit;s.ordinal=ordinal;s.editingColor=editingColor;s.initialized=true;return content||moved;
@@ -193,7 +213,7 @@ struct NativeNotesWorkspace::Impl {
     void rebuildEntries(){
         std::vector<Slot*>next;next.reserve(slots.size()+deletingCards.size());for(auto&[id,s]:slots)if(s->visible||s->outgoing)next.push_back(s.get());for(auto&s:deletingCards)next.push_back(s.get());
         std::sort(next.begin(),next.end(),[](const auto*a,const auto*b){const auto x=a->presentation.placement().layerOrder,y=b->presentation.placement().layerOrder;return x!=y?x<y:a->ordinal!=b->ordinal?a->ordinal<b->ordinal:a->token<b->token;});
-        std::vector<LayerCompositionEntry> list;list.reserve(next.size()+(field?1:0));for(auto*s:next){list.push_back({&s->native->scene(),s->media?s->native->mediaDraws():std::span<const DrawObject>{}});if(!s->deleted&&field&&field->id==s->presentation.noteID())list.push_back({&field->scene,s->native->externalEditorAfterDraws()});}
+        std::vector<LayerCompositionEntry> list;list.reserve(next.size()+(field?1:0));for(auto*s:next){list.push_back({&s->native->scene(),s->media?s->native->mediaDraws():std::span<const DrawObject>{}});if(s->drawingScene)for(const auto&e:s->drawingScene->entries())list.push_back(e);if(!s->deleted&&field&&field->id==s->presentation.noteID())list.push_back({&field->scene,s->native->externalEditorAfterDraws()});}
         bool changed=list.size()!=entries.size();for(std::size_t n=0;!changed&&n<list.size();++n)changed=list[n].scene!=entries[n].scene||list[n].after.data()!=entries[n].after.data()||list[n].after.size()!=entries[n].after.size();
         active=std::move(next);mediaSlots.clear();for(auto*s:active)if(s->media)mediaSlots.push_back(s);if(changed){entries=std::move(list);++compositionRevision;}
     }
@@ -205,7 +225,7 @@ struct NativeNotesWorkspace::Impl {
             if(!s&&visible){auto fresh=std::make_unique<Slot>(n.id);s=fresh.get();slots.emplace(n.id,std::move(fresh));issueToken(*s);changed=true;}
             if(s)changed=refresh(*s,n,ordinal,force)||changed;++ordinal;
         }
-        for(auto it=slots.begin();it!=slots.end();)if(!state.note(it->first)){measurer.remove(it->first);if(it->second->deleted)deletingCards.push_back(std::move(it->second));else{unregister(*it->second);retiredCards.push_back(std::move(it->second));}it=slots.erase(it);changed=true;}else ++it;
+        for(auto it=slots.begin();it!=slots.end();)if(!state.note(it->first)){if(brushSlot==it->second.get()){brushSlot->drawingScene->setBrush({},drawingWidth,style.palette.primary);brushSlot=nullptr;brushPhysical.reset();}measurer.remove(it->first);if(it->second->deleted)deletingCards.push_back(std::move(it->second));else{unregister(*it->second);retiredCards.push_back(std::move(it->second));}it=slots.erase(it);changed=true;}else ++it;
         rebuildEntries();synchronized=state.revision();++stats.stateSynchronizations;
         syncMediaVisibility(!deletingCards.empty()||std::any_of(active.begin(),active.end(),[](const auto*s){return s->outgoing;}));if(pose)applyPose(*pose);return changed||compositionRevision!=priorComposition;
     }
@@ -218,7 +238,8 @@ struct NativeNotesWorkspace::Impl {
             // its sibling cards and the source workspace tilt remain intact.
             s->effectiveWorkspace=m.x==0&&m.y==0&&m.scale==1?p.workspaceToScreen:p.workspaceToScreen*core::Matrix4::translation(cx+m.x,cy+m.y)*core::Matrix4::scale(m.scale,m.scale,m.scale)*core::Matrix4::translation(-cx,-cy);
             s->hitProjection=core::Projection::viewport(p.screenToClip*s->effectiveWorkspace,p.pixelWidth,p.pixelHeight);
-            changed=s->native->updatePose(s->effectiveWorkspace,p.opacity*static_cast<float>(m.opacity),p.time,(s->outgoing||s->deleted)?std::optional<bool>(true):std::nullopt)||changed;}
+            if(s->mediaProgress)s->native->setMediaProgress(s->mediaProgress->sample(p.time));
+            changed=s->native->updatePose(s->effectiveWorkspace,p.opacity*static_cast<float>(m.opacity),p.time,(s->outgoing||s->deleted)?std::optional<bool>(true):std::nullopt)||changed;if(s->drawingScene)changed=s->drawingScene->updatePose(s->effectiveWorkspace*core::Matrix4::translation(s->rect.x,s->rect.y),p.opacity*static_cast<float>(m.opacity))||changed;}
         if(field){auto*s=find(field->id);need(s&&s->native->externalEditorSlot(),"Notes field has no matching card slot");const auto r=s->native->externalEditorSlot()->localRect;
             ProjectedEditorPose e;e.localToScreen=s->effectiveWorkspace*core::Matrix4::translation(s->rect.x+r.x,s->rect.y+r.y);e.screenToClip=p.screenToClip;e.pixelWidth=p.pixelWidth;e.pixelHeight=p.pixelHeight;e.opacity=p.opacity*static_cast<float>(s->motion.opacity);e.visible=s->visible&&!s->outgoing&&!s->deleted&&e.opacity>0;e.ownerFocused=p.ownerFocused&&e.visible;e.caretVisible=p.caretVisible;changed=field->native->setPose(e)||changed;
         }
@@ -256,9 +277,9 @@ struct NativeNotesWorkspace::Impl {
 };
 
 NativeNotesWorkspace::NativeNotesWorkspace(HWND h,mod::NotesState&s,LayerRasterizer&r,NativeNotesWorkspaceStyle st,NativeNotesWorkspaceOptions o):impl_(std::make_unique<Impl>(h,s,r,std::move(st),std::move(o))){impl_->sync();}
-NativeNotesWorkspace::~NativeNotesWorkspace(){if(impl_->options.imagePlayback){try{impl_->options.imagePlayback->hide(impl_->mediaTime);}catch(...){}}}
+NativeNotesWorkspace::~NativeNotesWorkspace(){if(impl_->options.imagePlayback){try{impl_->options.imagePlayback->hide(impl_->mediaTime);}catch(...){}}if(impl_->options.videoPlayback){try{impl_->options.videoPlayback->hide(impl_->mediaTime);}catch(...){}}}
 bool NativeNotesWorkspace::syncState(){return impl_->sync();}
-bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*impl_;i.check();validateStyle(style);if(sameStyle(i.style,style))return false;
+bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*impl_;i.check();validateStyle(style);if(sameStyle(i.style,style))return false;endDrawing();updateDrawingHover({});
     need(i.slots.size()*2+i.deletingCards.size()+i.retiredCards.size()<=i.options.maximumRetainedCards,"Retire detached Notes cards before changing their native appearance");
     // A theme/localization event does not end the owner's sampled closing
     // transition. Stage replacement identities with their outgoing holds even
@@ -273,9 +294,10 @@ bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*imp
     for(auto&[id,s]:i.slots)i.retiredCards.push_back(std::move(s));i.slots=std::move(replacements);for(auto&[id,s]:i.slots)i.tokenSlots[s->tokenIndex]=s.get();i.style=std::move(style);i.synchronized=0;i.sync();return true;
 }
 bool NativeNotesWorkspace::setWorkspaceBounds(core::Rect bounds,std::optional<core::Point>point){auto&i=*impl_;i.check();if(!validRect(bounds)||(point&&(!std::isfinite(point->x)||!std::isfinite(point->y))))return false;
-    i.preflight(bounds,i.state.notesSelected());i.finishRequired();const bool changed=i.state.setWorkspaceBounds(bounds,point);i.drag.reset();i.sync();return changed;
+    i.preflight(bounds,i.state.notesSelected());endDrawing();updateDrawingHover({});i.finishRequired();const bool changed=i.state.setWorkspaceBounds(bounds,point);i.drag.reset();i.sync();return changed;
 }
 void NativeNotesWorkspace::setPresentation(bool selected,bool retainOutgoing){auto&i=*impl_;i.check();if(i.state.notesSelected()==selected)return;i.preflight(i.state.workspaceBounds(),selected);i.finishRequired();
+    endMediaSeek(i.mediaTime);endDrawing();updateDrawingHover({}); // source cancelInteraction commits active gestures
     need(i.presentationGeneration!=std::numeric_limits<std::uint64_t>::max()&&i.motionSerial<=(std::numeric_limits<NativeNotesCardToken>::max()>>10)-i.slots.size(),"Notes presentation generation exhausted");
     ++i.presentationGeneration;for(auto&[id,s]:i.slots)s->outgoing=!selected&&retainOutgoing&&s->visible&&!s->pinned;
     i.state.setPresentation(selected);i.drag.reset();i.sync();
@@ -294,27 +316,35 @@ bool NativeNotesWorkspace::setCardMotions(std::span<const NativeNotesCardMotion>
     if(stale)return false;for(const auto&m:motions)i.findToken(m.token)->motion=m.sample;return true;
 }
 bool NativeNotesWorkspace::updatePose(const NativeNotesWorkspacePose&p){return impl_->applyPose(p);}
-bool NativeNotesWorkspace::requiresFrames(double t)const{auto&i=*impl_;i.check();need(std::isfinite(t),"Notes frame-demand time must be finite");for(auto*s:i.active)if(s->motion.active||s->native->requiresFrames(t))return true;return false;}
+bool NativeNotesWorkspace::requiresFrames(double t)const{auto&i=*impl_;i.check();need(std::isfinite(t),"Notes frame-demand time must be finite");for(auto*s:i.active)if(s->motion.active||s->native->requiresFrames(t)||(s->mediaProgress&&s->mediaProgress->needsFrame(t)))return true;return i.options.videoPlayback&&i.options.videoPlayback->requiresFrames();}
+void NativeNotesWorkspace::connectVideoPlayback(NativeNotesVideoPlayback&owner){auto&i=*impl_;i.check();need(!i.options.videoPlayback&&std::none_of(i.mediaAssets.begin(),i.mediaAssets.end(),[](const auto&a){return a->content->kind==mod::NotesMediaKind::video;}),"Connect exclusive video owner before attaching movie cards");i.options.videoPlayback=&owner;}
 void NativeNotesWorkspace::connectImagePlayback(NativeNotesImagePlayback&owner){auto&i=*impl_;i.check();need(!i.options.imagePlayback&&i.mediaAssets.empty(),"Connect the exclusive media owner before attaching media cards");i.options.imagePlayback=&owner;}
-bool NativeNotesWorkspace::setMediaActive(bool active,double time,bool preserve){auto&i=*impl_;i.check();i.mediaClock(time);if(i.mediaActive==active)return false;i.mediaActive=active;return i.syncMediaVisibility(preserve);}
-bool NativeNotesWorkspace::acceptMedia(UINT_PTR generation,double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.options.imagePlayback)return false;const bool changed=i.options.imagePlayback->accept(generation,time);return changed?i.readMedia():false;}
-bool NativeNotesWorkspace::sampleMedia(double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.options.imagePlayback)return false;const bool changed=i.options.imagePlayback->sample(time);return changed?i.readMedia():false;}
-std::optional<double>NativeNotesWorkspace::mediaNextWakeTime()const{auto&i=*impl_;i.check();return i.options.imagePlayback?i.options.imagePlayback->nextWakeTime():std::nullopt;}
-bool NativeNotesWorkspace::toggleMedia(std::string_view id,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!s->media->request||!i.options.imagePlayback||!i.mediaActive)return false;const auto changed=i.options.imagePlayback->toggle(s->media->key,time);i.readMedia();return changed;}
+bool NativeNotesWorkspace::setMediaActive(bool active,double time,bool preserve){auto&i=*impl_;i.check();i.mediaClock(time);if(i.mediaActive==active)return false;if(!active)endMediaSeek(time);i.mediaActive=active;return i.syncMediaVisibility(preserve);}
+bool NativeNotesWorkspace::acceptMedia(UINT_PTR generation,double time){auto&i=*impl_;i.check();i.mediaClock(time);bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->accept(generation,time);if(i.options.videoPlayback){changed=i.options.videoPlayback->accept(generation,time)||changed;changed=i.options.videoPlayback->sample(time)||changed;}return changed?i.readMedia():false;}
+bool NativeNotesWorkspace::sampleMedia(double time){auto&i=*impl_;i.check();i.mediaClock(time);bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->sample(time);if(i.options.videoPlayback)changed=i.options.videoPlayback->sample(time)||changed;return changed?i.readMedia():false;}
+std::optional<double>NativeNotesWorkspace::mediaNextWakeTime()const{auto&i=*impl_;i.check();auto result=i.options.imagePlayback?i.options.imagePlayback->nextWakeTime():std::nullopt;if(i.options.videoPlayback){const auto video=i.options.videoPlayback->nextWakeTime();if(video&&(!result||*video<*result))result=video;}return result;}
+bool NativeNotesWorkspace::toggleMedia(std::string_view id,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!i.mediaActive)return false;bool changed{};if(s->media->request&&i.options.imagePlayback)changed=i.options.imagePlayback->toggle(s->media->key,time);else if(s->media->videoRequest&&i.options.videoPlayback)changed=i.options.videoPlayback->toggle(s->media->key,time);i.readMedia();return changed;}
+bool NativeNotesWorkspace::beginMediaSeek(std::string_view id,core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!s->media->videoRequest||!s->media->content->duration||!i.options.videoPlayback||!i.mediaActive)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return false;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);if(!inside(layout.geometry().seek,{point->x-s->rect.x,point->y-s->rect.y}))return false;i.mediaSeek=Impl::MediaSeek{std::string(id),layout.seekSeconds(point->x-s->rect.x)};i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
+bool NativeNotesWorkspace::updateMediaSeek(core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;auto*s=i.find(i.mediaSeek->id);if(!s||!s->media)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return true;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);i.mediaSeek->seconds=layout.seekSeconds(point->x-s->rect.x);i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
+bool NativeNotesWorkspace::endMediaSeek(double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;const auto value=std::move(*i.mediaSeek);i.mediaSeek.reset();auto*s=i.find(value.id);if(s&&s->media&&i.options.videoPlayback){i.options.videoPlayback->seek(s->media->key,value.seconds);i.readMedia();i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);}return true;}
+bool NativeNotesWorkspace::mediaSeeking()const noexcept{return impl_->mediaSeek.has_value();}
 void NativeNotesWorkspace::uploadMedia(Renderer&r){auto&i=*impl_;i.check();if(!i.mediaUploadPending)return;need(!i.mediaRenderer||i.mediaRenderer==&r,"Notes media textures belong to another renderer");i.mediaRenderer=&r;bool entryShapeChanged{},bindingChanged{};
-    for(auto*s:i.mediaSlots){auto&a=*s->media;const auto beforeDraws=s->native->mediaDraws();const std::string_view prior=beforeDraws.empty()?std::string_view{}:beforeDraws[0].textureID;bindingChanged=bindingChanged||(prior!=(a.frame?std::string_view(a.key):std::string_view{}));if(a.frame){if(!a.uploaded||a.uploadedFrame!=a.observedFrame){const auto&f=*a.frame;r.setTexture(a.key,a.observedFrame,{f.width,f.height,f.straightRGBA});a.uploaded=true;a.uploadedFrame=a.observedFrame;}s->native->setMediaTexture(a.key,a.frame->width,a.frame->height);}else s->native->setMediaTexture({},0,0);const auto before=s->native->mediaDraws().size();s->native->uploadMedia(r);entryShapeChanged=entryShapeChanged||before!=s->native->mediaDraws().size();}
+    for(auto*s:i.mediaSlots){auto&a=*s->media;const auto beforeDraws=s->native->mediaDraws();const std::string_view prior=beforeDraws.empty()?std::string_view{}:beforeDraws[0].textureID;const auto next=a.videoRequest?std::string_view(a.videoTexture):(a.frame?std::string_view(a.key):std::string_view{});bindingChanged=bindingChanged||prior!=next;
+        if(a.videoRequest){if(prior!=next||a.uploadedFrame!=a.observedContent)s->native->setMediaTexture(a.videoTexture,a.videoTexture.empty()?0:a.videoWidth,a.videoTexture.empty()?0:a.videoHeight);a.uploadedFrame=a.observedContent;}
+        else if(a.frame){if(!a.uploaded||a.uploadedFrame!=a.observedFrame){const auto&f=*a.frame;r.setTexture(a.key,a.observedFrame,{f.width,f.height,f.straightRGBA});a.uploaded=true;a.uploadedFrame=a.observedFrame;}s->native->setMediaTexture(a.key,a.frame->width,a.frame->height);}else s->native->setMediaTexture({},0,0);
+        const auto before=s->native->mediaDraws().size();s->native->uploadMedia(r);entryShapeChanged=entryShapeChanged||before!=s->native->mediaDraws().size();}
     i.mediaUploadPending=false;if(bindingChanged)++i.compositionRevision;if(entryShapeChanged)i.rebuildEntries();if(i.pose)i.applyPose(*i.pose);
 }
 std::span<const LayerCompositionEntry>NativeNotesWorkspace::entries()const noexcept{return impl_->entries;}
 std::uint64_t NativeNotesWorkspace::compositionRevision()const noexcept{return impl_->compositionRevision;}
 bool NativeNotesWorkspace::collectRetired(Renderer&r){auto&i=*impl_;i.check();for(auto it=i.retiredFields.begin();it!=i.retiredFields.end();)if((*it)->scene.releaseResources(r))it=i.retiredFields.erase(it);else ++it;
-    for(auto it=i.retiredCards.begin();it!=i.retiredCards.end();)if((*it)->native->scene().releaseResources(r)&&(*it)->native->releaseMedia(r))it=i.retiredCards.erase(it);else ++it;
+    for(auto it=i.retiredCards.begin();it!=i.retiredCards.end();)if((*it)->native->scene().releaseResources(r)&&(*it)->native->releaseMedia(r)&&(!(*it)->drawingScene||(*it)->drawingScene->releaseResources(r)))it=i.retiredCards.erase(it);else ++it;
     for(auto it=i.mediaAssets.begin();it!=i.mediaAssets.end();){auto&a=**it;
         if(a.uploaded&&(!a.frame||it->use_count()==1)&&r.removeTexture(a.key)){a.uploaded=false;a.uploadedFrame=0;}
-        if(it->use_count()==1&&!a.uploaded){if(i.options.imagePlayback&&a.request)i.options.imagePlayback->retire(a.key);it=i.mediaAssets.erase(it);}else ++it;
-    }return i.retiredCards.empty()&&i.retiredFields.empty();}
-bool NativeNotesWorkspace::releaseResources(Renderer&r){auto&i=*impl_;i.check();bool done=collectRetired(r);if(i.field)done=i.field->scene.releaseResources(r)&&done;for(auto&[id,s]:i.slots){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;}for(auto&s:i.deletingCards){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;}for(auto&a:i.mediaAssets)if(a->uploaded){if(r.removeTexture(a->key)){a->uploaded=false;a->uploadedFrame=0;}else done=false;}return done;}
-bool NativeNotesWorkspace::select(std::optional<std::string>id){auto&i=*impl_;i.check();if(i.field&&(!id||*id!=i.field->id))i.finishRequired();const bool changed=i.state.select(std::move(id));i.sync();return changed;}
+        if(it->use_count()==1&&!a.uploaded){if(i.options.imagePlayback&&a.request)i.options.imagePlayback->retire(a.key);if(i.options.videoPlayback&&a.videoRequest&&!i.options.videoPlayback->retire(a.key)){++it;continue;}it=i.mediaAssets.erase(it);}else ++it;
+    }if(i.options.videoPlayback)(void)i.options.videoPlayback->collectRetired();return i.retiredCards.empty()&&i.retiredFields.empty();}
+bool NativeNotesWorkspace::releaseResources(Renderer&r){auto&i=*impl_;i.check();bool done=collectRetired(r);if(i.field)done=i.field->scene.releaseResources(r)&&done;for(auto&[id,s]:i.slots){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&s:i.deletingCards){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&a:i.mediaAssets)if(a->uploaded){if(r.removeTexture(a->key)){a->uploaded=false;a->uploadedFrame=0;}else done=false;}if(i.options.videoPlayback){i.options.videoPlayback->hide(i.mediaTime);done=i.options.videoPlayback->collectRetired()&&done;}return done;}
+bool NativeNotesWorkspace::select(std::optional<std::string>id){auto&i=*impl_;i.check();if(i.drawingGesture&&(!id||*id!=i.drawingGesture->id))endDrawing();if(i.field&&(!id||*id!=i.field->id))i.finishRequired();const bool changed=i.state.select(std::move(id));i.sync();return changed;}
 bool NativeNotesWorkspace::createText(std::string id,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(ehud::data::validUUID(id)&&!i.state.note(id)&&std::isfinite(createdAt),"Invalid new Notes identity/time");
     need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards&&i.state.notes().size()<10000,"Notes retained-card or record capacity reached");Note prototype{.id=id,.kind=ehud::data::NoteKind::text,.width=210,.height=140,.createdAt=createdAt};
     const auto r=constrainedRect(prototype,i.state.workspaceBounds());auto next=i.prepareField(prototype,r);i.finishRequired();const bool changed=i.state.createText(std::move(id),createdAt);if(!changed)return false;i.generation=next->generation;i.field=std::move(next);i.sync();return true;}
@@ -328,6 +358,40 @@ bool NativeNotesWorkspace::beginEditingItem(std::string_view id,std::string_view
 bool NativeNotesWorkspace::createChecklist(std::string id,std::string firstID,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
     Note prototype{.id=id,.kind=ehud::data::NoteKind::todo,.width=228,.height=154,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()),true);i.finishRequired();const bool changed=i.state.createChecklist(id,firstID,createdAt);if(!changed)return false;i.sync();beginEditingItem(id,firstID);return true;
 }
+bool NativeNotesWorkspace::createDrawing(std::string id,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+    Note prototype{.id=id,.kind=ehud::data::NoteKind::drawing,.width=300,.height=240,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()));i.finishRequired();endDrawing();const bool changed=i.state.createDrawing(std::move(id),createdAt);i.sync();return changed;
+}
+bool NativeNotesWorkspace::beginDrawing(std::string_view id,core::Point physical){auto&i=*impl_;i.check();auto*s=i.find(id);if(!i.pose||!s||!s->drawing||!s->visible||s->outgoing||s->deleted)return false;
+    const auto point=s->hitProjection.unproject(physical);if(!point)return false;const auto viewport=mod::NotesDrawing::viewport({s->rect.width,s->rect.height});if(!inside(viewport,{point->x-s->rect.x,point->y-s->rect.y}))return false;
+    i.finishRequired();endDrawing();i.drawingIssue=NativeNotesDrawingIssue::none;i.drawingGesture.emplace(Impl::DrawingGesture{std::string(id),*s->drawing,mod::DrawingStroke{{},i.drawingWidth,i.drawingColor},false});updateDrawing(physical);return true;
+}
+bool NativeNotesWorkspace::updateDrawing(core::Point physical){auto&i=*impl_;i.check();if(!i.drawingGesture)return false;auto&gesture=*i.drawingGesture;auto*s=i.find(gesture.id);need(s&&s->drawingScene,"Active drawing card disappeared");const auto point=s->hitProjection.unproject(physical);if(!point)return true;const auto viewport=mod::NotesDrawing::viewport({s->rect.width,s->rect.height});
+    const core::Point size{viewport.width,viewport.height},local{std::clamp(point->x-s->rect.x-viewport.x,0.,size.x),std::clamp(point->y-s->rect.y-viewport.y,0.,size.y)};
+    if(i.erasing){if(gesture.drawing.erase(local,i.drawingWidth*.5,size)){gesture.erased=true;s->drawingScene->setCompleted(gesture.drawing,++i.drawingSerial,{s->rect.width,s->rect.height});++i.compositionRevision;}}
+    else{const auto sample=mod::sampleDrawingStroke(gesture.stroke,local,size);if(sample==mod::DrawingSample::appended){s->drawingScene->setLive(&gesture.stroke,++i.drawingSerial);++i.compositionRevision;}else if(sample==mod::DrawingSample::limit)i.drawingIssue=NativeNotesDrawingIssue::strokeLimit;}
+    updateDrawingHover(physical);return true;
+}
+bool NativeNotesWorkspace::endDrawing(){auto&i=*impl_;i.check();if(!i.drawingGesture)return false;auto gesture=std::move(*i.drawingGesture);i.drawingGesture.reset();auto*s=i.find(gesture.id);need(s&&s->drawingScene,"Finishing drawing card disappeared");
+    if(!i.erasing&&!gesture.stroke.points.empty()){if(gesture.drawing.append(std::move(gesture.stroke)))gesture.erased=true;else i.drawingIssue=NativeNotesDrawingIssue::drawingLimit;}
+    const bool committed=gesture.erased&&i.state.commitDrawing(gesture.id,gesture.drawing);i.sync();
+    // Successful sync already painted the new completed document once. Only
+    // an unaccepted erase needs to restore its previous completed pixels.
+    if(gesture.erased&&!committed){s->drawingRevision=++i.drawingSerial;s->drawingScene->setCompleted(*s->drawing,s->drawingRevision,{s->rect.width,s->rect.height});++i.compositionRevision;}
+    s->drawingScene->setLive(nullptr,++i.drawingSerial);return true;
+}
+bool NativeNotesWorkspace::drawingActive()const noexcept{return impl_->drawingGesture.has_value();}
+bool NativeNotesWorkspace::toggleDrawingEraser(core::Point physical){auto&i=*impl_;i.check();const auto hit=hitTest(physical);if(!hit)return false;auto*s=i.find(hit->noteID);if(!s||!s->drawing)return false;const auto viewport=mod::NotesDrawing::viewport({s->rect.width,s->rect.height});if(!inside(viewport,{hit->workspacePoint.x-s->rect.x,hit->workspacePoint.y-s->rect.y}))return false;endDrawing();i.erasing=!i.erasing;updateDrawingHover(physical);return true;}
+bool NativeNotesWorkspace::updateDrawingHover(std::optional<core::Point>physical){auto&i=*impl_;i.check();Impl::Slot*next{};std::optional<core::Point>local;if(physical){const auto hit=hitTest(*physical);if(hit){auto*s=i.find(hit->noteID);if(s&&s->drawing){const auto p=core::Point{hit->workspacePoint.x-s->rect.x,hit->workspacePoint.y-s->rect.y};if(inside(mod::NotesDrawing::viewport({s->rect.width,s->rect.height}),p)){next=s;local=p;}}}}
+    bool changed{};if(i.brushSlot&&i.brushSlot!=next)changed=i.brushSlot->drawingScene->setBrush({},i.drawingWidth,i.style.palette.primary)||changed;i.brushSlot=next;i.brushPhysical=physical;
+    if(next){const auto before=next->drawingScene->stats().brushRasters;changed=next->drawingScene->setBrush(local,i.drawingWidth,i.erasing?i.style.eraserColor:i.style.palette.primary)||changed;if(next->drawingScene->stats().brushRasters!=before)++i.compositionRevision;}return changed;
+}
+bool NativeNotesWorkspace::setDrawingColor(mod::NotesColor color){auto&i=*impl_;i.check();for(double v:color)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid drawing color");if(i.drawingColor==color)return false;i.drawingColor=color;
+    if(const auto id=i.state.selection())if(auto*s=i.find(*id);s&&s->drawing){auto input=i.presentationInput(*s);s->presentation.updateContent(i.state,input);s->native->syncContent();++i.compositionRevision;++i.stats.cardContentUpdates;if(i.pose)i.applyPose(*i.pose);}return true;
+}
+mod::NotesColor NativeNotesWorkspace::drawingColor()const noexcept{return impl_->drawingColor;}
+double NativeNotesWorkspace::drawingWidth()const noexcept{return impl_->drawingWidth;}
+bool NativeNotesWorkspace::drawingErasing()const noexcept{return impl_->erasing;}
+NativeNotesDrawingIssue NativeNotesWorkspace::drawingIssue()const noexcept{return impl_->drawingIssue;}
 bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::string reference,core::Point point,std::shared_ptr<void>access){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;
     need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
     // Source aspect-derived media dimensions are at most300x260 before the
@@ -366,7 +430,7 @@ bool NativeNotesWorkspace::dragTo(core::Point p){auto&i=*impl_;i.check();if(!i.d
     i.synchronized=i.state.revision();if(i.pose)i.applyPose(*i.pose);return true;
 }
 bool NativeNotesWorkspace::endGesture(){auto&i=*impl_;i.check();const bool changed=i.state.endGesture();i.drag.reset();i.sync();return changed;}
-void NativeNotesWorkspace::cancelInteraction(){auto&i=*impl_;i.check();i.finishRequired();i.state.cancelInteraction();i.drag.reset();i.sync();}
+void NativeNotesWorkspace::cancelInteraction(){auto&i=*impl_;i.check();i.finishRequired();endMediaSeek(i.mediaTime);endDrawing();updateDrawingHover({});i.state.cancelInteraction();i.drag.reset();i.sync();}
 bool NativeNotesWorkspace::togglePin(std::string_view id){auto&i=*impl_;i.check();const bool changed=i.state.togglePin(id);i.sync();return changed;}
 bool NativeNotesWorkspace::requestDeletion(std::string_view id){auto&i=*impl_;i.check();if(!i.state.visible(id))return false;i.finishRequired();const bool changed=i.state.requestDeletion(id);i.sync();return changed;}
 void NativeNotesWorkspace::cancelDeletion(){auto&i=*impl_;i.check();i.state.cancelDeletion();i.sync();}
@@ -401,6 +465,7 @@ bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
         if(delta==0||i.drag||i.state.dragging()||s->media)return true;
         const auto to=s->hitProjection.unproject({point.x,point.y+delta});if(!to)return true;
         const auto localDelta=to->y-from->y;if(!std::isfinite(localDelta))return true;
+        if(s->drawing){i.drawingWidth=mod::scrollDrawingWidth(i.drawingWidth,localDelta);updateDrawingHover(point);return true;}
         if(i.field&&i.field->id==s->presentation.noteID()){
             // A bubbled wheel over another part of the same card is consumed;
             // only the native editor viewport scrolls its own document.

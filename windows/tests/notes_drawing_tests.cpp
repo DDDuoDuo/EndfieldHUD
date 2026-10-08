@@ -1,0 +1,29 @@
+#include "modules/notes_drawing.hpp"
+#include <fstream>
+#include <filesystem>
+#include <algorithm>
+#include <iterator>
+#include <cmath>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+namespace {
+using namespace endfield::modules;using J=ehud::data::Json;using P=endfield::core::Point;
+unsigned checks{};void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
+template<class F>void rejects(F f,const char*why){bool rejected{};try{f();}catch(const std::exception&){rejected=true;}check(rejected,why);}
+DrawingStroke stroke(const J&j){DrawingStroke s;s.width=j["width"].number();const auto&c=j["color"];s.color={c["red"].number(),c["green"].number(),c["blue"].number(),c["alpha"].number()};for(const auto&p:j["points"].array())s.points.push_back({p["x"].number(),p["y"].number()});return s;}
+void oracle(const std::filesystem::path&path){std::ifstream file(path,std::ios::binary);check(bool(file),"Read pinned original drawing cases");const std::string raw((std::istreambuf_iterator<char>(file)),{});const auto reference=J::parse(raw,16*1024*1024);check(reference["provenance"]["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1","Drawing oracle uses authoritative build18");NotesDrawing model;
+    for(const auto&row:reference["rows"].array()){bool changed{};if(row["operation"].string()=="append"){auto s=stroke(row["stroke"]);changed=model.append(s);if(changed){const auto path=NotesDrawing::path(s,{290,184});const auto&actual=row["path"].array();check(path.size()==actual.size(),"Source path length includes isolated-point segment");for(std::size_t n=0;n<path.size();++n)check(std::abs(path[n].x-actual[n].array()[0].number())<1e-12&&std::abs(path[n].y-actual[n].array()[1].number())<1e-12,"Source vector path scales with drawing viewport");}}
+        else changed=model.erase({row["point"].array()[0].number(),row["point"].array()[1].number()},row["radius"].number(),{290,184});
+        check(changed==row["result"].boolean(),"Original stroke append/whole-stroke erasure outcome");const NotesDrawing expected(row["drawing"].encode(16*1024*1024));check(std::equal(model.strokes().begin(),model.strokes().end(),expected.strokes().begin(),expected.strokes().end())&&model.pointCount()==expected.pointCount(),"Original surviving strokes, color, widths and positions remain exact");const NotesDrawing roundtrip(model.encode());check(std::equal(model.strokes().begin(),model.strokes().end(),roundtrip.strokes().begin(),roundtrip.strokes().end()),"Source-compatible version1 drawing roundtrips after mutation");
+    }
+}
+void limits(){DrawingStroke s; s.points={{0,0}};NotesDrawing d;for(unsigned n=0;n<NotesDrawing::maximumStrokes;++n)check(d.append(s),"Source2000 stroke capacity is available");const auto before=d.encode();check(!d.append(s)&&d.encode()==before,"Exceeding stroke limit preserves existing drawing");NotesDrawing points;s.points.assign(4000,{.5,.5});for(unsigned n=0;n<25;++n)check(points.append(s),"Exact source100000 point capacity remains usable");check(!points.append(s)&&points.pointCount()==100000,"Point limit rejects new work only");s.points.assign(4097,{0,0});check(!s.valid(),"Source4096 per-stroke bound");s.points={{std::numeric_limits<double>::quiet_NaN(),0}};check(!s.valid(),"Nonfinite samples cannot be stored");
+    rejects([]{NotesDrawing d("{\"version\":2,\"strokes\":[]}");},"Future version is not overwritten");rejects([]{NotesDrawing d("{\"version\":1,\"strokes\":false}");},"Malformed stroke container is rejected");
+}
+void interaction(){DrawingStroke s;check(sampleDrawingStroke(s,{-2,250},{100,200})==DrawingSample::appended&&s.points.front()==P{0,1},"Drawing samples clamp to card viewport");check(sampleDrawingStroke(s,{.79,200},{100,200})==DrawingSample::ignored,"Subpixel movement retains source0.8point sampling threshold");check(sampleDrawingStroke(s,{.81,200},{100,200})==DrawingSample::appended,"A sample beyond threshold appends");check(scrollDrawingWidth(8,.5)==8.125&&scrollDrawingWidth(8,-100)==1&&scrollDrawingWidth(8,1000)==80,"Brush scrolling retains fractions and source bounds");check(NotesDrawing::viewport({300,240})==endfield::core::Rect{5,29,290,184},"Original drawing card insets");DrawingStroke tap;tap.points={{.5,.5}};const auto path=NotesDrawing::path(tap,{100,100});check(path.size()==2&&path[0]==P{50,50}&&path[1]==P{50.01,50},"One-point stroke stays visible with round caps");
+    NotesDrawing boundary;boundary.append(tap);check(!boundary.erase({55,50},.999,{100,100}),"Eraser outside brush-radius sum retains stroke");check(boundary.erase({55,50},1,{100,100})&&boundary.pointCount()==0,"Eraser includes exactly stroke half-width plus radius");
+}
+void extensions(){const auto original=R"({"version":1,"futureDocument":{"id":"keep"},"strokes":[{"points":[{"x":0.5,"y":0.5,"futurePoint":7}],"width":8,"color":{"red":1,"green":0,"blue":0,"alpha":1,"futureColor":"keep"},"futureStroke":true}]})";NotesDrawing d(original);DrawingStroke other;other.points={{0,0}};d.append(other);const auto out=J::parse(d.encode());check(out["futureDocument"]["id"].string()=="keep"&&out["strokes"].array()[0]["futureStroke"].boolean()&&out["strokes"].array()[0]["color"]["futureColor"].string()=="keep"&&out["strokes"].array()[0]["points"].array()[0]["futurePoint"].integer()==7,"Editing preserves unknown document/stroke/color/point fields");check(d.erase({0,0},1,{100,100})&&d.strokes().size()==1,"Erase moves metadata with surviving original stroke");const auto kept=J::parse(d.encode());check(kept["strokes"].array()[0]["futureStroke"].boolean(),"Compaction cannot misassociate imported extensions");}
+}
+int main(int argc,char**argv){try{check(argc==2,"Pass unchanged source drawing fixture");oracle(argv[1]);limits();interaction();extensions();std::cout<<"PASS "<<checks<<" Notes drawing checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

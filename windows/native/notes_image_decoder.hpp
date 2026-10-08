@@ -16,7 +16,7 @@ struct NotesImageInfo {
     unsigned pixelWidth{},pixelHeight{},frameCount{1};
     modules::NotesMediaKind kind{modules::NotesMediaKind::image};
     std::vector<double>frameDelays; // source .04…600, default .1; at most2000
-    double duration{}; // GIF sum; still image0
+    double duration{}; // GIF sum / movie seconds; still image0
 };
 struct NotesImageFrame {
     unsigned width{},height{},index{};
@@ -26,6 +26,10 @@ struct NotesImageRequest {
     std::string key,path;std::uint64_t revision{};int maximumDimension{512};
     bool firstFrameOnly{}; // persisted still-image kind, even if file was replaced by a GIF
     std::shared_ptr<void>accessLease; // independent lifetime only; no owner/store callbacks
+    bool allowVideoInspection{}; // probe image contents first, then movie metadata on import
+    // Explicit first-frame extraction on this same worker. This is a still
+    // poster, never a video playback clock; mutually exclusive with inspection.
+    bool videoPoster{};
     bool operator==(const NotesImageRequest&)const=default;
 };
 #ifdef _WIN32

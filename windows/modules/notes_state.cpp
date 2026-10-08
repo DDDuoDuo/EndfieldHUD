@@ -1,4 +1,5 @@
 #include "modules/notes_state.hpp"
+#include "modules/notes_drawing.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -120,6 +121,22 @@ bool NotesState::createChecklist(std::string id,std::string firstID,double creat
     const auto offset=double(notes_.size()%7)*18;const auto origin=creationPoint_.value_or(Point{workspace_.x+workspace_.width/2-95,workspace_.y+workspace_.height/2-60});
     item.x=origin.x+offset;item.y=origin.y+offset;item.width=228;item.height=154;item.zIndex=nextZ();item=constrained(std::move(item),workspace_);
     replace(item);(void)save(item);(void)select(item.id);++revision_;return true;
+}
+bool NotesState::createDrawing(std::string id,double createdAt){
+    writable();if(!notesSelected_)return false;
+    if(!ehud::data::validUUID(id)||note(id)||!std::isfinite(createdAt))throw std::invalid_argument("Invalid new drawing identity/time");
+    if(editing_)throw std::logic_error("Finish Notes editor before creating a drawing");
+    if(notes_.size()>=10000)throw std::length_error("Notes record bound exceeded");
+    Note item{.id=std::move(id),.kind=ehud::data::NoteKind::drawing,.createdAt=createdAt};item.drawing=NotesDrawing{}.encode();
+    const auto offset=double(notes_.size()%7)*18;const auto origin=creationPoint_.value_or(Point{workspace_.x+workspace_.width/2-95,workspace_.y+workspace_.height/2-60});
+    item.x=origin.x+offset;item.y=origin.y+offset;item.width=300;item.height=240;item.zIndex=nextZ();item=constrained(std::move(item),workspace_);
+    replace(item);(void)save(item);(void)select(item.id);++revision_;return true;
+}
+bool NotesState::commitDrawing(std::string_view id,const NotesDrawing&drawing){
+    writable();const auto*found=note(id);if(!found||found->kind!=ehud::data::NoteKind::drawing||!visible(id))return false;
+    if(editing_)throw std::logic_error("Finish Notes editor before changing drawing content");
+    auto payload=drawing.encode();if(found->drawing==payload&&!unsaved_.contains(id))return false;
+    auto item=*found;item.drawing=std::move(payload);replace(item);(void)save(item);++revision_;return true;
 }
 bool NotesState::createMedia(std::string id,double createdAt,std::string reference,Point point){
     writable();if(!notesSelected_)return false;

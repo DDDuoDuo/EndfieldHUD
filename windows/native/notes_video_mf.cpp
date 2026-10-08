@@ -32,6 +32,11 @@ public:Notify(Owner::Notify callback,std::shared_ptr<NativeStatus>status):callba
         if(event==MF_MEDIA_ENGINE_EVENT_NOTIFYSTABLESTATE){SetEvent(reinterpret_cast<HANDLE>(a));return S_OK;}
         std::uint32_t flags{};HRESULT error=S_OK;
         switch(event){case MF_MEDIA_ENGINE_EVENT_CANPLAY:flags=Owner::ready;break;
+            // Frame-server implementations may report LOADEDDATA without the
+            // optional FIRSTFRAMEREADY event. LOADEDDATA explicitly guarantees
+            // enough data to render content; an initially paused movie still
+            // needs its poster and must not wait for Play or a polling clock.
+            case MF_MEDIA_ENGINE_EVENT_LOADEDDATA:
             case MF_MEDIA_ENGINE_EVENT_FIRSTFRAMEREADY:flags=Owner::firstFrame;break;
             case MF_MEDIA_ENGINE_EVENT_SEEKED:flags=Owner::seeked;break;
             case MF_MEDIA_ENGINE_EVENT_ENDED:flags=Owner::ended;break;
@@ -62,7 +67,7 @@ public:Engine(std::shared_ptr<Platform>platform,std::shared_ptr<void>device,Owne
     HRESULT tick(std::int64_t&pts)override{if(stopped_)return MF_E_SHUTDOWN;LONGLONG value{};const auto result=engine_->OnVideoStreamTick(&value);pts=value;return result;}
     HRESULT transfer(void*surface,unsigned width,unsigned height)override{if(stopped_)return MF_E_SHUTDOWN;if(!surface||width>LONG_MAX||height>LONG_MAX)return E_INVALIDARG;const RECT rect{0,0,static_cast<LONG>(width),static_cast<LONG>(height)};const MFARGB transparent{};return engine_->TransferVideoFrame(static_cast<IDXGISurface*>(surface),nullptr,&rect,&transparent);}
     void stop()noexcept override{if(stopped_)return;stopped_=true;if(engine_){engine_->Pause();engine_->Shutdown();}extended_.Reset();engine_.Reset();manager_.Reset();lease_.reset();}
-    NotesVideoDiagnostics diagnostics()const override{NotesVideoDiagnostics out;for(std::size_t i=0;i<out.eventCounts.size();++i)out.eventCounts[i]=status_->events[i].load(std::memory_order_relaxed);out.lastEvent=status_->lastEvent.load(std::memory_order_relaxed);if(engine_){out.readyState=engine_->GetReadyState();out.networkState=engine_->GetNetworkState();out.hasVideo=engine_->HasVideo()!=FALSE;out.paused=engine_->IsPaused()!=FALSE;out.seeking=engine_->IsSeeking()!=FALSE;ComPtr<IMFMediaError>error;if(SUCCEEDED(engine_->GetError(&error))&&error){out.errorCode=error->GetErrorCode();out.error=error->GetExtendedErrorCode();}}return out;}
+    NotesVideoDiagnostics diagnostics()const override{NotesVideoDiagnostics out;for(std::size_t i=0;i<out.eventCounts.size();++i)out.eventCounts[i]=status_->events[i].load(std::memory_order_relaxed);out.lastEvent=status_->lastEvent.load(std::memory_order_relaxed);if(engine_){out.currentTime=engine_->GetCurrentTime();out.readyState=engine_->GetReadyState();out.networkState=engine_->GetNetworkState();out.hasVideo=engine_->HasVideo()!=FALSE;out.paused=engine_->IsPaused()!=FALSE;out.seeking=engine_->IsSeeking()!=FALSE;ComPtr<IMFMediaError>error;if(SUCCEEDED(engine_->GetError(&error))&&error){out.errorCode=error->GetErrorCode();out.error=error->GetExtendedErrorCode();}}return out;}
 };
 }
 NativeNotesVideoPlayback::Factory makeNotesMFVideoFactory(){auto platform=std::make_shared<Platform>();return [platform](std::shared_ptr<void>device,NativeNotesVideoPlayback::Notify callback){return std::make_unique<Engine>(platform,std::move(device),std::move(callback));};}

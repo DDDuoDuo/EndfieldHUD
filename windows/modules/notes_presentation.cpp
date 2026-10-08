@@ -1,6 +1,7 @@
 #include "modules/notes_presentation.hpp"
 #include "modules/notes_checklist.hpp"
 #include "modules/notes_media_presentation.hpp"
+#include "modules/notes_drawing.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -47,9 +48,11 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
     if(!note||!card)throw std::invalid_argument("Missing Notes presentation record");
     const bool todo=note->kind==ehud::data::NoteKind::todo;
     const bool image=note->kind==ehud::data::NoteKind::image;
-    if((note->kind!=ehud::data::NoteKind::text&&!todo&&!image)||note->drawing||(!image&&(note->media||note->imageName))||(!todo&&!note->items.empty()))throw std::invalid_argument("Notes presentation requires text, checklist or explicit media records");
+    const bool drawing=note->kind==ehud::data::NoteKind::drawing;
+    if((note->kind!=ehud::data::NoteKind::text&&!todo&&!image&&!drawing)||(!drawing&&note->drawing)||(!image&&(note->media||note->imageName))||(drawing&&note->richText)||(!todo&&!note->items.empty()))throw std::invalid_argument("Notes presentation requires a consistent text, checklist, drawing or media record");
     if(image!=bool(input.media))throw std::invalid_argument("Media presentation needs explicit matching content");
     const bool editing=state.editing()&&state.editing()->noteID==noteID_;
+    if(drawing&&editing)throw std::invalid_argument("Drawing cannot host a text editor");
     const double w=card->rect.width,h=card->rect.height;
     std::optional<NotesMediaLayout> mediaLayout;
     if(image){const auto&m=*input.media;mediaLayout.emplace(w,h,m.kind,m.duration,m.legacyManagedImage);
@@ -58,17 +61,17 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
         if(m.status.localizedError&&!ehud::data::Json::validUtf8(*m.status.localizedError))throw std::invalid_argument("Invalid media status");
         if(editing)throw std::invalid_argument("Media cannot host a text editor");
     }
-    const Rect viewport=image?mediaLayout->geometry().content:todo?Rect{5,27,w-10,std::max(1.,h-55)}:Rect{9,29,w-18,std::max(1.,h-(editing?58.:37.))};
-    if((!image&&(todo?!input.checklist:!input.measured))||!std::isfinite(input.scrollOffset))throw std::invalid_argument("Notes requires finite measured content/scroll offset");
+    const Rect viewport=image?mediaLayout->geometry().content:drawing?NotesDrawing::viewport({w,h}):todo?Rect{5,27,w-10,std::max(1.,h-55)}:Rect{9,29,w-18,std::max(1.,h-(editing?58.:37.))};
+    if((!image&&!drawing&&(todo?!input.checklist:!input.measured))||!std::isfinite(input.scrollOffset))throw std::invalid_argument("Notes requires finite measured content/scroll offset");
     const auto& p=input.palette;for(const auto* c:{&p.primary,&p.muted,&p.border,&p.card,&p.header,&p.formatPlate,&p.accent})colorCheck(*c);
-    if(input.editingColor)colorCheck(*input.editingColor);
+    if(input.editingColor)colorCheck(*input.editingColor);if(input.drawingColor)colorCheck(*input.drawingColor);
     const auto& strings=input.strings;
-    for(const auto* s:{&strings.textTitle,&strings.placeholder,&strings.pin,&strings.unpin,&strings.remove,&strings.edit,&strings.select,&strings.grow,&strings.shrink,&strings.todoTitle,&strings.itemPlaceholder,&strings.addItem,&strings.checkItem,&strings.uncheckItem,&strings.editItem,&strings.moveUp,&strings.moveDown,&strings.removeItem,&strings.addItemAction,&strings.imageTitle})if(!ehud::data::Json::validUtf8(*s))throw std::invalid_argument("Invalid Notes localized string");
+    for(const auto* s:{&strings.textTitle,&strings.placeholder,&strings.pin,&strings.unpin,&strings.remove,&strings.edit,&strings.select,&strings.grow,&strings.shrink,&strings.todoTitle,&strings.itemPlaceholder,&strings.addItem,&strings.checkItem,&strings.uncheckItem,&strings.editItem,&strings.moveUp,&strings.moveDown,&strings.removeItem,&strings.addItemAction,&strings.imageTitle,&strings.drawingTitle,&strings.drawingColor})if(!ehud::data::Json::validUtf8(*s))throw std::invalid_argument("Invalid Notes localized string");
     for(const auto& s:strings.format)if(!ehud::data::Json::validUtf8(s))throw std::invalid_argument("Invalid Notes formatting label");
     double contentHeight{};
     if(todo){const auto&list=*input.checklist;if(list.noteID()!=noteID_||list.viewport()!=viewport||list.rows().size()!=note->items.size())throw std::invalid_argument("Checklist measurement identity/geometry mismatch");
         for(std::size_t i=0;i<note->items.size();++i){const auto&row=list.rows()[i];const auto&item=note->items[i];if(row.itemID!=item.id||row.text->text!=item.text||row.checked!=item.isChecked||row.display->text!=(item.text.empty()?strings.itemPlaceholder:item.text))throw std::invalid_argument("Checklist measurement does not match source row");}contentHeight=list.contentHeight();
-    }else if(!image){validate(*input.measured,note->text.empty()?strings.placeholder:note->text,viewport.width);
+    }else if(!image&&!drawing){validate(*input.measured,note->text.empty()?strings.placeholder:note->text,viewport.width);
         if(input.measured->sourceRichPayload!=note->richText||bool(input.measured->richText)!=bool(note->richText))throw std::invalid_argument("Notes rich measurement does not match stored formatting");contentHeight=input.measured->height;}
     const double maximum=std::max(0.,contentHeight-viewport.height);
     const double offset=std::min(maximum,std::max(0.,input.scrollOffset));
@@ -84,7 +87,7 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
         const auto i=add(std::move(id),parent,frame,NotesLayerKind::shape);auto& s=layers[i].shape;s.points=std::move(points);s.stroke=stroke;s.roundCaps=rounded;s.roundJoins=rounded;return i;};
     const auto root=add("card",NotesLayer::noParent,{0,0,w,h});layers[root].name="notes.note."+noteID_;layers[root].background=p.card;layers[root].border=card->selected?p.accent:p.border;layers[root].borderWidth=card->selected?1.1:.65;layers[root].cornerRadius=3;layers[root].masksToBounds=true;layers[root].allowsGroupOpacity=false;
     const auto head=add("header",root,{0,0,w,24});layers[head].background=p.header;
-    text("header/title",head,{7,6,w-56,14},"⠿  "+(image?strings.imageTitle:todo?strings.todoTitle:strings.textTitle),9,p.muted,true);
+    text("header/title",head,{7,6,w-56,14},"⠿  "+(image?strings.imageTitle:drawing?strings.drawingTitle:todo?strings.todoTitle:strings.textTitle),9,p.muted,true);
     shape("header/pin",head,{w-41,6,12,12},{{true,{3,1}},{false,{9,1}},{true,{4,1}},{false,{4,5}},{false,{2,7}},{false,{10,7}},{false,{8,5}},{false,{8,1}},{true,{6,7}},{false,{6,12}}},card->pinned?p.accent:p.muted);
     shape("header/delete",head,{w-17,8,7,7},{{true,{0,0}},{false,{7,7}},{true,{7,0}},{false,{0,7}}},p.muted);
     const auto view=add("viewport",root,viewport);layers[view].name="notes.content.viewport";layers[view].masksToBounds=true;
@@ -106,7 +109,7 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
         const auto&display=*r.display;auto firstLine=std::lower_bound(display.lines.begin(),display.lines.end(),offset-r.origin-3,[](const auto&l,double y){return l.y+l.height<=y;});
         const auto lastLine=std::lower_bound(firstLine,display.lines.end(),offset+viewport.height-r.origin-3,[](const auto&l,double y){return l.y<y;});
         for(auto line=firstLine;line!=lastLine;++line){const auto n=static_cast<std::size_t>(line-display.lines.begin());const auto i=text(base+"/line/"+std::to_string(n),row,{23,3+line->y,input.checklist->textWidth(),line->height},display.text.substr(line->begin,line->visibleTextEnd-line->begin),11,r.checked||r.text->text.empty()?p.muted:p.primary,false,false);layers[i].name="notes.content.line."+std::to_string(n);layers[i].text.strikethrough=r.checked&&!r.text->text.empty();}
-    }}else if(!image){const auto&measured=*input.measured;
+    }}else if(!image&&!drawing){const auto&measured=*input.measured;
     // Only visible line layers, using the original two binary-search boundaries.
     auto first=std::lower_bound(measured.lines.begin(),measured.lines.end(),offset,[](const auto& l,double v){return l.y+l.height<=v;});
     auto last=std::lower_bound(first,measured.lines.end(),offset+viewport.height,[](const auto& l,double v){return l.y<v;});
@@ -124,7 +127,7 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
     auto action=[&](std::string verb,const std::string& label,Rect r,bool ax=false){actions.push_back({"note:"+noteID_+":"+verb,std::move(verb),label,r,ax});};
     action("select",strings.select,{0,0,w,h},true);action("pin",card->pinned?strings.unpin:strings.pin,{w-46,2,21,20});action("delete",strings.remove,{w-24,2,21,20});if(todo){const NotesChecklistStrings labels{strings.checkItem,strings.uncheckItem,strings.editItem,strings.moveUp,strings.moveDown,strings.removeItem,strings.addItemAction};auto rows=input.checklist->actions(offset,labels);actions.insert(actions.end(),std::make_move_iterator(rows.begin()),std::make_move_iterator(rows.end()));
         const auto footer=text("footer",root,{10,h-24,w-24,19},strings.addItem,10.5,p.primary);layers[footer].text.medium=true;
-    }else if(!image)action("edit",strings.edit,viewport);
+    }else if(!image&&!drawing)action("edit",strings.edit,viewport);
     if(image){const auto&m=*input.media;if(m.legacyManagedImage){if(m.legacyUnavailable){const auto label=text("media/unavailable",root,{10,40,w-20,35},m.strings.unavailable,11,p.muted,false,false);layers[label].text.wrapped=true;}}
         else {auto footer=mediaLayout->footer(m.status,p,m.strings);footer.id=prefix+footer.id;footer.parent=root;layers.push_back(std::move(footer));
             if(const auto playback=mediaLayout->playbackAction(noteID_,m.status,m.strings))actions.push_back(*playback);
@@ -138,6 +141,10 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
         if(i==2){const auto swatch=add("format/formatColor/swatch",plate,{4,4,12,12});layers[swatch].background=input.editingColor.value_or(p.primary);}
         else text("format/"+std::string(verbs[i])+"/label",plate,{2,3,16,15},symbols[i],10,p.primary);
     }
+    if(drawing&&card->selected){const Rect rect{6,h-24,20,20};action("formatColor",strings.drawingColor,rect);
+        const auto plate=add("format/formatColor",root,rect);layers[plate].borderWidth=.5;layers[plate].border=p.border;layers[plate].background=p.formatPlate;
+        const auto swatch=add("format/formatColor/swatch",plate,{4,4,12,12});layers[swatch].background=input.drawingColor.value_or(NotesColor{.98,.83,.12,1});
+    }
     // Highlights are card siblings AFTER formatting plates and BEFORE the grip.
     // Ancestor card clipping must also be retained if split into GPU surfaces.
     for(const auto& a:actions)if(!a.accessibilityOnly&&a.verb!="edit"&&a.verb.find(':')==std::string::npos)highlight(a.verb,root,a.localRect);
@@ -148,7 +155,7 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
     editor_=std::nullopt;if(editing){if(todo){const auto&request=*state.editing();if(!request.itemID)throw std::invalid_argument("Checklist requires a row editor");editor_=NotesEditorLeaf{{request.rect.x-card->rect.x,request.rect.y-card->rect.y,request.rect.width,request.rect.height},request.scrollOffset,11,false};}
         else editor_=NotesEditorLeaf{viewport,offset,12,true};}
     editingItem_=editing?state.editing()->itemID:std::nullopt;checklist_=input.checklist;
-    media_=input.media;palette_=input.palette;measured_=input.measured;placement_=newPlacement;viewport_=viewport;scrollOffset_=offset;
+    media_=input.media;drawing_=drawing;palette_=input.palette;measured_=input.measured;placement_=newPlacement;viewport_=viewport;scrollOffset_=offset;
     width_=w;height_=h;selected_=card->selected;pinned_=card->pinned;editing_=editing;initialized_=true;
     feedback_.reset();pressed_=false;reduceMotion_=false;++contentRevision_;++feedbackRevision_;if(changedPlacement)++placementRevision_;return true;
 }

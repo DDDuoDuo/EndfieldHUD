@@ -3,6 +3,8 @@
 #include "native/notes_text_measure.hpp"
 #include "native/projected_editor.hpp"
 #include "native/notes_image_playback.hpp"
+#include "native/notes_video_playback.hpp"
+#include "native/notes_drawing_scene.hpp"
 #include "modules/notes_motion.hpp"
 #include "modules/notes_checklist.hpp"
 #ifdef _WIN32
@@ -11,6 +13,8 @@ struct NativeNotesWorkspaceStyle {
     modules::NotesPalette palette;modules::NotesStrings strings;
     NativeNotesExternalEditorAppearance editor;
     std::array<double,4> selectionColor{.2,.4,.7,.5},compositionColor{1,1,1,1};
+    // Detached original AppKit DarkAqua systemRed; light owners supply59/255,48/255.
+    std::array<double,4> eraserColor{1,69./255.,58./255.,1};
 };
 struct NativeNotesWorkspaceOptions {
     LayerRasterOptions raster;
@@ -24,6 +28,7 @@ struct NativeNotesWorkspaceOptions {
     // Pure managed-name mapping only; file access belongs to the decoder's
     // independently owned worker resolver. No filesystem work on this thread.
     std::function<std::optional<std::string>(std::string_view)> legacyImagePath;
+    NativeNotesVideoPlayback* videoPlayback{}; // exclusive owner, same renderer/device
 };
 struct NativeNotesWorkspacePose {
     core::Matrix4 workspaceToScreen,screenToClip;
@@ -47,6 +52,7 @@ struct NativeNotesCardMotion {
     modules::NotesMotionSample sample;
 };
 struct NativeNotesFinishResult {bool finished{},saved{};};
+enum class NativeNotesDrawingIssue {none,strokeLimit,drawingLimit};
 // Attachment-free plain/rich Notes coordinator. It borrows ONE state, rasterizer, HWND and
 // optional already-activated TSF manager. It creates no window, service, clock,
 // publisher, persistence store, clipboard reader or global input hook.
@@ -55,7 +61,8 @@ struct NativeNotesFinishResult {bool finished{},saved{};};
 // and style resolver drive settled lines and the same-object DWrite editor.
 // Settled attributed line metrics and edited paragraph metrics follow their
 // distinct original source paths. TODO uses plain font11 row editors. Optional
-// still/GIF playback shares the caller's decoder/deadline; drawing rejects when visible;
+// still/GIF/video playback shares caller-owned decode/device/deadlines. Drawing uses
+// retained completed/live/brush surfaces and commits only when the gesture ends;
 // hidden unsupported records are not read/rendered. Stored text is never cut.
 // Owner appends entries() to its ONE LayerComposition and republishes whenever
 // compositionRevision changes. Removed scenes remain alive until collectRetired
@@ -93,6 +100,7 @@ public:
     bool setCardMotions(std::span<const NativeNotesCardMotion>);
     bool updatePose(const NativeNotesWorkspacePose&);
     bool requiresFrames(double time)const;
+    void connectVideoPlayback(NativeNotesVideoPlayback&);
     void connectImagePlayback(NativeNotesImagePlayback&); // once, before any media card was attached
     // Window visibility is independent from Notes selection: pinned media
     // stays active across module changes, but releases decoding on HUD hide.
@@ -102,6 +110,10 @@ public:
     bool sampleMedia(double time);
     std::optional<double> mediaNextWakeTime()const;
     bool toggleMedia(std::string_view noteID,double time);
+    bool beginMediaSeek(std::string_view noteID,core::Point physical,double time);
+    bool updateMediaSeek(core::Point physical,double time);
+    bool endMediaSeek(double time);
+    bool mediaSeeking()const noexcept;
     // Before entries() publication. Upload only changed image frames and each
     // card's one retained quad; pointer/tilt updates do not touch textures.
     void uploadMedia(Renderer&);
@@ -113,6 +125,18 @@ public:
     bool releaseResources(Renderer&); // only after owner removes ALL workspace entries
     bool select(std::optional<std::string>);
     bool createText(std::string id,double createdAt);
+    bool createDrawing(std::string noteID,double createdAt);
+    bool beginDrawing(std::string_view noteID,core::Point physical);
+    bool updateDrawing(core::Point physical);
+    bool endDrawing(); // commits once, including source cancel/section close
+    bool drawingActive()const noexcept;
+    bool toggleDrawingEraser(core::Point physical);
+    bool updateDrawingHover(std::optional<core::Point> physical);
+    bool setDrawingColor(modules::NotesColor);
+    modules::NotesColor drawingColor()const noexcept;
+    double drawingWidth()const noexcept;
+    bool drawingErasing()const noexcept;
+    NativeNotesDrawingIssue drawingIssue()const noexcept;
     bool createChecklist(std::string noteID,std::string firstItemID,double createdAt);
     bool createMedia(std::string noteID,double createdAt,std::string reference,core::Point,
         std::shared_ptr<void> accessLease={}); // retained through inspection handoff/playback/card retirement

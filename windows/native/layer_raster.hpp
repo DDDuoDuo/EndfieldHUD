@@ -103,7 +103,11 @@ struct LayerRasterStats {
 // already top-left. Other explicit CA flip conventions are reported, not guessed.
 class LayerRasterizer final {
 public:
-    static constexpr std::size_t maximumEntries = 256, maximumResourceBytes = 256 * 1024 * 1024;
+    // The shared application cache contains shell labels plus several module
+    // faces and their transactional replacement. Count is metadata-only; no
+    // slots are preallocated. The unchanged byte/pixel/layout budgets remain
+    // the actual memory limits across all owners.
+    static constexpr std::size_t maximumEntries = 1024, maximumResourceBytes = 256 * 1024 * 1024;
     static constexpr std::size_t maximumPixels = 4096 * 4096, maximumNodes = 4096;
     static constexpr std::size_t maximumTextMetadataBytes = 16 * 1024 * 1024;
     LayerRasterizer();
