@@ -96,6 +96,17 @@ void invalidAndBoundary(){
     auto unicode=state(note("中文😀\n"));in=input("中文😀\n");p.updateContent(unicode,in);check(lineCount(p)==2&&layer(p,"/content/line/0").text.text=="中文😀"&&layer(p,"/content/line/1").text.text.empty(),"UTF-8 lines preserve emoji and source trailing-newline blank line");
     wrong=std::make_shared<NotesMeasuredText>(*in.measured);wrong->lines[0].visibleTextEnd=1;in.measured=wrong;rejects([&]{p.updateContent(unicode,in);},"Measured range cannot split a Unicode scalar");
 }
+void richVisibleLines(){
+    namespace rich=endfield::core::notes;auto n=note("A😀中\nB中");rich::TextStyle st;st.fontSize=24;st.bold=true;st.color=rich::RGBA{.9,.2,.1,1};
+    rich::RichText payload;payload.runs={{1,3,st,{}}};n.richText=rich::encodeRichText(payload,u"A😀中\nB中").encode();auto s=state(n);auto m=std::make_shared<NotesMeasuredText>();
+    m->text=n.text;m->width=242;m->height=49;m->lines={{0,9,8,0,33,0,4},{9,n.text.size(),n.text.size(),33,16,5,7}};m->richText=payload;m->sourceRichPayload=n.richText;
+    auto in=input();in.measured=m;NotesCardPresentation p(id);p.updateContent(s,in);const auto&line=layer(p,"/content/line/0");
+    check(line.text.text=="A😀中"&&line.text.runs.size()==1&&line.text.runs[0].location==1&&line.text.runs[0].length==3&&line.text.runs[0].style==st,"Visible rich lines retain UTF16 style runs without interpreting UTF8 bytes as ACP");
+    check(layer(p,"/content/line/1").text.runs.empty()&&layer(p,"/content/line/1").frame.y==33,"Sparse style gaps use source theme font; variable attributed line origin retained");
+    auto light=in;light.palette=NotesPalette::source(false,{.98,.83,.12,1});p.updateContent(s,light);check(layer(p,"/content/line/0").text.runs[0].style.color==st.color&&layer(p,"/content/line/1").text.color==light.palette.primary,"Theme changes preserve explicit rich ink and change only default ink");
+    auto stale=std::make_shared<NotesMeasuredText>(*m);stale->sourceRichPayload.reset();in.measured=stale;rejects([&]{p.updateContent(s,in);},"Stale formatting measurement rejects instead of painting plain fallback");
+}
+
 bool approximately(double a,double b){return std::abs(a-b)<1e-6;}
 Rect rect(const Json& j){const auto& a=j.array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
 NotesColor color(const Json& j){const auto& a=j["sRGB"].array();return {a[0].number(),a[1].number(),a[2].number(),a[3].number()};}
@@ -119,4 +130,4 @@ void sourceFixture(const char* path){std::ifstream file(path);if(!file)throw std
     for(const auto& a:p.actions()){const Json* found=nullptr;for(const auto& candidate:j["actions"].array())if(candidate["id"].string()==a.id){found=&candidate;break;}check(found!=nullptr,"Source action ID exists in original NotesCanvas export");auto r=a.localRect;r.x+=60;r.y+=90;check(r==rect((*found)["rect"]),"Source workspace action rectangles match original export");}
 }
 }
-int main(int argc,char** argv){try{sourceGeometry();editPinAndPlacement();scrollingAndFeedback();invalidAndBoundary();if(argc>1)sourceFixture(argv[1]);std::cout<<checks<<" Notes presentation checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<"Notes presentation failed: "<<e.what()<<'\n';return 1;}}
+int main(int argc,char** argv){try{sourceGeometry();richVisibleLines();editPinAndPlacement();scrollingAndFeedback();invalidAndBoundary();if(argc>1)sourceFixture(argv[1]);std::cout<<checks<<" Notes presentation checks passed\n";return 0;}catch(const std::exception& e){std::cerr<<"Notes presentation failed: "<<e.what()<<'\n';return 1;}}

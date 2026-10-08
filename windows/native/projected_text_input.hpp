@@ -8,6 +8,7 @@
 #include <msctf.h>
 #include <textstor.h>
 #include <memory>
+#include <functional>
 
 namespace endfield::native {
 enum class TextInputChange:unsigned {text=1,selection=2,composition=4,layout=8};
@@ -41,6 +42,12 @@ public:
     // Successful host edits notify the advised TSF sink, outside document locks.
     HRESULT replaceFromHost(core::text::Range,std::u16string_view) noexcept;
     HRESULT selectFromHost(core::text::Selection) noexcept;
+    // Formatting/history changes use the same host lock/composition gate. The
+    // callback mutates the caller's Document atomically and must not invoke UI
+    // or TSF callbacks. Return the actual text delta, or null for style-only.
+    // S_FALSE means no document/selection change. Layout is notified only after
+    // the owner has painted the resulting revision via layoutChanged().
+    HRESULT performHostEdit(const std::function<std::optional<core::text::Change>()>&)noexcept;
     HRESULT setPlacement(const core::text::Placement&) noexcept;
     HRESULT layoutChanged() noexcept;
     // WM_KEYDOWN/UP and WM_SYSKEYDOWN/UP only, routed by the focused owner.

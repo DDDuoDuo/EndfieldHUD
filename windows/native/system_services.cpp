@@ -8,6 +8,25 @@
 #include <utility>
 
 namespace endfield::native {
+std::optional<float> audio_stereo_balance(float left,float right) noexcept {
+    if(!std::isfinite(left)||!std::isfinite(right)||left<0||left>1||right<0||right>1)return {};
+    const auto peak=std::max(left,right);if(peak<=0)return {};return std::clamp((right-left)/peak,-1.f,1.f);
+}
+std::array<float,2> audio_stereo_levels(float peak,float balance) noexcept {
+    peak=std::clamp(std::isfinite(peak)?peak:0.f,0.f,1.f);balance=std::clamp(std::isfinite(balance)?balance:0.f,-1.f,1.f);
+    return balance>=0?std::array{peak*(1-balance),peak}:std::array{peak,peak*(1+balance)};
+}
+std::int32_t apply_audio_stereo_balance(float balance,const AudioStereoAccess&access) noexcept {
+    constexpr auto invalid=static_cast<std::int32_t>(0x80070057u),unsupported=static_cast<std::int32_t>(0x80070032u),unexpected=static_cast<std::int32_t>(0x8000ffffu);
+    if(!std::isfinite(balance)||balance<-1||balance>1||!access.read||!access.write)return invalid;
+    const auto read=[&](unsigned index,float&value){try{return access.read(index,value);}catch(...){return unexpected;}};
+    const auto write=[&](unsigned index,float value){try{return access.write(index,value);}catch(...){return unexpected;}};
+    std::array<float,2>originals{};for(unsigned n=0;n<2;++n){const auto status=read(n,originals[n]);if(status<0)return status;}
+    if(!audio_stereo_balance(originals[0],originals[1]))return unsupported;
+    const auto next=audio_stereo_levels(std::max(originals[0],originals[1]),balance);unsigned attempted{};std::int32_t status{};
+    for(unsigned n=0;n<2;++n){++attempted;status=write(n,next[n]);if(status<0)break;float actual{};status=read(n,actual);if(status<0)break;if(!std::isfinite(actual)||actual<0||actual>1){status=unexpected;break;}}
+    if(status>=0)return 0;bool restored=true;while(attempted){const auto n=--attempted;if(write(n,originals[n])<0)restored=false;}return restored?status:unexpected;
+}
 BatterySnapshot decode_power_status(const PowerStatus& raw) noexcept {
     BatterySnapshot result; result.available = true;
     if (raw.ac_line_status <= 1) result.ac_connected = raw.ac_line_status == 1;
@@ -274,6 +293,9 @@ void ClipboardHistory::clear(bool keep_pinned) {
 
 #ifdef _WIN32
 #include <atomic>
+// Instantiate the SDK's endpoint PROPERTYKEYs in this implementation unit.
+// uuid.lib does not provide PKEY_AudioEndpoint_FormFactor.
+#include <initguid.h>
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -310,10 +332,10 @@ public:
     HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { route_->post(topology_event); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { route_->post(topology_event); return S_OK; }
     HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR) override {
-        if (flow == eRender && role == eConsole) route_->post(topology_event); return S_OK;
+        if ((flow == eRender||flow==eCapture) && role == eConsole) route_->post(topology_event); return S_OK;
     }
     HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY key) override {
-        if (IsEqualPropertyKey(key, PKEY_Device_FriendlyName)) route_->post(topology_event);
+        if (IsEqualPropertyKey(key, PKEY_Device_FriendlyName)||IsEqualPropertyKey(key,PKEY_AudioEndpoint_FormFactor)) route_->post(topology_event);
         return S_OK;
     }
 private:
@@ -378,6 +400,11 @@ std::wstring endpoint_name(IMMDevice* device, const std::wstring& fallback) {
     try { if (SUCCEEDED(status) && value.vt == VT_LPWSTR && value.pwszVal) result = value.pwszVal; }
     catch (...) { PropVariantClear(&value); throw; }
     PropVariantClear(&value); return result.empty() ? fallback : result;
+}
+bool endpoint_headphones(IMMDevice*device){
+    ComPtr<IPropertyStore>properties;if(!device||FAILED(device->OpenPropertyStore(STGM_READ,&properties)))return false;
+    PROPVARIANT value;PropVariantInit(&value);const auto hr=properties->GetValue(PKEY_AudioEndpoint_FormFactor,&value);
+    const bool result=SUCCEEDED(hr)&&value.vt==VT_UI4&&(value.ulVal==Headphones||value.ulVal==Headset);PropVariantClear(&value);return result;
 }
 std::u16string utf16(std::wstring_view value) {
     static_assert(sizeof(wchar_t) == sizeof(char16_t));
@@ -444,14 +471,18 @@ public:
         if (next != battery) { battery = next; notify(ServiceChange::battery); }
     }
     HRESULT read_volume(AudioSnapshot& snapshot) {
-        snapshot.available = false; snapshot.volume.reset(); snapshot.muted.reset();
+        snapshot.available = false; snapshot.volume.reset(); snapshot.muted.reset();snapshot.balance.reset();snapshot.can_set_balance=false;
         if (!endpoint_volume) return snapshot.error = static_cast<std::int32_t>(HRESULT_FROM_WIN32(ERROR_NOT_FOUND));
         float scalar{}; BOOL muted{};
         HRESULT status = endpoint_volume->GetMasterVolumeLevelScalar(&scalar);
         if (SUCCEEDED(status)) status = endpoint_volume->GetMute(&muted);
         if (SUCCEEDED(status) && (!std::isfinite(scalar) || scalar < 0 || scalar > 1)) status = E_UNEXPECTED;
         snapshot.error = static_cast<std::int32_t>(status);
-        if (SUCCEEDED(status)) { snapshot.available = true; snapshot.volume = scalar; snapshot.muted = muted != FALSE; }
+        if (SUCCEEDED(status)) {
+            snapshot.available = true; snapshot.volume = scalar; snapshot.muted = muted != FALSE;
+            UINT count{};float left{},right{};
+            if(SUCCEEDED(endpoint_volume->GetChannelCount(&count))&&count==2&&SUCCEEDED(endpoint_volume->GetChannelVolumeLevelScalar(0,&left))&&SUCCEEDED(endpoint_volume->GetChannelVolumeLevelScalar(1,&right))){snapshot.balance=audio_stereo_balance(left,right);snapshot.can_set_balance=snapshot.balance.has_value();}
+        }
         return status;
     }
     HRESULT refresh_volume() {
@@ -485,7 +516,15 @@ public:
             ComPtr<IMMDevice> device;
             status = devices->Item(index, &device); if (FAILED(status)) break;
             auto id = endpoint_id(device.Get()); if (id.empty()) { status = E_UNEXPECTED; break; }
-            next.devices.push_back({id, endpoint_name(device.Get(), id), id == next.default_device_id});
+            next.devices.push_back({id, endpoint_name(device.Get(), id), id == next.default_device_id,endpoint_headphones(device.Get())});
+        }
+        // Input topology is independently readable even when there is no active
+        // render device. It never opens a capture stream or changes the default.
+        if(enumerator){ComPtr<IMMDevice>input;if(SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eCapture,eConsole,&input)))next.default_input_device_id=endpoint_id(input.Get());
+            ComPtr<IMMDeviceCollection>inputs;HRESULT inputStatus=enumerator->EnumAudioEndpoints(eCapture,DEVICE_STATE_ACTIVE,&inputs);UINT inputCount{};
+            if(SUCCEEDED(inputStatus))inputStatus=inputs->GetCount(&inputCount);if(SUCCEEDED(inputStatus)&&inputCount>512)inputStatus=HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+            for(UINT index=0;SUCCEEDED(inputStatus)&&index<inputCount;++index){ComPtr<IMMDevice>item;inputStatus=inputs->Item(index,&item);if(FAILED(inputStatus))break;auto id=endpoint_id(item.Get());if(id.empty()){inputStatus=E_UNEXPECTED;break;}next.inputs.push_back({id,endpoint_name(item.Get(),id),id==next.default_input_device_id,endpoint_headphones(item.Get())});}
+            next.input_error=static_cast<std::int32_t>(inputStatus);if(FAILED(inputStatus))next.inputs.clear();
         }
         next.controlled_device_id = selected_endpoint.empty() ? next.default_device_id : selected_endpoint;
         if (SUCCEEDED(status)) {
@@ -510,7 +549,7 @@ public:
         if (audio_active == active) return S_FALSE;
         if (!active) {
             audio_active = false; stop_audio();
-            auto next = audio; next.paused = true; next.available = false;
+            auto next = audio; next.paused = true; next.available = false;next.can_set_balance=false;
             if (next != audio) { audio = std::move(next); notify(ServiceChange::audio); }
             return S_OK;
         }
@@ -787,6 +826,15 @@ HRESULT SystemServices::set_master_mute(bool muted) {
     if (!impl_->endpoint_volume) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
     const auto status = impl_->endpoint_volume->SetMute(muted ? TRUE : FALSE, nullptr);
     if (SUCCEEDED(status)) impl_->refresh_volume(); return status;
+}
+HRESULT SystemServices::set_output_balance(float balance) {
+    if(!impl_->owner_thread())return RPC_E_WRONG_THREAD;if(!std::isfinite(balance)||balance<-1||balance>1)return E_INVALIDARG;
+    if(!impl_->audio_active)return E_PENDING;if(!impl_->endpoint_volume||!impl_->audio.can_set_balance)return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+    UINT count{};auto endpoint=impl_->endpoint_volume;HRESULT status=endpoint->GetChannelCount(&count);
+    if(SUCCEEDED(status)&&count!=2)status=HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);if(FAILED(status))return status;
+    status=static_cast<HRESULT>(apply_audio_stereo_balance(balance,{[endpoint](unsigned n,float&v){return static_cast<std::int32_t>(endpoint->GetChannelVolumeLevelScalar(n,&v));},[endpoint](unsigned n,float v){return static_cast<std::int32_t>(endpoint->SetChannelVolumeLevelScalar(n,v,nullptr));}}));
+    // Always read back changed/rollback state; no optimistic balanced value.
+    (void)impl_->refresh_volume();return status;
 }
 } // namespace endfield::native
 #endif

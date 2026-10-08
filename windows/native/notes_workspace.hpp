@@ -3,6 +3,7 @@
 #include "native/notes_text_measure.hpp"
 #include "native/projected_editor.hpp"
 #include "modules/notes_motion.hpp"
+#include "modules/notes_checklist.hpp"
 #ifdef _WIN32
 namespace endfield::native {
 struct NativeNotesWorkspaceStyle {
@@ -39,13 +40,14 @@ struct NativeNotesCardMotion {
     modules::NotesMotionSample sample;
 };
 struct NativeNotesFinishResult {bool finished{},saved{};};
-// Short/plain Notes coordinator. It borrows ONE state, rasterizer, HWND and
+// Attachment-free plain/rich Notes coordinator. It borrows ONE state, rasterizer, HWND and
 // optional already-activated TSF manager. It creates no window, service, clock,
 // publisher, persistence store, clipboard reader or global input hook.
 // Only content events measure text/create artwork. Frame poses visit cached
 // visible/outgoing cards, never scan NotesState or copy text. The measured font
-// drives both plain card lines and its same-object DWrite projected editor.
-// Rich/TODO/media/drawing are explicitly rejected when they become visible;
+// and style resolver drive settled lines and the same-object DWrite editor.
+// Settled attributed line metrics and edited paragraph metrics follow their
+// distinct original source paths. TODO uses plain font11 row editors; media/drawing reject when visible;
 // hidden unsupported records are not read/rendered. Stored text is never cut.
 // Owner appends entries() to its ONE LayerComposition and republishes whenever
 // compositionRevision changes. Removed scenes remain alive until collectRetired
@@ -91,9 +93,18 @@ public:
     bool releaseResources(Renderer&); // only after owner removes ALL workspace entries
     bool select(std::optional<std::string>);
     bool createText(std::string id,double createdAt);
+    bool createChecklist(std::string noteID,std::string firstItemID,double createdAt);
+    bool addChecklistItem(std::string_view noteID,std::string itemID);
+    bool mutateChecklistItem(std::string_view noteID,std::string_view itemID,modules::NotesState::ChecklistAction);
+    bool beginEditingItem(std::string_view noteID,std::string_view itemID);
+    std::optional<std::string_view> editingItemID()const noexcept;
     bool beginEditing(std::string_view noteID);
     NativeNotesFinishResult finishEditing(bool commit=true); // false.finished means TSF lock; retry later
     bool syncEditor(); // document/selection event, then owner republishes
+    ProjectedEditorResult applyFormat(const core::notes::FormatChange&);
+    ProjectedEditorResult undo();
+    ProjectedEditorResult redo();
+    std::optional<core::notes::TextStyle> selectionStyle()const;
     NativeProjectedEditor* editor()noexcept;
     const core::text::Document* editorDocument()const noexcept;
     std::optional<std::string_view> editingNoteID()const noexcept;

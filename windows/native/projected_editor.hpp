@@ -1,4 +1,5 @@
 #pragma once
+#include "core/notes_rich_text.hpp"
 #include "native/layer_scene.hpp"
 #include "native/layer_text_layout.hpp"
 #include "native/projected_text_input.hpp"
@@ -23,16 +24,19 @@ struct ProjectedEditorPose {
     unsigned pixelWidth{},pixelHeight{};
     float opacity{1};bool visible{true},ownerFocused{},caretVisible{true};
 };
-// Reusable bounded plain-text document with a fixed visible raster viewport.
+// Reusable bounded plain/rich document with a fixed visible raster viewport.
 // Caller-owned Document, dedicated EMPTY LayerScene/rasterizer, HWND and shared
-// activated TSF manager outlive this UI-thread adapter. A caller must explicitly
-// reject rich Notes before construction; no formatting is captured/flattened.
+// activated TSF manager outlive this UI-thread adapter. Use the typed rich
+// overload for Notes runs; formatting is never inferred from a plain Document.
 // Capacity is a fixture/leaf limitation (<=65536 UTF16), not a Notes storage limit.
-// Rich text and visual-bidi/word navigation remain separate integration work.
+// The explicit RichDocument overload preserves source runs/undo/composition.
+// Visual-bidi/word navigation and exact cross-platform font parity remain open.
 // No window, renderer, publisher, clock, focus stealing, clipboard or timers.
 class NativeProjectedEditor final {
 public:
     NativeProjectedEditor(HWND,core::text::Document&,LayerScene&,ProjectedEditorStyle,
+        LayerRasterOptions,PlainEditorFixtureCapacity,UINT ownerMessage,UINT_PTR generation);
+    NativeProjectedEditor(HWND,core::notes::RichDocument&,LayerScene&,ProjectedEditorStyle,
         LayerRasterOptions,PlainEditorFixtureCapacity,UINT ownerMessage,UINT_PTR generation);
     ~NativeProjectedEditor();
     NativeProjectedEditor(const NativeProjectedEditor&)=delete;
@@ -65,6 +69,14 @@ public:
     // edits coalesce reveal into their next sync. Manual scroll cancels pending
     // reveal (including an unchanged restore). Pointer-down never reveals.
     bool revealCaret();
+    // Caller invokes syncContent/upload after changed=true. Collapsed formatting
+    // changes only future typing unless source paragraph normalization is due.
+    // Marked composition/TSF locks decline host formatting/history unchanged.
+    ProjectedEditorResult applyFormat(const core::notes::FormatChange&);
+    ProjectedEditorResult undo();
+    ProjectedEditorResult redo();
+    std::optional<core::notes::TextStyle> selectionStyle()const;
+    bool richLayoutEnabled()const noexcept;
     ProjectedEditorResult command(ProjectedEditorCommand,bool extend=false);
     ProjectedEditorResult character(std::uint32_t value,bool unicodeScalar=false);
     // Client PHYSICAL pixels. Host owns actual focus/capture. Call syncContent

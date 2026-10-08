@@ -104,6 +104,23 @@ bool shutterContains(const endfield::core::ShutterPath& path, endfield::core::Po
     }
     return false;
 }
+void alphaCoverage(Renderer& renderer,DrawObject& object){
+    object.textureID.clear();object.world={};object.opacity=1;object.linearTint={1,0,0,1};object.masks.clear();object.shutter.reset();
+    const std::array<std::uint8_t,4>half{0,255,0,128};renderer.setTexture("alpha.fixture",1,{1,1,half,TextureColorSpace::linear});
+    object.alphaMask=PlaneAlphaMask{{},{-1,-1,2,2},"alpha.fixture"};renderer.setDrawList(std::span(&object,1));renderer.draw(false);
+    pixel(renderer.readback(),16,16,{0,0,128,128},1,"Mask alpha multiplies premultiplied RGB and alpha once, ignoring mask RGB");
+    check(!renderer.removeTexture("alpha.fixture"),"Published alpha-mask resource cannot be removed");
+    const auto saved=renderer.readback().pixels;const auto constants=renderer.stats().objectUploads;
+    auto invalid=object;invalid.alphaMask->textureID="missing-alpha";rejects([&]{renderer.setDrawList(std::span(&invalid,1));},"Missing mask rejects before replacing live draw");
+    invalid=object;invalid.alphaMask->bounds.width=0;rejects([&]{renderer.setDrawList(std::span(&invalid,1));},"Collapsed mask rejects before replacing live constants");renderer.draw(false);check(renderer.readback().pixels==saved&&renderer.stats().objectUploads==constants,"Rejected alpha mask retains previous pixels/resources");
+    object.alphaMask->bounds={-1,-1,1,2};renderer.setDrawList(std::span(&object,1));renderer.draw(false);pixel(renderer.readback(),24,16,{0,0,0,0},0,"Alpha-mask texture cannot clamp coverage outside its plane bounds");
+    object.alphaMask->worldToLocal=endfield::core::Matrix4::translation(-1,0);renderer.setDrawList(std::span(&object,1));renderer.draw(false);pixel(renderer.readback(),24,16,{0,0,128,128},1,"Alpha mask follows its own transformed plane");
+    object.masks={{{},{-1,0,2,1}}};renderer.setDrawList(std::span(&object,1));renderer.draw(false);pixel(renderer.readback(),24,24,{0,0,0,0},0,"Alpha mask intersects ordinary ancestor clip");
+    const auto before=renderer.stats();for(unsigned n=0;n<120;++n){object.alphaMask->worldToLocal.values[12]=-1+double(n)*.001;renderer.setDrawList(std::span(&object,1));}
+    check(renderer.stats().textureUploads==before.textureUploads&&renderer.stats().meshUploads==before.meshUploads&&renderer.stats().objectBufferAllocations==before.objectBufferAllocations,"Mask pose-only frames retain texture/geometry/buffers");
+    const std::array<std::uint8_t,4>opaque{0,0,0,255};renderer.setTexture("alpha.fixture",2,{1,1,opaque,TextureColorSpace::linear});object.masks.clear();object.alphaMask->bounds={-1,-1,2,2};object.alphaMask->worldToLocal={};renderer.setDrawList(std::span(&object,1));renderer.draw(false);pixel(renderer.readback(),16,16,{0,0,255,255},0,"Replacing resident alpha bytes updates stable draw references");
+    object.alphaMask.reset();renderer.setDrawList(std::span(&object,1));check(renderer.removeTexture("alpha.fixture"),"Mask retires after publication stops referencing it");
+}
 void roundedCoverage(Renderer& renderer,DrawObject& object){
     using namespace endfield::core;
     renderer.setCamera({});object.world={};object.opacity=1;object.textureID.clear();object.shutter.reset();object.linearTint={1,0,0,1};
@@ -328,6 +345,7 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     pixel(image, 24, 8, {0, 0, 255, 255}, 1, "Nested plane masks intersect");
     pixel(image, 24, 24, {0, 0, 0, 0}, 0, "Nested masks cannot reveal outside either ancestor");
 
+    alphaCoverage(renderer, red);
     roundedCoverage(renderer, red);
     shutterCoverage(renderer, red);
     subsectionCoverage(renderer, red);

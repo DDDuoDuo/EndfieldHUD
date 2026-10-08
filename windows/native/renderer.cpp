@@ -75,8 +75,10 @@ struct alignas(16) ObjectUniform {
     std::array<MaskUniform, 8> masks{};
     std::array<float, 16> shutterWorldToLocal{};
     std::array<std::array<float, 4>, 30> shutterEdges{};
+    std::array<float,16> alphaWorldToLocal{};
+    std::array<float,4> alphaBounds{},alphaControl{};
 };
-static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 96 && sizeof(ObjectUniform) == 1408);
+static_assert(sizeof(Vertex) == 36 && sizeof(MaskUniform) == 96 && sizeof(ObjectUniform) == 1504);
 void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
     result.shutterEnabled = static_cast<std::uint32_t>(shutter.path.index())+1;
     result.shutterWorldToLocal = matrix(shutter.worldToLocal);
@@ -151,6 +153,13 @@ ObjectUniform uniforms(const DrawObject &object) {
         }
     }
     if (object.shutter) shutterUniforms(result, *object.shutter);
+    if(object.alphaMask){const auto& mask=*object.alphaMask;identity(mask.textureID);
+        result.alphaWorldToLocal=matrix(mask.worldToLocal);const auto& b=mask.bounds;
+        require(std::isfinite(b.x)&&std::isfinite(b.y)&&std::isfinite(b.width)&&std::isfinite(b.height)&&b.width>0&&b.height>0,"Invalid alpha-mask rectangle");
+        const std::array<double,4> bounds{b.x,b.y,b.x+b.width,b.y+b.height};
+        for(unsigned k=0;k<4;++k){require(std::isfinite(bounds[k])&&std::abs(bounds[k])<=std::numeric_limits<float>::max(),"Alpha-mask bounds exceed GPU range");result.alphaBounds[k]=static_cast<float>(bounds[k]);}
+        require(result.alphaBounds[2]>result.alphaBounds[0]&&result.alphaBounds[3]>result.alphaBounds[1],"Alpha-mask bounds collapse at GPU precision");result.alphaControl[0]=1;
+    }
     return result;
 }
 ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, const char *target) {
@@ -226,7 +235,7 @@ struct Renderer::Impl {
     struct Draw {
         std::string sourceID;
         Mesh *mesh{};
-        Texture *texture{};
+        Texture *texture{},*alphaMask{};
         ObjectUniform values{};
         ComPtr<ID3D11Buffer> constants;
     };
@@ -289,11 +298,11 @@ struct Renderer::Impl {
         for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.mesh==mesh)return true;}return false;
     }
     bool textureReferenced(const Texture* texture)const{
-        for(const auto&draw:draws)if(draw.texture==texture)return true;
-        for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.texture==texture)return true;}return false;
+        for(const auto&draw:draws)if((draw.texture==texture||draw.alphaMask==texture))return true;
+        for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if((draw.texture==texture||draw.alphaMask==texture))return true;}return false;
     }
     void invalidate(const Mesh* mesh){for(auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.mesh==mesh){group->dirty=true;break;}}}
-    void invalidate(const Texture* texture){for(auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.texture==texture){group->dirty=true;break;}}}
+    void invalidate(const Texture* texture){for(auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if((draw.texture==texture||draw.alphaMask==texture)){group->dirty=true;break;}}}
 
     ~Impl() {
         if (target) target->SetRoot(nullptr);
@@ -516,14 +525,17 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
         const auto texture=r.textures.find(object.textureID);
         require(mesh!=r.meshes.end()&&!mesh->second.groupOwned,"Native group cannot consume a group output mesh");
         require(object.textureID.empty()||(texture!=r.textures.end()&&!texture->second.groupOwned),"Native group cannot consume a group output texture");
+        if(object.alphaMask){const auto mask=r.textures.find(object.alphaMask->textureID);require(mask!=r.textures.end()&&!mask->second.groupOwned,"Native group cannot consume a missing/group alpha-mask texture");}
     }
     bool retained = objects.size() == activeDraws.size();
     for (std::size_t i = 0; retained && i < objects.size(); ++i) {
         const auto &object = objects[i]; const auto &draw = activeDraws[i];
         const auto mesh = r.meshes.find(object.meshID);
         const auto texture = r.textures.find(object.textureID);
+        const auto alpha = object.alphaMask?r.textures.find(object.alphaMask->textureID):r.textures.end();
         retained = object.sourceID == draw.sourceID && mesh != r.meshes.end() && &mesh->second == draw.mesh &&
-            (object.textureID.empty() ? draw.texture == &r.white : texture != r.textures.end() && &texture->second == draw.texture);
+            (object.textureID.empty() ? draw.texture == &r.white : texture != r.textures.end() && &texture->second == draw.texture) &&
+            (object.alphaMask ? alpha!=r.textures.end() && &alpha->second==draw.alphaMask : draw.alphaMask==&r.white);
     }
     if (retained) {
         // Validate the complete pose before touching any active GPU constants.
@@ -556,6 +568,9 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
         Impl::Draw draw;
         draw.sourceID = object.sourceID; draw.mesh = &mesh->second;
         draw.texture = object.textureID.empty() ? &r.white : &texture->second;
+        auto alpha=object.alphaMask?r.textures.find(object.alphaMask->textureID):r.textures.end();
+        require(!object.alphaMask||alpha!=r.textures.end(),"Draw refers to an unregistered alpha-mask texture");
+        draw.alphaMask=object.alphaMask?&alpha->second:&r.white;
         draw.values = uniforms(object);
         if (i < activeDraws.size())
             draw.constants = activeDraws[i].constants;
@@ -612,6 +627,7 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
             const auto texture=textures.find(object.textureID);
             require(mesh!=meshes.end()&&!mesh->second.groupOwned,"Native group cannot consume a missing/group output mesh");
             require(object.textureID.empty()||(texture!=textures.end()&&!texture->second.groupOwned),"Native group cannot consume a missing/group output texture");
+            if(object.alphaMask){const auto mask=textures.find(object.alphaMask->textureID);require(mask!=textures.end()&&!mask->second.groupOwned,"Native group cannot consume a missing/group alpha-mask texture");}
         }
     }
     const auto found=groups.find(id);
@@ -698,8 +714,8 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(pixelWidth), static_cast<float>(pixelHeight), 0, 1};
     r.context->RSSetViewports(1, &viewport); r.context->RSSetState(r.raster.Get());
     r.context->OMSetDepthStencilState(r.noDepth.Get(), 0);
-    ID3D11ShaderResourceView *emptyResource = nullptr;
-    r.context->PSSetShaderResources(0, 1, &emptyResource);
+    ID3D11ShaderResourceView *emptyResources[2]{};
+    r.context->PSSetShaderResources(0, 2, emptyResources);
     auto *linear = passTarget;
     r.context->OMSetRenderTargets(1, &linear, nullptr);
     constexpr float clear[4]{};
@@ -718,12 +734,12 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
         r.context->IASetIndexBuffer(draw.mesh->indices.Get(), DXGI_FORMAT_R32_UINT, 0);
         auto *constants = draw.constants.Get();
         r.context->VSSetConstantBuffers(1, 1, &constants); r.context->PSSetConstantBuffers(1, 1, &constants);
-        auto *texture = draw.texture->view.Get();
-        auto *sampler = draw.texture->filter == TextureFilter::nearest ? r.nearestSampler.Get() : r.linearSampler.Get();
-        r.context->PSSetShaderResources(0, 1, &texture); r.context->PSSetSamplers(0, 1, &sampler);
+        ID3D11ShaderResourceView* textures[2]{draw.texture->view.Get(),draw.alphaMask->view.Get()};
+        ID3D11SamplerState* samplers[2]{draw.texture->filter==TextureFilter::nearest?r.nearestSampler.Get():r.linearSampler.Get(),r.linearSampler.Get()};
+        r.context->PSSetShaderResources(0,2,textures);r.context->PSSetSamplers(0,2,samplers);
         r.context->DrawIndexed(draw.mesh->indexCount, 0, 0); ++r.counters.drawCalls;if(group)++r.counters.nativeGroupDrawCalls;
     }
-    r.context->PSSetShaderResources(0, 1, &emptyResource);
+    r.context->PSSetShaderResources(0,2,emptyResources);
     r.context->OMSetRenderTargets(0,nullptr,nullptr);
 }
 void Renderer::draw(bool present) {
@@ -748,7 +764,7 @@ void Renderer::draw(bool present) {
     }
     for(auto&[id,group]:r.groups){(void)id;if(!group->dirty)continue;
         const auto*texture=&r.textures.find(group->output.textureID)->second;
-        const bool visible=std::any_of(r.draws.begin(),r.draws.end(),[&](const auto&draw){return draw.texture==texture&&draw.values.opacity>0&&draw.values.tint[3]>0;});
+        const bool visible=std::any_of(r.draws.begin(),r.draws.end(),[&](const auto&draw){return (draw.texture==texture||draw.alphaMask==texture)&&draw.values.opacity>0&&draw.values.tint[3]>0;});
         if(!visible)continue;
         r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true);
         group->dirty=false;++r.counters.nativeGroupRenders;

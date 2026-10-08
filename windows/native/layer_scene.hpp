@@ -60,6 +60,8 @@ public:
     // world coordinates, like its ordinary plane masks. Fixed-size data only;
     // changing/clearing it never rebuilds local artwork or resource bindings.
     void setGroupShutter(std::optional<PlaneShutter>);
+    // Borrowed external resident alpha texture; the caller owns upload/retirement.
+    void setGroupAlphaMask(const std::optional<PlaneAlphaMask>&);
     // Reuses all local surfaces. Caller supplies source-derived placement,
     // including a changed camera or module transition, in top-left screen space.
     void present(Renderer&,const core::Matrix4& screenTransform={});
@@ -86,6 +88,7 @@ private:
     std::vector<Surface> surfaces_;
     std::vector<DrawObject> draws_;
     std::optional<PlaneShutter> groupShutter_;
+    std::optional<PlaneAlphaMask> groupAlphaMask_;
     LayerSceneReport report_;
     std::vector<LayerRasterIssue> structuralIssues_;
     std::string namespace_;

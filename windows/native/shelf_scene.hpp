@@ -1,6 +1,7 @@
 #pragma once
 #include "modules/shelf_presentation.hpp"
 #include "native/layer_scene.hpp"
+#include "core/subsection_mask.hpp"
 
 namespace endfield::native {
 // Explicit source-prepared artwork or caller-supplied native icon snapshots. This bridge never obtains file icons,
@@ -12,7 +13,7 @@ struct NativeShelfImage {
 struct ShelfSceneSurface {
     static constexpr std::size_t none=static_cast<std::size_t>(-1);
     std::string id;core::Matrix4 local;float opacity{1};
-    std::size_t feedback{none};bool rim{},toolbar{};
+    std::size_t feedback{none};bool rim{},toolbar{},drop{};
 };
 struct ShelfScenePart {
     std::string itemID; // empty for collection, scrollbar and foreground
@@ -31,6 +32,10 @@ ShelfScenePlan prepareShelfScene(const modules::ShelfPresentation&,
     std::span<const NativeShelfImage> images={});
 
 struct ShelfSelectionPose {std::string_view itemID;double y{},z{};};
+struct ShelfRevealSample {double direction{1},elapsed{};};
+// Original rounded drop outline, trimmed by true cubic arc length. Retains
+// authored curve segments (no flattened polygon or generic fade).
+ehud::data::Json shelfDropStrokePath(double strokeEnd);
 struct NativeShelfPose {
     core::Matrix4 contentWorld;float opacity{1};double time{};
     // Sample original .18s source translations on the owner's clock. Omitted
@@ -39,15 +44,17 @@ struct NativeShelfPose {
     double toolbarY{},toolbarZ{}; // original reveal from (6,-6) to (0,0)
     std::span<const PlaneMask> ownerMasks; // typically ModuleSurfacePose.hostClip
     std::optional<PlaneShutter> moduleShutter;
-    // Explicit next-adapter boundary. Active subsection and drop-path inputs
-    // currently reject BEFORE mutation; never substitute a fade/rectangle.
+    // Explicit authored polygon input; no point interpolation is implied. For
+    // intermediate source CA curves supply reveal below instead.
     core::Matrix4 collectionSublayerTransform;
     std::optional<SubsectionShutterPath> collectionReveal;
     double dropStrokeEnd{1};
+    std::optional<ShelfRevealSample> reveal; // finite caller-clock .26s animation
 };
 struct NativeShelfSceneStats {
     std::size_t cards{},retiredParts{};
     std::uint64_t contentSynchronizations{},partBuilds{},poseUpdates{},feedbackChanges{};
+    std::uint64_t maskRasters{},maskUploads{},dropRasters{},topologyGapSamples{};
 };
 #ifdef _WIN32
 // Retained settled-collection bridge. The caller supplies one already-updated
@@ -59,12 +66,14 @@ struct NativeShelfSceneStats {
 // Removed/replaced parts survive until collectRetired after owner publication.
 // One uncollected generation is permitted, bounding retained resources. Detach
 // all entries and releaseResources BEFORE destruction; raster/source outlive it.
-// The full .26s four-strip collection reveal needs a local GPU group so its
-// inner mask coexists with the module's independent outer shutter. That group
-// and the .20s drop stroke trace are explicitly not implemented in this slice.
+// Curved reveal uses one bounded planar alpha texture during the finite .26s
+// transition, intersecting the independent outer module shutter. Measured CA
+// curve approximation and D2D raster antialiasing are explicit parity limits.
+// Call collectRetired after composition.present to retire a completed mask.
 class NativeShelfScene final {
 public:
-    NativeShelfScene(modules::ShelfPresentation&,LayerRasterizer&,LayerRasterOptions);
+    NativeShelfScene(modules::ShelfPresentation&,LayerRasterizer&,LayerRasterOptions,
+        std::shared_ptr<const core::SubsectionMaskSampler> revealSamples={});
     ~NativeShelfScene();
     NativeShelfScene(const NativeShelfScene&)=delete;
     NativeShelfScene&operator=(const NativeShelfScene&)=delete;
@@ -73,6 +82,9 @@ public:
     bool syncContent(std::span<const NativeShelfImage> images={},std::uint64_t imageRevision=0);
     bool setFeedback(std::optional<std::string_view> action,bool pressed,bool reduced,double time);
     bool updatePose(const NativeShelfPose&);
+    // After pose, before combined publication. Raster/upload only changed finite
+    // mask or stroke samples; steady poses do no bitmap or resource work.
+    bool uploadAnimations(Renderer&);
     bool requiresFrames(double time)const;
     std::span<const LayerCompositionEntry> entries()const noexcept;
     std::uint64_t compositionRevision()const noexcept;

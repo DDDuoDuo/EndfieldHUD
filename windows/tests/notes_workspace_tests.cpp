@@ -160,7 +160,9 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     rejects([&]{gpu::NativeProjectedEditor rejected(hwnd,longDocument,longScene,style,rasterOptions,gpu::PlainEditorFixtureCapacity{65536},WM_APP+181,2);},"Long editor fixture capacity rejects instead of flattening/truncating stored text");
     check(longDocument.text().size()==65537&&longScene.contentRevision()==0,"Rejected long field preserves complete owner text and empty scene");
     auto rich=note;rich.id="00000000-0000-4000-8000-000000000002";rich.richText="{\"version\":1,\"runs\":[]}";mod::NotesState richState({rich},{[](const auto&){},[](auto){}});richState.setWorkspaceBounds({0,0,640,360});
-    rejects([&]{richState.beginEditing(rich.id);},"Rich Notes still rejects the plain-editor fixture explicitly");check(richState.note(rich.id)->richText==rich.richText,"Rich payload is left intact for the later style-preserving adapter");
+    const auto& richRequest=richState.beginEditing(rich.id);check(richRequest.richText==rich.richText&&richRequest.text==rich.text,"Rich Notes exposes full original formatting to the style-preserving editor");
+    rejects([&]{richState.finishEditing("flattened");},"Legacy plain commit explicitly rejects flattening a rich note");check(richState.editing()&&richState.note(rich.id)->richText==rich.richText&&richState.note(rich.id)->text==rich.text,"Rejected plain commit preserves the rich record and active handoff");
+    check(richState.finishEditing(richRequest.text,richRequest.richText)&&!richState.editing()&&richState.note(rich.id)->richText==rich.richText,"Explicit rich commit preserves the original payload");
 }
 }
 int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass original native HUD shader path");ok(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED),"Owned fixture COM apartment initializes");

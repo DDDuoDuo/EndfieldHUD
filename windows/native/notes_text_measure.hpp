@@ -19,10 +19,10 @@ struct NativeNotesTextMeasureStats {
     std::size_t entries{},retainedBytes{};
     std::uint64_t measurements{},cacheHits{},analysisLayoutsCreated{},evictions{};
 };
-// Lazy plain-text line index only; no HWND, renderer, timer, editor or data I/O.
+// Lazy plain/rich text line index only; no HWND, renderer, timer, editor or data I/O.
 // Shares LayerRasterizer's existing DirectWrite factory/font resolver. Borrowed
 // rasterizer outlives this cache and calls occur on its creating thread.
-// The caller must increment textRevision whenever text changes. Equal source
+// The caller must increment textRevision whenever text or formatting changes. Equal source
 // key/revision/width/size/fallback returns the identical shared result immediately.
 // A transient whole-paragraph DWrite analysis layout is released once indexed;
 // visible line leaves are subsequently reconstructed using the SAME selected
@@ -42,7 +42,8 @@ public:
     NativeNotesTextMeasurer(const NativeNotesTextMeasurer&)=delete;
     NativeNotesTextMeasurer&operator=(const NativeNotesTextMeasurer&)=delete;
     std::shared_ptr<const NativeNotesTextMeasurement> measure(std::string_view sourceID,std::uint64_t textRevision,
-        std::string_view text,double width,double fontSize=12,const LayerRasterOptions& options={});
+        std::string_view text,double width,double fontSize=12,const LayerRasterOptions& options={},
+        const std::optional<std::string>& richPayload=std::nullopt);
     bool remove(std::string_view sourceID);
     void clear();
     NativeNotesTextMeasureStats stats()const;

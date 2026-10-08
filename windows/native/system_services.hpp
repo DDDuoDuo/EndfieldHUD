@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -79,6 +80,7 @@ private:
 struct AudioDevice {
     std::wstring id, name;
     bool is_default{};
+    bool headphones{}; // Explicit endpoint form factor; no name/ID guessing.
     bool operator==(const AudioDevice&) const = default;
 };
 struct AudioSnapshot {
@@ -89,8 +91,25 @@ struct AudioSnapshot {
     std::optional<bool> muted;
     // HRESULT represented without a Windows dependency for model consumers.
     std::int32_t error{};
+    std::vector<AudioDevice> inputs;
+    std::wstring default_input_device_id;
+    std::optional<float> balance;
+    bool can_set_balance{};
+    std::int32_t input_error{};
     bool operator==(const AudioSnapshot&) const = default;
 };
+// Same peak-preserving stereo math as Mac AudioVolumeMath. Unknown/nonfinite
+// channel state remains unavailable; all-zero channels cannot infer balance.
+std::optional<float> audio_stereo_balance(float left,float right) noexcept;
+std::array<float,2> audio_stereo_levels(float peak,float balance) noexcept;
+struct AudioStereoAccess {
+    std::function<std::int32_t(unsigned,float&)>read;
+    std::function<std::int32_t(unsigned,float)>write;
+};
+// HRESULT-shaped status, preserving the first failure unless rollback fails.
+// Reads both originals before mutation, validates each readback, and restores
+// all attempted channels in reverse order, as the source HAL transaction does.
+std::int32_t apply_audio_stereo_balance(float,const AudioStereoAccess&) noexcept;
 enum class ServiceChange : unsigned { battery = 1, clipboard = 2, audio = 4 };
 
 // Testable, allocation-free callback mailbox. request() returns true only for
@@ -175,6 +194,9 @@ public:
     HRESULT select_audio_endpoint(std::wstring id);
     HRESULT set_master_volume(float scalar);
     HRESULT set_master_mute(bool muted);
+    // Public endpoint channel controls only, exactly stereo with a nonzero
+    // readable peak. Unsupported/multichannel devices retain no fake balance.
+    HRESULT set_output_balance(float balance);
 private:
     class Impl;
     std::unique_ptr<Impl> impl_;

@@ -70,6 +70,7 @@ void FrameRequestBatch::cancel() {
 #include <windows.h>
 #include <windowsx.h>
 #include <exception>
+#include <cstdio>
 #include <system_error>
 
 namespace endfield::app {
@@ -243,6 +244,7 @@ struct OverlayHost::Impl {
             // Never unwind through USER32. Propagate on the next pump/API edge,
             // with all scheduling stopped even if a callback threw during paint.
             self->callbackError = std::current_exception();
+            try{std::rethrow_exception(self->callbackError);}catch(const std::exception&error){std::fprintf(stderr,"HUD callback failed: %s\n",error.what());std::fflush(stderr);}catch(...){std::fputs("HUD callback failed: unknown exception\n",stderr);std::fflush(stderr);}
             self->stopped = true;
             self->cancelFrames();
             self->releaseCursor();
@@ -526,7 +528,7 @@ bool OverlayHost::pumpOnce(std::uint32_t timeout) {
         const auto handlers=p.callbacks;
         const bool keyboard=message.message==WM_KEYDOWN||message.message==WM_KEYUP||
             message.message==WM_SYSKEYDOWN||message.message==WM_SYSKEYUP;
-        if(keyboard&&(message.hwnd==owner||IsChild(owner,message.hwnd))&&handlers&&handlers->beforeKeyTranslation){
+        if(keyboard&&(message.hwnd==owner||IsChild(owner,message.hwnd)||GetAncestor(message.hwnd,GA_ROOTOWNER)==owner)&&handlers&&handlers->beforeKeyTranslation){
             bool consumed{};
             try{consumed=handlers->beforeKeyTranslation({message.hwnd,message.message,message.wParam,message.lParam});}
             catch(...){p.stopped=true;p.cancelFrames();p.releaseCursor();throw;}

@@ -270,6 +270,11 @@ void nativeWindow() {
     OverlayHost unrelated;unrelated.create({L"Other owned hidden key target",0,0,16,16,nullptr});
     PostMessageW(static_cast<HWND>(unrelated.hwnd()),WM_KEYDOWN,'D',1);
     drain(host);check(filtered==2,"The owner key filter does not intercept another window's queued input");unrelated.destroy();
+    const auto popup=CreateWindowExW(WS_EX_TOOLWINDOW,L"STATIC",L"Owned preview fixture",WS_POPUP,0,0,16,16,window,nullptr,GetModuleHandleW(nullptr),nullptr);
+    check(popup&&!IsWindowVisible(popup),"Create separate hidden owner popup");
+    const auto child=CreateWindowExW(0,L"STATIC",L"Preview child",WS_CHILD,0,0,8,8,popup,nullptr,GetModuleHandleW(nullptr),nullptr);
+    PostMessageW(popup,WM_KEYDOWN,'D',1);PostMessageW(child,WM_KEYDOWN,'D',1);drain(host);
+    check(filtered==4,"Owner popup and handler-child keys reach explicit native panel filter");DestroyWindow(popup);
     check(SendMessageW(window,WM_APP+21,123,0)==45&&privateMessages==1,"A private editor notification reaches its caller without a second message loop");
     SendMessageW(window,WM_DISPLAYCHANGE,32,MAKELPARAM(800,600));
     check(displayChanges==1,"Display topology changes are delivered as events without polling");

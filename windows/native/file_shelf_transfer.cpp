@@ -117,6 +117,8 @@ HRESULT mediumFor(std::span<const std::uint8_t> bytes,const std::shared_ptr<Tran
 }
 }
 
+std::vector<std::string> readShelfTransferPaths(IDataObject&object){return incoming(object);}
+
 struct ShelfDragTransfer::Object final:IDataObject,IDropSource,IDataObjectAsyncCapability {
     std::atomic<ULONG> refs{1};Notice notice;std::shared_ptr<TransferData> data;ShelfDragChanges changes;
     CLIPFORMAT preferred{};bool extracting{},cancelled{},started{},completed{},running{},asyncMode{true},asyncActive{};

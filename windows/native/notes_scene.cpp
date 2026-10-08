@@ -1,4 +1,5 @@
 #include "native/notes_scene.hpp"
+#include "native/notes_rich_style.hpp"
 #include "core/source_camera.hpp"
 #include "core/motion.hpp"
 #include <algorithm>
@@ -38,9 +39,11 @@ Json descriptor(const Layer&l){
         // Current Notes uses NSFont.systemFont, not a game/monospace font.
         // The existing rasterizer reports the selected installed fallback.
         out["text"]=Json::Object{{"string",l.text.text},{"fontSize",l.text.fontSize},
-            {"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",l.text.semibold?".SFNS-Semibold":".SFNS-Regular"},{"pointSize",l.text.fontSize}}},
+            {"font",Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",l.text.semibold?".SFNS-Semibold":l.text.medium?".SFNS-Medium":".SFNS-Regular"},{"pointSize",l.text.fontSize}}},
             {"foregroundColor",color(l.text.color)},{"alignment","left"},{"wrapped",false},
             {"truncation",l.text.truncateEnd?"end":"none"},{"runs",Json::Array{}}};
+        if(l.text.strikethrough&&!l.text.text.empty()){std::uint32_t units{};for(unsigned char c:l.text.text)if((c&0xc0)!=0x80)units+=c>=0xf0?2:1;out["text"]["runs"]=Json::Array{Json::Object{{"utf16Range",Json::Array{0,static_cast<double>(units)}},{"attributes",Json::Object{{"NSStrikethrough",1}}}}};}
+        if(!l.text.runs.empty()){out["text"]["notesRichLine"]=true;Json::Array runs;runs.reserve(l.text.runs.size());for(const auto&r:l.text.runs)runs.push_back(notesRunDescriptor(r,l.text.color));out["text"]["runs"]=std::move(runs);}
     }else if(l.kind==modules::NotesLayerKind::shape){
         out["class"]="CAShapeLayer";out["kind"]="shape";Json path;
         if(l.shape.kind==modules::NotesPathKind::roundedRect)path=roundedPath(l.bounds,l.shape.radius);
@@ -50,12 +53,13 @@ Json descriptor(const Layer&l){
     }
     return out;
 }
-Json clipped(const Layer&l,const Matrix&world,const Layer&card,std::optional<core::Rect>inkBounds={}){
+Json clipped(const Layer&l,const Matrix&world,const Layer&card,std::optional<core::Rect>inkBounds={},std::optional<core::Rect>ancestorClip={}){
     auto node=descriptor(l);const auto b=inkBounds.value_or(l.bounds);node["bounds"]=rect(b);
     node["position"]=Json::Array{world.values[12]+b.x,world.values[13]+b.y};node["opacity"]=1;node["hidden"]=false;
     Layer clip;clip.id=l.id+"/card-clip";clip.kind=modules::NotesLayerKind::shape;clip.bounds=card.bounds;
     clip.frame={-world.values[12],-world.values[13],clip.bounds.width,clip.bounds.height};clip.shape.kind=modules::NotesPathKind::roundedRect;
-    clip.shape.radius=card.cornerRadius;clip.shape.fill=modules::NotesColor{1,1,1,1};node["mask"]=descriptor(clip);return node;
+    clip.shape.radius=card.cornerRadius;clip.shape.fill=modules::NotesColor{1,1,1,1};node["mask"]=descriptor(clip);
+    if(ancestorClip){Layer nested;nested.id=l.id+"/viewport-clip";nested.kind=modules::NotesLayerKind::shape;nested.frame=*ancestorClip;nested.bounds={0,0,ancestorClip->width,ancestorClip->height};nested.shape.kind=modules::NotesPathKind::roundedRect;nested.shape.fill=modules::NotesColor{1,1,1,1};node["mask"]["mask"]=descriptor(nested);}return node;
 }
 double opacity(std::span<const Layer> layers,std::size_t index){double value=1;for(;;){const auto&l=layers[index];value*=l.hidden?0:l.opacity;if(l.parent==Layer::noParent)return value;index=l.parent;}}
 Matrix local(std::span<const Layer>layers,std::size_t index){
@@ -112,7 +116,7 @@ struct NativeNotesCardScene::Impl {
             need(r.width>=6&&r.height>=6&&r.x>=3&&r.y>=3&&r.x+r.width<=bounds.width-3&&r.y+r.height<=bounds.height-3,
                 "External Notes editor requires a contained source-radius viewport");
             auto overlaps=[&](core::Rect other){return r.x<other.x+other.width&&r.x+r.width>other.x&&r.y<other.y+other.height&&r.y+r.height>other.y;};
-            for(const auto&a:source->actions())if(!a.accessibilityOnly&&a.verb!="edit")need(!overlaps(a.localRect),"External Notes editor overlaps source controls; exact alternate ordering is required");
+            for(const auto&a:source->actions())if(!a.accessibilityOnly&&a.verb!="edit"&&!a.verb.starts_with("editItem:"))need(!overlaps(a.localRect),"External Notes editor overlaps source controls; exact alternate ordering is required");
             nextSlot=NativeNotesExternalEditorSlot{r,3,1};
         }
         // LayerScene groups a rounded local tree only within this source-area
@@ -130,7 +134,7 @@ struct NativeNotesCardScene::Impl {
         const auto grip=std::find_if(layers.begin(),layers.end(),[](const auto&l){return l.id.ends_with("/resizeGrip");});
         need(grip!=layers.end()&&grip->kind==modules::NotesLayerKind::shape&&grip->shape.kind==modules::NotesPathKind::polyline&&!grip->shape.points.empty(),"Notes card requires its exact final resize grip");
         const auto gripIndex=static_cast<std::size_t>(grip-layers.begin());excluded[gripIndex]=true;
-        if(nextSlot)for(std::size_t i=0;i<layers.size();++i)if(layers[i].id.ends_with("/scrollThumb"))excluded[i]=true;
+        if(nextSlot&&source->editor()->multiline)for(std::size_t i=0;i<layers.size();++i)if(layers[i].id.ends_with("/scrollThumb"))excluded[i]=true;
         for(std::size_t i=0;i<layers.size();++i)if(layers[i].parent!=Layer::noParent&&excluded[layers[i].parent])excluded[i]=true;
         auto card=tree(layers,{excluded.get(),layers.size()},0);card["opacity"]=1;card["hidden"]=false;
         if(nextSlot){
@@ -145,7 +149,8 @@ struct NativeNotesCardScene::Impl {
             // Bake the exact rounded card ancestor into this tiny feedback
             // bitmap. Its alpha clip survives even tiny/clamped workspaces,
             // without a full-card feedback bitmap or a rectangular substitute.
-            decorations.push_back(clipped(layers[f.source],m,layers[0]));
+            std::optional<core::Rect>ancestorClip;for(auto parent=layers[f.source].parent;parent!=Layer::noParent&&parent!=0;parent=layers[parent].parent)if(layers[parent].masksToBounds){const auto world=local(layers,parent);const core::Rect r{world.values[12]+layers[parent].bounds.x,world.values[13]+layers[parent].bounds.y,layers[parent].bounds.width,layers[parent].bounds.height};if(!ancestorClip)ancestorClip=r;else{const auto x=std::max(r.x,ancestorClip->x),y=std::max(r.y,ancestorClip->y),right=std::min(r.x+r.width,ancestorClip->x+ancestorClip->width),bottom=std::min(r.y+r.height,ancestorClip->y+ancestorClip->height);ancestorClip=core::Rect{x,y,std::max(0.,right-x),std::max(0.,bottom-y)};}}
+            decorations.push_back(clipped(layers[f.source],m,layers[0],{},ancestorClip));
         }
         // Source draws the grip AFTER controls, also on tiny valid workspaces
         // where they overlap. Keep only its ink extent, not another card bitmap.

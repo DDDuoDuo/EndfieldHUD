@@ -89,7 +89,8 @@ struct OverlayCallbacks {
     std::function<void(const ClientMetrics&)> resize;
     std::function<void()> closeRequested; // caller may animate then hide; default hides
     // TSF must consume keys before TranslateMessage can enqueue WM_CHAR.
-    // Only queued keys for this window/its children reach this callback.
+    // Only queued keys for this window, its children or root-owned native
+    // panels reach this callback. Route by NativeMessage.window before TSF.
     std::function<bool(const NativeMessage&)> beforeKeyTranslation;
     // Module-owned WM_APP...0xBFFF notifications; the host's frame ticket is
     // reserved. Returning no value leaves default handling in place.

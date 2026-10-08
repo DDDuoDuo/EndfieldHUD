@@ -2,6 +2,7 @@
 
 #include "core/data/json.hpp"
 #include "core/scene.hpp"
+#include "core/notes_rich_text.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -35,6 +36,9 @@ struct LayerRasterOptions {
     core::Point textDocumentOffset{};
     std::shared_ptr<const PaintedTextLayout> retainedPlainText;
     std::optional<std::uint32_t> revealPlainTextPosition;
+    // Attachment-free source Notes runs. Shares document viewport/scroll fields;
+    // mutually exclusive with plainTextDocument.
+    bool richTextDocument{};
     bool operator==(const LayerRasterOptions&) const = default;
 };
 struct LayerRasterIssue { std::string node, feature; };
@@ -48,6 +52,7 @@ struct LayerPlainTextMetrics {
 // and font resolver. Each analysis layout is released after its line lengths
 // are read; this is NOT a painted editor handle. The returned span is owned by
 // this analysis object until its next call. Creating-thread use only.
+struct LayerStyledTextLine {std::uint32_t length{};double height{};};
 class LayerPlainTextAnalysis final {
 public:
     ~LayerPlainTextAnalysis();
@@ -56,6 +61,10 @@ public:
     // No 65,536-unit leaf limit: string length must fit native UINT32. Width
     // follows source max(1,width). Caller supplies its explicit line budget.
     std::span<const std::uint32_t> lineLengths(std::u16string_view,double width,std::size_t maximumLines);
+    // Original settled Notes uses attributed wrapping and ceil(actual line
+    // metrics)+1. This shares paint font resolution; no bitmap/leaf limit.
+    std::span<const LayerStyledTextLine> richLines(std::u16string_view,double width,
+        std::span<const core::notes::TextRun>,std::size_t maximumLines);
     const LayerPlainTextMetrics& metrics()const noexcept;
     std::uint64_t layoutsCreated()const noexcept;
 private:

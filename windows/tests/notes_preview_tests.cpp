@@ -126,13 +126,13 @@ struct Fixture final {
     bool released{};
 
     Fixture(HWND hwnd, gpu::Renderer& r, gpu::LayerRasterizer& raster,
-            const gpu::NativeNotesControlsAssets& assets) : renderer(r), ownerWindow(hwnd) {
+            const gpu::NativeNotesControlsAssets& assets,const std::filesystem::path&formatRoot={}) : renderer(r), ownerWindow(hwnd) {
         settings.viewport = {0, 0, 1280, 800};
         settings.module = core::Module::notes;
         settings.sourceShell = true;
         design = source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
         published.reserve(132);
-        preview = std::make_unique<tools::NotesPreview>(hwnd, raster, root.path, assets, false);
+        preview = std::make_unique<tools::NotesPreview>(hwnd, raster, root.path, assets, false,formatRoot);
         preview->resize({1280, 800, 96, 1, 1280, 800});
         frame();
     }
@@ -751,11 +751,38 @@ void run(HWND hwnd, gpu::Renderer& renderer, const gpu::NativeNotesControlsAsset
     fixture.release();
     check(raster.stats().entries == 0, "Teardown removes every preview-owned raster entry");
 }
+void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets,const std::filesystem::path&formatRoot){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets,formatRoot);
+    auto note=savedNotes(f.root.path).front();
+    check(f.pointer(app::PointerKind::doubleClick,{note.x+30,note.y+45}),"Combined owner enters rich Notes editing");
+    // Follow the real toolbar/owner route, not just the standalone menu.
+    const core::Point fontButton{note.x+38,note.y+note.height-15};
+    check(f.pointer(app::PointerKind::down,fontButton),"Font toolbar press stays inside Notes owner");
+    f.pointer(app::PointerKind::up,fontButton);f.tick(.2);
+    check(f.preview->selected()==core::Module::notes&&f.draw("projected-editor-glyphs"),"Opening font chooser keeps current module and editor");
+    const core::Point firstFont{note.x+22,note.y+note.height+4+18};
+    check(f.preview->covers(firstFont),"Projected font menu shields the underlying HUD");
+    check(f.pointer(app::PointerKind::down,firstFont),"Font choice stays inside menu");
+    check(f.pointer(app::PointerKind::up,firstFont),"Font choice release stays inside menu");f.tick(.2);
+    check(f.draw("projected-editor-glyphs")&&f.preview->selected()==core::Module::notes,"Font selection retains editor and module");
+    for(unsigned n=0;n<48;++n){
+        const core::Point wheelPoint{note.x+60,note.y+note.height+4+75};
+        f.time+=.01;check(f.preview->wheel({wheelPoint.x,wheelPoint.y,n<32?-1.:1.,false,0,3},f.time),"Combined font chooser consumes every scrolling step");f.frame();
+        if(n%4==0){f.pointer(app::PointerKind::move,firstFont,app::PointerButton::none);check(f.pointer(app::PointerKind::down,firstFont),"Scrolled font item remains actionable");f.pointer(app::PointerKind::up,firstFont);}
+        check(f.preview->selected()==core::Module::notes&&f.draw("projected-editor-glyphs"),"Font scrolling never dismisses editor or module");
+    }
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"First Escape closes formatting menu rather than HUD");f.tick(.2);
+    check(f.draw("projected-editor-glyphs"),"Menu dismissal preserves text editing");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Second Escape completes editing rather than HUD");f.tick(.2);
+    check(!f.draw("projected-editor-glyphs"),"Finishing edits retires editor only");
+    check(savedNotes(f.root.path).front().text==note.text,"Selecting font does not alter note text");
+    f.release();
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
     try {
-        check(argc == 5, "Pass HUD shader, prepared Notes bundle root, pinned manifest SHA and pinned source commit");
+        check(argc == 5 || argc == 6, "Pass HUD shader, prepared Notes bundle root, pinned manifest SHA and pinned source commit");
         const auto ascii = [](const wchar_t* value) {
             std::string result;
             for (; *value; ++value) {
@@ -774,6 +801,7 @@ int wmain(int argc, wchar_t** argv) {
         reentrantClock(window.hwnd, renderer, assets);
         scrollPreview(window.hwnd, renderer, assets);
         run(window.hwnd, renderer, assets);
+        if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";
         return 0;

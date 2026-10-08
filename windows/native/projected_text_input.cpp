@@ -277,6 +277,15 @@ HRESULT ProjectedTextInput::selectFromHost(Selection selection)noexcept{
     auto*s=store_;const auto hr=s->ready();if(FAILED(hr))return hr;if(s->lock||s->doc->composition())return TS_E_NOLOCK;
     Store::Keep hold(s);return protect([&]{s->doc->setSelection(selection);s->post(selectionChange);auto target=s->sink;if(target&&(s->sinkMask&TS_AS_SEL_CHANGE))target->OnSelectionChange();return S_OK;});
 }
+HRESULT ProjectedTextInput::performHostEdit(const std::function<std::optional<Change>()>&edit)noexcept{
+    auto*s=store_;const auto hr=s->ready();if(FAILED(hr))return hr;if(!edit)return E_INVALIDARG;
+    if(s->lock||s->doc->composition())return TS_E_NOLOCK;if(s->doc->readOnly())return TS_E_READONLY;
+    Store::Keep hold(s);return protect([&]{const auto revision=s->doc->revision();const auto selected=s->doc->selection();
+        const auto change=edit();const bool modified=revision!=s->doc->revision(),selection=selected!=s->doc->selection();
+        if(change){s->post(textChange|selectionChange|layoutChange);s->notifyText(*change);}
+        else if(modified||selection){s->post((modified?layoutChange:0u)|(selection?selectionChange:0u));auto target=s->sink;if(selection&&target&&(s->sinkMask&TS_AS_SEL_CHANGE))target->OnSelectionChange();}
+        return modified||selection||change.has_value()?S_OK:S_FALSE;});
+}
 HRESULT ProjectedTextInput::setPlacement(const core::text::Placement&value)noexcept{
     const auto hr=store_->ready();if(FAILED(hr))return hr;if(!core::text::validPlacement(value))return E_INVALIDARG;if(store_->lock)return TS_E_NOLOCK;if(store_->placement==value){text_input_diagnostic_detail::placement(false);return S_FALSE;}
     text_input_diagnostic_detail::placement(true);

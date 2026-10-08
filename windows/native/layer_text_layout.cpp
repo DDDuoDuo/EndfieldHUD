@@ -20,9 +20,9 @@ void checked(HRESULT v,const char*why){if(FAILED(v))throw std::runtime_error(why
 bool finite(core::Rect r){return std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
 }
 struct PaintedTextLayout::Impl {
-    ComPtr<IDWriteTextLayout>layout;std::u16string text;std::uint64_t revision{};core::Rect viewport;bool document{};double height{};std::size_t textBytes{};core::Point initialOffset;ehud::data::Json plainStyle;DWORD thread{GetCurrentThreadId()};
-    Impl(IDWriteTextLayout*l,std::u16string t,std::uint64_t r,core::Rect v,bool d,const ehud::data::Json& style,core::Point offset):layout(l),text(std::move(t)),revision(r),viewport(v),document(d),height(v.height),initialOffset(offset){
-        textBytes=text.size()*sizeof(char16_t);if(d){plainStyle=style;textBytes+=style["string"].string().size();DWRITE_TEXT_METRICS metrics{};checked(l->GetMetrics(&metrics),"Read complete painted document extent");need(std::isfinite(metrics.top)&&std::isfinite(metrics.height)&&metrics.height>=0,"Invalid painted document extent");height=std::max(v.height,std::ceil(double(metrics.top)+metrics.height)+1);}
+    ComPtr<IDWriteTextLayout>layout;std::u16string text;std::uint64_t revision{};core::Rect viewport;bool document{};double height{};std::size_t textBytes{};core::Point initialOffset;DocumentTextLines lines;ehud::data::Json plainStyle;DWORD thread{GetCurrentThreadId()};
+    Impl(IDWriteTextLayout*l,std::u16string t,std::uint64_t r,core::Rect v,bool d,const ehud::data::Json& style,core::Point offset):layout(l),text(std::move(t)),revision(r),viewport(v),document(d),height(v.height),initialOffset(offset),lines(d?DocumentTextLines(*l,style):DocumentTextLines{}){
+        textBytes=text.size()*sizeof(char16_t);if(d){plainStyle=style;textBytes+=style["string"].string().size();DWRITE_TEXT_METRICS metrics{};checked(l->GetMetrics(&metrics),"Read complete painted document extent");need(std::isfinite(metrics.top)&&std::isfinite(metrics.height)&&metrics.height>=0,"Invalid painted document extent");height=std::max(v.height,std::ceil(double(metrics.top)+metrics.height+lines.extraHeight())+1);}
     }
 };
 PaintedTextLayout::PaintedTextLayout(IDWriteTextLayout*layout,std::u16string text,std::uint64_t revision,core::Rect viewport,bool document,const ehud::data::Json& style,core::Point offset):impl_(std::make_unique<Impl>(layout,std::move(text),revision,viewport,document,style,offset)){
@@ -38,6 +38,7 @@ double PaintedTextLayout::documentHeight()const noexcept{return impl_->height;}
 core::Point PaintedTextLayout::initialPaintOffset()const noexcept{return impl_->initialOffset;}
 std::size_t PaintedTextLayout::metadataBytes()const noexcept{return impl_->textBytes;}
 IDWriteTextLayout*PaintedTextLayout::nativeLayout()const noexcept{return impl_->layout.Get();}
+const DocumentTextLines&PaintedTextLayout::lines()const noexcept{return impl_->lines;}
 bool PaintedTextLayout::matchesPlainStyle(const ehud::data::Json& style,core::Rect viewport)const{
     if(GetCurrentThreadId()!=impl_->thread||!impl_->document||impl_->viewport!=viewport||!style.isObject())return false;
     return impl_->plainStyle==style;
@@ -57,13 +58,13 @@ struct LayerTextLayout::Impl {
             clipped|=trimmed||l!=rect.x||t!=rect.y||right!=rect.x+rect.width||bottom!=rect.y+rect.height;
             if(right>l&&bottom>t)rectangles.push_back({l,t,right-l,bottom-t});
         };
-        if(r.start==r.end){FLOAT x{},y{};DWRITE_HIT_TEST_METRICS m{};checked(layout->HitTestTextPosition(r.start,FALSE,&x,&y,&m),"Read caret from painted layout");append({x,y,1,std::max(1.0,double(m.height))},m.isTrimmed!=FALSE);}
+        if(r.start==r.end){FLOAT x{},y{};DWRITE_HIT_TEST_METRICS m{};checked(layout->HitTestTextPosition(r.start,FALSE,&x,&y,&m),"Read caret from painted layout");append({x,y+painted->impl_->lines.offsetAtACP(r.start),1,std::max(1.0,double(m.height))},m.isTrimmed!=FALSE);}
         else{
             UINT32 count{};if(metrics.empty())metrics.resize(16);
             auto result=layout->HitTestTextRange(r.start,r.end-r.start,0,0,metrics.data(),static_cast<UINT32>(metrics.size()),&count);
             if(result==HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)){need(count<=painted->text().size()+2,"Painted range geometry exceeds its ACP bound");metrics.resize(count);result=layout->HitTestTextRange(r.start,r.end-r.start,0,0,metrics.data(),static_cast<UINT32>(metrics.size()),&count);}
             checked(result,"Read selection from painted layout");need(count<=metrics.size(),"DirectWrite range count exceeds owned buffer");rectangles.reserve(count);
-            for(UINT32 i=0;i<count;++i){const auto&m=metrics[i];append({m.left,m.top,m.width,m.height},m.isTrimmed!=FALSE);}
+            for(UINT32 i=0;i<count;++i){const auto&m=metrics[i];append({m.left,m.top+painted->impl_->lines.offsetAtACP(m.textPosition),m.width,m.height},m.isTrimmed!=FALSE);}
         }
         cachedRange=r;
     }
@@ -95,7 +96,7 @@ std::optional<core::text::RangeBounds>LayerTextLayout::bounds(core::text::Range 
 }
 std::optional<std::uint32_t>LayerTextLayout::hit(core::Point point,bool nearest,bool roundNearest)const{
     auto&i=*impl_;i.onThread();if(!std::isfinite(point.x)||!std::isfinite(point.y)||std::abs(point.x)>std::numeric_limits<FLOAT>::max()||std::abs(point.y)>std::numeric_limits<FLOAT>::max())return {};
-    BOOL trailing{},inside{};DWRITE_HIT_TEST_METRICS metric{};const auto result=i.painted->impl_->layout->HitTestPoint(static_cast<FLOAT>(point.x),static_cast<FLOAT>(point.y),&trailing,&inside,&metric);if(FAILED(result)||(!nearest&&!inside))return {};
+    BOOL trailing{},inside{};DWRITE_HIT_TEST_METRICS metric{};const auto result=i.painted->impl_->layout->HitTestPoint(static_cast<FLOAT>(point.x),static_cast<FLOAT>(i.painted->impl_->lines.nativeY(point.y)),&trailing,&inside,&metric);if(FAILED(result)||(!nearest&&!inside))return {};
     const auto position=std::uint64_t(metric.textPosition)+(roundNearest&&trailing?metric.length:0u);return position<=i.painted->text().size()?std::optional(std::uint32_t(position)):std::nullopt;
 }
 std::shared_ptr<const PaintedTextLayout>LayerTextLayout::painted()const noexcept{return impl_->painted;}

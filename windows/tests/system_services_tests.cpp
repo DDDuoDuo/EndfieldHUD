@@ -125,8 +125,17 @@ void clipboard() {
     picture.image=png();picture.text=u"extra";check(!ClipboardHistory::valid(picture),"mixed payloads rejected");
     AudioSnapshot audio;check(audio.paused&&!audio.available&&!audio.volume&&!audio.muted,"audio model has no fabricated device state");
 }
+void stereo(){
+    check(!audio_stereo_balance(0,0)&&!audio_stereo_balance(-1,.5f)&&!audio_stereo_balance(.5f,std::numeric_limits<float>::quiet_NaN()),"Unknown/zero stereo state never invents balance");
+    for(unsigned n=0;n<=1000;++n){const auto balance=float(n)/500-1;const auto levels=audio_stereo_levels(.8f,balance);const auto restored=audio_stereo_balance(levels[0],levels[1]);check(restored&&std::abs(*restored-balance)<2e-7f&&std::max(levels[0],levels[1])==.8f,"Source stereo math preserves peak across entire balance range");}
+    std::array<float,2>levels{.4f,.8f};std::vector<unsigned>writes;AudioStereoAccess access{[&](unsigned n,float&v){v=levels[n];return 0;},[&](unsigned n,float v){writes.push_back(n);levels[n]=v;return 0;}};
+    check(apply_audio_stereo_balance(-1,access)==0&&levels==std::array{.8f,0.f},"Injected stereo transaction applies full left pan");
+    levels={.4f,.8f};writes.clear();access.write=[&](unsigned n,float v){writes.push_back(n);levels[n]=v;return writes.size()==2?-42:0;};check(apply_audio_stereo_balance(0,access)==-42&&levels==std::array{.4f,.8f}&&writes==std::vector<unsigned>{0,1,1,0},"Partially failing second channel restores every attempted original in reverse order");
+    levels={.4f,.8f};writes.clear();unsigned reads{};access.read=[&](unsigned n,float&v){v=++reads==3?std::numeric_limits<float>::infinity():levels[n];return 0;};access.write=[&](unsigned n,float v){writes.push_back(n);levels[n]=v;return 0;};check(apply_audio_stereo_balance(.2f,access)<0&&levels==std::array{.4f,.8f}&&writes==std::vector<unsigned>{0,0},"Invalid native readback rolls back before writing the next channel");
+    writes.clear();check(apply_audio_stereo_balance(2,access)<0&&writes.empty(),"Invalid balance rejects before touching injected hardware");
+}
 }
 int main() {
-    try {battery();notification();clipboard();std::cout<<checks<<" synthetic system-service checks passed\n";return 0;}
+    try {battery();notification();clipboard();stereo();std::cout<<checks<<" synthetic system-service checks passed\n";return 0;}
     catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

@@ -10,8 +10,14 @@ D3D11/DirectComposition renderer, retained source material and label adapters,
 an event-driven window host, and Windows battery, clipboard and master-volume
 service foundations. An explicit development preview now combines the source
 shell, native captions/icons, clock and custom cursor. An optional isolated
-Notes preview adds scrollable plain-text editing, moving, resizing, pinning and confirmed
-deletion. Other module bodies and the remaining Notes kinds are not installed.
+Notes preview adds scrollable text and rich-text editing, font/size/color/trait menus,
+checklists, moving, resizing, pinning and confirmed deletion. Temporary File Shelf,
+synthetic Clipboard history, Volume and Event Log use the same module transitions,
+renderer and frame clock. Their hidden integration tests pass. The five-language
+catalog is ported, but a live application-wide language preference is not connected.
+Image/GIF decoding is verified separately; media insertion/playback and drawing
+are still being connected. Other module bodies and the production application
+owner remain unfinished.
 It does **not** yet produce a complete runnable HUD or a release candidate.
 
 The fresh graphics path now also runs the original Mac material programs. A
@@ -375,8 +381,9 @@ No watcher, background scan or second service was added. The copy-only OLE trans
 suite, including actual drop-target registration, Unicode CF_HDROP, coalesced
 notifications, cancellation and leases that survive asynchronous extraction.
 Incoming data is released before the metadata commit, and UI notices remain
-outside COM callbacks. Live Explorer drops, the picker, virtual files and direct
-tray drops are not verified or integrated.
+outside COM callbacks. The native file picker, bounded icon worker and shelf actions are connected.
+Live Explorer drops/picker behavior, virtual files and direct tray drops still
+require their own integration or acceptance checks.
 
 All MSVC targets explicitly use UTF-8 source and execution encodings, including
 on Chinese-language Windows. Incremental deployment must copy changed files
@@ -393,9 +400,10 @@ highlights stay separate. A distant scroll can retain two generations until the
 owner publishes replacement draws; this uses 176 card raster entries, plus
 chrome. Shared-cache capacity is checked before staging, without evicting live
 Notes/shell resources. Native tests cover scroll recycling, source paint order,
-hover/selection, failed replacement rollback and teardown. The shelf is not yet
-connected to the live preview; native icons, picker/open/preview actions and
-actual subsection/drop animation are unfinished.
+hover/selection, failed replacement rollback and teardown. The shelf is connected to the shared preview with selection, scrolling,
+reference persistence, removal/clear confirmation, native icons and picker,
+copy-only drag preparation and finite reveal/drop animation. Shell preview is
+being added separately; visible drag/drop and visual parity remain unverified.
 
 The retained mask shader now supports the source subsection’s four six-vertex
 strips alongside the existing six five-vertex module strips. Both use the same
@@ -419,17 +427,58 @@ source style capture, typing/selection changes, bounded undo and IME grouping.
 An unchanged-source Mac reference records 22 real formatting/layout cases,
 including mixed sizes, fonts, paragraph normalization and undo. Its detached
 text view creates one explicitly recorded invisible AppKit input helper; it
-never shows a window or activates the app. Native rich editing/rendering is
-not connected yet; source data must not be silently flattened to plain text.
+never shows a window or activates the app. The native typed rich editor now preserves runs and shares its exact DWrite
+layout with painting, selection and IME geometry. Color effects remain valid
+after scrolling to a new raster target. Native formatting-menu tests exercise
+selection-only size/traits/color changes, scrolling, tilt and finite dismissal.
+Notes workspace integration and imported paragraph-format undo remain open;
+source data must never be silently flattened to plain text.
 
 The subsection timing and transform adapter matches 666 paused original Mac
 samples in 265,584 comparisons. It also preserves authored mask keyframes.
 Intermediate mask shape is a separate problem: Core Animation normalizes the
 paths into curved contours, sometimes with five subpaths. A build-only sampled
 candidate takes 98,856 bytes for both directions and stays within 0.0142 local
-points at 394 independent holdouts. Twelve tiny topology-switch gaps and pixel
-coverage remain unverified, so this candidate is not shipped or used as a claim
-of animation parity. The settled shelf still rejects active reveal animations.
+points at 394 independent holdouts. The development shelf now uses this bounded sample asset during its finite
+0.26-second reveal, with no settled mask repaint. It uses nearest-endpoint
+selection across topology gaps no larger than 1e-12 in normalized time. Native
+readback verifies alpha-mask composition/retirement; exact live Core Animation
+raster/antialias parity remains unverified, so this is not a full-parity claim.
+
+
+
+Latest Windows validation (2026-10-08, snapshot 68 plus the Event Log native
+include correction): **83 suites passed**, plus **265,584** original subsection
+transform checks, **686** connected Notes checks and **151** checklist-owner checks.
+The user confirmed font selection and repeated font-menu scrolling stayed open in
+live preview 20 after two earlier dismissals. Its event log contains completed
+selections and scrolls with no callback error. The earlier dismissal has no proven
+cause yet; additional real-host burst-input coverage is in progress. This manual
+success is not evidence that an unidentified intermittent fault was repaired.
+The new shelf owner fixture imports only owned temporary files, persists their
+references, scrolls/selects/removes/clears them and confirms every original file
+survives. Sixty settled tilt frames create no text layouts, rasters, textures or
+meshes. The menu fixture similarly retains resources through 120 tilt frames.
+These checks run in hidden offscreen windows; they do not open Explorer, native
+preview handlers, dialogs, another app's data or the real clipboard.
+
+Volume and Event Log owners are verified with injected data/actions only. Volume
+mirrors the original artwork (44,329 detached Mac comparisons), balances confirmed
+stereo channels, and lists input/output endpoints through the existing audio
+service. Actual default-device switching remains unavailable through the public
+API used here; the live fixture's fake switch is not a system capability. Per-app
+audio session control is still being connected to one sleeping worker.
+
+Event Log preserves source categories, bounded rows, confirmation and the original
+finite page handoff. Live OS event recording, persistence and long Unicode name
+compaction remain unconnected. Clipboard uses its own source-derived reveal mask,
+retains press timing when a row is rebuilt, and allocates no frame-time resources
+for settled tilt. Its fixture does not inspect the user's real clipboard.
+
+The bounded WIC still/GIF decoder passes generated-media, cancellation, retained
+frame and teardown tests on Windows. It has one worker and no idle polling. This
+validates the decoder, not connected Notes media UI or cross-platform decoder
+pixel identity. GPU video integration remains in progress.
 
 
 Reference tools (macOS, temporary fixture data only):

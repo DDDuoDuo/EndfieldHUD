@@ -1,6 +1,7 @@
 #pragma once
 #include "core/text_input.hpp"
 #include "core/data/json.hpp"
+#include "native/rich_text_paint.hpp"
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -32,6 +33,7 @@ private:
         const ehud::data::Json&,core::Point);
     IDWriteTextLayout* nativeLayout()const noexcept;
     bool matchesPlainStyle(const ehud::data::Json&,core::Rect)const;
+    const DocumentTextLines& lines()const noexcept;
     struct Impl;std::unique_ptr<Impl> impl_;
 };
 // Caller-owned Layout for ProjectedTextInput. Bind only on a content/revision

@@ -133,6 +133,13 @@ void asyncAndFailures(){
     check(changes.finished&&changes.result==DRAGDROP_S_DROP&&changes.effect==DROPEFFECT_COPY&&changes.asyncFinished&&changes.asyncResult==E_FAIL&&changes.asyncEffect==DROPEFFECT_NONE,"Coalesced notifications preserve both drag and asynchronous extraction outcomes");
     async.Reset();transfer.reset();check(files.shared->active==0,"Separate outcome reporting does not change lease ownership");window.drain();
 }
+void explicitPaste(){
+    ComPtr<FakeData> data;data.Attach(new FakeData);
+    const auto paths=readShelfTransferPaths(*data.Get());
+    check(paths==std::vector<std::string>{"C:\\synthetic\\file.txt","C:\\synthetic\\folder"}&&*data->releases==1,"Explicit paste borrows only the supplied object and releases storage before returning paths");
+    data->bytes={1,2,3};bool rejected{};try{(void)readShelfTransferPaths(*data.Get());}catch(...){rejected=true;}
+    check(rejected&&*data->releases==2,"Invalid pasted allocation is rejected with balanced ownership");
+}
 void incomingTarget(){
     Window window;ComPtr<FakeData> data;data.Attach(new FakeData);unsigned commits{};std::vector<std::string> received;
     ShelfDropTarget target(window.route(),{[](POINTL p){return p.x>=0&&p.x<100&&p.y>=0&&p.y<100;},[&](std::span<const std::string> paths){check(*data->releases==1,"External medium is released before storage transaction");++commits;received.assign(paths.begin(),paths.end());return true;}});
@@ -166,7 +173,7 @@ void incomingFailureAndReentry(){
 }
 int main(){try{codec();
 #ifdef _WIN32
-    Ole ole;outgoing();asyncAndFailures();incomingTarget();incomingFailureAndReentry();
+    Ole ole;outgoing();asyncAndFailures();explicitPaste();incomingTarget();incomingFailureAndReentry();
 #else
     std::cout<<"SKIP native OLE fixture: Windows required; no clipboard/files/window accessed\n";
 #endif

@@ -5,6 +5,16 @@
 #include <stdexcept>
 
 namespace endfield::modules {
+std::optional<core::notes::RichText> decodeNotesRichText(std::string_view text,const std::optional<std::string>& payload){
+    if(text.size()>16*1024*1024||!ehud::data::Json::validUtf8(text))throw std::invalid_argument("Invalid or oversized Notes UTF-8 text");
+    if(!payload)return std::nullopt;
+    std::u16string units;units.reserve(text.size());
+    for(std::size_t at=0;at<text.size();){const auto first=static_cast<unsigned char>(text[at++]);std::uint32_t cp=first;unsigned more{};
+        if(first>=0xf0){cp=first&7;more=3;}else if(first>=0xe0){cp=first&15;more=2;}else if(first>=0xc0){cp=first&31;more=1;}
+        while(more--)cp=(cp<<6)|(static_cast<unsigned char>(text[at++])&63);
+        if(cp<0x10000)units.push_back(static_cast<char16_t>(cp));else{cp-=0x10000;units.push_back(static_cast<char16_t>(0xd800+(cp>>10)));units.push_back(static_cast<char16_t>(0xdc00+(cp&1023)));}}
+    return core::notes::decodeRichText(ehud::data::Json::parse(*payload,16*1024*1024),units);
+}
 namespace {
 bool finite(core::Point p){return std::isfinite(p.x)&&std::isfinite(p.y);}
 bool valid(core::Rect r){return finite({r.x,r.y})&&std::isfinite(r.width)&&std::isfinite(r.height)&&r.width>0&&r.height>0&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
@@ -102,6 +112,36 @@ bool NotesState::createText(std::string id,double createdAt){
     item.x=origin.x+offset;item.y=origin.y+offset;item.width=210;item.height=140;item.zIndex=nextZ();item=constrained(std::move(item),workspace_);
     replace(item);(void)save(item);(void)select(item.id);(void)beginEditing(item.id);++revision_;return true;
 }
+bool NotesState::createChecklist(std::string id,std::string firstID,double createdAt){
+    writable();if(!notesSelected_)return false;
+    if(!ehud::data::validUUID(id)||note(id)||!ehud::data::validUUID(firstID)||!std::isfinite(createdAt))throw std::invalid_argument("Invalid new checklist identity/time");
+    if(notes_.size()>=10000)throw std::length_error("Notes record bound exceeded");
+    Note item{.id=std::move(id),.kind=ehud::data::NoteKind::todo,.createdAt=createdAt};item.items.push_back({std::move(firstID),"",false,ehud::data::Json::Object{}});
+    const auto offset=double(notes_.size()%7)*18;const auto origin=creationPoint_.value_or(Point{workspace_.x+workspace_.width/2-95,workspace_.y+workspace_.height/2-60});
+    item.x=origin.x+offset;item.y=origin.y+offset;item.width=228;item.height=154;item.zIndex=nextZ();item=constrained(std::move(item),workspace_);
+    replace(item);(void)save(item);(void)select(item.id);++revision_;return true;
+}
+bool NotesState::addChecklistItem(std::string_view id,std::string childID){
+    writable();const auto*found=note(id);if(!found||!visible(id)||found->kind!=ehud::data::NoteKind::todo)return false;
+    if(editing_)throw std::logic_error("Finish Notes editor before changing checklist rows");
+    if(!ehud::data::validUUID(childID)||std::any_of(found->items.begin(),found->items.end(),[&](const auto&i){return i.id==childID;}))throw std::invalid_argument("Invalid new checklist row identity");
+    if(found->items.size()>=100000)throw std::length_error("Checklist row capacity reached");
+    const std::string owned(id);(void)select(owned);auto item=*note(owned);item.items.push_back({std::move(childID),"",false,ehud::data::Json::Object{}});replace(item);(void)save(item);++revision_;return true;
+}
+bool NotesState::mutateChecklistItem(std::string_view id,std::string_view childID,ChecklistAction action){
+    writable();const auto*found=note(id);if(!found||!visible(id)||found->kind!=ehud::data::NoteKind::todo)return false;
+    const auto child=std::find_if(found->items.begin(),found->items.end(),[&](const auto&i){return i.id==childID;});if(child==found->items.end())return false;
+    if(editing_)throw std::logic_error("Finish Notes editor before changing checklist rows");
+    if(action!=ChecklistAction::toggle&&action!=ChecklistAction::up&&action!=ChecklistAction::down&&action!=ChecklistAction::remove)throw std::invalid_argument("Invalid checklist mutation");
+    const auto index=static_cast<std::size_t>(child-found->items.begin());const std::string owned(id);(void)select(owned);auto item=*note(owned);
+    switch(action){case ChecklistAction::toggle:item.items[index].isChecked=!item.items[index].isChecked;break;
+    case ChecklistAction::up:if(index)std::swap(item.items[index],item.items[index-1]);break;
+    case ChecklistAction::down:if(index+1<item.items.size())std::swap(item.items[index],item.items[index+1]);break;
+    case ChecklistAction::remove:item.items.erase(item.items.begin()+static_cast<std::ptrdiff_t>(index));break;
+    default:throw std::invalid_argument("Invalid checklist mutation");}
+    // Source still performs its save/render/mutation event at an up/down edge.
+    replace(item);(void)save(item);++revision_;return true;
+}
 bool NotesState::togglePin(std::string_view id){
     writable();if(!visible(id))return false;const std::string owned(id);(void)select(owned);auto item=*note(owned);item.isPinned=!item.isPinned;
     replace(item);(void)save(item);++revision_;return true;
@@ -144,14 +184,31 @@ bool NotesState::endGesture(){
 }
 const NotesState::EditRequest& NotesState::beginEditing(std::string_view id){
     writable();const auto* item=note(id);if(!item||!visible(id))throw std::invalid_argument("Cannot edit an unavailable note");
-    if(item->kind!=ehud::data::NoteKind::text||item->richText)throw std::logic_error("Rich text and checklist editing require the measured style-preserving adapter");
-    const auto r=geometry(*item,workspace_);editing_=EditRequest{item->id,item->text,{r.x+9,r.y+29,r.width-18,std::max(1.,r.height-58)}};++revision_;return *editing_;
+    if(item->kind!=ehud::data::NoteKind::text)throw std::logic_error("Checklist editing requires its row adapter");
+    (void)decodeNotesRichText(item->text,item->richText);
+    const auto r=geometry(*item,workspace_);editing_=EditRequest{item->id,item->text,{r.x+9,r.y+29,r.width-18,std::max(1.,r.height-58)},12,true,item->richText};++revision_;return *editing_;
+}
+const NotesState::EditRequest& NotesState::beginEditingItem(std::string_view id,std::string_view childID,Rect local,double offset){
+    writable();const auto*item=note(id);if(!item||!visible(id)||item->kind!=ehud::data::NoteKind::todo)throw std::invalid_argument("Cannot edit unavailable checklist");
+    const auto child=std::find_if(item->items.begin(),item->items.end(),[&](const auto&v){return v.id==childID;});if(child==item->items.end())throw std::invalid_argument("Cannot edit unavailable checklist row");
+    const auto r=geometry(*item,workspace_);if(!valid(local)||local.x<5||local.y<27||local.x+local.width>r.width-5||local.y+local.height>27+std::max(1.,r.height-55)||!std::isfinite(offset)||offset<0)throw std::invalid_argument("Invalid measured checklist editor viewport");
+    (void)decodeNotesRichText(child->text,std::nullopt);editing_=EditRequest{item->id,child->text,{r.x+local.x,r.y+local.y,local.width,local.height},11,false,std::nullopt,child->id,offset};++revision_;return *editing_;
 }
 bool NotesState::finishEditing(std::string text){
-    writable();if(!editing_)return false;if(!ehud::data::Json::validUtf8(text))throw std::invalid_argument("Invalid Notes UTF-8 text");
-    const auto* found=note(editing_->noteID);if(!found)return false;
-    if(found->kind!=ehud::data::NoteKind::text||found->richText)throw std::logic_error("Notes edit type changed");
-    auto item=*found;item.text=std::move(text);editing_.reset();replace(item);const bool saved=save(item);++revision_;return saved;
+    writable();if(!editing_)return false;const auto* found=note(editing_->noteID);if(!found)return false;
+    if(!editing_->itemID&&(found->richText||editing_->richText))throw std::logic_error("Plain Notes commit cannot discard rich formatting");
+    return finishEditing(std::move(text),std::nullopt);
+}
+bool NotesState::finishEditing(std::string text,std::optional<std::string> richText){
+    writable();if(!editing_)return false;const auto* found=note(editing_->noteID);if(!found)return false;
+    if(editing_->itemID){
+        if(found->kind!=ehud::data::NoteKind::todo||richText)throw std::logic_error("Checklist commits cannot contain rich formatting");
+        const auto child=std::find_if(found->items.begin(),found->items.end(),[&](const auto&i){return i.id==*editing_->itemID;});if(child==found->items.end())throw std::logic_error("Checklist edited row disappeared");
+        (void)decodeNotesRichText(text,std::nullopt);const auto index=static_cast<std::size_t>(child-found->items.begin());auto item=*found;item.items[index].text=std::move(text);editing_.reset();replace(item);const bool saved=save(item);++revision_;return saved;
+    }
+    if(found->kind!=ehud::data::NoteKind::text)throw std::logic_error("Notes edit type changed");
+    (void)decodeNotesRichText(text,richText); // complete validation before state/persistence mutation
+    auto item=*found;item.text=std::move(text);item.richText=std::move(richText);editing_.reset();replace(item);const bool saved=save(item);++revision_;return saved;
 }
 void NotesState::detachEditor(){writable();if(editing_){editing_.reset();++revision_;}}
 } // namespace endfield::modules

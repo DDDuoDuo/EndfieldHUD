@@ -14,7 +14,7 @@ namespace mod=modules;namespace text=core::text;using Note=ehud::data::Note;
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
 bool inside(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
 bool validRect(core::Rect r){return std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&r.width>0&&r.height>0&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
-void plain(const Note&n){need(n.kind==ehud::data::NoteKind::text&&!n.richText&&!n.imageName&&!n.media&&!n.drawing&&n.items.empty(),"Notes workspace currently supports plain text records only; other payloads remain untouched");}
+void textRecord(const Note&n){need((n.kind==ehud::data::NoteKind::text||n.kind==ehud::data::NoteKind::todo)&&!n.imageName&&!n.media&&!n.drawing&&(n.kind==ehud::data::NoteKind::todo||n.items.empty()),"Notes workspace supports attachment-free text and checklist records only; other payloads remain untouched");}
 core::Rect constrainedRect(const Note&n,core::Rect bounds){
     // Reuse the source geometry algorithm without copying the record's text,
     // media or rich payload. Identity/content are not read by constrained().
@@ -35,7 +35,7 @@ std::string utf8(std::u16string_view s){
 void validateStyle(const NativeNotesWorkspaceStyle&s){
     for(const auto*c:{&s.palette.primary,&s.palette.muted,&s.palette.border,&s.palette.card,&s.palette.header,&s.palette.formatPlate,&s.palette.accent,&s.editor.background,&s.editor.border,&s.selectionColor,&s.compositionColor})for(double v:*c)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Notes workspace color");
     need(s.editor.background[3]==1,"Source Notes editor backing must be opaque");
-    for(const auto*t:{&s.strings.textTitle,&s.strings.placeholder,&s.strings.pin,&s.strings.unpin,&s.strings.remove,&s.strings.edit,&s.strings.select,&s.strings.grow,&s.strings.shrink})need(ehud::data::Json::validUtf8(*t),"Invalid Notes localized text");
+    for(const auto*t:{&s.strings.textTitle,&s.strings.placeholder,&s.strings.pin,&s.strings.unpin,&s.strings.remove,&s.strings.edit,&s.strings.select,&s.strings.grow,&s.strings.shrink,&s.strings.todoTitle,&s.strings.itemPlaceholder,&s.strings.addItem,&s.strings.checkItem,&s.strings.uncheckItem,&s.strings.editItem,&s.strings.moveUp,&s.strings.moveDown,&s.strings.removeItem,&s.strings.addItemAction})need(ehud::data::Json::validUtf8(*t),"Invalid Notes localized text");
     for(const auto&t:s.strings.format)need(ehud::data::Json::validUtf8(t),"Invalid Notes format label");
 }
 bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor;}
@@ -46,16 +46,21 @@ struct NativeNotesWorkspace::Impl {
     struct Slot {
         mod::NotesCardPresentation presentation;std::unique_ptr<NativeNotesCardScene> native;
         std::shared_ptr<const NativeNotesTextMeasurement> measurement;
+        struct Row {std::shared_ptr<const NativeNotesTextMeasurement>text,display;};
+        std::map<std::string,Row,std::less<>>rowMeasurements;std::shared_ptr<const mod::NotesChecklistLayout>checklist;
         core::Rect rect;bool selected{},pinned{},editing{},visible{},outgoing{},deleted{};
         NativeNotesCardToken token{};std::size_t tokenIndex{tokenCapacity};mod::NotesMotionSample motion;
         core::Matrix4 effectiveWorkspace;core::Projection hitProjection;
-        std::size_t ordinal{};bool initialized{};double scrollOffset{};
+        std::size_t ordinal{};bool initialized{};double scrollOffset{};std::optional<mod::NotesColor> editingColor;
         explicit Slot(std::string id):presentation(std::move(id)){}
     };
     struct Field {
-        std::string id;text::Buffer document;LayerScene scene;std::unique_ptr<NativeProjectedEditor> native;
+        std::string id;std::optional<std::string>itemID;double initialScrollOffset{};
+        std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeProjectedEditor> native;
+        std::uint64_t initialDocumentRevision{};
         UINT_PTR generation{}; // scene/document outlive the adapter on destruction
-        Field(std::string name,std::u16string value,std::uint32_t capacity,LayerRasterizer&r):id(std::move(name)),document(std::move(value),capacity),scene(r){}
+        Field(std::string name,std::u16string value,std::optional<core::notes::RichText> formatting,std::uint32_t capacity,LayerRasterizer&r,std::optional<std::string>row={})
+            :id(std::move(name)),itemID(std::move(row)),ownedDocument(itemID?std::unique_ptr<text::Document>(std::make_unique<text::Buffer>(std::move(value),capacity)):std::unique_ptr<text::Document>(std::make_unique<core::notes::RichDocument>(std::move(value),std::move(formatting),capacity))),document(*ownedDocument),rich(dynamic_cast<core::notes::RichDocument*>(ownedDocument.get())),scene(r){initialDocumentRevision=document.revision();}
     };
     struct Drag {std::string id;core::Rect original;core::Point start;mod::NotesState::Gesture kind;};
     HWND hwnd;DWORD thread{GetCurrentThreadId()};mod::NotesState&state;LayerRasterizer&raster;
@@ -75,7 +80,7 @@ struct NativeNotesWorkspace::Impl {
         need(std::isfinite(options.raster.pixelsPerPoint)&&options.raster.pixelsPerPoint>0&&options.raster.pixelsPerPoint<=4&&std::isfinite(options.raster.paddingPoints)&&options.raster.paddingPoints>=0&&options.raster.paddingPoints<=64,"Invalid Notes raster geometry");
     }
     void check()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Notes workspace belongs to its creating UI thread");}
-    void editorOwnership()const{need(state.editing().has_value()==bool(field)&&(!field||state.editing()->noteID==field->id),"Notes editor was replaced outside its workspace owner");}
+    void editorOwnership()const{need(state.editing().has_value()==bool(field)&&(!field||(state.editing()->noteID==field->id&&state.editing()->itemID==field->itemID)),"Notes editor was replaced outside its workspace owner");}
     void geometry(core::Rect r,bool edit=false)const{
         // The source header title is width-56. The native leaf adapter rejects
         // negative layer bounds rather than silently painting an approximation.
@@ -94,25 +99,43 @@ struct NativeNotesWorkspace::Impl {
     void unregister(Slot&s){if(s.tokenIndex<tokenCapacity&&tokenSlots[s.tokenIndex]==&s)tokenSlots[s.tokenIndex]=nullptr;}
     void preflight(core::Rect bounds,bool notesSelected)const{
         std::size_t newSlots{};
-        for(const auto&n:state.notes())if(notesSelected||n.isPinned){plain(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);if(!find(n.id))++newSlots;}
+        for(const auto&n:state.notes())if(notesSelected||n.isPinned){textRecord(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(!existing)++newSlots;}
         need(slots.size()+deletingCards.size()+retiredCards.size()+newSlots<=options.maximumRetainedCards,"Notes retained-card capacity reached; retire detached cards before adding more");
     }
     std::shared_ptr<const NativeNotesTextMeasurement>measure(std::string_view id,const Note&n,core::Rect r,const std::shared_ptr<const NativeNotesTextMeasurement>&old={}){
         const std::string_view value=n.text.empty()?std::string_view(style.strings.placeholder):std::string_view(n.text);
-        if(old&&old->measured.text==value&&old->measured.width==r.width-18)return old;
-        return measurer.measure(id,++measureRevision,value,r.width-18,12,options.raster);
+        if(old&&old->measured.text==value&&old->measured.width==r.width-18&&old->measured.sourceRichPayload==n.richText)return old;
+        return measurer.measure(id,++measureRevision,value,r.width-18,12,options.raster,n.richText);
     }
+    std::shared_ptr<const mod::NotesChecklistLayout>measureChecklist(Slot&s,const Note&n,core::Rect r,bool force=false){
+        const auto width=std::max(20.,r.width-89);bool unchanged=!force&&s.checklist&&s.checklist->viewport()==core::Rect{5,27,r.width-10,std::max(1.,r.height-55)}&&s.checklist->rows().size()==n.items.size();
+        if(unchanged)for(std::size_t index=0;index<n.items.size();++index){const auto&a=n.items[index];const auto&b=s.checklist->rows()[index];if(a.id!=b.itemID||a.text!=b.text->text||a.isChecked!=b.checked||b.display->text!=(a.text.empty()?style.strings.itemPlaceholder:a.text)){unchanged=false;break;}}
+        if(unchanged)return s.checklist;
+        need(n.items.size()<=mod::NotesChecklistLayout::maximumRows,"Checklist row capacity exceeded");decltype(s.rowMeasurements)next;std::vector<mod::NotesChecklistMeasurement>inputs;inputs.reserve(n.items.size());
+        for(const auto&item:n.items){need(ehud::data::validUUID(item.id)&&!next.contains(item.id),"Invalid checklist row identity");const auto old=s.rowMeasurements.find(item.id);Slot::Row row;
+            if(!force&&old!=s.rowMeasurements.end()&&old->second.text->measured.text==item.text&&old->second.text->measured.width==width)row.text=old->second.text;
+            else row.text=measurer.measure(n.id+"/item/"+item.id,++measureRevision,item.text,width,11,options.raster);
+            if(!item.text.empty())row.display=row.text;
+            else if(!force&&old!=s.rowMeasurements.end()&&old->second.display->measured.text==style.strings.itemPlaceholder&&old->second.display->measured.width==width)row.display=old->second.display;
+            else row.display=measurer.measure(n.id+"/placeholder/"+item.id,++measureRevision,style.strings.itemPlaceholder,width,11,options.raster);
+            inputs.push_back({item.id,row.text->presentationText(row.text),row.display->presentationText(row.display),item.isChecked});next.emplace(item.id,std::move(row));
+        }
+        auto layout=std::make_shared<mod::NotesChecklistLayout>(n.id,r.width,r.height,inputs);s.rowMeasurements=std::move(next);return layout;
+    }
+    mod::NotesPresentationInput presentationInput(const Slot&s)const{mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(s.measurement)input.measured=s.measurement->presentationText(s.measurement);input.checklist=s.checklist;input.scrollOffset=s.scrollOffset;input.editingColor=s.editingColor;return input;}
     bool refresh(Slot&s,const Note&n,std::size_t ordinal,bool force=false){
-        const auto c=state.card(n.id);need(c.has_value(),"Notes card disappeared during content synchronization");plain(n);geometry(c->rect,field&&field->id==n.id);
+        const auto c=state.card(n.id);need(c.has_value(),"Notes card disappeared during content synchronization");textRecord(n);geometry(c->rect,field&&field->id==n.id);
         if(s.initialized&&s.visible!=c->visible){s.motion={};issueToken(s);}
-        const bool edit=field&&field->id==n.id;const auto measurement=measure(n.id,n,c->rect,force?nullptr:s.measurement);
-        const bool content=force||!s.initialized||s.measurement!=measurement||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
-        bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;input.measured=measurement->presentationText(measurement);input.scrollOffset=s.scrollOffset;s.presentation.updateContent(state,input);
+        const bool edit=field&&field->id==n.id;const bool todo=n.kind==ehud::data::NoteKind::todo;const auto measurement=todo?std::shared_ptr<const NativeNotesTextMeasurement>{}:measure(n.id,n,c->rect,force?nullptr:s.measurement);
+        const auto checklist=todo?measureChecklist(s,n,c->rect,force):std::shared_ptr<const mod::NotesChecklistLayout>{};
+        std::optional<mod::NotesColor> editingColor;if(edit&&field->rich){const auto color=field->rich->selectionStyle().color;if(color)editingColor=mod::NotesColor{color->red,color->green,color->blue,color->alpha};}
+        const bool content=force||s.editingColor!=editingColor||!s.initialized||s.measurement!=measurement||s.checklist!=checklist||s.rect.width!=c->rect.width||s.rect.height!=c->rect.height||s.selected!=c->selected||s.pinned!=c->pinned||s.editing!=edit;
+        bool moved{};if(content){mod::NotesPresentationInput input;input.palette=style.palette;input.strings=style.strings;if(measurement)input.measured=measurement->presentationText(measurement);input.checklist=checklist;input.scrollOffset=s.scrollOffset;input.editingColor=editingColor;s.presentation.updateContent(state,input);
             if(!s.native)s.native=std::make_unique<NativeNotesCardScene>(s.presentation,raster,options.raster,style.editor);
-            s.native->syncContent();s.measurement=measurement;++stats.cardContentUpdates;++compositionRevision;
+            s.native->syncContent();s.measurement=measurement;s.checklist=checklist;++stats.cardContentUpdates;++compositionRevision;
             if(!edit)s.scrollOffset=s.presentation.scrollOffset();
         }else if(s.presentation.updatePlacement(state)){moved=true;++stats.cardPlacementUpdates;}
-        s.rect=c->rect;s.selected=c->selected;s.pinned=c->pinned;s.visible=c->visible;s.editing=edit;s.ordinal=ordinal;s.initialized=true;return content||moved;
+        s.rect=c->rect;s.selected=c->selected;s.pinned=c->pinned;s.visible=c->visible;s.editing=edit;s.ordinal=ordinal;s.editingColor=editingColor;s.initialized=true;return content||moved;
     }
     void rebuildEntries(){
         std::vector<Slot*>next;next.reserve(slots.size()+deletingCards.size());for(auto&[id,s]:slots)if(s->visible||s->outgoing)next.push_back(s.get());for(auto&s:deletingCards)next.push_back(s.get());
@@ -148,23 +171,33 @@ struct NativeNotesWorkspace::Impl {
         }
         pose=p;lastTime=p.time;projection=nextProjection;return changed;
     }
-    std::unique_ptr<Field>prepareField(const Note&n,core::Rect r){
-        plain(n);geometry(r,true);need(retiredFields.size()<options.maximumRetainedCards,"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
-        auto value=utf16(n.text,options.maximumEditorUnits);auto measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);
-        auto next=std::make_unique<Field>(n.id,std::move(value),options.maximumEditorUnits,raster);next->generation=generation+1;
+    std::unique_ptr<Field>prepareField(const Note&n,core::Rect r,std::optional<std::string>itemID={},const mod::NotesChecklistEdit*itemEdit=nullptr){
+        textRecord(n);geometry(r,true);need(retiredFields.size()<options.maximumRetainedCards,"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
+        std::shared_ptr<const NativeNotesTextMeasurement>measured;std::u16string value;std::optional<core::notes::RichText>rich;
+        double width=r.width-18,height=std::max(1.,r.height-58),fontSize=12,offset=find(n.id)?find(n.id)->scrollOffset:0;
+        if(itemID){need(itemEdit&&n.kind==ehud::data::NoteKind::todo,"Checklist edit requires measured source viewport");const auto child=std::find_if(n.items.begin(),n.items.end(),[&](const auto&v){return v.id==*itemID;});need(child!=n.items.end(),"Missing checklist editor row");
+            value=utf16(child->text,options.maximumEditorUnits);auto*slot=find(n.id);need(slot&&slot->rowMeasurements.contains(*itemID),"Checklist editor has no retained measurement");measured=slot->rowMeasurements.at(*itemID).text;
+            width=itemEdit->localRect.width;height=itemEdit->localRect.height;fontSize=11;offset=itemEdit->editorScrollOffset;
+        }else{need(n.kind==ehud::data::NoteKind::text,"Checklist must choose an item editor");value=utf16(n.text,options.maximumEditorUnits);measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);rich=mod::decodeNotesRichText(n.text,n.richText);}
+        auto next=std::make_unique<Field>(n.id,std::move(value),std::move(rich),options.maximumEditorUnits,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
         const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});
-        ProjectedEditorStyle e;e.width=r.width-18;e.height=std::max(1.,r.height-58);e.fontSize=12;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
-        next->native=std::make_unique<NativeProjectedEditor>(hwnd,next->document,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
-        // Source selects the end before restoring the session viewport. A
-        // restored offset must not be replaced by initial caret revelation.
-        next->native->setScrollOffset(find(n.id)?find(n.id)->scrollOffset:0);
+        ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
+        if(next->rich)next->native=std::make_unique<NativeProjectedEditor>(hwnd,*next->rich,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
+        else next->native=std::make_unique<NativeProjectedEditor>(hwnd,next->document,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
+        next->native->setScrollOffset(offset); // source select-end THEN restore session viewport
         if(options.activatedTextManager)need(SUCCEEDED(next->native->connect(*options.activatedTextManager,options.textClient)),"Cannot connect Notes field to caller TSF manager");return next;
     }
     NativeNotesFinishResult finish(bool commit){
         check();editorOwnership();if(!field)return {true,true};const auto offset=field->native->scrollOffset();if(FAILED(field->native->stop()))return {false,false};
-        if(auto*s=find(field->id))s->scrollOffset=offset;
-        const auto value=commit?utf8(field->document.text()):std::string{};bool saved=true;if(commit)saved=state.finishEditing(value);else state.detachEditor();
-        retiredFields.push_back(std::move(field));sync();return {true,saved};
+        if(!field->itemID)if(auto*s=find(field->id))s->scrollOffset=offset;
+        const auto value=commit?utf8(field->document.text()):std::string{};bool saved=true;
+        if(commit){std::optional<std::string> payload;const auto*original=state.note(field->id);need(original!=nullptr,"Notes edited record disappeared");
+            if(!field->itemID){if(field->document.revision()==field->initialDocumentRevision)payload=original->richText;
+            else if(const auto rich=field->rich->richText())payload=core::notes::encodeRichText(*rich,field->document.text()).encode(16*1024*1024);}
+            saved=state.finishEditing(value,std::move(payload));
+        }else state.detachEditor();
+        const auto noteID=field->id;const auto itemID=field->itemID;const auto initial=field->initialScrollOffset;retiredFields.push_back(std::move(field));sync();
+        if(itemID)if(auto*s=find(noteID);s&&s->checklist){const auto rows=s->checklist->rows();const auto row=std::find_if(rows.begin(),rows.end(),[&](const auto&v){return v.itemID==*itemID;});if(row!=rows.end()){const auto next=s->checklist->finishEditingOffset(static_cast<std::size_t>(row-rows.begin()),s->scrollOffset,initial,offset);if(next!=s->scrollOffset){s->scrollOffset=next;auto input=presentationInput(*s);s->presentation.updateContent(state,input);s->native->syncContent();++stats.cardContentUpdates;++compositionRevision;if(pose)applyPose(*pose);}}}return {true,saved};
     }
     void finishRequired(){need(finish(true).finished,"Notes editor is held by TSF; retry this owner action after its queued notification");}
 };
@@ -177,7 +210,7 @@ bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*imp
     // A theme/localization event does not end the owner's sampled closing
     // transition. Stage replacement identities with their outgoing holds even
     // when NotesState already marks those unpinned cards target-hidden.
-    decltype(i.slots) replacements;for(const auto&[id,s]:i.slots){auto next=std::make_unique<Impl::Slot>(id);next->outgoing=s->outgoing;next->motion=s->motion;next->token=s->token;next->tokenIndex=s->tokenIndex;next->measurement=s->measurement;replacements.emplace(id,std::move(next));}
+    decltype(i.slots) replacements;for(const auto&[id,s]:i.slots){auto next=std::make_unique<Impl::Slot>(id);next->outgoing=s->outgoing;next->motion=s->motion;next->token=s->token;next->tokenIndex=s->tokenIndex;next->measurement=s->measurement;next->rowMeasurements=s->rowMeasurements;next->checklist=s->checklist;replacements.emplace(id,std::move(next));}
     i.finishRequired();
     // Finishing may have captured a newer editor offset than the staged
     // replacement. The settled refresh below clamps it to the h-37 viewport.
@@ -220,8 +253,27 @@ bool NativeNotesWorkspace::createText(std::string id,double createdAt){auto&i=*i
     const auto r=constrainedRect(prototype,i.state.workspaceBounds());auto next=i.prepareField(prototype,r);i.finishRequired();const bool changed=i.state.createText(std::move(id),createdAt);if(!changed)return false;i.generation=next->generation;i.field=std::move(next);i.sync();return true;}
 bool NativeNotesWorkspace::beginEditing(std::string_view id){auto&i=*impl_;i.check();if(i.field&&i.field->id==id)return false;const auto*n=i.state.note(id);need(n&&i.state.visible(id),"Cannot edit an unavailable Notes card");
     auto next=i.prepareField(*n,i.state.card(id)->rect);i.finishRequired();i.state.select(next->id);i.state.beginEditing(next->id);i.generation=next->generation;i.field=std::move(next);i.sync();return true;}
+bool NativeNotesWorkspace::beginEditingItem(std::string_view id,std::string_view itemID){auto&i=*impl_;i.check();if(i.field&&i.field->id==id&&i.field->itemID==itemID)return false;
+    const std::string noteID(id),childID(itemID);i.finishRequired();auto*s=i.find(noteID);const auto*n=i.state.note(noteID);need(s&&s->checklist&&n&&i.state.visible(noteID),"Cannot edit unavailable checklist");const auto rows=s->checklist->rows();const auto row=std::find_if(rows.begin(),rows.end(),[&](const auto&r){return r.itemID==childID;});need(row!=rows.end(),"Cannot edit unavailable checklist row");
+    const auto edit=s->checklist->beginEditing(static_cast<std::size_t>(row-rows.begin()),s->scrollOffset);auto next=i.prepareField(*n,i.state.card(noteID)->rect,childID,&edit);
+    i.state.select(noteID);i.state.beginEditingItem(noteID,childID,edit.localRect,edit.editorScrollOffset);s->scrollOffset=edit.noteScrollOffset;i.generation=next->generation;i.field=std::move(next);i.sync();return true;
+}
+bool NativeNotesWorkspace::createChecklist(std::string id,std::string firstID,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+    Note prototype{.id=id,.kind=ehud::data::NoteKind::todo,.width=228,.height=154,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()),true);i.finishRequired();const bool changed=i.state.createChecklist(id,firstID,createdAt);if(!changed)return false;i.sync();beginEditingItem(id,firstID);return true;
+}
+bool NativeNotesWorkspace::addChecklistItem(std::string_view id,std::string itemID){auto&i=*impl_;i.check();const std::string owned(id);i.finishRequired();if(!i.state.addChecklistItem(owned,itemID))return false;i.sync();auto*s=i.find(owned);need(s&&s->checklist,"Checklist missing after add");s->scrollOffset=s->checklist->maximumScrollOffset();beginEditingItem(owned,itemID);return true;}
+bool NativeNotesWorkspace::mutateChecklistItem(std::string_view id,std::string_view childID,mod::NotesState::ChecklistAction action){auto&i=*impl_;i.check();const std::string owned(id),child(childID);i.finishRequired();const auto changed=i.state.mutateChecklistItem(owned,child,action);i.sync();return changed;}
+std::optional<std::string_view>NativeNotesWorkspace::editingItemID()const noexcept{return impl_->field&&impl_->field->itemID?std::optional<std::string_view>(*impl_->field->itemID):std::nullopt;}
 NativeNotesFinishResult NativeNotesWorkspace::finishEditing(bool commit){return impl_->finish(commit);}
-bool NativeNotesWorkspace::syncEditor(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return false;const bool changed=i.field->native->syncContent();if(changed){++i.compositionRevision;++i.stats.editorContentUpdates;if(i.pose)i.applyPose(*i.pose);}return changed;}
+bool NativeNotesWorkspace::syncEditor(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return false;bool changed=i.field->native->syncContent();if(changed){++i.compositionRevision;++i.stats.editorContentUpdates;}
+    auto*s=i.find(i.field->id);if(s){const auto c=i.field->rich?i.field->rich->selectionStyle().color:std::optional<core::notes::RGBA>{};const auto color=c?std::optional<mod::NotesColor>(mod::NotesColor{c->red,c->green,c->blue,c->alpha}):std::nullopt;
+        if(color!=s->editingColor){changed=i.refresh(*s,*i.state.note(i.field->id),s->ordinal)||changed;i.rebuildEntries();}}
+    if(changed&&i.pose)i.applyPose(*i.pose);return changed;
+}
+ProjectedEditorResult NativeNotesWorkspace::applyFormat(const core::notes::FormatChange&change){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return{};auto result=i.field->native->applyFormat(change);if(result.changed)syncEditor();return result;}
+ProjectedEditorResult NativeNotesWorkspace::undo(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return{};auto result=i.field->native->undo();if(result.changed)syncEditor();return result;}
+ProjectedEditorResult NativeNotesWorkspace::redo(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return{};auto result=i.field->native->redo();if(result.changed)syncEditor();return result;}
+std::optional<core::notes::TextStyle>NativeNotesWorkspace::selectionStyle()const{auto&i=*impl_;i.check();return i.field&&i.field->rich?std::optional<core::notes::TextStyle>(i.field->rich->selectionStyle()):std::nullopt;}
 NativeProjectedEditor*NativeNotesWorkspace::editor()noexcept{return impl_->field?impl_->field->native.get():nullptr;}
 const text::Document*NativeNotesWorkspace::editorDocument()const noexcept{return impl_->field?&impl_->field->document:nullptr;}
 std::optional<std::string_view>NativeNotesWorkspace::editingNoteID()const noexcept{return impl_->field?std::optional<std::string_view>(impl_->field->id):std::nullopt;}
@@ -274,16 +326,19 @@ bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
         const auto to=s->hitProjection.unproject({point.x,point.y+delta});if(!to)return true;
         const auto localDelta=to->y-from->y;if(!std::isfinite(localDelta))return true;
         if(i.field&&i.field->id==s->presentation.noteID()){
+            // A bubbled wheel over another part of the same card is consumed;
+            // only the native editor viewport scrolls its own document.
+            const auto&placement=i.field->native->placement();const auto editorPoint=placement.projection.unproject(point);if(!editorPoint||!inside(placement.viewport,*editorPoint))return true;
             // A queued TSF write may precede its owner synchronization. Do not
             // use old geometry or reenter a text lock just to handle a wheel.
             if(i.field->native->layout().textRevision()!=i.field->document.revision())return true;
-            if(i.field->native->scrollBy(localDelta)){s->scrollOffset=i.field->native->scrollOffset();++i.compositionRevision;++i.stats.editorContentUpdates;if(i.pose)i.applyPose(*i.pose);}
+            if(i.field->native->scrollBy(localDelta)){if(!i.field->itemID)s->scrollOffset=i.field->native->scrollOffset();++i.compositionRevision;++i.stats.editorContentUpdates;if(i.pose)i.applyPose(*i.pose);}
             return true;
         }
-        need(s->measurement!=nullptr,"Visible Notes card has no retained measurement");
-        const auto maximum=std::max(0.,s->measurement->measured.height-std::max(1.,s->rect.height-37));
+        need(s->measurement||s->checklist,"Visible Notes card has no retained measurement");
+        const auto maximum=s->checklist?s->checklist->maximumScrollOffset():std::max(0.,s->measurement->measured.height-std::max(1.,s->rect.height-37));
         const auto next=std::clamp(s->scrollOffset+localDelta,0.,maximum);if(next==s->scrollOffset)return true;
-        mod::NotesPresentationInput input;input.palette=i.style.palette;input.strings=i.style.strings;input.measured=s->measurement->presentationText(s->measurement);input.scrollOffset=next;
+        auto input=i.presentationInput(*s);input.scrollOffset=next;
         s->presentation.updateContent(i.state,input);s->native->syncContent();s->scrollOffset=s->presentation.scrollOffset();++i.stats.cardContentUpdates;++i.compositionRevision;
         if(i.pose)i.applyPose(*i.pose);return true;
     }

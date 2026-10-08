@@ -18,12 +18,12 @@ struct NativeNotesExternalEditorSlot {
     // Actual editor glyph/selection clip must honor this radius. The card
     // backing alone does not establish rounded editor-clip parity.
 };
-// Retained native artwork for one source-authored plain-text workspace card.
+// Retained native artwork for one source-authored text or checklist workspace card.
 // The caller owns NotesState/NotesCardPresentation, one LayerComposition and
 // its existing Renderer/clock. Nothing here publishes a draw list, creates a
 // device/window/editor, measures text, reads data or schedules frames.
 // Explicit measured short-fixture text comes from NotesCardPresentation;
-// rich/TODO/media/drawing and actual editor glyphs are not silently flattened.
+// Rich runs/checklist rows retain their descriptors; media/drawing are not flattened.
 // Borrowed presentation/rasterizer outlive this adapter; remove scene() from its
 // composition before destroying it. Its stable scene/resource IDs let sibling
 // cards retain their textures when one card changes or is removed.

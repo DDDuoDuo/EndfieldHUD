@@ -50,6 +50,19 @@ void createAndEdit(){
     auto rich=note(c);rich.richText="opaque styles preserved";Fake g;State formatted({rich},g.adapter());
     rejects([&]{formatted.beginEditing(c);},"Formatted note editing is explicitly deferred");check(formatted.note(c)->richText==rich.richText,"Unavailable plain editor does not erase rich payload");
 }
+void richHandoff(){
+    namespace rich=endfield::core::notes;rich::TextStyle style;style.fontSize=24;style.bold=true;style.extra.emplace("futureStyle",true);
+    rich::RichText value;value.extra.emplace("futureRoot",42);value.runs.push_back({1,2,style,{{"futureRun","retained"}}});
+    auto item=note(a);item.text="A😀中";item.richText=" "+rich::encodeRichText(value,u"A😀中").encode()+" ";Fake f;State state({item},f.adapter());
+    const auto& request=state.beginEditing(a);check(request.richText==item.richText&&request.text==item.text,"Rich handoff retains full original payload and UTF8 text");
+    rejects([&]{state.finishEditing("changed");},"Old plain commit cannot erase an imported formatted document");check(state.editing()&&f.writes==0&&*state.note(a)==item,"Rejected plain commit leaves pending editor and saved record intact");
+    rejects([&]{state.finishEditing("A",item.richText);},"Rich commit rejects stale UTF16 ranges before mutation");check(state.editing()&&f.writes==0,"Invalid rich commit keeps input retryable");
+    check(state.finishEditing(item.text,item.richText)&&state.note(a)->richText==item.richText,"Unchanged rich commit preserves exact raw payload bytes");
+    state.beginEditing(a);check(state.finishEditing("Plain",std::nullopt)&&!state.note(a)->richText,"Only explicit rich-aware commit may intentionally remove formatting");
+    const auto decoded=endfield::modules::decodeNotesRichText(item.text,item.richText);check(decoded&&*decoded==value,"Native model retains source root/run/style extensions and supplementary UTF16 ranges");
+    auto unitRange=value;unitRange.runs[0].location=2;unitRange.runs[0].length=1;check(rich::decodeRichText(rich::encodeRichText(unitRange,u"A😀中"),u"A😀中")==unitRange,"Stored source run boundaries count UTF16 units and remain lossless");
+}
+
 void workspaceAndGesture(){
     auto first=note(a);first.x=20;first.y=30;first.width=210;first.height=140;
     auto second=note(b);second.x=400;second.zIndex=3;
@@ -136,4 +149,4 @@ void sourceGeometry(const std::filesystem::path& path){
     }
 }
 }
-int main(int argc,char**argv){try{check(argc<=2,"Optional explicit source geometry fixture only");createAndEdit();workspaceAndGesture();pinDeleteAndClose();largePayloadGesture();failuresAndOrder();sqliteIntegration();if(argc==2)sourceGeometry(argv[1]);std::cout<<checks<<" isolated Notes state checks passed; no live app data or native APIs\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{check(argc<=2,"Optional explicit source geometry fixture only");createAndEdit();richHandoff();workspaceAndGesture();pinDeleteAndClose();largePayloadGesture();failuresAndOrder();sqliteIntegration();if(argc==2)sourceGeometry(argv[1]);std::cout<<checks<<" isolated Notes state checks passed; no live app data or native APIs\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

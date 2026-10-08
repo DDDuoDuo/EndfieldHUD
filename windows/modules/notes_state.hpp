@@ -1,12 +1,15 @@
 #pragma once
 #include "core/data/data_store.hpp"
 #include "core/scene.hpp"
+#include "core/notes_rich_text.hpp"
 #include <functional>
 #include <optional>
 #include <set>
 #include <span>
 
 namespace endfield::modules {
+// Validates the complete stored UTF-8/v1 payload; never truncates or flattens.
+std::optional<core::notes::RichText> decodeNotesRichText(std::string_view text,const std::optional<std::string>& payload);
 // Source: NotesStore.swift NotesGeometry and NotesCanvas.swift. This controller
 // has no renderer, clock, OS service or autonomous I/O. One owner calls it on its
 // UI thread; persistence callbacks are synchronous and must not reenter it.
@@ -25,6 +28,8 @@ public:
         std::string noteID,text;
         Rect rect; // full workspace coordinates, NOT clipped by the center module
         double fontSize{12};bool multiline{true};
+        std::optional<std::string> richText; // original payload, unchanged until an explicit rich commit
+        std::optional<std::string> itemID;double scrollOffset{}; // TODO row adapter supplies exact clipped geometry
     };
     struct Card {
         Rect rect,localRect,resizeHandle;
@@ -62,6 +67,10 @@ public:
     // caller; no hidden UUID generator or OS clock runs here. Selects and starts
     // editing with source defaults, even when the view retains an unsaved draft.
     bool createText(std::string id,double createdAt);
+    bool createChecklist(std::string id,std::string firstItemID,double createdAt); // select; row owner starts editor
+    enum class ChecklistAction {toggle,up,down,remove};
+    bool addChecklistItem(std::string_view noteID,std::string itemID);
+    bool mutateChecklistItem(std::string_view noteID,std::string_view itemID,ChecklistAction);
     bool select(std::optional<std::string> id);
     bool togglePin(std::string_view id);
     bool requestDeletion(std::string_view id);
@@ -71,10 +80,12 @@ public:
     bool beginGesture(std::string_view id,Point start,Gesture);
     bool dragTo(Point);
     bool endGesture(); // only a changed gesture saves; source threshold >1 point
-    // Plain text editor handoff only; rich text/TODO rows require their actual
-    // measured, style-preserving adapter and reject explicitly in this slice.
+    // Attachment-free text handoff. The one-argument commit remains plain-only;
+    // a rich editor must explicitly supply its full preserved formatting.
     const EditRequest& beginEditing(std::string_view id);
+    const EditRequest& beginEditingItem(std::string_view noteID,std::string_view itemID,Rect localRect,double scrollOffset);
     bool finishEditing(std::string text);
+    bool finishEditing(std::string text,std::optional<std::string> richText);
     void detachEditor(); // caller already committed or explicitly discarded input
 private:
     struct Drag {std::string noteID;ehud::data::NoteKind noteKind;Rect original;Point start;Gesture kind;bool changed{};};

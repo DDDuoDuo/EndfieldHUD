@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "scope": "Original Depot rasters copied without editing from detached FileShelfCanvas dark/light export; no user files or native file icons.",
+  "sources": {
+    "Sources/FileShelfCanvas.swift": "719a41c1bfdd9b64dbcc26f31c152510b201787ce7ccccaca857bb0fde84bc2b",
+    "Sources/EndfieldGameIcon.swift": "9763996185a3094faf77290e5930e5f4cc18e221d10dd4e5012adb2ea1dc3f95"
+  },
+  "rasters": [
+    {
+      "file": "raster/260fd478ebec24d1e9a30510ec171bac68605bc5eda2cf113d0d8cd131c5dd58.png",
+      "sha256": "260fd478ebec24d1e9a30510ec171bac68605bc5eda2cf113d0d8cd131c5dd58",
+      "bytes": 2934
+    },
+    {
+      "file": "raster/1c730020fd2f614233212095d3414c5e1700a35eaa4f7701798dd1dba92088a6.png",
+      "sha256": "1c730020fd2f614233212095d3414c5e1700a35eaa4f7701798dd1dba92088a6",
+      "bytes": 2944
+    },
+    {
+      "file": "raster/16f1048df41f7632a17160ffa4a8be0a1f254b6861bb8e78115bfb1f36c3943f.png",
+      "sha256": "16f1048df41f7632a17160ffa4a8be0a1f254b6861bb8e78115bfb1f36c3943f",
+      "bytes": 1016
+    }
+  ]
+}

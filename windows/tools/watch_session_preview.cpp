@@ -2,6 +2,12 @@
 // export/cache. Visible launch is opt-in; benchmark never shows its owned HWND.
 #include "app/overlay_host.hpp"
 #include "tools/notes_preview.hpp"
+#include "tools/shelf_preview.hpp"
+#include "tools/clipboard_preview.hpp"
+#include "tools/volume_preview.hpp"
+#include "tools/event_log_preview.hpp"
+#include "native/clipboard_assets.hpp"
+#include "native/shelf_file_picker.hpp"
 #include "app/source_watch_session.hpp"
 #include "native/watch_presentation.hpp"
 #include "native/chrome_presentation.hpp"
@@ -23,6 +29,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <wrl/client.h>
 #include <psapi.h>
 #include <dwmapi.h>
 #include <DispatcherQueue.h>
@@ -42,7 +49,7 @@ std::string utf8(const fs::path&value){const auto bytes=value.u8string();return 
 double now(){static const auto frequency=[] {LARGE_INTEGER value;need(QueryPerformanceFrequency(&value)!=0,"Performance frequency unavailable");return double(value.QuadPart);}();LARGE_INTEGER value;need(QueryPerformanceCounter(&value)!=0,"Performance counter unavailable");return double(value.QuadPart)/frequency;}
 using Clock=std::chrono::steady_clock;
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
-struct COM {COM(){need(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"COM initialization failed");}~COM(){CoUninitialize();}};
+struct COM {COM(){need(SUCCEEDED(OleInitialize(nullptr)),"OLE initialization failed");}~COM(){OleUninitialize();}};
 // The native backdrop borrows the caller's one UI queue. Creating its controller
 // on this UI thread adds no worker or private animation clock. It outlives HWND
 // and composition cleanup, including exception unwinding.
@@ -74,16 +81,21 @@ private:
 // Keep all synchronous HWND teardown callbacks behind ready=false, before the
 // locals they normally borrow leave scope. Also restores DWM state on failure.
 struct PreviewWindowLifetime final {
-    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;
-    ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(notes&&renderer.stats().initialized)notes->release(renderer);}catch(...) {} if(detached)notes.reset();backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
+    bool&ready;app::OverlayHost&host;gpu::Renderer&renderer;gpu::DesktopBackdrop&backdrop;gpu::LayerComposition&composition;std::unique_ptr<endfield::tools::NotesPreview>&notes;std::unique_ptr<endfield::tools::ShelfPreview>&shelf;std::unique_ptr<endfield::tools::ClipboardPreview>&clipboard;std::unique_ptr<endfield::tools::VolumePreview>&volume;std::unique_ptr<endfield::tools::EventLogPreview>&eventLog;
+    ~PreviewWindowLifetime(){ready=false;bool detached=false;try{composition.detach(renderer);detached=true;if(notes&&renderer.stats().initialized)notes->release(renderer);if(shelf&&renderer.stats().initialized)shelf->release(renderer);if(clipboard&&renderer.stats().initialized)clipboard->release(renderer);if(volume&&renderer.stats().initialized)volume->release(renderer);if(eventLog&&renderer.stats().initialized)eventLog->release(renderer);}catch(...) {} if(detached){notes.reset();shelf.reset();clipboard.reset();volume.reset();eventLog.reset();}backdrop.reset();renderer.reset();try{host.destroy();}catch(...) {}}
 };
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,liveDiagnostics;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},volumeFixture{},eventLogFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
     for(int i=4;i<argc;++i){const std::wstring_view arg=argv[i];
         if(arg==L"--visible"){need(!o.visible,"Duplicate visible mode");o.visible=true;}
         else if(arg==L"--live-diagnostics"&&i+1<argc){need(o.liveDiagnostics.empty(),"Duplicate live diagnostic output");o.liveDiagnostics=fs::absolute(argv[++i]);}
+        else if(arg==L"--shelf-assets"&&i+1<argc){need(o.shelfAssets.empty(),"Duplicate shelf assets");o.shelfAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--shelf-data"&&i+1<argc){need(o.shelfData.empty(),"Duplicate shelf data");o.shelfData=fs::absolute(argv[++i]);}
+        else if(arg==L"--shelf-mask"&&i+1<argc){need(o.shelfMask.empty(),"Duplicate shelf reveal");o.shelfMask=fs::absolute(argv[++i]);}
+        else if(arg==L"--event-log-fixture"){need(!o.eventLogFixture,"Duplicate Event Log fixture");o.eventLogFixture=true;}
+        else if(arg==L"--volume-fixture"){need(!o.volumeFixture,"Duplicate Volume fixture");o.volumeFixture=true;}
         else if(arg==L"--coverage"){need(!o.coverage,"Duplicate coverage mode");o.coverage=true;}
         else if(arg==L"--benchmark-size"&&i+2<argc){auto dimension=[&]{const std::wstring token=argv[++i];std::size_t used{};const auto value=std::stoul(token,&used);need(used==token.size()&&value>=64&&value<=4096,"Benchmark dimensions must be 64...4096 pixels");return static_cast<std::uint32_t>(value);};o.benchmarkWidth=dimension();o.benchmarkHeight=dimension();}
         else if(arg==L"--benchmark-epoch"&&i+1<argc){const std::wstring token=argv[++i];std::size_t used{};o.benchmarkEpoch=std::stod(token,&used);need(used==token.size()&&std::isfinite(o.benchmarkEpoch)&&o.benchmarkEpoch>=0&&o.benchmarkEpoch<=1e9,"Invalid bounded synthetic epoch");}
@@ -95,6 +107,8 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--cursor-png"&&i+1<argc){need(o.cursor.empty(),"Duplicate cursor image");o.cursor=fs::absolute(argv[++i]);}
         else if(arg==L"--watch-blur"&&i+1<argc){need(o.watchBlur.empty(),"Duplicate original WatchBlur source");o.watchBlur=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-assets"&&i+1<argc){need(o.notesAssets.empty(),"Duplicate Notes assets");o.notesAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--clipboard-assets"&&i+1<argc){need(o.clipboardAssets.empty(),"Duplicate Clipboard assets");o.clipboardAssets=fs::absolute(argv[++i]);}
+        else if(arg==L"--notes-format-assets"&&i+1<argc){need(o.notesFormatAssets.empty(),"Duplicate Notes format assets");o.notesFormatAssets=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-data"&&i+1<argc){need(o.notesData.empty(),"Duplicate Notes fixture data");o.notesData=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-assets-sha"&&i+1<argc){need(o.notesAssetsSHA.empty(),"Duplicate Notes asset pin");o.notesAssetsSHA=utf8(argv[++i]);}
         else if(arg==L"--compiled-sha"&&i+1<argc){need(o.pin.empty(),"Duplicate cache pin");o.pin=utf8(argv[++i]);}
@@ -107,6 +121,11 @@ Options options(int argc,wchar_t**argv){
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
     need(!o.visible||(!o.coverage&&o.benchmarkEpoch==0&&o.benchmarkWidth==1280&&o.benchmarkHeight==800),"Coverage/epoch/size overrides are hidden-test only");
     need(o.liveDiagnostics.empty()||(o.visible&&!o.notesAssets.empty()&&!fs::exists(o.liveDiagnostics)),"Live diagnostics require visible isolated Notes and a new output");
+    need(o.shelfAssets.empty()==o.shelfData.empty()&&o.shelfAssets.empty()==o.shelfMask.empty(),"Shelf preview needs assets, fresh data and original reveal samples");
+    need(!o.eventLogFixture||!o.notesAssets.empty(),"Event Log fixture requires the shared module owner");
+    need(!o.volumeFixture||!o.notesAssets.empty(),"Volume fixture requires the shared module owner");
+    need(o.clipboardAssets.empty()||!o.notesAssets.empty(),"Clipboard needs the shared module owner");
+    need(o.shelfAssets.empty()||!o.notesAssets.empty(),"Shelf uses the shared Notes module transition owner");
     if(!o.report.empty())need(!fs::exists(o.report),"Benchmark output already exists");
     need(o.snapshots.empty()||!o.visible,"Owned-target snapshots are hidden benchmark only");
     if(!o.snapshots.empty())need(!fs::exists(o.snapshots),"Snapshot directory already exists");return o;
@@ -185,7 +204,7 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"layoutBuilds",std::int64_t(b.frame.layoutBuilds-a.frame.layoutBuilds)},
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
 }
-int wmain(int argc,wchar_t**argv){try{
+int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;try{
     const auto args=options(argc,argv);COM com;const auto preparation=Clock::now();StartupStages startup;
     std::optional<gpu::DesktopBackdropAnimation> backdropAnimation;if(!args.watchBlur.empty())backdropAnimation=loadWatchBlur(args.watchBlur);startup.mark("original-backdrop-animation");
     std::unique_ptr<source::WatchRuntimeInput> runtime;std::unique_ptr<packet::Package> package;
@@ -239,13 +258,13 @@ int wmain(int argc,wchar_t**argv){try{
     metadata=Json{};legacyTop=Json{};legacyBottom=Json{};chromeJSON=Json{};package.reset();if(runtime)runtime->releaseSetupJSON();startup.mark("release-full-reference-json");
     gpu::SourceCursor cursor;if(!args.cursor.empty())cursor=gpu::SourceCursor::fromOriginalPNG(args.cursor);startup.mark("native-cursor");
     std::unique_ptr<BackdropQueue> backdropQueue;
-    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;std::unique_ptr<endfield::tools::NotesPreview> notes;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,pendingClose=false,focused=!args.visible;
-    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop,composition,notes};
+    app::OverlayHost host;gpu::Renderer renderer;gpu::DesktopBackdrop backdrop;std::unique_ptr<gpu::NativeNotesControlsAssets> notesAssets;std::unique_ptr<endfield::tools::NotesPreview> notes;std::unique_ptr<gpu::NativeShelfAssets>shelfAssets;std::unique_ptr<endfield::tools::ShelfPreview>shelf;std::optional<ehud::data::ShelfFileAccess>pendingShelfReveal;std::unique_ptr<gpu::NativeClipboardAssets>clipboardAssets;std::unique_ptr<endfield::tools::ClipboardPreview>clipboard;std::unique_ptr<endfield::tools::VolumePreview>volume;std::unique_ptr<endfield::tools::EventLogPreview>eventLog;gpu::LayerComposition composition;app::ClientMetrics metrics;bool ready=false,closing=false,pendingClose=false,focused=!args.visible;
+    PreviewWindowLifetime windowLifetime{ready,host,renderer,backdrop,composition,notes,shelf,clipboard,volume,eventLog};
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
     std::vector<gpu::LayerCompositionEntry>ordered;std::vector<PublishedEntry>published;ordered.reserve(134);published.reserve(134);
-    auto publishNative=[&]{ordered.clear();ordered.push_back({&layers,{}});if(notes){notes->upload(renderer);for(const auto&e:notes->entries())ordered.push_back(e);}
+    auto publishNative=[&]{ordered.clear();ordered.push_back({&layers,{}});if(eventLog){eventLog->upload(renderer);for(const auto&e:eventLog->entries())ordered.push_back(e);}if(volume){volume->upload(renderer);for(const auto&e:volume->entries())ordered.push_back(e);}if(clipboard){clipboard->upload(renderer);for(const auto&e:clipboard->entries())ordered.push_back(e);}if(shelf){shelf->upload(renderer);for(const auto&e:shelf->entries())ordered.push_back(e);}if(notes){notes->upload(renderer);for(const auto&e:notes->entries())ordered.push_back(e);}
         bool changed=ordered.size()!=published.size();if(!changed)for(std::size_t n=0;n<ordered.size();++n){const auto&e=ordered[n];const auto&p=published[n];if(e.scene!=p.scene||e.scene->contentRevision()!=p.content||e.scene->resourceRevision()!=p.resources||e.after.data()!=p.after||e.after.size()!=p.count){changed=true;break;}}
-        if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(notes)notes->collected(renderer);}
+        if(changed){composition.setEntries(renderer,ordered);published.clear();for(const auto&e:ordered)published.push_back({e.scene,e.scene->contentRevision(),e.scene->resourceRevision(),e.after.data(),e.after.size()});if(notes)notes->collected(renderer);if(shelf)shelf->collected(renderer);if(clipboard)clipboard->collected(renderer);if(volume)volume->collected(renderer);if(eventLog)eventLog->collected(renderer);}
     };
     app::WatchSessionEnvironment environment{{1280,800},true,true,true,false,{}};app::WatchSessionSettings settings;session.setSettings(settings,0);session.setEnvironment(environment,0);
     // Exact independent SystemHUDView canvas opacity. SourceWatch is a
@@ -269,11 +288,11 @@ int wmain(int argc,wchar_t**argv){try{
         backdropState.lowPower=settings.lowPower;backdropState.sourceOpacity=backdropOpacity(time);backdrop.update(backdropState);
     };
     auto open=[&](double time){closing=false;canvasOpenedAt=time;session.open(time,0x5eed);};
-    auto demand=[&](double time){auto result=session.demand(time);if(notes&&result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||notes->requiresFrames(time);return result;};
+    auto demand=[&](double time){auto result=session.demand(time);if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(notes&&notes->requiresFrames(time))||(shelf&&shelf->requiresFrames(time))||(clipboard&&clipboard->requiresFrames(time))||(volume&&volume->requiresFrames(time))||(eventLog&&eventLog->requiresFrames(time));return result;};
     auto refresh=[&](double time){if(args.visible){host.setFrameDemand(demand(time));host.invalidate();}};
-    auto close=[&](double time){if(!closing){if(notes&&!notes->finish()){pendingClose=true;return;}pendingClose=false;host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
+    auto close=[&](double time){if(!closing){std::cout<<"Preview close requested at "<<time<<std::endl;if(notes&&!notes->finish()){pendingClose=true;return;}pendingClose=false;if(shelf){shelf->cancelPanels();shelf->cancelInteraction();}if(clipboard)clipboard->cancelInteraction();if(volume)volume->cancelInteraction(time);if(eventLog)eventLog->cancelInteraction();host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){notes->select(module,now());break;}}}
-        std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (plain Notes preview)":" (module body is not installed)")<<'\n';};
+        std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (Notes preview)":shelf&&entry->target=="fileShelf"?" (File Shelf preview)":clipboard&&entry->target=="clipboard"?" (synthetic Clipboard preview)":" (module body is not installed)")<<'\n';};
     LiveProbe probe;probe.enabled=!args.liveDiagnostics.empty();
     auto present=[&](double time,bool submit){
         auto frameProbe=probe.measure(LiveProbe::frame);
@@ -294,15 +313,31 @@ int wmain(int argc,wchar_t**argv){try{
         if(chrome)chrome->update(*sample->sourceFrame,sample->camera,chromeSettings,static_cast<float>(canvasOpacity(time)));
         }
         const source::DesktopChromeSettings noteChromeSettings{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
-        {auto stage=probe.measure(LiveProbe::notesPose);if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,noteChromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);}
+        {auto stage=probe.measure(LiveProbe::notesPose);if(notes&&chromePlan&&chromePlan->projection().center)notes->update(*chromePlan->projection().center,noteChromeSettings,static_cast<float>(canvasOpacity(time)),time,focused);if(eventLog&&notes&&chromePlan&&chromePlan->projection().center)eventLog->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(volume&&notes&&chromePlan&&chromePlan->projection().center)volume->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(shelf&&notes&&chromePlan&&chromePlan->projection().center)shelf->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);if(clipboard&&notes&&chromePlan&&chromePlan->projection().center)clipboard->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);}
         {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
         if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(args.visible);}return true;
     };
     app::OverlayCallbacks callbacks;
-    callbacks.resize=[&](const auto&value){metrics=value;if(notes)notes->resize(value);if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
+    callbacks.resize=[&](const auto&value){metrics=value;if(notes)notes->resize(value);if(shelf)shelf->resize(value);if(clipboard)clipboard->resize(value);if(volume)volume->resize(value);if(eventLog)eventLog->resize(value);if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session.setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);refresh(time);};
     callbacks.pointer=[&](const app::PointerEvent&e){auto stage=probe.measure(LiveProbe::pointer);if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
         if(notes&&session.inputEnabled()){
-            const bool handled=notes->pointer(e,time);environment.pointerLocked=notes->pointerLocked();environment.pointer=p;session.setEnvironment(environment,time);
+            const bool handled=notes->pointer(e,time);environment.pointerLocked=notes->pointerLocked()||(shelf&&shelf->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
+            if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
+        }
+        if(shelf&&session.inputEnabled()){
+            const bool handled=shelf->pointer(e,time);environment.pointerLocked=shelf->pointerLocked()||(notes&&notes->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
+            if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
+        }
+        if(clipboard&&session.inputEnabled()){
+            const bool handled=clipboard->pointer(e,time);environment.pointerLocked=clipboard->pointerLocked()||(notes&&notes->pointerLocked())||(shelf&&shelf->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
+            if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
+        }
+        if(volume&&session.inputEnabled()){
+            const bool handled=volume->pointer(e,time);environment.pointerLocked=volume->pointerLocked()||(notes&&notes->pointerLocked())||(shelf&&shelf->pointerLocked())||(clipboard&&clipboard->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
+            if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
+        }
+        if(eventLog&&session.inputEnabled()){
+            const bool handled=eventLog->pointer(e,time);environment.pointerLocked=eventLog->pointerLocked()||(volume&&volume->pointerLocked())||(notes&&notes->pointerLocked())||(shelf&&shelf->pointerLocked())||(clipboard&&clipboard->pointerLocked());environment.pointer=p;session.setEnvironment(environment,time);
             if(handled){if(e.kind==app::PointerKind::move)session.pointerMove(p,time);if(e.kind==app::PointerKind::down||e.kind==app::PointerKind::doubleClick)host.capturePointer(true);if(e.kind==app::PointerKind::up)host.capturePointer(false);refresh(time);return true;}
         }
         if(e.kind==app::PointerKind::move){environment.pointer=p;session.pointerMove(p,time);}
@@ -318,12 +353,27 @@ int wmain(int argc,wchar_t**argv){try{
             }
         }
         else return false;refresh(time);return true;};
-    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
-    callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){return ready&&notes&&notes->filterKey(m);};
-    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{auto stage=probe.measure(LiveProbe::message);if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}return {};};
-    callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){close(now());return true;}return false;};
-    callbacks.focus=[&](bool value){focused=value;if(notes)notes->focus(value);if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
-    callbacks.closeRequested=[&]{if(ready)close(now());};
+    callbacks.wheel=[&](const app::WheelEvent&e){if(!ready)return false;const auto time=now();if(notes&&session.inputEnabled()&&notes->wheel(e,time)){refresh(time);return true;}if(shelf&&session.inputEnabled()&&shelf->wheel(e,time)){refresh(time);return true;}if(clipboard&&session.inputEnabled()&&clipboard->wheel(e,time)){refresh(time);return true;}if(volume&&session.inputEnabled()&&volume->wheel(e,time)){refresh(time);return true;}if(eventLog&&session.inputEnabled()&&eventLog->wheel(e,time)){refresh(time);return true;}if(e.horizontal)return false;const bool handled=session.wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;};
+    callbacks.beforeKeyTranslation=[&](const app::NativeMessage&m){if(!ready)return false;if(shelf&&shelf->filterKey(m))return true;const auto target=static_cast<HWND>(m.window),owner=static_cast<HWND>(host.hwnd());return (target==owner||IsChild(owner,target))&&notes&&notes->filterKey(m);};
+    callbacks.appMessage=[&](const app::NativeMessage&m)->std::optional<std::intptr_t>{auto stage=probe.measure(LiveProbe::message);if(ready&&notes&&notes->message(m)){if(pendingClose)close(now());refresh(now());return 0;}
+        if(ready&&shelf){
+            if(shelf->message(m,now())){refresh(now());return 0;}
+            if(m.message==endfield::tools::ShelfPreview::actionMessage){
+                if(auto action=shelf->takeAction())try{using K=endfield::tools::ShelfPreviewAction::Kind;
+                    switch(action->kind){
+                    case K::choose:host.capturePointer(false);shelf->requestFiles();break;
+                    case K::paste:{Microsoft::WRL::ComPtr<IDataObject>source;need(SUCCEEDED(OleGetClipboard(&source)),"Clipboard is unavailable");const auto paths=gpu::readShelfTransferPaths(*source.Get());source.Reset();shelf->importFiles(paths,now());break;}
+                    case K::reveal:pendingShelfReveal=shelf->access(action->itemID);close(now());break;
+                    case K::preview:host.capturePointer(false);shelf->requestPreview(action->itemID);break;
+                    case K::drag:{auto transfer=shelf->prepareDrag(action->itemID);shelf->setNativeDragActive(true);host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,now());DWORD effect{};const auto result=transfer->run(&effect);shelf->setNativeDragActive(false);if(result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY))close(now());break;}
+                    }
+                }catch(const std::exception&e){shelf->setNativeDragActive(false);shelf->showError(e.what(),now());}
+                refresh(now());return 0;
+            }
+        }return {};};
+    callbacks.key=[&](const app::KeyEvent&e){auto stage=probe.measure(LiveProbe::key);if(ready&&notes&&session.inputEnabled()&&notes->key(e,now())){refresh(now());return true;}if(ready&&shelf&&session.inputEnabled()&&shelf->key(e,now())){refresh(now());return true;}if(ready&&clipboard&&session.inputEnabled()&&clipboard->key(e,now())){refresh(now());return true;}if(ready&&volume&&session.inputEnabled()&&volume->key(e,now())){refresh(now());return true;}if(ready&&eventLog&&session.inputEnabled()&&eventLog->key(e,now())){refresh(now());return true;}if(ready&&e.kind==app::KeyKind::down&&e.value==VK_ESCAPE){std::cout<<"Preview unhandled Escape"<<std::endl;close(now());return true;}return false;};
+    callbacks.focus=[&](bool value){std::cout<<"Preview focus: "<<value<<std::endl;focused=value;if(notes)notes->focus(value);if(shelf&&!value)shelf->cancelInteraction();if(clipboard&&!value)clipboard->cancelInteraction();if(volume&&!value)volume->cancelInteraction(now());if(eventLog&&!value)eventLog->cancelInteraction();if(ready){const auto time=now();if(!focused){environment.pointer.reset();session.pointerMove({},time);session.setInputEnabled(false,time);}else if(session.phase()==core::VisibilityPhase::visible)session.setInputEnabled(true,time);refresh(time);}};
+    callbacks.closeRequested=[&]{std::cout<<"Preview native close request"<<std::endl;if(ready)close(now());};
     double diagnosticStart{};bool diagnosticEditing{},diagnosticFinished{};
     callbacks.frame=[&](double time){if(!ready)return;
         if(probe.enabled&&!diagnosticFinished){
@@ -359,10 +409,49 @@ int wmain(int argc,wchar_t**argv){try{
     startup.mark("lower-system-backdrop");
     if(!args.notesAssets.empty()){need(bool(chromePlan),"Notes integration requires the source chrome projection");
         notesAssets=std::make_unique<gpu::NativeNotesControlsAssets>(args.notesAssets,gpu::NativeNotesControlsAssetPins{args.notesAssetsSHA,"ca04f142185c7de40acd8523bdb563195d90a1d1"});
-        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,true);notes->resize(metrics);session.setHitFilter([&](std::string_view,core::Point p){return !notes||!notes->covers(p);},0);startup.mark("isolated-notes-owner");}
+        notes=std::make_unique<endfield::tools::NotesPreview>(static_cast<HWND>(host.hwnd()),rasterizer,args.notesData,*notesAssets,true,args.notesFormatAssets);notes->resize(metrics);session.setHitFilter([&](std::string_view,core::Point p){return (!notes||!notes->covers(p))&&(!shelf||!shelf->covers(p))&&(!clipboard||!clipboard->covers(p))&&(!volume||!volume->covers(p))&&(!eventLog||!eventLog->covers(p));},0);startup.mark("isolated-notes-owner");}
+    if(!args.shelfAssets.empty()){
+        const auto bytes=ehud::data::detail::readFile(args.shelfMask,128*1024);need(bytes.has_value(),"Missing original Shelf reveal samples");
+        auto masks=std::make_shared<core::SubsectionMaskSampler>(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()),core::SubsectionMaskSampler::assetSHA256);
+        shelfAssets=std::make_unique<gpu::NativeShelfAssets>(args.shelfAssets);
+        shelf=std::make_unique<endfield::tools::ShelfPreview>(static_cast<HWND>(host.hwnd()),rasterizer,*shelfAssets,endfield::tools::ShelfPreviewOptions{args.shelfData,args.visible,args.visible,std::move(masks)});shelf->resize(metrics);startup.mark("isolated-shelf-owner");
+    }
     materials.upload(renderer.sourceGraphics());publishNative();host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=args.visible?now():args.benchmarkEpoch;session.setEnvironment(environment,start);const auto preparedMS=milliseconds(preparation);
-    std::cout<<(notes?"Synthetic shell + bounded plain Notes integration: editing/drag/pin/delete only; other module bodies/providers and full Notes features remain. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
+    if(!args.clipboardAssets.empty()){
+        clipboardAssets=std::make_unique<gpu::NativeClipboardAssets>(args.clipboardAssets);
+        auto synthetic=std::make_shared<gpu::ClipboardSnapshot>();synthetic->capacity=20;
+        for(unsigned n=0;n<12;++n)synthetic->rows.push_back({n+1,n==0,gpu::ClipboardKind::text,"临时剪贴板测试 · "+std::to_string(n+1)+" · EndfieldHUD",{}});
+        gpu::ClipboardActions actions;actions.snapshot=[synthetic]{return *synthetic;};
+        actions.copy=[synthetic](std::uint64_t id){return std::any_of(synthetic->rows.begin(),synthetic->rows.end(),[&](const auto&r){return r.id==id;});};
+        actions.togglePin=[synthetic](std::uint64_t id){for(auto&r:synthetic->rows)if(r.id==id){r.pinned=!r.pinned;return true;}return false;};
+        actions.remove=[synthetic](std::uint64_t id){return std::erase_if(synthetic->rows,[&](const auto&r){return r.id==id;})!=0;};
+        actions.clearUnpinned=[synthetic]{std::erase_if(synthetic->rows,[](const auto&r){return !r.pinned;});return true;};
+        gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.paddingPoints=1;ro.assetRoot=clipboardAssets->root();
+        clipboard=std::make_unique<endfield::tools::ClipboardPreview>(rasterizer,ro,std::move(actions),gpu::ClipboardStrings{},gpu::ClipboardAppearance{},clipboardAssets->images(),clipboardAssets->revealSamples());clipboard->resize(metrics);
+    }
+    if(args.eventLogFixture){
+        auto sample=std::make_shared<endfield::modules::EventLogSnapshot>();
+        for(unsigned n=0;n<32;++n){using K=endfield::modules::EventKind;sample->events.push_back({ehud::data::makeUUID(),n%2?K::shelfAdded:K::clipboardCopied,812000000.-n*30,n%2?endfield::modules::EventMetadata{{"filename","Synthetic.pdf"}}:endfield::modules::EventMetadata{{"kind","text"}}});}
+        endfield::modules::EventLogCallbacks actions{[sample]{return *sample;},[sample]{sample->events.clear();},[](double){return std::string("10-08 12:34:56");}};
+        eventLog=std::make_unique<endfield::tools::EventLogPreview>(rasterizer,gpu::LayerRasterOptions{},std::move(actions));eventLog->resize(metrics);
+    }
+    if(args.volumeFixture){
+        auto sample=std::make_shared<gpu::VolumeSnapshot>();
+        sample->outputs={{"test-speaker","测试扬声器"},{"test-headphones","测试耳机",true,false}};
+        sample->inputs={{"test-microphone","测试麦克风"}};sample->outputID="test-speaker";sample->inputID="test-microphone";
+        sample->volume=.45;sample->balance=0;sample->muted=false;
+        sample->canSetVolume=sample->canSetMute=sample->canSetBalance=sample->canSetDefaultOutput=sample->canSetDefaultInput=true;
+        endfield::tools::VolumePreviewOptions options;options.initial=*sample;
+        const auto changed=[&volume,sample]{if(volume)volume->receiveSnapshot(*sample);};
+        options.actions.setVolume=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->volume=value;changed();return true;};
+        options.actions.setBalance=[sample,changed](std::string_view id,double value){if(id!=sample->outputID)return false;sample->balance=value;changed();return true;};
+        options.actions.setMute=[sample,changed](std::string_view id,bool value){if(id!=sample->outputID)return false;sample->muted=value;changed();return true;};
+        options.actions.setDefaultOutput=[sample,changed](std::string_view id){if(std::none_of(sample->outputs.begin(),sample->outputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->outputID=id;changed();return true;};
+        options.actions.setDefaultInput=[sample,changed](std::string_view id){if(std::none_of(sample->inputs.begin(),sample->inputs.end(),[&](const auto&d){return d.id==id;}))return false;sample->inputID=id;changed();return true;};
+        volume=std::make_unique<endfield::tools::VolumePreview>(rasterizer,std::move(options));volume->resize(metrics);
+    }
+    std::cout<<(notes?"Synthetic shell with rich Notes, File Shelf and isolated Clipboard history; other modules and remaining Notes tools are not connected yet. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
     if(args.visible){open(start);host.show();refresh(start);host.run();}
     else {
         auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphics().stats(),rasterizer.stats(),session.frameStats(),session.stats()};};Json::Array rows,images;
@@ -422,6 +511,6 @@ int wmain(int argc,wchar_t**argv){try{
     }
     ready=false;host.setFrameDemand({});host.setCursor(nullptr);backdrop.reset();
     if(args.visible)need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
-    composition.detach(renderer);if(notes){notes->finish();notes->release(renderer);notes.reset();}renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();return 0;
+    composition.detach(renderer);if(notes){notes->finish();notes->release(renderer);notes.reset();}if(shelf){shelf->release(renderer);shelf.reset();}if(clipboard){clipboard->release(renderer);clipboard.reset();}if(volume){volume->release(renderer);volume.reset();}if(eventLog){eventLog->release(renderer);eventLog.reset();}renderer.reset();host.destroy();if(backdropQueue)backdropQueue->finish();if(pendingShelfReveal)need(SUCCEEDED(gpu::revealShelfReference(std::move(*pendingShelfReveal))),"Cannot reveal Shelf reference in Explorer");return 0;
 }catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}
 catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}

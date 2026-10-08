@@ -79,6 +79,12 @@ struct PlaneShutter {
 // Shared CPU validation for retained scene setters and final GPU publication.
 // No device, resource or allocation is needed for a valid source mask.
 void validatePlaneShutter(const PlaneShutter&);
+struct PlaneAlphaMask {
+    core::Matrix4 worldToLocal;
+    core::Rect bounds; // texture edges in mask-local points
+    std::string textureID; // caller-owned resident texture; sampled alpha only
+    bool operator==(const PlaneAlphaMask&)const=default;
+};
 struct DrawObject {
     std::string sourceID, meshID, textureID; // empty textureID selects opaque white
     core::Matrix4 world;
@@ -88,6 +94,7 @@ struct DrawObject {
     // stencil/soft-mask programs remain outside this plain-surface API.
     std::vector<PlaneMask> masks;
     std::optional<PlaneShutter> shutter;
+    std::optional<PlaneAlphaMask> alphaMask; // intersects ordinary masks/shutter
 };
 // Checks retained numeric/identity data with the exact GPU-uniform rules,
 // without querying or allocating device resources. Resource existence remains

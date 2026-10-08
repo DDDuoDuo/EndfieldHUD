@@ -19,9 +19,14 @@ cbuffer Object : register(b1) {
     PlaneMask masks[8];
     column_major float4x4 shutterWorldToLocal;
     float4 shutterEdges[30];
+    column_major float4x4 alphaWorldToLocal;
+    float4 alphaBounds;
+    float4 alphaControl;
 };
 Texture2D<float4> colorTexture : register(t0);
 SamplerState colorSampler : register(s0);
+Texture2D<float4> alphaMaskTexture : register(t1);
+SamplerState alphaMaskSampler : register(s1);
 
 struct VertexInput {
     float3 position : POSITION;
@@ -89,6 +94,14 @@ float4 ScenePS(SceneVertex input) : SV_Target {
     float4 sampled = colorTexture.Sample(colorSampler, input.uv);
     float4 tint = input.linearColor * linearTint;
     float opacityFactor = saturate(tint.a * opacity);
+    [branch] if (alphaControl.x != 0) {
+        float4 local = mul(alphaWorldToLocal, input.worldPosition);
+        clip(local.w - 0.0000001);
+        float2 alphaPoint = local.xy / local.w;
+        clip(float4(alphaPoint - alphaBounds.xy, alphaBounds.zw - alphaPoint));
+        float2 uv = (alphaPoint-alphaBounds.xy)/(alphaBounds.zw-alphaBounds.xy);
+        opacityFactor *= saturate(alphaMaskTexture.Sample(alphaMaskSampler,uv).a);
+    }
     return float4(sampled.rgb * tint.rgb * opacityFactor, sampled.a * opacityFactor);
 }
 

@@ -202,15 +202,20 @@ void LayerScene::setGroupShutter(std::optional<PlaneShutter> shutter){
     if(shutter)validatePlaneShutter(*shutter);
     groupShutter_=std::move(shutter);
 }
+void LayerScene::setGroupAlphaMask(const std::optional<PlaneAlphaMask>& mask){
+    if(groupAlphaMask_==mask)return;DrawObject test;test.sourceID="alpha";test.alphaMask=mask;validateDrawObject(test);groupAlphaMask_=mask;
+}
 Matrix LayerScene::validatePreparation(const Matrix& placement)const{
     need(placement.finite(),"Invalid native layer placement");const auto inverse=core::source::inverseSourceMatrix(placement);
     if(groupShutter_)need((groupShutter_->worldToLocal*inverse).finite(),"Invalid projected native shutter matrix");
+    if(groupAlphaMask_)need((groupAlphaMask_->worldToLocal*inverse).finite(),"Invalid projected native alpha-mask matrix");
     for(const auto&surface:surfaces_){need((placement*surface.draw.world).finite(),"Invalid projected native world matrix");for(const auto&mask:surface.draw.masks)need((mask.worldToLocal*inverse).finite(),"Invalid projected native mask matrix");}
     return inverse;
 }
 void LayerScene::prepare(const Matrix& placement,const Matrix& inverse){
     for(std::size_t i=0;i<surfaces_.size();++i){const auto&source=surfaces_[i].draw;auto&draw=draws_[i];draw.world=placement*source.world;draw.opacity=source.opacity;draw.masks.resize(source.masks.size());
         draw.shutter=groupShutter_;if(draw.shutter)draw.shutter->worldToLocal=groupShutter_->worldToLocal*inverse;
+        draw.alphaMask=groupAlphaMask_;if(draw.alphaMask)draw.alphaMask->worldToLocal=groupAlphaMask_->worldToLocal*inverse;
         for(std::size_t j=0;j<draw.masks.size();++j){draw.masks[j]=source.masks[j];draw.masks[j].worldToLocal=source.masks[j].worldToLocal*inverse;}}
 }
 std::span<const DrawObject> LayerScene::prepareDraws(const Matrix& placement){
@@ -312,7 +317,7 @@ void LayerComposition::copyPrepared(const Entry&entry){
     const auto source=entry.scene->draws();
     for(std::size_t i=0;i<entry.count;++i){auto&target=draws_[entry.begin+i];const auto&draw=source[i];
         target.world=draw.world;target.linearTint=draw.linearTint;target.opacity=draw.opacity;
-        target.shutter=draw.shutter;
+        target.shutter=draw.shutter;target.alphaMask=draw.alphaMask;
         target.masks.resize(draw.masks.size());std::copy(draw.masks.begin(),draw.masks.end(),target.masks.begin());
     }
 }
@@ -329,15 +334,16 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
         for(std::size_t j=0;j<entry.after.size();++j){const auto&input=entry.after[j];auto&stage=stagedAfter_[entry.stageBegin+j];
             need(input.sourceID==stage.sourceID&&input.meshID==stage.meshID&&input.textureID==stage.textureID,"Supplemental draw identity changed; replace the composition entries");
             need(input.masks.size()<=8,"Too many supplemental draw masks");
-            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;
+            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;stage.alphaMask=input.alphaMask;
             if(stage.shutter)stage.shutter->worldToLocal=stage.shutter->worldToLocal*inverseTransforms_[i];
+            if(stage.alphaMask)stage.alphaMask->worldToLocal=stage.alphaMask->worldToLocal*inverseTransforms_[i];
             stage.masks.resize(input.masks.size());for(std::size_t k=0;k<input.masks.size();++k){stage.masks[k]=input.masks[k];stage.masks[k].worldToLocal=input.masks[k].worldToLocal*inverseTransforms_[i];}
             validateDrawObject(stage);
         }
     }
     for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);
         for(std::size_t j=0;j<entry.after.size();++j){const auto&stage=stagedAfter_[entry.stageBegin+j];auto&out=draws_[entry.begin+entry.count+j];
-            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;
+            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;out.alphaMask=stage.alphaMask;
             out.masks.resize(stage.masks.size());std::copy(stage.masks.begin(),stage.masks.end(),out.masks.begin());
         }
     }

@@ -20,6 +20,11 @@ std::vector<std::uint8_t> encodeShelfDropPaths(std::span<const std::string>);
 std::vector<std::string> decodeShelfDropPaths(std::span<const std::uint8_t>);
 
 #ifdef _WIN32
+// Explicit user paste/drop extraction. Caller retains the IDataObject; its
+// STGMEDIUM and global lock are released before returning. No clipboard API,
+// filesystem, focus change or callback into a store occurs here.
+std::vector<std::string> readShelfTransferPaths(IDataObject&);
+
 struct ShelfTransferRoute {HWND owner{};UINT message{};UINT_PTR generation{};};
 // Posted notices have wParam=generation/lParam=0 and coalesce until drained.
 // Owner supplies an existing OLE-initialized STA and message pump. These objects
