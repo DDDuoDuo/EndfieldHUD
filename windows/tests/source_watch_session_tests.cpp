@@ -154,6 +154,10 @@ void actual(const std::filesystem::path&path,const std::filesystem::path&runtime
         check(scrollPoint.has_value(),"Navigation plane projects into the owned viewport");
         check(!session.wheel(*scrollPoint,-1,0,20)&&session.scrollPosition()==.5,"Windows disabled wheel setting does not scroll");
         check(session.wheel(*scrollPoint,-1,3,20),"Windows wheel accepts configured line count");session.sample(21);const double threeLineTravel=.5-session.scrollPosition();
+        const auto edgeTop=plane.project({scrollNode->rect->origin[0],scrollNode->rect->origin[1]}),edgeBottom=plane.project({scrollNode->rect->origin[0],scrollNode->rect->origin[1]+scrollNode->rect->size[1]});
+        check(edgeTop&&edgeBottom,"Wheel travel measures its actual tilted viewport");
+        const double units=scrollNode->rect->size[1]/std::max(1.,std::hypot(edgeBottom->x-edgeTop->x,edgeBottom->y-edgeTop->y));
+        checkNear(threeLineTravel*scrollInfo.hiddenLength/units,60,1e-4,"Default wheel notch now travels sixty screen points while retaining original spring timing");
         session.setScrollPosition(.5,21);session.sample(21);session.wheel(*scrollPoint,-1,1,21);session.sample(22);
         checkNear(threeLineTravel,3*(.5-session.scrollPosition()),1e-6,"System line count scales wheel movement without changing spring timing");
         session.setScrollPosition(.5,22);session.sample(22);session.wheel(*scrollPoint,-1,UINT32_MAX,22);session.sample(23);

@@ -6,6 +6,7 @@
 #include <optional>
 
 namespace endfield::native {
+class Renderer;
 
 // Original SystemHUDView buildDepthLayers/updateContent metadata. This is not a
 // claim that the Windows system host material matches NSVisualEffectView pixels.
@@ -57,6 +58,10 @@ struct DesktopBackdropStats {
     // The source parameters are exact; these cross-platform material/radial
     // appearances remain a visible/native validation gate, never an API promise.
     bool materialVisualParityVerified{}, radialVisualParityVerified{};
+    bool foregroundAttached{},groupOpacityVisualParityVerified{};
+    double panelOpacity{1};
+    std::uint64_t foregroundAttachments{},foregroundDetachments{},foregroundSurfaceAllocations{},rendererInvalidations{};
+    bool foregroundRestorationAttempted{},foregroundRestored{};
 };
 
 // Owns the lower (isTopmost=false) composition target of the caller's HWND.
@@ -80,6 +85,17 @@ public:
     // Equal state returns false without property writes or allocation. Valid
     // property-set failure resets the object; recover from caller retained state.
     bool update(const DesktopBackdropState&);
+    // Projection-only handoff on the same hidden HWND. Wraps the renderer's
+    // existing swap chain above blur/tone in one retained LayerVisual; reserves
+    // the renderer's original upper target for exact restoration. All children
+    // keep their content alpha; panelOpacity is applied once to the final group.
+    // sourceOpacity retains its existing BACKDROP-only meaning: the Projection
+    // owner keeps it at 1 when panelOpacity carries the whole-window fade.
+    bool attachForeground(Renderer&);
+    bool setPanelOpacity(double);
+    // Call while hidden or panelOpacity==0. reset/destruction also restores the
+    // old renderer binding and releases the bridge before compositor teardown.
+    bool detachForeground();
     void reset() noexcept;
     DesktopBackdropStats stats() const noexcept;
 private:

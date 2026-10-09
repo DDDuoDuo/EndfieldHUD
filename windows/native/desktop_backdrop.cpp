@@ -1,7 +1,9 @@
 #include "native/desktop_backdrop.hpp"
+#include "native/renderer.hpp"
 #include "core/source_animation.hpp"
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <limits>
 #include <stdexcept>
 #ifdef _WIN32
@@ -73,11 +75,25 @@ struct DesktopBackdrop::Impl {
     wc::ContainerVisual root{nullptr},tone{nullptr};wc::SpriteVisual blur{nullptr},tint{nullptr},vignette{nullptr};
     wc::CompositionBackdropBrush hostBrush{nullptr};wc::CompositionColorBrush tintBrush{nullptr};
     wc::CompositionRadialGradientBrush vignetteBrush{nullptr};
+    wc::LayerVisual panel{nullptr};wc::SpriteVisual foreground{nullptr};
+    wc::CompositionSurfaceBrush foregroundBrush{nullptr};wc::ICompositionSurface foregroundSurface{nullptr};
+    std::shared_ptr<RendererCompositionSurface>rendererSurface;Renderer*renderer{};
     std::array<wc::CompositionColorGradientStop,3>stops{nullptr,nullptr,nullptr};
     DesktopBackdropState state;DesktopBackdropStats counts;
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Desktop backdrop used outside its owner UI thread");}
+    bool detachBridge()noexcept{
+        if(!rendererSurface)return true;bool restored=true;
+        rendererSurface->unbindResetObserver(this);
+        try{if(target)target.Root(nullptr);if(panel)panel.Children().RemoveAll();if(target&&root)target.Root(root);}catch(...){restored=false;}
+        try{if(foreground)foreground.Brush(nullptr);if(foregroundBrush)foregroundBrush.Surface(nullptr);}catch(...){restored=false;}
+        close(foreground);close(foregroundBrush);foregroundSurface=nullptr;close(panel);
+        if(rendererSurface->valid()&&renderer){counts.foregroundRestorationAttempted=true;
+            try{renderer->restoreComposition(*rendererSurface);counts.foregroundRestored=!renderer->stats().compositionSuspended;restored&=counts.foregroundRestored;}catch(...){counts.foregroundRestored=false;restored=false;}}
+        rendererSurface.reset();renderer=nullptr;counts.foregroundAttached=false;counts.panelOpacity=1;++counts.foregroundDetachments;return restored;
+    }
     void clear()noexcept{
         // Caller must destroy on owner thread, before HWND / DispatcherQueue.
+        (void)detachBridge();
         if(target)try{target.Root(nullptr);}catch(...){}
         close(target);close(blur);close(tint);close(vignette);close(tone);close(root);
         close(hostBrush);close(tintBrush);close(vignetteBrush);for(auto&stop:stops)close(stop);close(compositor);
@@ -93,7 +109,8 @@ struct DesktopBackdrop::Impl {
     }
     ~Impl(){clear();}
     void apply(const DesktopBackdropState&next,bool initial){
-        if(initial||next.pixelWidth!=state.pixelWidth||next.pixelHeight!=state.pixelHeight){root.Size({static_cast<float>(next.pixelWidth),static_cast<float>(next.pixelHeight)});++counts.propertyWrites;}
+        if(initial||next.pixelWidth!=state.pixelWidth||next.pixelHeight!=state.pixelHeight){const winrt::Windows::Foundation::Numerics::float2 size{static_cast<float>(next.pixelWidth),static_cast<float>(next.pixelHeight)};root.Size(size);++counts.propertyWrites;
+            if(panel){panel.Size(size);foreground.Size(size);counts.propertyWrites+=2;}}
         if(initial||next.dark!=state.dark||next.projectionPlane!=state.projectionPlane){
             const auto style=desktopBackdropStyle(next.dark,next.projectionPlane);tintBrush.Color(gray(style.tintWhite,1));++counts.propertyWrites;
             for(std::size_t i=0;i<stops.size();++i){stops[i].Color(gray(0,style.vignetteAlpha[i]));++counts.propertyWrites;}
@@ -157,9 +174,43 @@ void DesktopBackdrop::initialize(void*handle,const DesktopBackdropState&state,co
     impl_=std::move(candidate);
 }
 bool DesktopBackdrop::update(const DesktopBackdropState&state){
-    auto&i=*impl_;i.onThread();validate(state);need(i.counts.initialized,"Backdrop is not initialized");if(i.state==state)return false;
+    auto&i=*impl_;i.onThread();validate(state);need(i.counts.initialized,"Backdrop is not initialized");
+    if(i.rendererSurface)need(i.rendererSurface->valid()&&i.rendererSurface->width()==state.pixelWidth&&i.rendererSurface->height()==state.pixelHeight&&state.projectionPlane,"Resize the Projection renderer before updating its bridged backdrop");
+    if(i.state==state)return false;
     try{i.apply(state,false);}catch(...){i.clear();throw;}return true;
 }
+bool DesktopBackdrop::attachForeground(Renderer&renderer){
+    auto&i=*impl_;i.onThread();need(i.counts.initialized&&i.state.projectionPlane,"Foreground bridge requires an initialized Projection backdrop");
+    if(i.rendererSurface){need(i.renderer==&renderer&&i.rendererSurface->valid(),"Backdrop already has another foreground renderer");return false;}
+    need(!IsWindowVisible(i.window),"Foreground handoff requires a hidden owner HWND");
+    auto borrowed=renderer.borrowCompositionSurface();need(borrowed->window()==i.window&&borrowed->width()==i.state.pixelWidth&&borrowed->height()==i.state.pixelHeight,"Foreground renderer must match backdrop HWND and physical dimensions");
+    need(!renderer.stats().compositionSuspended,"Foreground renderer binding is already suspended");
+    wc::ICompositionSurface surface{nullptr};wc::CompositionSurfaceBrush brush{nullptr};wc::SpriteVisual foreground{nullptr};wc::LayerVisual panel{nullptr};bool suspended{};
+    try{
+        const auto interop=i.compositor.as<ABI::Windows::UI::Composition::ICompositorInterop>();
+        checkResult(interop->CreateCompositionSurfaceForSwapChain(static_cast<IUnknown*>(borrowed->swapChain()),reinterpret_cast<ABI::Windows::UI::Composition::ICompositionSurface**>(winrt::put_abi(surface))),L"Projection: wrap existing renderer swap chain");
+        brush=i.compositor.CreateSurfaceBrush(surface);brush.Stretch(wc::CompositionStretch::None);brush.HorizontalAlignmentRatio(0);brush.VerticalAlignmentRatio(0);
+        foreground=i.compositor.CreateSpriteVisual();foreground.Brush(brush);panel=i.compositor.CreateLayerVisual();
+        const winrt::Windows::Foundation::Numerics::float2 size{static_cast<float>(i.state.pixelWidth),static_cast<float>(i.state.pixelHeight)};
+        foreground.Size(size);panel.Size(size);panel.Opacity(1);
+        // Only the two existing target bindings change; no additional HWND,
+        // swap chain, bitmap, device, or fullscreen application texture exists.
+        suspended=renderer.suspendComposition(*borrowed);i.target.Root(nullptr);
+        panel.Children().InsertAtBottom(i.root);panel.Children().InsertAtTop(foreground);i.target.Root(panel);
+    }catch(...){
+        const auto failure=std::current_exception();try{if(i.target)i.target.Root(nullptr);if(panel)panel.Children().RemoveAll();if(i.target)i.target.Root(i.root);}catch(...){i.clear();}
+        try{if(foreground)foreground.Brush(nullptr);if(brush)brush.Surface(nullptr);}catch(...){}close(foreground);close(brush);surface=nullptr;close(panel);
+        if(suspended&&borrowed->valid())try{renderer.restoreComposition(*borrowed);}catch(...){}std::rethrow_exception(failure);
+    }
+    i.renderer=&renderer;i.rendererSurface=std::move(borrowed);i.panel=std::move(panel);i.foreground=std::move(foreground);i.foregroundBrush=std::move(brush);i.foregroundSurface=std::move(surface);
+    try{i.rendererSurface->bindResetObserver(&i,[](void*context)noexcept{auto&owner=*static_cast<Impl*>(context);++owner.counts.rendererInvalidations;owner.clear();});}catch(...){(void)i.detachBridge();throw;}
+    i.counts.foregroundAttached=true;i.counts.panelOpacity=1;i.counts.foregroundRestorationAttempted=i.counts.foregroundRestored=false;++i.counts.foregroundAttachments;++i.counts.foregroundSurfaceAllocations;i.counts.visualAllocations+=2;++i.counts.brushAllocations;return true;
+}
+bool DesktopBackdrop::setPanelOpacity(double opacity){
+    auto&i=*impl_;i.onThread();unit(opacity,"Projection panel opacity outside unit range");need(i.counts.foregroundAttached&&i.rendererSurface&&i.rendererSurface->valid(),"Attach Projection foreground before changing panel opacity");if(i.counts.panelOpacity==opacity)return false;
+    try{i.panel.Opacity(static_cast<float>(opacity));i.counts.panelOpacity=opacity;++i.counts.propertyWrites;return true;}catch(...){i.clear();throw;}
+}
+bool DesktopBackdrop::detachForeground(){auto&i=*impl_;i.onThread();if(!i.rendererSurface)return false;need(!IsWindowVisible(i.window)||i.counts.panelOpacity==0,"Foreground restoration requires a hidden or fully faded owner");if(!i.detachBridge()){i.clear();throw std::runtime_error("Projection foreground restoration failed; bridge retired");}return true;}
 void DesktopBackdrop::reset()noexcept{impl_->clear();}
 DesktopBackdropStats DesktopBackdrop::stats()const noexcept{return impl_->counts;}
 #endif

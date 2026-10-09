@@ -80,6 +80,20 @@ void run(const std::filesystem::path& shader) {
     renderer.draw(false);
     auto image=renderer.readback();
     check(image.pixels[(16*32+16)*4+2]==255 && image.pixels[(16*32+16)*4+3]==255,"Original source pipeline renders retained vertex colors");
+    const auto beforeGate=source.stats();const auto nativeBeforeGate=renderer.stats();
+    check(renderer.sourcePassEnabled()&&renderer.stats().sourcePassEnabled,"Existing HUD source pass starts enabled");
+    allocations=0;countAllocations=true;
+    bool gateChanged{},gateEqual{};
+    try{gateChanged=renderer.setSourcePassEnabled(false);gateEqual=renderer.setSourcePassEnabled(false);}
+    catch(...){countAllocations=false;throw;}countAllocations=false;
+    check(gateChanged&&!gateEqual&&allocations==0&&!renderer.stats().sourcePassEnabled,"Source gate changes once and equality allocates nothing");
+    renderer.draw(false);image=renderer.readback();
+    check(image.pixels[(16*32+16)*4+3]==0&&source.stats().frames==beforeGate.frames,"Disabled source-only frame clears old pixels without executing source passes");
+    check(source.active()&&source.stats().draws==beforeGate.draws&&source.stats().payloadBytes==beforeGate.payloadBytes,"Suspension retains original ordered source draws and resource bytes");
+    check(renderer.setSourcePassEnabled(true)&&!renderer.setSourcePassEnabled(true),"Restoration is an equal-safe presentation event");
+    renderer.draw(false);image=renderer.readback();
+    check(image.pixels[(16*32+16)*4+2]==255&&image.pixels[(16*32+16)*4+3]==255&&source.stats().frames==beforeGate.frames+1,"Restoring the gate draws the same retained source again");
+    check(source.stats().geometryUploads==beforeGate.geometryUploads&&source.stats().textureUploads==beforeGate.textureUploads&&source.stats().uniformUploads==beforeGate.uniformUploads&&source.stats().uniformAllocations==beforeGate.uniformAllocations&&source.stats().pipelines==beforeGate.pipelines&&renderer.stats().meshUploads==nativeBeforeGate.meshUploads&&renderer.stats().textureUploads==nativeBeforeGate.textureUploads,"Toggling the source pass uploads no geometry, textures, constants or pipelines");
     const auto before=source.stats();
     rejects([&] {source.setMesh(meshID,2,32,bytes(quad),std::span(indices).first(3));},"A shorter replacement cannot invalidate an active draw");
     rejects([&] {source.setMesh(meshID,2,16,bytes(quad),indices);},"A smaller stride cannot invalidate the active vertex layout");
@@ -130,9 +144,16 @@ void run(const std::filesystem::path& shader) {
           "Native caption surface composites over original shader output in encoded space");
     check(pixel(24,0)==0 && std::abs(pixel(24,2)-137)<=1 && pixel(24,3)==255,
           "Transparent native surface preserves original source pixels");
+    const auto mixedGate=source.stats();renderer.setSourcePassEnabled(false);renderer.draw(false);image=renderer.readback();
+    check(std::abs(pixel(8,0)-128)<=1&&pixel(8,2)==0&&std::abs(pixel(8,3)-128)<=1&&pixel(24,3)==0,"Disabled source leaves native content and its original alpha intact");
+    check(source.stats().frames==mixedGate.frames,"Native-only draws do not increment original source frame statistics");
+    renderer.setSourcePassEnabled(true);renderer.draw(false);image=renderer.readback();
+    check(pixel(24,3)==255&&std::abs(pixel(24,2)-137)<=1,"Source resumes underneath existing native content without republishing either list");
     renderer.clearResources(); renderer.draw(false); image=renderer.readback();
     check(source.stats().payloadBytes==0 && !source.active(),"Scene teardown releases all original resources");
     check(image.pixels[(16*32+16)*4+3]==0,"Source teardown does not leave old content visible");
+    renderer.setSourcePassEnabled(false);renderer.reset();check(renderer.sourcePassEnabled()&&renderer.stats().sourcePassEnabled,"Reset restores the default source gate");
+    renderer.initialize(window.value,32,32,{Driver::warpForTests,shader,RenderTarget::offscreenForTests});check(renderer.sourcePassEnabled(),"Reinitialization preserves default HUD source behavior");
 }
 }
 int wmain(int argc,wchar_t**argv) {

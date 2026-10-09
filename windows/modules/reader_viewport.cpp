@@ -20,7 +20,7 @@ void ReaderViewport::setPage(std::optional<ReaderPageAnchor>p,double t,bool redu
     if(differentBook){pendingOffset_.reset();pendingView_.reset();turnDirection_=0;offset_=0;view_={};}
     const bool changed=differentBook||(!p)!=(!page_)||(p&&page_&&p->location!=page_->location);
     const bool animate=changed&&page_&&p&&turnDirection_!=0;
-    if(changed){const bool same=page_&&p&&page_->bookID==p->bookID;offset_=pendingOffset_.value_or(0);pendingOffset_.reset();view_=same&&p->illustration?pendingView_.value_or(view_):ReaderImageView{};pendingView_.reset();panStart_.reset();}
+    if(changed){animatedScroll_=false;const bool same=page_&&p&&page_->bookID==p->bookID;offset_=pendingOffset_.value_or(0);pendingOffset_.reset();view_=same&&p->illustration?pendingView_.value_or(view_):ReaderImageView{};pendingView_.reset();panStart_.reset();}
     page_=std::move(p);if(changed)scheduleDetail(t);animatedTurn_=animate&&active_&&!reduceMotion?turnDirection_:0;
     if(animatedTurn_){if(pageTurnSequence_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("Reader turn sequence exhausted");++pageTurnSequence_;}if(changed)turnDirection_=0;
 }

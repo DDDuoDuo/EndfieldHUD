@@ -702,3 +702,26 @@ A clean Windows build passed all 156 registered suites, the explicit backdrop
 check, and combined hardware module coverage. The combined run needed a corrected
 asset-checksum argument in its test script, with no runtime change. Live Reader,
 Projection, real Activity sampling and full-app performance remain unverified.
+
+
+Snapshot 96 connects Reader controls and the Projection workspace to the shared
+renderer and host. Projection borrows the existing media broker, backdrop, file
+picker and Shelf drop registration; return/quit retires its visible resources
+before releasing media. Calendar civil-date/storage/artwork foundations and
+Map camera/pin/presentation models now have source comparisons and bounded-state
+tests. Their visible owners are still being integrated.
+
+The Reader preview exposed slow zoom, vertical page rebound and sidebar clicks
+being intercepted. Its correction retains separate base/detail page textures,
+reuses one bounded EPUB image decode, and keeps document rendering on the shared
+worker. Wheel changes continue from the sampled position; crossing a vertical
+page boundary clears the old interpolation. Only a Reader-owned press captures
+the matching release. Sidebar wheel travel is doubled while retaining the same
+spring and direct dragging.
+
+All 175 Windows suites and combined hardware module coverage passed. Reader
+checks include actual button/navigation routing, retained-texture zoom/pan,
+bounded real PDF/EPUB rendering and page-boundary behavior. Small synthetic
+document timings do not establish full-document or whole-app performance.
+The corrected Reader preview still needs the user's live recheck; Projection
+media/drop/return still needs live acceptance. Neither is a stable release claim.

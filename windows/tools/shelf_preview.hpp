@@ -49,6 +49,14 @@ public:
     void cancelPanels();
     void cancelInteraction();
     void setNativeDragActive(bool);
+    // Selects the existing HWND's file-drop route. Present callbacks enable an
+    // external owner; null restores Shelf's sampled input gate. Call only on a
+    // route transition. Callbacks own their dependencies; commit only enqueues
+    // bounded work, which the external owner drains after the COM callback.
+    void setExternalDropCallbacks(std::optional<native::ShelfDropTarget::Callbacks>,double time);
+    // Borrowed existing COM target; retaining callers must AddRef. No second
+    // registration is created. Null when file-drop registration was disabled.
+    IDropTarget* fileDropTarget()const noexcept;
     ehud::data::ShelfFileAccess access(std::string_view);
     std::unique_ptr<native::ShelfDragTransfer> prepareDrag(std::string_view);
     const modules::FileShelfState& state()const;

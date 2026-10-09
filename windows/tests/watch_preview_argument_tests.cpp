@@ -86,6 +86,10 @@ void run(const fs::path&executable){
     const auto sentinel=existing/L"keep.txt";{std::ofstream out(sentinel);out<<"owned sentinel";}
     const auto existingReport=temp.root/L"existing report.json";{std::ofstream out(existingReport);out<<"owned report";}
     unsigned index{};
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--projection"},"Projection needs the visible shared HUD");
+    reject(executable,temp,++index,{L"--visible",L"--projection",L"--projection"},"Duplicate Projection mode");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--reader"},"Reader needs the shared module owner");
+    reject(executable,temp,++index,{L"--visible",L"--reader",L"--reader"},"Duplicate Reader mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-activity"},
            "Native Activity requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-activity"},

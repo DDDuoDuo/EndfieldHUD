@@ -46,6 +46,11 @@ void run(){
     check(!h.hudClosed(cycle.generation),"Cancellation drops pending external actions too");
     cycle=h.open({true,false,false,false},context).value();
     check(!h.hudClosed(cycle.generation,false)&&!h.active(),"Unavailable source and fallback display cancels rather than stranding a handoff");
+    cycle=h.open({true,false,false,false},context).value();result=h.hudClosed(cycle.generation,true,101);
+    check(result&&result->context.display==101,"A fallback monitor selected after HUD exit becomes the Projection display");
+    check(h.reposition(102)&&!h.reposition(102),"Display changes update only visible Projection context");
+    h.returnToHUD();check(!h.reposition(103),"Monitor reposition cannot alter a running dismissal");result=h.projectionClosed(cycle.generation);
+    check(result&&result->context.display==102&&result->context.previousApplication==context.previousApplication,"Return preserves the latest display and original foreground application separately");
 }
 }
 int main(){try{run();std::cout<<"PASS "<<checks<<" Projection handoff checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

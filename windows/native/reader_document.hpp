@@ -11,10 +11,10 @@ struct NativeReaderInfo {
     // is available; this does not affect an already saved library title.
     bool pdfMetadataTitleAvailable{};
 };
-struct NativeReaderStats {std::uint64_t textLayouts{},pagesRendered{},cacheHits{},pdfRenders{},imageDecodes{};std::size_t cachedPages{};};
+struct NativeReaderStats {std::uint64_t textLayouts{},pagesRendered{},cacheHits{},pdfRenders{},imageDecodes{},imageDecodeCacheHits{},detailMetadataCacheHits{};std::size_t cachedPages{},cachedImageBytes{};};
 // Existing borrowed FIFO/MTA UtilityExecutor only. No worker/window/service,
 // timer, renderer, font loader or referenced-file writes. One read-only opened
-// handle is retained for a document; Windows references only, explicit relink
+// handle and at most one 2048×2048 decoded EPUB image are retained for a document; Windows references only, explicit relink
 // required for opaque Mac bookmarks. Accepted jobs must drain before destruction.
 class NativeReaderDocument final:public modules::ReaderDocumentSource {
 public:

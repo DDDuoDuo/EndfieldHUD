@@ -40,7 +40,13 @@ constexpr UINT previewMessage=WM_APP+189;
 std::atomic<UINT_PTR> nextGeneration{1};
 }
 struct ShelfPreview::Impl {
-    struct DropState {HWND hwnd{};core::Projection projection;double scale{1};bool enabled{};};
+    struct DropState {
+        HWND hwnd{};core::Projection projection;double scale{1};bool enabled{},noticeExternal{};
+        std::shared_ptr<const gpu::ShelfDropTarget::Callbacks> external;
+        // Commit can reenter a route transition. Its deferred notice still
+        // belongs to the callback snapshot that completed the transaction.
+        std::optional<bool> committedExternal;
+    };
     struct Selection {std::string id;double fromY{},fromZ{},toY{},toZ{},start{};};
     HWND hwnd;gpu::LayerRasterizer&raster;const gpu::NativeShelfAssets&assets;ShelfPreviewOptions options;
     gpu::NativeFileShelfFiles files{{"文件","文件夹"}};
@@ -89,13 +95,13 @@ struct ShelfPreview::Impl {
         if(options.registerDropTarget){
             auto shared=dropState;auto retainedStore=store;
             drop=std::make_unique<gpu::ShelfDropTarget>(gpu::ShelfTransferRoute{hwnd,noticeMessage,generation},gpu::ShelfDropTarget::Callbacks{
-                [shared](POINTL p){if(!shared->enabled)return false;POINT point{p.x,p.y};if(!ScreenToClient(shared->hwnd,&point))return false;const auto local=shared->projection.unproject({double(point.x),double(point.y)});return local&&contains(mod::FileShelfState::bounds(),*local);},
-                [retainedStore](auto paths){retainedStore->add(paths);return true;}});
+                [shared](POINTL p){const auto route=shared->external;shared->noticeExternal=bool(route);if(route)return route->acceptsPoint(p);if(!shared->enabled)return false;POINT point{p.x,p.y};if(!ScreenToClient(shared->hwnd,&point))return false;const auto local=shared->projection.unproject({double(point.x),double(point.y)});return local&&contains(mod::FileShelfState::bounds(),*local);},
+                [shared,retainedStore](auto paths){const auto route=shared->external;shared->noticeExternal=bool(route);const bool committed=route?route->commit(paths):(retainedStore->add(paths),true);if(committed)shared->committedExternal=bool(route);return committed;}});
             need(SUCCEEDED(drop->registerTarget()),"Register Windows Shelf file drop target");drop->setEnabled(false);
         }
         images.reserve(10);requests.reserve(8);selectionTracks.reserve(16);selectionPoses.reserve(8);composed.reserve(12);
     }
-    ~Impl(){dropState->enabled=false;if(drop)drop->stop();if(icons)icons->stop();}
+    ~Impl(){dropState->enabled=false;dropState->external.reset();if(drop)drop->stop();if(icons)icons->stop();}
     void request(ShelfPreviewAction value){if(action||nativeDrag)return;action=std::move(value);need(PostMessageW(hwnd,actionMessage,generation,0)!=FALSE,"Queue Shelf user action");}
     const data::ShelfRecord*record(std::string_view id)const{const auto&items=store->items();const auto found=std::find_if(items.begin(),items.end(),[&](const auto&i){return i.id==id;});return found==items.end()?nullptr:&*found;}
     std::optional<std::string_view>hitAction(core::Point point)const{
@@ -120,6 +126,13 @@ struct ShelfPreview::Impl {
             case mod::FileShelfState::EventKind::collectionReveal:revealStart=e.animated?time:-1;revealDirection=e.direction;break;
             default:break;
         }
+    }
+    void drainDrop(){
+        if(!drop)return;auto changes=drop->takeChanges(generation);bool changedState{};
+        if(changes.committed){const bool external=dropState->committedExternal.value_or(dropState->noticeExternal);dropState->committedExternal.reset();
+            if(!external){state->refreshFromStore();std::vector<std::string>ids;for(const auto&file:store->items())if(std::find(changes.paths.begin(),changes.paths.end(),file.windowsPath)!=changes.paths.end())ids.push_back(file.id);state->revealItems(ids);revealStart=time;revealDirection=1;changedState=true;}}
+        if(!dropState->noticeExternal){if(changes.feedbackChanged){state->setDropTarget(changes.hovering);changedState=true;}if(changes.error){state->showError(*changes.error);changedState=true;}}
+        if(changedState)changed();
     }
     void content(){
         if(!dirty)return;presentation.update(*state,appearance);requests.clear();images.clear();
@@ -164,7 +177,7 @@ void ShelfPreview::update(const Matrix&center,const core::source::DesktopChromeS
     const auto*shown=sample.current.module==core::Module::fileShelf?&sample.current:sample.incoming&&sample.incoming->module==core::Module::fileShelf?&*sample.incoming:nullptr;
     const bool active=shown&&sample.requested==core::Module::fileShelf;
     if(active!=i.active){i.active=active;if(active)i.state->activate();else{i.state->deactivate();i.dragCandidate.reset();i.pressed=false;if(i.icons)i.icons->hide();}i.changed();}
-    i.acceptsInput=active&&sample.acceptsModuleInput&&!i.nativeDrag;i.dropState->enabled=i.acceptsInput;if(i.drop)i.drop->setEnabled(i.acceptsInput);
+    i.acceptsInput=active&&sample.acceptsModuleInput&&!i.nativeDrag;i.dropState->enabled=i.acceptsInput;if(i.drop)i.drop->setEnabled(bool(i.dropState->external)||i.acceptsInput);
     if(!shown){i.pose.reset();i.registration.update({});return;}
     i.content();i.surface->update(center,settings,*shown,opacity);i.pose=i.surface->pose();const auto&p=*i.pose;
     const auto camera=gpu::layerViewportProjection(i.metrics.pixelWidth,i.metrics.pixelHeight)*Matrix::scale(i.metrics.scale,i.metrics.scale);
@@ -207,7 +220,7 @@ bool ShelfPreview::message(const app::NativeMessage&m,double t){auto&i=*impl_;if
         if(notice.kind==gpu::ShelfPreviewEventKind::failed)showError("Windows 未提供此文件的预览程序。",t);
         else if(notice.kind==gpu::ShelfPreviewEventKind::revealRequested)i.request({ShelfPreviewAction::Kind::reveal,notice.itemID});}return true;}
     const Impl::Event event(i,t);
-    if(m.message==noticeMessage&&i.drop){auto changes=i.drop->takeChanges(m.wParam);if(changes.committed){i.state->refreshFromStore();std::vector<std::string>ids;for(const auto&file:i.store->items())if(std::find(changes.paths.begin(),changes.paths.end(),file.windowsPath)!=changes.paths.end())ids.push_back(file.id);i.state->revealItems(ids);i.revealStart=i.time;i.revealDirection=1;}if(changes.feedbackChanged)i.state->setDropTarget(changes.hovering);if(changes.error)i.state->showError(*changes.error);i.changed();return true;}
+    if(m.message==noticeMessage&&i.drop){i.drainDrop();return true;}
     if(m.message==iconMessage&&i.icons){if(!i.icons->drain(m.wParam).empty())i.dirty=true;return true;}return false;
 }
 bool ShelfPreview::pointerLocked()const{return impl_->dragCandidate.has_value()||impl_->nativeDrag;}
@@ -221,11 +234,25 @@ bool ShelfPreview::filterKey(const app::NativeMessage&m){MSG message{};message.h
 void ShelfPreview::cancelPanels(){impl_->picker->cancel();impl_->preview->close(false);}
 void ShelfPreview::cancelInteraction(){auto&i=*impl_;i.dragCandidate.reset();i.pressed=false;i.action.reset();}
 void ShelfPreview::setNativeDragActive(bool value){impl_->nativeDrag=value;cancelInteraction();}
+void ShelfPreview::setExternalDropCallbacks(std::optional<gpu::ShelfDropTarget::Callbacks> callbacks,double t){
+    auto&i=*impl_;const Impl::Event event(i,t);need(!i.released,"Shelf drop route is released");
+    if(callbacks)need(bool(callbacks->acceptsPoint)&&bool(callbacks->commit),"Incomplete external file-drop callbacks");
+    if(!callbacks&&!i.dropState->external)return;
+    need(i.drop!=nullptr,"Shelf file-drop registration is disabled");
+    auto next=callbacks?std::make_shared<const gpu::ShelfDropTarget::Callbacks>(std::move(*callbacks)):nullptr;
+    i.drop->setEnabled(false);i.drainDrop();
+    i.dropState->external=std::move(next);
+    // A route can change while COM prevents notice draining. Remove an old
+    // Shelf hover now; later commits retain their own origin independently.
+    if(i.state->dropTarget()){i.state->setDropTarget(false);i.changed();}
+    i.drop->setEnabled(bool(i.dropState->external)||i.acceptsInput);
+}
+IDropTarget*ShelfPreview::fileDropTarget()const noexcept{return impl_->drop?impl_->drop->dropTarget():nullptr;}
 data::ShelfFileAccess ShelfPreview::access(std::string_view id){return impl_->store->access(id);}
 std::unique_ptr<gpu::ShelfDragTransfer>ShelfPreview::prepareDrag(std::string_view id){auto&i=*impl_;auto ids=i.state->dragSelection(id);return std::make_unique<gpu::ShelfDragTransfer>(i.store->prepareCopy(ids),i.files.platform().resolve);}
 const mod::FileShelfState&ShelfPreview::state()const{return *impl_->state;}
 void ShelfPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ShelfPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene->entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
 void ShelfPreview::collected(gpu::Renderer&r){need(impl_->scene->collectRetired(r),"Shelf retired artwork must be detached after publication");}
-void ShelfPreview::release(gpu::Renderer&r){auto&i=*impl_;cancelPanels();i.dropState->enabled=false;if(i.drop)i.drop->stop();if(i.icons)i.icons->stop();need(i.scene->releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Shelf resources remain published during teardown");i.released=true;}
+void ShelfPreview::release(gpu::Renderer&r){auto&i=*impl_;cancelPanels();i.dropState->enabled=false;i.dropState->external.reset();if(i.drop)i.drop->stop();if(i.icons)i.icons->stop();need(i.scene->releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Shelf resources remain published during teardown");i.released=true;}
 }

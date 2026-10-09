@@ -194,7 +194,9 @@ bool SourceWatchSession::wheel(Point point,double steps,std::uint32_t lines,doub
     const auto&info=p.rendered.sourceFrame->layoutReport.scroll;if(!info||info->hiddenLength<=0)return false;
     const auto*node=p.resolved(info->viewportID);if(!node||!node->rect)return false;
     const double units=p.unitsPerPoint(*node,*node->rect),page=node->rect->size[1]/std::max(.0001,units);
-    const double distance=lines==UINT32_MAX?page:std::min(page,double(lines)*10.);
+    // Windows wheel notches need more travel than the source trackpad input.
+    // Keep the original spring/edge behavior and scale only the OS line step.
+    const double distance=lines==UINT32_MAX?page:std::min(page,double(lines)*20.);
     return scroll(point,steps*distance,true,GesturePhase::none,GesturePhase::none,time);
 }
 std::optional<WatchActivation> SourceWatchSession::activate(std::string_view id,double time){auto&p=*impl_;const auto at=p.advance(time);return at?p.perform(id,*at,{}):std::nullopt;}

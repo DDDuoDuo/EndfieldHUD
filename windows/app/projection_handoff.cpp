@@ -11,11 +11,16 @@ std::optional<ProjectionHandoff::Command>ProjectionHandoff::open(OpeningConditio
     if(active()||!gate.hudOpen||gate.quitting||gate.closeAlreadyPending||gate.shelfDragging)return {};
     ++generation_;context_=context;external_.reset();phase_=Phase::closingHUD;return command(Action::closeHUD);
 }
-std::optional<ProjectionHandoff::Command>ProjectionHandoff::hudClosed(std::uint64_t token,bool displayAvailable){
+std::optional<ProjectionHandoff::Command>ProjectionHandoff::hudClosed(std::uint64_t token,bool displayAvailable,std::optional<std::uintptr_t>display){
     if(token!=generation_||phase_!=Phase::closingHUD)return {};
     if(!displayAvailable){cancel();return {};}
+    if(display)context_.display=*display;
     if(external_)return finish(Action::external);
     phase_=Phase::projection;return command(Action::showProjection);
+}
+bool ProjectionHandoff::reposition(std::uintptr_t display)noexcept{
+    if(phase_!=Phase::projection||context_.display==display)return false;
+    context_.display=display;return true;
 }
 std::optional<ProjectionHandoff::Command>ProjectionHandoff::returnToHUD(){
     if(phase_!=Phase::projection)return {};

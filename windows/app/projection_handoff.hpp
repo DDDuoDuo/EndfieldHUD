@@ -23,7 +23,9 @@ public:
     };
     struct OpeningConditions { bool hudOpen{}, quitting{}, closeAlreadyPending{}, shelfDragging{}; };
     std::optional<Command> open(OpeningConditions,Context);
-    std::optional<Command> hudClosed(std::uint64_t generation,bool displayAvailable=true);
+    std::optional<Command> hudClosed(std::uint64_t generation,bool displayAvailable=true,
+        std::optional<std::uintptr_t> resolvedDisplay={});
+    bool reposition(std::uintptr_t resolvedDisplay)noexcept;
     std::optional<Command> returnToHUD();
     std::optional<Command> projectionClosed(std::uint64_t generation);
     // A latest external action replaces an older deferred request, as in the

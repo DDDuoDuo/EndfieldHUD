@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstring>
 #include <cwchar>
+#include <exception>
 #include <limits>
 #include <map>
 #include <utility>
@@ -265,6 +266,24 @@ unsigned RendererMediaTexture::height()const noexcept{return impl_->height;}
 const std::string&RendererMediaTexture::sourceID()const noexcept{return impl_->id;}
 void*RendererMediaTexture::targetSurface()const noexcept{return impl_->surface.Get();}
 
+struct RendererCompositionSurface::Impl {
+    ComPtr<IDXGISwapChain1>swapchain;std::weak_ptr<const int>epoch;
+    HWND window{};DWORD thread{};unsigned width{},height{};bool registered{true};
+    void*observer{};void(*willReset)(void*)noexcept{};
+};
+RendererCompositionSurface::RendererCompositionSurface(std::unique_ptr<Impl>impl):impl_(std::move(impl)){}
+RendererCompositionSurface::~RendererCompositionSurface()=default;
+bool RendererCompositionSurface::valid()const noexcept{return impl_->registered&&!impl_->epoch.expired();}
+void*RendererCompositionSurface::swapChain()const noexcept{return valid()?impl_->swapchain.Get():nullptr;}
+void*RendererCompositionSurface::window()const noexcept{return valid()?impl_->window:nullptr;}
+unsigned RendererCompositionSurface::width()const noexcept{return impl_->width;}
+unsigned RendererCompositionSurface::height()const noexcept{return impl_->height;}
+void RendererCompositionSurface::bindResetObserver(void*owner,void(*callback)(void*)noexcept){
+    require(valid()&&GetCurrentThreadId()==impl_->thread&&owner&&callback,"Invalid composition bridge reset observer");
+    require(!impl_->observer||impl_->observer==owner,"Composition swap chain already belongs to a backdrop bridge");impl_->observer=owner;impl_->willReset=callback;
+}
+void RendererCompositionSurface::unbindResetObserver(void*owner)noexcept{if(impl_->observer==owner){impl_->observer=nullptr;impl_->willReset=nullptr;}}
+
 struct Renderer::Impl {
     struct Mesh {
         ComPtr<ID3D11Buffer> vertices, indices;
@@ -333,9 +352,11 @@ struct Renderer::Impl {
     std::map<std::string,std::unique_ptr<NativeGroup>> groups;
     std::map<std::string,std::shared_ptr<RendererMediaTexture>>media;
     std::shared_ptr<const int>epoch=std::make_shared<const int>(0);
+    std::shared_ptr<RendererCompositionSurface>compositionSurface;bool compositionSuspended{};
     std::shared_ptr<MediaBudget>mediaBudget=std::make_shared<MediaBudget>();
     std::size_t groupBytes{};
     std::unique_ptr<SourceGraphics> source;
+    bool sourcePassEnabled{true};
 
     bool assignDraws(std::vector<Draw>&,std::vector<ObjectUniform>&,
         std::span<const DrawObject>,bool localGroup);
@@ -358,6 +379,12 @@ struct Renderer::Impl {
     void invalidate(const Texture* texture){for(auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if((draw.texture==texture||draw.alphaMask==texture)){group->dirty=true;break;}}}
 
     ~Impl() {
+        if(compositionSurface){auto&bridge=*compositionSurface->impl_;bridge.registered=false;
+            const auto observer=bridge.observer;const auto callback=bridge.willReset;bridge.observer=nullptr;bridge.willReset=nullptr;
+            // The registered owner drops the CompositionSurface/brush before
+            // this same swap chain, old target, and device are released.
+            if(callback)callback(observer);bridge.swapchain.Reset();
+        }
         if (target) target->SetRoot(nullptr);
         if (visual) visual->SetContent(nullptr);
         if (composition) composition->Commit();
@@ -533,7 +560,27 @@ void Renderer::resize(std::uint32_t width, std::uint32_t height) {
         r.outputView.Reset(); r.backBuffer.Reset(); r.linearView.Reset(); r.linearResource.Reset(); r.linearTarget.Reset();
         if (!r.offscreen) checked(r.swapchain->ResizeBuffers(2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0), "Resize composition buffers");
         r.width = width; r.height = height; r.bindTargets();
+        if(r.compositionSurface){r.compositionSurface->impl_->width=width;r.compositionSurface->impl_->height=height;}
     } catch (...) { reset(); throw; }
+}
+std::shared_ptr<RendererCompositionSurface>Renderer::borrowCompositionSurface(){
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();require(!r.offscreen&&r.swapchain&&r.target&&r.visual,"Offscreen renderer has no composition swap chain");
+    if(!r.compositionSurface){auto value=std::make_unique<RendererCompositionSurface::Impl>();value->swapchain=r.swapchain;value->epoch=r.epoch;value->window=r.window;value->thread=r.ownerThread;value->width=r.width;value->height=r.height;
+        r.compositionSurface=std::shared_ptr<RendererCompositionSurface>(new RendererCompositionSurface(std::move(value)));++r.counters.compositionSurfaceBorrows;}
+    return r.compositionSurface;
+}
+bool Renderer::suspendComposition(const RendererCompositionSurface&surface){
+    require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();require(surface.valid()&&surface.impl_->epoch.lock()==r.epoch&&r.compositionSurface.get()==&surface,"Stale or foreign composition swap chain");
+    if(r.compositionSuspended)return false;require(!IsWindowVisible(r.window),"Composition handoff requires a hidden owner HWND");
+    try{checked(r.target->SetRoot(nullptr),"Suspend upper composition root");checked(r.visual->SetContent(nullptr),"Suspend upper swap-chain binding");checked(r.composition->Commit(),"Commit suspended upper binding");
+        r.compositionSuspended=true;++r.counters.compositionSuspends;return true;
+    }catch(...){const auto failure=std::current_exception();const auto a=r.visual->SetContent(r.swapchain.Get()),b=r.target->SetRoot(r.visual.Get()),c=r.composition->Commit();if(FAILED(a)||FAILED(b)||FAILED(c))reset();std::rethrow_exception(failure);}
+}
+bool Renderer::restoreComposition(const RendererCompositionSurface&surface){
+    if(!surface.valid())return false;require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();require(surface.impl_->epoch.lock()==r.epoch&&r.compositionSurface.get()==&surface,"Foreign composition swap chain cannot restore this renderer");
+    if(!r.compositionSuspended)return false;
+    try{checked(r.visual->SetContent(r.swapchain.Get()),"Restore original upper swap-chain binding");checked(r.target->SetRoot(r.visual.Get()),"Restore original upper composition root");checked(r.composition->Commit(),"Commit restored upper binding");r.compositionSuspended=false;++r.counters.compositionRestores;return true;}
+    catch(...){reset();throw;}
 }
 bool Renderer::setMesh(std::string sourceID, std::uint64_t revision, MeshData input) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread(); identity(sourceID);
@@ -857,7 +904,7 @@ void Renderer::draw(bool present) {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
     require(!present || !r.offscreen, "An isolated render target cannot present to the desktop");
     r.readbackReady = false;
-    const bool originalBackground = r.source && r.source->active();
+    const bool originalBackground = r.sourcePassEnabled && r.source && r.source->active();
     if (originalBackground) {
         r.source->renderTo(r.backBuffer.Get(), r.width, r.height);
         if (r.draws.empty()) {
@@ -946,12 +993,19 @@ void Renderer::clearResources() {
     if (impl_->source) impl_->source->clear();
 }
 void Renderer::reset() noexcept { impl_.reset(); }
+bool Renderer::setSourcePassEnabled(bool enabled){
+    require(impl_ != nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();
+    if(r.sourcePassEnabled==enabled)return false;r.sourcePassEnabled=enabled;return true;
+}
+bool Renderer::sourcePassEnabled()const noexcept{return !impl_||impl_->sourcePassEnabled;}
 RendererStats Renderer::stats() const noexcept {
     if (!impl_) return {};
     auto result = impl_->counters;
     result.meshes = impl_->meshes.size(); result.textures = impl_->textures.size(); result.objects = impl_->draws.size();
     result.nativeGroups=impl_->groups.size();result.nativeGroupBytes=impl_->groupBytes;
     result.mediaTargets=impl_->media.size();result.mediaLiveBytes=impl_->mediaBudget->bytes.load(std::memory_order_relaxed);result.resourceBytes+=result.mediaLiveBytes;
+    result.compositionSuspended=impl_->compositionSuspended;
+    result.sourcePassEnabled=impl_->sourcePassEnabled;
     return result;
 }
 RendererDeviceInfo Renderer::deviceInfo() const {

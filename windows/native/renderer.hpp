@@ -16,6 +16,7 @@
 
 namespace endfield::native {
 class SourceGraphics;
+class DesktopBackdrop;
 
 enum class Driver { hardware, warpForTests };
 enum class TextureColorSpace { sRGB, linear };
@@ -126,6 +127,29 @@ struct RendererStats {
     std::uint64_t nativeGroupTargetAllocations{},nativeGroupRenders{},nativeGroupDrawCalls{};
     std::size_t mediaTargets{},mediaLiveBytes{};
     std::uint64_t mediaTargetAllocations{},mediaFrameCommits{};
+    std::uint64_t compositionSurfaceBorrows{},compositionSuspends{},compositionRestores{};
+    bool compositionSuspended{};
+    bool sourcePassEnabled{true};
+};
+// AddRef-owned existing composition swap chain, never a copied bitmap/device.
+// The raw pointer is borrowed IDXGISwapChain1 and valid only while valid().
+// Renderer reset invalidates the epoch and detaches a registered backdrop
+// bridge before releasing its device/target. All use stays on the owner thread.
+class RendererCompositionSurface final {
+public:
+    ~RendererCompositionSurface();
+    RendererCompositionSurface(const RendererCompositionSurface&)=delete;
+    RendererCompositionSurface&operator=(const RendererCompositionSurface&)=delete;
+    bool valid()const noexcept;
+    void*swapChain()const noexcept;
+    void*window()const noexcept;
+    unsigned width()const noexcept;unsigned height()const noexcept;
+private:
+    friend class Renderer;friend class DesktopBackdrop;
+    struct Impl;explicit RendererCompositionSurface(std::unique_ptr<Impl>);
+    void bindResetObserver(void*,void(*)(void*)noexcept);
+    void unbindResetObserver(void*)noexcept;
+    std::unique_ptr<Impl>impl_;
 };
 // A same-device frame-server surface. The handle retains its COM resources
 // through reset/removal, but valid() then becomes false and further commits
@@ -192,6 +216,19 @@ public:
     // permits only one target at that window's chosen composition layer.
     void initialize(void *window, std::uint32_t width, std::uint32_t height, const RendererOptions &options);
     void resize(std::uint32_t width, std::uint32_t height);
+    // Same live handle is reused. Offscreen renderers cannot be bridged.
+    std::shared_ptr<RendererCompositionSurface>borrowCompositionSurface();
+    // Suspend only while the HWND is hidden. Retains the upper target slot and
+    // exact original visual, so restore never allocates a replacement target.
+    // Invalid/foreign handles reject before mutation. Stale restoration is a
+    // harmless false after device loss/reset; no old device is resurrected.
+    bool suspendComposition(const RendererCompositionSurface&);
+    bool restoreComposition(const RendererCompositionSurface&);
+    // Event-only presentation gate for the retained original material pass.
+    // Native draws keep rendering. No source resources/draws are removed or
+    // reuploaded; equal values are no-ops. A fresh/reset renderer defaults true.
+    bool setSourcePassEnabled(bool);
+    bool sourcePassEnabled()const noexcept;
     bool setMesh(std::string sourceID, std::uint64_t revision, MeshData mesh);
     bool setTexture(std::string sourceID, std::uint64_t revision, TextureData texture);
     // AddRef-owned ID3D11Device, for the owner's MF DXGI manager. Requires the
