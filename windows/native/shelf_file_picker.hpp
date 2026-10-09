@@ -14,18 +14,21 @@
 #endif
 
 namespace endfield::native {
+enum class ShelfPickerMode {mixedReferences,singleReaderFile};
 struct ShelfPickerLabels {
     std::string title{"Add to Temporary File Shelf"};
     std::string addReferences{"Add references"};
     // Windows' standard folder mode excludes files. This native dialog action
     // accepts its current mixed file/folder selection without following links.
     std::string addSelection{"Add selected references"};
+    ShelfPickerMode mode{ShelfPickerMode::mixedReferences};
 };
 // Pure validation: all selections are bounded ordinary absolute Windows paths.
 // No filesystem, Shell namespace lookup or implicit deduplication takes place.
 inline constexpr std::size_t shelfPickerMaximumItems=10000,
     shelfPickerMaximumSelectionBytes=ehud::data::FileShelfStore::maximumArchiveBytes;
 bool validShelfPickerSelection(std::span<const std::string>)noexcept;
+bool validReaderPickerSelection(std::span<const std::string>)noexcept;
 
 #ifdef _WIN32
 struct ShelfPickerRoute {HWND owner{};UINT message{};UINT_PTR generation{};};

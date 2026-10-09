@@ -20,6 +20,9 @@
 #include "tools/storage_options.hpp"
 #include "tools/activity_preview.hpp"
 #include "native/activity_assets.hpp"
+#include "native/activity_provider.hpp"
+#include "native/activity_catalog.hpp"
+#include "native/activity_disk.hpp"
 #include "tools/event_log_preview.hpp"
 #include "tools/work_mode_preview.hpp"
 #include "native/clipboard_assets.hpp"
@@ -148,7 +151,7 @@ struct PreviewLifetime final {
     std::function<void()>cleanup;
     ~PreviewLifetime(){try{cleanup();}catch(...) {}}
 };
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},nativeClipboard{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},nativeClipboard{},nativeActivity{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-assets common-resources (development preview)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
@@ -164,6 +167,7 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--shelf-mask"&&i+1<argc){need(o.shelfMask.empty(),"Duplicate shelf reveal");o.shelfMask=fs::absolute(argv[++i]);}
         else if(arg==L"--event-log-fixture"){need(!o.eventLogFixture,"Duplicate Event Log fixture");o.eventLogFixture=true;}
         else if(arg==L"--resident-preview-icons"&&i+1<argc){need(o.residentIcons.empty(),"Duplicate resident preview icon directory");o.residentIcons=fs::absolute(argv[++i]);}
+        else if(arg==L"--native-activity"){need(!o.nativeActivity,"Duplicate native Activity mode");o.nativeActivity=true;}
         else if(arg==L"--native-clipboard"){need(!o.nativeClipboard,"Duplicate native Clipboard mode");o.nativeClipboard=true;}
         else if(arg==L"--module-coverage"){need(!o.moduleCoverage,"Duplicate module coverage");o.moduleCoverage=true;}
         else if(arg==L"--battery-fixture"){need(!o.batteryFixture,"Duplicate battery fixture");o.batteryFixture=true;}
@@ -188,6 +192,7 @@ Options options(int argc,wchar_t**argv){
         else need(false,"Unknown or incomplete preview argument");
     }
     need(!o.nativeClipboard||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.clipboardAssets.empty()&&!o.notesAssets.empty()),"Native Clipboard requires explicit visible mode and module assets; hidden tests never access the clipboard");
+    need(!o.nativeActivity||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.activityAssets.empty()&&!o.notesAssets.empty()),"Native Activity requires explicit visible mode and module assets; hidden tests never enumerate applications");
     need(o.notesAssets.empty()==o.notesData.empty()&&o.notesAssets.empty()==o.notesAssetsSHA.empty(),"Notes preview requires assets, independent SHA and a new data root together");
     need(o.visible||o.notesAssets.empty()||o.moduleCoverage,"Hidden module integration requires explicit --module-coverage");
     need(!o.moduleCoverage||(!o.visible&&!o.notesAssets.empty()),"Module coverage requires hidden mode and fresh isolated Notes data");
@@ -349,6 +354,10 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     std::shared_ptr<StorageFixture>storageFixture;
     std::unique_ptr<gpu::EventLogOwner>eventOwner;
     std::unique_ptr<app::UtilityExecutor>utility;
+    endfield::modules::ActivitySamplingPlan activityPlan;
+    std::shared_ptr<gpu::ActivityCatalogSampler>activityCatalog;
+    std::shared_ptr<gpu::WindowsActivityDisk>activityDisk;
+    std::unique_ptr<gpu::ActivityProbe>activityProbe;
     std::unique_ptr<gpu::SystemServices>systemServices;
     std::unique_ptr<gpu::NativeClipboardProvider>clipboardProvider;
     bool clipboardDirty{},clipboardRefreshQueued{};
@@ -385,12 +394,13 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         if(archive){try{if(renderer.stats().initialized)archive->release(renderer);}catch(...) {}}
         if(archiveMedia){try{archiveMedia->releaseResources(now());}catch(...){}archiveMedia.reset();}
         archive.reset();release(settingsUI);release(battery);release(workMode);release(notes);
+        activityPlan.stop();activityProbe.reset();
         release(shelf);release(clipboard);release(volume);release(eventLog);release(storage);release(activity);
         // Retire state routes before the shared file executor; accepted immutable
         // writes finish on its existing shutdown barrier, with callbacks dead.
         if(clipboardProvider)clipboardProvider->close();clipboardProvider.reset();
         if(systemServices)systemServices->stop();systemServices.reset();
-        archiveService.reset();settingsSaves.reset();eventSaves.reset();utility.reset();
+        archiveService.reset();settingsSaves.reset();eventSaves.reset();utility.reset();activityCatalog.reset();activityDisk.reset();
         if(mediaBroker){try{mediaBroker->collectRetired();if(archiveMediaClient)mediaBroker->detachClient(archiveMediaClient);if(notesMediaClient)mediaBroker->detachClient(notesMediaClient);}catch(...){}mediaBroker.reset();}
         mediaVideos.reset();mediaImages.reset();if(mediaDecoder)mediaDecoder->stop();mediaDecoder.reset();
         archiveDates.reset();backdrop.reset();renderer.reset();try{host.setCursor(nullptr);host.destroy();}catch(...){}
@@ -489,7 +499,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     auto demand=[&](double time){auto result=session.demand(time);if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(notes&&notes->requiresFrames(time))||(archive&&archive->requiresFrames(time))||(mediaBroker&&mediaBroker->requiresFrames())||(shelf&&shelf->requiresFrames(time))||(clipboard&&clipboard->requiresFrames(time))||(volume&&volume->requiresFrames(time))||(eventLog&&eventLog->requiresFrames(time))||(workMode&&workMode->requiresFrames(time))||(battery&&battery->requiresFrames(time))||(settingsUI&&settingsUI->requiresFrames(time))||(storage&&storage->requiresFrames(time))||(activity&&activity->requiresFrames(time));return result;};
     auto scheduleDeadline=[&]{if(!args.visible||!ready||stopping)return;std::optional<double>next;
         auto include=[&](std::optional<double>value){if(value&&(!next||*value<*next))next=value;};
-        include(headerClock.nextDeadline());if(settingsUI)include(settingsUI->nextWakeTime(now()));if(workMode)include(workMode->nextWakeTime());if(notes)include(notes->nextWakeTime());if(archive)include(archive->nextWakeTime());if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(storage)include(storage->nextWakeTime());host.setDeadline(next);
+        include(headerClock.nextDeadline());if(settingsUI)include(settingsUI->nextWakeTime(now()));if(workMode)include(workMode->nextWakeTime());if(notes)include(notes->nextWakeTime());if(archive)include(archive->nextWakeTime());if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();if(wake&&*wake>now())include(wake);}if(eventOwner)include(eventOwner->saveDeadline());if(storage)include(storage->nextWakeTime());if(activityProbe)include(activityPlan.nextWakeTime());host.setDeadline(next);
     };
     auto refresh=[&](double time){if(args.visible&&ready&&!stopping){if(workMode)updateClock();host.setFrameDemand(demand(time));scheduleDeadline();host.invalidate();}};
     auto close=[&](double time){if(!closing){std::cout<<"Preview close requested at "<<time<<std::endl;if(archive&&!archive->finishEditing(time)){pendingClose=true;return;}if(notes&&!notes->finish()){pendingClose=true;return;}if(workMode&&!workMode->finishEditing(false,time)){pendingClose=true;return;}pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)archiveMedia->cancelImport();if(archive){archive->cancelInteraction(time);archive->setOverlayVisible(false,time);}if(notes)notes->setMediaActive(false,time,true);if(shelf){shelf->cancelPanels();shelf->cancelInteraction();}if(clipboard)clipboard->cancelInteraction();if(volume)volume->cancelInteraction(time);if(battery)battery->cancelInteraction(time);if(settingsUI)settingsUI->setOverlayVisible(false,time);if(eventLog)eventLog->cancelInteraction();if(storage){storage->cancelInteraction(time);storage->setVisible(false,time);}if(activity){activity->cancelInteraction();activity->setOverlayVisible(false,time);}if(workMode){workMode->cancelInteraction(time);workMode->setOverlayVisible(false,time);}host.capturePointer(false);environment.pointerLocked=false;session.setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session.close(time);refresh(time);}};
@@ -505,7 +515,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
     };
     auto activate=[&](const app::WatchActivation&event){const auto entries=contentCatalog.entries();const auto entry=std::find_if(entries.begin(),entries.end(),[&](const auto&value){return value.action==event.action;});need(entry!=entries.end(),"Source activation exceeds exported actions");if(notes){for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);if(core::moduleIdentifier(module)==entry->target){selectModule(module,now());break;}}}
-        std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (Notes preview)":shelf&&entry->target=="fileShelf"?" (File Shelf preview)":clipboard&&entry->target=="clipboard"?(args.nativeClipboard?" (Windows Clipboard preview)":" (synthetic Clipboard preview)"):storage&&entry->target=="storage"?" (development Storage preview)":activity&&entry->target=="activityMonitor"?" (synthetic Activity preview)":archive&&entry->target=="archive"?" (Archive preview)":volume&&entry->target=="volume"?" (synthetic Volume preview)":eventLog&&entry->target=="eventLog"?" (synthetic Event Log preview)":workMode&&entry->target=="workMode"?" (Work Mode preview)":battery&&entry->target=="power"?" (synthetic Battery preview)":settingsUI&&(entry->target=="system"||entry->target=="display"||entry->target=="hotkeys"||entry->target=="about")?" (Settings preview)":" (module body is not installed)")<<'\n';};
+        std::cout<<"Source action: "<<entry->target<<(notes&&entry->target=="notes"?" (Notes preview)":shelf&&entry->target=="fileShelf"?" (File Shelf preview)":clipboard&&entry->target=="clipboard"?(args.nativeClipboard?" (Windows Clipboard preview)":" (synthetic Clipboard preview)"):storage&&entry->target=="storage"?" (development Storage preview)":activity&&entry->target=="activityMonitor"?(args.nativeActivity?" (Windows Activity preview)":" (synthetic Activity preview)"):archive&&entry->target=="archive"?" (Archive preview)":volume&&entry->target=="volume"?" (synthetic Volume preview)":eventLog&&entry->target=="eventLog"?" (synthetic Event Log preview)":workMode&&entry->target=="workMode"?" (Work Mode preview)":battery&&entry->target=="power"?" (synthetic Battery preview)":settingsUI&&(entry->target=="system"||entry->target=="display"||entry->target=="hotkeys"||entry->target=="about")?" (Settings preview)":" (module body is not installed)")<<'\n';};
     LiveProbe probe;probe.enabled=!args.liveDiagnostics.empty();
     auto present=[&](double time,bool submit){
         if(storageFixture)storageFixture->time.store(time,std::memory_order_relaxed);
@@ -612,7 +622,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             }return 0;
         }
         if(ready&&m.wParam==serviceGeneration){
-            if(m.message==utilityMessage){if(utility)utility->drain();if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());if(archiveService)archiveService->queueCapacityAvailable();if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();refresh(now());return 0;}
+            if(m.message==utilityMessage){if(utility)utility->drain();if(activityProbe)activityProbe->submitPending();if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());if(archiveService)archiveService->queueCapacityAvailable();if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();refresh(now());return 0;}
             if(m.message==clipboardChangedMessage){clipboardRefreshQueued=false;if(clipboardDirty&&session.phase()!=core::VisibilityPhase::concealed&&notes&&notes->selected()==core::Module::clipboard)refresh(now());return 0;}
             if(m.message==eventChangedMessage){eventRefreshQueued=false;if(eventLog)eventLog->refresh();refresh(now());return 0;}
             if(m.message==archiveChangedMessage){archiveRefreshQueued=false;refresh(now());return 0;}
@@ -678,7 +688,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         close(now());
     };
     callbacks.closeRequested=[&]{std::cout<<"Preview native close request"<<std::endl;if(ready)close(now());};
-    callbacks.deadline=[&](double time){if(!ready||stopping)return;bool artwork=notes&&notes->deadline(time);if(archive)artwork=archive->deadline(time)||artwork;if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();const bool due=wake&&*wake<=time;if(session.phase()==core::VisibilityPhase::concealed){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(time);if(archiveMedia)archiveMedia->refresh(time);}else artwork=artwork||due;}if(settingsUI){settingsUI->wake(time);artwork=true;}if(workMode){const auto revision=workMode->state().revision();workMode->wake(time);artwork=artwork||revision!=workMode->state().revision();}if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;if(eventSaves)eventSaves->capture(time);if(storage)artwork=storage->deadline(time)||artwork;scheduleDeadline();if(artwork)refresh(time);};
+    callbacks.deadline=[&](double time){if(!ready||stopping)return;bool artwork=notes&&notes->deadline(time);if(archive)artwork=archive->deadline(time)||artwork;if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();const bool due=wake&&*wake<=time;if(session.phase()==core::VisibilityPhase::concealed){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(time);if(archiveMedia)archiveMedia->refresh(time);}else artwork=artwork||due;}if(settingsUI){settingsUI->wake(time);artwork=true;}if(workMode){const auto revision=workMode->state().revision();workMode->wake(time);artwork=artwork||revision!=workMode->state().revision();}if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;if(eventSaves)eventSaves->capture(time);if(storage)artwork=storage->deadline(time)||artwork;if(activityProbe)activityProbe->update(time);scheduleDeadline();if(artwork)refresh(time);};
     double diagnosticStart{};bool diagnosticEditing{},diagnosticFinished{};
     callbacks.frame=[&](double time){if(!ready)return;
         if(probe.enabled&&!diagnosticFinished){
@@ -732,7 +742,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
     }
     materials.upload(renderer.sourceGraphics());publishNative();host.setCursor(cursor.handle());ready=true;startup.mark("initial-gpu-upload");
     environment.viewport={metrics.width,metrics.height};const auto start=args.visible?now():args.benchmarkEpoch;session.setEnvironment(environment,start);
-    if(args.nativeClipboard||args.eventLogFixture||!args.settingsAssets.empty()||!args.archiveAssets.empty()||!args.storageAssets.empty()){
+    if(args.nativeClipboard||args.nativeActivity||args.eventLogFixture||!args.settingsAssets.empty()||!args.archiveAssets.empty()||!args.storageAssets.empty()){
         const auto window=static_cast<HWND>(host.hwnd());utility=std::make_unique<app::UtilityExecutor>([window]{need(PostMessageW(window,utilityMessage,serviceGeneration,0)!=FALSE,"Post utility completion");});
     }
     if(args.nativeClipboard){
@@ -800,8 +810,8 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         startup.mark(args.moduleCoverage?"synthetic-storage-owner":"development-storage-capacity-owner");
     }
     if(!args.activityAssets.empty()){
-        // Explicit development data; no OS processes or device counters are
-        // read in either this isolated live preview or hidden integration.
+        // Hidden coverage and ordinary isolated preview keep injected data.
+        // OS reads are confined to an explicitly visible native opt-in.
         gpu::NativeActivityAssets assets(args.activityAssets);
         endfield::tools::ActivityPreviewOptions options;options.sortSamples=assets.sortSamples();
         options.appearance.language=core::Language::simplifiedChinese;
@@ -814,8 +824,25 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
             item.identity={"synthetic-"+std::to_string(n),"Synthetic App "+std::to_string(n+1),"",{100+n}};
             item.cpuPercent=double(18-n);item.memoryBytes=200000000ULL+n*10000000ULL;
             options.apps.items.push_back(std::move(item));}
+        if(args.nativeActivity){
+            options.initial={};options.apps={};options.compareNames=gpu::compareWindowsActivityNames;
+            options.demandChanged=[&](bool visible,bool apps,double time){
+                if(stopping)return;const bool wasApps=activityPlan.appsActive();activityPlan.setVisible(visible,false,apps,time);
+                if(activityCatalog&&wasApps!=activityPlan.appsActive())activityCatalog->invalidate();
+                if(activityProbe)activityProbe->update(time);scheduleDeadline();
+            };
+        }
         activity=std::make_unique<endfield::tools::ActivityPreview>(rasterizer,std::move(options));activity->resize(metrics);
-        startup.mark("synthetic-activity-owner");
+        if(args.nativeActivity){
+            activityCatalog=std::make_shared<gpu::ActivityCatalogSampler>(gpu::windowsActivityCatalogReaders());
+            activityDisk=std::make_shared<gpu::WindowsActivityDisk>();
+            const auto sampleClock=[]{const auto stamp=std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count()-978307200.;return std::pair{stamp,double(GetTickCount64())*.001};};
+            gpu::ActivityProbe::Readers readers;
+            readers.system=[disk=activityDisk,sampleClock]{const auto [stamp,uptime]=sampleClock();auto result=gpu::readWindowsActivity(stamp,uptime);result.disk=disk->sample();return result;};
+            readers.apps=[catalog=activityCatalog,sampleClock]{const auto [stamp,uptime]=sampleClock();return catalog->sample(stamp,uptime);};
+            activityProbe=std::make_unique<gpu::ActivityProbe>(activity->providerState(),activityPlan,*utility,std::move(readers));
+        }
+        startup.mark(args.nativeActivity?"native-activity-owner":"synthetic-activity-owner");
     }
     if(args.eventLogFixture){
         const auto window=static_cast<HWND>(host.hwnd());
@@ -897,7 +924,7 @@ int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbu
         if(!shortcut)std::cout<<"Ctrl + ` is already registered; reopen this isolated preview from its tray icon.\n";
     }
     std::cout<<(archive?"Synthetic module preview with Archive, rich Notes and shared media; all files remain references in the explicit temporary data root. ESC finishes editing, then animates closing.\n":notes?"Synthetic shell with rich Notes, File Shelf and isolated Clipboard history; other modules and remaining Notes tools are not connected yet. ESC finishes editing, then animates closing.\n":"Synthetic source-shell feasibility only: no module bodies/providers; font substitutions and explicit source-content variant coverage remain. ESC animates closing.\n");
-    if(activity)std::cout<<"Activity preview uses synthetic app and system readings only.\n";
+    if(activity)std::cout<<(args.nativeActivity?"Native Activity reads bounded Windows counters on the shared worker; per-app disk/network remain unavailable.\n":"Activity preview uses synthetic app and system readings only.\n");
     if(storage)std::cout<<(args.moduleCoverage?"Storage coverage uses injected synthetic capacity/details and a no-op settings action.\n":"Development Storage preview: startup-volume capacity is read only while selected; Settings opens only on explicit click; no automatic folder scan.\n");
     startup.mark("all-preview-owners-ready");const auto preparedMS=milliseconds(preparation);
     // Initialization must not consume the opening timeline while the HWND is

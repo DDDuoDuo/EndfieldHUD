@@ -22,6 +22,9 @@ void selections(){
     mixed.back()="C:\\folder\\bad\xff";check(!n::validShelfPickerSelection(mixed),"Invalid UTF8 rejects");
     std::vector<std::string>many(n::shelfPickerMaximumItems+1,"C:\\synthetic\\file");check(!n::validShelfPickerSelection(many),"Selection item bound is explicit, never truncate");
     const std::string longPath="C:\\"+std::string(32765,'a');std::vector<std::string>budget(128,longPath);check(n::validShelfPickerSelection(budget),"Exact aggregate byte boundary accepted");budget.push_back("C:\\a");check(!n::validShelfPickerSelection(budget),"Aggregate path budget rejects atomically");
+    for(const auto*file:{"C:\\owned\\book.PDF","C:\\owned\\book.EpUb","C:\\owned\\book.txt"}){const std::vector<std::string>paths{file};check(n::validReaderPickerSelection(paths),"Reader accepts one original supported extension, case-insensitively");}
+    check(!n::validReaderPickerSelection(mixed)&&!n::validReaderPickerSelection({}),"Reader never silently chooses one book from multiple paths");
+    const std::vector<std::string>unsupported{"C:\\owned\\book.pdf.exe"};check(!n::validReaderPickerSelection(unsupported),"Unsupported double extension cannot pass the Reader filter");
 }
 }
 #ifdef _WIN32
@@ -77,6 +80,19 @@ void destructionReentry(){
     picker->request();const auto request=window.next();auto* borrowed=picker.get();dialog->onShow=[&]{picker.reset();};check(borrowed->handleMessage(request.wParam,request.lParam),"Facade may die during native nested modal call");check(!picker&&dialog->cancelCalls==1&&dialog->selectCalls==0,"Teardown cancels and suppresses selection after modal reentry");MSG notice{};check(!PeekMessageW(&notice,window.value,Window::notice,Window::notice,PM_REMOVE),"Destroyed owner route receives no completion notice");
     dialog->onShow={};dialog->onConfigure=[&]{picker.reset();};picker=std::make_unique<n::NativeShelfFilePicker>(window.route(42),n::ShelfPickerLabels{},[&]{return dialog;});picker->request();const auto configured=window.next();borrowed=picker.get();const auto shows=dialog->showCalls;check(borrowed->handleMessage(configured.wParam,configured.lParam)&&!picker&&dialog->showCalls==shows,"Configure reentry cannot use a detached owner HWND");
 }
+void readerMode(){
+    Window window;auto dialog=std::make_shared<FakeDialog>();n::ShelfPickerLabels labels;labels.mode=n::ShelfPickerMode::singleReaderFile;
+    n::NativeShelfFilePicker picker(window.route(51),labels,[&]{return dialog;});
+    picker.request();dispatch(picker,window.next());dispatch(picker,window.next());auto result=picker.drain(51);
+    check(result&&FAILED(result->result)&&result->paths.empty(),"Reader rejects a mixed multi-item completion without partially importing it");
+    dialog->paths={"C:\\owned\\book.epub"};picker.request();dispatch(picker,window.next());dispatch(picker,window.next());result=picker.drain(51);
+    check(result&&SUCCEEDED(result->result)&&result->paths==dialog->paths&&dialog->labels.mode==n::ShelfPickerMode::singleReaderFile,"One shared native picker carries explicit Reader filtering and the intact reference");
+    dialog->paths={"C:\\owned\\folder"};dialog->onShow=[&]{picker.setLabels({});};picker.request();dispatch(picker,window.next());dispatch(picker,window.next());result=picker.drain(51);
+    check(result&&FAILED(result->result),"Changing the next owner's mode cannot relax an already-open Reader selection");
+    dialog->onShow={};picker.request();dispatch(picker,window.next());dispatch(picker,window.next());result=picker.drain(51);
+    check(result&&SUCCEEDED(result->result)&&dialog->labels.mode==n::ShelfPickerMode::mixedReferences,"The next Shelf request restores its original directory/reference behavior");
+    check(!IsWindowVisible(window.value),"Reader picker tests never show a real dialog or read a user book");
+}
 d::ShelfFileAccess lease(unsigned identity,unsigned&released){d::ShelfFileMetadata metadata;metadata.windowsPath="C:\\explicit-synthetic\\owned.txt";metadata.name="owned.txt";metadata.identity.volumeSerial=1;metadata.identity.objectID[0]=static_cast<std::uint8_t>(identity);return {std::move(metadata),[&]{++released;}};}
 void revealIdentity(){
     unsigned released{},calls{};auto result=n::revealShelfReference(lease(1,released),[&](const d::ShelfRecord&record){check(record.identity.objectID[0]==1,"Reveal independently verifies original object identity");return lease(1,released);},[&](const d::ShelfFileAccess&current){++calls;check(current.open()&&released==0,"Both leases span the Explorer handoff");return S_OK;});
@@ -86,7 +102,7 @@ void revealIdentity(){
     check(FAILED(n::revealShelfReference({}, {}, {})),"Closed lease cannot implicitly access any user path");
 }
 }
-int main(){try{selections();COM com;deferredAndReferences();cancellationAndFailure();destructionReentry();revealIdentity();std::cout<<"PASS "<<checks<<" Shelf picker/reference handoff checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
+int main(){try{selections();COM com;deferredAndReferences();cancellationAndFailure();destructionReentry();readerMode();revealIdentity();std::cout<<"PASS "<<checks<<" Shelf picker/reference handoff checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
 #else
 int main(){try{selections();std::cout<<"PASS "<<checks<<" portable Shelf selection checks; native dialog/reveal fixtures not executed\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
 #endif

@@ -86,6 +86,12 @@ void run(const fs::path&executable){
     const auto sentinel=existing/L"keep.txt";{std::ofstream out(sentinel);out<<"owned sentinel";}
     const auto existingReport=temp.root/L"existing report.json";{std::ofstream out(existingReport);out<<"owned report";}
     unsigned index{};
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-activity"},
+           "Native Activity requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--native-activity"},
+           "Native Activity requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--native-activity",L"--native-activity"},
+           "Duplicate native Activity mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-clipboard"},
            "Native Clipboard requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-clipboard"},

@@ -40,7 +40,8 @@ DesktopBackdropTrack track(const ehud::data::Json& value){
     unit(s.blurAmount,"Backdrop blur opacity outside unit range");unit(s.backgroundDarkness,"Backdrop tint opacity outside unit range");unit(s.sourceOpacity,"Backdrop source opacity outside unit range");
 }
 }
-DesktopBackdropStyle desktopBackdropStyle(bool dark) noexcept{
+DesktopBackdropStyle desktopBackdropStyle(bool dark,bool projectionPlane) noexcept{
+    if(projectionPlane)return DesktopBackdropStyle{};
     DesktopBackdropStyle result;result.tintWhite=dark?.015:.90;result.vignetteAlpha=dark?std::array<double,3>{0,.06,.38}:std::array<double,3>{0,.02,.14};return result;
 }
 double DesktopBackdropTrack::alpha(double elapsed)const{
@@ -93,8 +94,8 @@ struct DesktopBackdrop::Impl {
     ~Impl(){clear();}
     void apply(const DesktopBackdropState&next,bool initial){
         if(initial||next.pixelWidth!=state.pixelWidth||next.pixelHeight!=state.pixelHeight){root.Size({static_cast<float>(next.pixelWidth),static_cast<float>(next.pixelHeight)});++counts.propertyWrites;}
-        if(initial||next.dark!=state.dark){
-            const auto style=desktopBackdropStyle(next.dark);tintBrush.Color(gray(style.tintWhite,1));++counts.propertyWrites;
+        if(initial||next.dark!=state.dark||next.projectionPlane!=state.projectionPlane){
+            const auto style=desktopBackdropStyle(next.dark,next.projectionPlane);tintBrush.Color(gray(style.tintWhite,1));++counts.propertyWrites;
             for(std::size_t i=0;i<stops.size();++i){stops[i].Color(gray(0,style.vignetteAlpha[i]));++counts.propertyWrites;}
         }
         if(initial||next.sourceOpacity!=state.sourceOpacity){tone.Opacity(static_cast<float>(next.sourceOpacity));++counts.propertyWrites;}
@@ -140,7 +141,7 @@ void DesktopBackdrop::initialize(void*handle,const DesktopBackdropState&state,co
     stage=L"Backdrop: create tint and radial gradient brushes";
     candidate->tintBrush=candidate->compositor.CreateColorBrush();candidate->tint.Brush(candidate->tintBrush);
     candidate->vignetteBrush=candidate->compositor.CreateRadialGradientBrush();candidate->vignette.Brush(candidate->vignetteBrush);candidate->counts.brushAllocations=3;
-    const auto style=desktopBackdropStyle(state.dark);candidate->vignetteBrush.MappingMode(wc::CompositionMappingMode::Relative);
+    const auto style=desktopBackdropStyle(state.dark,state.projectionPlane);candidate->vignetteBrush.MappingMode(wc::CompositionMappingMode::Relative);
     candidate->vignetteBrush.EllipseCenter({static_cast<float>(style.vignetteStart[0]),static_cast<float>(style.vignetteStart[1])});
     // Feasibility mapping only: source CAGradientLayer.start/end are preserved
     // above, but radial falloff/color/group opacity need an actual pixel oracle.

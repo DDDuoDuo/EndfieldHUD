@@ -12,6 +12,14 @@ bool validShelfPickerSelection(std::span<const std::string>paths)noexcept{
         bytes+=path.size();
     }return true;
 }
+bool validReaderPickerSelection(std::span<const std::string>paths)noexcept{
+    if(paths.size()!=1||!validShelfPickerSelection(paths))return false;
+    const auto&path=paths.front();const auto dot=path.find_last_of('.');
+    if(dot==std::string::npos||path.size()-dot>5)return false;
+    char extension[5]{};const auto count=path.size()-dot;
+    for(std::size_t n=0;n<count;++n){const auto c=path[dot+n];extension[n]=c>='A'&&c<='Z'?char(c+32):c;}
+    const std::string_view value(extension,count);return value==".pdf"||value==".epub"||value==".txt";
+}
 }
 #ifdef _WIN32
 #include "native/file_shelf_files.hpp"
@@ -40,7 +48,7 @@ std::string pathText(PCWSTR value){
     if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value,static_cast<int>(units),out.data(),size,nullptr,nullptr)!=size)throw Failure{HRESULT_FROM_WIN32(GetLastError())};
     need(ehud::data::validWindowsFilePath(out),"Picker returned an unsupported filesystem path");return out;
 }
-void labels(const ShelfPickerLabels&value){for(const auto*token:{&value.title,&value.addReferences,&value.addSelection})need(!token->empty()&&token->size()<=4096&&ehud::data::Json::validUtf8(*token)&&token->find('\0')==std::string::npos,"Invalid Shelf picker localization");}
+void labels(const ShelfPickerLabels&value){for(const auto*token:{&value.title,&value.addReferences,&value.addSelection})need(!token->empty()&&token->size()<=4096&&ehud::data::Json::validUtf8(*token)&&token->find('\0')==std::string::npos,"Invalid Shelf picker localization");need(value.mode==ShelfPickerMode::mixedReferences||value.mode==ShelfPickerMode::singleReaderFile,"Invalid native picker mode");}
 void route(const ShelfPickerRoute&value){
     if(!value.owner){need(!value.message&&!value.generation,"Empty Shelf picker route must have no message or generation");return;}
     DWORD process{};const auto thread=GetWindowThreadProcessId(value.owner,&process);
@@ -90,9 +98,14 @@ public:
         checked(CoCreateInstance(CLSID_FileOpenDialog,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&state_->dialog)));
         FILEOPENDIALOGOPTIONS options{};checked(state_->dialog->GetOptions(&options));
         options|=FOS_FORCEFILESYSTEM|FOS_ALLOWMULTISELECT|FOS_PATHMUSTEXIST|FOS_FILEMUSTEXIST|FOS_NODEREFERENCELINKS|FOS_DONTADDTORECENT;
-        options&=~(FOS_PICKFOLDERS|FOS_ALLNONSTORAGEITEMS|FOS_STRICTFILETYPES);checked(state_->dialog->SetOptions(options));
+        options&=~(FOS_PICKFOLDERS|FOS_ALLNONSTORAGEITEMS|FOS_STRICTFILETYPES);
+        if(text.mode==ShelfPickerMode::singleReaderFile){options&=~FOS_ALLOWMULTISELECT;options|=FOS_STRICTFILETYPES;}
+        checked(state_->dialog->SetOptions(options));
         const auto title=wide(text.title),prompt=wide(text.addReferences),selection=wide(text.addSelection);checked(state_->dialog->SetTitle(title.c_str()));checked(state_->dialog->SetOkButtonLabel(prompt.c_str()));
-        ComPtr<IFileDialogCustomize>custom;checked(state_->dialog.As(&custom));checked(custom->AddPushButton(addSelectionControl,selection.c_str()));
+        if(text.mode==ShelfPickerMode::singleReaderFile){
+            const COMDLG_FILTERSPEC filters[]={{L"PDF / EPUB / TXT",L"*.pdf;*.epub;*.txt"}};
+            checked(state_->dialog->SetFileTypes(1,filters));
+        }else{ComPtr<IFileDialogCustomize>custom;checked(state_->dialog.As(&custom));checked(custom->AddPushButton(addSelectionControl,selection.c_str()));}
         events_.Attach(new DialogEvents(state_));checked(state_->dialog->Advise(events_.Get(),&advice_));advised_=true;return S_OK;
     });}
     HRESULT show(HWND owner)override{return state_->dialog?state_->dialog->Show(owner):E_UNEXPECTED;}
@@ -131,7 +144,7 @@ bool NativeShelfFilePicker::handleMessage(UINT_PTR generation,LPARAM notice){aut
     result.result=protect([&]{auto dialog=state->factory();if(!state->current(token))return E_ABORT;need(bool(dialog),"Shelf picker factory returned no dialog");state->dialog=dialog;
         const auto labels=state->labels;auto hr=dialog->configure(labels);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;
         ++state->counts.shows;hr=dialog->show(state->route.owner);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;
-        hr=dialog->selection(result.paths);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;need(validShelfPickerSelection(result.paths),"Native Shelf picker returned an invalid complete path selection");return S_OK;});
+        hr=dialog->selection(result.paths);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;need(labels.mode==ShelfPickerMode::singleReaderFile?validReaderPickerSelection(result.paths):validShelfPickerSelection(result.paths),"Native picker returned an invalid complete path selection");return S_OK;});
     if(!state->current(token))return true;
     if(FAILED(result.result))result.paths.clear();state->presenting=false;auto dialog=std::exchange(state->dialog,{});dialog.reset();
     if(!state->alive||state->token!=token)return true;state->completion=std::move(result);state->post(ShelfPickerNotice::completed);return true;

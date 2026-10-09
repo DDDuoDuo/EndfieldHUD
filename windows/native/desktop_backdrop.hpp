@@ -14,7 +14,7 @@ struct DesktopBackdropStyle {
     std::array<double,2> vignetteStart{.5,.46}, vignetteEnd{1,1};
     std::array<double,3> vignetteLocations{0,.5,1}, vignetteAlpha{};
 };
-DesktopBackdropStyle desktopBackdropStyle(bool dark) noexcept;
+DesktopBackdropStyle desktopBackdropStyle(bool dark,bool projectionPlane=false) noexcept;
 
 // Original HUDSourceWatchBlurAnimation.Track -> CABasicAnimation control points.
 // Pure caller-sampled finite track, independent of the main Watch OutQuad clock.
@@ -33,6 +33,9 @@ struct DesktopBackdropState {
     std::uint32_t pixelWidth{}, pixelHeight{};
     bool dark{true}, lowPower{};
     double blurAmount{}, backgroundDarkness{}, sourceOpacity{};
+    // ProjectionWorkspace owns its flat darkness/dots layer. Reuse the same
+    // system material while removing HUD-specific vignette and tint coloration.
+    bool projectionPlane{};
     bool operator==(const DesktopBackdropState&) const = default;
 };
 struct DesktopBackdropInitialization {

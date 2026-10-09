@@ -51,6 +51,7 @@ void source(const Json&raw){
     check(dark.tintWhite==.015&&light.tintWhite==.90,"Source dark/light backdrop whites");
     check(dark.vignetteAlpha==std::array<double,3>{0,.06,.38}&&light.vignetteAlpha==std::array<double,3>{0,.02,.14},"Source dark/light vignette alpha");
     check(dark.vignetteStart==std::array<double,2>{.5,.46}&&dark.vignetteEnd==std::array<double,2>{1,1}&&dark.vignetteLocations==std::array<double,3>{0,.5,1},"Source radial descriptors remain explicit");
+    for(const bool darkMode:{false,true}){const auto projection=desktopBackdropStyle(darkMode,true);check(projection.tintWhite==0&&projection.vignetteAlpha==std::array<double,3>{0,0,0},"Projection removes HUD vignette/coloration while sharing its native material owner");}
     auto invalid=raw;invalid["default_speed"]=2;rejects([&]{DesktopBackdropAnimation::fromSource(invalid);},"Changed wrapper speed is rejected rather than guessed");
     invalid=raw;invalid["entrance"]["curve"]["path"]="other";rejects([&]{DesktopBackdropAnimation::fromSource(invalid);},"Wrong source alpha binding rejected");
     invalid=raw;auto keys=invalid["exit"]["curve"]["raw"]["curve"]["m_Curve"].array();keys[0]["weightedMode"]=1;invalid["exit"]["curve"]["raw"]["curve"]["m_Curve"]=keys;rejects([&]{DesktopBackdropAnimation::fromSource(invalid);},"Weighted tracks cannot be silently converted to unweighted CA controls");
@@ -105,6 +106,9 @@ void native(){
     check(backdrop.stats().propertyWrites==first.propertyWrites,"Unchanged frames perform no compositor property writes");
     for(unsigned i=0;i<120;++i){state.sourceOpacity=double(i)/119;check(backdrop.update(state),"Caller-driven finite fade updates retained opacity");}
     state.lowPower=true;backdrop.update(state);state.dark=false;backdrop.update(state);state.pixelWidth=1280;state.pixelHeight=800;backdrop.update(state);
+    state.projectionPlane=true;state.backgroundDarkness=0;backdrop.update(state);
+    const auto projection=backdrop.stats();check(!backdrop.update(state)&&backdrop.stats().propertyWrites==projection.propertyWrites,"Settled flat Projection backdrop adds no compositor work");
+    state.projectionPlane=false;backdrop.update(state);
     const auto last=backdrop.stats();check(last.visualAllocations==first.visualAllocations&&last.brushAllocations==first.brushAllocations,"Fade/theme/size changes keep the same visuals and brushes");
     check(!IsWindowVisible(window.value),"All proof updates remain hidden");
     backdrop.reset();check(!backdrop.stats().initialized,"Explicit reset removes the lower target");

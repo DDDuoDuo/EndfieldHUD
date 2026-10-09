@@ -690,3 +690,15 @@ lifetime checks and the existing Notes/Archive checks pass. Startup timestamps
 now begin the opening animation after every preview owner is ready. Projection's
 session model and media geometry match 247 original AppKit cases; its visible
 workspace and handoff are not yet integrated.
+
+Snapshot 90 adds read-only PDF/EPUB/TXT providers on the existing utility worker,
+bounded page caches, original Chinese text decoding, and shared SC/KR document
+fonts. Reader's native validation passes; its visible controls are the next
+integration step. Projection now has its source interaction/handoff model and a
+single-file Reader mode reuses the existing native picker. Activity has optional
+real process sampling; hidden tests continue to use synthetic catalogs only.
+
+A clean Windows build passed all 156 registered suites, the explicit backdrop
+check, and combined hardware module coverage. The combined run needed a corrected
+asset-checksum argument in its test script, with no runtime change. Live Reader,
+Projection, real Activity sampling and full-app performance remain unverified.

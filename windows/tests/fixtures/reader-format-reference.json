@@ -1,0 +1,355 @@
+{
+  "cases": [
+    {
+      "base64": "PGh0bWw+PGhlYWQ+PHRpdGxlPuOAgEJvb2vCoDwvdGl0bGU+PC9oZWFkPjxib2R5PjxwPkhlbGxvJm5ic3A7d29ybGQ8L3A+PHA+5Lit5paH8J+ZgjwvcD48aW1nIHNyYz0naW1hZ2VzL2EucG5nJy8+PGRpdj5UYWlsPGJyLz5saW5lPC9kaXY+PC9ib2R5PjwvaHRtbD4=",
+      "name": "paragraphs",
+      "result": {
+        "blocks": [
+          {
+            "text": "Hello world\n中文🙂"
+          },
+          {
+            "image": "images/a.png"
+          },
+          {
+            "text": "Tail\nline"
+          }
+        ],
+        "manifest": {},
+        "rootFile": null,
+        "spine": [],
+        "title": "　Book "
+      },
+      "success": true
+    },
+    {
+      "base64": "PGh0bWw+PGJvZHk+PHA+YmVmb3JlPC9wPjxzY3JpcHQ+YmFkPHN0eWxlPm5lc3RlZDwvc3R5bGU+PC9zY3JpcHQ+PHZpZGVvPmJhZDwvdmlkZW8+PG9iamVjdD5iYWQ8L29iamVjdD48aWZyYW1lPmJhZDwvaWZyYW1lPjxhdWRpbz5iYWQ8L2F1ZGlvPjxwPmFmdGVyPC9wPjwvYm9keT48L2h0bWw+",
+      "name": "ignored",
+      "result": {
+        "blocks": [
+          {
+            "text": "before\nafter"
+          }
+        ],
+        "manifest": {},
+        "rootFile": null,
+        "spine": [],
+        "title": ""
+      },
+      "success": true
+    },
+    {
+      "base64": "PGh0bWw+PGJvZHk+YmVmb3JlPCFbQ0RBVEFbaGlkZGVuIDxjb250ZW50Pl1dPmFmdGVyPC9ib2R5PjwvaHRtbD4=",
+      "name": "CDATA",
+      "result": {
+        "blocks": [
+          {
+            "text": "beforehidden <content>after"
+          }
+        ],
+        "manifest": {},
+        "rootFile": null,
+        "spine": [],
+        "title": ""
+      },
+      "success": true
+    },
+    {
+      "base64": "PCFET0NUWVBFIGh0bWwgU1lTVEVNICdodHRwczovL2V4YW1wbGUuaW52YWxpZC9uby1mZXRjaC5kdGQnPjxodG1sPjxib2R5PjxwPnNhZmU8L3A+PC9ib2R5PjwvaHRtbD4=",
+      "name": "externalDTD",
+      "result": {
+        "blocks": [
+          {
+            "text": "safe"
+          }
+        ],
+        "manifest": {},
+        "rootFile": null,
+        "spine": [],
+        "title": ""
+      },
+      "success": true
+    },
+    {
+      "base64": "PCFET0NUWVBFIGh0bWwgWzwhRU5USVRZIGZvbyAnYmFkJz5dPjxodG1sPjxib2R5PiZmb287PC9ib2R5PjwvaHRtbD4=",
+      "name": "internalEntity",
+      "success": false
+    },
+    {
+      "base64": "PHBhY2thZ2U+PG1hbmlmZXN0PjxpdGVtIGlkPSd4JyBocmVmPSdhJyBtZWRpYS10eXBlPSd0ZXh0L2h0bWwnLz48aXRlbSBpZD0neCcgaHJlZj0nYicgbWVkaWEtdHlwZT0ndGV4dC9odG1sJy8+PC9tYW5pZmVzdD48L3BhY2thZ2U+",
+      "name": "duplicateID",
+      "success": false
+    },
+    {
+      "base64": "PG86cGFja2FnZSB4bWxuczpvPSd1cm46dGVzdCc+PG86dGl0bGU+TmFtZWQ8L286dGl0bGU+PGl0ZW0gaWQ9J2EnIGhyZWY9J2EueGh0bWwnIG1lZGlhLXR5cGU9J2FwcGxpY2F0aW9uL3hodG1sK3htbCcvPjxpdGVtcmVmIGlkcmVmPSdhJy8+PGl0ZW1yZWYgaWRyZWY9J2InIGxpbmVhcj0nbm8nLz48cm9vdGZpbGUgZnVsbC1wYXRoPSdPUFMvYm9vay5vcGYnLz48L286cGFja2FnZT4=",
+      "name": "namespaces",
+      "result": {
+        "blocks": [],
+        "manifest": {
+          "a": {
+            "href": "a.xhtml",
+            "type": "application/xhtml+xml"
+          }
+        },
+        "rootFile": "OPS/book.opf",
+        "spine": [
+          "a"
+        ],
+        "title": "Named"
+      },
+      "success": true
+    },
+    {
+      "base64": "PGh0bWwgeG1sbnM6eGxpbms9J2h0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsnPjxib2R5PkE8aW1hZ2UgeGxpbms6aHJlZj0nY292ZXIucG5nJy8+QjwvYm9keT48L2h0bWw+",
+      "name": "SVGImage",
+      "result": {
+        "blocks": [
+          {
+            "text": "A"
+          },
+          {
+            "image": "cover.png"
+          },
+          {
+            "text": "B"
+          }
+        ],
+        "manifest": {},
+        "rootFile": null,
+        "spine": [],
+        "title": ""
+      },
+      "success": true
+    },
+    {
+      "base64": "//48AD8AeABtAGwAIAB2AGUAcgBzAGkAbwBuAD0AJwAxAC4AMAAnACAAZQBuAGMAbwBkAGkAbgBnAD0AJwBVAFQARgAtADEANgAnAD8APgA8AGgAdABtAGwAPgA8AGIAbwBkAHkAPgA8AHAAPgAtTodlPdhC3jwALwBwAD4APAAvAGIAbwBkAHkAPgA8AC8AaAB0AG0AbAA+AA==",
+      "name": "UTF16LE",
+      "result": {
+        "blocks": [
+          {
+            "text": "中文🙂"
+          }
+        ],
+        "manifest": {},
+        "rootFile": null,
+        "spine": [],
+        "title": ""
+      },
+      "success": true
+    },
+    {
+      "base64": "PGh0bWw+PGJvZHk+YmFkADwvYm9keT48L2h0bWw+",
+      "name": "NUL",
+      "success": false
+    },
+    {
+      "base64": "PGh0bWw+PGJvZHk+dW5jbG9zZWQ=",
+      "name": "malformed",
+      "success": false
+    }
+  ],
+  "exporterSHA256": {
+    "windows/tools/reader_format_reference.sh": "e2fb02852e0d41eb146260f481ea89341b14ed60a9ea844888efc56d4c3783ad",
+    "windows/tools/reader_format_reference.swift": "9d8428b7bb3b51d86ed76f8d58e87a252e0a6fb95e0230c4a09dd3bc9dcaeb8c"
+  },
+  "privateAccessShimSHA256": "450bbd1b3193946d548fb0e7b2275ae5f937ec5baa938f5429cffa6e603215f7",
+  "rawOracleSHA256": "35452c1b45bd41fe8ca613f33cbd9bcffdb56d75ff49afa51635dc725e6669c2",
+  "scope": "Unchanged original XML parser and TXT document initialization; detached temporary synthetic files only; no windows, application activation, network resolver or user stores",
+  "sourceAuthority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "sourceSHA256": {
+    "Sources/ReaderDocument.swift": "c73e4c10b4cc3714e36efd35c3da59a4c3f103ea981eb0546a06a024f6561a72",
+    "Sources/ReaderEPUB.swift": "f33af327fade5562c9ebbcd36bd5f13dd69f8d26fa7372427979421243fbbe24",
+    "Sources/ReaderStore.swift": "46ec9c8a5f833f7351fb78da3ff7884991342d75b509a8c523929131c2b680b8",
+    "Sources/ReaderZIP.swift": "fd452f1a5ddcb842e65a812dc5d14df5331e1c7b06c0d2495f5e770ee8aad5f4"
+  },
+  "txtCases": [
+    {
+      "base64": "VVRGOCDkuK3mlofwn5mCIGXMgQ==",
+      "name": "UTF8",
+      "result": {
+        "sections": 1,
+        "text": "UTF8 中文🙂 é",
+        "title": "UTF8"
+      },
+      "success": true
+    },
+    {
+      "base64": "//4tTj3YQt4=",
+      "name": "UTF16LE",
+      "result": {
+        "sections": 1,
+        "text": "中🙂",
+        "title": "UTF16LE"
+      },
+      "success": true
+    },
+    {
+      "base64": "/v9OLdg93kI=",
+      "name": "UTF16BE",
+      "result": {
+        "sections": 1,
+        "text": "中🙂",
+        "title": "UTF16BE"
+      },
+      "success": true
+    },
+    {
+      "base64": "1tDOxA==",
+      "name": "GB18030",
+      "result": {
+        "sections": 1,
+        "text": "中文",
+        "title": "GB18030"
+      },
+      "success": true
+    },
+    {
+      "base64": "qLym2Q==",
+      "name": "GB18030-private",
+      "result": {
+        "sections": 1,
+        "text": "ḿ︐",
+        "title": "GB18030-private"
+      },
+      "success": true
+    },
+    {
+      "base64": "",
+      "name": "empty",
+      "success": false
+    },
+    {
+      "base64": "QQA=",
+      "name": "NUL",
+      "success": false
+    },
+    {
+      "base64": "gQ==",
+      "name": "truncatedGB",
+      "success": false
+    },
+    {
+      "base64": "//4A2A==",
+      "name": "unpairedUTF16",
+      "success": false
+    }
+  ],
+  "whitespace": [
+    {
+      "scalar": 9,
+      "trimmed": true
+    },
+    {
+      "scalar": 10,
+      "trimmed": true
+    },
+    {
+      "scalar": 11,
+      "trimmed": true
+    },
+    {
+      "scalar": 12,
+      "trimmed": true
+    },
+    {
+      "scalar": 13,
+      "trimmed": true
+    },
+    {
+      "scalar": 32,
+      "trimmed": true
+    },
+    {
+      "scalar": 133,
+      "trimmed": true
+    },
+    {
+      "scalar": 160,
+      "trimmed": true
+    },
+    {
+      "scalar": 5760,
+      "trimmed": true
+    },
+    {
+      "scalar": 6158,
+      "trimmed": false
+    },
+    {
+      "scalar": 8192,
+      "trimmed": true
+    },
+    {
+      "scalar": 8193,
+      "trimmed": true
+    },
+    {
+      "scalar": 8194,
+      "trimmed": true
+    },
+    {
+      "scalar": 8195,
+      "trimmed": true
+    },
+    {
+      "scalar": 8196,
+      "trimmed": true
+    },
+    {
+      "scalar": 8197,
+      "trimmed": true
+    },
+    {
+      "scalar": 8198,
+      "trimmed": true
+    },
+    {
+      "scalar": 8199,
+      "trimmed": true
+    },
+    {
+      "scalar": 8200,
+      "trimmed": true
+    },
+    {
+      "scalar": 8201,
+      "trimmed": true
+    },
+    {
+      "scalar": 8202,
+      "trimmed": true
+    },
+    {
+      "scalar": 8203,
+      "trimmed": true
+    },
+    {
+      "scalar": 8232,
+      "trimmed": true
+    },
+    {
+      "scalar": 8233,
+      "trimmed": true
+    },
+    {
+      "scalar": 8239,
+      "trimmed": true
+    },
+    {
+      "scalar": 8287,
+      "trimmed": true
+    },
+    {
+      "scalar": 8288,
+      "trimmed": false
+    },
+    {
+      "scalar": 12288,
+      "trimmed": true
+    },
+    {
+      "scalar": 65279,
+      "trimmed": false
+    }
+  ]
+}
