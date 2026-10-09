@@ -723,5 +723,15 @@ All 175 Windows suites and combined hardware module coverage passed. Reader
 checks include actual button/navigation routing, retained-texture zoom/pan,
 bounded real PDF/EPUB rendering and page-boundary behavior. Small synthetic
 document timings do not establish full-document or whole-app performance.
-The corrected Reader preview still needs the user's live recheck; Projection
-media/drop/return still needs live acceptance. Neither is a stable release claim.
+The user accepted the corrected zoom, module navigation and faster sidebar in
+live preview 26. Vertical scrolling still jumps between pages and is undergoing
+a separate continuity correction. Projection media/drop/return still needs live
+acceptance. Neither is a stable release claim.
+
+Snapshot 97 passes all 180 Windows suites and combined hardware module coverage.
+It adds the original Map geography/raster contracts, portable OrbiPom session and
+input rules, and versioned app-shortcut storage with Windows target references.
+The unchanged Mac Map renderer and game engine provide independent comparison
+fixtures. These foundations do not yet connect Map, Minigame or shortcut editing
+to the visible Windows preview. Shortcut tests use synthetic paths and never
+inspect or launch installed applications.

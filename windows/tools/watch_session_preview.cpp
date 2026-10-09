@@ -50,6 +50,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cwchar>
 #include <iostream>
 #include <memory>
 #include <set>
@@ -131,6 +133,25 @@ double now(){return app::OverlayHost::clockNow();}
 using Clock=std::chrono::steady_clock;
 double milliseconds(Clock::time_point start){return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
 struct COM {COM(){need(SUCCEEDED(OleInitialize(nullptr)),"OLE initialization failed");}~COM(){OleUninitialize();}};
+// Development preview only: record graphics-fault module offsets, never document
+// memory or typed text. Keep normal Windows exception handling/termination.
+class PreviewFaultTrace final {
+    void* handler_{};
+    static LONG CALLBACK report(EXCEPTION_POINTERS* event) {
+        if(!event||!event->ExceptionRecord||event->ExceptionRecord->ExceptionCode!=0x87a)return EXCEPTION_CONTINUE_SEARCH;
+        std::fprintf(stderr,"Preview graphics fault 0x87a; native module offsets follow\n");
+        void* frames[32]{};const auto count=CaptureStackBackTrace(0,32,frames,nullptr);
+        for(USHORT n=0;n<count;++n){HMODULE module{};wchar_t path[MAX_PATH]{};
+            if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(frames[n]),&module)&&GetModuleFileNameW(module,path,MAX_PATH)){
+                const auto*base=wcsrchr(path,L'\\');base=base?base+1:path;
+                std::fprintf(stderr,"%ls+0x%llx\n",base,static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(frames[n])-reinterpret_cast<std::uintptr_t>(module)));
+            }
+        }
+        std::fflush(stderr);return EXCEPTION_CONTINUE_SEARCH;
+    }
+public:explicit PreviewFaultTrace(bool enabled){if(enabled)handler_=AddVectoredExceptionHandler(1,report);}
+    ~PreviewFaultTrace(){if(handler_)RemoveVectoredExceptionHandler(handler_);}
+};
 // The native backdrop borrows the caller's one UI queue. Creating its controller
 // on this UI thread adds no worker or private animation clock. It outlives HWND
 // and composition cleanup, including exception unwinding.
@@ -310,7 +331,7 @@ Json counters(const Snapshot&a,const Snapshot&b){return Json::Object{
     {"localImageBuilds",std::int64_t(b.frame.localImageBuilds-a.frame.localImageBuilds)}};}
 }
 int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;try{
-    const auto args=options(argc,argv);COM com;const auto preparation=Clock::now();StartupStages startup;
+    const auto args=options(argc,argv);PreviewFaultTrace faults(args.visible);COM com;const auto preparation=Clock::now();StartupStages startup;
     std::optional<gpu::DesktopBackdropAnimation> backdropAnimation;if(!args.watchBlur.empty())backdropAnimation=loadWatchBlur(args.watchBlur);startup.mark("original-backdrop-animation");
     std::unique_ptr<source::WatchRuntimeInput> runtime;std::unique_ptr<packet::Package> package;
     Json metadata,legacyTop,legacyBottom,chromeJSON;std::optional<source::SceneDefinition> legacyScene;
