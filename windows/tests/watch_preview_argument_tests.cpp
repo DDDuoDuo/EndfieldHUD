@@ -86,6 +86,14 @@ void run(const fs::path&executable){
     const auto sentinel=existing/L"keep.txt";{std::ofstream out(sentinel);out<<"owned sentinel";}
     const auto existingReport=temp.root/L"existing report.json";{std::ofstream out(existingReport);out<<"owned report";}
     unsigned index{};
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-clipboard"},
+           "Native Clipboard requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--native-clipboard"},
+           "Native Clipboard requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--native-clipboard",L"--notes-assets",assets,L"--clipboard-assets",assets},
+           "Native Clipboard requires explicit visible mode");
+    reject(executable,temp,++index,{L"--visible",L"--native-clipboard",L"--native-clipboard"},
+           "Duplicate native Clipboard mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",archiveAssets},
            "Archive needs explicit Notes assets and a new shared test data root");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--archive-assets",archiveAssets,

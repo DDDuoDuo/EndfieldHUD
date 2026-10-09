@@ -30,6 +30,8 @@ struct ClipboardActions {
     std::function<ClipboardSnapshot()>snapshot;
     std::function<bool(std::uint64_t)>copy,togglePin,remove;
     std::function<bool()>clearUnpinned;
+    // Content-event preparation, at most7 old+7 incoming row identities.
+    std::function<void(std::span<const std::uint64_t>)>prepareImageRows;
 };
 // Original ClipboardCanvas controller semantics with injected side effects.
 // Explicit refresh is the owner's coalesced service notification; no listener,
@@ -42,6 +44,7 @@ public:
     static constexpr core::Rect contentRect(){return {12,41,376,246};}
     explicit ClipboardState(ClipboardActions,ClipboardStrings={});
     void activate();void deactivate();void refresh();void setReduceMotion(bool);
+    void prepareImageRows(std::span<const std::uint64_t>);
     bool setStrings(ClipboardStrings); // keeps opaque payload/status and source interaction state
     bool mouseDown(core::Point);bool scroll(core::Point,double delta);bool scrollBy(double delta);
     void selectNext(int);void copySelection();void copyVisibleItem(unsigned);void deleteSelection();void perform(std::string_view);

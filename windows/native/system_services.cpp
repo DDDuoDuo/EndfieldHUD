@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace endfield::native {
@@ -174,6 +175,9 @@ bool ClipboardHistory::valid_image(ClipboardImageFormat format, std::span<const 
         }
         return false;
     }
+    if(format==ClipboardImageFormat::tiff){const bool little=bytes[0]=='I'&&bytes[1]=='I',big=bytes[0]=='M'&&bytes[1]=='M';if(!little&&!big)return false;
+        auto u16=[&](std::size_t p){return little?little16(bytes,p):std::uint16_t((std::uint16_t(bytes[p])<<8)|bytes[p+1]);};auto u32=[&](std::size_t p){return little?little32(bytes,p):big32(bytes,p);};const auto first=u32(4);if(u16(2)!=42||first<8||first>bytes.size()-2)return false;const auto count=u16(first);if(count>(bytes.size()-first-2)/12)return false;std::uint32_t width{},height{};
+        for(std::size_t i=0;i<count;++i){const auto at=std::size_t(first)+2+i*12;const auto tag=u16(at);if(tag!=256&&tag!=257)continue;const auto type=u16(at+2);if(u32(at+4)!=1||(type!=3&&type!=4))return false;const auto value=type==3?u16(at+8):u32(at+8);auto&dimension=tag==256?width:height;if(dimension&&dimension!=value)return false;dimension=value;}return valid_image_metadata(width,height,bytes.size());}
     if (format != ClipboardImageFormat::dib && format != ClipboardImageFormat::dib_v5) return false;
     const auto header = little32(bytes, 0);
     if (format == ClipboardImageFormat::dib_v5 && header != 124) return false;
@@ -212,8 +216,14 @@ bool ClipboardHistory::valid_image(ClipboardImageFormat format, std::span<const 
     }
     return true;
 }
+std::span<const std::uint8_t> ClipboardPayload::image_bytes()const noexcept {
+    return decodedImage&&decodedImage->encoded.bytes?std::span<const std::uint8_t>(*decodedImage->encoded.bytes):std::span<const std::uint8_t>(image);
+}
+bool ClipboardPayload::operator==(const ClipboardPayload&other)const {
+    return kind==other.kind&&text==other.text&&files==other.files&&image_format==other.image_format&&std::ranges::equal(image_bytes(),other.image_bytes());
+}
 std::size_t ClipboardHistory::payload_bytes(const ClipboardPayload& value) noexcept {
-    if (value.kind == ClipboardKind::image) return value.image.size();
+    if (value.kind == ClipboardKind::image) return value.image_bytes().size();
     // Charge actual retained UTF-16 bytes as well as the source's UTF-8 limit.
     if (value.kind == ClipboardKind::text || value.kind == ClipboardKind::url)
         return value.text.size() > maximum_text_bytes ? maximum_retained_bytes + 1 : value.text.size() * sizeof(char16_t);
@@ -226,11 +236,11 @@ std::size_t ClipboardHistory::payload_bytes(const ClipboardPayload& value) noexc
 }
 bool ClipboardHistory::valid(const ClipboardPayload& value) noexcept {
     if (value.kind == ClipboardKind::text || value.kind == ClipboardKind::url)
-        return value.files.empty() && value.image.empty() && !value.text.empty() &&
+        return value.files.empty() && value.image.empty() && !value.decodedImage && !value.text.empty() &&
             value.text.size() <= maximum_text_bytes && utf8_bytes(value.text) <= maximum_text_bytes &&
             (value.kind != ClipboardKind::url || url_text(value.text));
     if (value.kind == ClipboardKind::files) {
-        if (!value.text.empty() || !value.image.empty() || value.files.empty() || value.files.size() > maximum_files ||
+        if (!value.text.empty() || !value.image.empty() || value.decodedImage || value.files.empty() || value.files.size() > maximum_files ||
             payload_bytes(value) > maximum_text_bytes * 2) return false;
         std::size_t source_bytes{};
         for (const auto& path : value.files) {
@@ -241,7 +251,10 @@ bool ClipboardHistory::valid(const ClipboardPayload& value) noexcept {
         }
         return true;
     }
-    return value.kind == ClipboardKind::image && value.text.empty() && value.files.empty() && valid_image(value.image_format, value.image);
+    if(value.kind!=ClipboardKind::image||!value.text.empty()||!value.files.empty()||!valid_image(value.image_format,value.image_bytes()))return false;
+    if(value.decodedImage){const auto&t=*value.decodedImage;const auto expected=value.image_format==ClipboardImageFormat::png?ClipboardEncodedFormat::png:value.image_format==ClipboardImageFormat::tiff?ClipboardEncodedFormat::tiff:value.image_format==ClipboardImageFormat::dib_v5?ClipboardEncodedFormat::dibV5:ClipboardEncodedFormat::dib;
+        return value.image.empty()&&t.encoded.format==expected&&valid_image_metadata(t.sourceWidth,t.sourceHeight,value.image_bytes().size())&&t.width&&t.height&&t.width<=96&&t.height<=96&&t.rgba.size()==std::size_t(t.width)*t.height*4;}
+    return true;
 }
 ClipboardInsertResult ClipboardHistory::ingest(ClipboardPayload payload, bool excluded) {
     if (excluded) return ClipboardInsertResult::excluded;
@@ -293,6 +306,31 @@ void ClipboardHistory::clear(bool keep_pinned) {
         if (!items_[index].pinned) { retained_bytes_ -= payload_bytes(items_[index].payload); items_.erase(items_.begin() + static_cast<std::ptrdiff_t>(index)); }
     }
 }
+struct ClipboardCapture::Impl : std::enable_shared_from_this<Impl> {
+    ClipboardHistory&history;Reader reader;Sequence sequence;Changed changed;std::unique_ptr<NativeClipboardImageProbe>probe;
+    std::uint32_t expected{};unsigned next{};ClipboardCaptureState current{ClipboardCaptureState::idle};std::int32_t error{};bool alive{true};
+    Impl(ClipboardHistory&h,Reader r,Sequence s,Changed c):history(h),reader(std::move(r)),sequence(std::move(s)),changed(std::move(c)){}
+    void status(ClipboardCaptureState value,std::int32_t native=0){const bool different=current!=value||error!=native;current=value;error=native;auto callback=changed;if(alive&&callback&&(different||value==ClipboardCaptureState::changed))callback(value,native);}
+    void accept(ClipboardPayload payload){if(!alive||sequence()!=expected){status(ClipboardCaptureState::stale);return;}const auto inserted=history.ingest(std::move(payload));switch(inserted){case ClipboardInsertResult::inserted:case ClipboardInsertResult::moved:status(ClipboardCaptureState::changed);break;case ClipboardInsertResult::full:status(ClipboardCaptureState::full);break;case ClipboardInsertResult::invalid:status(ClipboardCaptureState::invalid);break;default:status(ClipboardCaptureState::unchanged);break;}}
+    void readNext(){while(alive){if(!expected||sequence()!=expected){status(ClipboardCaptureState::stale);return;}auto result=reader(expected,next);if(result.state!=ClipboardReadState::busy&&result.sequence!=expected){status(ClipboardCaptureState::stale);return;}
+        switch(result.state){case ClipboardReadState::busy:status(ClipboardCaptureState::busy,result.nativeError);return;case ClipboardReadState::stale:status(ClipboardCaptureState::stale);return;case ClipboardReadState::excluded:status(ClipboardCaptureState::excluded);return;case ClipboardReadState::empty:status(ClipboardCaptureState::empty);return;case ClipboardReadState::invalid:status(ClipboardCaptureState::invalid,result.nativeError);return;case ClipboardReadState::payload:break;}
+        if(result.payload.kind!=ClipboardKind::image){accept(std::move(result.payload));return;}
+        if(result.nextImage<=next||result.nextImage>imageFormats.size()||result.payload.image_format!=imageFormats[result.nextImage-1]||result.payload.decodedImage){status(ClipboardCaptureState::invalid);return;}next=result.nextImage;
+        const auto format=result.payload.image_format==ClipboardImageFormat::png?ClipboardEncodedFormat::png:result.payload.image_format==ClipboardImageFormat::tiff?ClipboardEncodedFormat::tiff:result.payload.image_format==ClipboardImageFormat::dib_v5?ClipboardEncodedFormat::dibV5:ClipboardEncodedFormat::dib;
+        ClipboardEncodedImage encoded{format,std::make_shared<const std::vector<std::uint8_t>>(std::move(result.payload.image))};
+        if(probe->request(expected,std::move(encoded))){status(ClipboardCaptureState::pending);return;}
+        // Header rejection falls through to the next format under a NEW lease,
+        // never using bytes from a changed clipboard or decoding on the UI thread.
+    }}
+    void complete(std::uint64_t seq,ClipboardImageResult result){if(!alive||seq!=expected||sequence()!=expected){status(ClipboardCaptureState::stale);return;}if(!result.thumbnail){readNext();return;}ClipboardPayload payload;payload.kind=ClipboardKind::image;payload.image_format=imageFormats[next-1];payload.decodedImage=std::move(result.thumbnail);accept(std::move(payload));}
+};
+ClipboardCapture::ClipboardCapture(ClipboardHistory&history,app::UtilityExecutor&executor,Reader reader,Sequence sequence,Changed changed,NativeClipboardImageProbe::Decoder decoder){if(!reader||!sequence||!changed)throw std::invalid_argument("Clipboard capture requires explicit owner access and notification");impl_=std::make_shared<Impl>(history,std::move(reader),std::move(sequence),std::move(changed));const std::weak_ptr<Impl>weak=impl_;impl_->probe=std::make_unique<NativeClipboardImageProbe>(executor,[weak](auto sequence,auto result){if(auto self=weak.lock())self->complete(sequence,std::move(result));},std::move(decoder));}
+ClipboardCapture::~ClipboardCapture(){impl_->alive=false;impl_->changed={};impl_->probe.reset();}
+ClipboardCaptureState ClipboardCapture::begin(std::uint32_t seq){auto state=impl_;state->probe->cancel();state->expected=seq;state->next=0;state->current=ClipboardCaptureState::idle;state->error=0;state->readNext();return state->current;}
+void ClipboardCapture::cancel(){auto state=impl_;state->probe->cancel();state->expected=0;state->next=0;state->current=ClipboardCaptureState::idle;state->error=0;}
+bool ClipboardCapture::queueCapacityAvailable(){return impl_->probe->submitPending();}
+bool ClipboardCapture::retryBusy(){auto state=impl_;if(state->current!=ClipboardCaptureState::busy)return false;state->readNext();return true;}
+ClipboardCaptureState ClipboardCapture::state()const{return impl_->current;}
 } // namespace endfield::native
 
 #ifdef _WIN32
@@ -421,6 +459,8 @@ public:
     HWND owner{}; DWORD thread{}; UINT message{}; Changed changed;
     BatterySnapshot battery;
     ClipboardHistory clipboard;
+    std::unique_ptr<ClipboardCapture> clipboard_capture;
+    bool clipboard_retry_available{};
     HRESULT clipboard_error{E_PENDING};
     AudioSnapshot audio;
     bool clipboard_registered{}, co_initialized{}, com_attempted{}, audio_active{}, device_registered{}, volume_registered{};
@@ -457,6 +497,7 @@ public:
     void stop() noexcept {
         if (route) route->events.cancel();
         changed = {};
+        clipboard_capture.reset(); // Cancel routes before the borrowed utility executor is released.
         stop_audio();
         if(session_worker){session_worker->stop();session_worker.reset();}
         if (clipboard_registered && owner) RemoveClipboardFormatListener(owner);
@@ -602,9 +643,9 @@ public:
         }
         return false;
     }
-    HRESULT read_clipboard(ClipboardPayload& payload, bool& found) const {
+    HRESULT read_clipboard(ClipboardPayload& payload, bool& found, unsigned firstImage=0, unsigned* nextImage=nullptr) const {
         found = false;
-        if (IsClipboardFormatAvailable(CF_HDROP)) {
+        if (firstImage==0 && IsClipboardFormatAvailable(CF_HDROP)) {
             const auto handle = static_cast<HDROP>(GetClipboardData(CF_HDROP));
             if (!handle) return last_error();
             const UINT count = DragQueryFileW(handle, 0xffffffffu, nullptr, 0);
@@ -622,19 +663,18 @@ public:
             }
             found = true; return S_OK;
         }
-        const std::array<std::pair<UINT, ClipboardImageFormat>, 3> image_formats{{
-            {CF_DIBV5, ClipboardImageFormat::dib_v5}, {CF_DIB, ClipboardImageFormat::dib}, {png_format, ClipboardImageFormat::png}}};
-        bool rejected_image = false;
-        for (const auto [format, kind] : image_formats) {
-            if (!format || !IsClipboardFormatAvailable(format)) continue;
+        const std::array<UINT,4> formats{png_format,CF_TIFF,CF_DIBV5,CF_DIB};
+        for (unsigned index=firstImage;index<formats.size();++index) {
+            const auto format=formats[index];if(!format||!IsClipboardFormatAvailable(format))continue;
             LockedGlobal image(GetClipboardData(format));
-            if (!image.data || image.size > ClipboardHistory::maximum_image_bytes) { rejected_image = true; continue; }
-            const auto bytes = std::span(static_cast<const std::uint8_t*>(image.data), image.size);
-            if (!ClipboardHistory::valid_image(kind, bytes)) { rejected_image = true; continue; }
-            payload.kind = ClipboardKind::image; payload.image_format = kind;
-            payload.image.assign(bytes.begin(), bytes.end()); found = true; return S_OK;
+            if(!image.data||!image.size)continue;
+            if(image.size>ClipboardHistory::maximum_image_bytes)return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+            // Only copy the immutable encoded bytes while holding the lease.
+            // All stream validation and decompression belong to the utility job.
+            const auto bytes=std::span(static_cast<const std::uint8_t*>(image.data),image.size);
+            payload.kind=ClipboardKind::image;payload.image_format=ClipboardCapture::imageFormats[index];
+            payload.image.assign(bytes.begin(),bytes.end());if(nextImage)*nextImage=index+1;found=true;return S_OK;
         }
-        if (rejected_image) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
         if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
             LockedGlobal text(GetClipboardData(CF_UNICODETEXT));
             if (!text.data || text.size < 2 || text.size > ClipboardHistory::maximum_text_bytes * 2 + 2 || text.size % 2) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
@@ -647,35 +687,34 @@ public:
         }
         return S_OK;
     }
+    ClipboardReadResult read_capture(std::uint32_t expected,unsigned firstImage){
+        ClipboardReadResult result;result.sequence=expected;
+        ClipboardLease lease(owner);if(!lease.opened){result.state=ClipboardReadState::busy;result.nativeError=static_cast<std::int32_t>(last_error());return result;}
+        if(GetClipboardSequenceNumber()!=expected){result.state=ClipboardReadState::stale;return result;}
+        if(excluded_clipboard())result.state=ClipboardReadState::excluded;
+        else{bool found{};const auto hr=read_clipboard(result.payload,found,firstImage,&result.nextImage);result.nativeError=static_cast<std::int32_t>(hr);result.state=FAILED(hr)?ClipboardReadState::invalid:found?ClipboardReadState::payload:ClipboardReadState::empty;}
+        // Acknowledgment occurs inside the lease, even while image acceptance is
+        // pending. Every later format read still verifies this exact sequence.
+        clipboard_sequence.acknowledge(expected);return result;
+    }
+    void capture_changed(ClipboardCaptureState state,std::int32_t native){
+        HRESULT status=S_OK;
+        switch(state){case ClipboardCaptureState::pending:status=E_PENDING;break;case ClipboardCaptureState::busy:status=native?static_cast<HRESULT>(native):HRESULT_FROM_WIN32(ERROR_BUSY);break;case ClipboardCaptureState::invalid:status=native?static_cast<HRESULT>(native):HRESULT_FROM_WIN32(ERROR_INVALID_DATA);break;case ClipboardCaptureState::full:status=HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY);break;case ClipboardCaptureState::unavailable:status=HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);break;case ClipboardCaptureState::stale:return;default:break;}
+        if(state==ClipboardCaptureState::busy&&clipboard_retry_available&&route){clipboard_retry_available=false;route->post(clipboard_retry_event);}
+        const bool different=clipboard_error!=status;clipboard_error=status;if(state==ClipboardCaptureState::changed||different)notify(ServiceChange::clipboard);
+    }
     HRESULT refresh_clipboard(bool allow_retry = true) {
-        if (!owner_thread()) return RPC_E_WRONG_THREAD;
-        if (!clipboard_registered) return clipboard_error;
-        const DWORD sequence = GetClipboardSequenceNumber();
-        if (!clipboard_sequence.should_capture(sequence)) return S_FALSE;
-        ClipboardPayload payload; bool found = false, excluded = false;
-        HRESULT status = S_OK;
-        {
-            ClipboardLease lease(owner);
-            if (!lease.opened) {
-                const auto unavailable = last_error();
-                if (allow_retry && route) route->post(clipboard_retry_event);
-                return set_clipboard_error(unavailable);
-            }
-            if (!clipboard_sequence.should_capture(GetClipboardSequenceNumber())) return S_FALSE;
-            excluded = excluded_clipboard();
-            if (!excluded) status = read_clipboard(payload, found);
-            // Acknowledge while the clipboard is still locked, before notifying
-            // observers. A subsequent external write must retain its own event.
-            clipboard_sequence.acknowledge(GetClipboardSequenceNumber());
-        }
-        if (FAILED(status)) return set_clipboard_error(status);
-        if (excluded || !found) return set_clipboard_error(S_OK);
-        const auto inserted = clipboard.ingest(std::move(payload));
-        if (inserted == ClipboardInsertResult::invalid) return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_INVALID_DATA));
-        if (inserted == ClipboardInsertResult::full) return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY));
-        const bool error_changed = clipboard_error != S_OK; clipboard_error = S_OK;
-        if (inserted == ClipboardInsertResult::inserted || inserted == ClipboardInsertResult::moved || error_changed) notify(ServiceChange::clipboard);
-        return inserted == ClipboardInsertResult::inserted || inserted == ClipboardInsertResult::moved ? S_OK : S_FALSE;
+        if(!owner_thread())return RPC_E_WRONG_THREAD;if(!clipboard_registered)return clipboard_error;
+        const DWORD sequence=GetClipboardSequenceNumber();if(!clipboard_sequence.should_capture(sequence))return S_FALSE;
+        if(clipboard_capture){clipboard_retry_available=allow_retry;const auto state=clipboard_capture->begin(sequence);return state==ClipboardCaptureState::unchanged?S_FALSE:clipboard_error;}
+        // Backward-compatible callers may omit a worker for text/files. Never
+        // accept encoded images without successful asynchronous thumbnail decode.
+        auto result=read_capture(sequence,0);if(result.state==ClipboardReadState::busy){if(allow_retry&&route)route->post(clipboard_retry_event);return set_clipboard_error(static_cast<HRESULT>(result.nativeError));}
+        if(result.state==ClipboardReadState::stale)return S_FALSE;if(result.state==ClipboardReadState::invalid)return set_clipboard_error(static_cast<HRESULT>(result.nativeError));
+        if(result.state!=ClipboardReadState::payload)return set_clipboard_error(S_OK);
+        if(result.payload.kind==ClipboardKind::image)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED));
+        const auto inserted=clipboard.ingest(std::move(result.payload));if(inserted==ClipboardInsertResult::invalid)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_INVALID_DATA));if(inserted==ClipboardInsertResult::full)return set_clipboard_error(HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY));
+        const bool changed=clipboard_error!=S_OK;clipboard_error=S_OK;if(inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved||changed)notify(ServiceChange::clipboard);return inserted==ClipboardInsertResult::inserted||inserted==ClipboardInsertResult::moved?S_OK:S_FALSE;
     }
     HRESULT set_clipboard_error(HRESULT status) {
         if (clipboard_error != status) { clipboard_error = status; notify(ServiceChange::clipboard); }
@@ -701,10 +740,10 @@ public:
             }
         } else {
             format = payload.image_format == ClipboardImageFormat::dib_v5 ? CF_DIBV5 :
-                payload.image_format == ClipboardImageFormat::dib ? CF_DIB : png_format;
+                payload.image_format == ClipboardImageFormat::dib ? CF_DIB : payload.image_format==ClipboardImageFormat::tiff?CF_TIFF:png_format;
         }
         if (!format) return E_UNEXPECTED;
-        const auto data = payload.kind == ClipboardKind::image ? std::span<const std::uint8_t>(payload.image) : std::span<const std::uint8_t>(bytes);
+        const auto data = payload.kind == ClipboardKind::image ? payload.image_bytes() : std::span<const std::uint8_t>(bytes);
         OwnedGlobal primary(data.size()), marker(sizeof(ClipboardOwnerMarker)), effect(sizeof(DWORD));
         const DWORD copy_effect = DROPEFFECT_COPY;
         const ClipboardOwnerMarker owner_marker{GetCurrentProcessId(), route->token};
@@ -723,6 +762,7 @@ public:
                 if (payload.kind == ClipboardKind::files && drop_effect_format) effect.publish(drop_effect_format);
             }
             clipboard_sequence.copied(GetClipboardSequenceNumber());
+            if(clipboard_capture)clipboard_capture->cancel();
         }
         return set_clipboard_error(status);
     }
@@ -730,7 +770,7 @@ public:
 
 SystemServices::SystemServices() : impl_(std::make_unique<Impl>()) {}
 SystemServices::~SystemServices() { stop(); }
-HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed changed, bool audio_active) {
+HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed changed, bool audio_active, app::UtilityExecutor* clipboard_executor) {
     if (!owner || !IsWindow(owner) || notification_message < WM_APP || notification_message > 0xbfff) return E_INVALIDARG;
     if (GetWindowThreadProcessId(owner, nullptr) != GetCurrentThreadId()) return RPC_E_WRONG_THREAD;
     if (impl_->owner && !impl_->owner_thread()) return RPC_E_WRONG_THREAD;
@@ -747,6 +787,9 @@ HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed cha
             L"org.nspasteboard.ConcealedType", L"org.nspasteboard.TransientType", L"org.nspasteboard.AutoGeneratedType",
             L"de.petermaurer.TransientPasteboardType", L"com.typeit4me.clipping"})
             impl_->excluded_formats.push_back(RegisterClipboardFormatW(name));
+        if(clipboard_executor){auto*state=impl_.get();impl_->clipboard_capture=std::make_unique<ClipboardCapture>(impl_->clipboard,*clipboard_executor,
+            [state](auto sequence,auto first){return state->read_capture(sequence,first);},[]{return GetClipboardSequenceNumber();},
+            [state](auto value,auto error){state->capture_changed(value,error);});}
         impl_->clipboard_sequence.begin(GetClipboardSequenceNumber());
         const bool privacy_formats_ready = impl_->history_format &&
             std::all_of(impl_->excluded_formats.begin(), impl_->excluded_formats.end(), [](const auto format) { return format != 0; });
@@ -761,6 +804,7 @@ HRESULT SystemServices::start(HWND owner, UINT notification_message, Changed cha
     catch (...) { impl_->stop(); return E_FAIL; }
 }
 void SystemServices::stop() noexcept { impl_->stop(); }
+bool SystemServices::clipboard_queue_capacity_available(){if(!impl_->owner_thread()||!impl_->clipboard_capture)return false;return impl_->clipboard_capture->queueCapacityAvailable();}
 HRESULT SystemServices::set_audio_active(bool active) {
     try { return impl_->set_audio_active(active); }
     catch (const std::bad_alloc&) { impl_->stop_audio(); impl_->audio_active = false; return E_OUTOFMEMORY; }
@@ -786,7 +830,7 @@ bool SystemServices::handle_message(UINT message, WPARAM wparam, LPARAM) {
             if (events & clipboard_event) refresh_clipboard();
             else if (events & clipboard_retry_event) {
                 // One message-loop retry per native change, never a polling loop.
-                try { impl_->refresh_clipboard(false); } catch (...) { /* Explicit UI refresh can retry. */ }
+                try { if(!impl_->clipboard_capture||!impl_->clipboard_capture->retryBusy())impl_->refresh_clipboard(false); } catch (...) { /* Explicit UI refresh can retry. */ }
             }
             if(events&application_event)impl_->refresh_applications();
         } else if (impl_->audio_route && wparam == impl_->audio_route->token) {
@@ -821,8 +865,10 @@ bool SystemServices::set_clipboard_capacity(std::size_t capacity) {
 }
 void SystemServices::clear_clipboard(bool keep_pinned) {
     if (!impl_->owner_thread()) return;
+    if(impl_->clipboard_capture)impl_->clipboard_capture->cancel();
+    const bool errorChanged=impl_->clipboard_error!=S_OK;impl_->clipboard_error=S_OK;
     const auto count = impl_->clipboard.items().size(); impl_->clipboard.clear(keep_pinned);
-    if (impl_->clipboard.items().size() != count) impl_->notify(ServiceChange::clipboard);
+    if (impl_->clipboard.items().size() != count||errorChanged) impl_->notify(ServiceChange::clipboard);
 }
 HRESULT SystemServices::refresh_audio() {
     try { return impl_->refresh_audio(); } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; } catch (...) { return E_FAIL; }

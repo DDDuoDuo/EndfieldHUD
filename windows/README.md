@@ -661,3 +661,18 @@ across that run and the targeted corrections. Notes, Archive, private-font menus
 and combined hardware coverage also passed after the small imported-system-font
 menu correction. This validates the thumbnail helper, not live clipboard capture;
 connecting Windows notifications and the metadata bridge is the next checkpoint.
+
+Snapshot 86 connects event-driven Windows clipboard capture to the existing
+shared utility queue and bounded thumbnail cache. Its explicit native-capture
+option is rejected in hidden/coverage runs; all tests still use injected history
+and leave the real clipboard untouched. Inactive sections do not rebuild on
+clipboard notifications. Reader library, bookmark and navigation models now
+match the original versioned data, including preserved additive metadata and
+Mac bookmark bytes. Activity sampling and presentation foundations also pass
+isolated checks; Reader format rendering and Activity UI remain separate work.
+
+A clean laptop rebuild passed all 146 registered suites and all 18 explicit
+checks. The initial incremental run retained three consumers of an older shared
+Clipboard structure and crashed those test binaries; rebuilding every consumer
+resolved all three without a runtime workaround. Live native clipboard capture,
+Reader interaction and Activity integration are not yet accepted.

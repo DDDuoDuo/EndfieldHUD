@@ -1,5 +1,6 @@
 #pragma once
 #include "audio_session_worker.hpp"
+#include "clipboard_image.hpp"
 
 #include <atomic>
 #include <array>
@@ -30,14 +31,18 @@ struct BatterySnapshot {
 BatterySnapshot decode_power_status(const PowerStatus& status) noexcept;
 
 enum class ClipboardKind { text, url, files, image };
-enum class ClipboardImageFormat { dib, dib_v5, png };
+enum class ClipboardImageFormat { dib, dib_v5, png, tiff };
 struct ClipboardPayload {
     ClipboardKind kind{ClipboardKind::text};
     std::u16string text;
     std::vector<std::u16string> files;
     ClipboardImageFormat image_format{ClipboardImageFormat::dib};
     std::vector<std::uint8_t> image;
-    bool operator==(const ClipboardPayload&) const = default;
+    // Native capture shares original encoded bytes with its validated thumbnail.
+    // Legacy value-owned synthetic callers can continue using image instead.
+    std::shared_ptr<const ClipboardImageThumbnail> decodedImage;
+    std::span<const std::uint8_t> image_bytes() const noexcept;
+    bool operator==(const ClipboardPayload&) const;
 };
 struct ClipboardItem {
     std::uint64_t id{};
@@ -86,6 +91,40 @@ private:
     std::vector<ClipboardItem> items_;
     std::size_t capacity_{10}, retained_bytes_{};
     std::uint64_t next_id_{1};
+};
+
+// The reader runs ONLY on the owner thread. Each invocation atomically reads
+// under the native clipboard lease and verifies expectedSequence, including
+// format fallbacks after asynchronous decode. No OS access belongs to a worker.
+enum class ClipboardReadState { payload,empty,excluded,busy,stale,invalid };
+struct ClipboardReadResult {
+    ClipboardReadState state{ClipboardReadState::empty};
+    std::uint32_t sequence{};
+    ClipboardPayload payload;
+    unsigned nextImage{};
+    std::int32_t nativeError{};
+};
+enum class ClipboardCaptureState { idle,pending,changed,unchanged,empty,excluded,busy,stale,invalid,full,unavailable };
+class ClipboardCapture final {
+public:
+    static constexpr std::array imageFormats{ClipboardImageFormat::png,ClipboardImageFormat::tiff,ClipboardImageFormat::dib_v5,ClipboardImageFormat::dib};
+    using Reader=std::function<ClipboardReadResult(std::uint32_t expectedSequence,unsigned firstImage)>;
+    using Sequence=std::function<std::uint32_t()>;
+    using Changed=std::function<void(ClipboardCaptureState,std::int32_t)>;
+    // History and executor must outlive capture. Decoder injection is for owned
+    // fixtures; default performs real bounded WIC validation on the utility job.
+    ClipboardCapture(ClipboardHistory&,app::UtilityExecutor&,Reader,Sequence,Changed,
+        NativeClipboardImageProbe::Decoder=decodeClipboardImage);
+    ~ClipboardCapture();
+    ClipboardCapture(const ClipboardCapture&)=delete;
+    ClipboardCapture&operator=(const ClipboardCapture&)=delete;
+    ClipboardCaptureState begin(std::uint32_t sequence);
+    void cancel();
+    bool queueCapacityAvailable();
+    // One caller-posted retry after a busy native lease; preserves next format.
+    bool retryBusy();
+    ClipboardCaptureState state() const;
+private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 
 struct AudioDevice {
@@ -181,7 +220,11 @@ public:
     // read occurs: history begins with subsequent clipboard-change events.
     // A valid start can have unavailable individual services; inspect snapshots
     // and clipboard_status rather than treating missing hardware as fake data.
-    HRESULT start(HWND owner, UINT notification_message, Changed changed, bool audio_active = false);
+    HRESULT start(HWND owner, UINT notification_message, Changed changed, bool audio_active = false,
+        app::UtilityExecutor* clipboard_executor = nullptr);
+    // Call after draining the SAME borrowed executor. Image capture requires
+    // it; without it text/files work but images are not accepted undecoded.
+    bool clipboard_queue_capacity_available();
     // Inactive audio has no endpoint/device listeners. Battery + clipboard stay
     // registered, with no polling. Resume does a single fresh topology read.
     HRESULT set_audio_active(bool active);
