@@ -41,7 +41,8 @@ void run(HWND hwnd,gpu::Renderer&r,const std::filesystem::path&assets){
     check(document.selectionStyle().color!=beforeColor,"Keyboard nudge edits selected text color");frame();
     for(const auto language:{gpu::LayerFontLanguage::simplifiedChinese,gpu::LayerFontLanguage::korean}){
         raster.setDefaultFontLanguage(language);const auto expected=std::string(raster.defaultFontFamily());
-        check(menu.open("formatFont",rich::TextStyle{},time),"Unspecified font menu opens at the current default family");frame(.2);
+        rich::TextStyle sourceSystem;if(language==gpu::LayerFontLanguage::korean)sourceSystem.fontName=".SFNS-Regular";
+        check(menu.open("formatFont",sourceSystem,time),"Unspecified or imported source-system font opens at the current default family");frame(.2);
         const auto&families=raster.installedFontFamilies();const auto at=std::find(families.begin(),families.end(),expected);
         check(at!=families.end(),"Bundled default remains selectable without system installation");
         const auto first=endfield::modules::NotesControls::initialFirstRow(families,expected);

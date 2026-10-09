@@ -18,6 +18,7 @@ SourceRGB multiply(const double (&m)[3][3],SourceRGB rgb){SourceRGB result{};for
 }
 SourceRGB genericRGBToSRGB(SourceRGB rgb){valid(rgb);for(auto&v:rgb)v=std::pow(v,461./256.);auto result=multiply(matrix,rgb);for(auto&v:result)v=encoded(v);return result;}
 SourceRGB sourceBlackBlend(SourceRGB rgb,double fraction){valid(rgb);if(!std::isfinite(fraction)||fraction<0||fraction>1)throw std::invalid_argument("Invalid source black blend fraction");if(fraction==0)return rgb;for(auto&v:rgb)v=linear(v);auto generic=multiply(inverse,rgb);for(auto&v:generic)v=std::clamp(v,0.,1.)*std::pow(1-fraction,1.8);auto result=multiply(matrix,generic);for(auto&v:result)v=encoded(v);return result;}
+SourceRGB sourceWhiteBlend(SourceRGB rgb,double fraction){valid(rgb);if(!std::isfinite(fraction)||fraction<0||fraction>1)throw std::invalid_argument("Invalid source white blend fraction");if(fraction==0)return rgb;if(fraction==1)return {1,1,1};for(auto&v:rgb)v=linear(v);auto generic=multiply(inverse,rgb);for(auto&v:generic)v=std::pow(std::pow(std::clamp(v,0.,1.),1/1.8)*(1-fraction)+fraction,1.8);auto result=multiply(matrix,generic);for(auto&v:result)v=encoded(v);return result;}
 SourceRGB selectedCaptionColor(SourceRGB rgb){return sourceBlackBlend(rgb,.5);}
 SourceRGBA colorAtWheel(Point p){
  if(!std::isfinite(p.x)||!std::isfinite(p.y)||std::abs(p.x)>1e9||std::abs(p.y)>1e9)throw std::invalid_argument("Invalid source wheel point");

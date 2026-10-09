@@ -23,7 +23,7 @@ for row in j['variants']+j['customCaptions']:
  if key not in keys:
   keys[key]=len(measurements);measurements.append({'text':key[0],'width':key[1],'bold':key[2],'wrapped':key[3]})
  cases.append({'button':slot['buttonID'],'language':row['language'],'target':target,'title':title,'module':module,'right':slot['group']=='right','selected':row.get('selected',False),'dark':row.get('theme','dark')=='dark','authoredSize':[rect['x'],rect['y']],'measurement':keys[key], 'expected':{'text':text['string'],'fontSize':text['fontSize'],'bold':key[2],'wrapped':text['wrapped'],'ellipsis':text['truncation']=='end','bounds':tree['bounds'],'color':text['foregroundColor']['sRGB']}})
-(out/'input.json').write_text(json.dumps({'cases':cases,'measurements':measurements,'sourceSHA256':hashlib.sha256((repo/'Sources/HUDSourceWatchView.swift').read_bytes()).hexdigest()},ensure_ascii=False,separators=(',',':')))
+(out/'input.json').write_text(json.dumps({'cases':cases,'measurements':measurements,'sourceSHA256':hashlib.sha256((repo/'Sources/HUDSourceWatchView.swift').read_bytes()).hexdigest(),'telemetrySourceSHA256':hashlib.sha256((repo/'Sources/TelemetryCanvases.swift').read_bytes()).hexdigest()},ensure_ascii=False,separators=(',',':')))
 PY
 xcrun swiftc -parse-as-library -swift-version 5 -O -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk -module-cache-path "$repo/build/windows-module-reference/.compiler/module-cache" -framework Cocoa "$repo/windows/tools/desktop_content_reference.swift" -o "$out/reference"
 "$out/reference" "$out/desktop-content-source.json" "$out/input.json"

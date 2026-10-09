@@ -4,8 +4,14 @@
 namespace endfield::native {
 // One descriptor mapping for settled Notes shaping/paint. Public names remain
 // explicit; source-private system fonts use the configured native fallback.
+inline bool notesHasExplicitFont(const core::notes::TextStyle&s)noexcept{
+    return s.fontName&&!s.fontName->starts_with(".");
+}
+inline std::string_view notesSelectedFontFamily(const core::notes::TextStyle&s,std::string_view fallback)noexcept{
+    return notesHasExplicitFont(s)?std::string_view(*s.fontName):fallback;
+}
 inline ehud::data::Json notesRunFont(const core::notes::TextStyle&s){
-    using J=ehud::data::Json;const bool named=s.fontName&&!s.fontName->starts_with(".");
+    using J=ehud::data::Json;const bool named=notesHasExplicitFont(s);
     return J::Object{{"familyName",named?*s.fontName:".AppleSystemUIFont"},{"postScriptName",named?*s.fontName:".SFNS-Regular"},
         {"pointSize",s.fontSize},{"symbolicTraits",(s.bold?2:0)|(s.italic?1:0)},{"preserveUserFont",named}};
 }

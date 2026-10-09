@@ -642,4 +642,22 @@ checks pass, including actual SC/KR default selection. The remaining Archive syn
 the actual paused worker poster instead of requiring a playback-only GPU target.
 All 141 registered suites have therefore passed across 84b and its targeted
 corrections; the combined hardware module check also passed after the changes.
-Live font appearance and Korean IME still need desktop acceptance.
+The user confirmed the SC/KR appearance, immediate language changes, typing and
+hovering in the isolated live preview. Dedicated Korean IME composition/candidate
+placement still needs a specific acceptance test.
+
+Snapshot 85 connects Storage to the same renderer and utility queue. Its combined
+hardware test replaces all OS readers with fixtures before construction, checks
+manual refresh and the visible 60-second deadline, and verifies that hidden
+Storage and warm animation frames do not query capacity. Source color blending
+matches the original AppKit conversion rather than blending encoded RGB values.
+
+The full native run passed 141 of 142 suites. The remaining Clipboard image test
+had assumed malformed streams must be rejected; both the original ImageIO path
+and Windows WIC recover the tested PNG/TIFF streams. Targeted 85b/85c checks now
+verify their exact recovered pixels and unchanged copy-back bytes, while keeping
+CRC, truncation, orientation, alpha and size checks. All 142 suites have passed
+across that run and the targeted corrections. Notes, Archive, private-font menus
+and combined hardware coverage also passed after the small imported-system-font
+menu correction. This validates the thumbnail helper, not live clipboard capture;
+connecting Windows notifications and the metadata bridge is the next checkpoint.

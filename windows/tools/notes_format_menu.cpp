@@ -1,4 +1,5 @@
 #include "tools/notes_format_menu.hpp"
+#include "native/notes_rich_style.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include "core/data/file_io.hpp"
@@ -41,7 +42,7 @@ NotesFormatMenu::~NotesFormatMenu()=default;
 bool NotesFormatMenu::open(std::string_view verb,const rich::TextStyle&s,double t){auto&i=*impl_;mod::NotesControlsKind kind;if(verb=="formatSize")kind=mod::NotesControlsKind::size;else if(verb=="formatFont")kind=mod::NotesControlsKind::font;else if(verb=="formatColor")kind=mod::NotesControlsKind::color;else if(verb=="formatSpecial")kind=mod::NotesControlsKind::special;else return false;
     if(kind==mod::NotesControlsKind::color)i.prepareWheel();
     auto m=std::make_unique<Impl::Menu>();m->input.kind=kind;m->input.traits={s.bold,s.italic,s.underline,s.strikethrough};const auto c=s.color.value_or(rich::RGBA{1,1,1,1});m->input.currentColor={c.red,c.green,c.blue,c.alpha};m->input.colorWheelSelection=colorPoint(c);m->started=t;
-    if(kind==mod::NotesControlsKind::font){m->input.values=i.raster.installedFontFamilies();m->input.selectedValue=s.fontName.value_or(std::string(i.raster.defaultFontFamily()));}else if(kind==mod::NotesControlsKind::size){m->input.values=mod::NotesControls::sizeValues(s.fontSize);m->input.selectedValue=std::to_string(static_cast<int>(std::round(s.fontSize)));}m->input.firstRow=mod::NotesControls::initialFirstRow(m->input.values,m->input.selectedValue);
+    if(kind==mod::NotesControlsKind::font){m->input.values=i.raster.installedFontFamilies();m->input.selectedValue=std::string(gpu::notesSelectedFontFamily(s,i.raster.defaultFontFamily()));}else if(kind==mod::NotesControlsKind::size){m->input.values=mod::NotesControls::sizeValues(s.fontSize);m->input.selectedValue=std::to_string(static_cast<int>(std::round(s.fontSize)));}m->input.firstRow=mod::NotesControls::initialFirstRow(m->input.values,m->input.selectedValue);
     m->controls.update(m->input);gpu::LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;options.assetRoot=i.root;m->scene=std::make_unique<gpu::NativeNotesControlsScene>(m->controls,i.raster,options);m->scene->syncContent(kind==mod::NotesControlsKind::color?std::span(&*i.wheel,1):std::span<const gpu::NativeNotesControlsImage>{},1);m->scene->updatePose({},1,t);m->group=std::make_unique<gpu::NativeLayerGroup>(m->scene->scene(),"notes.format",2);
     i.close(t);i.menus.push_back(std::move(m));return true;
 }
