@@ -3,6 +3,7 @@
 #ifdef _WIN32
 #include <objbase.h>
 #include <wrl/client.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <functional>
@@ -62,6 +63,12 @@ void run(){
     bool called{};sink->onLock=[&]{called=true;const auto before=document.revision();check(!editor.applyFormat(ink).changed&&!editor.undo().changed,"Formatting/history decline TSF lock");check(document.revision()==before,"Locked commands preserve rich model");};HRESULT session{};ok(editor.textStore()->RequestLock(TS_LF_READWRITE|TS_LF_SYNC,&session),"Grant synthetic write lock");check(called&&SUCCEEDED(session),"Synthetic lock completed");sink->onLock={};
     const auto count=raster.stats();for(unsigned n=0;n<120;++n){auto p=pose();p.localToScreen=Matrix4::translation(30+double(n)*.01,30);editor.setPose(p);}
     check(raster.stats().rasterizations==count.rasterizations&&raster.stats().textLayoutsCreated==count.textLayoutsCreated,"Rich projected pointer frames create no text layouts or raster images");
+    const auto beforeLanguage=editor.layout().painted();const auto contentRevision=document.revision();const auto selected=document.selection();const auto notified=sink->layouts;
+    raster.setDefaultFontLanguage(LayerFontLanguage::korean);check(editor.syncContent(),"Default language event rebuilds an active editor through its owner transaction");
+    check(editor.layout().painted()!=beforeLanguage&&beforeLanguage->text()==document.text()&&document.revision()==contentRevision&&document.selection()==selected,"Language refresh keeps document/selection and old immutable glyph snapshot intact");
+    const auto&families=scene.report().fontSubstitutions;check(!families.empty()&&std::all_of(families.begin(),families.end(),[](const auto&f){return f.selectedFamily=="Noto Sans KR";})&&sink->layouts>notified,"The same painted Korean layout drives refreshed TSF extents");
+    const auto languageRaster=raster.stats();for(unsigned n=0;n<120;++n)editor.syncContent();check(raster.stats().textLayoutsCreated==languageRaster.textLayoutsCreated&&raster.stats().rasterizations==languageRaster.rasterizations,"Steady editor frames do not reshape after a font event");
+    raster.setDefaultFontLanguage(LayerFontLanguage::simplifiedChinese);editor.syncContent();
     ok(editor.stop(),"Stop owned rich field");check(!IsWindowVisible(window.value),"Test never shows or activates its HWND");
 
     {

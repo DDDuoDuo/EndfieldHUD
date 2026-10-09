@@ -1,4 +1,5 @@
 #pragma once
+#include "core/localization.hpp"
 #include "app/overlay_host.hpp"
 #include "native/work_mode_scene.hpp"
 #include "native/projected_editor.hpp"
@@ -31,6 +32,7 @@ public:
         TfClientId,WorkModePreviewOptions={});
     ~WorkModePreview();
     void resize(const app::ClientMetrics&);
+    void setLanguage(core::Language); // preference event; retains the model and current interaction
     void setAppearance(modules::WorkModeAppearance);void setReduceMotion(bool,double);
     void setFocusStatus(std::string,bool permissionAction,double);
     // HUD visibility is separate from OS suspension. False cancels the draft

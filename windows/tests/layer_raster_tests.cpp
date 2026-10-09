@@ -158,13 +158,14 @@ void run(){
         {"alignment","left"},{"wrapped",false},{"truncation","none"},{"runs",Json::Array{}}};
     image=raster.rasterize("text",1,text,options);
     check(image->complete()&&!image->fontSubstitutions.empty(),"Unavailable Mac font reports an explicit substitution without claiming matching typography");
-    check(image->fontSubstitutions.front().selectedFamily=="Segoe UI"&&nonzeroAlpha(*image)>100,"Fallback uses the requested installed family and renders glyphs");
+    check(image->fontSubstitutions.front().selectedFamily=="Noto Sans SC"&&nonzeroAlpha(*image)>100,"Fallback uses the requested installed family and renders glyphs");
     before=raster.stats();for(unsigned i=0;i<120;++i)raster.rasterize("text",1,text,options);
     check(raster.stats().textLayoutsCreated==before.textLayoutsCreated&&raster.stats().rasterizations==before.rasterizations,"Repeated caption frames reuse both final pixels and retained text layout");
     auto mono=text;mono["text"]["font"]["familyName"]=".AppleSystemUIFontMonospaced";mono["text"]["font"]["postScriptName"]=".AppleSystemUIFontMonospaced-Semibold";mono["text"]["font"]["symbolicTraits"]=17410;
-    const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="Consolas","Explicit Mac monospace source uses installed fixed-pitch fallback");
+    const auto monoImage=raster.rasterize("source-monospace",1,mono,options);check(!monoImage->fontSubstitutions.empty()&&monoImage->fontSubstitutions.front().selectedFamily=="Noto Sans SC","Application default typography overrides source monospace UI text");
+    auto clock=mono;clock["text"]["preserveSourceFont"]=true;const auto clockImage=raster.rasterize("source-clock-monospace",1,clock,options);check(clockImage->fontSubstitutions.front().selectedFamily=="Consolas","Clock marker preserves the existing fixed-pitch source fallback");
     auto proportional=text;proportional["text"]["font"]["familyName"]=".AppleSystemUIFont";proportional["text"]["font"]["postScriptName"]=".SFNS-Semibold";proportional["text"]["font"]["symbolicTraits"]=2;
-    const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="Segoe UI","Proportional source is not inferred as monospace from clock usage");
+    const auto proportionalImage=raster.rasterize("source-proportional",1,proportional,options);check(!proportionalImage->fontSubstitutions.empty()&&proportionalImage->fontSubstitutions.front().selectedFamily=="Noto Sans SC","Proportional source is not inferred as monospace from clock usage");
     auto demi=proportional;demi["text"]["font"]["postScriptName"]=".AppleSystemUIFontDemi";
     const auto demiImage=raster.rasterize("source-demi",1,demi,options);
     check(demiImage->straightRGBA==proportionalImage->straightRGBA,"Mac system Demi source face retains semibold weight despite its bold symbolic trait");

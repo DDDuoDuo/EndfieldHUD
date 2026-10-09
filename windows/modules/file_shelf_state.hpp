@@ -26,6 +26,7 @@ struct FileShelfStrings {
     std::string selectedStatus{"{count} selected · Drag to copy"},itemsStatus{"{count} items · Shift-click to select"};
     std::string folder{"Folder"},image{"Image"},video{"Video"},archive{"Archive"},file{"File"};
     static FileShelfStrings simplifiedChinese();
+    bool operator==(const FileShelfStrings&) const = default;
 };
 // Source: FileShelfCanvas.swift + the semantic keyboard/drag commands in
 // HUDFileShelfInteraction.swift. UI-thread, synchronous non-reentrant callbacks.
@@ -85,6 +86,8 @@ public:
     std::uint64_t revision() const noexcept{return revision_;}
     // Owner drains after each input command; these are effects, not a history log.
     std::vector<Event> takeEvents(); // delivery after state mutation, never a reentrant callback
+    bool setStrings(FileShelfStrings); // content event only; no provider read or selection/motion reset
+    const FileShelfStrings& strings() const noexcept{return strings_;}
     void setReduceMotion(bool);
     void activate(); // explicit refresh on activation, never polling
     void deactivate(); // clears confirmation/drop/pending click, preserves selection/scroll

@@ -83,7 +83,7 @@ struct NativeNotesWorkspace::Impl {
     std::array<Slot*,tokenCapacity>tokenSlots{};
     std::vector<Slot*> active;std::vector<LayerCompositionEntry>entries;
     std::unique_ptr<Field>field;std::optional<Drag>drag;std::optional<NativeNotesWorkspacePose>pose;
-    core::Projection projection;std::optional<double>lastTime;std::uint64_t synchronized{},compositionRevision{},measureRevision{},motionSerial{},presentationGeneration{1};UINT_PTR generation{};
+    core::Projection projection;std::optional<double>lastTime;std::uint64_t synchronized{},fontRevision{},compositionRevision{},measureRevision{},motionSerial{},presentationGeneration{1};UINT_PTR generation{};
     NativeNotesWorkspaceStats stats;
     std::vector<std::shared_ptr<Media>>mediaAssets;std::vector<Slot*>mediaSlots;
     std::vector<NotesImagePlaybackRequest>mediaRequests;std::vector<NotesVideoRequest>videoRequests;
@@ -102,6 +102,7 @@ struct NativeNotesWorkspace::Impl {
         need(options.maximumRetainedCards>0&&options.maximumRetainedCards<=1024&&options.maximumEditorUnits>0&&options.maximumEditorUnits<=65536,"Invalid explicit Notes workspace capacities");
         need(options.ownerMessage>=WM_APP&&options.ownerMessage<=0xBFFF,"Notes workspace requires a private owner message");
         need((options.activatedTextManager==nullptr)==(options.textClient==TF_CLIENTID_NULL),"Notes TSF manager/client must be supplied together");
+        need((options.mediaBroker==nullptr)==(options.mediaClient==0)&&(!options.mediaBroker||(!options.imagePlayback&&!options.videoPlayback)),"Notes shared media requires one borrowed broker/client without exclusive provider ownership");
         need(std::isfinite(options.raster.pixelsPerPoint)&&options.raster.pixelsPerPoint>0&&options.raster.pixelsPerPoint<=4&&std::isfinite(options.raster.paddingPoints)&&options.raster.paddingPoints>=0&&options.raster.paddingPoints<=64,"Invalid Notes raster geometry");
     }
     void check()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Notes workspace belongs to its creating UI thread");}
@@ -142,50 +143,61 @@ struct NativeNotesWorkspace::Impl {
             if(!value["duration"].isNull())content->duration=value["duration"].number();
             if(value["referencePlatform"].isString()&&value["referencePlatform"].string()=="windows")path=value["windowsPath"].string();
         }else{need(n.imageName.has_value(),"Image card has no source reference");content->legacyManagedImage=true;if(options.legacyImagePath)path=options.legacyImagePath(*n.imageName);}
-        if(path&&options.imagePlayback&&content->kind!=mod::NotesMediaKind::video){
+        if(path&&hasImages()&&content->kind!=mod::NotesMediaKind::video){
             asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,false,asset->accessLease},content->kind};content->status.state=mod::NotesMediaState::loading;
-        }else if(path&&options.videoPlayback&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease,options.imagePlayback!=nullptr};
-            if(options.imagePlayback)asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,true,asset->accessLease,false,true},mod::NotesMediaKind::image};
+        }else if(path&&hasVideos()&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease,hasImages()};
+            if(hasImages())asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,true,asset->accessLease,false,true},mod::NotesMediaKind::image};
             content->status.state=mod::NotesMediaState::loading;}else{content->status.state=mod::NotesMediaState::failed;content->status.localizedError=content->kind==mod::NotesMediaKind::video?options.videoUnavailable:options.mediaUnavailable;content->legacyUnavailable=content->legacyManagedImage;}
         asset->content=std::move(content);mediaAssets.push_back(asset);mediaUploadPending=true;return asset;
     }
+    bool hasImages()const{return options.mediaBroker||options.imagePlayback;}
+    bool hasVideos()const{return options.mediaBroker?options.mediaBroker->hasVideoPlayback():options.videoPlayback!=nullptr;}
+    const NotesImagePlaybackRecord*image(std::string_view key)const{return options.mediaBroker?options.mediaBroker->findImage(options.mediaClient,key):options.imagePlayback?options.imagePlayback->find(key):nullptr;}
+    const NotesVideoRecord*video(std::string_view key)const{return options.mediaBroker?options.mediaBroker->findVideo(options.mediaClient,key):options.videoPlayback?options.videoPlayback->find(key):nullptr;}
+    bool poster(const Media&a,std::uint64_t revision,const NotesImageFrame*f,HRESULT error){return options.mediaBroker?options.mediaBroker->setVideoPoster(options.mediaClient,a.key,a.videoRequest->revision,revision,f,error):options.videoPlayback->setPoster(a.key,a.videoRequest->revision,revision,f,error);}
+    bool toggleImage(std::string_view key,double time){return options.mediaBroker?options.mediaBroker->toggleImage(options.mediaClient,key,time):options.imagePlayback->toggle(key,time);}
+    bool toggleVideo(std::string_view key,double time){return options.mediaBroker?options.mediaBroker->toggleVideo(options.mediaClient,key,time):options.videoPlayback->toggle(key,time);}
+    bool seekVideo(std::string_view key,double seconds){return options.mediaBroker?options.mediaBroker->seekVideo(options.mediaClient,key,seconds):options.videoPlayback->seek(key,seconds);}
+    bool retireImage(std::string_view key){if(!image(key))return true;return options.mediaBroker?options.mediaBroker->retireImage(options.mediaClient,key):options.imagePlayback->retire(key);}
+    bool retireVideo(std::string_view key){if(!video(key))return true;return options.mediaBroker?options.mediaBroker->retireVideo(options.mediaClient,key):options.videoPlayback->retire(key);}
+    void hideMedia(){if(options.mediaBroker){options.mediaBroker->hideImages(options.mediaClient,mediaTime);options.mediaBroker->hideVideos(options.mediaClient,mediaTime);}else{if(options.imagePlayback)options.imagePlayback->hide(mediaTime);if(options.videoPlayback)options.videoPlayback->hide(mediaTime);}}
     void mediaClock(double time){need(std::isfinite(time)&&time>=mediaTime,"Invalid Notes media owner clock");mediaTime=time;}
     void progress(Slot&s,bool animated){
-        if(!s.media||!s.media->videoRequest||!options.videoPlayback||!s.mediaProgress)return;
-        const auto*r=options.videoPlayback->find(s.media->key);if(!r)return;
+        if(!s.media||!s.media->videoRequest||!hasVideos()||!s.mediaProgress)return;
+        const auto*r=video(s.media->key);if(!r)return;
         const auto preview=mediaSeek&&mediaSeek->id==s.presentation.noteID()?std::optional<double>(mediaSeek->seconds):std::nullopt;
         s.mediaProgress->update(r->pendingSeek.value_or(r->currentTime),preview,animated,r->state==mod::NotesMediaState::playing,s.visible&&mediaActive,false,mediaTime);
     }
     bool readMedia(){
         bool changed{},contentChanged{};
         for(auto&asset:mediaAssets){
-            if(asset->request&&!asset->videoRequest&&options.imagePlayback){const auto*record=options.imagePlayback->find(asset->key);if(!record)continue;
+            if(asset->request&&!asset->videoRequest&&hasImages()){const auto*record=image(asset->key);if(!record)continue;
                 if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->legacyUnavailable=content->legacyManagedImage&&record->state==mod::NotesMediaState::failed;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
                 if(record->frameRevision!=asset->observedFrame){asset->frame=record->frame;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
-            }else if(asset->videoRequest&&options.videoPlayback){
-                if(asset->request&&options.imagePlayback){const auto*poster=options.imagePlayback->find(asset->key);
+            }else if(asset->videoRequest&&hasVideos()){
+                if(asset->request&&hasImages()){const auto*poster=image(asset->key);
                     if(poster&&((poster->state==mod::NotesMediaState::ready&&poster->frame&&poster->frameRevision!=asset->observedPosterFrame)||(poster->state==mod::NotesMediaState::failed&&poster->contentRevision!=asset->observedPosterContent))){
                         need(asset->posterSerial<std::numeric_limits<std::uint64_t>::max(),"Video poster completion generation exhausted");
-                        options.videoPlayback->setPoster(asset->key,asset->videoRequest->revision,++asset->posterSerial,poster->frame.get(),poster->error);
+                        this->poster(*asset,++asset->posterSerial,poster->frame.get(),poster->error);
                         asset->observedPosterFrame=poster->frameRevision;asset->observedPosterContent=poster->contentRevision;
                     }
                 }
-                const auto*record=options.videoPlayback->find(asset->key);if(!record)continue;
+                const auto*record=video(asset->key);if(!record)continue;
                 if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->duration=record->duration;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
                 if(record->frameRevision!=asset->observedFrame){asset->videoTexture=record->textureID;asset->videoWidth=record->width;asset->videoHeight=record->height;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
             }
         }
         if(contentChanged){for(auto*s:mediaSlots){if(s->deleted)continue;const auto*n=state.note(s->presentation.noteID());if(n)refresh(*s,*n,s->ordinal);}rebuildEntries();}
-        for(auto*s:mediaSlots)if(s->media->videoRequest&&options.videoPlayback){const auto*r=options.videoPlayback->find(s->media->key);if(r&&r->progressRevision!=s->media->observedProgress){s->media->observedProgress=r->progressRevision;progress(*s,true);changed=true;}}
+        for(auto*s:mediaSlots)if(s->media->videoRequest&&hasVideos()){const auto*r=video(s->media->key);if(r&&r->progressRevision!=s->media->observedProgress){s->media->observedProgress=r->progressRevision;progress(*s,true);changed=true;}}
         if(changed&&pose)applyPose(*pose);return changed;
     }
     bool syncMediaVisibility(bool preserve=false){
         mediaRequests.clear();videoRequests.clear();if(mediaActive)for(auto*s:mediaSlots)if(s->visible&&!s->deleted){if(s->media->request)mediaRequests.push_back(*s->media->request);if(s->media->videoRequest)videoRequests.push_back(*s->media->videoRequest);}
-        bool changed{};if(options.imagePlayback)changed=options.imagePlayback->setVisible(mediaRequests,mediaTime,preserve)||changed;if(options.videoPlayback)changed=options.videoPlayback->setVisible(videoRequests,mediaTime,preserve)||changed;if(changed)readMedia();return changed;
+        bool changed{};if(options.mediaBroker){changed=options.mediaBroker->setImages(options.mediaClient,1,mediaRequests,mediaTime,preserve);changed=options.mediaBroker->setVideos(options.mediaClient,1,videoRequests,mediaTime,preserve)||changed;}else{if(options.imagePlayback)changed=options.imagePlayback->setVisible(mediaRequests,mediaTime,preserve)||changed;if(options.videoPlayback)changed=options.videoPlayback->setVisible(videoRequests,mediaTime,preserve)||changed;}if(changed)readMedia();return changed;
     }
     std::shared_ptr<const NativeNotesTextMeasurement>measure(std::string_view id,const Note&n,core::Rect r,const std::shared_ptr<const NativeNotesTextMeasurement>&old={}){
         const std::string_view value=n.text.empty()?std::string_view(style.strings.placeholder):std::string_view(n.text);
-        if(old&&old->measured.text==value&&old->measured.width==r.width-18&&old->measured.sourceRichPayload==n.richText)return old;
+        if(old&&old->fontRevision==raster.fontRevision()&&old->measured.text==value&&old->measured.width==r.width-18&&old->measured.sourceRichPayload==n.richText)return old;
         return measurer.measure(id,++measureRevision,value,r.width-18,12,options.raster,n.richText);
     }
     std::shared_ptr<const mod::NotesChecklistLayout>measureChecklist(Slot&s,const Note&n,core::Rect r,bool force=false){
@@ -194,10 +206,10 @@ struct NativeNotesWorkspace::Impl {
         if(unchanged)return s.checklist;
         need(n.items.size()<=mod::NotesChecklistLayout::maximumRows,"Checklist row capacity exceeded");decltype(s.rowMeasurements)next;std::vector<mod::NotesChecklistMeasurement>inputs;inputs.reserve(n.items.size());
         for(const auto&item:n.items){need(ehud::data::validUUID(item.id)&&!next.contains(item.id),"Invalid checklist row identity");const auto old=s.rowMeasurements.find(item.id);Slot::Row row;
-            if(!force&&old!=s.rowMeasurements.end()&&old->second.text->measured.text==item.text&&old->second.text->measured.width==width)row.text=old->second.text;
+            if(!force&&old!=s.rowMeasurements.end()&&old->second.text->fontRevision==raster.fontRevision()&&old->second.text->measured.text==item.text&&old->second.text->measured.width==width)row.text=old->second.text;
             else row.text=measurer.measure(n.id+"/item/"+item.id,++measureRevision,item.text,width,11,options.raster);
             if(!item.text.empty())row.display=row.text;
-            else if(!force&&old!=s.rowMeasurements.end()&&old->second.display->measured.text==style.strings.itemPlaceholder&&old->second.display->measured.width==width)row.display=old->second.display;
+            else if(!force&&old!=s.rowMeasurements.end()&&old->second.display->fontRevision==raster.fontRevision()&&old->second.display->measured.text==style.strings.itemPlaceholder&&old->second.display->measured.width==width)row.display=old->second.display;
             else row.display=measurer.measure(n.id+"/placeholder/"+item.id,++measureRevision,style.strings.itemPlaceholder,width,11,options.raster);
             inputs.push_back({item.id,row.text->presentationText(row.text),row.display->presentationText(row.display),item.isChecked});next.emplace(item.id,std::move(row));
         }
@@ -228,7 +240,7 @@ struct NativeNotesWorkspace::Impl {
         active=std::move(next);mediaSlots.clear();for(auto*s:active)if(s->media)mediaSlots.push_back(s);if(changed){entries=std::move(list);++compositionRevision;}
     }
     bool sync(bool force=false){
-        check();editorOwnership();if(!force&&synchronized==state.revision())return false;preflight(state.workspaceBounds(),state.notesSelected());const auto priorComposition=compositionRevision;
+        check();editorOwnership();force|=fontRevision!=raster.fontRevision();if(!force&&synchronized==state.revision())return false;preflight(state.workspaceBounds(),state.notesSelected());const auto priorComposition=compositionRevision;
         bool changed{};std::size_t ordinal{};
         for(const auto&n:state.notes()){
             auto*s=find(n.id);const bool visible=state.notesSelected()||n.isPinned;
@@ -236,7 +248,7 @@ struct NativeNotesWorkspace::Impl {
             if(s)changed=refresh(*s,n,ordinal,force)||changed;++ordinal;
         }
         for(auto it=slots.begin();it!=slots.end();)if(!state.note(it->first)){if(brushSlot==it->second.get()){brushSlot->drawingScene->setBrush({},drawingWidth,style.palette.primary);brushSlot=nullptr;brushPhysical.reset();}measurer.remove(it->first);if(it->second->deleted)deletingCards.push_back(std::move(it->second));else{unregister(*it->second);retiredCards.push_back(std::move(it->second));}it=slots.erase(it);changed=true;}else ++it;
-        rebuildEntries();synchronized=state.revision();++stats.stateSynchronizations;
+        rebuildEntries();synchronized=state.revision();fontRevision=raster.fontRevision();++stats.stateSynchronizations;
         syncMediaVisibility(!deletingCards.empty()||std::any_of(active.begin(),active.end(),[](const auto*s){return s->outgoing;}));if(pose)applyPose(*pose);return changed||compositionRevision!=priorComposition;
     }
     bool applyPose(const NativeNotesWorkspacePose&p){
@@ -287,9 +299,10 @@ struct NativeNotesWorkspace::Impl {
 };
 
 NativeNotesWorkspace::NativeNotesWorkspace(HWND h,mod::NotesState&s,LayerRasterizer&r,NativeNotesWorkspaceStyle st,NativeNotesWorkspaceOptions o):impl_(std::make_unique<Impl>(h,s,r,std::move(st),std::move(o))){impl_->sync();}
-NativeNotesWorkspace::~NativeNotesWorkspace(){if(impl_->options.imagePlayback){try{impl_->options.imagePlayback->hide(impl_->mediaTime);}catch(...){}}if(impl_->options.videoPlayback){try{impl_->options.videoPlayback->hide(impl_->mediaTime);}catch(...){}}}
+NativeNotesWorkspace::~NativeNotesWorkspace(){try{impl_->hideMedia();}catch(...){}}
 bool NativeNotesWorkspace::syncState(){return impl_->sync();}
-bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*impl_;i.check();validateStyle(style);if(sameStyle(i.style,style))return false;endDrawing();updateDrawingHover({});
+std::uint64_t NativeNotesWorkspace::fontRevision()const noexcept{return impl_->fontRevision;}
+bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*impl_;i.check();validateStyle(style);if(sameStyle(i.style,style)&&i.fontRevision==i.raster.fontRevision())return false;endDrawing();updateDrawingHover({});
     need(i.slots.size()*2+i.deletingCards.size()+i.retiredCards.size()<=i.options.maximumRetainedCards,"Retire detached Notes cards before changing their native appearance");
     // A theme/localization event does not end the owner's sampled closing
     // transition. Stage replacement identities with their outgoing holds even
@@ -327,16 +340,17 @@ bool NativeNotesWorkspace::setCardMotions(std::span<const NativeNotesCardMotion>
 }
 bool NativeNotesWorkspace::updatePose(const NativeNotesWorkspacePose&p){return impl_->applyPose(p);}
 bool NativeNotesWorkspace::requiresFrames(double t)const{auto&i=*impl_;i.check();need(std::isfinite(t),"Notes frame-demand time must be finite");for(auto*s:i.active)if(s->motion.active||s->native->requiresFrames(t)||(s->mediaProgress&&s->mediaProgress->needsFrame(t)))return true;return i.options.videoPlayback&&i.options.videoPlayback->requiresFrames();}
-void NativeNotesWorkspace::connectVideoPlayback(NativeNotesVideoPlayback&owner){auto&i=*impl_;i.check();need(!i.options.videoPlayback&&std::none_of(i.mediaAssets.begin(),i.mediaAssets.end(),[](const auto&a){return a->content->kind==mod::NotesMediaKind::video;}),"Connect exclusive video owner before attaching movie cards");i.options.videoPlayback=&owner;}
-void NativeNotesWorkspace::connectImagePlayback(NativeNotesImagePlayback&owner){auto&i=*impl_;i.check();need(!i.options.imagePlayback&&i.mediaAssets.empty(),"Connect the exclusive media owner before attaching media cards");i.options.imagePlayback=&owner;}
+void NativeNotesWorkspace::connectVideoPlayback(NativeNotesVideoPlayback&owner){auto&i=*impl_;i.check();need(!i.options.mediaBroker&&!i.options.videoPlayback&&std::none_of(i.mediaAssets.begin(),i.mediaAssets.end(),[](const auto&a){return a->content->kind==mod::NotesMediaKind::video;}),"Connect exclusive video owner before attaching movie cards");i.options.videoPlayback=&owner;}
+void NativeNotesWorkspace::connectImagePlayback(NativeNotesImagePlayback&owner){auto&i=*impl_;i.check();need(!i.options.mediaBroker&&!i.options.imagePlayback&&i.mediaAssets.empty(),"Connect the exclusive media owner before attaching media cards");i.options.imagePlayback=&owner;}
 bool NativeNotesWorkspace::setMediaActive(bool active,double time,bool preserve){auto&i=*impl_;i.check();i.mediaClock(time);if(i.mediaActive==active)return false;if(!active)endMediaSeek(time);i.mediaActive=active;return i.syncMediaVisibility(preserve);}
-bool NativeNotesWorkspace::acceptMedia(UINT_PTR generation,double time){auto&i=*impl_;i.check();i.mediaClock(time);bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->accept(generation,time);if(i.options.videoPlayback){changed=i.options.videoPlayback->accept(generation,time)||changed;changed=i.options.videoPlayback->sample(time)||changed;}return changed?i.readMedia():false;}
-bool NativeNotesWorkspace::sampleMedia(double time){auto&i=*impl_;i.check();i.mediaClock(time);bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->sample(time);if(i.options.videoPlayback)changed=i.options.videoPlayback->sample(time)||changed;return changed?i.readMedia():false;}
-std::optional<double>NativeNotesWorkspace::mediaNextWakeTime()const{auto&i=*impl_;i.check();auto result=i.options.imagePlayback?i.options.imagePlayback->nextWakeTime():std::nullopt;if(i.options.videoPlayback){const auto video=i.options.videoPlayback->nextWakeTime();if(video&&(!result||*video<*result))result=video;}return result;}
-bool NativeNotesWorkspace::toggleMedia(std::string_view id,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!i.mediaActive)return false;bool changed{};if(s->media->videoRequest&&i.options.videoPlayback)changed=i.options.videoPlayback->toggle(s->media->key,time);else if(s->media->request&&i.options.imagePlayback)changed=i.options.imagePlayback->toggle(s->media->key,time);i.readMedia();return changed;}
-bool NativeNotesWorkspace::beginMediaSeek(std::string_view id,core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!s->media->videoRequest||!s->media->content->duration||!i.options.videoPlayback||!i.mediaActive)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return false;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);if(!inside(layout.geometry().seek,{point->x-s->rect.x,point->y-s->rect.y}))return false;i.mediaSeek=Impl::MediaSeek{std::string(id),layout.seekSeconds(point->x-s->rect.x)};i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
+bool NativeNotesWorkspace::acceptMedia(UINT_PTR generation,double time){auto&i=*impl_;i.check();i.mediaClock(time);if(i.options.mediaBroker)return i.readMedia();bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->accept(generation,time);if(i.options.videoPlayback){changed=i.options.videoPlayback->accept(generation,time)||changed;changed=i.options.videoPlayback->sample(time)||changed;}return changed?i.readMedia():false;}
+bool NativeNotesWorkspace::sampleMedia(double time){auto&i=*impl_;i.check();i.mediaClock(time);if(i.options.mediaBroker)return i.readMedia();bool changed{};if(i.options.imagePlayback)changed=i.options.imagePlayback->sample(time);if(i.options.videoPlayback)changed=i.options.videoPlayback->sample(time)||changed;return changed?i.readMedia():false;}
+bool NativeNotesWorkspace::refreshSharedMedia(double time){auto&i=*impl_;i.check();need(i.options.mediaBroker!=nullptr,"Notes shared refresh requires the borrowed app broker");i.mediaClock(time);return i.readMedia();}
+std::optional<double>NativeNotesWorkspace::mediaNextWakeTime()const{auto&i=*impl_;i.check();if(i.options.mediaBroker)return{};auto result=i.options.imagePlayback?i.options.imagePlayback->nextWakeTime():std::nullopt;if(i.options.videoPlayback){const auto video=i.options.videoPlayback->nextWakeTime();if(video&&(!result||*video<*result))result=video;}return result;}
+bool NativeNotesWorkspace::toggleMedia(std::string_view id,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!i.mediaActive)return false;bool changed{};if(s->media->videoRequest&&i.hasVideos())changed=i.toggleVideo(s->media->key,time);else if(s->media->request&&i.hasImages())changed=i.toggleImage(s->media->key,time);i.readMedia();return changed;}
+bool NativeNotesWorkspace::beginMediaSeek(std::string_view id,core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);auto*s=i.find(id);if(!s||!s->visible||s->outgoing||s->deleted||!s->media||!s->media->videoRequest||!s->media->content->duration||!i.hasVideos()||!i.mediaActive)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return false;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);if(!inside(layout.geometry().seek,{point->x-s->rect.x,point->y-s->rect.y}))return false;i.mediaSeek=Impl::MediaSeek{std::string(id),layout.seekSeconds(point->x-s->rect.x)};i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
 bool NativeNotesWorkspace::updateMediaSeek(core::Point physical,double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;auto*s=i.find(i.mediaSeek->id);if(!s||!s->media)return false;const auto point=s->hitProjection.unproject(physical);if(!point)return true;mod::NotesMediaLayout layout(s->rect.width,s->rect.height,mod::NotesMediaKind::video,s->media->content->duration);i.mediaSeek->seconds=layout.seekSeconds(point->x-s->rect.x);i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);return true;}
-bool NativeNotesWorkspace::endMediaSeek(double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;const auto value=std::move(*i.mediaSeek);i.mediaSeek.reset();auto*s=i.find(value.id);if(s&&s->media&&i.options.videoPlayback){i.options.videoPlayback->seek(s->media->key,value.seconds);i.readMedia();i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);}return true;}
+bool NativeNotesWorkspace::endMediaSeek(double time){auto&i=*impl_;i.check();i.mediaClock(time);if(!i.mediaSeek)return false;const auto value=std::move(*i.mediaSeek);i.mediaSeek.reset();auto*s=i.find(value.id);if(s&&s->media&&i.hasVideos()){i.seekVideo(s->media->key,value.seconds);i.readMedia();i.progress(*s,false);if(i.pose)i.applyPose(*i.pose);}return true;}
 bool NativeNotesWorkspace::mediaSeeking()const noexcept{return impl_->mediaSeek.has_value();}
 void NativeNotesWorkspace::uploadMedia(Renderer&r){auto&i=*impl_;i.check();if(!i.mediaUploadPending)return;need(!i.mediaRenderer||i.mediaRenderer==&r,"Notes media textures belong to another renderer");i.mediaRenderer=&r;bool entryShapeChanged{},bindingChanged{};
     for(auto*s:i.mediaSlots){auto&a=*s->media;const auto beforeDraws=s->native->mediaDraws();const std::string_view prior=beforeDraws.empty()?std::string_view{}:beforeDraws[0].textureID;const auto next=a.videoRequest?std::string_view(a.videoTexture):(a.frame?std::string_view(a.key):std::string_view{});bindingChanged=bindingChanged||prior!=next;
@@ -351,9 +365,9 @@ bool NativeNotesWorkspace::collectRetired(Renderer&r){auto&i=*impl_;i.check();fo
     for(auto it=i.retiredCards.begin();it!=i.retiredCards.end();)if((*it)->native->scene().releaseResources(r)&&(*it)->native->releaseMedia(r)&&(!(*it)->drawingScene||(*it)->drawingScene->releaseResources(r)))it=i.retiredCards.erase(it);else ++it;
     for(auto it=i.mediaAssets.begin();it!=i.mediaAssets.end();){auto&a=**it;
         if(a.uploaded&&(!a.frame||it->use_count()==1)&&r.removeTexture(a.key)){a.uploaded=false;a.uploadedFrame=0;}
-        if(it->use_count()==1&&!a.uploaded){if(i.options.imagePlayback&&a.request)i.options.imagePlayback->retire(a.key);if(i.options.videoPlayback&&a.videoRequest&&!i.options.videoPlayback->retire(a.key)){++it;continue;}it=i.mediaAssets.erase(it);}else ++it;
+        if(it->use_count()==1&&!a.uploaded){if((a.request&&!i.retireImage(a.key))||(a.videoRequest&&!i.retireVideo(a.key))){++it;continue;}it=i.mediaAssets.erase(it);}else ++it;
     }if(i.options.videoPlayback)(void)i.options.videoPlayback->collectRetired();return i.retiredCards.empty()&&i.retiredFields.empty();}
-bool NativeNotesWorkspace::releaseResources(Renderer&r){auto&i=*impl_;i.check();bool done=collectRetired(r);if(i.field)done=i.field->scene.releaseResources(r)&&done;for(auto&[id,s]:i.slots){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&s:i.deletingCards){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&a:i.mediaAssets)if(a->uploaded){if(r.removeTexture(a->key)){a->uploaded=false;a->uploadedFrame=0;}else done=false;}if(i.options.videoPlayback){i.options.videoPlayback->hide(i.mediaTime);done=i.options.videoPlayback->collectRetired()&&done;}return done;}
+bool NativeNotesWorkspace::releaseResources(Renderer&r){auto&i=*impl_;i.check();bool done=collectRetired(r);if(i.field)done=i.field->scene.releaseResources(r)&&done;for(auto&[id,s]:i.slots){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&s:i.deletingCards){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&a:i.mediaAssets)if(a->uploaded){if(r.removeTexture(a->key)){a->uploaded=false;a->uploadedFrame=0;}else done=false;}if(i.options.mediaBroker){i.hideMedia();for(auto&a:i.mediaAssets){if(a->request)done=i.retireImage(a->key)&&done;if(a->videoRequest)done=i.retireVideo(a->key)&&done;}}else if(i.options.videoPlayback){i.options.videoPlayback->hide(i.mediaTime);done=i.options.videoPlayback->collectRetired()&&done;}return done;}
 bool NativeNotesWorkspace::select(std::optional<std::string>id){auto&i=*impl_;i.check();if(i.drawingGesture&&(!id||*id!=i.drawingGesture->id))endDrawing();if(i.field&&(!id||*id!=i.field->id))i.finishRequired();const bool changed=i.state.select(std::move(id));i.sync();return changed;}
 bool NativeNotesWorkspace::createText(std::string id,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(ehud::data::validUUID(id)&&!i.state.note(id)&&std::isfinite(createdAt),"Invalid new Notes identity/time");
     need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards&&i.state.notes().size()<10000,"Notes retained-card or record capacity reached");Note prototype{.id=id,.kind=ehud::data::NoteKind::text,.width=210,.height=140,.createdAt=createdAt};

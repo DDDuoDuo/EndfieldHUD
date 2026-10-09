@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cmath>
 #include <numbers>
+#include <algorithm>
 namespace core=endfield::core;namespace gpu=endfield::native;namespace tools=endfield::tools;namespace app=endfield::app;namespace rich=core::notes;
 namespace {
 unsigned checks{};void check(bool v,const char*why){++checks;if(!v)throw std::runtime_error(why);}
@@ -38,6 +39,16 @@ void run(HWND hwnd,gpu::Renderer&r,const std::filesystem::path&assets){
     const auto beforeColor=document.selectionStyle().color;
     check(menu.key({app::KeyKind::down,VK_RIGHT},time),"Color wheel consumes original four-point keyboard nudge");
     check(document.selectionStyle().color!=beforeColor,"Keyboard nudge edits selected text color");frame();
+    for(const auto language:{gpu::LayerFontLanguage::simplifiedChinese,gpu::LayerFontLanguage::korean}){
+        raster.setDefaultFontLanguage(language);const auto expected=std::string(raster.defaultFontFamily());
+        check(menu.open("formatFont",rich::TextStyle{},time),"Unspecified font menu opens at the current default family");frame(.2);
+        const auto&families=raster.installedFontFamilies();const auto at=std::find(families.begin(),families.end(),expected);
+        check(at!=families.end(),"Bundled default remains selectable without system installation");
+        const auto first=endfield::modules::NotesControls::initialFirstRow(families,expected);
+        const auto row=static_cast<std::size_t>(at-families.begin())-first;
+        check(row<7,"Current default row is inside the initial seven visible rows");click({24,19+24.*row});
+        check(document.selectionStyle().fontName==std::optional(expected),"Initial default row selects the visible SC or KR face");
+    }
     check(menu.open("formatFont",document.selectionStyle(),time),"Native installed-font menu uses source presentation");frame(.2);const auto q=point({40,100});check(menu.wheel({q.x,q.y,-4,false,0,3},1,time),"Font list scroll stays inside menu");frame();
     check(menu.key({app::KeyKind::down,VK_ESCAPE},time),"Escape dismisses menu");check(!menu.acceptsInput()&&!menu.contains(q),"Closing artwork immediately detaches input");frame(.04);check(!menu.entries().empty(),"Finite closing animation retains old artwork");frame(.2);check(menu.entries().empty()&&!menu.requiresFrames(time),"Settled closed menu has no GPU entry or frame demand");
     check(document.text()==u"Selected text\nOther line","Formatting never replaces document content");composition.detach(r);menu.release(r);released=true;check(!IsWindowVisible(hwnd),"Menus never created a native popup or changed focus");

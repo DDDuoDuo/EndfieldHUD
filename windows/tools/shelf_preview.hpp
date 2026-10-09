@@ -1,4 +1,5 @@
 #pragma once
+#include "core/localization.hpp"
 #include "app/overlay_host.hpp"
 #include "native/shelf_assets.hpp"
 #include "native/file_shelf_transfer.hpp"
@@ -25,6 +26,10 @@ public:
     ShelfPreview(HWND,native::LayerRasterizer&,const native::NativeShelfAssets&,ShelfPreviewOptions);
     ~ShelfPreview();
     void resize(const app::ClientMetrics&);
+    void setLanguage(core::Language); // preference event; retains the model and current interaction
+    void setAppearance(bool dark,modules::ShelfColor accent); // derives source light drop color
+    void setAppearance(modules::ShelfPresentationStyle); // preserves selected language; source 2x packaged artwork
+    const modules::ShelfPresentationStyle& appearance() const;
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double time)const;

@@ -57,6 +57,7 @@ struct EventLogCallbacks {std::function<EventLogSnapshot()>snapshot;std::functio
 struct EventLogStrings {
     std::string heading="事件日志",clearLog="清空日志",all="All",cancel="Cancel",clear="Clear",confirm="Clear all saved events?",localHistory="Local history",empty="No events yet",emptyCategory="No events in this category",countSuffix=" events";
     std::array<std::string,7>categories{"Navigation","Clipboard","Files","Work","Power","Audio","Display"};
+    bool operator==(const EventLogStrings&) const = default;
 };
 struct EventLogAction {std::string id,label;core::Rect rect;bool framed{};};
 struct EventLogRow {std::string id,timestamp,category,title,detail;core::Rect rect;bool selected{};};
@@ -68,6 +69,7 @@ public:
     static constexpr core::Rect viewport(){return {12,94,376,198};}
     explicit EventLogState(EventLogCallbacks,EventLogStrings={},EventNameCompactor={});
     void activate();void deactivate();void refresh();void setReduceMotion(bool);
+    bool setStrings(EventLogStrings); // no snapshot read, filtering or selection change
     bool mouseDown(core::Point);bool scroll(core::Point,double);void scrollBy(double);
     void selectNext(int);bool cancelConfirmation();void perform(std::string_view);
     std::optional<core::Rect>rowRect(std::string_view,bool clipped=true)const;

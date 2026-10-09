@@ -1,4 +1,5 @@
 #include "tools/work_mode_preview.hpp"
+#include "modules/module_strings.hpp"
 #ifdef _WIN32
 #include "native/module_scene.hpp"
 #include "native/module_registration.hpp"
@@ -66,6 +67,7 @@ struct WorkModePreview::Impl {
 WorkModePreview::WorkModePreview(HWND w,gpu::LayerRasterizer&r,ITfThreadMgr*manager,TfClientId client,WorkModePreviewOptions options):impl_(std::make_shared<Impl>(w,r,manager,client,std::move(options))){}
 WorkModePreview::~WorkModePreview(){auto i=std::move(impl_);i->alive=false;if(i->field)i->field->editor.reset();}
 void WorkModePreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Work Mode viewport");impl_->metrics=m;}
+void WorkModePreview::setLanguage(core::Language language){impl_->state.setStrings(modules::workModeStrings(language));}
 void WorkModePreview::setAppearance(m::WorkModeAppearance value){impl_->options.appearance=value;impl_->scene.setAppearance(value);}
 void WorkModePreview::setReduceMotion(bool value,double now){auto i=impl_;i->advance(now);i->state.setReduceMotion(value,i->time);}
 void WorkModePreview::setFocusStatus(std::string status,bool permission,double now){auto i=impl_;i->advance(now);i->state.setFocusStatus(std::move(status),permission,i->time);}

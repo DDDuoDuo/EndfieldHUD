@@ -4,11 +4,19 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <new>
 #include <stdexcept>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <objbase.h>
+#endif
 
 namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};unsigned checks{};}
 void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
@@ -27,7 +35,7 @@ std::uint32_t crc(std::string_view data){std::uint32_t value=0xffffffffu;for(uns
 void chunk(std::string&png,std::string_view name,std::string_view payload){big(png,static_cast<std::uint32_t>(payload.size()));const auto start=png.size();png+=name;png+=payload;big(png,crc(std::string_view(png).substr(start)));}
 std::string image(unsigned variant){
     std::string header;big(header,36);big(header,36);header+=std::string("\x08\x06\0\0\0",5);
-    std::string pixels;pixels.reserve(5220);for(unsigned y=0;y<36;++y){pixels.push_back(0);for(unsigned x=0;x<36;++x){pixels+=std::string(3,static_cast<char>(239));pixels.push_back(static_cast<char>((x+y+variant)%2?255:128));}}
+    std::string pixels;pixels.reserve(5220);for(unsigned y=0;y<36;++y){pixels.push_back(0);for(unsigned x=0;x<36;++x){pixels+=std::string(3,static_cast<char>(239));pixels.push_back(static_cast<char>((x+y*36+variant)%256));}}
     std::string deflate("\x78\x01\x01",3);const auto size=static_cast<std::uint16_t>(pixels.size());deflate.push_back(static_cast<char>(size));deflate.push_back(static_cast<char>(size>>8));deflate.push_back(static_cast<char>(~size));deflate.push_back(static_cast<char>((~size)>>8));deflate+=pixels;
     std::uint32_t a=1,b{};for(unsigned char byte:pixels){a=(a+byte)%65521;b=(b+a)%65521;}big(deflate,(b<<16)|a);
     std::string result("\x89PNG\r\n\x1a\n",8);chunk(result,"IHDR",header);chunk(result,"IDAT",deflate);chunk(result,"IEND",{});return result;
@@ -62,7 +70,12 @@ void basic(){
     allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){const auto retained=assets.imagesFor(source);if(retained.data()!=images.data())throw std::runtime_error("Retained binding identity changed");}}catch(...){counting=false;throw;}counting=false;check(allocations==0,"Repeated retained binding access performs zero C++ allocations");
     // A retained accessor must not reread/hash the package after startup.
     std::filesystem::remove(fixture.root/fixture.files[0]);check(assets.imagesFor(source).data()==images.data(),"Retained image dependency access does not revisit files");
-    modules::NotesControlsInput input;input.dark=false;source.update(input);rejects([&]{assets.imagesFor(source);},"Different source tint never silently uses the dark prepared image");input.dark=true;input.contentsScale=3;source.update(input);rejects([&]{assets.imagesFor(source);},"Different requested pixel size rejects exact variant mismatch");
+    modules::NotesControlsInput input;input.dark=false;source.update(input);const auto light=assets.imagesFor(source);
+    for(std::size_t n=0;n<2;++n)check(light[n].dependency.tint==modules::NotesColor{.11,.11,.11,1}&&light[n].sourceInTint==light[n].dependency.tint&&light[n].contents==images[n].contents&&!images[n].sourceInTint,"Light icons require explicit exact source-in recoloring over unchanged pinned alpha");
+    const auto lightPlan=native::prepareNotesControlsScene(source,light);
+    for(const auto&leaf:lightPlan.layers["children"].array())if(leaf["id"].string()=="tool:text/icon"||leaf["id"].string()=="tool:todo/icon")check(leaf["contentsSourceInTint"]["sRGB"]==Json(Json::Array{.11,.11,.11,1}),"Scene compiler carries the source light color into the intrinsic image operation");
+    allocations=0;counting=true;try{for(unsigned n=0;n<120;++n)if(assets.imagesFor(source).data()!=light.data())throw std::runtime_error("Retained light binding changed");}catch(...){counting=false;throw;}counting=false;check(allocations==0,"Repeated light variant access allocates nothing and needs no file/decode work");
+    input.dark=true;source.update(input);check(assets.imagesFor(source).data()==images.data(),"Returning to dark restores the exact original prepared path");input.contentsScale=3;source.update(input);rejects([&]{assets.imagesFor(source);},"Different requested pixel size rejects exact variant mismatch");
     input={};input.kind=modules::NotesControlsKind::mediaSource;source.update(input);check(assets.imagesFor(source).empty(),"Image-free source menus need no invented bindings");input.kind=modules::NotesControlsKind::color;source.update(input);rejects([&]{assets.imagesFor(source);},"Missing original wheel is explicit rather than blank or fallback");
 }
 void invalid(){
@@ -90,5 +103,38 @@ void corruptPNG(){
         const auto digest=hash(bytes),file="raster/"+digest+".png";auto rows=f.manifest["images"].array();rows[0]["contents"]=Json::Object{{"asset",file},{"sha256",digest}};rows[0]["raster"]=Json::Object{{"file",file},{"sha256",digest},{"bytes",std::int64_t(bytes.size())},{"width",36},{"height",36}};f.manifest["images"]=rows;f.save();put(f.root/file,bytes);rejects([&]{native::NativeNotesControlsAssets assets(f.root,f.pins);},"Pinned but malformed PNG structure/checksum rejects before WIC load");}
 }
 void actual(const char*root,const char*sha,const char*commit){native::NativeNotesControlsAssets assets(std::filesystem::absolute(root).lexically_normal(),{sha,commit});modules::NotesControls source;source.update({});const auto images=assets.imagesFor(source);check(images.size()==2,"Explicit actual-source bundle binds both current Notes controls");const auto prepared=native::prepareNotesControlsScene(source,images);check(!prepared.requiresGroupOpacity&&!prepared.surfaces.empty(),"Actual source-prepared rasters enter the current retained control plan");}
+#ifdef _WIN32
+void nativePixels(){
+    Fixture fixture;native::NativeNotesControlsAssets assets(fixture.root,fixture.pins);native::LayerRasterizer raster;native::LayerRasterOptions options;options.assetRoot=fixture.root;options.pixelsPerPoint=2;options.paddingPoints=0;
+    modules::NotesControls controls;modules::NotesControlsInput input;controls.update(input);const auto dark=native::prepareNotesControlsScene(controls,assets.imagesFor(controls));input.dark=false;controls.update(input);const auto light=native::prepareNotesControlsScene(controls,assets.imagesFor(controls));
+    const auto leaf=[](const native::NotesControlsScenePlan&plan,std::string_view id)->const Json&{for(const auto&node:plan.layers["children"].array())if(node["id"].string()==id)return node;throw std::runtime_error("Missing prepared icon fixture");};
+    for(unsigned n=0;n<2;++n){const std::string id=n?"tool:todo/icon":"tool:text/icon";
+        // This source-plan lookup copies JSON ID strings. Resolve it once,
+        // outside the warm renderer measurement (MSVC's SSO is smaller).
+        const auto&darkLeaf=leaf(dark,id);const auto&lightLeaf=leaf(light,id);
+        const auto before=raster.rasterize(id,1,darkLeaf,options);const auto decoded=raster.stats().imageDecodes;
+        const auto after=raster.rasterize(id,2,lightLeaf,options);
+        check(before->complete()&&after->complete()&&before->width==36&&before->height==36&&before->bounds==after->bounds,"Source-in recoloring preserves exact icon geometry without unsupported effects");
+        check(raster.stats().imageDecodes==decoded,"Theme recoloring reuses the pinned decoded image rather than loading a variant");
+        // Actual RGBA8 CGContext source-in measured for all 256 alpha values:
+        // source .11 is quantized to 28 before multiplying the mask alpha.
+        // E.g. alpha50 -> premultiplied5, alpha132 ->14, alpha255 ->28.
+        for(std::size_t at=0;at<after->straightRGBA.size();at+=4){const unsigned alpha=before->straightRGBA[at+3];check(after->straightRGBA[at+3]==alpha,"Source-in with opaque light ink preserves every source alpha byte");const auto premul=(28u*alpha+127u)/255u;const auto expected=alpha?std::min(255u,(premul*255u+alpha/2)/alpha):0u;for(unsigned c=0;c<3;++c)check(after->straightRGBA[at+c]==expected,"Light icon uses source-in premultiplied color, including every fractional alpha");}
+        const auto restored=raster.rasterize(id,3,darkLeaf,options);check(restored->straightRGBA==before->straightRGBA,"Changing theme does not mutate the original decoded source pixels");
+        const auto cached=raster.stats();allocations=0;counting=true;try{for(unsigned k=0;k<120;++k)if(raster.rasterize(id,3,darkLeaf,options).get()!=restored.get())throw std::runtime_error("Stable icon cache changed");}catch(...){counting=false;throw;}counting=false;const auto warm=raster.stats();
+        if(allocations!=0||warm.rasterizations!=cached.rasterizations)std::cerr<<"Warm icon "<<id<<": allocations="<<allocations<<" rasterizations="<<(warm.rasterizations-cached.rasterizations)<<" cacheHits="<<(warm.cacheHits-cached.cacheHits)<<'\n';
+        check(allocations==0&&warm.rasterizations==cached.rasterizations,"Warm icon frames allocate and repaint nothing");
+        check(warm.cacheHits==cached.cacheHits+120&&warm.imageDecodes==cached.imageDecodes,"Every warm icon frame hits the retained cache without decoding");
+    }
 }
-int main(int argc,char**argv){try{check(argc==1||argc==4,"Optional arguments: prepared bundle root, expected manifest SHA, expected source commit");basic();invalid();corruptPNG();if(argc==4)actual(argv[1],argv[2],argv[3]);std::cout<<"PASS "<<checks<<" prepared Notes controls asset checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+#endif
+}
+int main(int argc,char**argv){
+#ifdef _WIN32
+    struct Apartment{HRESULT result=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);~Apartment(){if(SUCCEEDED(result))CoUninitialize();}}apartment;
+#endif
+    try{check(argc==1||argc==4,"Optional arguments: prepared bundle root, expected manifest SHA, expected source commit");basic();invalid();corruptPNG();if(argc==4)actual(argv[1],argv[2],argv[3]);
+#ifdef _WIN32
+        check(SUCCEEDED(apartment.result),"Initialize isolated image fixture COM apartment");nativePixels();
+#endif
+        std::cout<<"PASS "<<checks<<" prepared Notes controls asset checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

@@ -48,6 +48,12 @@ struct Compiler {
             const auto asset=text(supplied->contents["asset"]),sha=text(supplied->contents["sha256"]);
             need(supplied->contents.isObject()&&!asset.empty()&&Json::validUtf8(asset)&&sha.size()==64&&sha.find_first_not_of("0123456789abcdef")==std::string::npos,"Notes image binding requires an exact asset and SHA-256");
             node["contents"]=supplied->contents;node.erase("requiredSourceImage");
+            if(supplied->sourceInTint){
+                const auto&c=*supplied->sourceInTint;
+                need(dependency->sourceInTint&&c==dependency->tint,"Notes source-in color differs from its exact dependency");
+                for(double v:c)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Notes source-in color");
+                node["contentsSourceInTint"]=Json::Object{{"sRGB",Json::Array{c[0],c[1],c[2],c[3]}}};
+            }
         }
         const auto savedChildren=children(node);const auto border=number(node["borderWidth"]);const bool splitBorder=border>0&&!savedChildren.empty();
         auto own=node;if(splitBorder)own["borderWidth"]=0;

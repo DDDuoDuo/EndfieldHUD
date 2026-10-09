@@ -10,6 +10,10 @@ namespace {
 struct Call {bool& flag;explicit Call(bool& value):flag(value){if(flag)throw std::logic_error("Reentrant FileShelfState callback");flag=true;}~Call(){flag=false;}};
 void text(std::string_view s){if(!ehud::data::Json::validUtf8(s))throw std::invalid_argument("Invalid shelf UTF-8");}
 std::string countText(std::string pattern,std::size_t count){const auto p=pattern.find("{count}");if(p==std::string::npos)throw std::invalid_argument("Shelf count format needs {count}");pattern.replace(p,7,std::to_string(count));return pattern;}
+void validate(const FileShelfStrings&s){
+    for(const auto* value:{&s.add,&s.clear,&s.cancel,&s.confirmClear,&s.clearQuestion,&s.unavailable,&s.previewPrefix,&s.revealPrefix,&s.removePrefix,&s.storageUnavailable,&s.drop,&s.emptyStatus,&s.selectedStatus,&s.itemsStatus,&s.folder,&s.image,&s.video,&s.archive,&s.file})text(*value);
+    (void)countText(s.selectedStatus,0);(void)countText(s.itemsStatus,0);
+}
 }
 FileShelfStrings FileShelfStrings::simplifiedChinese(){
     FileShelfStrings s;s.add="添加文件";s.clear="清空";s.cancel="取消";s.confirmClear="清空暂存架";s.clearQuestion="仅清空文件引用？";s.unavailable="不可用";
@@ -21,9 +25,9 @@ FileShelfState::FileShelfState(std::vector<Item> initial,Store store,PlatformAct
 :store_(std::move(store)),platform_(std::move(platform)),strings_(std::move(strings)),error_(std::move(error)){
     const unsigned functions=unsigned(bool(store_.snapshot))+unsigned(bool(store_.refresh))+unsigned(bool(store_.add))+unsigned(bool(store_.remove))+unsigned(bool(store_.clear));
     if(functions!=0&&functions!=5)throw std::invalid_argument("Shelf store requires all operations");
-    for(const auto* s:{&strings_.add,&strings_.clear,&strings_.cancel,&strings_.confirmClear,&strings_.clearQuestion,&strings_.unavailable,&strings_.previewPrefix,&strings_.revealPrefix,&strings_.removePrefix,&strings_.storageUnavailable,&strings_.drop,&strings_.emptyStatus,&strings_.selectedStatus,&strings_.itemsStatus,&strings_.folder,&strings_.image,&strings_.video,&strings_.archive,&strings_.file})text(*s);
-    (void)countText(strings_.selectedStatus,0);(void)countText(strings_.itemsStatus,0);if(error_)text(*error_);load(std::move(initial));revision_=1;
+    validate(strings_);if(error_)text(*error_);load(std::move(initial));revision_=1;
 }
+bool FileShelfState::setStrings(FileShelfStrings value){writable();if(value==strings_)return false;validate(value);strings_=std::move(value);++revision_;return true;}
 void FileShelfState::writable()const{if(busy_)throw std::logic_error("Reentrant FileShelfState mutation");}
 void FileShelfState::event(EventKind kind,bool animated,int direction,std::vector<std::string> values,std::size_t count){events_.push_back({kind,animated,direction,count,std::move(values)});}
 std::vector<FileShelfState::Event> FileShelfState::takeEvents(){writable();std::vector<Event> result;result.swap(events_);return result;}

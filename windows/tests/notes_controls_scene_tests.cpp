@@ -35,6 +35,7 @@ void portable(){
     const auto resolved=native::prepareNotesControlsScene(source,images);check(source.artwork()==original,"Preparing pinned image metadata never mutates source artwork");
     for(const auto&i:images){const auto n=surface(resolved,i.dependency.layerID);check(resolved.layers["children"].array()[n]["contents"]==i.contents,"Exact owner image metadata reaches its source leaf");}
     auto wrong=images;wrong[0].dependency.tint[0]=0;rejects([&]{native::prepareNotesControlsScene(source,wrong);},"Untinted/different source image dependency rejects before native load");
+    wrong=images;wrong[0].sourceInTint=modules::NotesColor{.11,.11,.11,1};rejects([&]{native::prepareNotesControlsScene(source,wrong);},"Explicit image recoloring cannot bypass the exact requested source tint");
     wrong=images;wrong[0].contents["sha256"]="missing";rejects([&]{native::prepareNotesControlsScene(source,wrong);},"Unpinned image binding rejects");
     auto input=fallback();source.update(input);const auto plan=native::prepareNotesControlsScene(source);check(!plan.requiresGroupOpacity,"Source center controls permit independent retained surfaces");
     constexpr std::array<std::string_view,4>toolIDs{"tool:text","tool:todo","tool:image","tool:drawing"};

@@ -13,6 +13,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <dwrite_1.h>
+#include <dwrite_3.h>
 #include <wincodec.h>
 #include <bcrypt.h>
 #include <wrl/client.h>
@@ -32,6 +33,7 @@ namespace {
 using Microsoft::WRL::ComPtr;
 using Json = ehud::data::Json;
 using Matrix = D2D1::Matrix3x2F;
+struct ResolvedFont {std::wstring family;IDWriteFontCollection*collection{};};
 void checked(HRESULT hr, const char* operation) {
     if (FAILED(hr)) throw std::runtime_error(std::string(operation) + " HRESULT=" + std::to_string(static_cast<unsigned long>(hr)));
 }
@@ -137,24 +139,45 @@ std::vector<const Json*> children(const Json& node) {
 }
 }
 
+namespace {
+bool containsText(const Json&node){if(node["text"].isObject())return true;if(node["children"].isArray())for(const auto&child:node["children"].array())if(containsText(child))return true;return false;}
+std::size_t retainedJsonBytes(const Json&v,unsigned depth=0){if(depth>128)invalid("Typography descriptor nesting exceeds limit");std::size_t result=sizeof(Json);auto add=[&](std::size_t n){if(n>LayerRasterizer::maximumTypographyDescriptorBytes-result)invalid("Typography descriptor exceeds limit");result+=n;};if(v.isString())add(v.string().capacity()+1);else if(v.isArray()){add(v.array().capacity()*sizeof(Json));for(const auto&a:v.array())add(retainedJsonBytes(a,depth+1));}else if(v.isObject())for(const auto&[k,a]:v.object()){add(sizeof(Json::Object::value_type)+4*sizeof(void*)+k.capacity()+1);add(retainedJsonBytes(a,depth+1));}return result;}
+}
+
 struct LayerRasterizer::Impl {
-    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText; };
+    struct Entry { std::uint64_t revision;LayerRasterOptions options;std::shared_ptr<LayerRasterImage> image;std::vector<ComPtr<IDWriteTextLayout>> layouts;std::shared_ptr<const PaintedTextLayout> paintedText;std::uint64_t fontRevision{};bool hasText{};Json typographySource;std::size_t descriptorBytes{}; };
     struct DecodedImage { unsigned width{},height{};std::vector<std::uint8_t> premultipliedBGRA; };
     struct ImagePixels {
         unsigned width{},height{};std::span<const std::uint8_t> premultipliedBGRA;
         std::shared_ptr<const LayerMemoryImage> borrowed;
     };
     DWORD thread=GetCurrentThreadId();
-    ComPtr<ID2D1Factory> d2d;ComPtr<IDWriteFactory> text;ComPtr<IDWriteFontCollection> fonts;ComPtr<IWICImagingFactory> wic;
+    ComPtr<ID2D1Factory> d2d;ComPtr<IDWriteFactory> text;ComPtr<IDWriteFontCollection> fonts,bundledFonts;ComPtr<IWICImagingFactory> wic;
     std::optional<std::vector<std::string>> installedFontNames;
     BCRYPT_ALG_HANDLE sha{};
     std::map<std::string,Entry,std::less<>> entries;
     std::map<std::string,DecodedImage,std::less<>> images;
-    LayerRasterStats counts;
-    Impl(){
+    LayerRasterStats counts;LayerFontLanguage language{LayerFontLanguage::simplifiedChinese};std::uint64_t fontRevision{1};
+    const char*defaultFamily()const noexcept{return language==LayerFontLanguage::korean?"Noto Sans KR":"Noto Sans SC";}
+    const wchar_t*locale()const noexcept{return language==LayerFontLanguage::korean?L"ko-kr":L"zh-cn";}
+    static bool bundled(std::string_view family){return family=="Noto Sans SC"||family=="Noto Sans KR";}
+    explicit Impl(const std::filesystem::path&fontDirectory){
         checked(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,d2d.GetAddressOf()),"Create local D2D factory");
         checked(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(text.GetAddressOf())),"Create retained DirectWrite factory");
         checked(text->GetSystemFontCollection(fonts.GetAddressOf(),FALSE),"Read local font collection");
+        auto directory=fontDirectory;
+        if(directory.empty()){std::array<wchar_t,32768>path{};const auto length=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));if(!length||length>=path.size())invalid("Cannot locate application font directory");directory=std::filesystem::path(std::wstring(path.data(),length)).parent_path()/L"fonts";}
+        ComPtr<IDWriteFactory5>advanced;checked(text.As(&advanced),"Private fonts require DirectWrite on Windows 10 build 15063 or newer");
+        ComPtr<IDWriteFontSetBuilder1>builder;checked(advanced->CreateFontSetBuilder(builder.GetAddressOf()),"Create private application font set");
+        for(const auto&[name,bytes]:std::array<std::pair<const wchar_t*,std::uintmax_t>,2>{{{L"NotoSansSC.ttf",17772300},{L"NotoSansKR.ttf",10414588}}}){
+            const auto file=directory/name;if(!std::filesystem::is_regular_file(file)||std::filesystem::file_size(file)!=bytes)invalid("Bundled Noto font is missing or has unexpected size");
+            ComPtr<IDWriteFontFile>fontFile;checked(text->CreateFontFileReference(file.c_str(),nullptr,fontFile.GetAddressOf()),"Open bundled Noto font");
+            checked(builder->AddFontFile(fontFile.Get()),"Add complete Noto variable font");
+        }
+        ComPtr<IDWriteFontSet>fontSet;checked(builder->CreateFontSet(fontSet.GetAddressOf()),"Retain private application font set");
+        ComPtr<IDWriteFontCollection1>collection;checked(advanced->CreateFontCollectionFromFontSet(fontSet.Get(),collection.GetAddressOf()),"Create private Noto Sans SC collection");
+        checked(collection.As(&bundledFonts),"Retain application font collection");
+        for(const auto*name:{L"Noto Sans SC",L"Noto Sans KR"}){UINT32 index{};BOOL exists{};checked(bundledFonts->FindFamilyName(name,&index,&exists),"Verify private Noto family");if(!exists)invalid("Bundled font has an unexpected family");}
         checked(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(wic.GetAddressOf())),"Create local WIC factory");
         if(BCryptOpenAlgorithmProvider(&sha,BCRYPT_SHA256_ALGORITHM,nullptr,0)<0)throw std::runtime_error("Cannot initialize asset hash verification");
     }
@@ -227,24 +250,33 @@ struct LayerRasterizer::Impl {
         }
         return measured;
     }
-    std::wstring fontFamily(const Json& font,const Json& node,const LayerRasterOptions& options,LayerRasterImage& result){
+    ResolvedFont fontFamily(const Json& font,const Json& node,const LayerRasterOptions& options,LayerRasterImage& result){
         const auto family=string(font["familyName"],string(font["postScriptName"]));
-        UINT32 index{};BOOL exists=FALSE;auto selected=wide(family);
-        if(!selected.empty())checked(fonts->FindFamilyName(selected.c_str(),&index,&exists),"Resolve source font family");
+        const auto postscript=string(font["postScriptName"]);
+        const bool clock=flag(node["text"]["preserveSourceFont"]),preserve=clock||flag(font["preserveUserFont"]);
+        // User-requested Windows typography overrides source UI faces, while
+        // persisted user choices and the five source clock styles stay explicit.
+        const auto requested=preserve?family:options.fallbackFontFamily=="Noto Sans SC"?std::string(defaultFamily()):options.fallbackFontFamily;
+        auto*collection=bundled(requested)?bundledFonts.Get():fonts.Get();
+        UINT32 index{};BOOL exists=FALSE;auto selected=wide(requested);
+        if(!selected.empty())checked(collection->FindFamilyName(selected.c_str(),&index,&exists),"Resolve source font family");
         if(!exists){
-            const auto postscript=string(font["postScriptName"]);
             // NSFontMonoSpaceTrait is 1<<10 in the current macOS SDK. Known
             // private/public fixed-pitch families keep their typography class;
             // proportional system fonts and unknown requests keep the caller's
             // normal fallback, without guessing from their role in the HUD.
             const bool fixedPitch=(static_cast<unsigned>(number(font["symbolicTraits"]))&(1u<<10))!=0||family=="Menlo"||family=="Monaco"||family=="SF Mono"||family==".AppleSystemUIFontMonospaced"||family.starts_with(".SFNSMono")||postscript.starts_with("Menlo-")||postscript.starts_with("SFMono-")||postscript.starts_with(".SFNSMono")||postscript.starts_with(".AppleSystemUIFontMonospaced-");
-            const auto& fallbackFamily=fixedPitch?options.monospaceFallbackFontFamily:options.fallbackFontFamily;
-            selected=wide(fallbackFamily);checked(fonts->FindFamilyName(selected.c_str(),&index,&exists),"Resolve explicit fallback font");
+            const std::string fallbackFamily=fixedPitch?options.monospaceFallbackFontFamily:clock?"Segoe UI":options.fallbackFontFamily=="Noto Sans SC"?defaultFamily():options.fallbackFontFamily;
+            collection=bundled(fallbackFamily)?bundledFonts.Get():fonts.Get();
+            selected=wide(fallbackFamily);checked(collection->FindFamilyName(selected.c_str(),&index,&exists),"Resolve explicit fallback font");
             if(!exists)invalid("Configured fallback font is not installed");
             LayerFontSubstitution fallback{string(node["id"],"unnamed"),family,postscript,fallbackFamily};
             if(std::none_of(result.fontSubstitutions.begin(),result.fontSubstitutions.end(),[&](const auto& f){return f.node==fallback.node&&f.requestedFamily==fallback.requestedFamily&&f.requestedFace==fallback.requestedFace;}))result.fontSubstitutions.push_back(std::move(fallback));
+        }else if(requested!=family){
+            LayerFontSubstitution substitution{string(node["id"],"unnamed"),family,postscript,requested};
+            if(std::none_of(result.fontSubstitutions.begin(),result.fontSubstitutions.end(),[&](const auto&f){return f.node==substitution.node&&f.requestedFamily==family&&f.requestedFace==postscript&&f.selectedFamily==requested;}))result.fontSubstitutions.push_back(std::move(substitution));
         }
-        return selected;
+        return {std::move(selected),collection};
     }
     static DWRITE_FONT_WEIGHT weight(const Json& font){
         const auto traits=static_cast<unsigned>(number(font["symbolicTraits"]));const auto name=string(font["postScriptName"]);
@@ -330,8 +362,8 @@ struct LayerRasterizer::Impl {
         const auto family=fontFamily(descriptor["font"],node,options,result);const auto size=real(descriptor["fontSize"],12);
         if(size<=0||size>2048)invalid("Text size exceeds its range");
         const auto italic=(static_cast<unsigned>(number(descriptor["font"]["symbolicTraits"]))&1)!=0;
-        ComPtr<IDWriteTextFormat> format;checked(text->CreateTextFormat(family.c_str(),fonts.Get(),weight(descriptor["font"]),
-            italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,L"en-us",format.GetAddressOf()),"Create source text format");
+        ComPtr<IDWriteTextFormat> format;checked(text->CreateTextFormat(family.family.c_str(),family.collection,weight(descriptor["font"]),
+            italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,size,flag(descriptor["preserveSourceFont"])?L"en-us":locale(),format.GetAddressOf()),"Create source text format");
         const auto alignment=string(descriptor["alignment"],"left");
         checked(format->SetTextAlignment(alignment=="center"?DWRITE_TEXT_ALIGNMENT_CENTER:alignment=="right"?DWRITE_TEXT_ALIGNMENT_TRAILING:
             alignment=="justified"?DWRITE_TEXT_ALIGNMENT_JUSTIFIED:DWRITE_TEXT_ALIGNMENT_LEADING),"Set text alignment");
@@ -348,8 +380,8 @@ struct LayerRasterizer::Impl {
         result.textDocumentWidth=bounds.width;
         if(flag(descriptor["sourceSingleLineField"])){
             if(!options.plainTextDocument||flag(descriptor["wrapped"])||bounds.width<=6||!descriptor["font"]["ascender"].isNull())invalid("Single-line field needs natural plain metrics and explicit no-wrap");
-            UINT32 index{};BOOL exists{};checked(fonts->FindFamilyName(family.c_str(),&index,&exists),"Resolve field font metrics");if(!exists)invalid("Field font disappeared");
-            ComPtr<IDWriteFontFamily>fontFamily;checked(fonts->GetFontFamily(index,fontFamily.GetAddressOf()),"Read field font family");ComPtr<IDWriteFont>font;
+            UINT32 index{};BOOL exists{};checked(family.collection->FindFamilyName(family.family.c_str(),&index,&exists),"Resolve field font metrics");if(!exists)invalid("Field font disappeared");
+            ComPtr<IDWriteFontFamily>fontFamily;checked(family.collection->GetFontFamily(index,fontFamily.GetAddressOf()),"Read field font family");ComPtr<IDWriteFont>font;
             checked(fontFamily->GetFirstMatchingFont(weight(descriptor["font"]),DWRITE_FONT_STRETCH_NORMAL,italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,font.GetAddressOf()),"Read exact field font face");
             DWRITE_FONT_METRICS metrics{};font->GetMetrics(&metrics);if(!metrics.designUnitsPerEm)invalid("Invalid field font metrics");const double em=double(size)/metrics.designUnitsPerEm;
             const double lineHeight=(double(metrics.ascent)+metrics.descent+metrics.lineGap)*em;result.textContentInset={3,std::max(0.,(bounds.height-lineHeight)*.5)};
@@ -371,7 +403,7 @@ struct LayerRasterizer::Impl {
             if(!attributes.isObject())invalid("Text attributes must be an object");
             for(const auto& [key,item]:attributes.object()){
                 if(key=="NSFont"){
-                    const auto f=fontFamily(item,node,options,result);checked(layout->SetFontFamilyName(f.c_str(),range),"Set run font family");
+                    const auto f=fontFamily(item,node,options,result);checked(layout->SetFontFamilyName(f.family.c_str(),range),"Set run font family");checked(layout->SetFontCollection(f.collection,range),"Set run font collection");
                     const auto runSize=real(item["pointSize"],size);if(runSize<=0||runSize>2048)invalid("Run text size exceeds its range");
                     checked(layout->SetFontSize(runSize,range),"Set run font size");checked(layout->SetFontWeight(weight(item),range),"Set run font weight");
                     checked(layout->SetFontStyle((static_cast<unsigned>(number(item["symbolicTraits"]))&1)?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,range),"Set run font style");
@@ -465,7 +497,29 @@ struct LayerRasterizer::Impl {
         }else if(kind!="layer")issue(result,node,"unknown native layer kind: "+kind);
         if(!node["contents"].isNull()){
             const auto& decoded=image(node["contents"],options);
-            ComPtr<ID2D1Bitmap> bitmap;checked(target->CreateBitmap(D2D1::SizeU(decoded.width,decoded.height),decoded.premultipliedBGRA.data(),decoded.width*4,
+            // EndfieldGameIcon.image applies source-in AFTER source resizing.
+            // Prepared opaque-tint icons retain that exact source alpha. A
+            // preference event may recolor it without changing the pinned
+            // image/geometry or the shared decoded cache. No pointer-frame work.
+            auto pixels=decoded.premultipliedBGRA;std::vector<std::uint8_t>tinted;
+            if(!node["contentsSourceInTint"].isNull()){
+                D2D1_COLOR_F tint{};color(node["contentsSourceInTint"],tint);
+                // CGContext's RGBA8 source-in first quantizes the source
+                // color, then composites it with destination alpha. Direct
+                // round(color*alpha) differs at faint icon edge pixels.
+                const std::array<unsigned,4>ink{
+                    static_cast<unsigned>(std::lround(double(tint.b)*tint.a*255)),
+                    static_cast<unsigned>(std::lround(double(tint.g)*tint.a*255)),
+                    static_cast<unsigned>(std::lround(double(tint.r)*tint.a*255)),
+                    static_cast<unsigned>(std::lround(double(tint.a)*255))};
+                tinted.resize(pixels.size());
+                for(std::size_t at=0;at<pixels.size();at+=4){
+                    const unsigned alpha=pixels[at+3];
+                    for(unsigned c=0;c<4;++c)tinted[at+c]=static_cast<std::uint8_t>((ink[c]*alpha+127u)/255u);
+                }
+                pixels=tinted;
+            }
+            ComPtr<ID2D1Bitmap> bitmap;checked(target->CreateBitmap(D2D1::SizeU(decoded.width,decoded.height),pixels.data(),decoded.width*4,
                 D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED)),bitmap.GetAddressOf()),"Create local intrinsic bitmap");
             auto destination=rect(bounds);const auto gravity=string(node["contentsGravity"],"resize");
             const auto crop=node["contentsRect"].isNull()?core::Rect{0,0,1,1}:rectangle(node["contentsRect"]);
@@ -511,7 +565,7 @@ struct LayerPlainTextAnalysis::Impl {
     std::vector<DWRITE_LINE_METRICS> lines;
     std::vector<std::uint32_t> lengths;
     std::vector<LayerStyledTextLine> styledLines;
-    std::function<std::wstring(const Json&)> resolveFont;
+    std::function<ResolvedFont(const Json&)> resolveFont;
     DWRITE_FONT_WEIGHT(*fontWeight)(const Json&){};
     std::uint64_t created{};
     void onThread()const{if(GetCurrentThreadId()!=thread)throw std::logic_error("Plain text analysis used outside its creating thread");}
@@ -550,7 +604,7 @@ std::span<const LayerStyledTextLine>LayerPlainTextAnalysis::richLines(std::u16st
     ComPtr<IDWriteTextLayout>layout;checked(r.factory->CreateTextLayout(value.empty()?L"":reinterpret_cast<const WCHAR*>(value.data()),static_cast<UINT32>(value.size()),r.format.Get(),static_cast<float>(std::max(1.,width)),1e8f,layout.GetAddressOf()),"Create attributed Notes analysis");++r.created;
     checked(layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_DEFAULT,0,0),"Use attributed line metrics");
     for(const auto&run:runs){const auto font=notesRunFont(run.style);const auto family=r.resolveFont(font);const DWRITE_TEXT_RANGE range{run.location,run.length};
-        checked(layout->SetFontFamilyName(family.c_str(),range),"Set analyzed run family");checked(layout->SetFontSize(static_cast<float>(run.style.fontSize),range),"Set analyzed run size");
+        checked(layout->SetFontFamilyName(family.family.c_str(),range),"Set analyzed run family");checked(layout->SetFontCollection(family.collection,range),"Set analyzed run collection");checked(layout->SetFontSize(static_cast<float>(run.style.fontSize),range),"Set analyzed run size");
         checked(layout->SetFontWeight(r.fontWeight(font),range),"Set analyzed run weight");checked(layout->SetFontStyle(run.style.italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,range),"Set analyzed run style");}
     UINT32 needed{};const auto probe=layout->GetLineMetrics(nullptr,0,&needed);if(FAILED(probe)&&probe!=HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER))checked(probe,"Count attributed Notes lines");
     if(needed==0||needed>maximumLines||std::size_t(needed)>value.size()+1)invalid("Rich text line index exceeds its budget");r.lines.resize(needed);UINT32 actual{};checked(layout->GetLineMetrics(r.lines.data(),needed,&actual),"Read attributed Notes lines");if(actual!=needed)invalid("Attributed line metrics changed");
@@ -558,17 +612,22 @@ std::span<const LayerStyledTextLine>LayerPlainTextAnalysis::richLines(std::u16st
     if(total!=value.size())invalid("Attributed analysis did not cover complete text");return r.styledLines;
 }
 
-LayerRasterizer::LayerRasterizer():impl_(std::make_unique<Impl>()){}
+LayerRasterizer::LayerRasterizer():LayerRasterizer(std::filesystem::path{}){}
+LayerRasterizer::LayerRasterizer(const std::filesystem::path&fontDirectory):impl_(std::make_unique<Impl>(fontDirectory)){}
 LayerRasterizer::~LayerRasterizer()=default;
+bool LayerRasterizer::setDefaultFontLanguage(LayerFontLanguage language){auto&r=*impl_;r.onThread();if(language!=LayerFontLanguage::simplifiedChinese&&language!=LayerFontLanguage::korean)invalid("Invalid default font language");if(r.language==language)return false;if(r.fontRevision==std::numeric_limits<std::uint64_t>::max())invalid("Typography generation exhausted");r.language=language;++r.fontRevision;return true;}
+LayerFontLanguage LayerRasterizer::fontLanguage()const{impl_->onThread();return impl_->language;}
+std::uint64_t LayerRasterizer::fontRevision()const{impl_->onThread();return impl_->fontRevision;}
+std::string_view LayerRasterizer::defaultFontFamily()const{impl_->onThread();return impl_->defaultFamily();}
 std::unique_ptr<LayerPlainTextAnalysis>LayerRasterizer::plainSystemTextAnalysis(const std::string&id,double size,const LayerRasterOptions&options){
     auto&r=*impl_;r.onThread();
     if(id.empty()||id.size()>4096||!Json::validUtf8(id)||!std::isfinite(size)||size<=0||size>2048)invalid("Invalid plain system font request");
     const Json font=Json::Object{{"familyName",".AppleSystemUIFont"},{"postScriptName",".SFNS-Regular"}};
     const Json node=Json::Object{{"id",id}};LayerRasterImage report;
     const auto family=r.fontFamily(font,node,options,report);
-    UINT32 index{};BOOL exists{};checked(r.fonts->FindFamilyName(family.c_str(),&index,&exists),"Resolve analyzed family");
+    UINT32 index{};BOOL exists{};checked(family.collection->FindFamilyName(family.family.c_str(),&index,&exists),"Resolve analyzed family");
     if(!exists)invalid("Analyzed font family is no longer installed");
-    ComPtr<IDWriteFontFamily>matchedFamily;checked(r.fonts->GetFontFamily(index,matchedFamily.GetAddressOf()),"Read analyzed family");
+    ComPtr<IDWriteFontFamily>matchedFamily;checked(family.collection->GetFontFamily(index,matchedFamily.GetAddressOf()),"Read analyzed family");
     ComPtr<IDWriteFont>matched;checked(matchedFamily->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STRETCH_NORMAL,DWRITE_FONT_STYLE_NORMAL,matched.GetAddressOf()),"Match analyzed font");
     DWRITE_FONT_METRICS nativeMetrics{};matched->GetMetrics(&nativeMetrics);
     if(!nativeMetrics.designUnitsPerEm)invalid("Analyzed font has invalid design metrics");
@@ -576,10 +635,10 @@ std::unique_ptr<LayerPlainTextAnalysis>LayerRasterizer::plainSystemTextAnalysis(
     auto&m=analysis->metrics;const double scale=size/nativeMetrics.designUnitsPerEm;
     m.fontSize=size;m.ascent=nativeMetrics.ascent*scale;m.descent=nativeMetrics.descent*scale;
     m.leading=std::max(0.,nativeMetrics.lineGap*scale);m.lineHeight=std::ceil(m.ascent+m.descent+m.leading)+1;
-    m.selectedFamily=options.fallbackFontFamily;m.fontSubstitutions=std::move(report.fontSubstitutions);
+    m.selectedFamily=options.fallbackFontFamily=="Noto Sans SC"?r.defaultFamily():options.fallbackFontFamily;m.fontSubstitutions=std::move(report.fontSubstitutions);
     if(m.fontSubstitutions.empty())m.selectedFamily=".AppleSystemUIFont";
-    checked(r.text->CreateTextFormat(family.c_str(),r.fonts.Get(),DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,
-        static_cast<float>(size),L"en-us",analysis->format.GetAddressOf()),"Create shared plain system format");
+    checked(r.text->CreateTextFormat(family.family.c_str(),family.collection,DWRITE_FONT_WEIGHT_NORMAL,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,
+        static_cast<float>(size),r.locale(),analysis->format.GetAddressOf()),"Create shared plain system format");
     checked(analysis->format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP),"Set plain system wrapping");
     checked(analysis->format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,static_cast<float>(m.lineHeight),static_cast<float>(m.ascent)),"Set source-style plain line height");
     analysis->fontWeight=Impl::weight;auto* metrics=&analysis->metrics;auto*owner=&r;
@@ -601,7 +660,7 @@ const std::vector<std::string>&LayerRasterizer::installedFontFamilies(){
         if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,value.data(),static_cast<int>(value.size()),name.data(),bytes,nullptr,nullptr)!=bytes)invalid("Cannot encode installed font family name");
         names.push_back(std::move(name));
     }
-    std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());r.installedFontNames=std::move(names);return *r.installedFontNames;
+    names.push_back("Noto Sans SC");names.push_back("Noto Sans KR");std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());r.installedFontNames=std::move(names);return *r.installedFontNames;
 }
 LayerSourceTextMeasurement LayerRasterizer::measureSourceText(const std::string&id,const Json&descriptor,double width,const LayerRasterOptions&options){
     auto&r=*impl_;r.onThread();
@@ -610,10 +669,10 @@ LayerSourceTextMeasurement LayerRasterizer::measureSourceText(const std::string&
     if(!descriptor["runs"].isNull()&&(!descriptor["runs"].isArray()||!descriptor["runs"].array().empty()))invalid("Caption measurement does not flatten attributed runs");
     const auto value=wide(descriptor["string"].string());if(value.size()>65536)invalid("Caption measurement exceeds painted UTF-16 bound");
     const auto size=real(descriptor["fontSize"]);if(size<=0||size>2048)invalid("Invalid caption measurement font size");
-    const Json node=Json::Object{{"id",id}};LayerRasterImage report;const auto&font=descriptor["font"];
+    const Json node=Json::Object{{"id",id},{"text",descriptor}};LayerRasterImage report;const auto&font=descriptor["font"];
     const auto family=r.fontFamily(font,node,options,report);const bool italic=(static_cast<unsigned>(number(font["symbolicTraits"]))&1)!=0;
-    ComPtr<IDWriteTextFormat>format;checked(r.text->CreateTextFormat(family.c_str(),r.fonts.Get(),Impl::weight(font),italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL,size,L"en-us",format.GetAddressOf()),"Create source caption measurement format");
+    ComPtr<IDWriteTextFormat>format;checked(r.text->CreateTextFormat(family.family.c_str(),family.collection,Impl::weight(font),italic?DWRITE_FONT_STYLE_ITALIC:DWRITE_FONT_STYLE_NORMAL,
+        DWRITE_FONT_STRETCH_NORMAL,size,flag(descriptor["preserveSourceFont"])?L"en-us":r.locale(),format.GetAddressOf()),"Create source caption measurement format");
     const bool wrapped=flag(descriptor["wrapped"]);checked(format->SetWordWrapping(wrapped?DWRITE_WORD_WRAPPING_WRAP:DWRITE_WORD_WRAPPING_NO_WRAP),"Set source caption measurement wrapping");
     const auto ascent=real(font["ascender"]),descent=real(font["descender"]),leading=real(font["leading"]);
     if(ascent>0&&ascent-descent+leading>0)checked(format->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,ascent-descent+leading,ascent),"Preserve source caption measurement metrics");
@@ -640,8 +699,9 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     }else if(options.retainedPlainText||options.revealPlainTextPosition||options.textDocumentOffset!=core::Point{})invalid("Retained document painting requires an explicit plain text leaf");
     const auto old=r.entries.find(id);
     if(options.retainedPlainText&&(old==r.entries.end()||old->second.paintedText!=options.retainedPlainText))invalid("Borrowed text layout must belong to this retained surface");
+    if(options.retainedPlainText&&old->second.fontRevision!=r.fontRevision)invalid("Borrowed text layout has a different typography generation");
     if(options.retainedPlainText&&(old->second.options.fallbackFontFamily!=options.fallbackFontFamily||old->second.options.monospaceFallbackFontFamily!=options.monospaceFallbackFontFamily))invalid("Borrowed text layout has different font resolver options");
-    if(old!=r.entries.end()&&old->second.revision==revision&&old->second.options==options){++r.counts.cacheHits;return old->second.image;}
+    if(old!=r.entries.end()&&old->second.revision==revision&&old->second.options==options&&(!old->second.hasText||old->second.fontRevision==r.fontRevision)){++r.counts.cacheHits;return old->second.image;}
     if(old==r.entries.end()&&r.entries.size()>=maximumEntries)invalid("Retained layer cache is full; remove unused source IDs");
     auto result=std::make_shared<LayerRasterImage>();if(options.retainedPlainText)result->fontSubstitutions=old->second.image->fontSubstitutions;std::size_t visited=0;
     auto bounds=r.measure(layer,Matrix::Identity(),*result,visited,0);
@@ -679,12 +739,17 @@ std::shared_ptr<const LayerRasterImage> LayerRasterizer::rasterize(std::string i
     const auto oldMetadata=old==r.entries.end()||!old->second.paintedText?0:old->second.paintedText->metadataBytes();
     const auto newMetadata=painted?painted->metadataBytes():0;
     if(newMetadata>maximumTextMetadataBytes-(r.counts.textMetadataBytes-oldMetadata))invalid("Retained editor text metadata exceeds its bound");
-    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted)});
+    const bool hasText=containsText(layer);const auto oldDescriptors=old==r.entries.end()?0:old->second.descriptorBytes;
+    Json retained;std::size_t descriptorBytes{};
+    if(hasText&&!options.plainTextDocument&&!options.richTextDocument){descriptorBytes=retainedJsonBytes(layer);if(descriptorBytes>maximumTypographyDescriptorBytes-(r.counts.typographyDescriptorBytes-oldDescriptors))invalid("Retained typography descriptor budget exceeded");retained=layer;}
+    r.entries.insert_or_assign(std::move(id),Impl::Entry{revision,options,result,std::move(layouts),std::move(painted),r.fontRevision,hasText,std::move(retained),descriptorBytes});
+    r.counts.typographyDescriptorBytes=r.counts.typographyDescriptorBytes-oldDescriptors+descriptorBytes;
     r.counts.resourceBytes=r.counts.resourceBytes-previous+bytes;r.counts.textMetadataBytes=r.counts.textMetadataBytes-oldMetadata+newMetadata;++r.counts.rasterizations;return result;
 }
 std::shared_ptr<const PaintedTextLayout>LayerRasterizer::textLayout(const std::string&id,std::uint64_t revision)const{const auto&r=*impl_;r.onThread();const auto found=r.entries.find(id);return found!=r.entries.end()&&found->second.revision==revision?found->second.paintedText:nullptr;}
-bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->metadataBytes();r.entries.erase(it);return true;}
-void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;r.counts.textMetadataBytes=0;}
+std::shared_ptr<const LayerRasterImage>LayerRasterizer::refreshTypography(const std::string&id,std::uint64_t revision){auto&r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end()||it->second.typographySource.isNull())return{};const auto options=it->second.options;return rasterize(id,revision,it->second.typographySource,options);}
+bool LayerRasterizer::remove(const std::string& id){auto& r=*impl_;r.onThread();const auto it=r.entries.find(id);if(it==r.entries.end())return false;r.counts.resourceBytes-=it->second.image->straightRGBA.size();if(it->second.paintedText)r.counts.textMetadataBytes-=it->second.paintedText->metadataBytes();r.counts.typographyDescriptorBytes-=it->second.descriptorBytes;r.entries.erase(it);return true;}
+void LayerRasterizer::clear(){auto& r=*impl_;r.onThread();r.entries.clear();r.images.clear();r.counts.resourceBytes=0;r.counts.textMetadataBytes=0;r.counts.typographyDescriptorBytes=0;}
 LayerRasterStats LayerRasterizer::stats()const{const auto& r=*impl_;r.onThread();auto result=r.counts;result.entries=r.entries.size();result.decodedImages=r.images.size();return result;}
 } // namespace endfield::native
 #endif

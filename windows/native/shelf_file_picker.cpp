@@ -129,7 +129,7 @@ bool NativeShelfFilePicker::handleMessage(UINT_PTR generation,LPARAM notice){aut
     if(notice!=static_cast<LPARAM>(ShelfPickerNotice::showRequested)||!state->queued||state->presenting)return false;
     state->queued=false;state->presenting=true;const auto token=state->token;ShelfPickerCompletion result;
     result.result=protect([&]{auto dialog=state->factory();if(!state->current(token))return E_ABORT;need(bool(dialog),"Shelf picker factory returned no dialog");state->dialog=dialog;
-        auto hr=dialog->configure(state->labels);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;
+        const auto labels=state->labels;auto hr=dialog->configure(labels);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;
         ++state->counts.shows;hr=dialog->show(state->route.owner);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;
         hr=dialog->selection(result.paths);if(!state->current(token))return E_ABORT;if(FAILED(hr))return hr;need(validShelfPickerSelection(result.paths),"Native Shelf picker returned an invalid complete path selection");return S_OK;});
     if(!state->current(token))return true;
@@ -138,6 +138,7 @@ bool NativeShelfFilePicker::handleMessage(UINT_PTR generation,LPARAM notice){aut
 }
 std::optional<ShelfPickerCompletion>NativeShelfFilePicker::drain(UINT_PTR generation){auto state=state_;state->onThread();if(!state->alive||generation!=state->route.generation)return {};return std::exchange(state->completion,{});}
 void NativeShelfFilePicker::cancel(){auto state=state_;state->onThread();state->cancel();}
+void NativeShelfFilePicker::setLabels(ShelfPickerLabels value){labels(value);auto state=state_;state->onThread();need(state->alive,"Shelf picker is stopped");state->labels=std::move(value);}
 void NativeShelfFilePicker::setRoute(ShelfPickerRoute value){route(value);auto state=state_;state->onThread();state->cancel();if(state->alive)state->route=value;}
 ShelfPickerStats NativeShelfFilePicker::stats()const{auto state=state_;state->onThread();auto stats=state->counts;stats.queued=state->queued;stats.presenting=state->presenting;stats.hasCompletion=bool(state->completion);return stats;}
 HRESULT revealShelfReference(ehud::data::ShelfFileAccess lease,ShelfRevealResolver resolver,ShelfRevealOperation operation)noexcept{return protect([&]{

@@ -58,12 +58,12 @@ NativeNotesTextMeasurer::~NativeNotesTextMeasurer()=default;
 std::shared_ptr<const NativeNotesTextMeasurement>NativeNotesTextMeasurer::measure(std::string_view id,std::uint64_t revision,std::string_view value,double width,double size,const LayerRasterOptions&options,const std::optional<std::string>&richPayload){
     auto&r=*impl_;r.onThread();
     if(id.empty()||id.size()>4096||!ehud::data::Json::validUtf8(id)||!std::isfinite(width)||std::abs(width)>32768||!std::isfinite(size)||size<=0||size>2048)invalid("Invalid note measurement identity/geometry/font");
-    for(std::size_t i=0;i<r.entries.size();++i){const auto&e=r.entries[i];if(e.id==id&&e.revision==revision&&e.width==width&&e.fontSize==size&&e.fallback==options.fallbackFontFamily&&e.monospace==options.monospaceFallbackFontFamily&&e.result->measured.sourceRichPayload==richPayload){
+    for(std::size_t i=0;i<r.entries.size();++i){const auto&e=r.entries[i];if(e.result->fontRevision==r.raster->fontRevision()&&e.id==id&&e.revision==revision&&e.width==width&&e.fontSize==size&&e.fallback==options.fallbackFontFamily&&e.monospace==options.monospaceFallbackFontFamily&&e.result->measured.sourceRichPayload==richPayload){
         auto result=e.result;std::rotate(r.entries.begin()+static_cast<std::ptrdiff_t>(i),r.entries.begin()+static_cast<std::ptrdiff_t>(i+1),r.entries.end());++r.counts.cacheHits;return result;}}
     if(value.size()>maximumTextBytes||!ehud::data::Json::validUtf8(value))invalid("Note measurement exceeds native payload bound or has invalid UTF-8; input is not truncated");
     auto analysis=r.raster->plainSystemTextAnalysis(std::string(id),size,options);
     struct AnalysisCount{Impl&r;LayerPlainTextAnalysis&a;~AnalysisCount(){r.counts.analysisLayoutsCreated+=a.layoutsCreated();}}count{r,*analysis};
-    auto result=std::make_shared<NativeNotesTextMeasurement>();result->font=analysis->metrics();auto&measured=result->measured;
+    auto result=std::make_shared<NativeNotesTextMeasurement>();result->fontRevision=r.raster->fontRevision();result->font=analysis->metrics();auto&measured=result->measured;
     measured.text=value;measured.width=width;measured.fontSize=size;measured.sourceRichPayload=richPayload;if(richPayload)measured.richText=modules::decodeNotesRichText(value,richPayload);
     constexpr auto maximumLines=maximumIndexBytes/sizeof(modules::NotesMeasuredLine);
     std::uint32_t unitPosition{};

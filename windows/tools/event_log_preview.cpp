@@ -1,4 +1,5 @@
 #include "tools/event_log_preview.hpp"
+#include "modules/module_strings.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include "native/module_scene.hpp"
@@ -25,6 +26,7 @@ EventLogPreview::EventLogPreview(gpu::LayerRasterizer&r,gpu::LayerRasterOptions 
 EventLogPreview::~EventLogPreview()=default;
 void EventLogPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Event Log viewport");impl_->metrics=m;}
 void EventLogPreview::refresh(){if(impl_->active)impl_->state.refresh();}
+void EventLogPreview::setLanguage(core::Language language){impl_->state.setStrings(modules::eventLogStrings(language));}
 void EventLogPreview::setAppearance(modules::EventLogAppearance appearance){impl_->scene.setAppearance(appearance);}
 void EventLogPreview::setReduceMotion(bool value){impl_->state.setReduceMotion(value);}
 void EventLogPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;const Impl::Event event(i,t);

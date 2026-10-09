@@ -15,10 +15,10 @@ checklists, moving, resizing, pinning and confirmed deletion. Temporary File She
 synthetic Clipboard history, Volume, Work Mode and Event Log use the same module transitions,
 renderer and frame clock. Their hidden integration tests pass. Settings now joins
 that shared preview, with event-driven shell captions, theme, motion, clock and
-hotkey preferences. Language changes inside every module are still being connected.
+hotkey preferences. Connected module captions now update on the same language-change event.
 Still-image, GIF, drawing and real Windows video import/playback pass isolated
 integration checks. Archive storage/category models and its standalone editor
-are verified; the shared application integration is still being connected.
+are verified; its shared application integration now has hidden hardware coverage. Other module bodies still need integration.
 An optional resident preview adds the
 original icon, tray menu and Ctrl+` reopening. Other module bodies and the
 production application owner remain unfinished.
@@ -599,7 +599,8 @@ source feedback oracle passes 3,860 comparisons.
 WM_ACTIVATEAPP now distinguishes switching applications from an owned text field
 or file dialog. The shell closes on application deactivation by default and a
 hotkey brings an unfocused overlay forward on the first press. Native activation
-routing is tested; actual Alt+Tab acceptance is still pending. The concealed-tray
+routing is tested. The user has now confirmed animated Alt+Tab closing,
+one-press hotkey reopening, and the preference that leaves the overlay open. The concealed-tray
 Quit path also stops scheduling frames before shutdown. These fixes and standalone
 Archive/Settings owners are verified source work, not a complete Windows release.
 Remaining modules/services, and full performance and accessibility acceptance
@@ -619,7 +620,26 @@ The Windows run passed 124 of 126 registered suites. Both remaining failures
 were invalid JSON fixture construction (null instead of object), corrected and
 rerun successfully without weakening assertions. The other explicit Notes,
 media, source-transition and full hardware module checks also passed. The live
-preview now exposes the close-on-focus-loss setting for the pending Alt+Tab and
-one-press hotkey acceptance test. Real startup registration, display selection,
+preview exposes the close-on-focus-loss setting; both settings states and
+one-press hotkey reopening are user-confirmed. Real startup registration, display selection,
 custom icons, global module preferences and the full release owner still need
 integration; the isolated preview does not change the laptop's startup or data.
+
+
+The next typography checkpoint bundles Noto Sans SC for default HUD text and
+numbers, and Noto Sans KR for Korean. Both fonts are private application resources;
+no Windows font installation is required. Language changes refresh retained
+captions and editing layouts through one event, preserving document data and
+explicit user font choices. The five selectable clock styles keep their existing
+faces. Fonts are not reloaded or reshaped during pointer tilt.
+
+Snapshot 84b passed 138 of 141 Windows suites plus all explicit Notes, media,
+Storage source comparisons and combined Archive hardware coverage. The subsequent
+84c checks corrected two test-harness issues (an allocating fixture lookup and an
+old full-opacity expectation after a half-opacity pose) without changing the
+runtime. The private-font, Notes font-menu, Archive editor and retained-group
+checks pass, including actual SC/KR default selection. The remaining Archive synthetic movie readiness check passed in 84d after checking
+the actual paused worker poster instead of requiring a playback-only GPU target.
+All 141 registered suites have therefore passed across 84b and its targeted
+corrections; the combined hardware module check also passed after the changes.
+Live font appearance and Korean IME still need desktop acceptance.

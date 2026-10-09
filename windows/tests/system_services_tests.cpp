@@ -15,6 +15,9 @@ ClipboardPayload text(std::u16string value) { ClipboardPayload result; result.te
 void little32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
     for (unsigned i=0; i<4; ++i) bytes[at+i]=static_cast<std::uint8_t>(value>>(i*8));
 }
+void big32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
+    for(unsigned i=0;i<4;++i)bytes[at+i]=static_cast<std::uint8_t>(value>>(24-i*8));
+}
 std::vector<std::uint8_t> dib(std::uint32_t width=2, std::uint32_t height=2, std::uint32_t header=40) {
     std::vector<std::uint8_t> bytes(header+std::size_t(width)*height*4);
     little32(bytes,0,header);little32(bytes,4,width);little32(bytes,8,height);
@@ -125,6 +128,37 @@ void clipboard() {
     picture.image=png();picture.text=u"extra";check(!ClipboardHistory::valid(picture),"mixed payloads rejected");
     AudioSnapshot audio;check(audio.paused&&!audio.available&&!audio.volume&&!audio.muted,"audio model has no fabricated device state");
 }
+void clipboard_image_limits(){
+    using H=ClipboardHistory;
+    check(H::maximum_image_bytes==64*1'048'576&&H::maximum_retained_bytes==128*1'048'576&&H::maximum_thumbnail_dimension==96,"Source encoded/history/thumbnail limits remain independent");
+    for(const auto dimensions:std::array<std::array<std::uint32_t,2>,7>{{{100000,1000},{1000,100000},{10000,10000},{16385,1},{1,16385},{4097,4097},{1,1}}}){
+        const auto w=dimensions[0],h=dimensions[1];
+        check(H::valid_image_metadata(w,h,H::maximum_image_bytes),"Exact source dimensions and64MiB encoded boundary accepted without allocating image pixels");
+        // Only the IHDR metadata is varied. This is a structural-parser fixture,
+        // deliberately never submitted to a codec as a complete large image.
+        auto bytes=png();big32(bytes,16,w);big32(bytes,20,h);
+        check(H::valid_image(ClipboardImageFormat::png,bytes),"PNG preflight uses source dimensions rather than a full-RGBA memory estimate");
+    }
+    for(const auto dimensions:std::array<std::array<std::uint32_t,2>,8>{{{100001,1},{1,100001},{10000,10001},{100000,1001},{0,1},{1,0},{0xffffffffu,0xffffffffu},{0xffffffffu,1}}}){
+        const auto w=dimensions[0],h=dimensions[1];check(!H::valid_image_metadata(w,h,68),"Out-of-source dimension or product limit rejects without overflow");
+        auto bytes=png();big32(bytes,16,w);big32(bytes,20,h);check(!H::valid_image(ClipboardImageFormat::png,bytes),"PNG extent rejection agrees with shared metadata contract");
+    }
+    check(!H::valid_image_metadata(1,1,0)&&!H::valid_image_metadata(1,1,H::maximum_image_bytes+1),"Empty and oversized encoded payloads rejected with no giant allocation");
+    // Thin, real packed DIB payloads prove both signed orientations use the
+    // source axis bound while actual stride/pixel availability remains required.
+    for(const auto header:{40u,124u}){
+        auto bytes=dib(100000,1,header);const auto format=header==124?ClipboardImageFormat::dib_v5:ClipboardImageFormat::dib;
+        check(H::valid_image(format,bytes),"100000-wide packed DIB remains within the encoded budget");little32(bytes,8,0xffffffffu);
+        check(H::valid_image(format,bytes),"Top-down DIB uses absolute height safely");bytes.pop_back();check(!H::valid_image(format,bytes),"Larger allowed dimensions never bypass actual DIB byte availability");
+        bytes=dib(100001,1,header);check(!H::valid_image(format,bytes),"Actual payload does not override source axis rejection");
+    }
+    auto header=dib();little32(header,4,10000);little32(header,8,10000);check(!H::valid_image(ClipboardImageFormat::dib,header),"Valid100MP metadata alone cannot stand in for missing packed DIB pixels");
+    ClipboardPayload payload;payload.kind=ClipboardKind::image;payload.image_format=ClipboardImageFormat::png;payload.image=png();big32(payload.image,16,10000);big32(payload.image,20,10000);
+    ClipboardHistory history(2);check(history.ingest(payload)==ClipboardInsertResult::inserted&&history.retained_bytes()==payload.image.size(),"History charges encoded bytes, never hypothetical100MP decoded RGBA");
+    const auto id=history.items()[0].id;history.pin(id,true);check(history.ingest(payload)==ClipboardInsertResult::duplicate&&history.items()[0].pinned,"Expanded source acceptance preserves duplicate/pin identity");
+    big32(payload.image,20,10001);check(history.ingest(payload)==ClipboardInsertResult::invalid&&history.items().size()==1&&history.find(id)&&history.retained_bytes()==68,"Over-limit metadata cannot mutate existing retained history");
+    history.clear(false);check(history.retained_bytes()==0,"Encoded image storage releases normally");
+}
 void stereo(){
     check(!audio_stereo_balance(0,0)&&!audio_stereo_balance(-1,.5f)&&!audio_stereo_balance(.5f,std::numeric_limits<float>::quiet_NaN()),"Unknown/zero stereo state never invents balance");
     for(unsigned n=0;n<=1000;++n){const auto balance=float(n)/500-1;const auto levels=audio_stereo_levels(.8f,balance);const auto restored=audio_stereo_balance(levels[0],levels[1]);check(restored&&std::abs(*restored-balance)<2e-7f&&std::max(levels[0],levels[1])==.8f,"Source stereo math preserves peak across entire balance range");}
@@ -136,6 +170,6 @@ void stereo(){
 }
 }
 int main() {
-    try {battery();notification();clipboard();stereo();std::cout<<checks<<" synthetic system-service checks passed\n";return 0;}
+    try {battery();notification();clipboard();clipboard_image_limits();stereo();std::cout<<checks<<" synthetic system-service checks passed\n";return 0;}
     catch(const std::exception& error){std::cerr<<error.what()<<'\n';return 1;}
 }

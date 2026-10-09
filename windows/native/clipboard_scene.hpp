@@ -20,6 +20,10 @@ struct ClipboardStrings {
     std::array<std::string,4>kinds{"文字","链接","文件","图片"};
     std::string copy="复制：",pin="固定：",unpin="取消固定：",remove="删除：";
     std::string clear="清空未固定项",cancel="取消",confirm="清空",keepPinned="保留已固定项目";
+    // Empty preserves legacy countSuffix injection. Otherwise exactly {0}/{1}.
+    std::string countPattern;
+    std::string imagePrefix{"图片 · "};
+    bool operator==(const ClipboardStrings&) const = default;
 };
 struct ClipboardAction {std::string id,label;core::Rect rect;bool framed{};};
 struct ClipboardActions {
@@ -38,11 +42,13 @@ public:
     static constexpr core::Rect contentRect(){return {12,41,376,246};}
     explicit ClipboardState(ClipboardActions,ClipboardStrings={});
     void activate();void deactivate();void refresh();void setReduceMotion(bool);
+    bool setStrings(ClipboardStrings); // keeps opaque payload/status and source interaction state
     bool mouseDown(core::Point);bool scroll(core::Point,double delta);bool scrollBy(double delta);
     void selectNext(int);void copySelection();void copyVisibleItem(unsigned);void deleteSelection();void perform(std::string_view);
     const std::vector<ClipboardRow>&rows()const noexcept{return rows_;}
     std::span<const ClipboardAction>actions()const noexcept{return actions_;}
     const ClipboardStrings&strings()const noexcept{return strings_;}
+    std::string displayPreview(const ClipboardRow&) const; // only source-generated image prefix is localized
     std::pair<std::size_t,std::size_t>visibleRange()const noexcept;
     std::optional<core::Rect>rowRect(std::uint64_t,bool clipped=true)const;
     std::optional<std::string_view>actionAt(core::Point)const;
@@ -53,12 +59,13 @@ public:
     bool hasPendingEvents()const noexcept{return !events_.empty();}
     std::span<const Event>pendingEvents()const noexcept{return events_;}
     bool confirmingClear()const noexcept{return confirming_;}bool active()const noexcept{return active_;}
-    bool copiedFeedback()const noexcept{return feedback_&&*feedback_==strings_.copied;}
+    bool copiedFeedback()const noexcept{return feedback_&&feedbackKind_==1;}
     const std::string&status()const noexcept{return status_;}
     std::uint64_t revision()const noexcept{return revision_;}
     std::vector<Event>takeEvents();
 private:
     ClipboardActions callbacks_;ClipboardStrings strings_;std::vector<ClipboardRow>rows_;std::vector<ClipboardAction>actions_;std::vector<Event>events_;
+    unsigned feedbackKind_{}; // 0 opaque provider text, 1 copied, 2 built-in restore failure
     std::optional<std::uint64_t>selected_;std::optional<std::string>feedback_,storeStatus_;std::string status_;
     std::size_t capacity_{10};double offset_{};std::uint64_t revision_{};bool active_{},confirming_{},reduced_{};
     void rebuild();void copy(std::uint64_t);void remove(std::uint64_t);void event(EventKind,std::uint64_t=0,double=1);void reveal(std::size_t);

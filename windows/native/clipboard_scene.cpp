@@ -1,5 +1,6 @@
 #include "native/clipboard_scene.hpp"
 #include "core/motion.hpp"
+#include "core/source_color.hpp"
 #include "core/subsection_transition.hpp"
 #include <atomic>
 #include "core/source_camera.hpp"
@@ -18,10 +19,19 @@ bool contains(Rect r,Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.
 std::optional<Rect>clip(Rect r){const auto c=ClipboardState::contentRect();const double x=std::max(r.x,c.x),y=std::max(r.y,c.y),w=std::min(r.x+r.width,c.x+c.width)-x,h=std::min(r.y+r.height,c.y+c.height)-y;if(w<=0||h<2)return {};return Rect{x,y,w,h};}
 std::string action(std::uint64_t id,std::string_view verb){return "clipboard:"+std::to_string(id)+":"+std::string(verb);}
 void validText(std::string_view s){need(s.size()<=65536&&Json::validUtf8(s),"Invalid Clipboard presentation string");}
+std::string countStatus(const ClipboardStrings&s,std::size_t count,std::size_t capacity){
+    if(s.countPattern.empty())return std::to_string(count)+" / "+std::to_string(capacity)+s.countSuffix;
+    std::string out;bool first{},second{};
+    for(std::size_t n=0;n<s.countPattern.size();){if(s.countPattern.compare(n,3,"{0}")==0){out+=std::to_string(count);first=true;n+=3;}else if(s.countPattern.compare(n,3,"{1}")==0){out+=std::to_string(capacity);second=true;n+=3;}else{need(s.countPattern[n]!='{'&&s.countPattern[n]!='}',"Invalid Clipboard count pattern");out+=s.countPattern[n++];}}
+    need(first&&second,"Clipboard count pattern needs both source arguments");return out;
+}
+void validate(const ClipboardStrings&s){for(const auto*p:{&s.heading,&s.emptyTitle,&s.emptyHelp,&s.countSuffix,&s.copied,&s.copyFailed,&s.pinned,&s.copy,&s.pin,&s.unpin,&s.remove,&s.clear,&s.cancel,&s.confirm,&s.keepPinned,&s.countPattern,&s.imagePrefix})validText(*p);for(const auto&kind:s.kinds)validText(kind);(void)countStatus(s,0,1);}
+
 }
 ClipboardState::ClipboardState(ClipboardActions callbacks,ClipboardStrings strings):callbacks_(std::move(callbacks)),strings_(std::move(strings)){
-    need(bool(callbacks_.snapshot),"Clipboard owner must supply isolated metadata snapshot");events_.reserve(8);actions_.reserve(24);refresh();
+    validate(strings_);need(bool(callbacks_.snapshot),"Clipboard owner must supply isolated metadata snapshot");events_.reserve(8);actions_.reserve(24);refresh();
 }
+bool ClipboardState::setStrings(ClipboardStrings value){if(value==strings_)return false;validate(value);auto feedback=feedback_;if(feedback){if(feedbackKind_==1)feedback=value.copied;else if(feedbackKind_==2)feedback=value.copyFailed;}strings_=std::move(value);feedback_=std::move(feedback);rebuild();return true;}
 void ClipboardState::event(EventKind kind,std::uint64_t id,double direction){events_.push_back({kind,id,direction,active_&&!reduced_});}
 void ClipboardState::activate(){if(active_)return;active_=true;refresh();}
 void ClipboardState::deactivate(){if(!active_)return;active_=false;confirming_=false;feedback_.reset();event(EventKind::settle);rebuild();}
@@ -35,10 +45,11 @@ void ClipboardState::refresh(){auto next=callbacks_.snapshot();need(next.rows.si
     rows_=std::move(next.rows);capacity_=next.capacity;storeStatus_=std::move(next.status);feedback_.reset();if(anchor)for(std::size_t n=0;n<rows_.size();++n)if(rows_[n].id==*anchor){offset_=double(n)*41+remainder;break;}
     if(selected_&&!ids.contains(*selected_))selected_.reset();offset_=std::clamp(offset_,0.,maximumOffset());if(std::none_of(rows_.begin(),rows_.end(),[](const auto&r){return !r.pinned;}))confirming_=false;rebuild();
 }
+std::string ClipboardState::displayPreview(const ClipboardRow&r)const{if(r.kind==ClipboardKind::image)for(std::string_view prefix:{"Image · ","图像 · ","图片 · "})if(r.preview.starts_with(prefix))return strings_.imagePrefix+r.preview.substr(prefix.size());return r.preview;}
 void ClipboardState::rebuild(){actions_.clear();if(confirming_){actions_.push_back({"clipboard:cancelClear",strings_.cancel,{218,299,67,27},true});actions_.push_back({"clipboard:confirmClear",strings_.confirm,{294,299,94,27},true});}else if(std::any_of(rows_.begin(),rows_.end(),[](const auto&r){return !r.pinned;}))actions_.push_back({"clipboard:clear",strings_.clear,{12,299,140,27},true});
-    const auto[first,end]=visibleRange();for(auto n=first;n<end;++n){const auto&r=rows_[n];const auto full=rowRect(r.id,false),visible=rowRect(r.id);if(!visible)continue;actions_.push_back({action(r.id,"copy"),strings_.copy+r.preview,*visible,true});
-        for(bool remove:{false,true})if(const auto bounds=clip({full->x+(remove?348:320),full->y+6,23,25}))actions_.push_back({action(r.id,remove?"remove":"pin"),(remove?strings_.remove:r.pinned?strings_.unpin:strings_.pin)+r.preview,*bounds,false});}
-    status_=feedback_.value_or(storeStatus_.value_or(std::to_string(rows_.size())+" / "+std::to_string(capacity_)+strings_.countSuffix));++revision_;
+    const auto[first,end]=visibleRange();for(auto n=first;n<end;++n){const auto&r=rows_[n];const auto full=rowRect(r.id,false),visible=rowRect(r.id);if(!visible)continue;const auto preview=displayPreview(r);actions_.push_back({action(r.id,"copy"),strings_.copy+preview,*visible,true});
+        for(bool remove:{false,true})if(const auto bounds=clip({full->x+(remove?348:320),full->y+6,23,25}))actions_.push_back({action(r.id,remove?"remove":"pin"),(remove?strings_.remove:r.pinned?strings_.unpin:strings_.pin)+preview,*bounds,false});}
+    status_=feedback_.value_or(storeStatus_.value_or(countStatus(strings_,rows_.size(),capacity_)));++revision_;
 }
 std::optional<std::string_view>ClipboardState::actionAt(Point p)const{for(auto it=actions_.rbegin();it!=actions_.rend();++it)if(contains(it->rect,p))return it->id;return {};}
 std::optional<std::string_view>ClipboardState::feedbackActionAt(Point point)const{
@@ -54,7 +65,7 @@ bool ClipboardState::scroll(Point p,double delta){if(!contains(contentRect(),p)|
 bool ClipboardState::scrollBy(double delta){if(!std::isfinite(delta))return false;const double next=std::clamp(offset_+delta,0.,maximumOffset());if(next==offset_)return true;offset_=next;confirming_=false;feedback_.reset();event(EventKind::settle);rebuild();return true;}
 void ClipboardState::reveal(std::size_t n){const double top=double(n)*41;if(top<offset_)offset_=top;else if(top+41>offset_+246)offset_=top+41-246;offset_=std::clamp(offset_,0.,maximumOffset());}
 void ClipboardState::selectNext(int direction){if(rows_.empty())return;std::size_t index=direction<0?rows_.size()-1:0;if(selected_)for(std::size_t n=0;n<rows_.size();++n)if(rows_[n].id==*selected_){const auto next=std::clamp(std::int64_t(n)+std::int64_t(direction),std::int64_t(0),std::int64_t(rows_.size()-1));index=std::size_t(next);break;}selected_=rows_[index].id;reveal(index);feedback_.reset();confirming_=false;rebuild();}
-void ClipboardState::copy(std::uint64_t id){if(!rowRect(id,false))return;selected_=id;confirming_=false;const bool ok=callbacks_.copy&&callbacks_.copy(id);auto next=callbacks_.snapshot();storeStatus_=std::move(next.status);feedback_=ok?strings_.copied:storeStatus_.value_or(strings_.copyFailed);rebuild();if(ok)event(EventKind::engage,id);}
+void ClipboardState::copy(std::uint64_t id){if(!rowRect(id,false))return;selected_=id;confirming_=false;const bool ok=callbacks_.copy&&callbacks_.copy(id);auto next=callbacks_.snapshot();storeStatus_=std::move(next.status);feedbackKind_=ok?1:storeStatus_?0:2;feedback_=ok?strings_.copied:storeStatus_.value_or(strings_.copyFailed);rebuild();if(ok)event(EventKind::engage,id);}
 void ClipboardState::copySelection(){if(selected_)copy(*selected_);}void ClipboardState::copyVisibleItem(unsigned index){if(index>=6)return;const auto[first,end]=visibleRange();unsigned visible{};for(auto n=first;n<end;++n)if(rowRect(rows_[n].id)){if(visible++==index){copy(rows_[n].id);return;}}}
 void ClipboardState::remove(std::uint64_t id){if(callbacks_.remove&&callbacks_.remove(id)){refresh();event(EventKind::reflow);}}
 void ClipboardState::deleteSelection(){if(selected_)remove(*selected_);}
@@ -98,14 +109,14 @@ Json kindImage(const ClipboardRow&r,const ClipboardAppearance&s,const ClipboardI
 }
 ClipboardScenePlan prepareClipboardScene(const ClipboardState&state,const ClipboardAppearance&s,const ClipboardImages&images){need(std::isfinite(s.scale)&&s.scale>=1&&s.scale<=8,"Invalid Clipboard render scale");for(auto c:s.accent)need(std::isfinite(c)&&c>=0&&c<=1,"Invalid Clipboard accent");ClipboardScenePlan result;const auto primary=gray(s.dark?.94:.11),muted=gray(s.dark?.68:.38),ink=gray(.14);const auto&strings=state.strings();
     Build empty;if(state.rows().empty()){empty.add(label("clipboard.empty",{24,145,352,46},strings.emptyTitle,14,primary,s.scale,"regular","center",true));empty.add(label("clipboard.help",{24,197,352,32},strings.emptyHelp,10.5,muted,s.scale,"regular","center",true));}result.collection=empty.finish();
-    Build fore;auto heading=label("clipboard.heading",{12,0,376,20},(strings.heading.starts_with("//")?strings.heading:"// "+strings.heading),15,primary,s.scale,"semibold","natural");heading["text"]["truncation"]="none";fore.add(std::move(heading));auto statusColor=muted;if(state.copiedFeedback()){statusColor=s.accent;if(!s.dark)for(unsigned n=0;n<3;++n)statusColor[n]*=.6;}fore.add(label("clipboard.status",{12,22,376,13},state.status(),9.5,statusColor,s.scale,"regular","natural"));
+    Build fore;auto heading=label("clipboard.heading",{12,0,376,20},(strings.heading.starts_with("//")?strings.heading:"// "+strings.heading),15,primary,s.scale,"semibold","natural");heading["text"]["truncation"]="none";fore.add(std::move(heading));auto statusColor=muted;if(state.copiedFeedback()){statusColor=s.accent;if(!s.dark){const auto blend=core::source::sourceBlackBlend({s.accent[0],s.accent[1],s.accent[2]},.4);std::copy(blend.begin(),blend.end(),statusColor.begin());}}fore.add(label("clipboard.status",{12,22,376,13},state.status(),9.5,statusColor,s.scale,"regular","natural"));
     if(state.confirmingClear())fore.add(label("clipboard.keepPinned",{12,306,202,15},strings.keepPinned,10.5,primary,s.scale),{},false,false,false,true);
     for(const auto&a:state.actions())if(a.id=="clipboard:clear"||a.id=="clipboard:cancelClear"||a.id=="clipboard:confirmClear"){const auto&r=a.rect;fore.add(shape(a.id+"/plate",r,cut({0,0,r.width,r.height},4),a.id=="clipboard:confirmClear"?s.accent:gray(s.dark?.82:.9),gray(s.dark?.93:.38,.65),.6),{},false,false,false,true);fore.feedback(a.id,r,true,s.accent,true);fore.add(label(a.id+"/label",{r.x+4,r.y+6,r.width-8,17},a.label,11,ink,s.scale,"semibold","center"),{},false,false,false,true);}result.foreground=fore.finish();
     Build scroll;if(state.maximumOffset()>0){const double h=std::max(24.,246.*246/(double(state.rows().size())*41));auto node=layer("clipboard.scrollbar",{392,41+(246-h)*state.scrollOffset()/state.maximumOffset(),2,h});node["cornerRadius"]=1;node["backgroundColor"]=color(alpha(s.accent,.55));scroll.add(std::move(node));}result.scrollbar=scroll.finish();
     const auto[first,end]=state.visibleRange();result.rows.reserve(end-first);for(auto n=first;n<end;++n){const auto&r=state.rows()[n];const auto prefix="clipboard.row."+std::to_string(r.id);Build row;row.part.rowID=r.id;row.part.full=*state.rowRect(r.id,false);const bool selected=state.selected()==r.id;const Rect box{0,0,376,37};row.add(shape(prefix+"/fill",box,cut(box,5),gray(s.dark?.77:.90)));row.add(shape(prefix+"/outline",box,cut(box,5),{},selected?s.accent:gray(s.dark?.90:.37,.7),selected?1.4:.6),{},false,false,true);row.feedback(action(r.id,"copy"),box,true,s.accent);
         const auto number=n+1;row.add(label(prefix+"/number",{7,10,23,18},(number<10?"0":"")+std::to_string(number),10.5,alpha(ink,.65),s.scale,"semibold","center"));
         if(!r.thumbnail.isNull()||r.kind==ClipboardKind::text||r.kind==ClipboardKind::files)row.add(kindImage(r,s,images,prefix+"/kind"));else{Json::Array path;if(r.kind==ClipboardKind::url){path=rounded({36,10,16,12},5);auto second=rounded({46,16,16,12},5);path.insert(path.end(),second.begin(),second.end());}else{path={cmd("move",{{37,8}}),cmd("line",{{62,8}}),cmd("line",{{62,29}}),cmd("line",{{37,29}}),cmd("close"),cmd("move",{{39,25}}),cmd("line",{{47,17}}),cmd("line",{{53,23}}),cmd("line",{{58,19}}),cmd("line",{{61,22}})};auto circle=ellipse({53,11,4,4});path.insert(path.end(),circle.begin(),circle.end());}row.add(shape(prefix+"/kind",{},std::move(path),{},alpha(ink,.78),1.5,true));}
-        row.add(label(prefix+"/preview",{71,5,243,17},r.preview,11.5,ink,s.scale,"medium"));row.add(label(prefix+"/kindTitle",{71,23,243,11},strings.kinds[unsigned(r.kind)]+(r.pinned?strings.pinned:""),8.5,alpha(ink,.64),s.scale));row.feedback(action(r.id,"pin"),{320,6,23,25},false,s.accent);row.feedback(action(r.id,"remove"),{348,6,23,25},false,s.accent);
+        row.add(label(prefix+"/preview",{71,5,243,17},state.displayPreview(r),11.5,ink,s.scale,"medium"));row.add(label(prefix+"/kindTitle",{71,23,243,11},strings.kinds[unsigned(r.kind)]+(r.pinned?strings.pinned:""),8.5,alpha(ink,.64),s.scale));row.feedback(action(r.id,"pin"),{320,6,23,25},false,s.accent);row.feedback(action(r.id,"remove"),{348,6,23,25},false,s.accent);
         if(r.pinned)row.add(shape(prefix+"/pinHalo",{},ellipse({321,7,22,23}),s.accent));Json::Array pin{cmd("move",{{327,11}}),cmd("line",{{336,11}}),cmd("move",{{329,11}}),cmd("line",{{329,17}}),cmd("line",{{326,20}}),cmd("line",{{337,20}}),cmd("line",{{334,17}}),cmd("line",{{334,11}}),cmd("move",{{331.5,20}}),cmd("line",{{331.5,27}})};row.add(shape(prefix+"/pin",{},std::move(pin),{},alpha(ink,r.pinned?1:.68),1.1,true));row.add(shape(prefix+"/remove",{},Json::Array{cmd("move",{{356,13}}),cmd("line",{{365,23}}),cmd("move",{{365,13}}),cmd("line",{{356,23}})},{},alpha(ink,.76),1.1,true));result.rows.push_back(row.finish());}
     return result;
 }
@@ -149,15 +160,16 @@ bool NativeClipboardScene::syncContent(double time){auto&i=*impl_;i.time(time);i
     auto plan=prepareClipboardScene(i.state,i.appearance,i.images);std::size_t needed{};const auto same=[](const auto&p,const ClipboardPart&q){return p&&p->plan.layers==q.layers;};
     const auto count=[&](const auto&p,const ClipboardPart&q){if(!same(p,q))needed+=q.surfaces.size();};count(i.collection,plan.collection);count(i.foreground,plan.foreground);count(i.scrollbar,plan.scrollbar);
     for(const auto&r:plan.rows){const auto old=std::find_if(i.rows.begin(),i.rows.end(),[&](const auto&p){return p->plan.rowID==r.rowID;});if(old==i.rows.end()||!same(*old,r))needed+=r.surfaces.size();}need(needed<=LayerRasterizer::maximumEntries-i.raster.stats().entries,"Clipboard replacement exceeds shared raster budget");
-    const auto build=[&](const auto&p,ClipboardPart&q){return same(p,q)?std::unique_ptr<Impl::Part>{}:std::make_unique<Impl::Part>(i.raster,std::move(q),i.options);};
+    const auto inherit=[](Impl::Part&next,const Impl::Part&prior){
+        next.engageStart=prior.engageStart;next.reflowStart=prior.reflowStart;next.reflowFrom=prior.reflowFrom;next.stroke=prior.stroke;
+        for(std::size_t n=0;n<next.plan.surfaces.size();++n)for(std::size_t old=0;old<prior.plan.surfaces.size();++old)if(next.plan.surfaces[n].id==prior.plan.surfaces[old].id)next.feedback[n]=prior.feedback[old];
+    };
+    const auto build=[&](const auto&p,ClipboardPart&q){if(same(p,q))return std::unique_ptr<Impl::Part>{};auto next=std::make_unique<Impl::Part>(i.raster,std::move(q),i.options);if(p)inherit(*next,*p);return next;};
     auto collection=build(i.collection,plan.collection),foreground=build(i.foreground,plan.foreground),scrollbar=build(i.scrollbar,plan.scrollbar);
     std::array<std::unique_ptr<Impl::Part>,7>built;std::array<std::size_t,7>old{};old.fill(7);std::array<double,7>previousY{};
     for(std::size_t n=0;n<plan.rows.size();++n){previousY[n]=plan.rows[n].full.y+30;const Impl::Part*previous{};for(std::size_t k=0;k<i.rows.size();++k)if(i.rows[k]->plan.rowID==plan.rows[n].rowID){previous=i.rows[k].get();previousY[n]=Impl::y(*previous,time);if(same(i.rows[k],plan.rows[n]))old[n]=k;break;}
         if(old[n]==7){built[n]=std::make_unique<Impl::Part>(i.raster,plan.rows[n],i.options);
-            // Selection/pin content can change on the same press. Retain the
-            // original event-time feedback track across that local replacement;
-            // starting it again at render time loses stationary press progress.
-            if(previous)for(std::size_t next=0;next<built[n]->plan.surfaces.size();++next){const auto&surface=built[n]->plan.surfaces[next];if(surface.action.empty())continue;for(std::size_t prior=0;prior<previous->plan.surfaces.size();++prior){const auto&oldSurface=previous->plan.surfaces[prior];if(surface.id==oldSurface.id&&surface.action==oldSurface.action&&surface.rim==oldSurface.rim){built[n]->feedback[next]=previous->feedback[prior];break;}}}
+            if(previous)inherit(*built[n],*previous);
         }
     }
     if(!i.sampler)for(const auto&e:i.state.pendingEvents())if(e.kind==ClipboardState::EventKind::reflow&&e.animated){bool moved{};for(std::size_t n=0;n<plan.rows.size();++n)moved|=previousY[n]!=plan.rows[n].full.y;need(moved,"Animated Clipboard subsection needs its original normalized mask asset");}auto events=i.state.takeEvents();std::vector<std::unique_ptr<Impl::Part>>next;next.reserve(7);const auto replace=[&](auto&current,auto&candidate){if(candidate){if(current)i.retired.push_back(std::move(current));current=std::move(candidate);++i.stats.builds;}};

@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <atomic>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -68,12 +69,24 @@ void run(HWND hwnd,const wchar_t* shader){
     const auto blue=*local.surfaceIndex("blue");const gpu::LayerPlacement feedback{blue,core::Matrix4::translation(8,0),.5f,{}};local.setPlacements(std::span{&feedback,1});
     check(group.updateLocal(renderer),"Changed local feedback dirties the retained GPU target");group.setPose(core::Matrix4::translation(8,8),1);composition.present(renderer);renderer.draw(false);
     check(renderer.stats().nativeGroupRenders==before.nativeGroupRenders+1,"Local feedback causes exactly one target repaint");
+    // Dynamic source media enters the completed group at an exact paint slot,
+    // preserving overlapping later leaves and root group opacity.
+    const std::array<gpu::Vertex,4>mediaVertices{{{{0,0,0},{0,0}},{{1,0,0},{1,0}},{{1,1,0},{1,1}},{{0,1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>mediaIndices{0,1,2,0,2,3};const std::array<std::uint8_t,4>green{0,255,0,255};
+    renderer.setMesh("fixture.media.mesh",1,{mediaVertices,mediaIndices});renderer.setTexture("fixture.media.texture",1,{1,1,green});gpu::DrawObject media;media.sourceID="fixture.media.draw";media.meshID="fixture.media.mesh";media.textureID="fixture.media.texture";media.world=core::Matrix4::translation(4,2)*core::Matrix4::scale(12,12);
+    const gpu::LayerPlacement fullBlue{blue,core::Matrix4::translation(8,0),1,{}};local.setPlacements(std::span(&fullBlue,1));
+    const gpu::NativeGroupInsertion insertion{1,std::span(&media,1),{4,2,12,12}};group.uploadResources(renderer,{},insertion);group.setPose(core::Matrix4::translation(8,8),.5f);composition.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),13,12,{0,128,0,128},"Inserted source media receives group fade exactly once");pixel(renderer.readback(),20,12,{0,0,128,128},"Later source artwork stays above inserted media in the same group");check(!renderer.removeTexture(media.textureID)&&!renderer.removeMesh(media.meshID),"Group references protect borrowed media until ordered replacement");
+    const auto cachedGroup=renderer.stats();const auto cachedRaster=raster.stats();allocations=0;counting=true;try{for(unsigned frame=0;frame<120;++frame){group.updateLocal(renderer,insertion);group.setPose(core::Matrix4::translation(8+frame*.001,8),.5f);composition.present(renderer);renderer.draw(false);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&renderer.stats().nativeGroupRenders==cachedGroup.nativeGroupRenders&&raster.stats().rasterizations==cachedRaster.rasterizations,"Stable inserted media and group tilt reuse every child slot without allocation or repaint");auto invalid=media;invalid.textureID="fixture.absent";const gpu::NativeGroupInsertion bad{1,std::span(&invalid,1),{4,2,12,12}};rejects([&]{group.updateLocal(renderer,bad);},"Absent borrowed media cannot replace published group children");group.setPose(core::Matrix4::translation(8,8),.5f);composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),13,12,{0,128,0,128},"Failed insertion preserves the previously published media resource");
+    rejects([&]{group.updateLocal(renderer);},"Removal is an explicit content transaction, not a silent feedback-slot change");group.uploadResources(renderer);composition.present(renderer);renderer.draw(false);check(renderer.removeTexture(media.textureID)&&renderer.removeMesh(media.meshID),"Replacement group retires only detached supplemental resources");
     // Content replacement keeps its old group-referenced resources until the
     // complete new candidate has uploaded, then retires only those old assets.
     auto replacement=root();replacement["children"]=Json::Array{leaf("new",-4,-3,40,26,1,1,0)};local.load(replacement,options);
     rejects([&]{group.updateLocal(renderer);},"New content cannot use the old retained local bindings");
     group.uploadResources(renderer);composition.upload(renderer);composition.present(renderer);renderer.draw(false);
-    pixel(renderer.readback(),6,7,{255,255,0,255},"Resized group retains negative local source coverage");
+    pixel(renderer.readback(),6,7,{128,128,0,128},"Resized group retains negative coverage and its existing half-opacity pose");
+    group.setPose(core::Matrix4::translation(8,8),1);composition.present(renderer);renderer.draw(false);
+    pixel(renderer.readback(),6,7,{255,255,0,255},"Opaque resized group retains negative local source coverage");
     check(renderer.stats().nativeGroups==1,"Group content replacement does not accumulate targets");
     const auto siblingOnly=std::array{&sibling};composition.setScenes(renderer,siblingOnly);check(group.releaseResources(renderer),"Detach main group entry before retiring local resources");
     check(renderer.stats().nativeGroups==0&&renderer.stats().textures==1&&renderer.stats().meshes==1,"Group teardown preserves exactly the sibling assets");composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),70,12,{0,255,0,255},"Sibling remains visible after group teardown");
@@ -95,6 +108,11 @@ void run(HWND hwnd,const wchar_t* shader){
         menuGroup.setPose(tilt,float(fade.opacity));composition.present(renderer);renderer.draw(false);
     }}catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&renderer.stats().nativeGroupRenders==menuBefore.nativeGroupRenders&&raster.stats().rasterizations==menuRaster.rasterizations,"Source Notes menu entrance and pointer tilt retain one cached target without C++ allocation or artwork repaint");
+    const auto beforeFont=renderer.stats();const auto outputIdentity=menuGroup.draws()[0].textureID;const auto outputPose=menuGroup.draws()[0].world;
+    raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);const auto carrier=menuGroup.entry().scene;check(carrier->refreshTypography(),"Published empty group carrier refreshes its borrowed local text");composition.upload(renderer);composition.present(renderer);renderer.draw(false);
+    check(menuGroup.draws()[0].textureID==outputIdentity&&menuGroup.draws()[0].world==outputPose&&renderer.stats().nativeGroupTargetAllocations==beforeFont.nativeGroupTargetAllocations,"Typography event preserves group output identity, pose, and bounded target");
+    check(std::any_of(menu.scene().report().fontSubstitutions.begin(),menu.scene().report().fontSubstitutions.end(),[](const auto&f){return f.selectedFamily=="Noto Sans KR";}),"Unchanged grouped menu captions use the new Korean default face");
+    const auto stableFont=raster.stats();allocations=0;counting=true;for(unsigned n=0;n<120;++n)carrier->refreshTypography();counting=false;check(allocations==0&&raster.stats().rasterizations==stableFont.rasterizations,"Equal group font generation performs no raster or allocation");
     composition.detach(renderer);check(menuGroup.releaseResources(renderer),"Actual Notes menu retires after its borrowed output detaches");check(renderer.stats().resourceBytes==0,"Actual menu leaves no retained GPU resources");renderer.reset();
 }
 }

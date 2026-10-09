@@ -9,6 +9,7 @@ namespace endfield::modules {
 struct WorkModeStrings {
     std::string heading="工作模式",countdown="倒计时",stopwatch="秒表",pause="暂停",reset="重置",resume="继续",start="开始",custom="自定",ready="就绪",stopped="已结束",completed="已完成",invalidDuration="输入 0:01–1440:00（分:秒）",focusAccess="打开辅助功能设置";
     std::array<std::string,3>presets{"5 分","30 分","60 分"};
+    bool operator==(const WorkModeStrings&) const = default;
 };
 struct WorkModeAction {std::string id,label;core::Rect rect;bool operator==(const WorkModeAction&)const=default;};
 struct WorkModeViewHooks {std::function<void(core::Rect)>editDuration;std::function<void()>requestFocusAccess;};
@@ -24,6 +25,7 @@ class WorkModePresentation final {
 public:
     WorkModePresentation(WorkModeController&,WorkModeStrings={},WorkModeViewHooks={});
     void activate(double);void deactivate(double);void setReduceMotion(bool,double);void refresh(double,bool animated=true);
+    bool setStrings(WorkModeStrings); // keeps controller/draft and all event-time animation tracks
     bool perform(std::string_view,double);bool setCustomDuration(std::string_view,double);void cancelCustomEditing(double);
     void setFocusStatus(std::string,bool needsPermission,double);
     WorkModeLayout layout(double)const;WorkModeFeedback feedback(double)const;WorkModeRing ring(double)const;

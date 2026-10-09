@@ -52,7 +52,7 @@ struct NativeProjectedEditor::Impl {
     DWORD thread{GetCurrentThreadId()};bool alive{true},stopped{},dragging{},poseReady{},poseSet{},styleDirty{true},viewportDirty{},revealPending{};
     BoundedDocument document;core::notes::RichDocument* rich{};core::notes::RichDocument*history{};bool richLayout{},normalizedParagraphs{};std::vector<text::Range> spacedParagraphs;std::u16string paragraphText;LayerScene* scene;ProjectedEditorStyle style;LayerRasterOptions options;
     std::unique_ptr<LayerTextLayout> layout;std::unique_ptr<ProjectedTextInput> input;
-    std::uint64_t glyphRevision{},shapeRevision{},paintRevision{},structureRevision{},paintedDocument{},adornedDocument{};
+    std::uint64_t glyphRevision{},shapeRevision{},paintRevision{},structureRevision{},paintedFontRevision{},paintedDocument{},adornedDocument{};
     text::Selection adornedSelection;std::optional<text::Range>adornedComposition;std::optional<char16_t>highUnit;
     std::array<std::size_t,4> surfaces{};std::array<DrawObject,4> originals;std::array<LayerPlacement,4> placements;
     std::array<std::array<PlaneMask,8>,4> masks;std::array<std::size_t,4> maskCounts{};
@@ -94,7 +94,7 @@ struct NativeProjectedEditor::Impl {
         if(rich){
             Json::Array runs;runs.reserve(rich->runs().size());
             for(const auto&r:rich->runs()){const auto&st=r.style;const auto name=st.fontName&& !st.fontName->starts_with(".")?*st.fontName:style.fontFamily;
-                Json font=Json::Object{{"familyName",name},{"postScriptName",st.fontName&& !st.fontName->starts_with(".")?*st.fontName:style.fontFace},{"pointSize",st.fontSize},{"symbolicTraits",(st.bold?2:0)|(st.italic?1:0)}};
+                Json font=Json::Object{{"familyName",name},{"postScriptName",st.fontName&& !st.fontName->starts_with(".")?*st.fontName:style.fontFace},{"pointSize",st.fontSize},{"symbolicTraits",(st.bold?2:0)|(st.italic?1:0)},{"preserveUserFont",st.fontName&& !st.fontName->starts_with(".")}};
                 const auto c=st.color?std::array<double,4>{st.color->red,st.color->green,st.color->blue,st.color->alpha}:style.textColor;
                 runs.emplace_back(Json::Object{{"utf16Range",Json::Array{double(r.location),double(r.length)}},{"attributes",Json::Object{{"NSFont",std::move(font)},{"NSColor",rgba(c)},{"NSUnderline",st.underline?1:0},{"NSStrikethrough",st.strikethrough?1:0}}}});
             }
@@ -136,7 +136,7 @@ struct NativeProjectedEditor::Impl {
             scene->updateLocalContent(ids[1],++glyphRevision,glyphContent,glyphOptions(false));layout->bind(scene->paintedTextLayout(ids[1]),document);
         }
         horizontal=layout->painted()->initialPaintOffset().x;scroll=layout->painted()->initialPaintOffset().y;viewportDirty=false;revealPending=false;
-        paintedDocument=document.revision();styleDirty=false;adornedDocument=0;++paintRevision;
+        paintedFontRevision=scene->currentFontRevision();paintedDocument=document.revision();styleDirty=false;adornedDocument=0;++paintRevision;
     }
     bool sync(){
         onThread();bool changed{},layoutChanged{};
@@ -144,7 +144,7 @@ struct NativeProjectedEditor::Impl {
         // any content/pixel mutation. Owner retries after its queued change.
         if(input){const auto ready=input->setPlacement(placement);if(ready==TS_E_NOLOCK||!alive)return false;checked(ready,"Check editor layout transaction");}
         if(layout&&paintedDocument!=document.revision())revealPending=true;
-        if(!layout||paintedDocument!=document.revision()||styleDirty){if(history&&!rich)need(!history->richText(),"Plain history field cannot flatten externally formatted text");build();changed=layoutChanged=true;}
+        if(!layout||paintedDocument!=document.revision()||paintedFontRevision!=scene->currentFontRevision()||styleDirty){if(history&&!rich)need(!history->richText(),"Plain history field cannot flatten externally formatted text");build();changed=layoutChanged=true;}
         if(revealPending){const auto selected=document.selection();const auto at=selected.activeEnd==text::ActiveEnd::start?selected.range.start:selected.range.end;const auto box=layout->bounds({at,at});
             if(box){const auto&r=box->bounds;auto next=scroll;if(r.y<next)next=r.y;else if(r.y+r.height>next+style.height)next=r.y+r.height-style.height;next=std::clamp(next,0.,maximumScroll());auto nextX=horizontal;if(style.sourceSingleLineField){if(r.x<nextX)nextX=r.x;else if(r.x+r.width>nextX+style.width)nextX=r.x+r.width-style.width;nextX=std::clamp(nextX,0.,maximumHorizontal());}viewportDirty|=next!=scroll||nextX!=horizontal;scroll=next;horizontal=nextX;}revealPending=false;}
         const bool scrolled=viewportDirty;if(viewportDirty){paintViewport();changed=true;}

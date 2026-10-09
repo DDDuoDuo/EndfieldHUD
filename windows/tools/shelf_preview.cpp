@@ -1,4 +1,6 @@
 #include "tools/shelf_preview.hpp"
+#include "modules/module_strings.hpp"
+#include "core/source_color.hpp"
 #include "native/shelf_icon_provider.hpp"
 #include "native/shelf_file_picker.hpp"
 #include "native/shelf_file_preview.hpp"
@@ -31,7 +33,7 @@ std::vector<mod::FileShelfItem> snapshot(const data::FileShelfStore&store){
     std::vector<mod::FileShelfItem> result;result.reserve(store.items().size());
     for(const auto&i:store.items())result.push_back({i.id,i.name,i.windowsPath,i.typeDescription,i.byteCount,i.isDirectory,i.availabilityError});return result;
 }
-mod::ShelfPresentationStyle style(){mod::ShelfPresentationStyle s;s.accent={250./255,212./255,31./255,1};s.heading="文件暂存架";s.emptyTitle="将文件或文件夹拖到这里";s.emptyHelp="仅保存文件引用，需要时随时拖出。";s.clearQuestion="仅清空文件引用？";s.unavailable="不可用";s.errorColor=mod::ShelfColor{1,.27,.23,1};return s;}
+mod::ShelfPresentationStyle style(){auto s=mod::shelfPresentationStyle(core::Language::simplifiedChinese);s.accent={250./255,212./255,31./255,1};s.errorColor=mod::ShelfColor{1,.27,.23,1};return s;}
 constexpr UINT iconMessage=WM_APP+187;
 constexpr UINT pickerMessage=WM_APP+188;
 constexpr UINT previewMessage=WM_APP+189;
@@ -57,6 +59,7 @@ struct ShelfPreview::Impl {
     std::vector<gpu::LayerCompositionEntry>composed;std::optional<ShelfPreviewAction>action;
     std::optional<std::pair<std::string,core::Point>>dragCandidate;
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;
+    core::Language language{core::Language::simplifiedChinese};
     bool active{},acceptsInput{},pressed{},nativeDrag{},dirty{true},released{};
     std::uint64_t imageRevision{},iconRevision{};UINT_PTR generation{nextGeneration++};
     double time{},toolbarStart{-1},dropStart{-1},revealStart{-1},revealDirection{1};
@@ -137,6 +140,25 @@ struct ShelfPreview::Impl {
 ShelfPreview::ShelfPreview(HWND h,native::LayerRasterizer&r,const native::NativeShelfAssets&a,ShelfPreviewOptions o):impl_(std::make_unique<Impl>(h,r,a,std::move(o))){}
 ShelfPreview::~ShelfPreview()=default;
 void ShelfPreview::resize(const app::ClientMetrics&m){impl_->metrics=m;}
+void ShelfPreview::setLanguage(core::Language language){auto&i=*impl_;if(language==i.language)return;
+    auto strings=mod::fileShelfStrings(language);auto style=mod::shelfPresentationStyle(language,i.appearance);
+    // Platform action only: retain source grammar but name the actual Windows shell.
+    const auto finder=strings.revealPrefix.find("Finder");if(finder!=std::string::npos)strings.revealPrefix.replace(finder,6,language==core::Language::traditionalChinese?"檔案總管":"Explorer");
+    const auto zh=strings.revealPrefix.find("访达");if(zh!=std::string::npos)strings.revealPrefix.replace(zh,std::string("访达").size(),"资源管理器");
+    const auto add=core::localized("Add references","添加引用",language);gpu::ShelfPickerLabels labels{core::localized("Add to Temporary File Shelf","添加到文件暂存架",language),add,add};
+    i.state->setStrings(std::move(strings));i.picker->setLabels(std::move(labels));i.appearance=std::move(style);i.language=language;i.dirty=true;
+}
+void ShelfPreview::setAppearance(bool dark,mod::ShelfColor accent){auto value=impl_->appearance;value.dark=dark;value.accent=accent;value.lightDropColor.reset();setAppearance(std::move(value));}
+void ShelfPreview::setAppearance(mod::ShelfPresentationStyle value){auto&i=*impl_;
+    // Depot rasters are the prepared source 2x variants. HUD scale is a numeric
+    // module transform, independent of this source backing density.
+    need(value.contentsScale==2,"Shelf packaged artwork requires its original 2x backing");
+    for(const auto*color:{&value.accent})for(double v:*color)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Shelf accent");
+    for(const auto*color:{&value.errorColor,&value.lightDropColor})if(*color)for(double v:**color)need(std::isfinite(v)&&v>=0&&v<=1,"Invalid Shelf platform color");
+    if(!value.lightDropColor){const auto blend=core::source::sourceBlackBlend({value.accent[0],value.accent[1],value.accent[2]},.4);value.lightDropColor=mod::ShelfColor{blend[0],blend[1],blend[2],value.accent[3]};}
+    value=mod::shelfPresentationStyle(i.language,std::move(value));if(value==i.appearance)return;i.appearance=std::move(value);i.dirty=true;
+}
+const mod::ShelfPresentationStyle&ShelfPreview::appearance()const{return impl_->appearance;}
 void ShelfPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){
     auto&i=*impl_;const Impl::Event event(i,t);t=i.time;
     const auto*shown=sample.current.module==core::Module::fileShelf?&sample.current:sample.incoming&&sample.incoming->module==core::Module::fileShelf?&*sample.incoming:nullptr;

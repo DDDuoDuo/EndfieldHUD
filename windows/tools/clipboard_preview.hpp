@@ -1,4 +1,5 @@
 #pragma once
+#include "core/localization.hpp"
 #include "app/overlay_host.hpp"
 #include "native/clipboard_scene.hpp"
 #include "core/module_presentation.hpp"
@@ -17,6 +18,7 @@ public:
         std::shared_ptr<const core::SubsectionMaskSampler> revealSamples={});
     ~ClipboardPreview();
     void resize(const app::ClientMetrics&);
+    void setLanguage(core::Language); // preference event; retains the model and current interaction
     void refresh();void setAppearance(native::ClipboardAppearance,native::ClipboardImages);void setReduceMotion(bool);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);

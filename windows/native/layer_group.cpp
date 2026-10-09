@@ -16,11 +16,11 @@ NativeLayerGroup::NativeLayerGroup(LayerScene& scene,std::string id,double densi
     need(!scene.groupOwner_&&!scene.compositionOwner_&&!scene.resourceOwner_,"Native group needs an unpublished local scene");
     static std::atomic<std::uint64_t> sequence{};
     id_="layer:"+std::to_string(sequence.fetch_add(1,std::memory_order_relaxed))+":"+id_;
-    output_[0].masks.reserve(8);staged_.masks.reserve(8);scene.groupOwner_=this;
+    output_[0].masks.reserve(8);staged_.masks.reserve(8);scene.groupOwner_=this;carrier_.carrierGroup_=this;
 }
 NativeLayerGroup::~NativeLayerGroup(){
     if(renderer_)try{(void)releaseResources(*renderer_);}catch(...){}
-    local_->groupOwner_=nullptr;
+    local_->groupOwner_=nullptr;carrier_.carrierGroup_=nullptr;
 }
 core::Rect NativeLayerGroup::localCoverageBounds()const{
     // Called only while content is being installed. Local menu leaves share a
@@ -38,12 +38,25 @@ core::Rect NativeLayerGroup::localCoverageBounds()const{
     }
     need(result&&valid(*result),"Native group has no drawable local coverage");return *result;
 }
-bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Rect> coverage){
+std::span<const DrawObject> NativeLayerGroup::prepareChildren(std::optional<NativeGroupInsertion> insertion,bool installing){
+    const auto local=local_->prepareDraws();const auto count=insertion?insertion->draws.size():0;
+    need(!insertion||(insertion->before<=local.size()&&count>0&&count<=8&&valid(insertion->bounds)),"Invalid bounded native group insertion");
+    if(!installing)need(count==insertedCount_&&(!count||insertion->before==insertionIndex_),"Native group insertion structure changed; upload first");
+    if(!count)return local;
+    for(const auto&draw:insertion->draws){validateDrawObject(draw);const auto&m=draw.world.values;need(m[2]==0&&m[3]==0&&m[6]==0&&m[7]==0&&m[8]==0&&m[9]==0&&m[11]==0&&m[14]==0&&m[15]==1,"Native group insertion must remain in the local 2D plane");}
+    // Storage grows only on a content transaction. Frame updates reuse owned
+    // strings, mask capacities and ordered slots; renderer mutation is last.
+    if(installing)children_.resize(local.size()+count);
+    need(children_.size()==local.size()+count,"Native group insertion local structure changed");
+    std::size_t cursor{};for(std::size_t n=0;n<local.size()+1;++n){if(n==insertion->before)for(const auto&draw:insertion->draws)children_[cursor++]=draw;if(n<local.size())children_[cursor++]=local[n];}
+    return children_;
+}
+bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Rect> coverage,std::optional<NativeGroupInsertion> insertion){
     need(!renderer_||renderer_==&renderer,"Native group belongs to another renderer");
     need(renderer.stats().initialized,"Native group requires an initialized renderer");
-    const auto ink=localCoverageBounds();const auto bounds=coverage.value_or(ink);
+    auto ink=localCoverageBounds();if(insertion){need(valid(insertion->bounds),"Invalid native insertion coverage");const auto b=insertion->bounds;const auto x=std::min(ink.x,b.x),y=std::min(ink.y,b.y);ink={x,y,std::max(ink.x+ink.width,b.x+b.width)-x,std::max(ink.y+ink.height,b.y+b.height)-y};}const auto bounds=coverage.value_or(ink);
     need(valid(bounds)&&contains(bounds,ink),"Native group coverage must contain all source ink");
-    const auto localDraws=local_->prepareDraws();for(const auto& draw:localDraws)validateDrawObject(draw);
+    const auto localDraws=prepareChildren(insertion,true);for(const auto& draw:localDraws)validateDrawObject(draw);
     // Stage resources without publishing. Retained GPU group references keep
     // the old local assets alive if a later candidate fails validation.
     renderer_=&renderer;local_->uploadResources(renderer);
@@ -57,18 +70,19 @@ bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Re
         output_[0].sourceID.swap(nextOutput.sourceID);output_[0].meshID.swap(nextOutput.meshID);output_[0].textureID.swap(nextOutput.textureID);
         staged_.sourceID.swap(nextStage.sourceID);staged_.meshID.swap(nextStage.meshID);staged_.textureID.swap(nextStage.textureID);
     }else need(output_[0].sourceID==native.sourceID&&output_[0].meshID==native.meshID&&output_[0].textureID==native.textureID,"Retained native group output identities changed");
-    structureRevision_=local_->revision_;resourceRevision_=local_->resourceRevision_;
-    local_->collectRetiredResources(renderer);return changed;
+    structureRevision_=local_->revision_;resourceRevision_=local_->resourceRevision_;insertedCount_=insertion?insertion->draws.size():0;insertionIndex_=insertion?insertion->before:0;
+    local_->collectRetiredResources(renderer);retainedCoverage_=coverage;retainedInsertion_=insertion;return changed;
 }
-bool NativeLayerGroup::updateLocal(Renderer& renderer){
+bool NativeLayerGroup::updateLocal(Renderer& renderer,std::optional<NativeGroupInsertion> insertion){
     need(renderer_==&renderer&&local_->revision_==structureRevision_&&local_->resourceRevision_==resourceRevision_&&local_->uploadedRevision_==resourceRevision_,"Changed native group content needs upload before feedback");
-    return renderer.setNativeGroupDraws(id_,local_->prepareDraws());
+    const bool changed=renderer.setNativeGroupDraws(id_,prepareChildren(insertion,false));retainedInsertion_=insertion;return changed;
 }
 void NativeLayerGroup::setPose(const core::Matrix4& world,float opacity,std::span<const PlaneMask> masks,std::optional<PlaneShutter> shutter){
     need(!output_[0].sourceID.empty(),"Upload native group before setting its pose");need(masks.size()<=8,"Too many outer group masks");
     staged_.world=world;staged_.opacity=opacity;staged_.masks.assign(masks.begin(),masks.end());staged_.shutter=std::move(shutter);validateDrawObject(staged_);
     auto& out=output_[0];out.world=staged_.world;out.opacity=staged_.opacity;out.masks.assign(staged_.masks.begin(),staged_.masks.end());out.shutter=staged_.shutter;
 }
+bool NativeLayerGroup::refreshTypography(){const bool changed=local_->refreshTypography();if(renderer_&&(changed||local_->resourceRevision_!=resourceRevision_))uploadResources(*renderer_,retainedCoverage_,retainedInsertion_);return changed;}
 LayerCompositionEntry NativeLayerGroup::entry(){need(renderer_&&!output_[0].sourceID.empty(),"Upload native group before borrowing its composition entry");return {&carrier_,output_};}
 bool NativeLayerGroup::releaseResources(Renderer& renderer){
     need(!renderer_||renderer_==&renderer,"Release native group through its renderer owner");if(carrier_.compositionOwner_)return false;

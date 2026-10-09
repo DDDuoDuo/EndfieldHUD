@@ -55,6 +55,13 @@ public:
     // Call upload() after an accepted change. This is not a frame-clock method.
     bool updateLocalContent(std::string_view sourceID,std::uint64_t contentRevision,
         const ehud::data::Json& localContent,const LayerRasterOptions&);
+    // Explicit language event only. Repaints retained caption/card text through
+    // the shared rasterizer; preserves poses/masks/IDs and stages before commit.
+    // Editors are excluded: their owner must rebuild layout and TSF together.
+    // Caller follows with its existing composition upload/group invalidation.
+    bool refreshTypography();
+    std::uint64_t fontRevision() const noexcept{return fontRevision_;}
+    std::uint64_t currentFontRevision() const{return rasterizer_->fontRevision();}
     void setPlacements(std::span<const LayerPlacement>);
     // Caller-clock module wrapper mask. Geometry is already in this scene's
     // world coordinates, like its ordinary plane masks. Fixed-size data only;
@@ -82,7 +89,7 @@ private:
         std::uint64_t imageRevision{},meshRevision{};
         std::optional<std::uint64_t> localRevision;
         LayerRasterOptions options;
-        std::size_t nodeCount{};bool grouped{};
+        std::size_t nodeCount{};bool grouped{};std::uint64_t fontRevision{};
     };
     LayerRasterizer* rasterizer_;
     std::vector<Surface> surfaces_;
@@ -98,8 +105,9 @@ private:
     Renderer* resourceOwner_{};
     LayerComposition* compositionOwner_{};
     NativeLayerGroup* groupOwner_{};
+    NativeLayerGroup* carrierGroup_{};
     std::uint64_t resourceRevision_{},uploadedRevision_{};
-    std::uint64_t revision_{},attempt_{};
+    std::uint64_t revision_{},attempt_{},fontRevision_{};
     void append(const ehud::data::Json&,const core::Matrix4&,float,
                 const std::vector<PlaneMask>&,const LayerRasterOptions&,unsigned);
     void rebuildReport();

@@ -9,6 +9,11 @@ using namespace core::source;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::invalid_argument(message);}
 constexpr const char* styleNames[]{"digital","split","dial","rail","stacked"};
+void preserveClockFonts(Json&node){
+    if(node["text"].isObject())node["text"]["preserveSourceFont"]=true;
+    if(node["children"].isArray()){auto children=node["children"].array();for(auto&child:children)preserveClockFonts(child);node["children"]=std::move(children);}
+}
+Json clockFontTemplate(const Json&status){auto copy=status;auto children=copy["children"].array();for(auto&child:children)if(child["name"]==Json{"hud.clock.viewport"})preserveClockFonts(child);copy["children"]=std::move(children);return copy;}
 const Json& statusTemplate(const Json&reference,DesktopClockStyle style,bool hover=false){
     const auto index=static_cast<unsigned>(style);need(index<5,"Invalid chrome clock style");
     for(const auto&row:reference["styles"].array())if(row["style"].string()==styleNames[index]&&row["hover"].boolean()==hover)return row["status"];
@@ -23,7 +28,7 @@ Json retainedReference(const Json&reference){
     // Never retain oracle timelines, duplicate readings or benchmark layouts
     // in the running presentation. Only five source trees and hover variants.
     for(unsigned i=0;i<5;++i)for(const bool hover:{false,true})styles.push_back(Json::Object{
-        {"style",styleNames[i]},{"hover",hover},{"status",statusTemplate(reference,static_cast<DesktopClockStyle>(i),hover)}});
+        {"style",styleNames[i]},{"hover",hover},{"status",clockFontTemplate(statusTemplate(reference,static_cast<DesktopClockStyle>(i),hover))}});
     return Json::Object{{"schemaVersion",1},{"header",reference["header"]},{"footer",reference["footer"]},{"styles",std::move(styles)}};
 }
 Json coordinate(double x,double y){return Json::Array{x,y};}
@@ -68,7 +73,7 @@ Json desktopChromeAppearanceReference(const Json&reference,const DesktopChromeAp
 }
 Json NativeChromePresentation::combinedReferenceRoot(const Json&nativeRoot,const Json&reference){
     referenceValid(reference);Json root=nativeRoot;auto children=root["children"].array();
-    children.push_back(reference["header"]);children.push_back(statusTemplate(reference,DesktopClockStyle::digital));children.push_back(reference["footer"]["children"].array()[0]);
+    children.push_back(reference["header"]);children.push_back(clockFontTemplate(statusTemplate(reference,DesktopClockStyle::digital)));children.push_back(reference["footer"]["children"].array()[0]);
     // This synthetic non-drawing grouping node owns no geometry. A neutral
     // camera must not make the entire HUD eligible for one large raster group.
     root["bounds"]=Json::Array{0,0,0,0};root["children"]=std::move(children);return root;

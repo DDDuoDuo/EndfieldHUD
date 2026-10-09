@@ -28,7 +28,7 @@ void complete(const NativeNotesTextMeasurement&m,std::string_view original){
 void run(){
     LayerRasterizer raster;NativeNotesTextMeasurer measure(raster);LayerRasterOptions options;
     const auto empty=measure.measure("empty",1,"",190);complete(*empty,"");check(empty->measured.lines.size()==1&&empty->measured.lines[0].begin==0&&empty->measured.lines[0].end==0,"Empty source gets one real-font-height blank line");
-    check(empty->font.selectedFamily=="Segoe UI"&&!empty->font.fontSubstitutions.empty(),"Unavailable source system font fallback is explicit");
+    check(empty->font.selectedFamily=="Noto Sans SC"&&!empty->font.fontSubstitutions.empty(),"Unavailable source system font fallback is explicit");
     check(empty->font.lineHeight==std::ceil(empty->font.ascent+empty->font.descent+std::max(0.,empty->font.leading))+1,"Source ceil(font metrics)+1 contract uses selected font, not invented character dimensions");
     auto alias=empty->presentationText(empty);check(alias.get()==&empty->measured,"Presentation borrows same text/line index without copy");
     const auto before=raster.stats();const auto stats=measure.stats();

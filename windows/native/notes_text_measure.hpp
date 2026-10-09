@@ -8,6 +8,7 @@
 namespace endfield::native {
 struct NativeNotesTextMeasurement {
     modules::NotesMeasuredText measured;
+    std::uint64_t fontRevision{};
     LayerPlainTextMetrics font;
     // Binary-search source semantics: end>minimum, origin<maximum. Returns
     // indices, without allocating, scanning text or constructing a bitmap.

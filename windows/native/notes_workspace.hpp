@@ -4,6 +4,7 @@
 #include "native/projected_editor.hpp"
 #include "native/notes_image_playback.hpp"
 #include "native/notes_video_playback.hpp"
+#include "native/media_request_broker.hpp"
 #include "native/notes_drawing_scene.hpp"
 #include "modules/notes_motion.hpp"
 #include "modules/notes_checklist.hpp"
@@ -36,6 +37,12 @@ struct NativeNotesWorkspaceOptions {
     // independently owned worker resolver. No filesystem work on this thread.
     std::function<std::optional<std::string>(std::string_view)> legacyImagePath;
     NativeNotesVideoPlayback* videoPlayback{}; // exclusive owner, same renderer/device
+    // Optional APP-owned broker/client. Supply both and leave exclusive owners
+    // null. Root alone accepts/samples/providers deadlines; workspace only reads
+    // this client's records. Broker and attached client outlive the workspace,
+    // including resource retirement. Client attachment/detachment is caller-owned.
+    NativeMediaRequestBroker* mediaBroker{};
+    NativeMediaRequestBroker::Client mediaClient{};
 };
 struct NativeNotesWorkspacePose {
     core::Matrix4 workspaceToScreen,screenToClip;
@@ -90,6 +97,7 @@ public:
     // Finish the field before changing appearance/viewport. No state mutation
     // occurs when the requested geometry exceeds this adapter's native bounds.
     bool setStyle(NativeNotesWorkspaceStyle);
+    std::uint64_t fontRevision()const noexcept;
     bool setWorkspaceBounds(core::Rect,std::optional<core::Point> creationPoint={});
     void setPresentation(bool notesSelected,bool retainOutgoing=false);
     void settleOutgoing(); // after owner's finite section transition; no clock here
@@ -115,6 +123,9 @@ public:
     bool setMediaActive(bool,double time,bool preserveArtwork=false);
     bool acceptMedia(UINT_PTR routeGeneration,double time);
     bool sampleMedia(double time);
+    // Shared root calls broker.accept/sample once BEFORE this. No decoder drain,
+    // engine tick or sibling visibility change occurs here.
+    bool refreshSharedMedia(double time);
     std::optional<double> mediaNextWakeTime()const;
     bool toggleMedia(std::string_view noteID,double time);
     bool beginMediaSeek(std::string_view noteID,core::Point physical,double time);

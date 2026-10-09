@@ -796,6 +796,26 @@ void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesCont
         f.release();check(raster.stats().entries==0,"Recoverable failure retires all owned artwork cleanly");
     }
 }
+void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Preference event begins a real isolated Notes draft");
+    check(f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::character,'!'),"Unsaved text changes use the existing projected editor");
+    check(savedNotes(f.root.path).front().text==original.text,"A draft is not saved by ordinary key input");
+    tools::NotesPreviewPreferences p;p.dark=false;p.reduceMotion=true;p.workspace.palette=endfield::modules::NotesPalette::source(false,{.15,.7,.4,1});p.workspace.editor={{.96,.96,.96,1},p.workspace.palette.accent};p.workspace.compositionColor=p.workspace.palette.primary;p.workspace.strings.textTitle="TEXT · CUSTOM";p.workspace.strings.placeholder="Custom localized placeholder";p.controls.heading="CUSTOM NOTES";p.controls.tools={"A","B","C","D"};
+    check(f.preview->applyPreferences(p,f.time),"Event-only appearance changes accept caller-localized labels and source colors");f.frame();
+    check(!f.draw("projected-editor-glyphs")&&savedNotes(f.root.path).front().text==original.text+"!","Appearance replacement saves the dirty editor without truncating its document");
+    bool heading{};for(const auto&e:f.preview->entries())if(auto text=e.scene->paintedTextLayout("notes.controls/heading"))heading=text->text()==u"// CUSTOM NOTES";
+    // The literal header is source artwork; verify it through a retained painted
+    // layout rather than reconstructing any text-width algorithm in this test.
+    check(heading,"Caller-localized toolbar heading reaches actual retained text artwork");
+    const auto before=raster.stats().rasterizations;check(f.preview->applyPreferences(p,f.time)&&raster.stats().rasterizations==before,"Unchanged preferences do not rebuild Notes artwork or save text again");
+    raster.setDefaultFontLanguage(gpu::LayerFontLanguage::korean);
+    check(f.preview->applyPreferences(p,f.time),"A default-font change is applied even when all note preference values are equal");f.frame();
+    bool koreanFont{};for(const auto&e:f.preview->entries())for(const auto&font:e.scene->report().fontSubstitutions)koreanFont|=font.selectedFamily=="Noto Sans KR";
+    check(koreanFont&&raster.stats().rasterizations>before&&savedNotes(f.root.path).front().text==original.text+"!","Existing Notes repaint with Korean glyphs while preserving saved content");
+    const auto koreanRaster=raster.stats().rasterizations;check(f.preview->applyPreferences(p,f.time)&&raster.stats().rasterizations==koreanRaster,"Settled Korean preferences add no repeated raster work");
+    f.preview->select(core::Module::power,f.time);f.frame();check(!f.preview->modulePresentation().transitioning&&f.preview->selected()==core::Module::power,"Reduced-motion module selection settles synchronously on the caller clock");f.release();
+}
 void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets,const std::filesystem::path&formatRoot){
     gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets,formatRoot);
     auto note=savedNotes(f.root.path).front();
@@ -847,6 +867,7 @@ int wmain(int argc, wchar_t** argv) {
         scrollPreview(window.hwnd, renderer, assets);
         run(window.hwnd, renderer, assets);
         editingRecovery(window.hwnd,renderer,assets);
+        preferencesPreview(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

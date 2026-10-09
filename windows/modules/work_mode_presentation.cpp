@@ -29,9 +29,13 @@ WorkModeRingCut workModeRingCut(double fraction){need(std::isfinite(fraction)&&f
     double angle=std::atan2(y,x);if(angle<-.5*pi)angle+=2*pi;if(fraction==1)angle=1.5*pi;
     return {angle,{nx,ny,-(nx*x+ny*y)}};
 }
+namespace {void validateStrings(const WorkModeStrings&s){
+    for(const auto*p:{&s.heading,&s.countdown,&s.stopwatch,&s.pause,&s.reset,&s.resume,&s.start,&s.custom,&s.ready,&s.stopped,&s.completed,&s.invalidDuration,&s.focusAccess})need(p->size()<=4096&&ehud::data::Json::validUtf8(*p),"Invalid Work Mode localized label");
+    for(const auto&p:s.presets)need(p.size()<=4096&&ehud::data::Json::validUtf8(p),"Invalid Work Mode preset label");
+}}
+bool WorkModePresentation::setStrings(WorkModeStrings value){if(value==strings_)return false;validateStrings(value);auto error=error_;if(error==strings_.invalidDuration)error=value.invalidDuration;auto nextPhase=error.empty()?phase(snapshot_.phase,value):error;strings_=std::move(value);error_=std::move(error);phaseText_=std::move(nextPhase);rebuildActions();++revision_;return true;}
 WorkModePresentation::WorkModePresentation(WorkModeController&c,WorkModeStrings s,WorkModeViewHooks h):controller_(&c),strings_(std::move(s)),hooks_(std::move(h)){
-    for(const auto*p:{&strings_.heading,&strings_.countdown,&strings_.stopwatch,&strings_.pause,&strings_.reset,&strings_.resume,&strings_.start,&strings_.custom,&strings_.ready,&strings_.stopped,&strings_.completed,&strings_.invalidDuration,&strings_.focusAccess})need(p->size()<=4096&&ehud::data::Json::validUtf8(*p),"Invalid Work Mode localized label");
-    for(const auto&p:strings_.presets)need(p.size()<=4096&&ehud::data::Json::validUtf8(p),"Invalid Work Mode preset label");
+    validateStrings(strings_);
     actions_.reserve(9);configuration_.reserve(6);refresh(0,false);
 }
 void WorkModePresentation::settle(){layoutMoving_=false;layoutFrom_=layoutTo_;configurationInteractive_=!expanded_;actionFeedback_=clockFeedback_=focusFeedback_=false;}

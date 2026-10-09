@@ -240,7 +240,7 @@ void nativeWindow() {
     std::vector<KeyEvent> keys;
     std::vector<bool> focus,applicationActivation;
     std::vector<ClientMetrics> sizes;
-    unsigned frames = 0, closes = 0, filtered=0, privateMessages=0, displayChanges=0;
+    unsigned frames = 0, closes = 0, filtered=0, privateMessages=0, displayChanges=0, timeChanges=0;
     OverlayCallbacks callbacks;
     callbacks.frame = [&](double) { ++frames; };
     callbacks.pointer = [&](const auto& event) { pointer.push_back(event); return true; };
@@ -252,6 +252,7 @@ void nativeWindow() {
     callbacks.closeRequested = [&] { ++closes; host.hide(); };
     callbacks.beforeKeyTranslation=[&](const NativeMessage& event){++filtered;return event.wParam=='D';};
     callbacks.appMessage=[&](const NativeMessage& event)->std::optional<std::intptr_t>{
+        if(event.message==WM_TIMECHANGE){++timeChanges;return 0;}
         if(event.message!=WM_APP+21)return {};check(event.wParam==123,"Private owner notification preserves generation token");++privateMessages;return 45;};
     callbacks.displayChanged=[&]{++displayChanges;};
     const auto cursorBefore = GetCursor();
@@ -323,6 +324,9 @@ void nativeWindow() {
     PostMessageW(popup,WM_KEYDOWN,'D',1);PostMessageW(child,WM_KEYDOWN,'D',1);drain(host);
     check(filtered==4,"Owner popup and handler-child keys reach explicit native panel filter");DestroyWindow(popup);
     check(SendMessageW(window,WM_APP+21,123,0)==45&&privateMessages==1,"A private editor notification reaches its caller without a second message loop");
+    const auto timeChangeTimerArms=host.stats().timerArms;
+    SendMessageW(window,WM_TIMECHANGE,0,0);
+    check(timeChanges==1&&host.stats().timerArms==timeChangeTimerArms,"System time changes reach the owner without adding a polling timer");
     SendMessageW(window,WM_DISPLAYCHANGE,32,MAKELPARAM(800,600));
     check(displayChanges==1,"Display topology changes are delivered as events without polling");
     SendMessageW(window, WM_SETFOCUS, 0, 0);

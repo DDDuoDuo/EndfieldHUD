@@ -83,10 +83,13 @@ NativeNotesControlsAssets::NativeNotesControlsAssets(std::filesystem::path root,
         const auto size=static_cast<std::size_t>(integer(raster["bytes"],45,maximumRasterBytes));const auto data=read(root_,file,size);
         need(data.size()==size&&hash(data)==digest,"Prepared Notes raster integrity mismatch");png(data);image.contents=row["contents"];
     }
+    lightImages_=images_;
+    for(auto&image:lightImages_){image.dependency.tint={.11,.11,.11,1};image.sourceInTint=image.dependency.tint;}
 }
 std::span<const NativeNotesControlsImage>NativeNotesControlsAssets::imagesFor(const modules::NotesControls&source)const{
     need(source.contentRevision()!=0,"Initialize Notes controls before requesting prepared assets");const auto requested=source.images();if(requested.empty())return {};
     need(requested.size()==images_.size(),"Prepared Notes assets do not cover this source image request");
-    for(std::size_t n=0;n<images_.size();++n)need(same(requested[n],images_[n].dependency),"Prepared Notes assets differ from the exact source dependency");return images_;
+    const auto&variant=requested[0].tint==modules::NotesColor{.11,.11,.11,1}?lightImages_:images_;
+    for(std::size_t n=0;n<variant.size();++n)need(same(requested[n],variant[n].dependency),"Prepared Notes assets differ from the exact source dependency");return variant;
 }
 } // namespace endfield::native

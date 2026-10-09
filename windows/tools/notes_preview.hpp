@@ -9,6 +9,15 @@
 
 namespace endfield::tools {
 struct NotesKeyModifiers {bool control{},shift{},alt{},system{};};
+struct NotesPreviewMediaOptions {
+    native::NativeMediaRequestBroker* broker{};
+    native::NativeMediaRequestBroker::Client client{};
+};
+struct NotesPreviewPreferences {
+    native::NativeNotesWorkspaceStyle workspace;
+    modules::NotesControlsStrings controls;
+    bool dark{true},reduceMotion{};
+};
 // Build-only integration owner. Requires an explicit NEW temporary data root;
 // never opens the installed application's data or any account/service.
 // Its scenes enter the caller's one composition and existing frame clock.
@@ -18,7 +27,8 @@ class NotesPreview final {
 public:
     NotesPreview(HWND,native::LayerRasterizer&,const std::filesystem::path& newDataRoot,
         const native::NativeNotesControlsAssets&,bool activateTextServices,
-        const std::filesystem::path& formatAssets={},std::span<const ehud::data::Note> initialNotes={});
+        const std::filesystem::path& formatAssets={},std::span<const ehud::data::Note> initialNotes={},
+        NotesPreviewMediaOptions media={});
     ~NotesPreview();
     // Shared preview-session TSF service. Other module editors borrow this
     // already activated manager and MUST be destroyed before NotesPreview.
@@ -32,6 +42,13 @@ public:
     bool setMediaActive(bool,double time,bool preserveArtwork=false);
     std::optional<double>nextWakeTime()const;
     bool deadline(double time);
+    // App accepts/samples its shared broker once, then refreshes each module.
+    // Shared mode starts no private worker/video owner and owns no deadline.
+    bool refreshSharedMedia(double time);
+    // Event only, caller-localized strings. False means a TSF lock deferred the
+    // appearance change; retry after the queued editor message. Dirty text is
+    // saved before replacing artwork; stored formatting is never flattened.
+    bool applyPreferences(NotesPreviewPreferences,double time);
     const std::optional<std::string>&mediaError()const noexcept;
     bool showMediaError(std::string,double time); // existing source status row; no dialog/throw-close
     void select(core::Module,double time);

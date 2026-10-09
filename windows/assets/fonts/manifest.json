@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "version": "2.004",
+  "license": "OFL-1.1",
+  "upstreamCommit": "a85815a42757630ce188fdad368c2dfc444d4773",
+  "files": [
+    {
+      "file": "NotoSansSC.ttf",
+      "bytes": 17772300,
+      "sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+      "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf"
+    },
+    {
+      "file": "NotoSansSC-OFL.txt",
+      "bytes": 4388,
+      "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+      "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanssc/OFL.txt"
+    },
+    {
+      "file": "NotoSansKR.ttf",
+      "bytes": 10414588,
+      "sha256": "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252",
+      "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf"
+    },
+    {
+      "file": "NotoSansKR-OFL.txt",
+      "bytes": 4388,
+      "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+      "source": "https://raw.githubusercontent.com/google/fonts/a85815a42757630ce188fdad368c2dfc444d4773/ofl/notosanskr/OFL.txt"
+    }
+  ],
+  "families": [
+    "Noto Sans SC",
+    "Noto Sans KR"
+  ]
+}

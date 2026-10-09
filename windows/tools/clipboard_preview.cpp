@@ -1,4 +1,5 @@
 #include "tools/clipboard_preview.hpp"
+#include "modules/module_strings.hpp"
 #ifdef _WIN32
 #include "native/module_scene.hpp"
 #include "native/module_registration.hpp"
@@ -23,6 +24,7 @@ ClipboardPreview::ClipboardPreview(gpu::LayerRasterizer&r,gpu::LayerRasterOption
 ClipboardPreview::~ClipboardPreview()=default;
 void ClipboardPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Clipboard viewport");impl_->metrics=m;}
 void ClipboardPreview::refresh(){impl_->state.refresh();}
+void ClipboardPreview::setLanguage(core::Language language){impl_->state.setStrings(modules::clipboardStrings(language));}
 void ClipboardPreview::setAppearance(gpu::ClipboardAppearance a,gpu::ClipboardImages b){impl_->scene.setAppearance(a,std::move(b));}
 void ClipboardPreview::setReduceMotion(bool value){impl_->state.setReduceMotion(value);}
 void ClipboardPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto&i=*impl_;const Impl::Event event(i,t);

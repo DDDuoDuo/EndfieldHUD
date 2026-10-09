@@ -1,4 +1,5 @@
 #pragma once
+#include "core/localization.hpp"
 #include "app/overlay_host.hpp"
 #include "native/event_log_scene.hpp"
 #include "core/module_presentation.hpp"
@@ -15,6 +16,7 @@ public:
         modules::EventLogStrings={},modules::EventLogAppearance={},modules::EventNameCompactor={});
     ~EventLogPreview();
     void resize(const app::ClientMetrics&);
+    void setLanguage(core::Language); // preference event; retains the model and current interaction
     void refresh();void setAppearance(modules::EventLogAppearance);void setReduceMotion(bool);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);

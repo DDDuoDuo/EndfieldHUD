@@ -37,6 +37,11 @@ public:
     bool syncContent(modules::ArchiveArtwork,std::uint64_t revision,double time,
         bool animated=false,bool reduceMotion=false);
     bool setFeedback(std::optional<core::Point>,bool pressed,double time,bool reduceMotion=false);
+    // Content binding event, exact local media slot BEFORE footer/error artwork.
+    // Mesh/texture are borrowed from the app media owner until the outgoing
+    // face has retired. Empty removes only the current face's media reference.
+    bool setMediaDraw(std::optional<DrawObject>);
+    void setMediaProgress(double fraction); // retained numeric fill, no raster
     // Content event before pose/publication; the group output must exist first.
     bool uploadResources(Renderer&);
     void updatePose(const NativeArchivePose&);

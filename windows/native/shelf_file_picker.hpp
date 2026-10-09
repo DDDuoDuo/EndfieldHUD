@@ -65,6 +65,7 @@ public:
     // Move tokens to FileShelfStore::add OUTSIDE any state/provider callback.
     std::optional<ShelfPickerCompletion>drain(UINT_PTR routeGeneration);
     void cancel(); // stale dialog completions are discarded, no import
+    void setLabels(ShelfPickerLabels); // next request only; never interrupts an active dialog
     void setRoute(ShelfPickerRoute); // cancels before replacing/destroying HWND
     ShelfPickerStats stats()const;
 private:

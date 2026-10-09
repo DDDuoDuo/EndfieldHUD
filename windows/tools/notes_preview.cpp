@@ -32,6 +32,7 @@ struct NotesPreview::Impl {
     enum class TrackKind {sectionIn,sectionOut,create,remove,mutation};
     struct Track {gpu::NativeNotesCardToken token;TrackKind kind;double start;core::MotionPoint direction;};
     HWND hwnd;gpu::LayerRasterizer&raster;const gpu::NativeNotesControlsAssets&assets;TextManager manager;
+    NotesPreviewMediaOptions sharedMedia;
     std::unique_ptr<gpu::NativeNotesImageDecoder>imageDecoder;std::unique_ptr<gpu::NativeNotesImagePlayback>imagePlayback;
     std::unique_ptr<gpu::NativeNotesVideoPlayback>videoPlayback;gpu::Renderer*mediaRenderer{};
     std::unique_ptr<data::NotesStore>store;std::unique_ptr<mod::NotesState>state;std::unique_ptr<gpu::NativeNotesWorkspace>workspace;
@@ -45,6 +46,8 @@ struct NotesPreview::Impl {
     app::ClientMetrics metrics;Matrix workspaceWorld,confirmWorld;core::Projection controlsProjection,confirmationProjection,workspaceProjection;
     std::vector<Track>tracks;std::vector<gpu::LayerCompositionEntry>composed;
     std::array<double,4>toolbarStarted{-1,-1,-1,-1};
+    NotesPreviewPreferences preferences{style(),controlInput(mod::NotesControlsKind::center).strings};
+    std::optional<NotesPreviewPreferences> pendingPreferences;
     bool hasPose{},moduleVisible{true},moduleInput{true},focused{},editorDrag{},controlsPressed{},confirmationVisible{};
     float confirmationOpacity{};double currentTime{},confirmationStarted{};std::uint64_t outgoingGeneration{},uploadedRegistration{};
     unsigned timeDepth{};
@@ -69,14 +72,15 @@ struct NotesPreview::Impl {
 
     std::optional<core::Module>pendingModule;std::optional<app::ClientMetrics>pendingResize;bool pendingCancel{},pendingFocus{};
     std::optional<std::string>hoveredNote;std::optional<core::Rect>lastConfirmationRect;
-    Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes):hwnd(h),raster(r),assets(a),geometry(r){
+    Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media):hwnd(h),raster(r),assets(a),sharedMedia(media),geometry(r){
         static std::atomic<UINT_PTR>mediaOwners{1};mediaGeneration=mediaOwners.fetch_add(1);pendingImports.reserve(8);
+        need((sharedMedia.broker==nullptr)==(sharedMedia.client==0),"Notes preview requires shared media broker/client together");
         need(root.is_absolute()&&!std::filesystem::exists(root),"Notes preview requires a new absolute synthetic data directory");
         data::detail::validateRoot(root);need(std::filesystem::create_directory(root),"Create isolated Notes fixture directory");
         store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;if(initialNotes.empty())store->upsert(sample);else for(const auto&note:initialNotes)store->upsert(note);
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){store->remove(id);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
-        if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;
+        if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;wo.mediaBroker=sharedMedia.broker;wo.mediaClient=sharedMedia.client;
         workspace=std::make_unique<gpu::NativeNotesWorkspace>(hwnd,*state,raster,style(),wo);
         mediaMenu=std::make_unique<NotesMediaMenu>(raster,[this](NotesMediaAction action){mediaAction=std::move(action);need(PostMessageW(hwnd,NotesPreview::mediaActionMessage,mediaGeneration,0)!=FALSE,"Queue Notes media choice");});
         if(!formatRoot.empty())formatMenu=std::make_unique<NotesFormatMenu>(raster,formatRoot,[this](const core::notes::FormatChange&c){if(drawingFormatNote){if(c.kind!=core::notes::FormatKind::color)return false;workspace->setDrawingColor({c.color.red,c.color.green,c.color.blue,c.color.alpha});return true;}auto*e=workspace->editor();if(!e)return false;const auto result=e->applyFormat(c);if(result.handled)editSync();return result.handled;});
@@ -87,30 +91,36 @@ struct NotesPreview::Impl {
         tracks.reserve(256);composed.reserve(132);
         moduleSample=modules.sample(0).presentation;
     }
-    void startImageWorker(){if(imageDecoder)return;imageDecoder=std::make_unique<gpu::NativeNotesImageDecoder>([](const gpu::NotesImageRequest&r){return gpu::NotesImageAccess{std::filesystem::u8path(r.path),r.accessLease};},gpu::NotesImageRoute{hwnd,NotesPreview::mediaNoticeMessage,mediaGeneration});imagePlayback=std::make_unique<gpu::NativeNotesImagePlayback>(*imageDecoder);workspace->connectImagePlayback(*imagePlayback);}
-    bool startVideo(){if(videoPlayback)return true;if(!mediaRenderer){setMediaError("视频渲染尚未就绪，文件未被添加");return false;}try{auto owner=std::make_unique<gpu::NativeNotesVideoPlayback>(*mediaRenderer,gpu::NotesVideoRoute{hwnd,NotesPreview::mediaNoticeMessage,mediaGeneration});workspace->connectVideoPlayback(*owner);videoPlayback=std::move(owner);return true;}catch(const std::exception&){setMediaError("视频播放不可用，文件未被添加");return false;}}
-    bool setMediaError(std::optional<std::string> value){if(mediaError==value)return false;auto input=controlInput(mod::NotesControlsKind::center);input.error=value;
+    ~Impl(){try{cancelImport();}catch(...){}}
+    mod::NotesControlsInput input(mod::NotesControlsKind kind)const{auto out=controlInput(kind);out.dark=preferences.dark;out.accent=preferences.workspace.palette.accent;out.strings=preferences.controls;return out;}
+    bool samePreferences(const NotesPreviewPreferences&p)const{const auto&a=preferences.workspace;const auto&b=p.workspace;return preferences.dark==p.dark&&preferences.reduceMotion==p.reduceMotion&&preferences.controls==p.controls&&a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor&&a.eraserColor==b.eraserColor;}
+    void startImageWorker(){if(sharedMedia.broker||imageDecoder)return;imageDecoder=std::make_unique<gpu::NativeNotesImageDecoder>([](const gpu::NotesImageRequest&r){return gpu::NotesImageAccess{std::filesystem::u8path(r.path),r.accessLease};},gpu::NotesImageRoute{hwnd,NotesPreview::mediaNoticeMessage,mediaGeneration});imagePlayback=std::make_unique<gpu::NativeNotesImagePlayback>(*imageDecoder);workspace->connectImagePlayback(*imagePlayback);}
+    bool startVideo(){if(sharedMedia.broker){if(sharedMedia.broker->hasVideoPlayback())return true;setMediaError("视频播放不可用，文件未被添加");return false;}if(videoPlayback)return true;if(!mediaRenderer){setMediaError("视频渲染尚未就绪，文件未被添加");return false;}try{auto owner=std::make_unique<gpu::NativeNotesVideoPlayback>(*mediaRenderer,gpu::NotesVideoRoute{hwnd,NotesPreview::mediaNoticeMessage,mediaGeneration});workspace->connectVideoPlayback(*owner);videoPlayback=std::move(owner);return true;}catch(const std::exception&){setMediaError("视频播放不可用，文件未被添加");return false;}}
+    bool setMediaError(std::optional<std::string> value){if(mediaError==value)return false;auto input=this->input(mod::NotesControlsKind::center);input.error=value;
         // Original NotesCanvas uses NSColor.systemOrange. This dark appearance
         // sRGB value was read from AppKit, rather than a substituted warning tint.
-        input.systemOrange=mod::NotesColor{1,159./255.,10./255.,1};controls.update(input);controlScene->syncContent(assets.imagesFor(controls),1);mediaError=std::move(value);return true;}
+        input.systemOrange=preferences.dark?mod::NotesColor{1,159./255.,10./255.,1}:mod::NotesColor{1,149./255.,0,1};controls.update(input);controlScene->syncContent(assets.imagesFor(controls),1);mediaError=std::move(value);return true;}
     bool beginImport(std::span<const std::string>paths,core::Point point,std::shared_ptr<void>lease={}){if(!mediaActive||!state->notesSelected()||paths.empty())return false;need(std::isfinite(point.x)&&std::isfinite(point.y),"Media import requires a finite insertion point");
     if(paths.size()>10000-state->notes().size()){setMediaError("便笺记录数量已达到上限");return false;}for(const auto&path:paths)if(!data::validWindowsFilePath(path)){setMediaError("媒体路径无效，文件未被添加");return false;}if(!finish())return false;startImageWorker();
-    std::vector<Impl::Import>pending;std::vector<gpu::NotesImageRequest>requests;pending.reserve(paths.size());requests.reserve(paths.size());need(importSerial!=std::numeric_limits<std::uint64_t>::max(),"Media import generation exhausted");const auto serial=importSerial+1;for(std::size_t n=0;n<paths.size();++n){const auto key="notes.import."+std::to_string(mediaGeneration)+"."+std::to_string(serial)+"."+std::to_string(n);pending.push_back({key,paths[n],{},E_PENDING,lease});requests.push_back({key,paths[n],serial,64,false,lease,true});}imageDecoder->setInspections(requests);pendingImports=std::move(pending);importSerial=serial;importPoint=point;setMediaError({});return true;
+    std::vector<Impl::Import>pending;std::vector<gpu::NotesImageRequest>requests;pending.reserve(paths.size());requests.reserve(paths.size());need(importSerial!=std::numeric_limits<std::uint64_t>::max(),"Media import generation exhausted");const auto serial=importSerial+1;for(std::size_t n=0;n<paths.size();++n){const auto key="notes.import."+std::to_string(mediaGeneration)+"."+std::to_string(serial)+"."+std::to_string(n);pending.push_back({key,paths[n],{},E_PENDING,lease});requests.push_back({key,paths[n],serial,64,false,lease,true});}if(sharedMedia.broker)sharedMedia.broker->setInspections(sharedMedia.client,serial,requests);else imageDecoder->setInspections(requests);pendingImports=std::move(pending);importSerial=serial;importPoint=point;setMediaError({});return true;
     }
-    void cancelImport(){pendingImports.clear();if(imageDecoder)imageDecoder->setInspections({});}
-    bool mediaCompletion(double time){if(!imageDecoder)return false;bool changed=workspace->acceptMedia(mediaGeneration,time);
-        for(auto&result:imageDecoder->drainInspections(mediaGeneration)){const auto found=std::find_if(pendingImports.begin(),pendingImports.end(),[&](const auto&v){return v.key==result.key&&result.revision==importSerial;});if(found==pendingImports.end())continue;found->info=std::move(result.info);found->result=result.result;}
+    void clearInspections(){if(sharedMedia.broker)sharedMedia.broker->cancelInspections(sharedMedia.client,std::max<std::uint64_t>(1,importSerial));else if(imageDecoder)imageDecoder->setInspections({});}
+    void cancelImport(){clearInspections();pendingImports.clear();}
+    bool mediaCompletion(double time){if(!sharedMedia.broker&&!imageDecoder)return false;bool changed=sharedMedia.broker?workspace->refreshSharedMedia(time):workspace->acceptMedia(mediaGeneration,time);
+        auto results=sharedMedia.broker?sharedMedia.broker->drainInspections(sharedMedia.client,importSerial):imageDecoder->drainInspections(mediaGeneration);
+        for(auto&result:results){const auto found=std::find_if(pendingImports.begin(),pendingImports.end(),[&](const auto&v){return v.key==result.key&&result.revision==importSerial;});if(found==pendingImports.end())continue;found->info=std::move(result.info);found->result=result.result;}
         if(pendingImports.empty()||std::any_of(pendingImports.begin(),pendingImports.end(),[](const auto&v){return v.result==E_PENDING;}))return changed;
         if(!mediaActive||!state->notesSelected()){cancelImport();return changed;}
         if(std::any_of(pendingImports.begin(),pendingImports.end(),[](const auto&v){return FAILED(v.result)||!v.info;})){changed|=setMediaError("媒体无法载入，文件未被添加");cancelImport();return changed;}
         if(std::any_of(pendingImports.begin(),pendingImports.end(),[](const auto&v){return v.info->kind==mod::NotesMediaKind::video;})&&!startVideo()){cancelImport();return true;}
-        auto completed=std::move(pendingImports);pendingImports.clear();imageDecoder->setInspections({});changed|=setMediaError({});
+        auto completed=std::move(pendingImports);pendingImports.clear();clearInspections();changed|=setMediaError({});
         for(std::size_t n=0;n<completed.size();++n){const auto&v=completed[n];const auto&info=*v.info;const auto filename=std::filesystem::u8path(v.path).filename().u8string();const std::string name(reinterpret_cast<const char*>(filename.data()),filename.size());
             const auto reference=data::makeWindowsMediaReference(v.path,name,static_cast<int>(info.pixelWidth),static_cast<int>(info.pixelHeight),info.kind==mod::NotesMediaKind::video?"video":info.kind==mod::NotesMediaKind::gif?"gif":"image",info.kind==mod::NotesMediaKind::image?std::nullopt:std::optional<double>(info.duration),static_cast<int>(info.frameCount));const auto id=data::makeUUID();const double offset=double(n%4)*12;
             if(workspace->createMedia(id,data::foundationNow(),reference,{importPoint.x+offset,importPoint.y+offset},v.lease)){if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);changed=true;}else changed|=setMediaError(state->error());
         }return changed;
     }
     void track(gpu::NativeNotesCardToken token,TrackKind kind,double time,core::MotionPoint direction={}){
+        if(preferences.reduceMotion){if(kind==TrackKind::remove)workspace->settleDeletion(token);else if(kind==TrackKind::sectionOut)workspace->settleOutgoing(outgoingGeneration);return;}
         const auto it=std::find_if(tracks.begin(),tracks.end(),[&](const auto&t){return t.token==token;});Track value{token,kind,time,direction};if(it!=tracks.end())*it=value;else tracks.push_back(value);
     }
     void change(const std::optional<core::ModulePresentationChange>&value,double time){
@@ -136,7 +146,7 @@ struct NotesPreview::Impl {
         }if(settle)workspace->settleOutgoing(outgoingGeneration);
     }
     core::Point physical(const app::PointerEvent&e)const{return {e.x*metrics.scale,e.y*metrics.scale};}
-    void clearHover(double time){workspace->updateDrawingHover({});if(hoveredNote){workspace->setFeedback(*hoveredNote,{},false,false,time);hoveredNote.reset();}controlScene->setFeedback({},false,false,time);confirmScene->setFeedback({},false,false,time);}
+    void clearHover(double time){workspace->updateDrawingHover({});if(hoveredNote){workspace->setFeedback(*hoveredNote,{},false,preferences.reduceMotion,time);hoveredNote.reset();}controlScene->setFeedback({},false,preferences.reduceMotion,time);confirmScene->setFeedback({},false,preferences.reduceMotion,time);}
     void editSync(){workspace->syncEditor();}
     bool beginField(std::string_view id,std::optional<std::string_view>item={}){
         try{const bool changed=item?workspace->beginEditingItem(id,*item):workspace->beginEditing(id);focusEditor();return changed;}
@@ -144,7 +154,7 @@ struct NotesPreview::Impl {
     }
     void drawingStatus(){switch(workspace->drawingIssue()){case gpu::NativeNotesDrawingIssue::none:break;case gpu::NativeNotesDrawingIssue::strokeLimit:setMediaError("笔画长度已满，松开后可开始下一笔。");break;case gpu::NativeNotesDrawingIssue::drawingLimit:setMediaError("画画容量已满，请新建画画便笺。");break;}}
     bool confirmAt(core::Point p,double time,bool press){
-        if(!confirmationVisible)return false;const auto q=confirmationProjection.unproject(p);const auto action=q?confirmation.actionAt(*q):std::nullopt;confirmScene->setFeedback(action,press,false,time);
+        if(!confirmationVisible)return false;const auto q=confirmationProjection.unproject(p);const auto action=q?confirmation.actionAt(*q):std::nullopt;confirmScene->setFeedback(action,press,preferences.reduceMotion,time);
         if(!action)return false;if(!press)return true;
         if(*action=="cancelDelete")workspace->cancelDeletion();else if(state->pendingDeletion()){const auto id=*state->pendingDeletion();if(const auto token=workspace->confirmDeletionRetainingArtwork(id))track(*token,TrackKind::remove,time);}
         confirmationVisible=false;lastConfirmationRect.reset();return true;
@@ -155,7 +165,7 @@ struct NotesPreview::Impl {
         if(formatMenu&&formatMenu->pointer(e,metrics.scale,time))return true;
         if(e.kind==app::PointerKind::captureLost){editorDrag=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();workspace->endMediaSeek(time);workspace->endDrawing();drawingStatus();controlsPressed=false;clearHover(time);return false;}
         if(e.kind==app::PointerKind::leave){clearHover(time);return false;}
-        if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){const bool handled=editorDrag||state->dragging()||workspace->mediaSeeking()||workspace->drawingActive()||controlsPressed;editorDrag=false;controlsPressed=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();workspace->endMediaSeek(time);workspace->endDrawing();drawingStatus();const auto q=controlsProjection.unproject(p);controlScene->setFeedback(q?controls.actionAt(*q):std::nullopt,false,false,time);return handled;}
+        if(e.kind==app::PointerKind::up&&e.button==app::PointerButton::left){const bool handled=editorDrag||state->dragging()||workspace->mediaSeeking()||workspace->drawingActive()||controlsPressed;editorDrag=false;controlsPressed=false;if(auto*editor=workspace->editor())editor->pointerUp();workspace->endGesture();workspace->endMediaSeek(time);workspace->endDrawing();drawingStatus();const auto q=controlsProjection.unproject(p);controlScene->setFeedback(q?controls.actionAt(*q):std::nullopt,false,preferences.reduceMotion,time);return handled;}
         if(!moduleInput){clearHover(time);return false;}
         if(e.kind==app::PointerKind::move){
             if(workspace->mediaSeeking()){workspace->updateMediaSeek(p,time);return true;}
@@ -163,11 +173,11 @@ struct NotesPreview::Impl {
             if(editorDrag){if(auto*editor=workspace->editor()){editor->pointerDrag(p);editSync();}return true;}
             if(state->dragging()){if(const auto point=workspaceProjection.unproject(p))workspace->dragTo(*point);return true;}
             workspace->updateDrawingHover(p);const bool onConfirm=confirmAt(p,time,false);const auto hit=onConfirm?std::nullopt:workspace->hitTest(p);
-            if(hoveredNote&&(!hit||hit->noteID!=*hoveredNote)){workspace->setFeedback(*hoveredNote,{},false,false,time);hoveredNote.reset();}
+            if(hoveredNote&&(!hit||hit->noteID!=*hoveredNote)){workspace->setFeedback(*hoveredNote,{},false,preferences.reduceMotion,time);hoveredNote.reset();}
             if(hit){const auto verb=hit->kind==gpu::NativeNotesWorkspaceHit::Kind::action&&hit->verb!="edit"&&!hit->verb.starts_with("editItem:")?std::optional<std::string_view>{hit->verb}:std::nullopt;
-                if(!hoveredNote)hoveredNote=std::string(hit->noteID);workspace->setFeedback(hit->noteID,verb,false,false,time);}
+                if(!hoveredNote)hoveredNote=std::string(hit->noteID);workspace->setFeedback(hit->noteID,verb,false,preferences.reduceMotion,time);}
             std::optional<std::string_view>action;if(!onConfirm&&!hit&&moduleVisible&&moduleInput){const auto q=controlsProjection.unproject(p);if(q)action=controls.actionAt(*q);}
-            controlScene->setFeedback(action,controlsPressed,false,time);return onConfirm||hit.has_value()||action.has_value();
+            controlScene->setFeedback(action,controlsPressed,preferences.reduceMotion,time);return onConfirm||hit.has_value()||action.has_value();
         }
         if(e.kind==app::PointerKind::down&&e.button==app::PointerButton::right)return workspace->toggleDrawingEraser(p);
         if((e.kind!=app::PointerKind::down&&e.kind!=app::PointerKind::doubleClick)||e.button!=app::PointerButton::left)return false;
@@ -200,8 +210,8 @@ struct NotesPreview::Impl {
         if(workspace->editor()&&!workspace->finishEditing().finished)return true;
         if(state->pendingDeletion()){workspace->cancelDeletion();confirmationVisible=false;return true;}
         if(moduleVisible&&moduleInput){const auto q=controlsProjection.unproject(p);if(const auto action=q?controls.actionAt(*q):std::nullopt){
-            controlScene->setFeedback(action,true,false,time);controlsPressed=true;
-            for(std::size_t n=0;n<controls.actions().size();++n)if(controls.actions()[n].id==*action)toolbarStarted[n]=time;
+            controlScene->setFeedback(action,true,preferences.reduceMotion,time);controlsPressed=true;
+            for(std::size_t n=0;n<controls.actions().size();++n)if(controls.actions()[n].id==*action)toolbarStarted[n]=preferences.reduceMotion?-1:time;
             if(*action=="tool:text"){const auto id=data::makeUUID();workspace->createText(id,data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);focusEditor();}
             else if(*action=="tool:todo"){const auto id=data::makeUUID();workspace->createChecklist(id,data::makeUUID(),data::foundationNow());if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,time);focusEditor();}
             else if(*action=="tool:image"){if(finish()){const auto offset=double(state->notes().size()%7)*18;mediaMenu->openSource({metrics.width*.5-100+offset,metrics.height*.5-120+offset},time);}}
@@ -209,7 +219,7 @@ struct NotesPreview::Impl {
         }}workspace->select({});return false;
     }
 };
-NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot,initialNotes)){}
+NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot,initialNotes,media)){}
 NotesPreview::~NotesPreview()=default;
 ITfThreadMgr*NotesPreview::activatedTextManager()const noexcept{return impl_->manager.manager.Get();}
 TfClientId NotesPreview::textClient()const noexcept{return impl_->manager.client;}
@@ -222,9 +232,15 @@ void NotesPreview::presentShelfMedia(std::vector<mod::NotesShelfChoice>choices,c
 bool NotesPreview::setMediaActive(bool active,double t,bool preserve){auto&i=*impl_;const Impl::TimeScope event(i,t);i.mediaActive=active;if(!active){i.cancelImport();i.mediaAction.reset();i.mediaMenu->close(event.time,true);}return i.workspace->setMediaActive(active,event.time,preserve);}
 std::optional<double>NotesPreview::nextWakeTime()const{return impl_->workspace->mediaNextWakeTime();}
 bool NotesPreview::deadline(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.workspace->sampleMedia(event.time);}
+bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.samePreferences(p)&&i.workspace->fontRevision()==i.raster.fontRevision()){i.pendingPreferences.reset();return true;}if(!i.finish()){i.pendingPreferences=std::move(p);return false;}
+    i.workspace->setStyle(p.workspace);i.modules.setDark(p.dark);i.preferences=std::move(p);i.pendingPreferences.reset();
+    auto center=i.input(mod::NotesControlsKind::center);center.error=i.mediaError;center.systemOrange=i.preferences.dark?mod::NotesColor{1,159./255.,10./255.,1}:mod::NotesColor{1,149./255.,0,1};i.controls.update(center);i.controlScene->syncContent(i.assets.imagesFor(i.controls),1);i.confirmation.update(i.input(mod::NotesControlsKind::deletion));i.confirmScene->syncContent();i.groupUploaded=false;
+    if(i.preferences.reduceMotion){for(const auto&track:i.tracks){if(track.kind==Impl::TrackKind::remove)i.workspace->settleDeletion(track.token);else{const std::array patch{gpu::NativeNotesCardMotion{track.token,{}}};i.workspace->setCardMotions(patch);}}i.tracks.clear();i.workspace->settleOutgoing(i.outgoingGeneration);i.toolbarStarted.fill(-1);const auto result=i.modules.settle(event.time);i.moduleSample=result.presentation;i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,event.time);}return true;
+}
+bool NotesPreview::refreshSharedMedia(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);need(i.sharedMedia.broker!=nullptr,"Notes shared refresh requires the app media broker");return i.mediaCompletion(event.time);}
 const std::optional<std::string>&NotesPreview::mediaError()const noexcept{return impl_->mediaError;}
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
-void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
+void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
 const core::ModulePresentationSample&NotesPreview::modulePresentation()const noexcept{return impl_->moduleSample;}
 void NotesPreview::resize(const app::ClientMetrics&m){auto&i=*impl_;if(i.metrics==m)return;if(!i.finish()){i.pendingResize=m;return;}i.pendingResize.reset();i.metrics=m;i.workspace->setWorkspaceBounds({0,0,m.width,m.height},core::Point{m.width*.5-100,m.height*.5-120});}
@@ -242,7 +258,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
         i.controlsProjection=core::Projection::viewport(camera*p.contentWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
     }else{i.controlScene->updatePose({},0,t);i.registration.update({});}
     const auto rects=i.state->deletionControls();i.confirmationVisible=rects.has_value();
-    if(rects){const auto r=(*rects)[0];const auto motion=mod::notesDeletionMenuMotion(t-i.confirmationStarted);i.confirmWorld=i.workspaceWorld*Matrix::translation(r.x,r.y+motion.y);i.lastConfirmationRect=r;
+    if(rects){const auto r=(*rects)[0];const auto motion=i.preferences.reduceMotion?mod::NotesMotionSample{}:mod::notesDeletionMenuMotion(t-i.confirmationStarted);i.confirmWorld=i.workspaceWorld*Matrix::translation(r.x,r.y+motion.y);i.lastConfirmationRect=r;
         i.confirmScene->updatePose({},1,t);i.confirmationOpacity=opacity;i.confirmationProjection=core::Projection::viewport(camera*i.confirmWorld,i.metrics.pixelWidth,i.metrics.pixelHeight);
     }else{i.confirmScene->updatePose({},1,t);i.confirmationOpacity=0;}
     if(i.formatMenu){if(i.drawingFormatNote)if(const auto*n=i.state->note(*i.drawingFormatNote))i.formatNoteRect={n->x,n->y,n->width,n->height};if(const auto id=i.workspace->editingNoteID())if(const auto*n=i.state->note(*id))i.formatNoteRect={n->x,n->y,n->width,n->height};
@@ -251,7 +267,7 @@ void NotesPreview::update(const Matrix&center,const core::source::DesktopChromeS
     i.hasPose=true;
 }
 bool NotesPreview::requiresFrames(double t)const{const auto&i=*impl_;t=i.queryTime(t);if((i.mediaMenu&&i.mediaMenu->requiresFrames(t))||(i.formatMenu&&i.formatMenu->requiresFrames(t))||i.modules.requiresFrames()||!i.tracks.empty()||i.workspace->requiresFrames(t)||i.controlScene->requiresFrames(t)||i.confirmScene->requiresFrames(t))return true;
-    for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return i.confirmationVisible&&t-i.confirmationStarted<.16;}
+    for(auto s:i.toolbarStarted)if(s>=0&&t-s<.18)return true;return !i.preferences.reduceMotion&&i.confirmationVisible&&t-i.confirmationStarted<.16;}
 bool NotesPreview::diagnosticEditing(bool enabled,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);if(!enabled)return i.finish();if(i.state->notes().empty())return false;i.beginField(i.state->notes().front().id);return i.workspace->editor()!=nullptr;}
 bool NotesPreview::pointerLocked()const{return impl_->state->dragging()||impl_->workspace->mediaSeeking()||impl_->workspace->drawingActive();}
 bool NotesPreview::covers(core::Point p)const{const auto&i=*impl_;if(!i.hasPose||!i.moduleInput)return false;p={p.x*i.metrics.scale,p.y*i.metrics.scale};
@@ -279,11 +295,11 @@ bool NotesPreview::wheel(const app::WheelEvent&e,double t){
     return true;
 }
 bool NotesPreview::filterKey(const app::NativeMessage&m){if((impl_->mediaMenu&&impl_->mediaMenu->acceptsInput())||(impl_->formatMenu&&impl_->formatMenu->acceptsInput()))return false;auto*e=impl_->workspace->editor();return e&&e->filterKeyMessage(m.message,m.wParam,m.lParam);}
-bool NotesPreview::message(const app::NativeMessage&m,std::optional<double>time){auto&i=*impl_;const Impl::TimeScope event(i,time.value_or(i.currentTime));if(m.message==mediaNoticeMessage){if(m.wParam!=i.mediaGeneration)return false;return i.mediaCompletion(event.time);}if(m.message!=WM_APP+181)return false;if(i.workspace->takeEditorChanges(m.wParam))i.editSync();
+bool NotesPreview::message(const app::NativeMessage&m,std::optional<double>time){auto&i=*impl_;const Impl::TimeScope event(i,time.value_or(i.currentTime));if(m.message==mediaNoticeMessage){if(i.sharedMedia.broker||m.wParam!=i.mediaGeneration)return false;return i.mediaCompletion(event.time);}if(m.message!=WM_APP+181)return false;if(i.workspace->takeEditorChanges(m.wParam))i.editSync();
     // Selection/layout notifications are not focus transitions: refocusing
     // clears the field's active drag and any pending UTF-16 high surrogate.
     // Retry only an explicit field/window focus request held by a TSF lock.
-    if(i.pendingCancel&&i.finish())i.pendingCancel=false;if(i.pendingResize){const auto value=*i.pendingResize;resize(value);}if(i.pendingModule){const auto value=*i.pendingModule;select(value,i.currentTime);}if(i.pendingFocus)i.focusEditor();return true;}
+    if(i.pendingCancel&&i.finish())i.pendingCancel=false;if(i.pendingResize){const auto value=*i.pendingResize;resize(value);}if(i.pendingModule){const auto value=*i.pendingModule;select(value,i.currentTime);}if(i.pendingFocus)i.focusEditor();if(i.pendingPreferences){auto pending=std::move(*i.pendingPreferences);i.pendingPreferences.reset();applyPreferences(std::move(pending),i.currentTime);}return true;}
 bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModifiers>modifiers){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaMenu&&i.mediaMenu->key(e,event.time))return true;if(i.formatMenu&&i.formatMenu->key(e,event.time))return true;auto*editor=i.workspace->editor();if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
     // Original TODO fields finish on unconsumed Return; imported/pasted line
     // breaks still remain valid data. TSF receives keys before this owner.
@@ -301,5 +317,5 @@ std::uint64_t NotesPreview::compositionRevision()const noexcept{return impl_->wo
 void NotesPreview::upload(native::Renderer&r){auto&i=*impl_;need(!i.mediaRenderer||i.mediaRenderer==&r,"Notes owner cannot replace its media renderer");i.mediaRenderer=&r;i.workspace->uploadMedia(r);if(i.mediaMenu)i.mediaMenu->upload(r);if(i.formatMenu)i.formatMenu->upload(r);const auto revision=i.registration.stats().geometryRevision;if(i.uploadedRegistration!=revision){i.registration.uploadGeometry(r);i.uploadedRegistration=revision;}if(!i.groupUploaded){i.confirmationGroup->uploadResources(r);i.groupUploaded=true;}else i.confirmationGroup->updateLocal(r);i.confirmationGroup->setPose(i.confirmWorld,i.confirmationOpacity);}
 std::span<const native::LayerCompositionEntry>NotesPreview::entries(){auto&i=*impl_;i.composed.clear();i.composed.push_back({&i.controlScene->scene(),i.registration.draws()});for(const auto&e:i.workspace->entries())i.composed.push_back(e);i.composed.push_back(i.confirmationGroup->entry());if(i.formatMenu)for(const auto&e:i.formatMenu->entries())i.composed.push_back(e);if(i.mediaMenu)for(const auto&e:i.mediaMenu->entries())i.composed.push_back(e);return i.composed;}
 void NotesPreview::collected(native::Renderer&r){if(impl_->mediaMenu)impl_->mediaMenu->collected(r);if(impl_->formatMenu)impl_->formatMenu->collected(r);need(impl_->workspace->collectRetired(r),"Detached Notes assets must retire after publication");}
-void NotesPreview::release(native::Renderer&r){auto&i=*impl_;if(i.mediaMenu)i.mediaMenu->release(r);if(i.formatMenu)i.formatMenu->release(r);need(i.workspace->releaseResources(r),"Notes workspace remains published during teardown");need(i.registration.releaseResources(r),"Notes registration remains published during teardown");need(i.controlScene->scene().releaseResources(r)&&i.confirmationGroup->releaseResources(r),"Notes controls remain published during teardown");}
+void NotesPreview::release(native::Renderer&r){auto&i=*impl_;i.cancelImport();if(i.mediaMenu)i.mediaMenu->release(r);if(i.formatMenu)i.formatMenu->release(r);need(i.workspace->releaseResources(r),"Notes workspace remains published during teardown");need(i.registration.releaseResources(r),"Notes registration remains published during teardown");need(i.controlScene->scene().releaseResources(r)&&i.confirmationGroup->releaseResources(r),"Notes controls remain published during teardown");}
 }

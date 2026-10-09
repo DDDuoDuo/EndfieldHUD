@@ -7,7 +7,7 @@ namespace endfield::native {
 inline ehud::data::Json notesRunFont(const core::notes::TextStyle&s){
     using J=ehud::data::Json;const bool named=s.fontName&&!s.fontName->starts_with(".");
     return J::Object{{"familyName",named?*s.fontName:".AppleSystemUIFont"},{"postScriptName",named?*s.fontName:".SFNS-Regular"},
-        {"pointSize",s.fontSize},{"symbolicTraits",(s.bold?2:0)|(s.italic?1:0)}};
+        {"pointSize",s.fontSize},{"symbolicTraits",(s.bold?2:0)|(s.italic?1:0)},{"preserveUserFont",named}};
 }
 inline ehud::data::Json notesRunDescriptor(const core::notes::TextRun&r,const std::array<double,4>&theme){
     using J=ehud::data::Json;const auto&s=r.style;const auto c=s.color?std::array<double,4>{s.color->red,s.color->green,s.color->blue,s.color->alpha}:theme;

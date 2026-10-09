@@ -45,6 +45,8 @@ public:
         ITfThreadMgr* borrowedManager,TfClientId,ArchivePreviewOptions);
     ~ArchivePreview();
     void resize(const app::ClientMetrics&);void setAppearance(modules::ArchiveAppearance);
+    bool setStrings(modules::ArchiveStrings,modules::NotesControlsStrings,
+        std::string categoryNamePlaceholder,double ownerTime);
     void setReduceMotion(bool,double);void setOverlayVisible(bool,double);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
@@ -64,9 +66,18 @@ public:
     // Owner creates/validates references on its EXISTING bounded shared worker.
     bool receiveMedia(std::string_view document,std::uint64_t generation,
         std::vector<modules::ArchiveJson>,std::optional<std::string>error,double);
+    void setMediaPlayback(std::size_t,bool playing,double time,
+        std::optional<std::string>error,double ownerTime);
     void setMediaPresentation(std::size_t,bool playing,double time,
         std::map<std::string,modules::ArchiveJson,std::less<>>posters,
         std::optional<std::string>error,double ownerTime);
+    // Selected media lives inside the source grouped face (before footer/error),
+    // including section opacity/shutter. Binding is rejected for another doc.
+    bool setMediaDraw(std::string_view document,std::size_t index,
+        std::optional<native::DrawObject>,double);
+    std::size_t mediaIndex()const noexcept;
+    bool mediaVisible()const noexcept;
+    bool mediaRequestCurrent(std::string_view document,std::uint64_t generation)const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
     const modules::ArchiveState&state()const noexcept;

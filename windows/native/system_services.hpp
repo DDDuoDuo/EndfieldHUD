@@ -52,6 +52,11 @@ class ClipboardHistory final {
 public:
     static constexpr std::size_t maximum_text_bytes = 1'048'576;
     static constexpr std::size_t maximum_image_bytes = 64 * 1'048'576;
+    // ClipboardStore.swift:183–195. Encoded payload storage is independent of
+    // decoded dimensions; a preview consumer must produce only a 96px thumbnail.
+    static constexpr std::uint32_t maximum_image_dimension = 100'000;
+    static constexpr std::uint64_t maximum_image_pixels = 100'000'000;
+    static constexpr unsigned maximum_thumbnail_dimension = 96;
     static constexpr std::size_t maximum_retained_bytes = 128 * 1'048'576;
     static constexpr std::size_t maximum_files = 512;
     static constexpr std::size_t maximum_capacity = 512;
@@ -70,7 +75,12 @@ public:
     static bool valid_utf16(std::u16string_view value) noexcept;
     static std::size_t utf8_bytes(std::u16string_view value) noexcept;
     static bool url_text(std::u16string_view value) noexcept;
-    // Pure bounded DIB/PNG validation, without invoking an image decoder.
+    // Metadata preflight only: no allocation, decompression or pixel buffer.
+    static bool valid_image_metadata(std::uint32_t width, std::uint32_t height,
+        std::size_t encoded_bytes) noexcept;
+    // Pure structural DIB/PNG validation, without invoking an image decoder.
+    // PNG stream/CRC validity and successful bounded thumbnail decoding remain
+    // the image consumer's responsibility, as distinct from these size limits.
     static bool valid_image(ClipboardImageFormat format, std::span<const std::uint8_t> bytes) noexcept;
 private:
     std::vector<ClipboardItem> items_;

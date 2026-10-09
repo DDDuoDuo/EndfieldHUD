@@ -203,10 +203,11 @@ bool NativeShelfScene::syncContent(std::span<const NativeShelfImage>supplied,std
     reservePart(plan.collection,i.collection);reservePart(plan.scrollbar,i.scrollbar);reservePart(plan.foreground,i.foreground);
     for(const auto&p:plan.cards){const auto found=std::find_if(i.cards.begin(),i.cards.end(),[&](const auto&old){return old->plan.itemID==p.itemID&&Impl::sameArtwork(old->plan,p);});if(found==i.cards.end())required+=p.surfaces.size();}
     need(required<=LayerRasterizer::maximumEntries-i.raster->stats().entries,"Shelf replacement exceeds shared raster capacity; retire unused module artwork first");
-    const auto build=[&](ShelfScenePart&p,const std::unique_ptr<Impl::Part>&existing){if(existing&&Impl::sameArtwork(existing->plan,p))return std::unique_ptr<Impl::Part>{};return std::make_unique<Impl::Part>(*i.raster,std::move(p),i.options);};
+    const auto inherit=[](Impl::Part&next,const Impl::Part&prior){for(std::size_t n=0;n<next.plan.feedback.size();++n)for(std::size_t old=0;old<prior.plan.feedback.size();++old)if(next.plan.feedback[n].actionID==prior.plan.feedback[old].actionID)next.tracks[n]=prior.tracks[old];};
+    const auto build=[&](ShelfScenePart&p,const std::unique_ptr<Impl::Part>&existing){if(existing&&Impl::sameArtwork(existing->plan,p))return std::unique_ptr<Impl::Part>{};auto next=std::make_unique<Impl::Part>(*i.raster,std::move(p),i.options);if(existing)inherit(*next,*existing);return next;};
     auto collection=build(plan.collection,i.collection),scrollbar=build(plan.scrollbar,i.scrollbar),foreground=build(plan.foreground,i.foreground);
     std::array<std::size_t,8>old{};old.fill(8);std::array<std::unique_ptr<Impl::Part>,8>built;
-    for(std::size_t n=0;n<plan.cards.size();++n){for(std::size_t k=0;k<i.cards.size();++k)if(i.cards[k]->plan.itemID==plan.cards[n].itemID&&Impl::sameArtwork(i.cards[k]->plan,plan.cards[n])){old[n]=k;break;}if(old[n]==8)built[n]=std::make_unique<Impl::Part>(*i.raster,std::move(plan.cards[n]),i.options);}
+    for(std::size_t n=0;n<plan.cards.size();++n){for(std::size_t k=0;k<i.cards.size();++k)if(i.cards[k]->plan.itemID==plan.cards[n].itemID&&Impl::sameArtwork(i.cards[k]->plan,plan.cards[n])){old[n]=k;break;}if(old[n]==8){built[n]=std::make_unique<Impl::Part>(*i.raster,std::move(plan.cards[n]),i.options);for(const auto&prior:i.cards)if(prior->plan.itemID==built[n]->plan.itemID){inherit(*built[n],*prior);break;}}}
     std::vector<std::unique_ptr<Impl::Part>>next;next.reserve(8);
     // All parsing/rasterization completed before publication/lifetime mutation.
     const auto replace=[&](auto&current,auto&candidate){if(candidate){if(current)i.retired.push_back(std::move(current));current=std::move(candidate);++i.stats.partBuilds;}};

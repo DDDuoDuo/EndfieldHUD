@@ -11,7 +11,7 @@ struct ProjectedEditorStyle {
     // Both zero uses native field spacing. Notes supplies measured source-style
     // uniform line height/ascent so entering edit mode does not move its lines.
     double lineHeight{},baseline{};
-    std::string fontFamily{"Segoe UI"},fontFace{"SegoeUI"};
+    std::string fontFamily{"Noto Sans SC"},fontFace{"NotoSansSC-Regular"};
     std::array<double,4> textColor{1,1,1,1},caretColor{1,1,1,1};
     std::array<double,4> selectionColor{.2,.4,.7,.5},compositionColor{1,1,1,1};
     double cornerRadius{}; // caller source viewport radius; shared GPU/hit/TSF clip

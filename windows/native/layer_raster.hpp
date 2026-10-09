@@ -15,11 +15,12 @@
 namespace endfield::native {
 class PaintedTextLayout;
 class LayerImageSource;
+enum class LayerFontLanguage { simplifiedChinese, korean };
 struct LayerRasterOptions {
     double pixelsPerPoint{2};
     double paddingPoints{1};
     std::filesystem::path assetRoot;
-    std::string fallbackFontFamily{"Segoe UI"};
+    std::string fallbackFontFamily{"Noto Sans SC"};
     // The caller owns the root's placement, perspective, opacity and mask.
     // Child placement/opacity/masks are part of the local retained content.
     bool includeRootOpacity{false}, includeRootMask{false};
@@ -93,7 +94,7 @@ struct LayerRasterImage {
 struct LayerRasterStats {
     std::size_t entries{}, resourceBytes{}, decodedImages{};
     std::uint64_t rasterizations{}, cacheHits{}, textLayoutsCreated{}, imageDecodes{}, nodesDrawn{};
-    std::size_t textMetadataBytes{};
+    std::size_t textMetadataBytes{}, typographyDescriptorBytes{};
     std::uint64_t textAnalysisFormatsCreated{};
 };
 
@@ -117,8 +118,19 @@ public:
     static constexpr std::size_t maximumEntries = 1024, maximumResourceBytes = 256 * 1024 * 1024;
     static constexpr std::size_t maximumPixels = 4096 * 4096, maximumNodes = 4096;
     static constexpr std::size_t maximumTextMetadataBytes = 16 * 1024 * 1024;
+    static constexpr std::size_t maximumTypographyDescriptorBytes = 32 * 1024 * 1024;
     LayerRasterizer();
+    // Private, application-only fonts; never installs into the user's OS.
+    // Default constructor uses <executable-directory>/fonts. The directory
+    // must contain both pinned NotoSansSC.ttf and NotoSansKR.ttf.
+    explicit LayerRasterizer(const std::filesystem::path&fontDirectory);
     ~LayerRasterizer();
+    // Event-only default typography. Existing immutable images/layouts remain
+    // valid until owners replace them; no font install, raster, or frame timer.
+    bool setDefaultFontLanguage(LayerFontLanguage);
+    LayerFontLanguage fontLanguage() const;
+    std::uint64_t fontRevision() const;
+    std::string_view defaultFontFamily() const;
     LayerRasterizer(const LayerRasterizer&) = delete;
     LayerRasterizer& operator=(const LayerRasterizer&) = delete;
     std::shared_ptr<const LayerRasterImage> rasterize(std::string sourceID, std::uint64_t revision,
@@ -137,6 +149,9 @@ public:
     LayerSourceTextMeasurement measureSourceText(const std::string& sourceID,
         const ehud::data::Json& textDescriptor,double width,
         const LayerRasterOptions& options={});
+    // Internal scene bridge: repaint a retained non-editor text descriptor.
+    // Null denotes artwork without text or a caller-owned editor document.
+    std::shared_ptr<const LayerRasterImage> refreshTypography(const std::string& sourceID,std::uint64_t revision);
     bool remove(const std::string& sourceID);
     void clear();
     LayerRasterStats stats() const;

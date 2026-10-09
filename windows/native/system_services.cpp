@@ -141,6 +141,12 @@ bool ClipboardHistory::url_text(std::u16string_view value) noexcept {
     }
     return (matches(u"mailto") || matches(u"tel") || matches(u"sms") || matches(u"file")) && colon+1 < value.size();
 }
+bool ClipboardHistory::valid_image_metadata(std::uint32_t width, std::uint32_t height,
+    std::size_t encoded_bytes) noexcept {
+    return encoded_bytes > 0 && encoded_bytes <= maximum_image_bytes &&
+        width > 0 && height > 0 && width <= maximum_image_dimension && height <= maximum_image_dimension &&
+        std::uint64_t(width) * height <= maximum_image_pixels;
+}
 bool ClipboardHistory::valid_image(ClipboardImageFormat format, std::span<const std::uint8_t> bytes) noexcept {
     if (bytes.size() > maximum_image_bytes || bytes.size() < 12) return false;
     if (format == ClipboardImageFormat::png) {
@@ -154,8 +160,7 @@ bool ClipboardHistory::valid_image(ClipboardImageFormat format, std::span<const 
             if (!header) {
                 if (type != 0x49484452u || size != 13) return false; // IHDR
                 const auto width = big32(bytes, offset + 8), height = big32(bytes, offset + 12);
-                if (!width || !height || width > 16384 || height > 16384 ||
-                    std::uint64_t(width) * height > maximum_image_bytes / 4) return false;
+                if (!valid_image_metadata(width, height, bytes.size())) return false;
                 const auto depth = bytes[offset + 16], color = bytes[offset + 17];
                 const bool depth_ok = color == 0 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8 || depth == 16) :
                     color == 3 ? (depth == 1 || depth == 2 || depth == 4 || depth == 8) :
@@ -188,8 +193,7 @@ bool ClipboardHistory::valid_image(ClipboardImageFormat format, std::span<const 
         planes = little16(bytes, 12); bits = little16(bytes, 14);
         compression = little32(bytes, 16); image_size = little32(bytes, 20); colors = little32(bytes, 32);
     }
-    if (!width || !height || width > 16384 || height > 16384 || planes != 1 ||
-        std::uint64_t(width) * height > maximum_image_bytes / 4 ||
+    if (!valid_image_metadata(width, height, bytes.size()) || planes != 1 ||
         (bits != 1 && bits != 4 && bits != 8 && bits != 16 && bits != 24 && bits != 32)) return false;
     // Packed, uncompressed or bitfield DIBs only. RLE/JPEG/PNG-in-DIB need a
     // separate bounded codec before becoming acceptable clipboard previews.

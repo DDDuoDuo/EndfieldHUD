@@ -1,4 +1,5 @@
 #include "native/layer_scene.hpp"
+#include "native/layer_group.hpp"
 #include "native/layer_mask.hpp"
 #include "core/source_camera.hpp"
 #include <algorithm>
@@ -45,7 +46,7 @@ void validateIdentities(const Json& node,std::unordered_set<std::string>& ids,st
 }
 LayerScene::LayerScene(LayerRasterizer& r):rasterizer_(&r){
     static std::atomic<std::uint64_t> identity{0};
-    namespace_="native-scene:"+std::to_string(identity.fetch_add(1,std::memory_order_relaxed))+":";
+    namespace_="native-scene:"+std::to_string(identity.fetch_add(1,std::memory_order_relaxed))+":";fontRevision_=rasterizer_->fontRevision();
 }
 LayerScene::~LayerScene(){for(const auto&id:rasterIDs_)rasterizer_->remove(id);}
 void LayerScene::load(const Json& root,const LayerRasterOptions& options){
@@ -63,7 +64,7 @@ void LayerScene::load(const Json& root,const LayerRasterOptions& options){
     surfaces_=std::move(next.surfaces_);draws_=std::move(next.draws_);report_=std::move(next.report_);revision_=next.revision_;
     structuralIssues_=std::move(next.structuralIssues_);
     rasterIDs_=std::move(next.rasterIDs_);next.rasterIDs_.clear();next.surfaces_.clear();
-    ++resourceRevision_;
+    fontRevision_=rasterizer_->fontRevision();++resourceRevision_;
 }
 void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity,const std::vector<PlaneMask>& masks,const LayerRasterOptions& options,unsigned depth){
     need(depth<=64&&++report_.sourceNodes<=4096,"Native layer tree exceeds limits");
@@ -82,7 +83,7 @@ void LayerScene::append(const Json& node,const Matrix&parent,float parentOpacity
         if(image->width&&image->height){
             DrawObject draw;draw.sourceID=id;draw.meshID=id;draw.textureID=id;draw.world=world;draw.opacity=opacity;draw.masks=masks;
             std::unordered_set<std::string> localIDs;std::size_t localCount{};validateIdentities(content,localIDs,localCount,0);
-            surfaces_.push_back({id,image,draw,revision_,revision_,{},settings,localCount,rasterGroup});draws_.push_back(std::move(draw));
+            surfaces_.push_back({id,image,draw,revision_,revision_,{},settings,localCount,rasterGroup,rasterizer_->fontRevision()});draws_.push_back(std::move(draw));
             surfaces_.back().draw.masks.reserve(8);draws_.back().masks.reserve(8);
         }else report_.unsupported.insert(report_.unsupported.end(),image->unsupported.begin(),image->unsupported.end());
         if(rasterGroup)return;
@@ -124,7 +125,7 @@ void LayerScene::rebuildReport(){
 bool LayerScene::updateLocalContent(std::string_view sourceID,std::uint64_t contentRevision,const Json& localContent,const LayerRasterOptions& options){
     const auto index=surfaceIndex(sourceID);need(index.has_value(),"Local content has no retained surface");
     auto& surface=surfaces_[*index];auto settings=options;settings.includeRootOpacity=false;settings.includeRootMask=true;
-    if(surface.localRevision==contentRevision&&surface.options==settings)return false;
+    if(surface.localRevision==contentRevision&&surface.options==settings&&surface.fontRevision==rasterizer_->fontRevision())return false;
     need(text(localContent["id"])==sourceID,"Local content cannot replace another surface identity");
     std::unordered_set<std::string> ids;std::size_t count{};validateIdentities(localContent,ids,count,0);
     need(localContent2D(localContent,0)&&!flag(localContent["hidden"]),"Local content must stay in its existing visible plane");
@@ -136,7 +137,17 @@ bool LayerScene::updateLocalContent(std::string_view sourceID,std::uint64_t cont
     if(image->bounds!=surface.image->bounds)surface.meshRevision=token;
     report_.sourceNodes=report_.sourceNodes-surface.nodeCount+count;
     surface.image=std::move(image);surface.imageRevision=token;surface.localRevision=contentRevision;
-    surface.options=std::move(settings);surface.nodeCount=count;rebuildReport();++resourceRevision_;return true;
+    surface.options=std::move(settings);surface.nodeCount=count;surface.fontRevision=rasterizer_->fontRevision();rebuildReport();++resourceRevision_;return true;
+}
+bool LayerScene::refreshTypography(){
+    const auto generation=rasterizer_->fontRevision();if(fontRevision_==generation)return false;
+    if(carrierGroup_){const bool changed=carrierGroup_->refreshTypography();fontRevision_=generation;return changed;}
+    struct Refresh{std::size_t index;std::uint64_t token;std::shared_ptr<const LayerRasterImage>image;};std::vector<Refresh>pending;
+    for(std::size_t n=0;n<surfaces_.size();++n){const auto&s=surfaces_[n];if(s.fontRevision==generation||s.options.plainTextDocument||s.options.richTextDocument)continue;
+        const auto token=++attempt_;auto image=rasterizer_->refreshTypography(s.id,token);if(image){need(image->width&&image->height,"Typography cannot remove its retained surface");pending.push_back({n,token,std::move(image)});}}
+    for(auto&change:pending){auto&s=surfaces_[change.index];if(s.image->bounds!=change.image->bounds)s.meshRevision=change.token;s.image=std::move(change.image);s.imageRevision=change.token;}
+    for(auto&s:surfaces_)if(!s.options.plainTextDocument&&!s.options.richTextDocument)s.fontRevision=generation;
+    fontRevision_=generation;if(!pending.empty()){rebuildReport();++resourceRevision_;}return !pending.empty();
 }
 void LayerScene::uploadResources(Renderer& renderer){
     need(!resourceOwner_||resourceOwner_==&renderer,"A native scene must release its previous renderer resources first");

@@ -10,6 +10,11 @@ namespace endfield::native {
 struct NativeNotesControlsImage {
     modules::NotesControlsImage dependency;
     ehud::data::Json contents; // exact {asset, sha256} LayerRasterizer metadata
+    // Explicit source-in operation over the pinned image's alpha, prepared
+    // with an opaque original tint. Its size, shape and alpha are unchanged.
+    // When present this must equal dependency.tint; it never bypasses the
+    // dependency/resource checks or substitutes a generic image.
+    std::optional<modules::NotesColor> sourceInTint{};
 };
 struct NotesControlSurface {
     static constexpr std::size_t none=static_cast<std::size_t>(-1);

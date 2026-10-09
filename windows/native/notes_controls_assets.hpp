@@ -8,12 +8,14 @@ struct NativeNotesControlsAssetPins {
     // SHA binds the complete prepared manifest; sourceCommit binds its lineage.
     std::string manifestSHA256,sourceCommit;
 };
-// Prepared source artwork, not an image/tint service. Reads only an explicit
+// Prepared source artwork. Reads only an explicit
 // absolute package root: one <=64KiB manifest and exactly two <=128KiB PNGs.
 // Construction validates SHA/bytes, source pins, exact original dependency
 // fields and bounded PNG structure. WIC decoding remains LayerRasterizer's
 // existing content-event work; this owner retains no duplicate decoded pixels.
-// Current bundle has only source-exported dark/scale-2 Text and TODO variants.
+// The bundle contains source-exported dark/scale-2 Text and TODO variants.
+// Light controls use the same pinned alpha with the source's .11 source-in
+// color at raster content events; the original dark path remains unchanged.
 // No full Mac CALayer reference, user stores, window, service, watcher or timer.
 class NativeNotesControlsAssets final {
 public:
@@ -29,6 +31,6 @@ public:
 private:
     std::filesystem::path root_;
     std::string manifestSHA256_,sourceCommit_;
-    std::array<NativeNotesControlsImage,2> images_;
+    std::array<NativeNotesControlsImage,2> images_,lightImages_;
 };
 } // namespace endfield::native
