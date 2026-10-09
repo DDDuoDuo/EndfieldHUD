@@ -3,6 +3,7 @@
 #include "core/data/json.hpp"
 #include "core/scene.hpp"
 #include "core/notes_rich_text.hpp"
+#include "native/font_resources.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -131,6 +132,9 @@ public:
     LayerFontLanguage fontLanguage() const;
     std::uint64_t fontRevision() const;
     std::string_view defaultFontFamily() const;
+    // Creating-thread/configuration-event only; owned immutable references are
+    // safe to retain beyond this rasterizer's lifetime. No analysis/raster work.
+    LayerFontResources retainedFontResources() const;
     LayerRasterizer(const LayerRasterizer&) = delete;
     LayerRasterizer& operator=(const LayerRasterizer&) = delete;
     std::shared_ptr<const LayerRasterImage> rasterize(std::string sourceID, std::uint64_t revision,

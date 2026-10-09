@@ -619,6 +619,7 @@ bool LayerRasterizer::setDefaultFontLanguage(LayerFontLanguage language){auto&r=
 LayerFontLanguage LayerRasterizer::fontLanguage()const{impl_->onThread();return impl_->language;}
 std::uint64_t LayerRasterizer::fontRevision()const{impl_->onThread();return impl_->fontRevision;}
 std::string_view LayerRasterizer::defaultFontFamily()const{impl_->onThread();return impl_->defaultFamily();}
+LayerFontResources LayerRasterizer::retainedFontResources()const{auto&r=*impl_;r.onThread();return LayerFontResources(r.text.Get(),r.fonts.Get(),r.bundledFonts.Get(),r.defaultFamily(),r.language==LayerFontLanguage::korean?"ko-kr":"zh-cn",r.fontRevision);}
 std::unique_ptr<LayerPlainTextAnalysis>LayerRasterizer::plainSystemTextAnalysis(const std::string&id,double size,const LayerRasterOptions&options){
     auto&r=*impl_;r.onThread();
     if(id.empty()||id.size()>4096||!Json::validUtf8(id)||!std::isfinite(size)||size<=0||size>2048)invalid("Invalid plain system font request");

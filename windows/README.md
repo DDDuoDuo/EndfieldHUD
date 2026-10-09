@@ -676,3 +676,17 @@ checks. The initial incremental run retained three consumers of an older shared
 Clipboard structure and crashed those test binaries; rebuilding every consumer
 resolved all three without a runtime workaround. Live native clipboard capture,
 Reader interaction and Activity integration are not yet accepted.
+
+Snapshot 87 adds Activity Monitor to the shared isolated preview: overview/apps
+tabs, RAM/CPU sorting, original yellow/blue graphs, matching finite transitions,
+and six retained scrolling app rows. Seven targeted laptop suites plus combined
+hardware coverage pass. Repeated settled frames do not rebuild graphs, text or
+sort masks; repeated module cycles retain no additional raster resources. These
+checks use synthetic readings, not a complete real-process metrics provider.
+
+A retained font snapshot now lets background document rendering borrow the same
+SC/KR font collections without creating another font loader. Its Windows MTA
+lifetime checks and the existing Notes/Archive checks pass. Startup timestamps
+now begin the opening animation after every preview owner is ready. Projection's
+session model and media geometry match 247 original AppKit cases; its visible
+workspace and handoff are not yet integrated.
