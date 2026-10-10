@@ -68,6 +68,7 @@ bool ReaderState::previous(){auto i=impl_;i->check();std::optional<ReaderLocatio
 void ReaderState::jump(ReaderLocation location){auto i=impl_;i->check();need(location.valid(),"Invalid Reader jump location");i->history.clear();i->request(std::move(location));}
 void ReaderState::jump(double progress){auto i=impl_;i->check();if(!std::isfinite(progress))return;i->history.clear();i->request({},std::clamp(progress,0.,1.));}
 void ReaderState::requestImageDetail(ReaderImageView view){auto i=impl_;i->check();if(!i->active||!i->current||!i->current->illustration||!view.valid())return;view=view.clamped(i->size);if(view.zoom<=1){i->cancelDetail();return;}if(i->detail&&i->detail->view==view&&i->detail->page.location==i->current->location)return;i->detailGate->store(++i->detailSerial);i->pendingDetail=view;i->pumpDetail();}
+void ReaderState::prepareNeighbors(){auto i=impl_;i->check();if(i->active&&i->current&&!i->rendering&&!i->pending)i->request(i->current->location);}
 void ReaderState::cancelImageDetail(){auto i=impl_;i->check();i->cancelDetail();}
 void ReaderState::queueCapacityAvailable(){auto i=impl_;i->check();if(i->loadRejected)i->pumpLoad();if(i->releaseRejected&&!i->active)i->release();i->pumpSave();if(i->renderRejected)i->pumpRender();if(i->detailRejected)i->pumpDetail();}
 void ReaderState::retryPendingWrites(){auto i=impl_;i->check();i->failedWrite=false;i->pumpSave();}

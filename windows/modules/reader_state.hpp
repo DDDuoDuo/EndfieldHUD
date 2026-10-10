@@ -68,6 +68,9 @@ public:
     void setLayout(core::Point viewportSize,bool dark);
     bool next();bool previous();void jump(ReaderLocation);void jump(double progress);
     void requestImageDetail(ReaderImageView);void cancelImageDetail();
+    // Event-only cache refill through this same bounded FIFO/provider. Repeated
+    // input while a refill is accepted/pending creates no additional job.
+    void prepareNeighbors();
     void queueCapacityAvailable();void retryPendingWrites();
     // Explicit owner flush submission only. App's existing executor wait/drain
     // barrier decides completion; failed latest state remains available here.

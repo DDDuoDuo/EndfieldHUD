@@ -6,7 +6,7 @@ namespace endfield::modules {
 enum class ReaderGesturePhase {none,began,changed,ended,cancelled};
 struct ReaderNavigationIntent {int step{};std::optional<double>progress;};
 struct ReaderPagePlacement {core::Rect rect;bool hidden{};};
-struct ReaderPageAnchor {std::string bookID;ReaderLocation location;bool next{},previous{},illustration{};double progress{};};
+struct ReaderPageAnchor {std::string bookID;ReaderLocation location;bool next{},previous{},illustration{};double progress{};bool nextReady{true},previousReady{true};};
 // Direct port of ReaderCanvas's cached-page interaction, not a renderer. The
 // caller supplies its existing monotonic owner clock and dispatches each taken
 // navigation intent to ReaderState, then supplies the updated page anchor.
@@ -37,17 +37,35 @@ public:
     int lastAnimatedTurnDirection()const noexcept{return animatedTurn_;}
     double pageTurnDuration()const noexcept{return .26;}
     double nonPrecisionScrollDuration()const noexcept{return animatedScroll_?.10:0;}
+    // Only actual input retargets .10s wheel easing. Refilled page data can
+    // rebase an existing curve, but cannot start a new scrolling transaction.
+    std::uint64_t scrollInputSequence()const noexcept{return scrollInputSequence_;}
+    bool waitingScrollOpposes(double delta)const noexcept{return delta*deferredScroll_<0||delta*pendingScrollDirection_<0;}
+    // Owner supplies the SAME sampled full-page position that it draws. An
+    // opposite input abandons an unavailable target before retargeting here.
+    void adoptScrollPresentation(double position,double time);
+    // A continuous anchor change is a coordinate rebase, not a new animation.
+    // Renderer retains its sampled trajectory and shifts it by pageOrigin.
+    std::uint64_t scrollContinuityEpoch()const noexcept{return scrollEpoch_;}
+    double scrollPageOrigin()const noexcept{return pageOrigin_;}
+    bool takeNeighborRequest()noexcept{const bool value=neighborRequest_;neighborRequest_=false;return value;}
+    double deferredScroll()const noexcept{return deferredScroll_;}
+    int pendingContinuousDirection()const noexcept{return pendingScrollDirection_;}
 private:
     struct Pan {core::Point point,pan;};
     bool active_{},vertical_{true},animatedScroll_{};
-    std::optional<ReaderPageAnchor>page_;ReaderImageView view_;
+    std::optional<ReaderPageAnchor>page_;std::optional<ReaderPreferences>preferences_;ReaderImageView view_;
     double offset_{},horizontalRemainder_{},lastWheelTurn_{};bool turnConsumed_{};
     std::optional<double>pendingOffset_,dragProgress_,detailAt_,releaseAt_;
     std::optional<ReaderImageView>pendingView_;std::optional<Pan>panStart_;
     std::optional<ReaderNavigationIntent>navigation_;int turnDirection_{},animatedTurn_{};
     std::uint64_t pageTurnSequence_{};
+    std::uint64_t scrollEpoch_{1};double pageOrigin_{},deferredScroll_{};
+    int pendingScrollDirection_{};bool neighborRequest_{},waitingNeighbor_{},deferredPrecision_{true};
+    std::uint64_t scrollInputSequence_{};
     void setView(ReaderImageView,double time,double offset=0);
-    void scheduleDetail(double time);void scrollZoomed(double dx,double dy,double time);
+    void scheduleDetail(double time);void scrollZoomed(double dx,double dy,double time,bool precision);
+    void resetContinuity();void cancelPendingScroll()noexcept;double readyPosition(double desired,double height,bool precision);
     double fraction(core::Point)const noexcept;
 };
 // Exact compact secondary-menu placement and six-row wheel accumulator. These

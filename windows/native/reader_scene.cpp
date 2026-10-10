@@ -62,19 +62,37 @@ struct NativeReaderScene::Impl {
     Artwork art;Renderer*renderer{};std::string prefix,quadID;std::array<std::string,5>textureIDs;std::array<DrawObject,6>pages;
     std::array<std::shared_ptr<const modules::ReaderPagePixels>,5>pixels,uploadedPixels;std::array<std::uint64_t,5>pixelRevisions{};
     std::array<R,3>previousPlacement{},scrollFrom{},scrollTo{};std::array<bool,3>hidden{};R oldRect{};
-    std::uint64_t turnSequence{};double turnStart{},scrollStart{},scrollDuration{};int direction{};bool havePlacement{},cleared{},meshResident{},departing{};double progress{};
+    std::uint64_t turnSequence{},scrollEpoch{},scrollInputSequence{};double pageOrigin{},turnStart{},scrollStart{},scrollDuration{};int direction{};bool havePlacement{},cleared{},meshResident{},departing{};double progress{};
     NativeReaderSceneStats stats;std::optional<modules::ReaderCanvasInput>cachedInput;
     Impl(LayerRasterizer&r,LayerRasterOptions o):art(r,std::move(o),"reader/content"){
         static std::uint64_t ids{};prefix="reader/page/"+std::to_string(++ids);quadID=prefix+"/quad";for(unsigned n=0;n<5;++n)textureIDs[n]=prefix+"/texture/"+std::to_string(n);for(std::size_t n=0;n<pages.size();++n){auto&d=pages[n];d.sourceID=prefix+"/draw/"+std::to_string(n);d.meshID=quadID;d.masks.resize(2);d.opacity=0;}}
-    void pagePose(const modules::ReaderViewport&v,double t,bool reduced){progress=v.displayedProgress();const auto placement=v.placements(matchingDetail);if(v.pageTurnSequence()!=turnSequence){turnSequence=v.pageTurnSequence();turnStart=t;direction=reduced?0:v.lastAnimatedTurnDirection();oldRect=previousPlacement[0];}const bool turn=direction&&t<turnStart+.26;
+    void pagePose(const modules::ReaderViewport&v,double t,bool reduced){progress=v.displayedProgress();const auto placement=v.placements(false);
+        // Reanchoring onto a cached neighbor changes the local page origin by
+        // exactly one zoomed page height. Keep the same sampled physical path
+        // across this rebase instead of snapping to the new residual offset.
+        if(havePlacement&&scrollEpoch==v.scrollContinuityEpoch()){
+            const auto shift=v.scrollPageOrigin()-pageOrigin;
+            if(shift!=0)for(std::size_t n=0;n<3;++n){previousPlacement[n].y+=shift;scrollFrom[n].y+=shift;scrollTo[n].y+=shift;}
+        }else if(havePlacement){scrollDuration=0;havePlacement=false;}
+        scrollEpoch=v.scrollContinuityEpoch();pageOrigin=v.scrollPageOrigin();
+        if(v.pageTurnSequence()!=turnSequence){turnSequence=v.pageTurnSequence();turnStart=t;direction=reduced?0:v.lastAnimatedTurnDirection();oldRect=previousPlacement[0];}const bool turn=direction&&t<turnStart+.26;
         bool moved{};for(std::size_t n=0;n<3;++n)moved|=placement[n].rect!=previousPlacement[n];
         // Core Animation retargets from the presentation position, not the
         // previous destination. Recycled page identities and precise pan/zoom
         // publish their new placement immediately rather than bouncing back.
         if(turn||reduced||v.nonPrecisionScrollDuration()==0)scrollDuration=0;
-        if(havePlacement&&moved&&!turn&&v.nonPrecisionScrollDuration()>0&&!reduced){for(std::size_t n=0;n<3;++n)scrollFrom[n]=sampledPlacement(n,t);for(std::size_t n=0;n<3;++n)scrollTo[n]=placement[n].rect;scrollStart=t;scrollDuration=.10;}else if(!moved&&t>=scrollStart+scrollDuration)scrollDuration=0;
+        if(havePlacement&&moved&&!turn&&v.nonPrecisionScrollDuration()>0&&!reduced){
+            // Only an actual new wheel/key transaction gets a fresh .10s.
+            // An anchor/cache update can retarget the remaining current curve,
+            // but never extends its end or starts motion after it has settled.
+            const double duration=v.scrollInputSequence()!=scrollInputSequence?v.nonPrecisionScrollDuration():std::max(0.,scrollStart+scrollDuration-t);
+            for(std::size_t n=0;n<3;++n)scrollFrom[n]=sampledPlacement(n,t);for(std::size_t n=0;n<3;++n)scrollTo[n]=placement[n].rect;scrollStart=t;scrollDuration=duration;
+        }else if(!moved&&t>=scrollStart+scrollDuration)scrollDuration=0;
+        scrollInputSequence=v.scrollInputSequence();
         const double eased=turn?core::CubicTiming{.42,0,.58,1}.value(std::clamp((t-turnStart)/.26,0.,1.)):1;const double incoming=turn?direction*376*(1-eased):0,outgoing=turn?-direction*376*eased:0;
-        for(std::size_t n=0;n<3;++n){R r=placement[n].rect;if(scrollDuration>0&&t<scrollStart+scrollDuration){const auto q=core::CubicTiming{0,0,.58,1}.value(std::clamp((t-scrollStart)/scrollDuration,0.,1.));r.x=scrollFrom[n].x+(scrollTo[n].x-scrollFrom[n].x)*q;r.y=scrollFrom[n].y+(scrollTo[n].y-scrollFrom[n].y)*q;}previousPlacement[n]=placement[n].rect;hidden[n]=placement[n].hidden;setPage(n,r,incoming,pixels[n]&&!hidden[n],incoming);}
+        for(std::size_t n=0;n<3;++n){R r=placement[n].rect;if(scrollDuration>0&&t<scrollStart+scrollDuration){const auto q=core::CubicTiming{0,0,.58,1}.value(std::clamp((t-scrollStart)/scrollDuration,0.,1.));r.x=scrollFrom[n].x+(scrollTo[n].x-scrollFrom[n].x)*q;r.y=scrollFrom[n].y+(scrollTo[n].y-scrollFrom[n].y)*q;}previousPlacement[n]=placement[n].rect;hidden[n]=placement[n].hidden;
+            if(n==0&&matchingDetail){auto crop=v.placements(true)[0].rect;crop.x+=r.x-placement[n].rect.x;crop.y+=r.y-placement[n].rect.y;r=crop;}
+            setPage(n,r,incoming,pixels[n]&&!hidden[n],incoming);}
         havePlacement=true;setPage(3,oldRect,outgoing,turn&&bool(pixels[3]),outgoing);
         // Two borrowed source viewport backgrounds participate in the push;
         // the original stationary background is hidden only during that pass.
@@ -97,12 +115,22 @@ bool NativeReaderScene::syncPages(std::span<const modules::ReaderPage>all,const 
     if(current){next[0]=current->pixels;for(const auto&p:all){if(current->next&&p.location==*current->next)next[1]=p.pixels;if(current->previous&&p.location==*current->previous)next[2]=p.pixels;}}
     next[4]=matching?detail->page.pixels:nullptr;
     if(v.pageTurnSequence()!=i.turnSequence)next[3]=i.matchingDetail&&i.pixels[4]?i.pixels[4]:i.pixels[0];else if(!i.direction||t>=i.turnStart+.26)next[3].reset();for(const auto&p:next)if(p)need(p->width&&p->height&&p->width<=900&&p->height<=1000&&p->bytes.size()==std::size_t(p->width)*p->height*4,"Invalid Reader pixels before artwork mutation");
-    const bool changed=next!=i.pixels;i.matchingDetail=matching;i.pixels=std::move(next);i.cleared=false;if(changed)++i.stats.contentUpdates;return changed;
+    const bool changed=next!=i.pixels;
+    // Rotate resident full-page identities along with the anchor. The entering
+    // neighbor is already on the GPU; crossing uploads only a newly refilled
+    // neighbor, never the two pages that are still moving in the viewport.
+    if(i.havePlacement&&i.scrollEpoch==v.scrollContinuityEpoch()&&v.scrollPageOrigin()!=i.pageOrigin&&next[0]){
+        const auto rotate=[&](auto&slots,bool forward){if(forward){std::swap(slots[0],slots[1]);std::swap(slots[1],slots[2]);}else{std::swap(slots[0],slots[2]);std::swap(slots[1],slots[2]);}};
+        const bool forward=v.scrollPageOrigin()>i.pageOrigin;
+        if(next[0]==i.pixels[forward?1:2]){rotate(i.textureIDs,forward);rotate(i.uploadedPixels,forward);rotate(i.pixelRevisions,forward);}
+    }
+    i.matchingDetail=matching;i.pixels=std::move(next);i.cleared=false;if(changed)++i.stats.contentUpdates;return changed;
 }
 bool NativeReaderScene::syncContent(const modules::ReaderCanvasInput&input,std::span<const modules::ReaderPage>all,const modules::ReaderPage*current,const std::optional<modules::ReaderDetail>&detail,const modules::ReaderViewport&v,double t){auto&i=*impl_;const bool pagesChanged=syncPages(all,current,detail,v,t);bool artworkChanged{};if(!i.cachedInput||*i.cachedInput!=input){auto accepted=input;artworkChanged=i.art.load(modules::prepareReaderCanvas(input));i.cachedInput=std::move(accepted);if(artworkChanged)++i.stats.contentUpdates;}return pagesChanged||artworkChanged;
 }
 bool NativeReaderScene::setFeedback(std::optional<P>p,bool pressed,bool reduced,double t){return impl_->art.feedback(p,pressed,reduced,t);}
 void NativeReaderScene::updatePose(const M&w,float opacity,const modules::ReaderViewport&v,double t,bool reduced,std::span<const PlaneMask>masks,std::optional<PlaneShutter>shutter){auto&i=*impl_;need(w.finite()&&std::isfinite(opacity)&&opacity>=0&&opacity<=1,"Invalid Reader root pose");i.art.rootPose(w,opacity,masks,std::move(shutter));if(!i.departing)i.pagePose(v,t,reduced);else i.art.pose(t,i.progress);++i.stats.poseUpdates;}
+bool NativeReaderScene::canAdvanceVertical(int direction,double t)const{const auto&i=*impl_;need(std::isfinite(t)&&(!i.art.lastTime||t>=*i.art.lastTime),"Reader seam requires a finite monotonic owner clock");if(!i.havePlacement)return false;const auto r=i.sampledPlacement(0,t);return direction>0?bool(i.pixels[1])&&r.y<-.000001:bool(i.pixels[2])&&r.y>=-.000001;}
 bool NativeReaderScene::requiresFrames(double t)const{const auto&i=*impl_;return i.art.frames(t)||(i.direction&&t<i.turnStart+.26)||(i.scrollDuration>0&&t<i.scrollStart+i.scrollDuration);}
 void NativeReaderScene::retainDepartingArtwork(bool value){auto&i=*impl_;i.departing=value;if(value){i.direction=0;i.scrollDuration=0;for(auto&t:i.art.tracks){t.from=t.target;t.duration=0;}for(std::size_t n=0;n<3;++n)i.setPage(n,i.previousPlacement[n],0,i.pixels[n]&&!i.hidden[n],0);for(std::size_t n=3;n<6;++n)i.pages[n].opacity=0;for(std::size_t n=0;n<6;++n)if(i.ordered[n])Impl::copyNumeric(i.insert[n],*i.ordered[n]);}}
 std::span<const modules::ReaderAction>NativeReaderScene::actions()const noexcept{return impl_->art.plan.actions;}
@@ -117,6 +145,8 @@ LayerCompositionEntry NativeReaderScene::entry(){return impl_->art.group->entry(
 void NativeReaderScene::clearArtwork(){auto&i=*impl_;i.pixels={};i.cleared=true;for(auto&d:i.pages)d.opacity=0;for(auto&d:i.insert)d.opacity=0;}
 bool NativeReaderScene::release(Renderer&r){auto&i=*impl_;if(!i.art.group->releaseResources(r))return false;for(unsigned n=0;n<5;++n)r.removeTexture(i.textureIDs[n]);r.removeMesh(i.quadID);i.renderer=nullptr;i.uploadedPixels={};i.meshResident=false;i.art.dirty=true;i.art.groupUploaded=false;return true;}
 NativeReaderSceneStats NativeReaderScene::stats()const noexcept{return impl_->stats;}
+double NativeReaderScene::scrollPresentation(double time)const{const auto&i=*impl_;need(std::isfinite(time)&&(!i.art.lastTime||time>=*i.art.lastTime),"Reader sampled scroll clock moved backwards");return -i.sampledPlacement(0,time).y;}
+NativeReaderScrollSnapshot NativeReaderScene::scrollSnapshot()const noexcept{const auto&i=*impl_;NativeReaderScrollSnapshot out;out.epoch=i.scrollEpoch;out.pageOrigin=i.pageOrigin;out.animationStart=i.scrollStart;out.animationDuration=i.scrollDuration;for(std::size_t n=0;n<3;++n){const auto&m=i.pages[n].world.values;out.displayed[n]={m[12]-12,m[13]-48,m[0],m[5]};out.ready[n]=bool(i.pixels[n]);}return out;}
 struct NativeReaderMenu::Impl {Artwork art;explicit Impl(LayerRasterizer&r,LayerRasterOptions o):art(r,std::move(o),"reader/menu") {}};
 NativeReaderMenu::NativeReaderMenu(LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(r,std::move(o))){}NativeReaderMenu::~NativeReaderMenu()=default;
 void NativeReaderMenu::syncContent(const modules::ReaderArtwork&a){impl_->art.load(a);}

@@ -5,6 +5,7 @@
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
 namespace endfield::tools {
+struct ReaderScrollSnapshot {native::NativeReaderScrollSnapshot scene;double time{},targetOffset{},zoom{},panY{},deferred{};int pendingDirection{};std::uint64_t stateRevision{};bool providerBusy{};};
 struct ReaderImportAction {
     enum class Kind {chooseLocal,useShelf};Kind kind{};std::string shelfID;std::uint64_t generation{};
 };
@@ -35,6 +36,7 @@ public:
         const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double)const;std::optional<double>nextWakeTime()const noexcept;
     bool deadline(double);bool covers(core::Point)const;
+    ReaderScrollSnapshot scrollSnapshot()const noexcept; // source geometry only; no IDs/text/paths or extra work
     bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);
     bool key(const app::KeyEvent&,double);bool key(const app::KeyEvent&,bool modified,double);
     // Local event routing only: source Reader menus/pans do not lock HUD tilt.
