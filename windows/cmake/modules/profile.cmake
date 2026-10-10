@@ -40,7 +40,7 @@ endif()
 
 # Native Win32 page: retained scene, projected editors and the module owner.
 if(WIN32 AND TARGET hud_profile)
-  add_library(hud_profile_native native/profile_scene.cpp native/profile_editor_field.cpp native/profile_image.cpp native/id_card_captions.cpp native/profile_pickers.cpp tools/profile_preview.cpp tools/profile_owner.cpp)
+  add_library(hud_profile_native native/profile_scene.cpp native/profile_editor_field.cpp native/profile_image.cpp native/id_card_captions.cpp native/id_card_presenter.cpp native/profile_pickers.cpp tools/profile_preview.cpp tools/profile_owner.cpp)
   target_include_directories(hud_profile_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_profile_native PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_profile_native PUBLIC hud_profile hud_native hud_overlay_host PRIVATE windowscodecs ole32 comdlg32)
@@ -72,5 +72,38 @@ if(WIN32 AND TARGET hud_profile)
     target_compile_definitions(id_card_captions_tests PRIVATE UNICODE _UNICODE NOMINMAX)
     target_link_libraries(id_card_captions_tests PRIVATE hud_profile_native ole32)
     add_test(NAME id_card_captions_contracts COMMAND id_card_captions_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/id_card-native-captions.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/profile)
+    add_executable(id_card_presenter_tests tests/id_card_presenter_tests.cpp)
+    target_compile_definitions(id_card_presenter_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(id_card_presenter_tests PRIVATE hud_profile_native ole32)
+    add_test(NAME id_card_presenter_contracts COMMAND id_card_presenter_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/id_card-native-captions.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/profile)
+    if(MSVC)
+      target_compile_options(id_card_presenter_tests PRIVATE /W4 /permissive- /EHsc)
+    endif()
+  endif()
+endif()
+
+# Module area (app/module_owner.hpp, "Adding a module area"): the Personal
+# Profile owner joins EndfieldHUD.exe and the hidden coverage through the
+# registered factory; the card artwork and pinned card source are packaged as
+# resources/profile. The host's bottom-left card presenter
+# (native/id_card_presenter.hpp) lives in hud_profile_native, linked into the
+# application owner so the host can bind the published ID card feed.
+if(WIN32 AND TARGET hud_profile_native AND TARGET hud_module_registry AND TARGET hud_hypergryph_account)
+  add_library(hud_profile_area STATIC app/areas/profile_module.cpp)
+  target_include_directories(hud_profile_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_profile_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_profile_area PUBLIC hud_module_registry hud_profile_native hud_utility PRIVATE hud_hypergryph_account windowscodecs ole32 user32)
+  if(MSVC)
+    target_compile_options(hud_profile_area PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "profile|hud_profile_area|app/areas/profile_module.hpp|endfield::areas::profileModule")
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREA_FIXTURES
+    "profile.idCardCaptions|${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/id_card-native-captions.json")
+  if(COMMAND ehud_app_resource)
+    ehud_app_resource(profile directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/profile" "profile")
+  endif()
+  if(TARGET hud_application)
+    target_link_libraries(hud_application PRIVATE hud_profile_native)
   endif()
 endif()

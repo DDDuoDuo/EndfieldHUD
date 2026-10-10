@@ -35,6 +35,18 @@ struct SourceSceneStats {
     // Payload buffers/field values; excludes allocator/container overhead.
     std::size_t batches{},draws{},meshes{},textures{},pipelines{},uniforms{},retainedCPUBytes{},inactiveUniforms{};
     std::uint64_t updates{},uniformEncodes{},changedUniforms{},changedMeshes{},visibilityChanges{};
+    // Runtime desktop texture content events (replaceTexture/restoreTexture)
+    // and the GPU texture uploads they caused in flush().
+    std::uint64_t textureReplacements{},textureRestores{},textureFlushes{};
+    std::size_t runtimeTextures{},runtimeTextureBytes{};
+};
+// Diagnostics for one installed texture (textureInfo()).
+struct SourceTextureInfo {
+    std::string pixelFormat;
+    unsigned width{},height{},levels{};
+    std::uint64_t revision{};   // GPU upload revision (1: the installed original)
+    bool replaced{};            // a runtime replacement is bound
+    bool pending{};             // changed since the last upload/flush
 };
 struct SourceSceneProvenance {
     std::string packetSHA256,frameSHA256,shaderManifestSHA256,frameName;
@@ -148,6 +160,22 @@ public:
     // pinned packet bytes are reloaded each call, making the transform idempotent.
     // Requires both desktop textures installed, before upload/live submission.
     SourceProfileHoverMaskReport maskDesktopProfileHoverOutline(const std::filesystem::path& explicitPacketRoot);
+    // Runtime content-event replacement of an installed desktop texture
+    // (desktop.profile.avatar/background/hover: HUDSourceWatchView.
+    // setDesktopProfile registerTexture). `straightRGBA` is tight straight
+    // RGBA8 sRGB in the source texturePixels layout (bottom-origin rows), the
+    // layout of the installed original, which must be single-level
+    // rgba8Unorm_srgb under the "desktop." namespace. Its sampler is kept; the
+    // size may differ (the packet silhouette avatar vs the 368 px photo crop),
+    // so the GPU texture is recreated by the next upload()/flush(). The same
+    // caller revision with the same size is a no-op (false). The pixels are
+    // copied once here; no per-frame work, file, hash or decode occurs. Live
+    // rendering, upload and compiled catalogs never see a partial change.
+    bool replaceTexture(std::string_view id,unsigned width,unsigned height,std::span<const std::uint8_t> straightRGBA,std::uint64_t revision);
+    // Rebinds the installed original (the packet silhouette / default card).
+    // False when no replacement is bound.
+    bool restoreTexture(std::string_view id);
+    std::optional<SourceTextureInfo> textureInfo(std::string_view id) const;
     // Complete typed submission. Input validation finishes before mutation.
     // Existing slots/resources are reused; adding a stable identity may create
     // retained mesh/UBO slots, but never compiles/creates a shader or texture.
@@ -160,7 +188,8 @@ public:
     // Build-only explicit export. Existing output is rejected; used raw mips,
     // programs, geometry and ordered field plans are preserved losslessly,
     // including explicitly installed catalogs and any explicit build-only
-    // artwork correction. Runtime snapshots are rejected.
+    // artwork correction. Runtime snapshots (including runtime texture
+    // replacements) are rejected.
     void writeCompiled(const std::filesystem::path& newAbsoluteOutput) const;
     // CPU-only retained update. A complete, stable batch span is required.
     // World/color/visibility and submitted GPU camera/time are authoritative.

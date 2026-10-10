@@ -28,6 +28,12 @@ public:
     // fixed offset, exactly the "Work Mode counted first" path above. Never
     // combine with a controller already restored from the same record.
     void profileLoaded(double storedSeconds,Persist);
+    // For a read-only borrower of a controller another owner may already have
+    // restored (the application's Work Mode owner): the offset is the stored
+    // lifetime minus the total that controller restored, so the shown and
+    // persisted lifetime counts every second once whether or not the host
+    // restored it (OverlayController restores the same record at launch).
+    void profileLoadedObserved(const WorkModeController&,double storedSeconds,Persist);
     // Source PersonalProfileCanvas workSeconds closure value.
     double totalSeconds(const WorkModeController&,double now)const;
     bool loaded()const noexcept{return loaded_;}
@@ -40,6 +46,6 @@ public:
     bool retry();
 private:
     Persist persist_;double offset_{};std::optional<double>early_,unsaved_;bool loaded_{},restored_{};
-    double absolute(double controllerTotal)const noexcept;void deliver(double total);void load(double,Persist,WorkModeController*);
+    double absolute(double controllerTotal)const noexcept;void deliver(double total);void load(double,Persist,WorkModeController*,double alreadyRestored);
 };
 }

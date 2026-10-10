@@ -164,6 +164,36 @@ void readOnlyController(){
     check(hours.retry(),"Nothing left to retry");
     rejects([&]{hours.profileLoaded(1,{});},"The offset is set once");
 }
+// The application's Work Mode owner shares only a const controller
+// (ApplicationHost::workMode()). The profile observes its checkpoints through
+// listenCheckpoints() and loads the lifetime against whatever that owner
+// restored at launch: a host that restored the same record (Mac launch path)
+// and a host that started at zero both count every second exactly once.
+void observedController(){
+    for(const bool hostRestored:{true,false}){
+        Owner o;seed(o.temporary,700);double now{};m::WorkModeProfileHours hours;
+        m::WorkModeController controller;const m::WorkModeController&shared=controller;
+        if(hostRestored)check(controller.restoreTrackedWorkSeconds(700)&&shared.restoredTrackedWorkSeconds()==700.,"The host restored the launch lifetime");
+        else check(!shared.restoredTrackedWorkSeconds(),"A host that starts at zero reports no restore");
+        const auto token=shared.listenCheckpoints([&](double total){hours.checkpoint(total);});
+        check(shared.checkpointListeners()==1,"The read-only borrower is registered");
+        controller.chooseStopwatch(now);controller.start(now);now=20;controller.pause(now);
+        check(hours.unsaved()==(hostRestored?720.:20.),"Checkpoints reach the observer before the profile loads");
+        o.open();auto&s=*o.state;
+        hours.profileLoadedObserved(shared,s.profile().accumulatedWorkSeconds,[&](double v){return s.setWorkSeconds(v);});
+        check(!hours.restored()&&hours.offset()==(hostRestored?0.:700.)&&hours.totalSeconds(shared,now)==720,"Stored lifetime counted once beside the host's restore");
+        check(o.service->flush()&&saved(o.temporary)["profile"]["accumulatedWorkSeconds"].number()==720,"Early session persisted once on load");
+        controller.resume(now);now=50;controller.setVisible(true,now);controller.setVisible(false,now);
+        check(o.service->flush()&&saved(o.temporary)["profile"]["accumulatedWorkSeconds"].number()==750,"Later observed checkpoints persist the absolute lifetime");
+        shared.unlistenCheckpoints(token);check(shared.checkpointListeners()==0,"Unregistering removes the borrower");
+        now=60;controller.shutdown(now);check(o.service->flush()&&saved(o.temporary)["profile"]["accumulatedWorkSeconds"].number()==750&&hours.totalSeconds(shared,now)==760,"An unregistered borrower hears nothing more");
+    }
+    // A record that grew after the host's launch read: the difference is new time.
+    Owner o;seed(o.temporary,1000);m::WorkModeProfileHours hours;m::WorkModeController controller;check(controller.restoreTrackedWorkSeconds(900),"Older launch read");
+    o.open();auto&s=*o.state;hours.profileLoadedObserved(controller,s.profile().accumulatedWorkSeconds,[&](double v){return s.setWorkSeconds(v);});
+    check(hours.offset()==100&&hours.totalSeconds(controller,0)==1000,"The larger stored lifetime is shown without double counting");
+    rejects([&]{hours.profileLoadedObserved(controller,1,{});},"The observed lifetime loads once");
+}
 void loadFailures(){
     {
         Owner o;write(o.temporary.root/"Profile"/"profile.json",R"({"version":2,"profile":{}})");const auto bytes=read(o.temporary.root/"Profile"/"profile.json");
@@ -179,7 +209,7 @@ void loadFailures(){
 }
 }
 int main(){
-    try{lifecycle();editsAndCoalescing();syncLocks();images();workHours();lateLoad();readOnlyController();loadFailures();
+    try{lifecycle();editsAndCoalescing();syncLocks();images();workHours();lateLoad();readOnlyController();observedController();loadFailures();
         std::cout<<"Profile service: "<<checks<<" checks passed\n";return 0;}
     catch(const std::exception&e){std::cerr<<"Profile service failed after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

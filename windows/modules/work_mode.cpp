@@ -56,8 +56,15 @@ std::string workModeDurationEditText(double seconds){finite(seconds);return form
 WorkModeController::WorkModeController(WorkModeHooks hooks):hooks_(std::move(hooks)){}
 WorkModeSnapshot WorkModeController::snapshot(double now)const{finite(now);const auto interval=started_?std::max(0.,now-*started_):0;const auto elapsed=std::max(0.,accumulated_+(std::isfinite(interval)?interval:0));return{kind_,phase_,duration_,kind_==WorkModeKind::countdown?std::min(duration_,elapsed):elapsed};}
 double WorkModeController::trackedWorkSeconds(double now)const{return total(trackedTotal_,std::max(0.,snapshot(now).elapsed-trackedSessionElapsed_));}
-bool WorkModeController::restoreTrackedWorkSeconds(double value){if(restored_||phase_!=WorkModePhase::idle||accumulated_!=0||trackedTotal_!=0||!std::isfinite(value)||value<0)return false;trackedTotal_=value;restored_=true;return true;}
-void WorkModeController::checkpoint(double now){const auto elapsed=snapshot(now).elapsed;trackedTotal_=total(trackedTotal_,std::max(0.,elapsed-trackedSessionElapsed_));trackedSessionElapsed_=elapsed;if(hooks_.trackedWorkSecondsChanged)hooks_.trackedWorkSecondsChanged(trackedTotal_);}
+bool WorkModeController::restoreTrackedWorkSeconds(double value){if(restored_||phase_!=WorkModePhase::idle||accumulated_!=0||trackedTotal_!=0||!std::isfinite(value)||value<0)return false;trackedTotal_=value;restoredValue_=value;restored_=true;return true;}
+void WorkModeController::checkpoint(double now){const auto elapsed=snapshot(now).elapsed;trackedTotal_=total(trackedTotal_,std::max(0.,elapsed-trackedSessionElapsed_));trackedSessionElapsed_=elapsed;if(hooks_.trackedWorkSecondsChanged)hooks_.trackedWorkSecondsChanged(trackedTotal_);
+    const auto value=trackedTotal_;for(std::size_t i=0,count=listeners_.size();i<count&&i<listeners_.size();++i)if(listeners_[i].second)listeners_[i].second(value);}
+std::uint64_t WorkModeController::listenCheckpoints(CheckpointListener listener)const{
+    if(!listener)throw std::invalid_argument("Work Mode checkpoint listener is required");
+    if(nextListener_==std::numeric_limits<std::uint64_t>::max())throw std::overflow_error("Work Mode checkpoint listener tokens exhausted");
+    listeners_.emplace_back(++nextListener_,std::move(listener));return nextListener_;
+}
+void WorkModeController::unlistenCheckpoints(std::uint64_t token)const noexcept{std::erase_if(listeners_,[token](const auto&entry){return entry.first==token;});}
 void WorkModeController::publish(double now,bool force){const auto second=snapshot(now).displayedSeconds();if(!force&&publishedSecond_==second)return;publishedSecond_=second;++notificationRevision_;if(hooks_.changed)hooks_.changed();}
 void WorkModeController::reconcile(double now){if(phase_!=WorkModePhase::running||suspended_){display_.reset();completion_.reset();return;}if(visible_){if(!display_)display_=now+1;}else display_.reset();if(kind_==WorkModeKind::countdown){if(!completion_)completion_=now+std::max(.001,snapshot(now).remaining());}else completion_.reset();}
 void WorkModeController::changed(double now){++revision_;display_.reset();completion_.reset();reconcile(now);publish(now,true);}

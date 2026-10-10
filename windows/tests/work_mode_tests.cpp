@@ -32,6 +32,22 @@ void oracle(const Json&reference){
     for(const auto&row:reference["edit"].array())check(m::workModeDurationEditText(row["value"].number())==row["text"].string(),"Source canonical duration editor value");
 }
 void guards(){m::WorkModeController c;check(c.restoreTrackedWorkSeconds(123)&&!c.restoreTrackedWorkSeconds(123),"Lifetime work restores only once");c.chooseCountdown(1,0);c.start(0);c.wake(.2);check(c.snapshot(.2).phase==m::WorkModePhase::running&&c.nextDeadline()==1,"Early aggregate wake cannot complete timer early");c.wake(1.1);check(c.snapshot(1.1).phase==m::WorkModePhase::completed&&c.trackedWorkSeconds(1.1)==124&&!c.nextDeadline(),"Countdown completion accounts exactly configured duration");c.chooseStopwatch(2);c.start(2);check(!c.nextDeadline(),"Hidden stopwatch has no periodic work");allocations=0;counting=true;for(unsigned n=0;n<1000;++n){(void)c.snapshot(2+n*.1);(void)c.trackedWorkSeconds(2+n*.1);(void)c.nextDeadline();c.wake(2+n*.1);}counting=false;check(allocations==0,"Steady hidden stopwatch evaluation allocates nothing");const auto before=c.snapshot(102);for(const auto value:{0.,-1.,86401.,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()})check(!c.chooseCountdown(value,102)&&c.snapshot(102)==before,"Invalid duration preserves running session");rejects([&]{c.refresh(std::numeric_limits<double>::quiet_NaN());});rejects([&]{c.snapshot(std::numeric_limits<double>::infinity());});
+    // Read-only borrowers observe absolute checkpoints after the owner's hook.
+    {std::vector<std::string>order;m::WorkModeController owner({{},[&](double total){order.push_back("hook:"+std::to_string(int(total)));}});const m::WorkModeController&shared=owner;
+     check(!shared.restoredTrackedWorkSeconds()&&owner.restoreTrackedWorkSeconds(50)&&shared.restoredTrackedWorkSeconds()==50.,"Restored lifetime is observable");
+     const auto first=shared.listenCheckpoints([&](double total){order.push_back("a:"+std::to_string(int(total)));});
+     const auto second=shared.listenCheckpoints([&](double total){order.push_back("b:"+std::to_string(int(total)));});
+     rejects([&]{(void)shared.listenCheckpoints({});});
+     owner.chooseStopwatch(0);owner.start(0);owner.pause(10);
+     check((order==std::vector<std::string>{"hook:50","a:50","b:50","hook:50","a:50","b:50","hook:60","a:60","b:60"}),"Listeners follow the hook with the same absolute totals");
+     shared.unlistenCheckpoints(first);order.clear();owner.resume(10);
+     allocations=0;counting=true;owner.pause(15);counting=false;
+     check(order.size()==2&&order[1]=="b:65"&&shared.checkpointListeners()==1,"An unregistered listener hears nothing");
+     shared.unlistenCheckpoints(second);shared.unlistenCheckpoints(second);order.clear();owner.reset(15);
+     check(order.size()==1&&shared.checkpointListeners()==0,"Removing every listener leaves only the owner's hook");}
+    {m::WorkModeController quiet;double sum{};const m::WorkModeController&view=quiet;(void)view.listenCheckpoints([&](double total){sum+=total;});
+     allocations=0;counting=true;quiet.chooseStopwatch(0);quiet.start(0);quiet.pause(5);counting=false;
+     check(allocations==0&&sum==5,"Delivering checkpoints to a registered listener allocates nothing");}
     m::WorkModeController large;check(large.restoreTrackedWorkSeconds(std::numeric_limits<double>::max()),"Finite original lifetime boundary restores");large.chooseStopwatch(0);large.start(0);large.stop(100);check(large.trackedWorkSeconds(100)==std::numeric_limits<double>::max(),"Absolute lifetime overflow saturates without a duplicate delta");
 }
 }

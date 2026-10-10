@@ -38,6 +38,7 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     std::uint64_t seenRevision{},seenGeometry{};
     // Deferred picker requests (posted, then run outside page input).
     std::optional<m::ProfileImageKind>pendingImage;std::optional<std::array<double,3>>pendingColor;bool picking{};WPARAM pickerGeneration{1};
+    std::uint64_t imageRequests{},imageRequest{}; // asynchronous chooser (requestImage): the outstanding request
     // Card textures, generated on the utility worker; one job at a time.
     struct CardWorker {std::shared_ptr<const gpu::ProfileDecodedImage>source;m::ProfileImage working;};
     std::shared_ptr<CardWorker>cardWorker=std::make_shared<CardWorker>();
@@ -87,9 +88,10 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
             [weak]{const auto i=weak.lock();return i&&i->locked;},
             [weak]{const auto i=weak.lock();return i?i->hours.totalSeconds(i->work,i->time):0.;}),appearance.language);
         state->setSyncLocked(locked);state->setHudAccent(appearance.accentSRGB);
-        // The Work Mode owner was constructed without a restored total: the
-        // stored lifetime is the offset, and early checkpoints land once.
-        hours.profileLoaded(p.accumulatedWorkSeconds,[weak](double seconds){const auto i=weak.lock();return i&&i->state&&i->state->setWorkSeconds(seconds);});
+        // The read-only Work Mode controller may already hold the launch
+        // lifetime: the stored record minus that restore is the offset, and
+        // early checkpoints land once.
+        hours.profileLoadedObserved(work,p.accumulatedWorkSeconds,[weak](double seconds){const auto i=weak.lock();return i&&i->state&&i->state->setWorkSeconds(seconds);});
         card.emplace(cardSource,gpu::nativeIdCardMeasure(raster,options.raster));
         createPage();
         if(auto apply=std::exchange(pendingGame,std::nullopt)){try{applyGame(*apply);}catch(const std::exception&){/* the next account refresh retries */}}
@@ -203,8 +205,24 @@ struct ProfileOwner::Impl:std::enable_shared_from_this<Impl> {
     // ---- Pickers ---------------------------------------------------------
     void request(std::optional<m::ProfileImageKind>kind,std::optional<std::array<double,3>>rgb){
         if(picking||loadError)return;
+        if(kind&&options.requestImage){requestAsync(*kind);return;}
         pendingImage=kind;pendingColor=rgb;++pickerGeneration;
         if(PostMessageW(hwnd,options.pickerMessage,pickerGeneration,0)==FALSE){pendingImage.reset();pendingColor.reset();}
+    }
+    // HUDPersonalProfileInteraction.chooseImage through the host's queued dialog.
+    void requestAsync(m::ProfileImageKind kind){
+        if(!page||!state||!overlay||!page->active())return;
+        const std::weak_ptr<Impl>weak=shared_from_this();const auto generation=++imageRequests;
+        const auto done=std::make_shared<bool>(false);picking=true;imageRequest=generation;
+        const bool queued=options.requestImage(kind,[weak,kind,generation,done](std::optional<std::filesystem::path>path){
+            if(std::exchange(*done,true))return;
+            const auto i=weak.lock();if(!i||!i->alive||i->imageRequest!=generation)return;
+            i->imageRequest=0;i->picking=false;if(!i->state)return;
+            // The source completion ignores a chooser that outlived the page.
+            if(path&&i->overlay&&i->page&&i->page->active()&&!i->loadError){i->state->beginImageImport();(void)i->imageService->import(*path,kind);}
+            i->external();
+        });
+        if(!queued&&!*done){*done=true;if(imageRequest==generation){imageRequest=0;picking=false;}}
     }
     void runPicker(){
         auto kind=std::exchange(pendingImage,std::nullopt);auto rgb=std::exchange(pendingColor,std::nullopt);

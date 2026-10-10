@@ -279,9 +279,63 @@ void profileHoverOutline(){
     gpu::SourceScene wrongFormat(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");(void)wrongFormat.includeDesktopResources(fixture.root);
     rejects([&]{wrongFormat.maskDesktopProfileHoverOutline(fixture.root);},"Unknown color storage rejects instead of guessing premultiplied or straight alpha");
 }
+// Runtime replacement of the bottom-left card textures (HUDSourceWatchView.
+// setDesktopProfile registerTexture): content events only, the installed
+// sampler/format kept, the size free to change, the original restorable.
+void runtimeProfileTextures(){
+    Fixture fixture;
+    auto manifest=Json::parse(read(fixture.root/"shell-packet.json"));auto textures=manifest["textures"].array();
+    const auto add=[&](const char*id,unsigned width,unsigned height,char fill){
+        auto texture=textures.front();texture["id"]=id;texture["width"]=int(width);texture["height"]=int(height);texture["pixelFormat"]="rgba8Unorm_srgb";texture["sRGB"]=true;
+        auto mip=fixture.blob(std::string("texture/")+id+".bin",std::string(std::size_t(width)*height*4,fill));mip["level"]=0;mip["width"]=int(width);mip["height"]=int(height);mip["rowBytes"]=int(width*4);
+        texture["mips"]=Json::Array{mip};texture["sampler"]["minFilter"]=1;texture["sampler"]["magFilter"]=1;textures.push_back(std::move(texture));
+    };
+    add("desktop.profile.avatar",4,4,char(16));add("desktop.profile.background",8,2,char(32));add("desktop.profile.hover",8,2,char(48));manifest["textures"]=textures;
+    Json builder=Json::Object{};builder["desktopTextureDependencies"]=Json::Array{"__white","desktop.profile.avatar","desktop.profile.background","desktop.profile.hover"};
+    Json animation=Json::Object{};animation["library"]=Json::Object{{"clips",Json::Array{}}};
+    builder["sprites"]=Json::Object{};builder["sourceSprites"]=Json::Object{};
+    builder["desktopSettings"]=Json::Object{{"images",Json::Object{}},{"sprites",Json::Object{}}};
+    animation["frameBuilder"]=std::move(builder);
+    animation["mountedDocument"]=Json::Object{{"spriteByComponent",Json::Object{}},{"components",Json::Object{}}};
+    manifest["animation"]=fixture.blob("animation.json",animation.encode());write(fixture.root/"shell-packet.json",manifest.encode());
+    gpu::SourceScene scene(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");(void)scene.includeDesktopResources(fixture.root);
+    const auto cache=fixture.root/"profile-runtime.ehscene";scene.writeCompiled(cache);const auto saved=read(cache);
+    gpu::SourceScene live(gpu::CompiledSourceScene{cache,{}});
+    const auto original=live.textureInfo("desktop.profile.avatar");
+    check(original&&original->width==4&&original->height==4&&original->levels==1&&original->revision==1&&!original->replaced&&!original->pending&&original->pixelFormat=="rgba8Unorm_srgb","Installed card avatar is the single-level packet original");
+    check(!live.textureInfo("desktop.profile.absent"),"Unknown textures have no runtime identity");
+    const std::string photo(6*6*4,char(200));const auto view=bytes(photo);
+    rejects([&]{live.replaceTexture("__white",1,1,bytes(std::string(4,'x')),1);},"Material/default textures are not runtime replaceable");
+    rejects([&]{live.replaceTexture("desktop.profile.absent",6,6,view,1);},"Only installed desktop textures can be replaced");
+    rejects([&]{live.replaceTexture("desktop.profile.avatar",6,5,view,1);},"Pixel bytes must be tight RGBA8 for the stated size");
+    rejects([&]{live.replaceTexture("desktop.profile.avatar",0,0,{},1);},"Empty textures are rejected");
+    rejects([&]{live.replaceTexture("desktop.profile.avatar",6,6,view,0);},"Revision zero is reserved");
+    check(live.stats().textureReplacements==0&&!live.textureInfo("desktop.profile.avatar")->replaced,"Rejected replacements change nothing");
+    const auto uniforms=snapshot(live);
+    check(live.replaceTexture("desktop.profile.avatar",6,6,view,7),"A photo crop replaces the silhouette avatar");
+    auto info=live.textureInfo("desktop.profile.avatar");
+    check(info->width==6&&info->height==6&&info->levels==1&&info->replaced&&info->pending&&info->revision==2&&info->pixelFormat=="rgba8Unorm_srgb","The replacement may change size; storage and sampler stay");
+    check(!live.replaceTexture("desktop.profile.avatar",6,6,view,7)&&live.stats().textureReplacements==1,"The same revision is not uploaded twice");
+    check(snapshot(live)==uniforms&&live.stats().updates==0,"Texture content events touch no uniforms or animation state");
+    const std::string tinted(8*2*4,char(90));
+    check(live.replaceTexture("desktop.profile.background",8,2,bytes(tinted),3)&&live.replaceTexture("desktop.profile.hover",8,2,bytes(tinted),3),"Themed background and hover replace in place");
+    check(live.replaceTexture("desktop.profile.avatar",6,6,view,8)&&live.textureInfo("desktop.profile.avatar")->revision==3,"A new caller revision uploads again");
+    const auto stats=live.stats();
+    check(stats.runtimeTextures==3&&stats.runtimeTextureBytes==photo.size()+2*tinted.size()&&stats.textureReplacements==4,"Runtime textures are bounded to the bound replacements");
+    rejects([&]{const auto out=fixture.root/"runtime-snapshot.ehscene";live.writeCompiled(out);},"A runtime texture snapshot is never compiled");
+    rejects([&]{live.maskDesktopProfileHoverOutline(fixture.root);},"The build-only hover correction cannot run over runtime textures");
+    check(live.restoreTexture("desktop.profile.avatar"),"Restore rebinds the packet silhouette");
+    info=live.textureInfo("desktop.profile.avatar");
+    check(info->width==4&&info->height==4&&!info->replaced&&info->pending&&info->revision==4,"The original returns with a fresh upload revision");
+    check(!live.restoreTexture("desktop.profile.avatar")&&live.stats().textureRestores==1&&live.stats().runtimeTextures==2,"Restoring twice is a no-op");
+    check(read(cache)==saved,"The compiled catalog on disk is untouched by runtime textures");
+    gpu::SourceScene reloaded(gpu::CompiledSourceScene{cache,{}});
+    check(reloaded.textureInfo("desktop.profile.avatar")->revision==1&&!reloaded.textureInfo("desktop.profile.background")->replaced,"A new scene starts from the packet originals");
+}
 void run(){
     desktopClosure();
     profileHoverOutline();
+    runtimeProfileTextures();
     Fixture fixture;gpu::SourceScene scene(fixture.root,fixture.shaders/"compiled-shaders.json","fixture");
     check(scene.stats().batches==2&&scene.stats().draws==2&&scene.stats().uniforms==3,"Identical world buffers are isolated per batch; compatible camera buffer shared");
     const auto cache=fixture.root/"compiled-source.ehscene";scene.writeCompiled(cache);const auto file=read(cache);

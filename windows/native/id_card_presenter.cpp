@@ -1,0 +1,76 @@
+#include "native/id_card_presenter.hpp"
+#ifdef _WIN32
+#include "native/source_scene.hpp"
+#include <stdexcept>
+#include <utility>
+
+namespace endfield::native {
+namespace {
+void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
+}
+void IdCardFeed::publish(const modules::IdCardBinding*card,const std::array<std::optional<IdCardTextureView>,3>&textures){
+    for(const auto&t:textures)if(t)need(t->width>0&&t->height>0&&t->revision>0&&t->rgba.size()==std::size_t(t->width)*t->height*4,"ID card textures are tight straight RGBA8 with a revision");
+    card_=card;
+    if(card)textures_=textures;else textures_.fill(std::nullopt);
+    ++revision_;if(listener_)listener_();
+}
+void IdCardFeed::withdraw(){card_=nullptr;textures_.fill(std::nullopt);++revision_;if(listener_)listener_();}
+
+IdCardTextureTarget idCardTextureTarget(SourceScene&materials){
+    return {[&materials](std::string_view id,unsigned w,unsigned h,std::span<const std::uint8_t>rgba,std::uint64_t revision){return materials.replaceTexture(id,w,h,rgba,revision);},
+            [&materials](std::string_view id){return materials.restoreTexture(id);}};
+}
+IdCardPresenter::IdCardPresenter(LayerScene&labels,IdCardCaptionLeaves leaves,LayerRasterOptions options,IdCardTextureTarget target,core::source::SourceDesktopFrameSettings baseline)
+    :captions_(labels,std::move(leaves),std::move(options)),target_(std::move(target)),baseline_(std::move(baseline)),applied_(baseline_){
+    need(static_cast<bool>(target_.replace)&&static_cast<bool>(target_.restore),"ID card textures need a replace/restore target");
+    // HUDSourceDesktopNavigationLayout.profileHighlightNodeID: the hover plate
+    // the source binds to desktop.profile.hover (desktopImages[highlightID]).
+    for(const auto&[node,image]:baseline_.images)
+        if(image.texture==idCardTextureIDs[static_cast<std::size_t>(IdCardTextureSlot::hover)]){need(!highlight_,"One profile hover plate");highlight_=node;}
+}
+IdCardPresenter::~IdCardPresenter(){disconnect();}
+void IdCardPresenter::connect(IdCardFeed&feed,std::function<void()>changed){
+    disconnect();feed_=&feed;dirty_=true;
+    feed.setListener([this,changed=std::move(changed)]{dirty_=true;if(changed)changed();});
+}
+void IdCardPresenter::disconnect()noexcept{if(feed_){feed_->setListener({});feed_=nullptr;}}
+bool IdCardPresenter::pending()const noexcept{return feed_&&(dirty_||feed_->revision()!=seen_);}
+std::optional<core::source::SourceDesktopFrameSettings>IdCardPresenter::apply(){
+    ++stats_.applies;
+    if(!pending()){++stats_.unchanged;return std::nullopt;}
+    dirty_=false;seen_=feed_->revision();
+    const auto*card=feed_->card();
+    // Captions follow the binding revision; a missing card keeps the packet captions.
+    if(card&&card->revision()&&card->revision()!=cardRevision_){cardRevision_=card->revision();if(captions_.update(*card))++stats_.captionRepaints;}
+    for(std::size_t k=0;k<3;++k){
+        const auto*view=card?feed_->texture(static_cast<IdCardTextureSlot>(k)):nullptr;
+        if(view){
+            if(replaced_[k]&&textureRevision_[k]==view->revision)continue;
+            if(target_.replace(idCardTextureIDs[k],view->width,view->height,view->rgba,view->revision))++stats_.textureReplacements;
+            replaced_[k]=true;textureRevision_[k]=view->revision;
+        }else if(replaced_[k]){
+            if(target_.restore(idCardTextureIDs[k]))++stats_.textureRestores;
+            replaced_[k]=false;textureRevision_[k]=0;
+        }
+    }
+    // HUDSourceWatchView.setDesktopProfile frame settings: the baseline plus
+    // the card's glow/fill/tint/sprite, with each bound image sized like the
+    // texture it now samples (frameBuilder.desktopImages[id].size).
+    auto next=baseline_;
+    if(card&&card->revision()){
+        card->apply(next,highlight_);
+        const auto bind=[&](const std::string&node,IdCardTextureSlot slot){
+            const auto k=static_cast<std::size_t>(slot);if(!replaced_[k]||node.empty())return;
+            const auto*view=feed_->texture(slot);if(!view)return;
+            auto&image=next.images[node];image.texture=std::string(idCardTextureIDs[k]);
+            image.size={static_cast<float>(view->width),static_cast<float>(view->height)};
+        };
+        bind(card->source().playerHead,IdCardTextureSlot::avatar);
+        bind(card->source().background,IdCardTextureSlot::background);
+        if(highlight_)bind(*highlight_,IdCardTextureSlot::hover);
+    }
+    if(next==applied_)return std::nullopt;
+    applied_=std::move(next);++stats_.settingsChanges;return applied_;
+}
+}
+#endif

@@ -18,10 +18,14 @@ void WorkModeProfileHours::checkpoint(double controllerTotal){
     deliver(absolute(controllerTotal));
 }
 void WorkModeProfileHours::profileLoaded(WorkModeController&controller,double stored,Persist persist){
-    load(stored,std::move(persist),&controller);
+    load(stored,std::move(persist),&controller,0);
 }
-void WorkModeProfileHours::profileLoaded(double stored,Persist persist){load(stored,std::move(persist),nullptr);}
-void WorkModeProfileHours::load(double stored,Persist persist,WorkModeController*controller){
+void WorkModeProfileHours::profileLoaded(double stored,Persist persist){load(stored,std::move(persist),nullptr,0);}
+void WorkModeProfileHours::profileLoadedObserved(const WorkModeController&controller,double stored,Persist persist){
+    // The controller's absolute totals already contain what it restored.
+    load(stored,std::move(persist),nullptr,controller.restoredTrackedWorkSeconds().value_or(0));
+}
+void WorkModeProfileHours::load(double stored,Persist persist,WorkModeController*controller,double alreadyRestored){
     if(loaded_)throw std::logic_error("The personal profile lifetime is restored once");
     if(!std::isfinite(stored)||stored<0)throw std::invalid_argument("Stored Work Mode lifetime must be finite and nonnegative");
     loaded_=true;persist_=std::move(persist);
@@ -29,7 +33,7 @@ void WorkModeProfileHours::load(double stored,Persist persist,WorkModeController
     // A successful restore proves no time was tracked before loading (the
     // controller requires an idle zero total), so early zero checkpoints add
     // nothing. Otherwise the earlier sessions are new time above the record.
-    if(!restored_)offset_=stored;
+    if(!restored_)offset_=stored-alreadyRestored;
     const auto early=early_;early_.reset();unsaved_.reset();
     if(early&&!restored_)deliver(absolute(*early));
 }

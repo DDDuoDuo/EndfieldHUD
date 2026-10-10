@@ -38,6 +38,15 @@ struct ProfileOwnerOptions {
     std::function<std::optional<std::filesystem::path>(modules::ProfileImageKind)>chooseImage;
     std::function<std::optional<std::array<double,3>>(std::array<double,3>initial,
         const std::function<void(std::array<double,3>)>&live)>chooseColor;
+    // Asynchronous image chooser (the application's shared file dialog,
+    // ApplicationHost::chooseFiles); takes precedence over chooseImage. Called
+    // on the owner thread straight from the page request (the host queues the
+    // dialog itself); false when it cannot open now. The completion runs
+    // later on the owner thread exactly once with the chosen file (nullopt:
+    // cancelled, failed, or closed by cancelPicker()). A result that arrives
+    // after the page closed is ignored, as on the Mac.
+    using ImageCompletion=std::function<void(std::optional<std::filesystem::path>)>;
+    std::function<bool(modules::ProfileImageKind,ImageCompletion)>requestImage;
     // HUDPersonalProfileInteraction.deactivate: close the open picker (it then
     // returns as cancelled), e.g. native::ProfilePickerSession::cancel.
     std::function<void()>cancelPicker;
@@ -64,9 +73,11 @@ struct ProfileOwnerOptions {
 // so the host adapter only forwards. Borrows HWND, executor, rasterizer, image
 // source (also the page's memoryImages), the read-only Work Mode controller
 // and the TSF manager/client; creates no window, timer, thread or picker UI.
-// Construct the Work Mode owner with a zero restored total and route its
-// absolute checkpoints to workModeCheckpoint(); this owner adds the stored
-// lifetime (never a second ProfileStore writer). Owner thread only.
+// Route the Work Mode controller's absolute checkpoints to
+// workModeCheckpoint() (WorkModeController::listenCheckpoints on the shared
+// read-only controller). The stored lifetime is loaded against whatever that
+// controller restored at launch, so every second counts once; this owner is
+// the single profile.json writer (never a second ProfileStore). Owner thread only.
 class ProfileOwner final {
 public:
     ProfileOwner(HWND,app::UtilityExecutor&,native::LayerRasterizer&,native::LayerImageSource&,

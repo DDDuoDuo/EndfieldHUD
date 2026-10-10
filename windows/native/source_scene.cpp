@@ -519,8 +519,23 @@ void visibleDraws(PreparedReplay& s) {
 #include "source_scene_live.inc"
 } // namespace
 namespace endfield::native {
+// A runtime desktop texture (SourceScene::replaceTexture). The description's
+// single mip borrows `pixels`, which never moves after insertion.
+struct RuntimeTexture { gpu::SourceTexture description; std::string pixels; std::uint64_t callerRevision{}; };
 struct SourceScene::Impl {
     PreparedReplay scene;
+    std::map<std::string,RuntimeTexture,std::less<>> runtimeTextures;
+    std::map<std::string,std::uint64_t,std::less<>> textureRevisions; // only ids that ever changed (originals upload as 1)
+    std::vector<std::string> dirtyTextures;                             // reserved on first use; flush() clears without freeing
+    std::uint64_t textureReplacements{},textureRestores{},textureFlushes{};
+    std::uint64_t uploadRevision(std::string_view id)const{const auto found=textureRevisions.find(id);return found==textureRevisions.end()?1:found->second;}
+    const gpu::SourceTexture& current(const std::string& id,const PreparedTexture& original)const{
+        const auto found=runtimeTextures.find(id);return found==runtimeTextures.end()?original.description:found->second.description;}
+    void changed(std::string_view id){
+        auto& revision=textureRevisions[std::string(id)];revision=std::max<std::uint64_t>(revision,1)+1;
+        if(std::find(dirtyTextures.begin(),dirtyTextures.end(),id)==dirtyTextures.end()){
+            if(dirtyTextures.capacity()==0)dirtyTextures.reserve(8);dirtyTextures.emplace_back(id);}
+    }
     std::vector<std::string> keys;
     SourceSceneProvenance provenance;
     std::vector<SourceSceneProvenance> catalogProvenance;
@@ -669,7 +684,7 @@ std::vector<std::string> SourceScene::includeDesktopResources(const fs::path& pa
 }
 SourceProfileHoverMaskReport SourceScene::maskDesktopProfileHoverOutline(const fs::path& packetRoot) {
     auto& impl=*impl_;auto& scene=impl.scene;
-    require(!impl.uploadedTarget&&!impl.assembled&&scene.counters.updates==0,"Mask profile artwork only before first upload/submission");
+    require(!impl.uploadedTarget&&!impl.assembled&&scene.counters.updates==0&&impl.textureRevisions.empty(),"Mask profile artwork only before first upload/submission");
     const auto root=absoluteRoot(packetRoot);packet::Package source(root);
     require(source.manifestSHA256()==impl.provenance.packetSHA256,"Profile artwork must match the scene's source packet provenance");
     constexpr const char* hoverID="desktop.profile.hover";
@@ -698,6 +713,42 @@ SourceProfileHoverMaskReport SourceScene::maskDesktopProfileHoverOutline(const f
     // All validation/allocation above is staged; committing one owned texture
     // cannot affect any source geometry or partially alter the installed image.
     scene.textures.at(hoverID)=std::move(hover);return report;
+}
+bool SourceScene::replaceTexture(std::string_view id,unsigned width,unsigned height,std::span<const std::uint8_t> pixels,std::uint64_t revision) {
+    auto& impl=*impl_;
+    const auto installed=impl.scene.textures.find(id);
+    require(installed!=impl.scene.textures.end(),"Runtime texture replacement needs an installed source texture");
+    require(id.starts_with("desktop."),"Only desktop replacement textures change at runtime");
+    const auto& original=installed->second.description;
+    require(original.pixelFormat=="rgba8Unorm_srgb"&&original.mips.size()==1,"Runtime replacement keeps single-level straight RGBA8-sRGB storage");
+    require(width>0&&height>0&&width<=16384&&height<=16384&&pixels.size()==std::size_t(width)*height*4,"Runtime texture pixels are tight straight RGBA8");
+    require(revision!=0,"Runtime texture revisions start at 1");
+    if(const auto existing=impl.runtimeTextures.find(id);existing!=impl.runtimeTextures.end()){
+        const auto& mip=existing->second.description.mips.front();
+        if(existing->second.callerRevision==revision&&mip.width==width&&mip.height==height)return false;
+    }
+    // Stage the complete replacement before touching the bound texture.
+    RuntimeTexture next;next.description=original;next.callerRevision=revision;
+    next.pixels.assign(reinterpret_cast<const char*>(pixels.data()),pixels.size());
+    auto& slot=impl.runtimeTextures[std::string(id)];slot=std::move(next);
+    slot.description.mips.assign(1,gpu::SourceMip{width,height,width*4,bytes(slot.pixels)});
+    impl.changed(id);++impl.textureReplacements;return true;
+}
+bool SourceScene::restoreTexture(std::string_view id) {
+    auto& impl=*impl_;const auto found=impl.runtimeTextures.find(id);
+    if(found==impl.runtimeTextures.end())return false;
+    impl.runtimeTextures.erase(found);impl.changed(id);++impl.textureRestores;return true;
+}
+std::optional<SourceTextureInfo> SourceScene::textureInfo(std::string_view id) const {
+    const auto& impl=*impl_;const auto installed=impl.scene.textures.find(id);
+    if(installed==impl.scene.textures.end())return std::nullopt;
+    const auto runtime=impl.runtimeTextures.find(id);const bool replaced=runtime!=impl.runtimeTextures.end();
+    const auto& d=replaced?runtime->second.description:installed->second.description;
+    SourceTextureInfo info;info.pixelFormat=d.pixelFormat;info.levels=static_cast<unsigned>(d.mips.size());
+    if(!d.mips.empty()){info.width=d.mips.front().width;info.height=d.mips.front().height;}
+    info.revision=impl.uploadRevision(id);info.replaced=replaced;
+    info.pending=std::find(impl.dirtyTextures.begin(),impl.dirtyTextures.end(),id)!=impl.dirtyTextures.end();
+    return info;
 }
 bool SourceScene::assembleFrame(std::span<const SourceAssembledBatch> entries,const SourceFrameParameters& params) {
     auto& impl=*impl_;auto& s=impl.scene;validate(params);require(entries.size()<=4096,"Too many live source batches");
@@ -815,7 +866,7 @@ bool SourceScene::updateGeometry(std::string_view id,const SourceImageGeometryVi
     return updateGeometry(id,SourceGeometryView{80,data,input.indices,{}},range);
 }
 void SourceScene::writeCompiled(const fs::path& output)const {
-    require(impl_->scene.counters.updates==0&&!impl_->assembled,"Compile only unmodified source scenes/catalogs; runtime snapshots are rejected");
+    require(impl_->scene.counters.updates==0&&!impl_->assembled&&impl_->textureRevisions.empty(),"Compile only unmodified source scenes/catalogs; runtime snapshots are rejected");
     absoluteOrdinary(output);require(!ehud::data::detail::readFile(output,maximumCompiledBytes),"Compiled output already exists");
     auto file=saveCompiled(impl_->scene,impl_->provenance,impl_->prototypes,impl_->catalogProvenance);(void)loadCompiled(file);
     ehud::data::detail::replaceFile(output,std::nullopt,file,maximumCompiledBytes);
@@ -875,7 +926,8 @@ void SourceScene::upload(SourceGraphics& target) {
 #ifdef _WIN32
     auto& s=impl_->scene;target.clear();
     for(auto& [id,m]:s.meshes){target.setMesh(id,m.revision,m.stride,bytes(m.vertices),m.original->indices);m.dirty=false;}
-    for(const auto& [id,t]:s.textures)target.setTexture(id,1,t.description);
+    for(const auto& [id,t]:s.textures)target.setTexture(id,impl_->uploadRevision(id),impl_->current(id,t));
+    impl_->dirtyTextures.clear();
     for(const auto& [id,p]:s.pipelines)target.setPipeline(id,p.description);
     for(auto& [id,u]:s.uniforms){target.setUniform(id,bytes(u.bytes));u.dirty=false;}
     target.setDraws(s.activeDraws);s.visibilityDirty=false;impl_->uploadedTarget=&target;
@@ -889,6 +941,9 @@ void SourceScene::flush(SourceGraphics& target) {
     if(s.visibilityDirty)target.setDraws({}); // no draw executes while this owned-thread transaction updates changed ranges
     for(auto& [id,m]:s.meshes)if(m.dirty){target.setMesh(id,m.revision,m.stride,bytes(m.vertices),m.original->indices);m.dirty=false;}
     for(auto& [id,u]:s.uniforms)if(u.dirty){target.setUniform(id,bytes(u.bytes));u.dirty=false;}
+    // Runtime desktop textures changed by a content event since the last flush.
+    for(const auto& id:impl_->dirtyTextures){target.setTexture(id,impl_->uploadRevision(id),impl_->current(id,s.textures.at(id)));++impl_->textureFlushes;}
+    impl_->dirtyTextures.clear();
     if(s.visibilityDirty){target.setDraws(s.activeDraws);s.visibilityDirty=false;}
 #else
     (void)target;throw std::runtime_error("SourceGraphics flush requires native Windows graphics");
@@ -897,6 +952,8 @@ void SourceScene::flush(SourceGraphics& target) {
 SourceSceneStats SourceScene::stats()const noexcept {
     const auto& s=impl_->scene;auto out=s.counters;out.batches=s.batches.size();out.draws=s.activeDraws.size();out.meshes=s.meshes.size();
     out.textures=s.textures.size();out.pipelines=s.pipelines.size();out.uniforms=s.uniforms.size();out.inactiveUniforms=s.inactiveUniforms;
+    out.textureReplacements=impl_->textureReplacements;out.textureRestores=impl_->textureRestores;out.textureFlushes=impl_->textureFlushes;
+    out.runtimeTextures=impl_->runtimeTextures.size();for(const auto& [id,t]:impl_->runtimeTextures){(void)id;out.runtimeTextureBytes+=t.pixels.size();out.retainedCPUBytes+=t.pixels.size();}
     for(const auto& [id,m]:s.meshes){(void)id;out.retainedCPUBytes+=m.vertices.size();}
     for(const auto& [id,g]:s.originalGeometry){(void)id;out.retainedCPUBytes+=g->vertices.size()+g->indices.size()*4+g->colors.size()*16;}
     for(const auto& [id,t]:s.textures){(void)id;for(const auto& mip:t.levels)out.retainedCPUBytes+=mip.storage.size();}
