@@ -5,6 +5,7 @@
 #include "core/localization.hpp"
 #include "modules/media_assembly_model.hpp"
 #include "native/layer_raster.hpp"
+#include "native/media_assembly_accessibility.hpp"
 #include "native/media_assembly_codec.hpp"
 #include "native/renderer.hpp"
 #include "tools/media_assembly_preview.hpp"
@@ -26,6 +27,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <wincodec.h>
+#include <uiautomation.h>
 #include <wrl/client.h>
 
 namespace endfield::areas {
@@ -115,6 +117,13 @@ public:
                 auto answer = std::move(answers_.front()); answers_.pop_front(); return answer;
             };
         } else {
+            // Modal IFileOpenDialog/IFileSaveDialog owned by the HUD (same UI
+            // thread, so no application deactivation closes the HUD). Like the
+            // host's shared picker, the HUD gives up pointer capture first.
+            o.dialog = [](HWND owner, const gpu::MediaAssemblyDialogRequest& request) {
+                if (GetCapture() == owner) (void)ReleaseCapture();
+                return gpu::showMediaAssemblyDialog(owner, request);
+            };
             o.shelfChoices = [this] {
                 const auto* service = host_.find<ShelfChoices>(shelfChoicesKey);
                 return service && *service ? (*service)() : std::vector<mod::NotesShelfChoice>{};
@@ -202,6 +211,27 @@ public:
     // exporting). Signature-compatible with a host drop route for module
     // areas (requested): it binds as soon as ModuleOwner declares it.
     bool drop(std::span<const std::string> paths, core::Point, double t) { return preview_->importFiles(paths, t); }
+
+    // The host's UI Automation view of this owner (native/media_assembly_
+    // accessibility.hpp): the source AX elements already projected into
+    // logical client points, Invoke = perform, RangeValue = the accessible
+    // slider route, rectangles in physical screen pixels. The HUD window's UIA
+    // root provider (host) lists the fragments NativeMediaAssemblyAccessibility
+    // creates from it.
+    gpu::MediaAssemblyAccessibilityHost accessibilityHost(IRawElementProviderFragmentRoot* root) {
+        gpu::MediaAssemblyAccessibilityHost h;
+        h.root = root;
+        h.elements = [this] { return preview_->accessibility(); };
+        h.invoke = [this](std::string_view id) { return preview_->perform(id, host_.now()); };
+        h.setValue = [this](std::string_view id, double value) { return preview_->setAccessibleValue(id, value, host_.now()); };
+        h.toScreen = [this](core::Rect r) {
+            POINT origin{};
+            (void)ClientToScreen(window_, &origin);
+            const double scale = host_.metrics().scale;
+            return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
+        };
+        return h;
+    }
 
     void coverage(app::ModuleCoverage& step) override {
         if (!coverageMode_) return;
@@ -295,6 +325,7 @@ private:
         // the editor was first shown; the processor exists once it drained.
         bool mediaCapable{};
         try { mediaCapable = host_.renderer().mediaDevice() != nullptr; } catch (const std::exception&) {}
+        step.check(mediaCapable, "The application renderer offers same-device media (RendererOptions.mediaVideo)");
         run.settle(); run.present();
         step.check(owner.stats().gpuActive == mediaCapable && owner.controller().deferredPreviews() == mediaCapable,
                    "Previews are edited on the renderer's media device when it has one");
@@ -342,11 +373,35 @@ private:
         run.present();
         // Inline adjustment through the accessible slider route.
         step.check(owner.perform("adjust", run.t) && owner.presentation().tool() == mod::MediaAssemblyTool::adjust, "Adjust opens its inline parameters");
-        step.check(owner.setAccessibleValue("exposure", .5, run.t) && std::abs(session.adjustments().exposure - .5) < 1e-9, "Exposure follows the accessible slider value");
+        {   // UI Automation over the real owner (fragments on the hidden HUD
+            // window; rooted by the host's UIA root provider when it exists).
+            gpu::NativeMediaAssemblyAccessibility automation(accessibilityHost(nullptr));
+            const auto ax = owner.accessibility(); const auto close = core::localized("Close", "关闭", host_.appearance().language);
+            step.check(automation.refresh() && automation.size() == ax.size() && !ax.empty(), "One UIA fragment per projected source control");
+            const auto property = [](IRawElementProviderFragment* fragment, PROPERTYID id) {
+                Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple; VARIANT v; VariantInit(&v); std::wstring out;
+                if (SUCCEEDED(fragment->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPropertyValue(id, &v)) && v.vt == VT_BSTR) out.assign(v.bstrVal, SysStringLen(v.bstrVal));
+                VariantClear(&v); return out;
+            };
+            const auto closeAt = std::find_if(ax.begin(), ax.end(), [](const auto& e) { return e.id == "closeMedia"; });
+            step.check(closeAt != ax.end() && closeAt->name == close && closeAt->rect.width > 0 && closeAt->rect.height > 0, "The x is projected into client coordinates as Close");
+            const auto screen = accessibilityHost(nullptr).toScreen(closeAt->rect);
+            ComPtr<IRawElementProviderFragment> closeElement; UiaRect bounds{};
+            step.check(SUCCEEDED(automation.fromPoint(screen.x + screen.width / 2, screen.y + screen.height / 2, &closeElement)) && closeElement &&
+                       property(closeElement.Get(), UIA_AutomationIdPropertyId) == L"closeMedia" && SUCCEEDED(closeElement->get_BoundingRectangle(&bounds)) &&
+                       bounds.left == screen.x && bounds.top == screen.y && bounds.width == screen.width && bounds.height == screen.height,
+                       "UIA hit testing finds Close at its projected screen rectangle");
+            // The first inline parameter row (Brightness) is visible; rows
+            // scrolled out of the inline rectangle are not listed (source AX).
+            ComPtr<IRangeValueProvider> brightness;
+            for (std::size_t n = 0; n < automation.size() && !brightness; ++n) {
+                ComPtr<IRawElementProviderFragment> fragment;
+                if (SUCCEEDED(automation.child(n, &fragment)) && property(fragment.Get(), UIA_AutomationIdPropertyId) == L"brightness") (void)fragment.As(&brightness);
+            }
+            step.check(brightness && SUCCEEDED(brightness->SetValue(.25)) && std::abs(session.adjustments().brightness - .25) < 1e-9, "UIA RangeValue sets Brightness through the accessible slider route");
+            automation.disconnect();
+        }
         run.settle();
-        {   const auto ax = owner.accessibility(); const auto close = core::localized("Close", "关闭", host_.appearance().language);
-            step.check(std::any_of(ax.begin(), ax.end(), [&](const auto& e) { return e.id == "closeMedia" && e.name == close && e.rect.width > 0 && e.rect.height > 0; }),
-                       "Accessible controls are projected into client coordinates"); }
         step.check(run.key(VK_ESCAPE) && !owner.presentation().tool(), "Escape leaves the active tool first");
         // Zoom: Ctrl+wheel (precision pinch) and '-' back.
         {   const auto mid = run.projected({220, 198}); const auto zoom = owner.presentation().viewport().zoom();
@@ -439,7 +494,11 @@ private:
         // Close: the poster fades (0.16 s) and its texture is released.
         step.check(run.clickAction("closeMedia"), "Projected close");
         run.frames(.4); run.settle();
-        step.check(!session.document() && !owner.sceneClosing() && owner.stats().retainedTextures == 0 && !owner.menu(), "Close releases the poster after its fade");
+        const auto released = [&] { return !owner.sceneClosing() && owner.stats().retainedTextures == 0 && owner.sceneStats().retired == 0; };
+        for (unsigned n = 0; n < 60 && !released(); ++n) run.present();
+        step.check(!session.document() && !owner.sceneClosing() && owner.stats().retainedTextures == 0 && owner.sceneStats().retired == 0 && !owner.menu(),
+                   "Close releases the poster after its fade (document " + std::to_string(bool(session.document())) + ", closing " + std::to_string(owner.sceneClosing()) +
+                   ", textures " + std::to_string(owner.stats().retainedTextures) + ", retired " + std::to_string(owner.sceneStats().retired) + ")");
         run.frames(.3);
         step.check(engine_->stats().cachedSourceBytes <= std::size_t(1024) * 1024 * 4, "The engine keeps at most one bounded decoded source");
         ++coveredCycles_;

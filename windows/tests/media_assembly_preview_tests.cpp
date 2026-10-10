@@ -193,6 +193,7 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     n::NativeMediaRequestBroker broker(decoder,images,{hwnd,notice,generation},&videos);const auto client=broker.attachClient();
     n::LayerRasterizer raster;a::UtilityExecutor utility([]{});auto engine=std::make_shared<n::NativeMediaAssemblyEngine>(n::NativeMediaAssemblyEngine::Options{assets});unsigned ids{};
     t::MediaAssemblyPreviewOptions options;options.raster.pixelsPerPoint=1;options.raster.assetRoot=assets;options.window=hwnd;options.uuid=[&]{return "video-"+std::to_string(++ids);};options.broker=&broker;options.client=client;
+    options.appearance.systemOrange=m::MediaAssemblyColor{1,159./255.,10./255.,1}; // status errors use NSColor.systemOrange
     t::MediaAssemblyPreview owner(raster,utility,engine,std::move(options));owner.resize({1280,800,96,1,1280,800});
     n::LayerComposition composition;c::ModulePresentation modules(c::Module::power);c::source::DesktopChromeSettings settings{{0,0,1280,800},1,{},c::Module::power,true};auto center=c::source::DesktopChromeLayout::make(settings,{},{}).designToScreen;double now{};
     bool released{};struct Guard{n::Renderer&r;n::LayerComposition&c;t::MediaAssemblyPreview&o;bool&done;~Guard(){if(!done)try{c.detach(r);o.release(r);}catch(...){r.reset();}}}guard{r,composition,owner,released};
@@ -203,7 +204,8 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     modules.select(c::Module::mediaAssembly,now);for(int k=0;k<30;++k)frame();drain();frame();
     const std::array<std::string,1>drop{n::mediaAssemblyUTF8(movie)};check(owner.importFiles(drop,now),"Movie import");drain();frame();drain();frame();
     const auto&session=owner.controller().session();check(session.document()&&session.document()->video&&owner.controller().previewImage(),"Owned movie opened with a bounded poster");
-    const double playStart=now;check(owner.perform("play",now)&&session.wantsPlayback(),"Play routed to the shared broker");for(int k=0;k<10;++k)frame();
+    const double playStart=now;check(owner.perform("play",now)&&session.wantsPlayback(),"Play routed to the shared broker");frame();
+    check(engines.empty(),"The original is re-checked on the utility queue before a player exists (source makePlaybackItem)");drain();for(int k=0;k<10;++k)frame();
     check(engines.size()==1&&probe->opens==1&&probe->playing&&owner.stats().playbackStarts==1,"One native engine opened and playing");check(owner.stats().videoShown&&session.view().playing,"Live player texture replaces the poster while playing");
     const auto duration=session.document()->duration;std::cout<<"owned movie duration "<<duration<<'\n';check(duration>.3,"Fixture long enough for a range");
     const double started=now;for(int k=0;k<20;++k)frame();
@@ -217,8 +219,22 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     unsigned wakes{};for(;wakes<6&&session.wantsPlayback();++wakes){const auto wake=owner.nextWakeTime();check(wake.has_value(),"Resumed playback schedules its end deadline");if(probe->playing)probe->position+=*wake-now;now=*wake;check(owner.deadline(now),"A scheduled deadline fires");frame(.01);}
     check(wakes<=2,"Playback ends on its single end-of-range deadline");
     check(!session.wantsPlayback()&&!session.view().playing&&!owner.stats().videoShown&&!probe->playing,"Trim end stops playback and shows the poster");
-    owner.perform("play",now);for(int k=0;k<6;++k)frame();check(probe->playing&&probe->position<duration*.1,"Replaying near the end restarts at the trim start");
+    owner.perform("play",now);drain();for(int k=0;k<6;++k)frame();check(probe->playing&&probe->position<duration*.1,"Replaying near the end restarts at the trim start");
     owner.perform("play",now);for(int k=0;k<4;++k)frame();check(!probe->playing&&!owner.stats().videoShown,"Pause releases the player");
+    // Source makePlaybackItem: a changed or removed original never reaches a player.
+    {const auto opened=engines.size();drain();for(int k=0;k<4;++k){frame();drain();}
+        // A released poster/preview reader may still hold the owned file for a
+        // moment (the OS refuses writes meanwhile): change it once it is free.
+        // Sizes are read through an open handle (directory metadata can lag).
+        const auto size=[&]{std::ifstream in(movie,std::ios::binary|std::ios::ate);return static_cast<long long>(in.tellg());};const auto bytes=size();
+        for(int k=0;k<100&&size()==bytes;++k){{std::ofstream(movie,std::ios::app|std::ios::binary)<<'x';}if(size()==bytes){drain();frame();}}
+        check(size()==bytes+1,"The owned movie changes on disk once");
+        check(owner.perform("play",now),"Play with a changed original");drain();for(int k=0;k<4;++k){frame();drain();}
+        const auto state=[&]{return " (error "+std::to_string(session.error()?int(*session.error()):-1)+", wants "+std::to_string(session.wantsPlayback())+", engines "+std::to_string(engines.size())+"/"+std::to_string(opened)+", shown "+std::to_string(owner.stats().videoShown)+")";};
+        check(session.error()==m::MediaAssemblyError::changedOnDisk&&!session.wantsPlayback()&&engines.size()==opened&&!owner.stats().videoShown,"A changed original is reported before a player opens"+state());
+        {std::error_code e;for(int k=0;k<100&&!fs::remove(movie,e);++k){drain();frame();}}check(!fs::exists(movie),"The owned movie is removed");
+        check(owner.perform("play",now),"Play with a removed original");drain();for(int k=0;k<4;++k){frame();drain();}
+        check(session.error()==m::MediaAssemblyError::sourceUnavailable&&!session.wantsPlayback()&&engines.size()==opened,"A removed original asks to be chosen again before playback"+state());}
     owner.setOverlayVisible(false,now);frame();composition.detach(r);owner.release(r);released=true;broker.hideVideos(client,now);broker.collectRetired();
 }
 }

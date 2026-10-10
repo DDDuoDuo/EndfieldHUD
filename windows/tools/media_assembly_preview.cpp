@@ -83,6 +83,10 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         // Position from the shared frame clock, re-anchored on each engine
         // progress report; one end-of-range deadline instead of an observer.
         bool playing{};double anchorTime{},anchorPosition{};std::optional<double>endDeadline;}video;
+    // Source preparePlayer/makePlaybackItem: every new player first re-resolves
+    // the original and re-checks its identity on the utility queue; a passed
+    // check is consumed by exactly one player request for that document.
+    struct PlayerCheck {std::uint64_t token{};bool pending{};std::optional<std::string>passed;}playerCheck;
     std::array<gpu::LayerCompositionEntry,16>composed;std::size_t count{};MediaAssemblyPreviewStats statistics;
     Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&q,std::shared_ptr<mod::MediaAssemblyEngine>e,MediaAssemblyPreviewOptions o):raster(r),executor(q),route(q.makeRoute()),engine(std::move(e)),options(std::move(o)),assets(options.raster.assetRoot),geometry(r),surface(prepare(),core::Module::mediaAssembly){
         need(engine&&bool(options.uuid),"Media Assembly owner requires its engine and identity source");if(options.exportExecutor)exportRoute=options.exportExecutor->makeRoute();closing.reserve(4);dead.reserve(4);retiredTextures.reserve(4);
@@ -132,9 +136,32 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     }
     // Source preparePlayer/beginPlayback/releasePlayer and the end-of-range
     // stop, folded into owner events and the broker's own frame demand.
+    bool playerWanted()const{
+        const auto&s=controller->session();const auto&doc=s.document();
+        return options.broker&&options.broker->hasVideoPlayback()&&doc&&doc->video&&s.active()&&s.wantsPlayback()&&!s.cropPreview()&&!s.exporting()&&input;
+    }
+    // A missing original (or one that is no longer a regular file) asks to be
+    // chosen again; a different file at the path is changedOnDisk. On failure
+    // playback stops (wantsPlayback=false) and the error is shown, as in the
+    // source; a full queue retries on the next playback sync.
+    void checkPlayer(const std::shared_ptr<const mod::MediaAssemblyDocumentInfo>&doc){
+        if(playerCheck.pending)return;
+        const auto token=++playerCheck.token;const std::weak_ptr<Impl>weak=weak_from_this();auto result=std::make_shared<std::optional<mod::MediaAssemblyError>>();
+        playerCheck.pending=executor.submit(route,[doc,result]{
+            try{const auto identity=gpu::mediaAssemblyFileIdentity(gpu::mediaAssemblyPath(doc->path));
+                if(!identity)*result=mod::MediaAssemblyError::sourceUnavailable;else if(*identity!=doc->identity)*result=mod::MediaAssemblyError::changedOnDisk;}
+            catch(const mod::MediaAssemblyFailure&f){*result=f.error()==mod::MediaAssemblyError::unavailable?mod::MediaAssemblyError::sourceUnavailable:f.error();}
+        },[weak,token,doc,result](std::exception_ptr error){
+            const auto i=weak.lock();if(!i||!i->alive||token!=i->playerCheck.token)return;i->playerCheck.pending=false;
+            const auto&current=i->controller->session().document();if(!current||current->id!=doc->id||!i->playerWanted())return;
+            if(error&&!*result)*result=mod::MediaAssemblyError::unavailable;
+            if(*result){i->controller->togglePlayback(i->time);i->controller->report(**result);}else i->playerCheck.passed=doc->id;
+            i->syncPlayback();i->changed();
+        });
+    }
     void syncPlayback(){
         auto&s=controller->session();const auto doc=s.document();
-        const bool want=options.broker&&options.broker->hasVideoPlayback()&&doc&&doc->video&&s.active()&&s.wantsPlayback()&&!s.cropPreview()&&!s.exporting()&&input;
+        const bool want=playerWanted();
         if(video.requested&&(!want||video.document!=doc->id||video.adjustments!=s.adjustments())){
             const bool resume=want&&video.document==doc->id;releaseVideo();
             // Source: an edit releases the player; the next completed preview
@@ -144,6 +171,8 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         if(!want)return;
         if(!video.requested){
             if(video.previews&&controller->completedPreviews()==video.previews)return;
+            if(playerCheck.passed!=doc->id){checkPlayer(doc);return;}
+            playerCheck.passed.reset();
             video.key="media.assembly.video."+std::to_string(++video.revision);gpu::NotesVideoRequest r{video.key,doc->path,video.revision,1024,doc->duration,{},false};attachFrameFilter(r,s.adjustments());
             options.broker->setVideos(options.client,++video.generation,std::span(&r,1),time);
             video.requested=true;video.started=false;video.document=doc->id;video.adjustments=s.adjustments();video.previews=0;
@@ -465,6 +494,8 @@ MediaAssemblyPreviewStats MediaAssemblyPreview::stats()const noexcept{auto s=imp
 namespace {constexpr std::array<std::uint32_t,6>videoIndices{0,1,2,0,2,3};}
 void MediaAssemblyPreview::upload(gpu::Renderer&r){
     auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Media Assembly resources belong to another renderer");i.renderer=&r;
+    // Retired posters, parts, menus and preview textures are released only in
+    // collected(), after the host has republished its composition without them.
     if(!i.pose)return;
     // GPU previews start once the editor is first shown: the HLSL compile runs
     // on the utility worker (no UI-thread hitch); until it completes, or if a

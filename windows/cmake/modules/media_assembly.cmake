@@ -92,7 +92,7 @@ if(WIN32)
   target_include_directories(hud_media_assembly_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_media_assembly_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_media_assembly_area PUBLIC hud_module_registry hud_media_assembly_preview hud_utility hud_data
-    PRIVATE windowscodecs ole32 user32)
+    PRIVATE windowscodecs uiautomationcore oleaut32 ole32 user32)
   if(MSVC)
     target_compile_options(hud_media_assembly_area PRIVATE /W4 /permissive- /EHsc)
   endif()
