@@ -37,6 +37,28 @@ void metadata(const std::filesystem::path&oracle){Fixture f;const auto first=f.t
     provider.close();check(!actions.copy(first)&&!actions.togglePin(first)&&!actions.remove(first)&&!actions.clearUnpinned()&&actions.snapshot().rows.empty(),"Closed route callbacks cannot touch borrowed service");
     n::ClipboardActions expired;{n::NativeClipboardProvider temporary(f.source());expired=temporary.actions();}const auto closedReads=f.reads;check(expired.snapshot().rows.empty()&&!expired.copy(1)&&!expired.togglePin(1)&&!expired.clearUnpinned()&&f.reads==closedReads,"Copied callbacks remain harmless after provider destruction");
 }
+// SystemHUDView clipboardCanvas.onCopy: kind read before the copy, recorded
+// only after it succeeds; the owner turns it into Event Log clipboardCopied.
+void copiedEvents(){Fixture f;const auto link=f.text(u"https://example.com/a",n::ClipboardKind::url);const auto plain=f.text(u"synthetic body");std::vector<n::ClipboardKind>kinds;auto source=f.source();source.copied=[&](n::ClipboardKind kind){kinds.push_back(kind);};
+    n::NativeClipboardProvider provider(std::move(source));auto actions=provider.actions();
+    check(actions.copy(link)&&kinds.size()==1&&kinds[0]==n::ClipboardKind::url,"A successful copy reports the copied item's kind once");
+    f.failCopy=true;check(!actions.copy(plain)&&kinds.size()==1&&f.copies==2,"A failed copy records nothing");f.failCopy=false;
+    check(!actions.copy(999999)&&kinds.size()==1&&f.copies==2,"An unknown item is neither copied nor recorded");
+    check(actions.copy(plain)&&kinds.size()==2&&kinds[1]==n::ClipboardKind::text,"Each successful copy reports again");
+    check(n::clipboardEventKind(n::ClipboardKind::text)=="text"&&n::clipboardEventKind(n::ClipboardKind::url)=="url"&&n::clipboardEventKind(n::ClipboardKind::image)=="image"&&n::clipboardEventKind(n::ClipboardKind::files)=="files","Event kinds are the source ClipboardKind raw values");
+    provider.close();check(!actions.copy(plain)&&kinds.size()==2,"A closed provider records nothing");
+}
+// ClipboardStore.statusMessage: CaptureError and pinned-cache messages in the
+// five languages; no status while capturing works or an image validates.
+void statuses(){namespace s=n::clipboard_status;using L=endfield::core::Language;
+    check(!n::clipboardStatusText(0,L::english)&&!n::clipboardStatusText(1,L::english)&&!n::clipboardStatusText(s::pending,L::korean),"Success and a pending image validation show no status");
+    check(n::clipboardStatusText(s::cacheFull,L::english)=="The cache is full of pinned items. Unpin or remove an item to capture more.","A cache full of pinned items uses the source message");
+    check(n::clipboardStatusText(s::textTooLarge,L::simplifiedChinese)=="已跳过超过 1 MB 的文本。","Oversized text uses the source message");
+    check(n::clipboardStatusText(s::imageTooLarge,L::japanese)=="64 MBを超える画像はスキップしました。","An image over 64 MB uses the catalog translation");
+    check(n::clipboardStatusText(s::imageDimensionsTooLarge,L::korean)=="1억 픽셀을 초과하는 이미지를 건너뛰었습니다.","An image over 100 megapixels uses the catalog translation");
+    check(n::clipboardStatusText(s::tooManyFiles,L::traditionalChinese)=="此檔案選擇過大，無法快取。","A file selection too large to cache uses the catalog translation");
+    const auto busy=std::int32_t(0x80070005u);check(n::clipboardStatusText(busy,L::english)=="Clipboard unavailable"&&n::clipboardStatusText(busy,L::simplifiedChinese)=="剪贴板不可用"&&n::clipboardStatusText(busy,L::korean)=="클립보드를 사용할 수 없습니다","Other failures keep the Windows-only notice in every language");
+}
 void thumbnails(){Fixture f;std::vector<std::uint64_t>ids;for(unsigned k=0;k<40;++k)ids.push_back(f.image(k));n::NativeClipboardProvider provider(f.source());auto actions=provider.actions();auto snapshot=actions.snapshot();check(snapshot.rows.size()==40&&provider.stats().images.cachedImages==0,"History snapshots neither duplicate pixels nor eagerly prepare hidden thumbnails");
     std::array<std::uint64_t,14>visible{};std::copy_n(ids.begin(),14,visible.begin());actions.prepareImageRows(visible);check(provider.stats().images.cachedImages==14&&provider.stats().imagePreparations==14,"Only current/outgoing visible rows prepared");const auto key=snapshot.rows.back().thumbnail["memoryImage"].string();auto borrowed=provider.images().acquire(key,1);check(borrowed&&borrowed->premultipliedBGRA().size()==4&&borrowed->premultipliedBGRA()[0]==20&&borrowed->premultipliedBGRA()[2]==0,"Prepared pixel uses source RGBA once as premultiplied BGRA");
     const auto encoded=f.history.find(ids[0])->payload.decodedImage->encoded.bytes;actions.prepareImageRows(visible);check(provider.stats().imagePreparations==14&&f.history.find(ids[0])->payload.decodedImage->encoded.bytes==encoded,"Equal content preparation reuses pixels and original encoded allocation");
@@ -69,7 +91,7 @@ void native(const std::filesystem::path&shader,const std::filesystem::path&asset
 #endif
 }
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==4,"Pass preview oracle, HLSL, and original Clipboard assets");metadata(argv[1]);thumbnails();native(argv[2],argv[3]);CoUninitialize();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==4,"Pass preview oracle, HLSL, and original Clipboard assets");metadata(argv[1]);copiedEvents();statuses();thumbnails();native(argv[2],argv[3]);CoUninitialize();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
-int main(int argc,char**argv){try{check(argc==2,"Pass original clipboard-provider-preview.json fixture");metadata(argv[1]);thumbnails();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{check(argc==2,"Pass original clipboard-provider-preview.json fixture");metadata(argv[1]);copiedEvents();statuses();thumbnails();std::cout<<"PASS "<<checks<<" Clipboard provider/metadata/cache checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

@@ -13,8 +13,16 @@ namespace endfield::native {
 modules::ActivityRawSample readWindowsActivity(double timestamp,double uptime);
 // Caller supplies an explicit <=256 app catalog with <=8192 unique PIDs.
 // Opens one limited-query handle at a time; protected/reused PIDs stay unknown.
-// Windows working set is resident shared+private pages, not Mac phys_footprint.
+// App memory is the process's private working set (Task Manager's "Memory"
+// column), the closest public counterpart of the Mac phys_footprint: resident
+// pages no other process shares. Before Windows exposes it (pre-20348 builds)
+// the whole working set is used, which also counts shared pages.
 modules::ActivityAppsRaw readWindowsActivityApps(std::span<const modules::ActivityAppIdentity>,double timestamp,double uptime);
+#ifdef _WIN32
+// The memory figure above for one open process handle (HANDLE); empty when
+// the counters cannot be read.
+std::optional<std::uint64_t>windowsActivityProcessMemory(void*process)noexcept;
+#endif
 // Locale-aware natural Windows ordering; not a bit-identical Foundation
 // collation claim. Portable tests inject an explicit deterministic comparator.
 int compareWindowsActivityNames(std::string_view,std::string_view);

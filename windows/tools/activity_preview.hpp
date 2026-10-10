@@ -2,6 +2,8 @@
 #ifdef _WIN32
 #include "app/overlay_host.hpp"
 #include "native/activity_scene.hpp"
+#include "native/activity_icons.hpp"
+#include "app/utility_executor.hpp"
 #include "native/layer_scene.hpp"
 #include "core/source_desktop_chrome.hpp"
 #include "core/module_presentation.hpp"
@@ -13,8 +15,14 @@ struct ActivityPreviewOptions {
     std::shared_ptr<const core::SubsectionMaskSampler>sortSamples;bool reduceMotion{};
     // Exact visibility demand only. A shared provider owner applies this to
     // ActivitySamplingPlan along with charge-alert demand and its one deadline.
-    // No native reader, worker, polling, app enumeration or icon lookup here.
+    // No native reader, worker, polling or app enumeration here.
     std::function<void(bool visible,bool apps,double ownerTime)>demandChanged;
+    // Optional app-row icons (production): the visible Apps rows' icons load
+    // on this shared executor with iconLoader (default: the Windows loader),
+    // bounded by native::ActivityIconProvider and bound on content events only.
+    // The executor must outlive this owner. Without it no icon is requested.
+    app::UtilityExecutor*iconExecutor{};
+    native::ActivityIconLoader iconLoader;
 };
 class ActivityPreview final {
 public:
@@ -32,6 +40,7 @@ public:
     modules::ActivityState&providerState()noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);native::ActivitySceneStats stats()const;
+    std::optional<native::ActivityIconStats>iconStats()const;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

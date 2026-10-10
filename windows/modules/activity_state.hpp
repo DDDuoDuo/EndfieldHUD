@@ -81,9 +81,31 @@ struct ActivityDemand {bool system{},apps{},resetSystem{},resetApps{};std::uint6
 class ActivitySamplingPlan final {
 public:
     void start(double now);void stop();void setVisible(bool activity,bool alert,bool apps,double now);
+    // SystemActivityMonitor.setAlertActive: the charge alert/badge's own 1 Hz
+    // demand, independent of Activity's visibility (which it keeps). Starts
+    // a stopped session like the source; an unchanged value is a no-op.
+    void setAlert(bool alert,double now);
+    bool alertActive()const noexcept{return running_&&alert_;}bool visibleActive()const noexcept{return running_&&visible_;}
     ActivityDemand takeDue(double now);std::optional<double>nextWakeTime()const noexcept;
     bool running()const noexcept{return running_;}bool appsActive()const noexcept{return running_&&visible_&&apps_;}
     double interval()const noexcept{return visible_||alert_?1:5;}std::uint64_t generation()const noexcept{return generation_;}std::uint64_t appGeneration()const noexcept{return appGeneration_;}
 private:bool running_{},visible_{},alert_{},apps_{},resetSystem_{},resetApps_{};std::uint64_t generation_{},appGeneration_{};std::optional<double>systemDue_,appsDue_;
+};
+
+// OverlayController.reconcileChargeMetricTelemetry: the charge alert/badge
+// attach to the shared system samples only while they display a non-battery
+// metric. Attaching sets the plan's alert demand (1 Hz) and delivers the
+// current snapshot at once; every later system sample is delivered once;
+// detaching clears the demand and delivers "no telemetry" (nullptr) once.
+// The owner calls synchronize() from its existing events (deadline, executor
+// drain, refresh); no timer, observer list or allocation is involved.
+class ActivityTelemetryLink final {
+public:
+    using Deliver=std::function<void(const ActivitySnapshot*)>;
+    ActivityTelemetryLink(ActivitySamplingPlan&,const ActivityState&);
+    // True when the plan's next wake changed (the caller reschedules).
+    bool synchronize(bool demand,double now,const Deliver&);
+    bool attached()const noexcept{return attached_;}
+private:ActivitySamplingPlan&plan_;const ActivityState&state_;bool attached_{};std::uint64_t delivered_{};
 };
 } // namespace endfield::modules

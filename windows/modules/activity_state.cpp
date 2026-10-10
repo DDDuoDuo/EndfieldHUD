@@ -51,6 +51,17 @@ ActivityRows ActivityState::visibleRows()const noexcept{ActivityRows out;const a
 void ActivitySamplingPlan::start(double now){time(now);if(running_)return;increment(generation_);running_=true;resetSystem_=true;systemDue_=now;if(visible_&&apps_){increment(appGeneration_);resetApps_=true;appsDue_=now;}}
 void ActivitySamplingPlan::stop(){if(!running_)return;increment(generation_);increment(appGeneration_);running_=visible_=alert_=apps_=false;systemDue_.reset();appsDue_.reset();resetSystem_=resetApps_=false;}
 void ActivitySamplingPlan::setVisible(bool visible,bool alert,bool apps,double now){time(now);const auto before=interval();const bool wasApps=appsActive();visible_=visible;alert_=alert;apps_=apps;if(!running_&&(visible||alert)){start(now);return;}if(!running_)return;if(before!=interval())systemDue_=now+interval();if(wasApps!=appsActive()){increment(appGeneration_);resetApps_=appsActive();if(appsActive())appsDue_=now;else appsDue_.reset();}}
+void ActivitySamplingPlan::setAlert(bool alert,double now){time(now);if(running_&&alert_==alert)return;if(!running_&&!alert)return;setVisible(running_&&visible_,alert,running_&&apps_,now);}
+ActivityTelemetryLink::ActivityTelemetryLink(ActivitySamplingPlan&plan,const ActivityState&state):plan_(plan),state_(state){}
+bool ActivityTelemetryLink::synchronize(bool demand,double now,const Deliver&deliver){
+    const auto before=plan_.nextWakeTime();
+    if(demand!=attached_){attached_=demand;plan_.setAlert(demand,now);delivered_=state_.overviewRevision();if(deliver)deliver(demand?&state_.snapshot():nullptr);return before!=plan_.nextWakeTime();}
+    if(!attached_)return false;
+    // A stop/start cycle (sleep, lock) cleared the alert: attach again.
+    if(!plan_.alertActive())plan_.setAlert(true,now);
+    if(delivered_!=state_.overviewRevision()){delivered_=state_.overviewRevision();if(deliver)deliver(&state_.snapshot());}
+    return before!=plan_.nextWakeTime();
+}
 ActivityDemand ActivitySamplingPlan::takeDue(double now){time(now);ActivityDemand out;out.generation=generation_;out.appGeneration=appGeneration_;if(!running_)return out;if(systemDue_&&now>=*systemDue_){out.system=true;out.resetSystem=resetSystem_;resetSystem_=false;systemDue_=now+interval();}if(appsDue_&&now>=*appsDue_){out.apps=true;out.resetApps=resetApps_;resetApps_=false;appsDue_=now+1;}return out;}
 std::optional<double>ActivitySamplingPlan::nextWakeTime()const noexcept{if(systemDue_&&appsDue_)return std::min(*systemDue_,*appsDue_);return systemDue_?systemDue_:appsDue_;}
 } // namespace endfield::modules

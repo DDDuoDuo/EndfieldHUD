@@ -63,7 +63,16 @@ void native(){const auto base=std::filesystem::temp_directory_path()/(L"Endfield
 }
 #endif
 }
-int main(int argc,char**argv){try{accounting();bounds();queue();if(argc==2)original(argv[1]);else check(argc==1,"Pass optional original storage-files.json");
+// StorageController volumeNameKey on Windows: label, else Explorer's name
+// without the drive suffix, else the source "Startup disk" literal.
+void titles(){
+    check(n::storageVolumeTitle("Windows","Local Disk (C:)","C:\\")=="Windows","A volume label is the title");
+    check(n::storageVolumeTitle("","Local Disk (C:)","C:\\")=="Local Disk","An unlabelled volume takes Explorer's name without its drive suffix");
+    check(n::storageVolumeTitle("  ","\xe6\x9c\xac\xe5\x9c\xb0\xe7\xa3\x81\xe7\x9b\x98 (D:)","d:\\")=="\xe6\x9c\xac\xe5\x9c\xb0\xe7\xa3\x81\xe7\x9b\x98","Localized shell names keep their text; a lower-case root still matches");
+    check(n::storageVolumeTitle("","Local Disk (D:)","C:\\")=="Local Disk (D:)","Only the volume's own drive suffix is removed");
+    check(n::storageVolumeTitle("","","C:\\")=="Startup disk"&&n::storageVolumeTitle("",std::string("\xff",1),"C:\\")=="Startup disk"&&n::storageVolumeTitle(""," (C:)","C:\\")=="Startup disk","Without any usable name the source literal remains");
+}
+int main(int argc,char**argv){try{accounting();bounds();queue();titles();if(argc==2)original(argv[1]);else check(argc==1,"Pass optional original storage-files.json");
 #ifdef _WIN32
 native();
 #endif

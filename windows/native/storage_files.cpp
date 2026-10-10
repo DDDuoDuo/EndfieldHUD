@@ -20,6 +20,17 @@
 #endif
 namespace endfield::native {
 namespace {void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}bool label(std::string_view s){return s.size()<=4096&&s.find('\0')==std::string_view::npos&&ehud::data::Json::validUtf8(s);}}
+std::string storageVolumeTitle(std::string_view label,std::string_view display,std::string_view root){
+    const auto trim=[](std::string_view v){while(!v.empty()&&(v.front()==' '||v.front()=='\t'))v.remove_prefix(1);while(!v.empty()&&(v.back()==' '||v.back()=='\t'))v.remove_suffix(1);return v;};
+    const auto usable=[](std::string_view v){return !v.empty()&&v.size()<=1024&&v.find('\0')==v.npos&&ehud::data::Json::validUtf8(v);};
+    if(const auto l=trim(label);usable(l))return std::string(l);
+    auto d=trim(display);
+    if(usable(d)){
+        if(root.size()>=2&&root[1]==':'){char letter=root[0];if(letter>='a'&&letter<='z')letter=char(letter-'a'+'A');const std::string suffix=std::string("(")+letter+":)";if(d.ends_with(suffix)&&(d.size()==suffix.size()||d[d.size()-suffix.size()-1]==' '))d.remove_suffix(suffix.size());}
+        d=trim(d);if(usable(d))return std::string(d);
+    }
+    return "Startup disk";
+}
 modules::StorageDetailsSnapshot scanStorageFolders(std::span<const StorageFolderScope>scopes,const modules::StorageScanCancellation&cancel,double date,StorageFileSystem&fs,std::optional<std::uint64_t>expected,StorageScanClock clock,modules::StorageScanLimits limits){
     need(scopes.size()<=64&&std::isfinite(date)&&bool(clock),"Invalid Storage scan inputs");need(limits.maximumEntries<=40000&&limits.entriesPerFolder<=8000&&std::isfinite(limits.maximumSeconds)&&limits.maximumSeconds<=10&&std::isfinite(limits.secondsPerFolder)&&limits.secondsPerFolder<=2&&limits.maximumDepth<=32,"Storage scan exceeds original resource bounds");
     for(const auto&s:scopes){need(!s.id.empty()&&label(s.id)&&label(s.title)&&s.paths.size()<=8,"Invalid Storage scan scope");for(const auto&p:s.paths)need(p.size()<=32768&&p.find('\0')==p.npos&&ehud::data::Json::validUtf8(p),"Invalid Storage scope path");}
@@ -83,7 +94,14 @@ std::wstring startup(){std::array<wchar_t,32768>path{},root{};const auto n=GetWi
 std::string known(REFKNOWNFOLDERID id){PWSTR path{};if(FAILED(SHGetKnownFolderPath(id,KF_FLAG_DONT_VERIFY,nullptr,&path)))return {};struct Free {PWSTR p;~Free(){CoTaskMemFree(p);}}free{path};return utf8(path);}
 }
 std::unique_ptr<StorageFileSystem>makeWindowsStorageFileSystem(){return std::make_unique<FileSystem>();}
-std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date){need(std::isfinite(date),"Invalid Storage capacity date");const auto p=wide(explicitPath);if(!ordinary(p))return {};std::array<wchar_t,32768>root{};if(!GetVolumePathNameW(p.c_str(),root.data(),static_cast<DWORD>(root.size())))return {};const auto drive=GetDriveTypeW(root.data());if(drive!=DRIVE_FIXED&&drive!=DRIVE_RAMDISK)return {};ULARGE_INTEGER free{},total{};if(!GetDiskFreeSpaceExW(root.data(),&free,&total,nullptr)||total.QuadPart==0||total.QuadPart>static_cast<ULONGLONG>(std::numeric_limits<std::int64_t>::max())||free.QuadPart>total.QuadPart)return {};std::array<wchar_t,MAX_PATH+1>name{};std::string title="Startup disk";if(GetVolumeInformationW(root.data(),name.data(),static_cast<DWORD>(name.size()),nullptr,nullptr,nullptr,nullptr,0)){auto decoded=utf8(name.data());if(!decoded.empty())title=std::move(decoded);}return modules::StorageCapacity{std::move(title),static_cast<std::int64_t>(total.QuadPart),static_cast<std::int64_t>(free.QuadPart),date};}
+std::optional<modules::StorageCapacity>readWindowsCapacityAt(std::string_view explicitPath,double date){need(std::isfinite(date),"Invalid Storage capacity date");const auto p=wide(explicitPath);if(!ordinary(p))return {};std::array<wchar_t,32768>root{};if(!GetVolumePathNameW(p.c_str(),root.data(),static_cast<DWORD>(root.size())))return {};const auto drive=GetDriveTypeW(root.data());if(drive!=DRIVE_FIXED&&drive!=DRIVE_RAMDISK)return {};ULARGE_INTEGER free{},total{};if(!GetDiskFreeSpaceExW(root.data(),&free,&total,nullptr)||total.QuadPart==0||total.QuadPart>static_cast<ULONGLONG>(std::numeric_limits<std::int64_t>::max())||free.QuadPart>total.QuadPart)return {};std::array<wchar_t,MAX_PATH+1>name{};std::string label,display;if(GetVolumeInformationW(root.data(),name.data(),static_cast<DWORD>(name.size()),nullptr,nullptr,nullptr,nullptr,0))label=utf8(name.data());
+    if(label.empty()){
+        // Unlabelled volumes (the usual C:) take Explorer's localized name.
+        // SHGetFileInfo needs COM on this worker thread; scoped like the
+        // other shell readers on the shared executor.
+        struct Apartment{HRESULT hr=CoInitializeEx(nullptr,COINIT_MULTITHREADED);~Apartment(){if(SUCCEEDED(hr))CoUninitialize();}}apartment;
+        SHFILEINFOW info{};if((SUCCEEDED(apartment.hr)||apartment.hr==RPC_E_CHANGED_MODE)&&SHGetFileInfoW(root.data(),0,&info,static_cast<UINT>(sizeof(info)),SHGFI_DISPLAYNAME)){info.szDisplayName[MAX_PATH-1]=0;display=utf8(info.szDisplayName);}}
+    auto title=storageVolumeTitle(label,display,utf8(root.data()));return modules::StorageCapacity{std::move(title),static_cast<std::int64_t>(total.QuadPart),static_cast<std::int64_t>(free.QuadPart),date};}
 std::optional<modules::StorageCapacity>readWindowsStartupCapacity(double date){const auto root=startup();return root.empty()?std::nullopt:readWindowsCapacityAt(utf8(root),date);}
 std::vector<StorageFolderScope>windowsStorageScopes(){std::vector<StorageFolderScope>out{{"applications","Applications",{}},{"documents","Documents",{}},{"downloads","Downloads",{}},{"pictures","Pictures",{}},{"music","Music",{}},{"movies","Movies",{}}};
     const auto add=[&](std::size_t index,REFKNOWNFOLDERID id){auto p=known(id);if(p.empty())return;auto&paths=out[index].paths;const auto w=wide(p);for(const auto&old:paths){const auto previous=wide(old);if(CompareStringOrdinal(w.c_str(),static_cast<int>(w.size()),previous.c_str(),static_cast<int>(previous.size()),TRUE)==CSTR_EQUAL)return;}paths.push_back(std::move(p));};

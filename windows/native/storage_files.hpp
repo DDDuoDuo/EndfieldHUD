@@ -33,6 +33,11 @@ modules::StorageDetailsSnapshot scanStorageFolders(std::span<const StorageFolder
     const modules::StorageScanCancellation&,double date,StorageFileSystem&,
     std::optional<std::uint64_t>expectedVolume,StorageScanClock,
     modules::StorageScanLimits={});
+// StorageController's volumeNameKey title on Windows: the volume label when
+// it has one, else Explorer's localized display name of the root ("Local
+// Disk" for an unlabelled C:, without its " (C:)" drive suffix), else the
+// source "Startup disk" literal. Pure; the reader below supplies both names.
+std::string storageVolumeTitle(std::string_view label,std::string_view shellDisplayName,std::string_view root);
 #ifdef _WIN32
 // Worker-thread functions only. Construction/resolution is intentionally inside
 // each request, not the UI path. No query enumerates the whole startup volume.

@@ -6,6 +6,14 @@
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 namespace n=endfield::native;namespace m=endfield::modules;namespace a=endfield::app;
 namespace {
 unsigned checks{};void check(bool b,const char*s){++checks;if(!b)throw std::runtime_error(s);}
@@ -22,6 +30,9 @@ void test(){std::atomic<unsigned>notifications{},systemReads{},appReads{};std::a
  auto restartBlock=std::make_shared<Block>();Release freeRestart{restartBlock};unsigned attempts{};heldReaders.system=[&,restartBlock]{if(++attempts==1)restartBlock->wait();return readers.system();};m::ActivitySamplingPlan restartPlan;m::ActivityState restartState(names);n::ActivityProbe restart(restartState,restartPlan,executor,heldReaders);restartPlan.start(400);restart.update(400);restartBlock->await();restartPlan.stop();restartPlan.start(401);check(!restart.update(401)&&restart.stats().waiting,"Restart while running retains exactly one fresh baseline request");restartBlock->release();executor.waitIdle();executor.drain();executor.waitIdle();executor.drain();check(restartState.history().size()==1&&!restartState.snapshot().cpuPercent&&restart.stats().discarded==1,"Stale generation is discarded and new baseline publishes once");
  m::ActivitySamplingPlan selfPlan;m::ActivityState selfState(names);std::unique_ptr<n::ActivityProbe>self;self=std::make_unique<n::ActivityProbe>(selfState,selfPlan,executor,readers,[&](bool,bool){self.reset();});selfPlan.start(500);self->update(500);executor.waitIdle();executor.drain();check(!self,"Callback can destroy its own probe without resubmission");
  #ifdef _WIN32
+ {// Private working set of this test process only (no other process is opened).
+  std::vector<std::uint8_t>touched(8*1024*1024,1);const auto memory=n::windowsActivityProcessMemory(GetCurrentProcess());PROCESS_MEMORY_COUNTERS basic{};basic.cb=sizeof(basic);check(GetProcessMemoryInfo(GetCurrentProcess(),&basic,sizeof(basic))!=0,"Own working set readable");
+  check(memory&&*memory>=touched.size()/2&&*memory<=basic.WorkingSetSize+touched.size(),"App memory is the private working set (resident private pages, bounded by the working set)");check(!n::windowsActivityProcessMemory(nullptr),"An invalid handle has no memory reading");}
  check(n::compareWindowsActivityNames("Example2","Example10")<0,"Native natural comparator sorts digit runs numerically");check(n::compareWindowsActivityNames("활동","활동")==0,"Native comparator supports Korean identity");
  #endif
 }

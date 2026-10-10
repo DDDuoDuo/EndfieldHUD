@@ -73,7 +73,7 @@ NativeClipboardProvider::NativeClipboardProvider(ClipboardProviderSource source)
 NativeClipboardProvider::~NativeClipboardProvider()=default;
 ClipboardActions NativeClipboardProvider::actions()const{impl_->thread();const std::weak_ptr<Impl>weak=impl_;ClipboardActions out;
     out.snapshot=[weak]{if(auto i=weak.lock())return i->snapshot();return ClipboardSnapshot{};};
-    out.copy=[weak](auto id){if(auto i=weak.lock()){i->thread();const auto s=i->source;return s&&s->history().find(id)&&s->copy&&s->copy(id);}return false;};
+    out.copy=[weak](auto id){if(auto i=weak.lock()){i->thread();const auto s=i->source;const auto*item=s?s->history().find(id):nullptr;if(!item||!s->copy)return false;const auto kind=item->payload.kind;if(!s->copy(id))return false;if(s->copied)s->copied(kind);return true;}return false;};
     out.togglePin=[weak](auto id){if(auto i=weak.lock()){i->thread();const auto s=i->source;if(s&&s->pin){const auto*item=s->history().find(id);if(item)return s->pin(id,!item->pinned);}}return false;};
     out.remove=[weak](auto id){if(auto i=weak.lock()){i->thread();const auto s=i->source;return s&&s->history().find(id)&&s->remove&&s->remove(id);}return false;};
     out.clearUnpinned=[weak]{if(auto i=weak.lock()){i->thread();const auto s=i->source;return s&&s->clearUnpinned&&s->clearUnpinned();}return false;};
@@ -83,9 +83,30 @@ LayerImageSource&NativeClipboardProvider::images()noexcept{return impl_->images;
 void NativeClipboardProvider::clearImages(){impl_->thread();impl_->images.clear();}
 void NativeClipboardProvider::close(){impl_->thread();impl_->source.reset();impl_->rows.clear();impl_->images.clear();}
 ClipboardProviderStats NativeClipboardProvider::stats()const{impl_->thread();auto s=impl_->counts;s.metadataRows=impl_->rows.size();s.images=impl_->images.stats();return s;}
+std::optional<std::string>clipboardStatusText(std::int32_t status,core::Language language){
+    if(status>=0||status==clipboard_status::pending)return {};
+    switch(status){
+    case clipboard_status::cacheFull:return core::localized("The cache is full of pinned items. Unpin or remove an item to capture more.","缓存已被固定项目占满，请取消固定或移除项目后继续记录。",language);
+    case clipboard_status::textTooLarge:return core::localized("Text over 1 MB was skipped.","已跳过超过 1 MB 的文本。",language);
+    case clipboard_status::imageTooLarge:return core::localized("An image over 64 MB was skipped.","已跳过超过 64 MB 的图像。",language);
+    case clipboard_status::imageDimensionsTooLarge:return core::localized("An image over 100 megapixels was skipped.","已跳过超过 1 亿像素的图像。",language);
+    case clipboard_status::tooManyFiles:return core::localized("This file selection is too large to cache.","此文件选择过大，无法缓存。",language);
+    default:break;
+    }
+    // Windows-only state (the Mac pasteboard is never "busy"); not in the
+    // shared source catalog, so its five translations live here.
+    switch(language){
+    case core::Language::simplifiedChinese:return std::string("剪贴板不可用");
+    case core::Language::traditionalChinese:return std::string("剪貼簿無法使用");
+    case core::Language::japanese:return std::string("クリップボードを利用できません");
+    case core::Language::korean:return std::string("클립보드를 사용할 수 없습니다");
+    default:return std::string("Clipboard unavailable");
+    }
+}
+std::string_view clipboardEventKind(ClipboardKind kind)noexcept{switch(kind){case ClipboardKind::url:return "url";case ClipboardKind::files:return "files";case ClipboardKind::image:return "image";default:return "text";}}
 std::array<std::uint8_t,4>NativeClipboardProvider::unicodeVersion()noexcept{UVersionInfo v{};u_getUnicodeVersion(v);return {v[0],v[1],v[2],v[3]};}
 #ifdef _WIN32
-ClipboardProviderSource clipboardProviderSource(SystemServices&services,std::function<std::optional<std::string>(std::int32_t)>status){ClipboardProviderSource out;
+ClipboardProviderSource clipboardProviderSource(SystemServices&services,std::function<std::optional<std::string>(std::int32_t)>status,std::function<void(ClipboardKind)>copied){ClipboardProviderSource out;out.copied=std::move(copied);
     out.history=[&services]() -> const ClipboardHistory& {return services.clipboard();};out.copy=[&services](auto id){return SUCCEEDED(services.copy_clipboard_item(id));};out.remove=[&services](auto id){return services.erase_clipboard_item(id);};out.pin=[&services](auto id,bool pinned){return services.pin_clipboard_item(id,pinned);};
     out.clearUnpinned=[&services]{const auto count=services.clipboard().items().size();services.clear_clipboard(true);return count!=services.clipboard().items().size();};
     if(status)out.status=[&services,format=std::move(status)]{return format(static_cast<std::int32_t>(services.clipboard_status()));};return out;

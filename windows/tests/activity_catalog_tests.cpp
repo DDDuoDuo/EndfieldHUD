@@ -5,6 +5,15 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 namespace {namespace n=endfield::native;namespace m=endfield::modules;unsigned checks{};void check(bool v,const char*s){++checks;if(!v)throw std::runtime_error(s);}template<class F>void rejects(F f){bool caught{};try{f();}catch(const std::invalid_argument&){caught=true;}check(caught,"Malformed catalog rejects");}
 n::ActivityCatalogProcess p(unsigned pid,unsigned parent,unsigned start,std::string path,bool window=false,std::string app={}){return {pid,parent,start,path,app,"Synthetic "+std::to_string(pid),path,window};}
 void catalog(){n::ActivityCatalogInventory data{{p(10,0,1,"c:/apps/a/a.exe",true),p(11,10,2,"c:/apps/a/helper.exe"),p(12,11,3,"c:/apps/a/deep/renderer.exe"),p(13,10,4,"c:/apps/another/tool.exe"),p(14,0,5,"c:/apps/a/a.exe"),p(15,10,6,"c:/apps/b/b.exe",true),p(20,0,7,"c:/package/main.exe",false,"package!App"),p(21,0,8,"c:/package/helper.exe",false,"package!App"),p(30,31,1,"c:/apps/z/helper.exe"),p(31,0,9,"c:/apps/z/z.exe",true)},true,{}};
@@ -16,4 +25,23 @@ void catalog(){n::ActivityCatalogInventory data{{p(10,0,1,"c:/apps/a/a.exe",true
 }
 void disk(){using D=n::ActivityDiskCounter;std::vector<D>reads{{"0 C:",100,true},{"1 D:",200,true},{"_Total",300,true}},writes{{"1 D:",20,true},{"_Total",30,true},{"0 C:",10,true}};auto got=n::activityDiskCounters(reads,writes);check(got&&got->size()==2&&got->at("0 C:")==m::ActivityBytes{100,10},"Pair raw physical-device bytes and exclude duplicate total");auto old=m::ActivityRawSample{};old.timestamp=old.uptime=1;old.disk=got;reads[0].bytes+=60;writes[2].bytes+=20;auto current=old;current.timestamp=current.uptime=2;current.disk=n::activityDiskCounters(reads,writes);auto rates=m::deriveActivity(current,&old);check(rates.diskRead==60&&rates.diskWrite==20,"Raw bytes derive original per-second rates once");auto reset=current;reset.uptime=3;reset.disk->at("0 C:").received=0;check(!m::deriveActivity(reset,&current).diskRead,"Counter reset produces baseline gap");auto topology=current;topology.uptime=3;topology.disk->erase("1 D:");check(!m::deriveActivity(topology,&current).diskRead,"Hotplug topology produces baseline gap");writes.pop_back();check(!n::activityDiskCounters(reads,writes),"Partial read/write instance set rejects");check(!n::activityDiskCounters({},{}),"No disks remains unknown");writes={{"0 C:",1,true},{"1 D:",2,true}};reads[0].valid=false;check(!n::activityDiskCounters(reads,writes),"Provider invalid data remains unknown");reads[0].valid=true;writes.push_back(writes[0]);check(!n::activityDiskCounters(reads,writes),"Duplicate instance rejects");std::vector<D>large(1026);check(!n::activityDiskCounters(large,{}),"Source1024disk bound enforced");large.clear();for(unsigned k=0;k<1025;++k)large.push_back({std::to_string(k),0,true});check(!n::activityDiskCounters(large,large),"1025 non-total disks cannot use the aggregate reserved slot");}
 }
-int main(){try{catalog();disk();std::cout<<"PASS "<<checks<<" injected Activity catalog/disk checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+void names(){
+    check(n::activityDisplayName("  Google\tChrome \n","chrome")=="Google Chrome","Whitespace and controls collapse to single spaces");
+    check(n::activityDisplayName("","chrome")=="chrome"&&n::activityDisplayName(" \t\r\n ","chrome")=="chrome","Empty names fall back to the executable name");
+    check(n::activityDisplayName(std::string("Bad\xff\xfe",5),"fallback")=="fallback","Invalid UTF-8 falls back");
+    check(n::activityDisplayName("\xe2\x80\x8eNotepad\xe2\x80\xae\xef\xbb\xbf","x")=="Notepad","Bidi and zero-width format characters are removed");
+    check(n::activityDisplayName("\xe7\xbd\x91\xe6\x98\x93\xe4\xba\x91\xe9\x9f\xb3\xe4\xb9\x90\xe3\x80\x80Music","x")=="\xe7\xbd\x91\xe6\x98\x93\xe4\xba\x91\xe9\x9f\xb3\xe4\xb9\x90 Music","CJK names keep their text; ideographic space collapses");
+    std::string longName;for(unsigned k=0;k<70;++k)longName+="\xe4\xb8\xad";const auto bounded=n::activityDisplayName(longName,"x");check(bounded.size()==159&&bounded.size()%3==0,"Names are bounded to 160 bytes on a code point boundary");
+    using T=std::pair<std::uint16_t,std::uint16_t>;const std::vector<T>table{{0x0409,1200},{0x0804,1200},{0x0000,1200}};
+    check(n::activityTranslation(table,0x0804)==1u&&n::activityTranslation(table,0x0409)==0u,"The user's UI language is chosen exactly");
+    check(n::activityTranslation(table,0x1004)==1u,"Same primary language is the next choice");check(n::activityTranslation(table,0x0411)==2u,"Language-neutral strings follow");
+    check(n::activityTranslation(std::vector<T>{{0x0407,1252}},0x0411)==0u&&!n::activityTranslation({},0x0409),"Otherwise the first translation; none without a table");
+#ifdef _WIN32
+    std::wstring self(32768,L'\0');self.resize(GetModuleFileNameW(nullptr,self.data(),DWORD(self.size())));check(!self.empty(),"Test executable path");
+    const auto raw=n::windowsActivityFileDescription(self);check(raw=="  Synthetic  Activity Probe ","Localized version-resource FileDescription is read from the synthetic test executable");
+    check(n::activityDisplayName(raw,"activity_catalog_tests")=="Synthetic Activity Probe","Catalog names apply the shared hygiene");
+    check(n::windowsActivityFileDescription(L"").empty()&&n::windowsActivityFileDescription(self+L".missing").empty(),"Missing executables have no description");
+    check(n::windowsActivityPackagedName(L"EndfieldHUD.Synthetic.Missing_0000000000000!App").empty()&&n::windowsActivityPackagedName(L"").empty(),"Unknown packaged identities have no display name");
+#endif
+}
+int main(){try{catalog();disk();names();std::cout<<"PASS "<<checks<<" injected Activity catalog/disk checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

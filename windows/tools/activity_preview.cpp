@@ -5,23 +5,49 @@
 #include "native/module_registration.hpp"
 #include <cmath>
 #include <algorithm>
+#include <array>
+#include <string_view>
 namespace endfield::tools {
 namespace {namespace gpu=native;using Matrix=core::Matrix4;using Json=ehud::data::Json;void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}bool contains(core::Rect r,core::Point p){return r.contains(p);}Json blank(){return Json::Object{{"bounds",Json::Array{0,0,400,334}},{"position",Json::Array{0,0}},{"anchorPoint",Json::Array{0,0}},{"children",Json::Array{}}};}}
 struct ActivityPreview::Impl {
-    modules::ActivityState state;gpu::NativeActivityScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"activity.registration"};
+    modules::ActivityState state;std::unique_ptr<gpu::ActivityIconProvider>icons;gpu::NativeActivityScene scene;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"activity.registration"};
     modules::ActivityAppearance appearance;std::function<void(bool,bool,double)>demand;std::vector<gpu::LayerCompositionEntry>composed;
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;std::optional<core::Point>pointerPoint;
     bool alive{true},active{},input{},pressed{},reduced{},overlayVisible{true},hasVisibleSample{};double lastTimestamp{},time{};unsigned eventDepth{};
     struct Event{Impl&i;Event(Impl&v,double t):i(v){need(std::isfinite(t),"Activity owner needs finite time");if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}};
-    Impl(gpu::LayerRasterizer&r,ActivityPreviewOptions o):state(std::move(o.compareNames)),scene(state,r,o.raster,o.appearance,std::move(o.sortSamples)),geometry(r),surface(prepare(o.raster),core::Module::activityMonitor),appearance(o.appearance),demand(std::move(o.demandChanged)),reduced(o.reduceMotion){state.receive(std::move(o.initial));state.receiveApps(std::move(o.apps));composed.reserve(49);}
+    std::uint64_t boundContent{},boundPlacement{},boundIcons{},retainedContent{};unsigned boundPixels{};bool bound{};
+    static std::unique_ptr<gpu::ActivityIconProvider>makeIcons(ActivityPreviewOptions&o){
+        // Icons publish into the rows' memory image source; a caller-supplied
+        // source would not see them, so it keeps the rows icon-free.
+        if(!o.iconExecutor||o.raster.memoryImages)return {};
+#ifdef _WIN32
+        if(!o.iconLoader)o.iconLoader=gpu::windowsActivityIconLoader();
+#endif
+        if(!o.iconLoader)return {};auto out=std::make_unique<gpu::ActivityIconProvider>(*o.iconExecutor,std::move(o.iconLoader));o.raster.memoryImages=&out->images();return out;
+    }
+    Impl(gpu::LayerRasterizer&r,ActivityPreviewOptions o):state(std::move(o.compareNames)),icons(makeIcons(o)),scene(state,r,o.raster,o.appearance,std::move(o.sortSamples)),geometry(r),surface(prepare(o.raster),core::Module::activityMonitor),appearance(o.appearance),demand(std::move(o.demandChanged)),reduced(o.reduceMotion){state.receive(std::move(o.initial));state.receiveApps(std::move(o.apps));composed.reserve(49);}
     gpu::LayerScene&prepare(const gpu::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
     std::optional<core::Point>local(core::Point point)const{return input?projection.unproject({point.x*metrics.scale,point.y*metrics.scale}):std::nullopt;}
     void demandChange(){if(demand)demand(active,active&&state.showingApps(),time);}
+    unsigned iconPixels()const{return unsigned(std::clamp(std::ceil(18*appearance.scale),16.,256.));}
+    // ActivityMonitorCanvas.requestVisibleIcons: on content events only (new
+    // sample, scroll, tab, scale or a finished load), never on a warm frame.
+    void bindIcons(){
+        if(!icons||!state.showingApps())return;const auto content=state.appsContentRevision(),placement=state.placementRevision(),loaded=icons->revision();const auto pixels=iconPixels();
+        // Executor backpressure retries on the next content event (the next
+        // 1 Hz Apps sample), not on every frame.
+        if(bound&&content==boundContent&&placement==boundPlacement&&loaded==boundIcons&&pixels==boundPixels)return;
+        const auto&items=state.appSnapshot().items;if(!bound||content!=retainedContent){icons->retain(items);retainedContent=content;}
+        const auto rows=state.visibleRows();std::array<std::string_view,6>keys{};std::size_t count{};
+        for(std::size_t n=0;n<rows.count&&count<keys.size();++n)if(rows.rows[n].index<items.size())keys[count++]=items[rows.rows[n].index].identity.iconKey;
+        scene.setIcons(icons->bind(std::span<const std::string_view>(keys.data(),count),pixels));
+        bound=true;boundContent=content;boundPlacement=placement;boundIcons=icons->revision();boundPixels=pixels;
+    }
     void feedback(){if(!pose)return;const auto q=pointerPoint?local(*pointerPoint):std::nullopt;scene.setFeedback(q,pressed,reduced,time);}
     bool action(std::string_view id){if(!active||!input)return false;bool valid{};for(const auto&a:scene.actions())valid|=id==a.id;if(!valid)return false;
-        if(id=="activity:overview"||id=="activity:apps"){const bool next=id=="activity:apps";if(!state.setApps(next))return true;scene.syncContent(time,false);scene.selectPage(next,time,!reduced);demandChange();return true;}
+        if(id=="activity:overview"||id=="activity:apps"){const bool next=id=="activity:apps";if(!state.setApps(next))return true;bindIcons();scene.syncContent(time,false);scene.selectPage(next,time,!reduced);demandChange();return true;}
         static constexpr std::array keys{modules::ActivitySort::name,modules::ActivitySort::cpu,modules::ActivitySort::memory,modules::ActivitySort::network,modules::ActivitySort::disk};
-        for(auto key:keys)if(id.substr(std::string_view("activity:sort:").size())==modules::activitySortKey(key)){state.sort(key);scene.syncContent(time,false);scene.revealSort(state.descending()?1:-1,time,!reduced);return true;}return false;
+        for(auto key:keys)if(id.substr(std::string_view("activity:sort:").size())==modules::activitySortKey(key)){state.sort(key);bindIcons();scene.syncContent(time,false);scene.revealSort(state.descending()?1:-1,time,!reduced);return true;}return false;
     }
 };
 ActivityPreview::ActivityPreview(gpu::LayerRasterizer&r,ActivityPreviewOptions o):impl_(std::make_shared<Impl>(r,std::move(o))){}
@@ -34,7 +60,7 @@ void ActivityPreview::setOverlayVisible(bool value,double t){auto i=impl_;const 
 void ActivityPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto i=impl_;const Impl::Event event(*i,t);const auto*shown=sample.current.module==core::Module::activityMonitor?&sample.current:sample.incoming&&sample.incoming->module==core::Module::activityMonitor?&*sample.incoming:nullptr;const bool active=shown&&sample.requested==core::Module::activityMonitor&&i->overlayVisible;
     if(active!=i->active){i->active=active;i->input=false;i->pressed=false;i->hasVisibleSample=false;if(!active)i->scene.settle();i->demandChange();if(!i->alive)return;}
     i->input=active&&sample.acceptsModuleInput;if(!shown){i->pose.reset();i->registration.update({});return;}
-    if(active||i->scene.entries().empty()){const bool animate=i->hasVisibleSample&&i->lastTimestamp!=i->state.snapshot().timestamp&&!i->reduced;i->scene.syncContent(i->time,animate);i->lastTimestamp=i->state.snapshot().timestamp;i->hasVisibleSample=true;}
+    if(active||i->scene.entries().empty()){const bool animate=i->hasVisibleSample&&i->lastTimestamp!=i->state.snapshot().timestamp&&!i->reduced;i->bindIcons();i->scene.syncContent(i->time,animate);i->lastTimestamp=i->state.snapshot().timestamp;i->hasVisibleSample=true;}
     i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);i->feedback();i->scene.updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 bool ActivityPreview::requiresFrames(double t)const{return impl_->pose&&impl_->scene.requiresFrames(std::max(t,impl_->time));}
@@ -53,5 +79,6 @@ const modules::ActivityState&ActivityPreview::state()const noexcept{return impl_
 void ActivityPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene.uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ActivityPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene.entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}
 void ActivityPreview::collected(gpu::Renderer&r){need(impl_->scene.collectRetired(r),"Activity resources still published");}void ActivityPreview::release(gpu::Renderer&r){auto&i=*impl_;need(i.scene.releaseResources(r)&&i.registration.releaseResources(r)&&i.geometry.releaseResources(r),"Activity resources still published at teardown");}gpu::ActivitySceneStats ActivityPreview::stats()const{return impl_->scene.stats();}
+std::optional<gpu::ActivityIconStats>ActivityPreview::iconStats()const{if(!impl_->icons)return {};return impl_->icons->stats();}
 }
 #endif
