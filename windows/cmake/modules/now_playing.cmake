@@ -75,6 +75,24 @@ if(TARGET hud_now_playing_preview)
   target_link_libraries(hud_now_playing_preview PUBLIC hud_now_playing_accessibility)
 endif()
 
+# UI Automation fragments for the projected controls (Invoke/RangeValue/Value),
+# listed by the HUD window's UIA root provider.
+if(WIN32)
+  add_library(hud_now_playing_automation native/now_playing_automation.cpp)
+  target_include_directories(hud_now_playing_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_now_playing_automation PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_now_playing_automation PUBLIC hud_now_playing_accessibility PRIVATE uiautomationcore oleaut32 ole32)
+  if(MSVC)
+    target_compile_options(hud_now_playing_automation PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(now_playing_automation_tests tests/now_playing_automation_tests.cpp)
+    target_compile_definitions(now_playing_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(now_playing_automation_tests PRIVATE hud_now_playing_automation uiautomationcore oleaut32 ole32)
+    add_test(NAME now_playing_automation_contracts COMMAND now_playing_automation_tests)
+  endif()
+endif()
+
 # User-run live acceptance probe (GSMTC, thumbnails, lyric sources, commands).
 # The registered test only checks that the default invocation is inert.
 if(WIN32)
@@ -122,7 +140,7 @@ if(WIN32)
   target_compile_definitions(hud_now_playing_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_now_playing_area PUBLIC hud_module_registry
     PRIVATE hud_now_playing_preview hud_now_playing_fixture hud_now_playing_volume hud_now_playing_web hud_now_playing_accessibility
-            hud_audio_runtime hud_event_log hud_utility user32)
+            hud_now_playing_automation hud_audio_runtime hud_event_log hud_utility user32 uiautomationcore oleaut32 ole32)
   if(MSVC)
     target_compile_options(hud_now_playing_area PRIVATE /W4 /permissive- /EHsc)
   endif()

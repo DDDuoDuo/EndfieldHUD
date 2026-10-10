@@ -5,12 +5,16 @@
 #include "modules/now_playing_accessibility.hpp"
 #include "modules/now_playing_lyrics_sources.hpp"
 #include "native/audio_runtime.hpp"
+#include "native/now_playing_automation.hpp"
 #include "native/now_playing_fixture.hpp"
 #include "native/now_playing_volume.hpp"
 #include "native/now_playing_web.hpp"
 #include "tools/now_playing_preview.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -18,6 +22,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <uiautomation.h>
+#include <wrl/client.h>
 
 namespace endfield::areas {
 namespace {
@@ -59,10 +65,10 @@ struct Wake {
 class NowPlayingArea final : public app::ModuleOwner {
 public:
     explicit NowPlayingArea(const app::ApplicationModuleContext& c)
-        : host_(*c.host), utility_(*c.utility), mode_(c.mode), record_(c.recordEvent) {
+        : host_(*c.host), utility_(*c.utility), window_(static_cast<HWND>(c.window)), mode_(c.mode), record_(c.recordEvent) {
         message_ = host_.registerMessage();
         wake_ = std::make_shared<Wake>();
-        wake_->window = static_cast<HWND>(c.window);
+        wake_->window = window_;
         wake_->message = message_;
         wake_->post = mode_ != ApplicationAreaMode::hiddenCoverage;
         const std::function<void()> wake = [state = wake_] { (*state)(); };
@@ -186,7 +192,50 @@ public:
         else idleCoverage(step);
     }
 
+    // The host's UI Automation view of this owner (native/now_playing_automation.hpp):
+    // projected source buttons and sliders while Now Playing accepts input. The
+    // HUD window's UIA root provider (host) lists the fragments it creates.
+    gpu::NowPlayingAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
+        gpu::NowPlayingAutomationHost h;
+        h.root = root;
+        h.elements = [this] { return preview_->project({220, 220}) ? preview_->accessibility(host_.now()) : modules::NowPlayingAccessibility{}; };
+        h.toScreen = [this](core::Rect r) { return screenRect(r); };
+        h.invoke = [this](std::string_view id) {
+            for (const auto action : {NowPlayingAction::lyrics, NowPlayingAction::previous, NowPlayingAction::playPause, NowPlayingAction::next, NowPlayingAction::volume})
+                if (modules::nowPlayingActionID(action) == id) {
+                    const double t = host_.now();
+                    observe(t);
+                    return preview_->perform(action, t);
+                }
+            return false;
+        };
+        h.setValue = [this](std::string_view id, double value) {
+            const double t = host_.now();
+            observe(t);
+            if (id == "seek") return preview_->setSlider(NowPlayingSliderKind::seek, value, t);
+            if (id == "appVolume") return preview_->setSlider(NowPlayingSliderKind::volume, value, t);
+            return false;
+        };
+        return h;
+    }
+
 private:
+    // A 440-point canvas rect -> physical screen pixels through the current
+    // module plane (bounds of its projected corners); none while not presented.
+    std::optional<core::Rect> screenRect(core::Rect r) const {
+        double left = std::numeric_limits<double>::infinity(), top = left, right = -left, bottom = -left;
+        const std::array<core::Point, 4> corners{{{r.x, r.y}, {r.x + r.width, r.y}, {r.x, r.y + r.height}, {r.x + r.width, r.y + r.height}}};
+        for (const auto corner : corners) {
+            const auto p = preview_->project(corner);
+            if (!p) return std::nullopt;
+            left = std::min(left, p->x); top = std::min(top, p->y);
+            right = std::max(right, p->x); bottom = std::max(bottom, p->y);
+        }
+        POINT origin{};
+        if (!ClientToScreen(window_, &origin)) return std::nullopt;
+        const double scale = host_.metrics().scale;
+        return core::Rect{origin.x + left * scale, origin.y + top * scale, (right - left) * scale, (bottom - top) * scale};
+    }
     void observe(double t) {
         if (!fixtureClock_ || !std::isfinite(t)) return;
         if (t > fixtureClock_->load(std::memory_order_relaxed)) fixtureClock_->store(t, std::memory_order_release);
@@ -305,7 +354,19 @@ private:
             settle(step);
             step.check(std::abs(position() - 84) < 1 && recorded(events + 4, "seek"), "Seek release emits one successful command");
 
-            step.check(preview_->perform(NowPlayingAction::next, t), "Next is available");
+            // UI Automation over the real owner: projected fragments on the hidden
+            // HUD window (rooted by the host's UIA root provider when it exists).
+            gpu::NativeNowPlayingAutomation automation(automationHost(nullptr));
+            step.check(automation.refresh() && automation.size() == 6, "UIA lists the five projected buttons and the seek slider");
+            const auto nextScreen = screenRect(view.actions()[static_cast<std::size_t>(NowPlayingAction::next)].rect);
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> nextElement;
+            step.check(nextScreen && SUCCEEDED(automation.fromPoint(nextScreen->x + nextScreen->width / 2, nextScreen->y + nextScreen->height / 2, &nextElement)) && nextElement,
+                       "UIA hit testing finds Next at its projected screen position");
+            UiaRect bounds{};
+            step.check(SUCCEEDED(nextElement->get_BoundingRectangle(&bounds)) && bounds.left == nextScreen->x && bounds.top == nextScreen->y &&
+                       bounds.width == nextScreen->width && bounds.height == nextScreen->height, "UIA bounds are the projected control in screen pixels");
+            Microsoft::WRL::ComPtr<IInvokeProvider> invokeNext;
+            step.check(SUCCEEDED(nextElement.As(&invokeNext)) && SUCCEEDED(invokeNext->Invoke()), "UIA Invoke performs Next");
             settle(step);
             present(.3);
             step.check(title() == "EndfieldHUD Fixture 2" && std::abs(position()) < 1e-9 && recorded(events + 5, "next"), "Next advances the fixture track");
@@ -313,7 +374,12 @@ private:
             settle(step);
             present(.3);
             step.check(title() == "EndfieldHUD Fixture 1" && recorded(events + 6, "previous"), "Previous returns to the first fixture track");
-            step.check(preview_->setSlider(NowPlayingSliderKind::seek, 42, t), "Accessible seek sets an exact position");
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> seekElement;
+            Microsoft::WRL::ComPtr<IRangeValueProvider> seekRange;
+            double step5{};
+            step.check(!automation.refresh() && SUCCEEDED(automation.child(automation.size() - 1, &seekElement)) && SUCCEEDED(seekElement.As(&seekRange)) &&
+                       SUCCEEDED(seekRange->get_SmallChange(&step5)) && step5 == 5, "The UIA seek slider keeps its identity and the source 5 s increment");
+            step.check(SUCCEEDED(seekRange->SetValue(42)), "UIA RangeValue seeks to an exact position");
             settle(step);
             step.check(std::abs(position() - 42) < 1e-9 && recorded(events + 7, "seek"), "Accessible seek restores 42 seconds");
 
@@ -366,6 +432,10 @@ private:
         }
         const auto starts = *starts_;
         step.present(step.time + .1);
+        {
+            gpu::NativeNowPlayingAutomation automation(automationHost(nullptr));
+            step.check(!automation.refresh() && automation.size() == 0, "Unpresented Now Playing exposes no UIA fragments");
+        }
         step.check(!service_->snapshot().active && !presentation().active() && !preview_->nextWakeTime() && !pointerLocked() && !capturesPointer(),
                    "Unpresented Now Playing keeps no provider, deadline or input");
         step.check(!audioFixture_->nowPlayingVisible() && audioFixture_->applications().empty() && !wake_->pending.load() && *starts_ == starts,
@@ -377,6 +447,7 @@ private:
 
     app::ApplicationHost& host_;
     app::UtilityExecutor& utility_;
+    HWND window_{};
     const ApplicationAreaMode mode_;
     std::function<void(modules::EventKind, modules::EventMetadata)> record_;
     std::uint32_t message_{};
