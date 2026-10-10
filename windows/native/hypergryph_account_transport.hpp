@@ -2,6 +2,7 @@
 #include "modules/hypergryph_account_api.hpp"
 #include <functional>
 #include <memory>
+#include <optional>
 
 // Asynchronous WinHTTP transport for the fixed community endpoints and public
 // avatar images. HTTPS only (TLS 1.2+), no cookies, no redirects (every 3xx is
@@ -12,12 +13,22 @@
 // The 20 s per-request resource limit is a deadline folded into the host's
 // existing scheduler: no timer, worker thread or polling loop is created.
 namespace endfield::native {
+// A transport whose completions run only when the owner drains it (WinHTTP in
+// EndfieldHUD.exe; the in-process synthetic transport in hidden coverage).
+// Deadlines are host-clock seconds folded into the host's single scheduler.
+class OwnerDrainedAccountTransport:public modules::hypergryph::HttpTransport {
+public:
+    virtual std::size_t drain()=0;                       // owner thread
+    virtual std::optional<double> nextDeadline() const=0;
+    virtual bool deadline(double now)=0;                 // expires overdue requests
+    virtual std::size_t activeRequests() const=0;
+};
 #ifdef _WIN32
 // Response-head gate shared by the WinHTTP callbacks (exposed for tests).
 struct AccountResponseHead {std::optional<modules::hypergryph::Error> failure;bool readBody{};};
 AccountResponseHead classifyAccountResponseHead(int status,std::optional<unsigned long long> contentLength,
     std::size_t maximumBytes,bool allowAuthenticationStatus,std::optional<std::string> mimeType,bool imageRequest);
-class WinHttpAccountTransport final:public modules::hypergryph::HttpTransport {
+class WinHttpAccountTransport final:public OwnerDrainedAccountTransport {
 public:
     struct Options {
         std::function<void()> notify;          // thread-safe, posts one owner message
@@ -40,10 +51,10 @@ public:
     // Public image (avatar) GET: only "Accept: image/*", no account headers.
     modules::hypergryph::RequestHandle startImage(const std::string& httpsURL,std::size_t maximumBytes,
         std::function<void(modules::hypergryph::HttpOutcome)>);
-    std::size_t drain();                       // owner thread
-    std::optional<double> nextDeadline() const;
-    bool deadline(double now);                 // expires overdue requests as transport failures
-    std::size_t activeRequests() const;
+    std::size_t drain() override;              // owner thread
+    std::optional<double> nextDeadline() const override;
+    bool deadline(double now) override;        // expires overdue requests as transport failures
+    std::size_t activeRequests() const override;
 private:
     struct Impl;std::shared_ptr<Impl> impl_;
 };

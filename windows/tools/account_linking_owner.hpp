@@ -4,6 +4,7 @@
 #include "app/utility_executor.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
+#include "native/hypergryph_account_services.hpp"
 #include "tools/account_preview.hpp"
 #include "tools/account_sanity_gauge_preview.hpp"
 #include <filesystem>
@@ -46,6 +47,17 @@ struct AccountLinkingOwnerOptions {
     bool officialLogin{true};
     // Wall clock in Foundation reference seconds (Mac Date()); tests pin it.
     std::function<modules::hypergryph::Time()> wallClock;
+    // "Updated MM/dd HH:mm:ss" fields (default: the user's local time zone).
+    std::function<modules::hypergryph::LocalDateFields(modules::hypergryph::Time)> localDate;
+    // Thread-safe owner wake for WinHTTP completions; default posts
+    // serviceMessage to `window`. Hidden coverage passes a no-op and routes
+    // serviceMessage through the owners' message chain itself.
+    std::function<void()> wake;
+    // Hidden coverage only: synthetic transport/vault/avatar providers and a
+    // synthetic login host (borrowed, outliving the owner). No WinHTTP
+    // session, DPAPI blob, browser or network endpoint is then created.
+    std::optional<native::HypergryphAccountServicesOptions::Synthetic> synthetic;
+    modules::hypergryph::AccountLoginPresenter* login{};
 };
 class AccountLinkingOwner final {
 public:
@@ -84,7 +96,12 @@ public:
     // Personal Profile observer: an avatar change outside game sync turns
     // avatar sync off (Mac profile observer); Work Mode timer state changes.
     void profileAvatarChanged(const std::optional<std::string>& filename);
+    // The profile's loaded avatar (its first committed record): the known
+    // baseline, never mistaken for a manual edit.
+    void profileAvatarBaseline(const std::optional<std::string>& filename);
     void workModeChanged(double time);
+    // Local wall-clock presentation changed (time zone / clock change).
+    void localTimeChanged(double time);
 
     modules::hypergryph::HypergryphAccountController& controller() noexcept;
     const AccountPreview& module() const noexcept;

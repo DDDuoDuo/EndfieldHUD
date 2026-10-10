@@ -16,7 +16,8 @@ add_library(hud_hypergryph_account
   modules/hypergryph_account_identity_sync.cpp
   modules/hypergryph_account_login.cpp
   modules/hypergryph_account_sanity_gauge.cpp
-  modules/hypergryph_account_canvas.cpp)
+  modules/hypergryph_account_canvas.cpp
+  modules/hypergryph_account_profile_relay.cpp)
 target_include_directories(hud_hypergryph_account PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_hypergryph_account PUBLIC hud_data hud_localization hud_scene)
 
@@ -41,6 +42,10 @@ if(BUILD_TESTING)
   target_link_libraries(hypergryph_account_controller_tests PRIVATE hud_hypergryph_account)
   add_test(NAME hypergryph_account_controller_contracts COMMAND hypergryph_account_controller_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
+  # Profile sync across module areas: pending update/lock replay on attach.
+  add_executable(hypergryph_account_profile_relay_tests tests/hypergryph_account_profile_relay_tests.cpp)
+  target_link_libraries(hypergryph_account_profile_relay_tests PRIVATE hud_hypergryph_account)
+  add_test(NAME hypergryph_account_profile_relay_contracts COMMAND hypergryph_account_profile_relay_tests)
 endif()
 
 if(WIN32)
@@ -87,34 +92,70 @@ if(WIN32)
   endif()
 endif()
 
-# Official login over WebView2 is built only when the WebView2 SDK is supplied,
-# either explicitly or vendored at windows/third_party/webview2:
-#   -DEHUD_WEBVIEW2_SDK_DIR=<Microsoft.Web.WebView2 NuGet package root>
+# Official login over WebView2. The pinned Microsoft.Web.WebView2 package
+# files the build needs are vendored, byte for byte, at
+# windows/third_party/webview2 (include/WebView2.h, x64/WebView2LoaderStatic.lib;
+# flattened from build/native/ because the repository ignores build/
+# directories). provenance.json records the version, source URL and the
+# SHA-256 of the package and of every file; LICENSE.txt and NOTICE.txt are the
+# package's own. Configure verifies those pins. Another SDK may be supplied
+# explicitly in its NuGet layout:
+#   -DEHUD_WEBVIEW2_SDK_DIR=<Microsoft.Web.WebView2 package root>
 # (build/native/include/WebView2.h and build/native/<arch>/WebView2LoaderStatic.lib).
-# The SDK is not part of the Windows SDK and is not vendored in this tree;
-# without it the owner links UnavailableLoginPresenter and Connect reports a
-# clear failure. At run time the Evergreen WebView2 runtime is also required.
-set(EHUD_WEBVIEW2_SDK_DIR "" CACHE PATH "Optional Microsoft.Web.WebView2 SDK package root")
-set(ehud_webview2_root "${EHUD_WEBVIEW2_SDK_DIR}")
-if(NOT ehud_webview2_root AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2/build/native/include/WebView2.h")
-  set(ehud_webview2_root "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2")
+# Only the x64 static loader is vendored; other architectures build without
+# the official login (UnavailableLoginPresenter: Connect reports the explicit
+# failure). At run time the installed Evergreen WebView2 runtime is required.
+set(EHUD_WEBVIEW2_SDK_DIR "" CACHE PATH "Optional Microsoft.Web.WebView2 SDK package root (default: the vendored pinned package)")
+if(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+  set(ehud_webview2_arch arm64)
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  set(ehud_webview2_arch x64)
+else()
+  set(ehud_webview2_arch x86)
 endif()
-if(WIN32 AND ehud_webview2_root)
-  if(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
-    set(ehud_webview2_arch arm64)
-  elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(ehud_webview2_arch x64)
-  else()
-    set(ehud_webview2_arch x86)
+set(ehud_webview2_include "")
+set(ehud_webview2_loader "")
+if(EHUD_WEBVIEW2_SDK_DIR)
+  set(ehud_webview2_include "${EHUD_WEBVIEW2_SDK_DIR}/build/native/include")
+  set(ehud_webview2_loader "${EHUD_WEBVIEW2_SDK_DIR}/build/native/${ehud_webview2_arch}/WebView2LoaderStatic.lib")
+  if(NOT EXISTS "${ehud_webview2_include}/WebView2.h" OR NOT EXISTS "${ehud_webview2_loader}")
+    message(FATAL_ERROR "EHUD_WEBVIEW2_SDK_DIR must contain build/native/include/WebView2.h and build/native/${ehud_webview2_arch}/WebView2LoaderStatic.lib: ${EHUD_WEBVIEW2_SDK_DIR}")
   endif()
-  set(ehud_webview2_loader "${ehud_webview2_root}/build/native/${ehud_webview2_arch}/WebView2LoaderStatic.lib")
-  if(NOT EXISTS "${ehud_webview2_root}/build/native/include/WebView2.h" OR NOT EXISTS "${ehud_webview2_loader}")
-    message(FATAL_ERROR "WebView2 SDK root must contain build/native/include/WebView2.h and build/native/${ehud_webview2_arch}/WebView2LoaderStatic.lib: ${ehud_webview2_root}")
+else()
+  set(ehud_webview2_vendored "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2")
+  if(EXISTS "${ehud_webview2_vendored}/provenance.json")
+    # Every vendored file must match its recorded SHA-256 (no silent drift).
+    file(READ "${ehud_webview2_vendored}/provenance.json" ehud_webview2_provenance)
+    string(JSON ehud_webview2_version GET "${ehud_webview2_provenance}" version)
+    string(JSON ehud_webview2_count LENGTH "${ehud_webview2_provenance}" files)
+    math(EXPR ehud_webview2_last "${ehud_webview2_count} - 1")
+    foreach(ehud_index RANGE ${ehud_webview2_last})
+      string(JSON ehud_webview2_file MEMBER "${ehud_webview2_provenance}" files ${ehud_index})
+      string(JSON ehud_webview2_pin GET "${ehud_webview2_provenance}" files "${ehud_webview2_file}" sha256)
+      if(NOT EXISTS "${ehud_webview2_vendored}/${ehud_webview2_file}")
+        message(FATAL_ERROR "Vendored WebView2 SDK file is missing: ${ehud_webview2_file}")
+      endif()
+      file(SHA256 "${ehud_webview2_vendored}/${ehud_webview2_file}" ehud_webview2_actual)
+      if(NOT ehud_webview2_actual STREQUAL ehud_webview2_pin)
+        message(FATAL_ERROR "Vendored WebView2 SDK file does not match its pin: ${ehud_webview2_file}")
+      endif()
+    endforeach()
+    if(EXISTS "${ehud_webview2_vendored}/${ehud_webview2_arch}/WebView2LoaderStatic.lib")
+      set(ehud_webview2_include "${ehud_webview2_vendored}/include")
+      set(ehud_webview2_loader "${ehud_webview2_vendored}/${ehud_webview2_arch}/WebView2LoaderStatic.lib")
+    elseif(WIN32)
+      message(STATUS "Vendored WebView2 SDK ${ehud_webview2_version} has no ${ehud_webview2_arch} loader: official login unavailable in this build")
+    endif()
   endif()
+endif()
+if(WIN32 AND ehud_webview2_loader)
   add_library(hud_hypergryph_account_webview native/hypergryph_account_webview.cpp)
-  target_include_directories(hud_hypergryph_account_webview PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} "${ehud_webview2_root}/build/native/include")
+  target_include_directories(hud_hypergryph_account_webview PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  # The SDK header is third-party: include it as a system directory.
+  target_include_directories(hud_hypergryph_account_webview SYSTEM PRIVATE "${ehud_webview2_include}")
   target_compile_definitions(hud_hypergryph_account_webview PUBLIC EHUD_HAS_WEBVIEW2 PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_hypergryph_account_webview PUBLIC hud_hypergryph_account PRIVATE "${ehud_webview2_loader}" rpcrt4 ole32 user32 gdi32 advapi32 version)
+  target_link_libraries(hud_hypergryph_account_webview PUBLIC hud_hypergryph_account PRIVATE "${ehud_webview2_loader}" rpcrt4 ole32 user32 gdi32 advapi32 version shlwapi)
+  message(STATUS "Account Linking official login: WebView2 SDK (${ehud_webview2_arch}) from ${ehud_webview2_loader}")
 endif()
 
 if(WIN32)
@@ -133,5 +174,38 @@ if(WIN32)
     target_link_libraries(hypergryph_account_owner_tests PRIVATE hud_hypergryph_account_owner ole32)
     add_test(NAME hypergryph_account_owner_contracts COMMAND hypergryph_account_owner_tests
       ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/account)
+  endif()
+
+  # --- Module area (app/module_owner.hpp, "Adding a module area") ----------
+  # EndfieldHUD.exe and hidden coverage construct the owner through
+  # endfield::areas::accountModule; hidden coverage uses the synthetic
+  # providers in app/areas/account_coverage.* and the fixture below.
+  add_library(hud_account_area STATIC app/areas/account_module.cpp app/areas/account_coverage.cpp)
+  target_include_directories(hud_account_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_account_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_account_area PUBLIC hud_hypergryph_account_owner hud_module_registry hud_utility hud_data PRIVATE user32)
+  if(MSVC)
+    target_compile_options(hud_account_area PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "account|hud_account_area|app/areas/account_module.hpp|endfield::areas::accountModule")
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREA_FIXTURES
+    "account.coverage|${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-coverage.json")
+  # Header wallet sprites and numerals (pinned by GaugeAssets::load), staged
+  # as resources/account. This fragment sorts before app.cmake, so it appends
+  # the ehud_app_resource() record directly.
+  if(COMMAND ehud_app_resource)
+    ehud_app_resource(account.gauge directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/account" "account")
+  else()
+    set_property(GLOBAL APPEND PROPERTY EHUD_APP_RESOURCE_SPECS "account.gauge|directory|${CMAKE_CURRENT_SOURCE_DIR}/resources/account|account")
+  endif()
+  if(BUILD_TESTING)
+    # Synthetic coverage providers and the oracle-derived coverage fixture
+    # (tools/hypergryph_account_coverage_fixture.py): no network or browser.
+    add_executable(hypergryph_account_area_tests tests/hypergryph_account_area_tests.cpp)
+    target_compile_definitions(hypergryph_account_area_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(hypergryph_account_area_tests PRIVATE hud_account_area)
+    add_test(NAME hypergryph_account_area_contracts COMMAND hypergryph_account_area_tests
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-coverage.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
   endif()
 endif()

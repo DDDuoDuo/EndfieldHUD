@@ -41,6 +41,10 @@ public:
     bool deadline(double hostTime);
     const modules::hypergryph::SanityGaugeModel& model() const noexcept;
     std::vector<modules::hypergryph::GaugeAction> accessibleActions() const;
+    // A gauge-local point (accessibleActions() rects) in logical client
+    // coordinates through the current projected header pose (UIA, coverage);
+    // empty before the first posed frame or when it does not project.
+    std::optional<core::Point> clientPoint(core::Point local) const;
     native::NativeSanityGaugeStats sceneStats() const noexcept;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();

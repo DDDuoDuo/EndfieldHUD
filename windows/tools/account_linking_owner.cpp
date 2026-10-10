@@ -50,17 +50,21 @@ AccountLinkingOwner::AccountLinkingOwner(app::UtilityExecutor& executor,gpu::Lay
     gpu::HypergryphAccountServicesOptions s;
     s.accountDirectory=(i.options.dataRoot/L"Account").lexically_normal();
     // Thread-safe: WinHTTP completion threads only post one owner message.
-    s.notify=[window,wake]{PostMessageW(window,wake,0,0);};
+    if(i.options.wake) s.notify=i.options.wake;
+    else s.notify=[window,wake]{PostMessageW(window,wake,0,0);};
     s.hostClock=i.options.clock;
     if(i.options.wallClock) s.wallClock=i.options.wallClock;
+    if(i.options.localDate) s.localDate=i.options.localDate;
+    s.synthetic=i.options.synthetic;
     s.language=i.options.language;
     s.onEvent=[weak](std::string_view action){if(auto self=weak.lock();self&&self->options.recordEvent) self->options.recordEvent(action);};
     s.changed=[weak]{if(auto self=weak.lock()) self->changed();};
     s.profile=i.options.profile;s.initialAvatarFilename=i.options.initialAvatarFilename;
+    if(i.options.login) s.login=i.options.login;
 #ifdef EHUD_HAS_WEBVIEW2
     // Official login only with an installed Evergreen runtime; otherwise the
     // controller receives the explicit "unavailable" result (no browser).
-    if(i.options.officialLogin&&gpu::webView2RuntimeVersion()) {
+    else if(i.options.officialLogin&&gpu::webView2RuntimeVersion()) {
         gpu::WebViewLoginOptions l;l.owner=window;l.language=i.options.language;l.now=i.options.clock;
         l.scheduleChanged=[weak]{if(auto self=weak.lock();self&&self->options.invalidate) self->options.invalidate();};
         i.login=std::make_unique<gpu::WebViewLoginPresenter>(std::move(l));s.login=i.login.get();i.webView=true;
@@ -156,7 +160,9 @@ bool AccountLinkingOwner::message(const app::NativeMessage& m,double t) {
 void AccountLinkingOwner::cancelInteraction(double t) {auto& i=*impl_;i.advance(t);i.module->cancelInteraction(i.time);i.gauge->dismiss(i.time);}
 bool AccountLinkingOwner::flush(double t) {impl_->advance(t);return impl_->services->flush();}
 void AccountLinkingOwner::profileAvatarChanged(const std::optional<std::string>& filename) {impl_->services->controller().profileAvatarChanged(filename);}
+void AccountLinkingOwner::profileAvatarBaseline(const std::optional<std::string>& filename) {impl_->services->controller().profileAvatarBaseline(filename);}
 void AccountLinkingOwner::workModeChanged(double t) {auto& i=*impl_;i.advance(t);i.gauge->contentChanged(i.time);}
+void AccountLinkingOwner::localTimeChanged(double t) {auto& i=*impl_;i.advance(t);i.module->presentationChanged(i.time);i.gauge->contentChanged(i.time);}
 h::HypergryphAccountController& AccountLinkingOwner::controller() noexcept {return impl_->services->controller();}
 const AccountPreview& AccountLinkingOwner::module() const noexcept {return *impl_->module;}
 const AccountSanityGaugePreview& AccountLinkingOwner::gauge() const noexcept {return *impl_->gauge;}

@@ -51,6 +51,15 @@ struct HypergryphAccountServicesOptions {
     modules::hypergryph::AccountProfileSink* profile{};
     modules::hypergryph::AccountLoginPresenter* login{}; // null -> UnavailableLoginPresenter
     std::optional<std::string> initialAvatarFilename;
+    // Hidden coverage only: in-process synthetic providers replace WinHTTP,
+    // DPAPI and the avatar download (borrowed; they outlive the bundle). With
+    // them no socket, credential store or remote image is ever touched.
+    struct Synthetic {
+        OwnerDrainedAccountTransport* transport{};
+        modules::hypergryph::AccountCredentialVault* vault{};
+        modules::hypergryph::AccountAvatarLoader* avatar{};
+    };
+    std::optional<Synthetic> synthetic;
 };
 class HypergryphAccountServices final {
 public:
@@ -59,7 +68,7 @@ public:
     HypergryphAccountServices(const HypergryphAccountServices&)=delete;
     HypergryphAccountServices& operator=(const HypergryphAccountServices&)=delete;
     modules::hypergryph::HypergryphAccountController& controller() noexcept;
-    WinHttpAccountTransport& transport() noexcept;
+    OwnerDrainedAccountTransport& transport() noexcept;  // WinHTTP, or the synthetic coverage transport
     std::size_t drain();                                 // owner thread, after `notify`
     bool flush();                                        // shutdown: latest cache bytes reach the disk
     std::optional<double> nextDeadline() const;          // host-clock request deadlines

@@ -45,41 +45,48 @@ void UtilityAccountWorkQueue::run(std::function<void()> work,std::function<void(
 }
 struct HypergryphAccountServices::Impl {
     HypergryphAccountServicesOptions options;
-    std::unique_ptr<WinHttpAccountTransport> transport;std::unique_ptr<h::HypergryphAccountClient> client;
-    std::unique_ptr<DpapiAccountVault> vault;std::unique_ptr<QueuedAccountCacheFile> cache;
-    std::unique_ptr<UtilityAccountWorkQueue> queue;std::unique_ptr<WinHttpAvatarLoader> avatar;
+    std::unique_ptr<WinHttpAccountTransport> winhttp;OwnerDrainedAccountTransport* transport{};std::unique_ptr<h::HypergryphAccountClient> client;
+    std::unique_ptr<DpapiAccountVault> dpapi;h::AccountCredentialVault* vault{};std::unique_ptr<QueuedAccountCacheFile> cache;
+    std::unique_ptr<UtilityAccountWorkQueue> queue;std::unique_ptr<WinHttpAvatarLoader> download;h::AccountAvatarLoader* avatar{};
     std::unique_ptr<UnavailableLoginPresenter> unavailable;std::unique_ptr<h::HypergryphAccountController> controller;
 };
 HypergryphAccountServices::HypergryphAccountServices(app::UtilityExecutor& executor,HypergryphAccountServicesOptions options):impl_(std::make_unique<Impl>()) {
     auto& i=*impl_;i.options=std::move(options);
     if(!i.options.hostClock||!i.options.wallClock) throw std::invalid_argument("Account services need the host and wall clocks");
-    WinHttpAccountTransport::Options t;t.notify=i.options.notify;t.now=i.options.hostClock;
-    i.transport=std::make_unique<WinHttpAccountTransport>(std::move(t));
+    if(i.options.synthetic&&!(i.options.synthetic->transport&&i.options.synthetic->vault&&i.options.synthetic->avatar))
+        throw std::invalid_argument("Synthetic account services need a transport, vault and avatar loader");
+    if(i.options.synthetic) i.transport=i.options.synthetic->transport;
+    else {
+        WinHttpAccountTransport::Options t;t.notify=i.options.notify;t.now=i.options.hostClock;
+        i.winhttp=std::make_unique<WinHttpAccountTransport>(std::move(t));i.transport=i.winhttp.get();
+    }
     i.client=std::make_unique<h::HypergryphAccountClient>(*i.transport,i.options.wallClock);
-    i.vault=std::make_unique<DpapiAccountVault>(i.options.accountDirectory);
+    if(i.options.synthetic) i.vault=i.options.synthetic->vault;
+    else {i.dpapi=std::make_unique<DpapiAccountVault>(i.options.accountDirectory);i.vault=i.dpapi.get();}
     // Cache writes leave the UI thread; a failed write surfaces the Mac status text.
     i.cache=std::make_unique<QueuedAccountCacheFile>(i.options.accountDirectory/L"profile-cache.json",executor,
         [impl=impl_.get()]{if(impl->controller) impl->controller->cacheWriteFailed();});
     auto post=poster();
     i.queue=std::make_unique<UtilityAccountWorkQueue>(executor,post);
-    i.avatar=std::make_unique<WinHttpAvatarLoader>(*i.transport,executor);
+    if(i.options.synthetic) i.avatar=i.options.synthetic->avatar;
+    else {i.download=std::make_unique<WinHttpAvatarLoader>(*i.winhttp,executor);i.avatar=i.download.get();}
     if(!i.options.login) i.unavailable=std::make_unique<UnavailableLoginPresenter>(post);
     h::AccountControllerOptions c;c.now=i.options.wallClock;c.localDate=i.options.localDate;c.language=i.options.language;
     c.onEvent=i.options.onEvent;c.changed=i.options.changed;c.initialAvatarFilename=i.options.initialAvatarFilename;
     i.controller=std::make_unique<h::HypergryphAccountController>(*i.client,*i.vault,*i.queue,i.cache.get(),i.options.profile,
-        i.options.login?i.options.login:i.unavailable.get(),i.avatar.get(),std::move(c));
+        i.options.login?i.options.login:i.unavailable.get(),i.avatar,std::move(c));
 }
 HypergryphAccountServices::~HypergryphAccountServices() {
-    auto& i=*impl_;i.controller.reset();i.avatar.reset();i.queue.reset();i.client.reset();i.transport.reset();
+    auto& i=*impl_;i.controller.reset();i.download.reset();i.queue.reset();i.client.reset();i.winhttp.reset();
 }
 h::HypergryphAccountController& HypergryphAccountServices::controller() noexcept {return *impl_->controller;}
-WinHttpAccountTransport& HypergryphAccountServices::transport() noexcept {return *impl_->transport;}
+OwnerDrainedAccountTransport& HypergryphAccountServices::transport() noexcept {return *impl_->transport;}
 std::size_t HypergryphAccountServices::drain() {return impl_->transport->drain();}
 bool HypergryphAccountServices::flush() {return impl_->cache->flush();}
 std::optional<double> HypergryphAccountServices::nextDeadline() const {return impl_->transport->nextDeadline();}
 bool HypergryphAccountServices::deadline(double t) {const bool expired=impl_->transport->deadline(t);if(expired) impl_->transport->drain();return expired;}
 std::function<void(std::function<void()>)> HypergryphAccountServices::poster() {
-    auto* transport=impl_->transport.get();
+    auto* transport=impl_->transport;
     return [transport](std::function<void()> f){transport->post(std::move(f));};
 }
 }

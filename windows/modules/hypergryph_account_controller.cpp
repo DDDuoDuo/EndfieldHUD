@@ -418,6 +418,7 @@ void HypergryphAccountController::profileAvatarChanged(const std::optional<std::
         i.cache.syncAvatar=false;if(auto a=std::move(i.avatar)) a->cancel();i.avatar.reset();i.avatarURL.reset();i.changed(true);
     }
 }
+void HypergryphAccountController::profileAvatarBaseline(const std::optional<std::string>& filename) {impl_->knownAvatarFilename=filename;}
 void HypergryphAccountController::cacheWriteFailed() {
     auto& i=*impl_;i.statusMessage=i.t("Profile cache could not be saved.","无法保存账户缓存。");i.changed();
 }

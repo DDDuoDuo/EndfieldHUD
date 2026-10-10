@@ -1,0 +1,35 @@
+{
+  "adaptations": [],
+  "archiveBytes": 9259926,
+  "archiveSHA256": "f492bbf547d0da329553b6727435b677579b1e9f91cc9e4a1ad029366d5f23d0",
+  "files": {
+    "LICENSE.txt": {
+      "bytes": 1487,
+      "packagePath": "LICENSE.txt",
+      "sha256": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55"
+    },
+    "NOTICE.txt": {
+      "bytes": 3894,
+      "packagePath": "NOTICE.txt",
+      "sha256": "106423785c5b7eba0a8e61d1837f2132e9c828e20ad530f565d981c1df60dd90"
+    },
+    "include/WebView2.h": {
+      "bytes": 2939599,
+      "packagePath": "build/native/include/WebView2.h",
+      "sha256": "dff1e3181ec7ec203a34ef6efa966590e0ef0ba1a5c3fe3b69da6508c2f8a02e"
+    },
+    "x64/WebView2LoaderStatic.lib": {
+      "bytes": 10694268,
+      "packagePath": "build/native/x64/WebView2LoaderStatic.lib",
+      "sha256": "79723d3395c26f103275ef043062af41b87542c2668386ddc70cdca367720c2d"
+    }
+  },
+  "layout": "Flattened from the package: build/native/include -> include, build/native/x64 -> x64 (the repository ignores build/ directories). Bytes are unmodified.",
+  "license": "BSD-3-Clause-style Microsoft WebView2 SDK license (LICENSE.txt, package metadata license type=file); third-party notices in NOTICE.txt",
+  "project": "Microsoft Edge WebView2 SDK (Microsoft.Web.WebView2 NuGet package)",
+  "published": "2026-08-28T07:24:32Z",
+  "runtime": "Uses the installed Evergreen WebView2 Runtime (not redistributed); without it Connect reports the explicit sign-in failure.",
+  "scope": "Unmodified package files the native build needs: the Win32 COM header and the x64 static loader. No .NET/WinRT assemblies, WebView2Loader.dll, WebView2EnvironmentOptions.h, MSBuild targets or other architectures.",
+  "sourceURL": "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.4191.47",
+  "version": "1.0.4191.47"
+}

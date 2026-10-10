@@ -109,6 +109,11 @@ bool AccountSanityGaugePreview::deadline(double t) {
     return i.model.updateCount()+i.model.tooltipRenders()!=before;
 }
 const h::SanityGaugeModel& AccountSanityGaugePreview::model() const noexcept {return impl_->model;}
+std::optional<core::Point> AccountSanityGaugePreview::clientPoint(core::Point local) const {
+    const auto& i=*impl_;if(!i.posed||!(i.metrics.scale>0)) return std::nullopt;
+    const auto p=i.projection.project(local);if(!p) return std::nullopt;
+    return core::Point{p->x/i.metrics.scale,p->y/i.metrics.scale};
+}
 std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const {return impl_->model.accessibleActions(impl_->options.language);}
 gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) impl_->scene.upload(r);}
