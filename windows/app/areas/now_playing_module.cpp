@@ -1,0 +1,405 @@
+#include "app/areas/now_playing_module.hpp"
+#include "app/application_host.hpp"
+#include "app/utility_executor.hpp"
+#include "modules/event_log.hpp"
+#include "modules/now_playing_accessibility.hpp"
+#include "modules/now_playing_lyrics_sources.hpp"
+#include "native/audio_runtime.hpp"
+#include "native/now_playing_fixture.hpp"
+#include "native/now_playing_volume.hpp"
+#include "native/now_playing_web.hpp"
+#include "tools/now_playing_preview.hpp"
+#include <atomic>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+namespace endfield::areas {
+namespace {
+namespace gpu = native;
+using app::ApplicationAreaMode;
+using modules::NowPlayingAction;
+using modules::NowPlayingSliderKind;
+
+bool hasPixels(const app::ClientMetrics& m) { return m.pixelWidth && m.pixelHeight && std::isfinite(m.scale) && m.scale > 0; }
+bool modifierDown() { return (GetKeyState(VK_CONTROL) & 0x8000) || (GetKeyState(VK_MENU) & 0x8000) || (GetKeyState(VK_SHIFT) & 0x8000); }
+modules::NowPlayingAppearance appearanceFor(const app::ModuleAppearance& a) {
+    // HUDRuntimeAppearance.accent: the effective accent (ModuleAppearance::accent).
+    return {a.dark, a.reduceMotion, a.language, a.accent};
+}
+core::Point center(core::Rect r) { return {r.x + r.width * .5, r.y + r.height * .5}; }
+
+// One coalesced owner wake shared by the media-session service, the public
+// downloads and the synthetic per-app audio runtime. Worker, WinRT and HTTP
+// threads only set the flag and post the area's registered WM_APP message;
+// message() (or the shared utilityCompleted broadcast) drains everything on
+// the UI thread. Hidden coverage never posts: its steps route the same message
+// through the owners' message chain on the synthetic clock.
+struct Wake {
+    HWND window{};
+    UINT message{};
+    bool post{};
+    std::atomic<bool> pending{}, alive{true};
+    void operator()() {
+        if (!alive.load(std::memory_order_acquire) || pending.exchange(true, std::memory_order_acq_rel) || !post) return;
+        if (!PostMessageW(window, message, 0, 0)) {
+            // The caller (service/web) re-arms its own notice and retries on
+            // the next result; the next broadcast drains meanwhile.
+            pending.store(false, std::memory_order_release);
+            throw std::runtime_error("Now Playing could not post its owner wake");
+        }
+    }
+};
+
+class NowPlayingArea final : public app::ModuleOwner {
+public:
+    explicit NowPlayingArea(const app::ApplicationModuleContext& c)
+        : host_(*c.host), utility_(*c.utility), mode_(c.mode), record_(c.recordEvent) {
+        message_ = host_.registerMessage();
+        wake_ = std::make_shared<Wake>();
+        wake_->window = static_cast<HWND>(c.window);
+        wake_->message = message_;
+        wake_->post = mode_ != ApplicationAreaMode::hiddenCoverage;
+        const std::function<void()> wake = [state = wake_] { (*state)(); };
+
+        // The service's clock runs on this thread only. The real provider
+        // reads it from WinRT threads (the production clock is the thread-safe
+        // QueryPerformanceCounter clock). The coverage fixture reads a mirror
+        // of the synthetic clock instead, so no worker races the harness.
+        gpu::NativeNowPlayingService::Factory provider;
+        if (mode_ == ApplicationAreaMode::production) provider = gpu::windowsNowPlayingProvider(c.clock);
+        else if (mode_ == ApplicationAreaMode::developmentPreview) provider = gpu::nowPlayingFixtureProvider(c.clock);
+        else {
+            fixtureClock_ = std::make_shared<std::atomic<double>>(c.clock());
+            provider = gpu::nowPlayingFixtureProvider([clock = fixtureClock_] { return clock->load(std::memory_order_acquire); });
+        }
+        // Each activation (selection of a visible Now Playing) creates one provider.
+        provider = [inner = std::move(provider), starts = starts_] { ++*starts; return inner(); };
+        service_ = std::make_unique<gpu::NativeNowPlayingService>(utility_, std::move(provider), wake, c.clock);
+
+        tools::NowPlayingPreviewOptions options;
+        options.raster.pixelsPerPoint = 2;
+        options.raster.paddingPoints = 1;
+        options.appearance = appearanceFor(host_.appearance());
+        options.changed = c.invalidate;
+        if (mode_ == ApplicationAreaMode::production) {
+            // Visible-only LRCLIB/NetEase lookups and catalog covers.
+            web_ = std::make_shared<gpu::NowPlayingWeb>(gpu::windowsNowPlayingTransport(), wake, c.clock);
+            options.web = web_;
+            // The playing app's mixer route through the ONE shared audio worker;
+            // without it the source "unavailable" submenu remains.
+            if (auto* audio = host_.audio()) options.volume = gpu::nowPlayingAppVolume(*audio);
+        } else {
+            audioFixture_ = std::make_unique<gpu::NowPlayingAudioFixture>(wake);
+            options.volume = gpu::nowPlayingAppVolume(*audioFixture_);
+        }
+        // Successful transport commands only; never the title (source onEvent).
+        options.playback = [this](const modules::NowPlayingPlaybackEvent& event) {
+            auto metadata = modules::nowPlayingPlaybackMetadata(event);
+            ++playbackEvents_;
+            lastPlayback_ = metadata;
+            if (record_) record_(modules::EventKind::playbackAction, std::move(metadata));
+        };
+        preview_ = std::make_unique<tools::NowPlayingPreview>(*service_, c.rasterizer, utility_, std::move(options));
+        resize(c.metrics);
+    }
+    ~NowPlayingArea() override {
+        wake_->alive.store(false, std::memory_order_release);
+        // The preview withdraws the audio vote and stops the provider; then
+        // the downloads and the service go, all before the shared executor,
+        // the AudioRuntime and the HWND.
+        preview_.reset();
+        audioFixture_.reset();
+        web_.reset();
+        service_.reset();
+    }
+    NowPlayingArea(const NowPlayingArea&) = delete;
+    NowPlayingArea& operator=(const NowPlayingArea&) = delete;
+
+    std::string_view name() const noexcept override { return "nowPlaying"; }
+    app::ModuleRouting routing() const noexcept override {
+        // The open volume menu captures like the other module menus; ordinary
+        // input follows the built-in owners (0...19).
+        app::ModuleRouting r;
+        r.pointerCapture = 30; r.pointer = 30; r.key = 30; r.message = 30;
+        return r;
+    }
+    bool presents(core::Module m) const noexcept override { return m == core::Module::nowPlaying; }
+
+    void resize(const app::ClientMetrics& m) override {
+        if (!hasPixels(m)) return;
+        preview_->resize(m);
+        sized_ = true;
+    }
+    void setAppearance(const app::ModuleAppearance& a, double t) override { observe(t); preview_->setAppearance(appearanceFor(a), t); }
+    void setOverlayVisible(bool visible, double t) override { observe(t); preview_->setOverlayVisible(visible, t); }
+    void update(const app::ModuleFrame& f) override {
+        observe(f.time);
+        if (sized_) preview_->update(f.center, f.chrome, f.presentation, f.opacity, f.time);
+    }
+    bool requiresFrames(double t) const override { return preview_->requiresFrames(t); }
+    std::optional<double> nextWakeTime(double) const override { return preview_->nextWakeTime(); }
+    bool deadline(double t) override { observe(t); return preview_->deadline(t); }
+
+    void upload(gpu::Renderer& r) override { preview_->upload(r); }
+    std::span<const gpu::LayerCompositionEntry> entries(core::Module m) override {
+        if (m != core::Module::nowPlaying) return {};
+        return preview_->entries();
+    }
+    void release(gpu::Renderer& r) override { preview_->release(r); }
+
+    // Source containsControl: only control faces (or the open volume menu)
+    // claim the hit test; transparent canvas space still exposes navigation.
+    bool covers(core::Point p) const override { return preview_->capturesPointer() || preview_->containsControl(p, 0); }
+    bool pointerLocked() const override { return preview_->pointerLocked(); }
+    bool capturesPointer() const override { return preview_->capturesPointer(); }
+    bool pointer(const app::PointerEvent& e, double t) override { observe(t); return preview_->pointer(e, t); }
+    bool key(const app::KeyEvent& e, double t) override { observe(t); return preview_->key(e, modifierDown(), t); }
+    bool message(const app::NativeMessage& m, double t) override {
+        if (m.message != message_) return false;
+        observe(t);
+        (void)deliver(t);
+        return true;
+    }
+    void focus(bool focused, double t) override { if (!focused) cancelInteraction(t); }
+    void cancelInteraction(double t) override { observe(t); preview_->cancelInteraction(t); }
+
+    bool hostEvent(const app::HostEvent& e, double t) override {
+        observe(t);
+        switch (e.kind) {
+        case app::HostEvent::Kind::utilityCompleted:
+            // Service results, downloads, decoded artwork/lyrics, queue capacity.
+            return deliver(t);
+        case app::HostEvent::Kind::audioChanged:
+            return (e.flags & app::HostEvent::audioApplications) && preview_->audioChanged(t);
+        default:
+            return false;
+        }
+    }
+    void coverage(app::ModuleCoverage& step) override {
+        if (step.module) presentedCoverage(step);
+        else idleCoverage(step);
+    }
+
+private:
+    void observe(double t) {
+        if (!fixtureClock_ || !std::isfinite(t)) return;
+        if (t > fixtureClock_->load(std::memory_order_relaxed)) fixtureClock_->store(t, std::memory_order_release);
+    }
+    // Drains the service, the downloads, decoded artwork/lyrics and (previews
+    // and coverage) the synthetic audio publication; true when artwork changed.
+    bool deliver(double t) {
+        wake_->pending.store(false, std::memory_order_release);
+        bool changed = preview_->utilityCompleted(t);
+        if (audioFixture_ && audioFixture_->publish()) changed = preview_->audioChanged(t) || changed;
+        return changed;
+    }
+
+    // --- Hidden coverage (synthetic fixture player and audio route only) -----
+    // Delivers queued work on the coverage clock: owner wakes through the
+    // registered message (the WM_APP route), executor completions through the
+    // shared drain (the utilityCompleted broadcast).
+    void settle(app::ModuleCoverage& step) {
+        for (unsigned round = 0; round < 32; ++round) {
+            utility_.waitIdle();
+            if (wake_->pending.load(std::memory_order_acquire)) {
+                step.check(step.message(message_, 0, 0), "The Now Playing wake reaches its owner through the registered message");
+                continue;
+            }
+            if (!utility_.stats().completed) return;
+            step.drain();
+        }
+        step.check(false, "Synthetic Now Playing work settles within bounded deliveries");
+    }
+    bool recorded(unsigned count, std::string_view action) const {
+        const auto value = [&](std::string_view key) {
+            const auto found = lastPlayback_.find(key);
+            return found == lastPlayback_.end() ? std::string_view{} : std::string_view(found->second);
+        };
+        return playbackEvents_ == count && lastPlayback_.size() == 2 && value("action") == action && value("source") == "system";
+    }
+    void presentedCoverage(app::ModuleCoverage& step) {
+        step.check(*step.module == core::Module::nowPlaying && fixtureClock_ && audioFixture_ && !web_,
+                   "Hidden coverage presents Now Playing with the fixture player, a synthetic audio route and no network");
+        double t = step.time;
+        const auto present = [&](double seconds) { t += seconds; observe(t); step.present(t); };
+        const auto& view = presentation();
+        const auto title = [&] { return view.input().track ? view.input().track->title : std::string(); };
+        const auto position = [&] { return view.input().track && view.input().track->position ? *view.input().track->position : -1.; };
+        const auto playing = [&] { return view.input().track && view.input().track->isPlaying; };
+
+        if (step.cycle == 0) startsBefore_ = *starts_ ? *starts_ - 1 : 0;
+        settle(step);
+        present(.5); // cover/caption crossfades settle
+        step.check(*starts_ == startsBefore_ + step.cycle + 1 && service_->snapshot().active && view.active(),
+                   "Each presentation of Now Playing starts exactly one provider");
+        step.check(title() == "EndfieldHUD Fixture 1" && view.input().track->artist == "Local verification" && view.input().track->album == "Now Playing" &&
+                   !view.input().failed && view.input().session != 0, "Fixture metadata reaches the presentation");
+        step.check(std::abs(position() - 42) < 1e-9 && !playing() && view.durationText() == "3:30", "The fixture starts paused at 42 of 210 seconds");
+        step.check(view.input().coverAvailable && preview_->artworkStats().decoded > 0, "The fixture cover decodes on the shared executor");
+        step.check(view.lyricsSelected() && view.lyricRows()[1] == "Current", "Fixture timed lyrics show the current line");
+        step.check(view.input().volumeAvailable && view.input().volume && std::abs(*view.input().volume - 1) < 1e-9 &&
+                   audioFixture_->nowPlayingVisible() && audioFixture_->applications().size() == 1,
+                   "The synthetic process route resolves through the per-app audio bridge");
+
+        // Projection, hit testing and the UIA descriptors.
+        const auto& play = view.actions()[static_cast<std::size_t>(NowPlayingAction::playPause)];
+        const auto playPoint = step.project(center(play.rect), 440, 440);
+        step.check(playPoint.has_value() && play.enabled, "The play control projects through the Now Playing plane");
+        const auto uia = preview_->project(center(play.rect));
+        step.check(uia && std::abs(uia->x - playPoint->x) < .05 && std::abs(uia->y - playPoint->y) < .05,
+                   "UIA rectangles use the same projection as pointer input");
+        const auto transparent = step.project({20, 200}, 440, 440);
+        step.check(covers(*playPoint) && transparent && !covers(*transparent), "Only control faces claim the hit test over navigation");
+        {
+            const auto ax = preview_->accessibility(t);
+            step.check(ax.status == "EndfieldHUD Fixture 1 \xc2\xb7 Local verification \xc2\xb7 Now Playing" && ax.buttons.size() == 5 &&
+                       ax.sliders.size() == 1 && ax.sliders.front().id == "seek", "Accessible status, five buttons and the seek slider");
+        }
+
+        // Settled paused frames: no rasterization, provider work or deadline.
+        {
+            const auto scene = preview_->sceneStats();
+            const auto decodes = preview_->artworkStats().submitted;
+            const auto revision = service_->snapshot().revision;
+            const auto starts = *starts_;
+            for (unsigned frame = 0; frame < 12; ++frame) present(1. / 60);
+            const auto after = preview_->sceneStats();
+            step.check(after.localRasterUpdates == scene.localRasterUpdates && after.coverUploads == scene.coverUploads &&
+                       preview_->artworkStats().submitted == decodes && service_->snapshot().revision == revision && *starts_ == starts &&
+                       !wake_->pending.load() && !preview_->nextWakeTime() && !requiresFrames(t),
+                       "Paused warm frames re-rasterize, decode, read, schedule and wake nothing");
+        }
+
+        if (step.cycle == 0) {
+            // Transport commands record Event Log playbackAction once each (only
+            // in the first cycle, so the Event Log stays identical afterwards).
+            const auto events = playbackEvents_;
+            step.check(pointer({app::PointerKind::down, app::PointerButton::left, playPoint->x, playPoint->y}, t) &&
+                       pointer({app::PointerKind::up, app::PointerButton::left, playPoint->x, playPoint->y}, t), "Projected play click is consumed");
+            settle(step);
+            step.check(playing() && recorded(events + 1, "playPause"), "Play reaches the fixture and records playbackAction");
+            step.check(preview_->nextWakeTime().has_value(), "Playing lyrics fold their next cue into the shared deadline");
+            present(.4);
+            step.check(preview_->key({app::KeyKind::down, VK_RIGHT}, false, t), "Right arrow seeks forward");
+            settle(step);
+            step.check(position() > 47 - 1e-6 && recorded(events + 2, "seek"), "Keyboard seek moves five seconds and records seek");
+            step.check(preview_->key({app::KeyKind::down, VK_SPACE}, false, t), "Space toggles playback");
+            settle(step);
+            step.check(!playing() && recorded(events + 3, "playPause"), "Space pauses the fixture");
+            step.check(!preview_->key({app::KeyKind::down, VK_SPACE}, true, t), "Modified transport keys are left to the HUD");
+
+            // Seek drag on the projected rail: drag lock, then one command at release.
+            const auto from = step.project({121, 388}, 440, 440), to = step.project({187, 388}, 440, 440);
+            step.check(from && to && pointer({app::PointerKind::down, app::PointerButton::left, from->x, from->y}, t) && pointerLocked(),
+                       "The seek rail starts a drag that locks the HUD pointer");
+            present(1. / 60);
+            step.check(pointer({app::PointerKind::move, app::PointerButton::none, to->x, to->y}, t) && playbackEvents_ == events + 3,
+                       "Seek movement previews locally without a command");
+            step.check(pointer({app::PointerKind::up, app::PointerButton::left, to->x, to->y}, t) && !pointerLocked(), "Release ends the drag");
+            settle(step);
+            step.check(std::abs(position() - 84) < 1 && recorded(events + 4, "seek"), "Seek release emits one successful command");
+
+            step.check(preview_->perform(NowPlayingAction::next, t), "Next is available");
+            settle(step);
+            present(.3);
+            step.check(title() == "EndfieldHUD Fixture 2" && std::abs(position()) < 1e-9 && recorded(events + 5, "next"), "Next advances the fixture track");
+            step.check(preview_->perform(NowPlayingAction::previous, t), "Previous is available");
+            settle(step);
+            present(.3);
+            step.check(title() == "EndfieldHUD Fixture 1" && recorded(events + 6, "previous"), "Previous returns to the first fixture track");
+            step.check(preview_->setSlider(NowPlayingSliderKind::seek, 42, t), "Accessible seek sets an exact position");
+            settle(step);
+            step.check(std::abs(position() - 42) < 1e-9 && recorded(events + 7, "seek"), "Accessible seek restores 42 seconds");
+
+            // The lyrics toggle (source lyrics action) is local presentation state.
+            step.check(preview_->perform(NowPlayingAction::lyrics, t) && !view.lyricsSelected(), "Lyrics toggle hides the lyric rows");
+            present(.3);
+            step.check(preview_->perform(NowPlayingAction::lyrics, t) && view.lyricsSelected(), "Lyrics toggle restores the lyric rows");
+            present(.3);
+
+            // Playing-app volume: the per-app route through the audio bridge.
+            const auto accepted = audioFixture_->accepted();
+            const auto revision = audioFixture_->applicationsRevision();
+            step.check(preview_->perform(NowPlayingAction::volume, t) && capturesPointer() && view.sliderCount() == 2 && covers({1, 1}),
+                       "The volume menu opens and captures the pointer");
+            {
+                const auto ax = preview_->accessibility(t);
+                step.check(ax.sliders.size() == 2 && ax.sliders[1].enabled && ax.sliders[1].value && std::abs(*ax.sliders[1].value - 1) < 1e-9,
+                           "The accessible app-volume slider reports the route at 100%");
+            }
+            present(.2);
+            step.check(preview_->setSlider(NowPlayingSliderKind::volume, .4, t) && audioFixture_->accepted() == accepted + 1 && audioFixture_->pending(),
+                       "A volume change becomes one asynchronous route write");
+            settle(step);
+            const auto& route = audioFixture_->process();
+            step.check(audioFixture_->applicationsRevision() > revision && route.state == gpu::AudioApplicationRouteState::active && route.gain &&
+                       std::abs(*route.gain - .4f) < 1e-6f && view.input().volume && std::abs(*view.input().volume - .4) < 1e-6,
+                       "The confirmed route gain returns through the audio publication");
+            step.check(preview_->setSlider(NowPlayingSliderKind::volume, 1, t), "Volume returns to 100%");
+            settle(step);
+            step.check(route.gain && std::abs(*route.gain - 1) < 1e-6f && view.input().volume && std::abs(*view.input().volume - 1) < 1e-6 &&
+                       playbackEvents_ == events + 7, "Volume changes are not playback actions");
+            step.check(preview_->key({app::KeyKind::down, VK_ESCAPE}, false, t) && !capturesPointer() && !covers({1, 1}), "Escape dismisses the volume menu");
+            present(.5);
+        }
+
+        // Every cycle ends in the same presented state (bounded, repeatable caches).
+        step.check(title() == "EndfieldHUD Fixture 1" && std::abs(position() - 42) < 1e-9 && !playing() && view.input().coverAvailable &&
+                   view.input().volume && std::abs(*view.input().volume - 1) < 1e-6 && !capturesPointer() && !pointerLocked() &&
+                   (step.cycle == 0 || playbackEvents_ == eventsAfterFirstCycle_), "Now Playing returns to the same paused fixture state");
+        if (step.cycle == 0) eventsAfterFirstCycle_ = playbackEvents_;
+    }
+    void idleCoverage(app::ModuleCoverage& step) {
+        settle(step); // e.g. the withdrawn audio vote's publication
+        step.present(step.time + .05);
+        observe(step.time + .05);
+        if (host_.selectedModule() == core::Module::nowPlaying && host_.overlayVisible()) {
+            // Now Playing is still the last presented module of this cycle.
+            step.check(service_->snapshot().active && presentation().active(), "The presented Now Playing keeps its single provider");
+            return;
+        }
+        const auto starts = *starts_;
+        step.present(step.time + .1);
+        step.check(!service_->snapshot().active && !presentation().active() && !preview_->nextWakeTime() && !pointerLocked() && !capturesPointer(),
+                   "Unpresented Now Playing keeps no provider, deadline or input");
+        step.check(!audioFixture_->nowPlayingVisible() && audioFixture_->applications().empty() && !wake_->pending.load() && *starts_ == starts,
+                   "Unpresented Now Playing withdraws its audio vote and starts nothing");
+        step.check(!hostEvent({app::HostEvent::Kind::audioChanged, app::HostEvent::audioApplications}, step.time + .1),
+                   "Audio publications are ignored while Now Playing is hidden");
+    }
+    const modules::NowPlayingPresentation& presentation() const { return preview_->presentation(); }
+
+    app::ApplicationHost& host_;
+    app::UtilityExecutor& utility_;
+    const ApplicationAreaMode mode_;
+    std::function<void(modules::EventKind, modules::EventMetadata)> record_;
+    std::uint32_t message_{};
+    std::shared_ptr<Wake> wake_;
+    std::shared_ptr<std::atomic<double>> fixtureClock_;
+    std::shared_ptr<std::uint64_t> starts_ = std::make_shared<std::uint64_t>(0);
+    // Declaration order is destruction order in reverse: the preview first.
+    std::unique_ptr<gpu::NativeNowPlayingService> service_;
+    std::shared_ptr<gpu::NowPlayingWeb> web_;
+    std::unique_ptr<gpu::NowPlayingAudioFixture> audioFixture_;
+    std::unique_ptr<tools::NowPlayingPreview> preview_;
+    bool sized_{};
+    // Coverage evidence (never user content: action and source only).
+    unsigned playbackEvents_{}, eventsAfterFirstCycle_{};
+    std::uint64_t startsBefore_{};
+    modules::EventMetadata lastPlayback_;
+};
+} // namespace
+
+std::unique_ptr<app::ModuleOwner> nowPlayingModule(const app::ApplicationModuleContext& context) {
+    // The shared executor, HUD window and clock are the area's only services;
+    // without them the module stays absent rather than inventing its own.
+    if (!context.host || !context.utility || !context.window || !context.clock || !context.invalidate) return nullptr;
+    return std::make_unique<NowPlayingArea>(context);
+}
+} // namespace endfield::areas

@@ -87,22 +87,45 @@ if(WIN32)
   endif()
 endif()
 
-# Source diagnostic fixture player (OverlayController diagnostic mode).
+# Source diagnostic fixture player (OverlayController diagnostic mode) and the
+# synthetic per-app audio route behind the AudioRuntime members Now Playing uses.
 add_library(hud_now_playing_fixture native/now_playing_fixture.cpp)
 target_include_directories(hud_now_playing_fixture PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hud_now_playing_fixture PUBLIC hud_now_playing_service)
+target_link_libraries(hud_now_playing_fixture PUBLIC hud_now_playing_service hud_data)
 if(BUILD_TESTING)
   add_executable(now_playing_fixture_tests tests/now_playing_fixture_tests.cpp)
   target_link_libraries(now_playing_fixture_tests PRIVATE hud_now_playing_fixture hud_now_playing_session hud_data)
   add_test(NAME now_playing_fixture_contracts COMMAND now_playing_fixture_tests)
+  # The production volume bridge (nowPlayingAppVolume) over the real shared
+  # AudioRuntime with injected endpoint/session backends, and over the fixture.
+  if(TARGET hud_audio_runtime)
+    add_executable(now_playing_runtime_volume_tests tests/now_playing_runtime_volume_tests.cpp)
+    target_link_libraries(now_playing_runtime_volume_tests PRIVATE hud_now_playing_fixture hud_now_playing_session hud_now_playing_volume hud_audio_runtime hud_data)
+    if(WIN32)
+      target_compile_definitions(now_playing_runtime_volume_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+    endif()
+    add_test(NAME now_playing_runtime_volume_contracts COMMAND now_playing_runtime_volume_tests)
+    set_tests_properties(now_playing_runtime_volume_contracts PROPERTIES TIMEOUT 120)
+  endif()
 endif()
 
-# Make the Now Playing owner, diagnostic fixture and volume adapter available
-# to the development preview and to the production application owner when the
-# host area defines it (wiring itself lives in the host).
-if(WIN32 AND TARGET watch_session_preview AND TARGET hud_now_playing_preview)
-  target_link_libraries(watch_session_preview PRIVATE hud_now_playing_preview hud_now_playing_fixture hud_now_playing_volume)
-endif()
-if(WIN32 AND TARGET hud_application AND TARGET hud_now_playing_preview)
-  target_link_libraries(hud_application PUBLIC hud_now_playing_preview hud_now_playing_fixture hud_now_playing_volume)
+# Production module area (app/module_owner.hpp, "Adding a module area"):
+# EndfieldHUD.exe and the hidden owner coverage construct Now Playing through
+# endfield::areas::nowPlayingModule. Production: GSMTC, public lyric/cover
+# downloads, the shared AudioRuntime route and Event Log playbackAction.
+# Development previews and hidden coverage: the fixture player and the
+# synthetic per-app route only. app.cmake links this library into
+# EndfieldHUD.exe and watch_session_preview from the registration below.
+if(WIN32)
+  add_library(hud_now_playing_area STATIC app/areas/now_playing_module.cpp)
+  target_include_directories(hud_now_playing_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_now_playing_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_now_playing_area PUBLIC hud_module_registry
+    PRIVATE hud_now_playing_preview hud_now_playing_fixture hud_now_playing_volume hud_now_playing_web hud_now_playing_accessibility
+            hud_audio_runtime hud_event_log hud_utility user32)
+  if(MSVC)
+    target_compile_options(hud_now_playing_area PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "nowPlaying|hud_now_playing_area|app/areas/now_playing_module.hpp|endfield::areas::nowPlayingModule")
 endif()

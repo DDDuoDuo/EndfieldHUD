@@ -21,7 +21,7 @@ public:
     void start(Changed changed,Ready ready)override{{std::lock_guard lock(mutex_);if(stopped_)return;changed_=std::move(changed);}ready({});}
     void read(Read completion)override{
         NowPlayingReadResult result;const auto time=now_();
-        modules::NowPlayingSession session{1,"EndfieldHUD.Fixture","Music"};result.value.sessions={session};result.value.session=session;
+        modules::NowPlayingSession session{1,std::string(nowPlayingFixtureApplication),"Music"};result.value.sessions={session};result.value.session=session;
         modules::NowPlayingTrack track;{std::lock_guard lock(state_->mutex);
             track.title="EndfieldHUD Fixture "+std::to_string(state_->track);track.position=state_->current(time);track.isPlaying=state_->playing;
             result.value.metadataRevision=state_->track;}
@@ -72,5 +72,38 @@ NativeNowPlayingService::Factory nowPlayingFixtureProvider(std::function<double(
     // and reopen exactly like the source controller-owned fixture backend.
     auto state=std::make_shared<State>();state->sampledAt=now();
     return [now=std::move(now),state]{return std::make_shared<FixtureProvider>(now,state);};
+}
+
+NowPlayingAudioFixture::NowPlayingAudioFixture(std::function<void()>notice):notice_(std::move(notice)){
+    // One synthetic process (PID + creation-time identity) with the fixture
+    // session's captured AppUserModelID; its sessions start unattenuated.
+    process_.id=std::string(route);process_.name=L"EndfieldHUD Fixture";process_.pid=4242;process_.available=true;
+    process_.state=AudioApplicationRouteState::direct;process_.appUserModelID=std::string(nowPlayingFixtureApplication);
+    published_.reserve(1);
+}
+void NowPlayingAudioFixture::wake(){
+    // Coalesced like the runtime: one notice until the owner publishes.
+    if(pending_)return;pending_=true;if(notice_)notice_();
+}
+std::int32_t NowPlayingAudioFixture::setNowPlayingVisible(bool visible){
+    if(visible_!=visible){visible_=visible;wake();}
+    return 0;
+}
+bool NowPlayingAudioFixture::setApplicationGain(std::string_view id,double gain){
+    // AudioService refuses unknown routes and gains outside [0,1] before queueing.
+    if(!visible_||id!=process_.id||!std::isfinite(gain)||gain<0||gain>1)return false;
+    process_.state=AudioApplicationRouteState::active;process_.gain=static_cast<float>(gain);++accepted_;wake();return true;
+}
+bool NowPlayingAudioFixture::stopApplication(std::string_view id){
+    if(!visible_||id!=process_.id)return false;
+    process_.state=AudioApplicationRouteState::direct;process_.gain.reset();++accepted_;wake();return true;
+}
+bool NowPlayingAudioFixture::publish(){
+    pending_=false;
+    // Per-app rows are read only while a voter needs them.
+    const bool changed=visible_?published_.size()!=1||published_.front()!=process_:!published_.empty();
+    if(!changed)return false;
+    if(visible_)published_.assign(1,process_);else published_.clear();
+    ++revision_;return true;
 }
 }
