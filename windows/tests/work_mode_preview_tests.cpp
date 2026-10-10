@@ -28,6 +28,17 @@ void run(const std::filesystem::path&shader){Window window;gpu::Renderer rendere
     click({315,139});type("2:34");modules.select(c::Module::power,now);frame(.5);frame(.5);check(!owner.editing()&&owner.controller().snapshot(now).duration==2,"Leaving Work Mode cancels unsaved custom input");
     modules.select(c::Module::workMode,now);frame(.5);frame(.5);owner.setFocusStatus("Explicit unsupported platform",false,now);frame();check(std::none_of(owner.state().actions().begin(),owner.state().actions().end(),[](const auto&v){return v.id=="work:focusAccess";}),"Unsupported Focus does not invent a permission action");owner.setFocusStatus("Injected permission needed",true,now);frame();click({220,37});check(permissions==1,"Permission control reaches injected callback only");frame(.3);
     click({280,99});frame(.3);owner.key({a::KeyKind::down,VK_SPACE},false,now);frame(.4);modules.select(c::Module::power,now);frame(.5);frame(.5);check(!owner.nextWakeTime()&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,"Hidden stopwatch has no periodic wake");const auto beforeSleep=owner.controller().snapshot(now).elapsed;owner.setSuspended(true,now);now+=3600;owner.setSuspended(false,now);check(owner.controller().snapshot(now).elapsed>=beforeSleep+3600&&!owner.nextWakeTime(),"Caller continuous clock includes sleep without a second ticker");
+    // Accessibility-equivalent presses (HUDWorkModeInteraction.activateAction)
+    // and the projected control rects only exist on the presented page.
+    check(!owner.perform("work:pause",now)&&!owner.clientRect({100,296,116,30}),"Accessible presses and projections need the presented page");
+    modules.select(c::Module::workMode,now);frame(.5);frame(.5);
+    const auto pauseRect=owner.clientRect({100,296,116,30});
+    check(pauseRect&&pauseRect->width>0&&pauseRect->height>0&&owner.covers({pauseRect->x+pauseRect->width/2,pauseRect->y+pauseRect->height/2}),"The pause control projects into the client over the page");
+    const auto savesBefore=saves.size();
+    check(!owner.perform("work:start",now)&&!owner.perform("work:unknown",now)&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,"Only listed source actions perform");
+    check(owner.perform("work:pause",now)&&owner.controller().snapshot(now).phase==m::WorkModePhase::paused&&saves.size()==savesBefore+1,"The accessible pause press pauses and checkpoints like its click");
+    frame(.5);
+    check(owner.perform("work:resume",now)&&owner.controller().snapshot(now).phase==m::WorkModePhase::running,"The accessible resume press resumes the stopwatch");frame();
     check(owner.message({window.window,options.textMessage,123456,0},now)&&!owner.editing(),"Stale private field notice cannot reopen/edit a retired document");composition.detach(renderer);owner.shutdown(now);owner.release(renderer);done=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&!IsWindowVisible(window.window),"Detached owner retires all resources and never activates TSF, Focus or real UI");
 }
 }

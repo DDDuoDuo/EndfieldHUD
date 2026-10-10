@@ -73,6 +73,10 @@ public:
     // The page is the shown, requested module with the overlay visible (the
     // source interaction's active flag): picker requests run only then.
     bool active()const noexcept;
+    // Source accessibility projection (HUDPersonalProfileInteraction project):
+    // a 400 x 334 canvas rect -> the logical client bounding rect of its
+    // projected corners while the page accepts input; none otherwise.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
     bool editing()const noexcept;
     std::optional<modules::ProfileField>editingField()const noexcept;
     bool finishEditing(bool commit,double time);

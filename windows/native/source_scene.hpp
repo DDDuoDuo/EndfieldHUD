@@ -39,6 +39,9 @@ struct SourceSceneStats {
     // and the GPU texture uploads they caused in flush().
     std::uint64_t textureReplacements{},textureRestores{},textureFlushes{};
     std::size_t runtimeTextures{},runtimeTextureBytes{};
+    // Runtime-only desktop textures (registerTexture/unregisterTexture).
+    std::uint64_t textureRegistrations{},textureUnregistrations{};
+    std::size_t registeredTextures{},registeredTextureBytes{};
 };
 // Diagnostics for one installed texture (textureInfo()).
 struct SourceTextureInfo {
@@ -46,7 +49,18 @@ struct SourceTextureInfo {
     unsigned width{},height{},levels{};
     std::uint64_t revision{};   // GPU upload revision (1: the installed original)
     bool replaced{};            // a runtime replacement is bound
+    bool registered{};          // a runtime-only texture (registerTexture)
     bool pending{};             // changed since the last upload/flush
+    // The bound sampler in the SourceTexture (Metal) encoding.
+    unsigned minFilter{},magFilter{},mipFilter{},addressU{},addressV{};
+};
+// Unity sampler of a registered runtime texture, exactly as the source
+// HUDSourceMetalRenderer.registerTexture(named:texture:filterMode:wrapU:wrapV:)
+// maps it: filterMode 0 point, 1/2 bilinear, never mipmapped; wrap 0 repeat,
+// 1 clamp, 2 mirror, 3 mirror once.
+struct SourceRuntimeSampler {
+    unsigned filterMode{1},wrapU{1},wrapV{1};
+    bool operator==(const SourceRuntimeSampler&) const = default;
 };
 struct SourceSceneProvenance {
     std::string packetSHA256,frameSHA256,shaderManifestSHA256,frameName;
@@ -175,6 +189,28 @@ public:
     // Rebinds the installed original (the packet silhouette / default card).
     // False when no replacement is bound.
     bool restoreTexture(std::string_view id);
+    // Runtime content-event registration of a desktop texture the packet does
+    // not carry: the custom center logo (HUDSourceWatchView.
+    // setDesktopCenterLogo: registerTexture(named: "desktop.center-logo",
+    // filterMode: 1, wrapU: 1, wrapV: 1)), bound through the desktop frame
+    // settings' SourceDesktopImage::texture, i.e. an assembled batch's texture
+    // override. The same storage contract as replaceTexture (tight straight
+    // RGBA8 sRGB in the texturePixels layout, single level) with the caller's
+    // Unity sampler. The id lives under "desktop." and is not an installed
+    // packet texture (those change through replaceTexture); at most 16 ids are
+    // registered at once. A new id, size, sampler or caller revision uploads
+    // on the next upload()/flush(); the same revision, size and sampler is a
+    // no-op (false). Pixels are copied once here; no per-frame work, file,
+    // hash or decode occurs. Compiled catalogs refuse the runtime snapshot.
+    bool registerTexture(std::string_view id,unsigned width,unsigned height,std::span<const std::uint8_t> straightRGBA,
+        std::uint64_t revision,SourceRuntimeSampler sampler={});
+    // Drops a registered texture's pixels (e.g. the logo choice left custom).
+    // False when the id is not registered, or when the last assembled frame
+    // still binds it: submit a frame without the override first. The GPU copy
+    // stays with the graphics target until its next upload(), like the Mac
+    // renderer's textureAssets entry; a later registration of the same id
+    // uploads under a fresh revision.
+    bool unregisterTexture(std::string_view id);
     std::optional<SourceTextureInfo> textureInfo(std::string_view id) const;
     // Complete typed submission. Input validation finishes before mutation.
     // Existing slots/resources are reused; adding a stable identity may create

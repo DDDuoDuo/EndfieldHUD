@@ -19,6 +19,13 @@ void run(){
     check(chinese.title==L"选择头像"&&chinese.okLabel==L"选择","Chinese chooser strings");
     check(n::profileImagePickerText(m::ProfileImageKind::background,Language::simplifiedChinese).title==L"选择名片背景","Chinese background title");
     check(n::profileColorPickerTitle(Language::english)==L"Card color"&&n::profileColorPickerTitle(Language::simplifiedChinese)==L"名片颜色","NSColorPanel title");
+    // The caller-titled variant (Settings > Theme color, HUDSettingsInteraction.
+    // chooseColor) validates its title before any dialog exists.
+    check(n::profileColorPickerTitle(std::string_view("Theme color"))==L"Theme color"&&n::profileColorPickerTitle(std::string_view("主题颜色"))==L"主题颜色",
+          "Caller titles convert from UTF-8");
+    const auto refused=[](std::string_view title){try{(void)n::profileColorPickerTitle(title);}catch(const std::invalid_argument&){return true;}return false;};
+    check(refused("")&&refused(std::string_view("a\0b",3))&&refused("\xff\xfe")&&refused(std::string(257,'a'))&&!refused(std::string(256,'a')),
+          "Empty, NUL, non-UTF-8 and over-long titles are refused");
     // UTType.image: the installed WIC decoders.
     const auto spec=n::profileImageFilterSpec();
     for(const auto*ext:{L"*.png",L"*.jpg",L"*.jpeg",L"*.gif",L"*.bmp",L"*.tif",L"*.tiff",L"*.ico"})

@@ -8,6 +8,7 @@
 #include "native/id_card_presenter.hpp"
 #include "native/layer_scene.hpp"
 #include "native/layer_text_layout.hpp"
+#include "native/profile_automation.hpp"
 #include "native/profile_pickers.hpp"
 #include "tools/profile_owner.hpp"
 #include <algorithm>
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -23,6 +25,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <uiautomation.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 // Account Linking publishes its profile link (app/areas/account_profile_link.hpp,
@@ -46,6 +49,66 @@ constexpr double canvasWidth = 400, canvasHeight = 334;
 
 void require(bool value, const char* why) { if (!value) throw std::runtime_error(std::string("Personal Profile area: ") + why); }
 fs::path utf8Path(const std::string& text) { return fs::path(std::u8string_view(reinterpret_cast<const char8_t*>(text.data()), text.size())); }
+std::string narrow(std::wstring_view text) {
+    if (text.empty()) return {};
+    require(text.size() < 0x7fffffff, "a bounded wide string");
+    const int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    require(n > 0, "valid UTF-16 text");
+    std::string out(static_cast<std::size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(), static_cast<int>(text.size()), out.data(), n, nullptr, nullptr);
+    return out;
+}
+std::wstring widen(std::string_view text) {
+    if (text.empty()) return {};
+    require(text.size() < 0x7fffffff, "a bounded UTF-8 string");
+    const int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    require(n > 0, "valid UTF-8 text");
+    std::wstring out(static_cast<std::size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), n);
+    return out;
+}
+
+// Hidden coverage UI Automation probes (no UIA client, no window shown).
+using Fragment = Microsoft::WRL::ComPtr<IRawElementProviderFragment>;
+HRESULT uiaProperty(IRawElementProviderFragment* f, PROPERTYID id, VARIANT& out) {
+    VariantInit(&out);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+    if (!f || FAILED(f->QueryInterface(IID_PPV_ARGS(&simple)))) return E_NOINTERFACE;
+    return simple->GetPropertyValue(id, &out);
+}
+std::wstring uiaText(IRawElementProviderFragment* f, PROPERTYID id) {
+    VARIANT v;
+    std::wstring out;
+    if (SUCCEEDED(uiaProperty(f, id, v)) && v.vt == VT_BSTR && v.bstrVal) out.assign(v.bstrVal, SysStringLen(v.bstrVal));
+    VariantClear(&v);
+    return out;
+}
+long uiaControlType(IRawElementProviderFragment* f) {
+    VARIANT v;
+    long out = 0;
+    if (SUCCEEDED(uiaProperty(f, UIA_ControlTypePropertyId, v)) && v.vt == VT_I4) out = v.lVal;
+    VariantClear(&v);
+    return out;
+}
+bool uiaAvailable(IRawElementProviderFragment* f) {
+    VARIANT v;
+    const auto hr = uiaProperty(f, UIA_NamePropertyId, v);
+    VariantClear(&v);
+    return hr != UIA_E_ELEMENTNOTAVAILABLE;
+}
+Fragment uiaPeer(const gpu::NativeProfileAutomation& automation, std::string_view id) {
+    const auto wanted = widen(id);
+    for (std::size_t n = 0; n < automation.size(); ++n) {
+        Fragment f;
+        if (SUCCEEDED(automation.child(n, &f)) && f && uiaText(f.Get(), UIA_AutomationIdPropertyId) == wanted) return f;
+    }
+    return nullptr;
+}
+HRESULT uiaInvoke(const Fragment& f) {
+    Microsoft::WRL::ComPtr<IInvokeProvider> invoke;
+    if (!f || FAILED(f.As(&invoke))) return E_NOINTERFACE;
+    return invoke->Invoke();
+}
 core::Language resolved(core::Language language) { return language == core::Language::system ? core::Language::english : language; }
 
 // Hidden coverage only: a synthetic record with a fixed identity in the
@@ -119,7 +182,15 @@ public:
         // Hidden coverage keeps the record, zone and choosers synthetic.
         const auto root = hiddenCoverage() ? coverageRoot_ : c.dataRoot;
         require(!root.empty() && root.is_absolute(), "an explicit absolute data root");
-        if (hiddenCoverage()) seedCoverageProfile(root);
+        if (hiddenCoverage()) {
+            seedCoverageProfile(root);
+            // The host data root's profile.json as the run began: the profile
+            // area is its single writer, Work Mode never writes it.
+            if (!c.dataRoot.empty()) {
+                hostProfilePath_ = c.dataRoot / "Profile" / "profile.json";
+                hostProfileBefore_ = ehud::data::detail::readFile(hostProfilePath_, 1024 * 1024);
+            }
+        }
         zone_ = hiddenCoverage() ? u"UTC" : u"";
         appearance_ = host_.appearance();
         tools::ProfileOwnerOptions o;
@@ -146,7 +217,10 @@ public:
         owner_ = std::make_unique<tools::ProfileOwner>(hwnd_, *c.utility, c.rasterizer, images_, *work_, std::move(o), manager,
                                                        manager ? static_cast<TfClientId>(c.textClient) : TF_CLIENTID_NULL);
         // Work Mode lifetime: every absolute checkpoint of the shared controller.
-        listener_ = work_->listenCheckpoints([this](double total) { if (owner_) owner_->workModeCheckpoint(total); });
+        listener_ = work_->listenCheckpoints([this](double total) {
+            ++checkpoints_; lastCheckpoint_ = total;
+            if (owner_) owner_->workModeCheckpoint(total);
+        });
         // The host delivers the resolved appearance with its next configuration
         // pass (configurationPending); until then the source defaults stand.
         owner_->resize(c.metrics);
@@ -162,6 +236,7 @@ public:
         owner_->start(host_.now());
     }
     ~ProfileArea() override {
+        automation_.reset(); // its callbacks borrow the owner
 #ifdef EHUD_PROFILE_ACCOUNT_LINK
         if (account_) account_->attachProfile(nullptr);
 #endif
@@ -232,6 +307,30 @@ public:
     }
     void coverage(app::ModuleCoverage& step) override;
 
+    // UI Automation (HUDPersonalProfileInteraction.layoutAccessibility): one
+    // fragment per projected action and slider under the profile group.
+    // Created on the first refresh (a UIA client asked the HUD); a new group
+    // root (another HudAutomation) rebuilds the fragments under it.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        bool rebuilt = false;
+        if (!automation_ || automationRoot_ != root) {
+            if (automation_) { automation_->disconnect(); rebuilt = true; }
+            automation_ = std::make_unique<gpu::NativeProfileAutomation>(automationHost(root));
+            automationRoot_ = root;
+        }
+        return automation_->refresh() || rebuilt;
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
+
 private:
     app::ApplicationHost& host_;
     app::ApplicationAreaMode mode_;
@@ -240,18 +339,23 @@ private:
     std::function<fs::path(std::string_view)> fixture_;
     m::WorkModeController idleWork_;           // only when the host runs no Work Mode owner
     const m::WorkModeController* work_{};
-    std::uint64_t listener_{};
+    std::uint64_t listener_{}, checkpoints_{};
+    double lastCheckpoint_{};
+    fs::path hostProfilePath_;                    // hidden coverage only
+    std::optional<std::string> hostProfileBefore_;
     app::ModuleAppearance appearance_;
     std::u16string zone_;
     UINT pickerMessage_{};
     gpu::ProfilePickerSession colorSession_;
     bool fileChoiceOpen_{};
+    std::optional<std::string> imageFilter_;
     gpu::IdCardFeed feed_;
 #ifdef EHUD_PROFILE_ACCOUNT_LINK
     app::areas::AccountProfileLink* account_{};
 #endif
     // Hidden coverage choosers.
     tools::ProfileOwnerOptions::ImageCompletion coverageChooser_;
+    std::optional<app::ApplicationFileRequest> coverageRequest_; // the request production would queue
     std::optional<std::array<double, 3>> coverageColor_;
     unsigned coverageImageAsks_{}, coverageColorAsks_{}, cropEvents_{};
     std::string lastCrop_;
@@ -259,27 +363,95 @@ private:
     gpu::LayerImageSource images_;
     std::unique_ptr<tools::ProfileOwner> owner_;
     std::unique_ptr<ProfileAccountSink> sink_; // borrows the owner; detached and destroyed before it
+    std::unique_ptr<gpu::NativeProfileAutomation> automation_; // borrows the owner; destroyed first
+    IRawElementProviderFragmentRoot* automationRoot_{};       // identity only (the automation holds the reference)
+
+    // The host's UI Automation view of this owner (native/profile_automation.hpp).
+    gpu::ProfileAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
+        gpu::ProfileAutomationHost view;
+        view.root = root;
+        view.controls = [this] {
+            auto* page = owner_->page();
+            const auto* state = owner_->state();
+            if (!page || !state || !page->active()) return std::vector<gpu::ProfileAutomationControl>{};
+            return gpu::profileAutomationControls(*state, page->editingField());
+        };
+        view.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> {
+            // Canvas -> logical client -> physical client pixels -> screen pixels.
+            const auto client = owner_->clientRect(canvas);
+            const double scale = host_.metrics().scale;
+            POINT origin{0, 0};
+            if (!client || !(scale > 0) || !ClientToScreen(hwnd_, &origin)) return std::nullopt;
+            return core::Rect{origin.x + client->x * scale, origin.y + client->y * scale, client->width * scale, client->height * scale};
+        };
+        // activateAction: the open field commits first (ProfileOwner::perform).
+        view.invoke = [this](std::string_view id) {
+            const bool used = owner_->perform(id, host_.now());
+            if (used) automationContentChanged();
+            return used;
+        };
+        // adjustSlider: refused while a chooser or the colour panel is open.
+        view.setValue = [this](std::string_view id, double value) {
+            const auto field = m::profileField(id);
+            if (!field || owner_->pickerOpen()) return false;
+            const bool used = owner_->setSlider(*field, value, host_.now());
+            if (used) automationContentChanged();
+            return used;
+        };
+        return view;
+    }
+    // A UIA press changed the page outside the host's input routes: present
+    // it and re-list the fragments now (an opened popover replaces them),
+    // raising ChildrenInvalidated on this owner's group like the host.
+    void automationContentChanged() {
+        host_.requestFrame();
+        if (!automation_ || !automation_->refresh() || !automationRoot_ || !UiaClientsAreListening()) return;
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> group;
+        if (SUCCEEDED(automationRoot_->QueryInterface(IID_PPV_ARGS(&group))))
+            UiaRaiseStructureChangedEvent(group.Get(), StructureChangeType_ChildrenInvalidated, nullptr, 0);
+    }
 
     static tools::ProfileOwnerAppearance profileAppearance(const app::ModuleAppearance& a) {
         return {resolved(a.language), a.dark, a.accentSRGB, 2, a.reduceMotion};
     }
     bool hiddenCoverage() const noexcept { return mode_ == app::ApplicationAreaMode::hiddenCoverage; }
-    // HUDPersonalProfileInteraction.chooseImage: NSOpenPanel(image types) as
-    // the host's shared file dialog; the first chosen file is imported (the
-    // import picks the codec from the content and reports non-images).
-    bool chooseImage(m::ProfileImageKind kind, tools::ProfileOwnerOptions::ImageCompletion done) {
-        if (hiddenCoverage()) {
-            if (coverageChooser_) return false;
-            ++coverageImageAsks_; coverageChooser_ = std::move(done);
-            return true;
+    // UTType.image as the shared dialog's filter: the installed WIC decoder
+    // extensions, enumerated once (bounded like every picker label). Without
+    // decoders or past the bound the dialog lists every file; the import
+    // still picks the codec from the content and reports non-images.
+    const std::string& imageFilterSpec() {
+        if (!imageFilter_) {
+            std::string spec;
+            try { spec = narrow(gpu::profileImageFilterSpec()); } catch (const std::exception&) { spec.clear(); }
+            if (spec.size() > 4096) spec.clear();
+            imageFilter_ = std::move(spec);
         }
-        if (fileChoiceOpen_) return false;
+        return *imageFilter_;
+    }
+    // HUDPersonalProfileInteraction.chooseImage: NSOpenPanel (allowedContentTypes
+    // [.image], no multiple selection, no directories) as the host's shared
+    // dialog in its single-file mode with the "Images" filter.
+    app::ApplicationFileRequest imageRequest(m::ProfileImageKind kind) {
         const auto language = resolved(appearance_.language);
         const bool avatar = kind == m::ProfileImageKind::avatar;
         app::ApplicationFileRequest request;
         request.title = avatar ? core::localized("Choose profile picture", "选择头像", language) : core::localized("Choose profile background", "选择名片背景", language);
         request.acceptLabel = core::localized("Choose", "选择", language);
         request.selectionLabel = request.acceptLabel;
+        request.singleFile = true;
+        request.filterName = core::localized("Images", "图片", language);
+        request.filterSpec = imageFilterSpec();
+        return request;
+    }
+    bool chooseImage(m::ProfileImageKind kind, tools::ProfileOwnerOptions::ImageCompletion done) {
+        if (hiddenCoverage()) {
+            if (coverageChooser_) return false;
+            ++coverageImageAsks_; coverageChooser_ = std::move(done);
+            coverageRequest_ = imageRequest(kind);
+            return true;
+        }
+        if (fileChoiceOpen_) return false;
+        const auto request = imageRequest(kind);
         const bool queued = host_.chooseFiles(request, [this, done = std::move(done)](app::ApplicationFileResult result) {
             fileChoiceOpen_ = false;
             std::optional<fs::path> chosen;
@@ -340,6 +512,7 @@ private:
         while (PeekMessageW(&msg, hwnd_, pickerMessage_, pickerMessage_, PM_REMOVE)) (void)step.message(msg.message, msg.wParam, msg.lParam);
     }
     void coverageModule(app::ModuleCoverage& step);
+    void coverageAutomation(app::ModuleCoverage& step, double& t);
     void coverageCard(app::ModuleCoverage& step);
 };
 
@@ -359,6 +532,17 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
         writeCoveragePNG(photo, 300, 200);
         step.check(owner_->perform("profile:avatar", t) && coverageImageAsks_ == 1 && owner_->pickerOpen() && owner_->capturesPointer(),
                    "Change profile picture queues one chooser and captures input while it is open");
+        {
+            const auto language = resolved(appearance_.language);
+            const auto& r = coverageRequest_;
+            const auto spec = r ? ";" + r->filterSpec + ";" : std::string{};
+            step.check(r && r->singleFile && r->title == core::localized("Choose profile picture", "选择头像", language) &&
+                       r->acceptLabel == core::localized("Choose", "选择", language) && r->filterName == core::localized("Images", "图片", language) &&
+                       spec.find(";*.png;") != std::string::npos && spec.find(";*.jpg;") != std::string::npos && spec.find(";*.jpeg;") != std::string::npos &&
+                       r->filterSpec.size() <= 4096,
+                       "The chooser asks the shared dialog for one file through the localized Images filter of the installed decoders");
+        }
+        step.check(!automationHost(nullptr).setValue(m::profileFieldID(m::ProfileField::thumbnailZoom), 2), "UIA slider values are refused while a chooser is open");
         auto done = std::exchange(coverageChooser_, {});
         done(photo);
         drainUntil(step, [&] { return owner_->state()->profile().avatarFilename.has_value() && owner_->cardTexture(tools::IdCardTextureKind::avatar); });
@@ -381,11 +565,33 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
         step.check(coverageColorAsks_ == 1 && owner_->state()->profile().themeColorHex == std::optional<std::string>("0080FF") &&
                    owner_->card()->captions()[4].color[2] == 1, "The chosen colour commits and recolours the card");
         step.check(owner_->perform("profile:popoverClose", t), "The colour popover closes");
-        // Crop sliders: a committed thumbnail zoom records profileCropChanged
-        // {thumbnail} (SystemEventRecorder) and regenerates the card background.
-        const auto backgroundBefore = owner_->card()->backgroundRevision();
-        step.check(owner_->perform("profile:backgroundMenu", t) && owner_->setSlider(m::ProfileField::thumbnailZoom, 2, t), "The thumbnail zoom slider commits");
-        step.check(cropEvents_ == 1 && lastCrop_ == "thumbnail" && owner_->card()->backgroundRevision() > backgroundBefore, "The crop is recorded once and moves the card background");
+        // Crop sliders through UI Automation (HUDProfileAccessibilitySlider): a
+        // committed thumbnail zoom records profileCropChanged {thumbnail}
+        // (SystemEventRecorder) and regenerates the card background.
+        {
+            const auto backgroundBefore = owner_->card()->backgroundRevision();
+            gpu::NativeProfileAutomation automation(automationHost(nullptr));
+            (void)automation.refresh();
+            step.check(uiaInvoke(uiaPeer(automation, "profile:backgroundMenu")) == S_OK && owner_->state()->popover() == m::ProfilePopover::background && automation.refresh(),
+                       "Change card theme opens through its UIA button and lists the crop sliders");
+            const auto& sliders = owner_->state()->sliders();
+            const auto slider = std::find_if(sliders.begin(), sliders.end(), [](const auto& v) { return v.field == m::ProfileField::thumbnailZoom; });
+            const auto peer = uiaPeer(automation, m::profileFieldID(m::ProfileField::thumbnailZoom));
+            Microsoft::WRL::ComPtr<IRangeValueProvider> zoom;
+            double minimum{}, maximum{}, change{}, value{};
+            step.check(slider != sliders.end() && peer && SUCCEEDED(peer.As(&zoom)) && SUCCEEDED(zoom->get_Minimum(&minimum)) && SUCCEEDED(zoom->get_Maximum(&maximum)) &&
+                       SUCCEEDED(zoom->get_SmallChange(&change)) && SUCCEEDED(zoom->get_Value(&value)) && minimum == slider->minimum && maximum == slider->maximum &&
+                       change == slider->step && value == slider->value && uiaControlType(peer.Get()) == UIA_SliderControlTypeId &&
+                       uiaText(peer.Get(), UIA_NamePropertyId) == widen(slider->label) && uiaText(peer.Get(), UIA_HelpTextPropertyId) == widen(slider->valueDescription),
+                       "The thumbnail zoom is a UIA slider over the source range and step, described by its value");
+            step.check(zoom && zoom->SetValue(std::nan("")) == E_INVALIDARG && cropEvents_ == 0, "A non-finite slider value is refused");
+            step.check(zoom && SUCCEEDED(zoom->SetValue(maximum + 10)) && owner_->state()->profile().thumbnailZoom == maximum,
+                       "A value past the range is clamped like the source setAccessibilityValue");
+            step.check(cropEvents_ == 1 && lastCrop_ == "thumbnail" && owner_->card()->backgroundRevision() > backgroundBefore, "The crop is recorded once and moves the card background");
+            step.check(zoom && SUCCEEDED(zoom->SetValue(2)) && owner_->state()->profile().thumbnailZoom == 2 && cropEvents_ == 2, "The thumbnail zoom slider commits through RangeValue");
+            automation.disconnect();
+            step.check(zoom && zoom->get_Value(&value) == UIA_E_ELEMENTNOTAVAILABLE && !uiaAvailable(peer.Get()), "Disconnected fragments are no longer available");
+        }
         drainUntil(step, [&] { const auto* b = feed_.texture(gpu::IdCardTextureSlot::background); return b && b->revision == owner_->card()->backgroundRevision(); });
         step.check(feed_.texture(gpu::IdCardTextureSlot::background) && feed_.texture(gpu::IdCardTextureSlot::background)->revision == owner_->card()->backgroundRevision(),
                    "The regenerated card background is published");
@@ -415,6 +621,8 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
     step.check(close.has_value(), "The popover close control projects");
     click(step, *close, t);
     step.check(!owner_->state()->popover(), "The close control dismisses the popover");
+    t += .05; step.present(t);
+    coverageAutomation(step, t);
     for (unsigned n = 0; n < 30; ++n) step.present(t += 1. / 60);
     // Settled frames (tilt, ambient motion, Work Mode ticks) do no card work.
     const auto feed = feed_.revision();
@@ -423,6 +631,48 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
     step.check(feed_.revision() == feed && textures == std::array{owner_->card()->avatarRevision(), owner_->card()->backgroundRevision(), owner_->card()->hoverRevision()},
                "Settled page frames publish no card content and regenerate no card texture");
 }
+// UI Automation over the presented page (HUDPersonalProfileInteraction.
+// layoutAccessibility): a private fragment set without a group root, then the
+// owner's own hooks as the host's group refresh calls them.
+void ProfileArea::coverageAutomation(app::ModuleCoverage& step, double& t) {
+    {
+        gpu::NativeProfileAutomation automation(automationHost(nullptr));
+        const auto* state = owner_->state();
+        step.check(automation.refresh() && !state->actions().empty() && automation.size() == state->actions().size() + state->sliders().size(),
+                   "One UIA fragment per projected profile action and slider");
+        const auto& actions = state->actions();
+        const auto action = std::find_if(actions.begin(), actions.end(), [](const auto& a) { return a.id == "profile:menu"; });
+        const auto menu = uiaPeer(automation, "profile:menu");
+        step.check(action != actions.end() && menu && uiaText(menu.Get(), UIA_NamePropertyId) == widen(action->label) &&
+                   uiaText(menu.Get(), UIA_HelpTextPropertyId) == widen(state->accessibilityStatus()) && uiaControlType(menu.Get()) == UIA_ButtonControlTypeId,
+                   "A profile action is a button named by its label with the page status as help");
+        UiaRect bounds{}, under{};
+        Fragment hit;
+        step.check(menu && SUCCEEDED(menu->get_BoundingRectangle(&bounds)) && bounds.width > 0 && bounds.height > 0, "The button covers its projected control on screen");
+        const double x = bounds.left + bounds.width / 2, y = bounds.top + bounds.height / 2;
+        step.check(SUCCEEDED(automation.fromPoint(x, y, &hit)) && hit && SUCCEEDED(hit->get_BoundingRectangle(&under)) &&
+                   x >= under.left && y >= under.top && x < under.left + under.width && y < under.top + under.height,
+                   "The screen hit test returns the projected control under the point");
+        step.check(uiaInvoke(menu) == S_OK && owner_->state()->popover() == m::ProfilePopover::identity, "Invoke opens the identity popover like its click");
+        step.check(automation.refresh() && !uiaPeer(automation, "profile:menu") && !uiaAvailable(menu.Get()), "The popover's controls replace the page's");
+        const auto close = uiaPeer(automation, "profile:popoverClose");
+        step.check(uiaInvoke(close) == S_OK && !owner_->state()->popover(), "Invoke on the close control dismisses the popover");
+        step.check(automation.refresh() && uiaPeer(automation, "profile:menu"), "The page's controls return");
+    }
+    t += .05; step.present(t);
+    // The owner's hooks (the host refreshes them with its group as the root).
+    const auto listed = owner_->state()->actions().size() + owner_->state()->sliders().size();
+    step.check(automationRefresh(nullptr) && automationCount() == listed, "The owner's UIA hooks list the page's controls");
+    IRawElementProviderFragment* child{};
+    step.check(automationChild(0, &child) == S_OK && child, "The first fragment is available");
+    if (child) child->Release();
+    child = nullptr;
+    step.check(automationChild(listed, &child) == E_INVALIDARG && !child && !automationRefresh(nullptr), "Out-of-range children are refused; an unchanged page is no structure change");
+    automationDisconnect();
+    step.check(automationCount() == 0, "Disconnecting empties the profile group");
+    automation_.reset();
+    automationRoot_ = nullptr;
+}
 // Module-less step: the published card drives the presenter the host owns,
 // here over the exported caption leaves (coverage fixture) and a private
 // rasterizer, with the SourceScene replaced by a recording target.
@@ -430,6 +680,31 @@ void ProfileArea::coverageCard(app::ModuleCoverage& step) {
     step.check(host_.find<gpu::IdCardFeed>(gpu::IdCardFeed::serviceKey) == &feed_, "The ID card feed is published by exact type");
     drainUntil(step, [&] { return owner_->loaded() && owner_->card(); });
     step.check(owner_->card() && feed_.card() == owner_->card(), "The loaded card is published");
+    // Work Mode lifetime hours end to end, on every cycle: the host's single
+    // controller -> this area's checkpoint listener -> WorkModeProfileHours ->
+    // ProfileState (the page's REGION CONSTRUCTION hours) -> profile.json at
+    // flush. The host restores nothing and never writes profile.json.
+    {
+        const double now = step.time;
+        if (const auto* hostWork = host_.workMode()) {
+            step.check(work_ == hostWork && hostWork->checkpointListeners() >= 1, "Lifetime hours observe the host's one Work Mode controller");
+            const auto restored = hostWork->restoredTrackedWorkSeconds();
+            step.check(!restored || *restored == 0, "The host no longer restores the profile lifetime into Work Mode");
+        }
+        const auto live = work_->trackedWorkSeconds(now);
+        const auto lifetime = owner_->state()->profile().accumulatedWorkSeconds;
+        step.check(checkpoints_ == 0 || (lastCheckpoint_ <= live + 1e-9 && lifetime >= 3600 + lastCheckpoint_ - 1e-6),
+                   "Every delivered Work Mode checkpoint reached the profile lifetime");
+        if (work_->snapshot(now).phase != m::WorkModePhase::running) {
+            // Settled (idle, paused, stopped or completed): the controller's
+            // total has been checkpointed and counted once above the stored hours.
+            step.check(checkpoints_ == 0 ? live == 0 : std::abs(lastCheckpoint_ - live) < 1e-6, "A settled Work Mode total has reached the checkpoint listener");
+            step.check(std::abs(lifetime - (3600 + live)) < 1e-6, "The profile lifetime is the stored hours plus the Work Mode total, counted once");
+        }
+        if (!hostProfilePath_.empty())
+            step.check(ehud::data::detail::readFile(hostProfilePath_, 1024 * 1024) == hostProfileBefore_,
+                       "Only the profile area writes profile.json: the host's Work Mode leaves the data root's record untouched");
+    }
     if (step.cycle != 0) return;
     // Quit/session-end flush: the live Work Mode total lands once above the
     // stored lifetime and profile.json is drained; a flush never blocks quitting.

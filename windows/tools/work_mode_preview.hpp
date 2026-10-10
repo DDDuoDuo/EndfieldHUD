@@ -49,6 +49,15 @@ public:
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
     void focus(bool,double);void cancelInteraction(double);bool pointerLocked()const noexcept;
     bool editing()const noexcept;bool finishEditing(bool commit,double);
+    // Accessibility-equivalent activation (HUDWorkModeInteraction.
+    // activateAction): while the page accepts input, an open duration field
+    // is committed first, then the listed source action runs exactly as its
+    // click. False when inactive, when the field refuses to finish (an
+    // invalid draft stays selected) or when the id is not a current action.
+    bool perform(std::string_view actionID,double time);
+    // Source accessibility projection: a 440 x 440 canvas rect -> the logical
+    // client bounding rect of its projected corners while input is accepted.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
     const modules::WorkModeController&controller()const noexcept;
     const modules::WorkModePresentation&state()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();

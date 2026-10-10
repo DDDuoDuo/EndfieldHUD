@@ -213,6 +213,55 @@ void desktopClosure(){
     check(scene.assembleFrame(std::span(&entry,1),scene.parameters())&&loaded.assembleFrame(std::span(&entry,1),loaded.parameters()),"An initially unseen profile hover uses its original resource after standalone cache load");
     rejects([&]{scene.includeDesktopResources(fixture.root);},"Dynamic resources cannot be installed after live submission");
     entry.textureOverrides[0].textureID="not-exported-game-art";rejects([&]{loaded.assembleFrame(std::span(&entry,1),loaded.parameters());},"Unexported game art remains an explicit live error, never a substitute texture");
+    // Runtime-only desktop textures (HUDSourceWatchView.setDesktopCenterLogo
+    // registerTexture "desktop.center-logo"): registered by a content event,
+    // bound through the texture override, unregistered once nothing binds it.
+    const auto assembleLogo=[&]{return loaded.assembleFrame(std::span(&entry,1),loaded.parameters());};
+    entry.textureOverrides[0].textureID="desktop.center-logo";
+    rejects(assembleLogo,"An unregistered runtime texture is an explicit live error");
+    const std::string logo(3*2*4,char(77));const auto logoBytes=bytes(logo);
+    rejects([&]{loaded.registerTexture("desktop.profile.hover",3,2,logoBytes,1);},"Installed packet textures are replaced, never registered");
+    rejects([&]{loaded.registerTexture("center-logo",3,2,logoBytes,1);},"Registered textures live under the desktop. namespace");
+    rejects([&]{loaded.registerTexture("desktop.",3,2,logoBytes,1);},"A registered texture needs a name");
+    rejects([&]{loaded.registerTexture("desktop.center-logo",3,3,logoBytes,1);},"Registered pixels are tight RGBA8 for the stated size");
+    rejects([&]{loaded.registerTexture("desktop.center-logo",0,0,{},1);},"Empty registered textures are rejected");
+    rejects([&]{loaded.registerTexture("desktop.center-logo",3,2,logoBytes,0);},"Registered revision zero is reserved");
+    rejects([&]{loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1,{3,1,1});},"Unknown Unity filter modes are rejected");
+    rejects([&]{loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1,{1,4,1});},"Unknown Unity wrap modes are rejected");
+    check(!loaded.textureInfo("desktop.center-logo")&&loaded.stats().textureRegistrations==0&&loaded.stats().registeredTextures==0,"Rejected registrations change nothing");
+    const auto logoUniforms=snapshot(loaded);
+    check(loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1),"The custom center logo registers as a runtime texture");
+    auto logoInfo=loaded.textureInfo("desktop.center-logo");
+    check(logoInfo&&logoInfo->registered&&!logoInfo->replaced&&logoInfo->pending&&logoInfo->width==3&&logoInfo->height==2&&logoInfo->levels==1&&
+          logoInfo->pixelFormat=="rgba8Unorm_srgb"&&logoInfo->revision==2,"The registered logo is single-level straight RGBA8-sRGB awaiting its upload");
+    check(logoInfo->minFilter==1&&logoInfo->magFilter==1&&logoInfo->mipFilter==0&&logoInfo->addressU==0&&logoInfo->addressV==0,
+          "filterMode 1 with wrap 1 is bilinear, unmipmapped and clamped to edge like the source registration");
+    check(!loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1)&&loaded.stats().textureRegistrations==1,"The same registered revision is not uploaded twice");
+    check(loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1,{0,0,2}),"A sampler change registers again");
+    logoInfo=loaded.textureInfo("desktop.center-logo");
+    check(logoInfo->minFilter==0&&logoInfo->magFilter==0&&logoInfo->addressU==2&&logoInfo->addressV==3&&logoInfo->revision==3,"Unity point/repeat/mirror map to the Metal sampler encoding");
+    check(loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1,{1,3,1})&&loaded.textureInfo("desktop.center-logo")->addressU==1,"Unity mirror-once maps to mirrorClampToEdge");
+    rejects([&]{loaded.replaceTexture("desktop.center-logo",3,2,logoBytes,2);},"Registered textures are not replaced as packet originals");
+    check(!loaded.restoreTexture("desktop.center-logo")&&loaded.stats().textureRestores==0,"A registered texture has no packet original to restore");
+    check(snapshot(loaded)==logoUniforms,"Registration touches no uniforms or animation state");
+    check(assembleLogo(),"The registered logo binds through the frame's texture override");
+    check(!loaded.unregisterTexture("desktop.center-logo")&&loaded.textureInfo("desktop.center-logo")->registered,"A texture the assembled frame binds stays registered");
+    entry.textureOverrides[0].textureID="desktop.profile.hover";
+    check(assembleLogo(),"The next frame returns to the packet artwork");
+    const auto logoStats=loaded.stats();
+    check(logoStats.registeredTextures==1&&logoStats.registeredTextureBytes==logo.size()&&logoStats.textureRegistrations==3&&logoStats.runtimeTextures==0,"Registered textures are counted apart from replacements");
+    check(loaded.unregisterTexture("desktop.center-logo")&&!loaded.textureInfo("desktop.center-logo")&&!loaded.unregisterTexture("desktop.center-logo"),"An unbound logo unregisters exactly once");
+    check(loaded.stats().registeredTextures==0&&loaded.stats().registeredTextureBytes==0&&loaded.stats().textureUnregistrations==1&&loaded.stats().textures==logoStats.textures-1,"Unregistering frees the pixels");
+    entry.textureOverrides[0].textureID="desktop.center-logo";
+    rejects(assembleLogo,"An unregistered logo is a live error again");
+    check(loaded.registerTexture("desktop.center-logo",3,2,logoBytes,1)&&loaded.textureInfo("desktop.center-logo")->revision==5,"Registering again never reuses an upload revision");
+    check(assembleLogo(),"The registered logo binds again");
+    const std::string pixel(4,char(1));
+    for(unsigned n=0;n<15;++n)check(loaded.registerTexture("desktop.runtime."+std::to_string(n),1,1,bytes(pixel),1),"Up to 16 runtime textures register");
+    rejects([&]{loaded.registerTexture("desktop.runtime.15",1,1,bytes(pixel),1);},"A 17th runtime texture is refused");
+    check(loaded.stats().registeredTextures==16,"The registered set stays bounded");
+    rejects([&]{loaded.writeCompiled(fixture.root/"registered-snapshot.ehscene");},"A registered runtime texture is never compiled");
+    check(!fs::exists(fixture.root/"registered-snapshot.ehscene"),"The refused snapshot writes nothing");
     Fixture missing;metadata(missing,true);gpu::SourceScene absent(missing.root,missing.shaders/"compiled-shaders.json","fixture");
     rejects([&]{absent.includeDesktopResources(missing.root);},"Missing mandatory desktop replacement fails before shipping cache generation");check(absent.stats().textures==1,"Missing desktop reference leaves resources unchanged");
     Fixture corrupt;metadata(corrupt);gpu::SourceScene damaged(corrupt.root,corrupt.shaders/"compiled-shaders.json","fixture");write(corrupt.root/"texture/raw-texture.bin","xxxx");

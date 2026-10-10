@@ -280,6 +280,14 @@ void ProfilePreview::cancelInteraction(double t){
     if(i->state.dragging()){i->state.mouseUp();i->content();}i->feedback();
 }
 bool ProfilePreview::active()const noexcept{return impl_->active&&impl_->overlay;}
+std::optional<R>ProfilePreview::clientRect(R r)const{
+    const auto&i=*impl_;if(!i.input||!i.pose||!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0)return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const P c:{P{r.x,r.y},P{r.x+r.width,r.y},P{r.x,r.y+r.height},P{r.x+r.width,r.y+r.height}}){
+        const auto q=i.projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    const double scale=i.metrics.scale;return R{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}
 bool ProfilePreview::editing()const noexcept{return bool(impl_->field);}
 std::optional<m::ProfileField>ProfilePreview::editingField()const noexcept{return impl_->field?std::optional(impl_->field->field()):std::nullopt;}
 bool ProfilePreview::finishEditing(bool commit,double t){auto i=impl_;i->advance(t);return i->finish(commit);}

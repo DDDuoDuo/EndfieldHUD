@@ -48,6 +48,16 @@ std::optional<std::filesystem::path>chooseProfileImage(HWND owner,modules::Profi
 std::wstring profileColorPickerTitle(core::Language);
 std::optional<std::array<double,3>>chooseProfileColor(HWND owner,std::array<double,3>initial,core::Language,
     const std::function<void(std::array<double,3>)>&live,ProfilePickerSession* =nullptr);
+// The same picker under a caller-localized UTF-8 title, for the other source
+// NSColorPanel.shared user: Settings > Theme color (HUDSettingsInteraction.
+// chooseColor, title "Theme color" / "主题颜色", continuous, no alpha). The
+// sixteen custom swatches are shared with the card colour, like the one
+// shared panel. A title that is empty, longer than 256 bytes, not UTF-8 or
+// contains NUL throws std::invalid_argument before any dialog is created.
+std::optional<std::array<double,3>>chooseProfileColor(HWND owner,std::array<double,3>initial,std::string_view title,
+    const std::function<void(std::array<double,3>)>&live,ProfilePickerSession* =nullptr);
+// The validated wide title of that overload (exposed for tests).
+std::wstring profileColorPickerTitle(std::string_view utf8Title);
 // String(format:"%02X", Int((c * 255).rounded())) channels as a COLORREF.
 COLORREF profileColorRef(std::array<double,3>)noexcept;
 std::array<double,3>profileColorFromRef(COLORREF)noexcept;

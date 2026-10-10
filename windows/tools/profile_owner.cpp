@@ -349,6 +349,7 @@ bool ProfileOwner::setSlider(m::ProfileField field,double value,double t){
     auto i=impl_;i->advance(t);if(!i->page||!i->state||!i->page->finishEditing(true,t))return false;
     const bool used=i->state->setSlider(field,value);i->page->stateChanged(t);i->sync();return used;
 }
+std::optional<core::Rect>ProfileOwner::clientRect(core::Rect canvas)const{const auto&page=impl_->page;return page?page->clientRect(canvas):std::nullopt;}
 bool ProfileOwner::loaded()const noexcept{return impl_->state!=nullptr&&!impl_->loadError;}
 const std::optional<std::string>&ProfileOwner::loadError()const noexcept{return impl_->loadError;}
 const m::ProfileState*ProfileOwner::state()const noexcept{return impl_->state.get();}

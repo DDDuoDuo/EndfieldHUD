@@ -110,6 +110,16 @@ void WorkModePreview::cancelInteraction(double now){auto i=impl_;i->advance(now)
 bool WorkModePreview::pointerLocked()const noexcept{return impl_->fieldDragging;}
 bool WorkModePreview::editing()const noexcept{return bool(impl_->field);}
 bool WorkModePreview::finishEditing(bool commit,double now){auto i=impl_;i->advance(now);return i->finish(commit);}
+bool WorkModePreview::perform(std::string_view id,double now){auto i=impl_;i->advance(now);if(!i->input||!i->finish(true))return false;
+    const bool used=i->state.perform(id,i->time);i->updateFocus();return used;}
+std::optional<core::Rect>WorkModePreview::clientRect(core::Rect r)const{
+    const auto&i=*impl_;if(!i.input||!i.pose||!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0)return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
+        const auto q=i.projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    const double scale=i.metrics.scale;return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}
 const m::WorkModeController&WorkModePreview::controller()const noexcept{return impl_->controller;}
 const m::WorkModePresentation&WorkModePreview::state()const noexcept{return impl_->state;}
 void WorkModePreview::upload(gpu::Renderer&r){auto i=impl_;if(!i->pose)return;i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}

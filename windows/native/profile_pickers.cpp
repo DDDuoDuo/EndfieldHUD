@@ -103,10 +103,15 @@ std::optional<std::filesystem::path>chooseProfileImage(HWND owner,modules::Profi
     std::filesystem::path result(path);CoTaskMemFree(path);return result;
 }
 std::wstring profileColorPickerTitle(core::Language language){return wide(core::localized("Card color","名片颜色",language));}
-std::optional<std::array<double,3>>chooseProfileColor(HWND owner,std::array<double,3>initial,core::Language language,const std::function<void(std::array<double,3>)>&live,ProfilePickerSession*session){
+std::wstring profileColorPickerTitle(std::string_view title){
+    if(title.empty()||title.size()>256||title.find('\0')!=std::string_view::npos)throw std::invalid_argument("A colour picker title is 1...256 bytes without NUL");
+    return wide(title); // rejects invalid UTF-8
+}
+namespace {
+std::optional<std::array<double,3>>chooseColor(HWND owner,std::array<double,3>initial,std::wstring title,const std::function<void(std::array<double,3>)>&live,ProfilePickerSession*session){
     // The dialog's sixteen custom swatches persist for the process, like the shared NSColorPanel.
     static std::array<COLORREF,16>custom=[]{std::array<COLORREF,16>white;white.fill(RGB(255,255,255));return white;}();
-    HookState state{ProfileColorStream(live,profileColorFromRef(profileColorRef(initial))),profileColorPickerTitle(language),session};
+    HookState state{ProfileColorStream(live,profileColorFromRef(profileColorRef(initial))),std::move(title),session};
     const Detach detach{session};
     CHOOSECOLORW options{};options.lStructSize=sizeof options;options.hwndOwner=owner;options.rgbResult=profileColorRef(initial);
     options.lpCustColors=custom.data();options.Flags=CC_RGBINIT|CC_FULLOPEN|CC_ANYCOLOR|CC_ENABLEHOOK;
@@ -116,6 +121,13 @@ std::optional<std::array<double,3>>chooseProfileColor(HWND owner,std::array<doub
         return std::nullopt;
     }
     return profileColorFromRef(options.rgbResult);
+}
+}
+std::optional<std::array<double,3>>chooseProfileColor(HWND owner,std::array<double,3>initial,core::Language language,const std::function<void(std::array<double,3>)>&live,ProfilePickerSession*session){
+    return chooseColor(owner,initial,profileColorPickerTitle(language),live,session);
+}
+std::optional<std::array<double,3>>chooseProfileColor(HWND owner,std::array<double,3>initial,std::string_view title,const std::function<void(std::array<double,3>)>&live,ProfilePickerSession*session){
+    return chooseColor(owner,initial,profileColorPickerTitle(title),live,session);
 }
 COLORREF profileColorRef(std::array<double,3>c)noexcept{return RGB(channel(c[0]),channel(c[1]),channel(c[2]));}
 std::array<double,3>profileColorFromRef(COLORREF c)noexcept{return {GetRValue(c)/255.,GetGValue(c)/255.,GetBValue(c)/255.};}

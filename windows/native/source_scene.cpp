@@ -525,9 +525,14 @@ struct RuntimeTexture { gpu::SourceTexture description; std::string pixels; std:
 struct SourceScene::Impl {
     PreparedReplay scene;
     std::map<std::string,RuntimeTexture,std::less<>> runtimeTextures;
+    // Runtime-only desktop textures (registerTexture): their PreparedTexture
+    // lives in scene.textures, so live validation, upload and flush treat them
+    // like installed originals; this records the caller revision and sampler.
+    struct Registered { std::uint64_t callerRevision{}; SourceRuntimeSampler sampler; };
+    std::map<std::string,Registered,std::less<>> registered;
     std::map<std::string,std::uint64_t,std::less<>> textureRevisions; // only ids that ever changed (originals upload as 1)
     std::vector<std::string> dirtyTextures;                             // reserved on first use; flush() clears without freeing
-    std::uint64_t textureReplacements{},textureRestores{},textureFlushes{};
+    std::uint64_t textureReplacements{},textureRestores{},textureFlushes{},textureRegistrations{},textureUnregistrations{};
     std::uint64_t uploadRevision(std::string_view id)const{const auto found=textureRevisions.find(id);return found==textureRevisions.end()?1:found->second;}
     const gpu::SourceTexture& current(const std::string& id,const PreparedTexture& original)const{
         const auto found=runtimeTextures.find(id);return found==runtimeTextures.end()?original.description:found->second.description;}
@@ -590,6 +595,7 @@ std::span<const std::string> SourceScene::stateIDs()const noexcept{return impl_-
 void SourceScene::includeTemplates(const SourceScene& other,std::string prefix) {
     auto& impl=*impl_;auto& s=impl.scene;const auto& input=other.impl_->scene;
     require(&other!=this&&!impl.uploadedTarget&&!impl.assembled&&s.counters.updates==0,"Install source catalogs only before first upload/submission");
+    require(impl.textureRevisions.empty()&&other.impl_->textureRevisions.empty(),"Source catalogs never carry runtime texture content");
     require(validIdentity(prefix)&&prefix.size()<=64,"Source catalog namespace must be explicit and bounded");
     require(impl.prototypes.size()+other.impl_->prototypes.size()<=4096,"Source prototype catalog exceeds bounds");
     for(const auto& p:other.impl_->prototypes){const auto id=prefix+":"+p.description.id;require(validIdentity(id),"Namespaced source prototype ID exceeds bounds");require(!impl.prototypeIDs.contains(id),"Source catalog namespace/prototype already installed");}
@@ -628,7 +634,7 @@ void SourceScene::includeTemplates(const SourceScene& other,std::string prefix) 
 }
 std::vector<std::string> SourceScene::includeDesktopResources(const fs::path& packetRoot) {
     auto& impl=*impl_;auto& scene=impl.scene;
-    require(!impl.uploadedTarget&&!impl.assembled&&scene.counters.updates==0,"Install desktop resource closure only before first upload/submission");
+    require(!impl.uploadedTarget&&!impl.assembled&&scene.counters.updates==0&&impl.textureRevisions.empty(),"Install desktop resource closure only before first upload/submission");
     const auto root=absoluteRoot(packetRoot);packet::Package source(root);
     require(hash(read(root/"shell-packet.json",packet::Package::maximumJSONBytes))==impl.provenance.packetSHA256,
             "Desktop resources must match the compiled scene's source packet provenance");
@@ -719,6 +725,7 @@ bool SourceScene::replaceTexture(std::string_view id,unsigned width,unsigned hei
     const auto installed=impl.scene.textures.find(id);
     require(installed!=impl.scene.textures.end(),"Runtime texture replacement needs an installed source texture");
     require(id.starts_with("desktop."),"Only desktop replacement textures change at runtime");
+    require(!impl.registered.contains(id),"Registered runtime textures change through registerTexture");
     const auto& original=installed->second.description;
     require(original.pixelFormat=="rgba8Unorm_srgb"&&original.mips.size()==1,"Runtime replacement keeps single-level straight RGBA8-sRGB storage");
     require(width>0&&height>0&&width<=16384&&height<=16384&&pixels.size()==std::size_t(width)*height*4,"Runtime texture pixels are tight straight RGBA8");
@@ -739,6 +746,45 @@ bool SourceScene::restoreTexture(std::string_view id) {
     if(found==impl.runtimeTextures.end())return false;
     impl.runtimeTextures.erase(found);impl.changed(id);++impl.textureRestores;return true;
 }
+bool SourceScene::registerTexture(std::string_view id,unsigned width,unsigned height,std::span<const std::uint8_t> pixels,std::uint64_t revision,SourceRuntimeSampler sampler) {
+    auto& impl=*impl_;auto& textures=impl.scene.textures;
+    require(id.starts_with("desktop.")&&id.size()>8&&id.size()<=128&&validIdentity(id),"Registered runtime textures use a bounded desktop. identity");
+    const auto known=impl.registered.find(id);
+    require(known!=impl.registered.end()||!textures.contains(id),"Installed packet textures change through replaceTexture");
+    require(width>0&&height>0&&width<=16384&&height<=16384&&pixels.size()==std::size_t(width)*height*4,"Runtime texture pixels are tight straight RGBA8");
+    require(revision!=0,"Runtime texture revisions start at 1");
+    require(sampler.filterMode<=2&&sampler.wrapU<=3&&sampler.wrapV<=3,"Registered textures use the Unity filter (0...2) and wrap (0...3) modes");
+    require(known!=impl.registered.end()||impl.registered.size()<16,"At most 16 runtime textures are registered");
+    if(known!=impl.registered.end()){
+        const auto& mip=textures.find(id)->second.description.mips.front();
+        if(known->second.callerRevision==revision&&known->second.sampler==sampler&&mip.width==width&&mip.height==height)return false;
+    }
+    // Stage the complete texture before touching the bound one. Metal sampler
+    // encoding (SourceTexture): filters 0 nearest / 1 linear, mip 0 none;
+    // address 0 clampToEdge, 1 mirrorClampToEdge, 2 repeat, 3 mirrorRepeat.
+    const auto address=[](unsigned unity)->unsigned{switch(unity){case 0:return 2;case 2:return 3;case 3:return 1;default:return 0;}};
+    PreparedTexture next;auto& d=next.description;d.pixelFormat="rgba8Unorm_srgb";
+    d.minFilter=d.magFilter=sampler.filterMode==0?0:1;d.mipFilter=0;d.addressU=address(sampler.wrapU);d.addressV=address(sampler.wrapV);d.addressW=0;d.maxAnisotropy=1;
+    next.levels.resize(1);next.levels.front().storage.assign(reinterpret_cast<const char*>(pixels.data()),pixels.size());
+    const auto [slot,inserted]=textures.try_emplace(std::string(id));
+    try{impl.registered.insert_or_assign(std::string(id),Impl::Registered{revision,sampler});}
+    catch(...){if(inserted)textures.erase(slot);throw;}
+    // The single mip borrows the storage only after its final move.
+    slot->second=std::move(next);auto& stored=slot->second;
+    stored.description.mips.assign(1,gpu::SourceMip{width,height,width*4,stored.levels.front().bytes()});
+    impl.changed(id);++impl.textureRegistrations;return true;
+}
+bool SourceScene::unregisterTexture(std::string_view id) {
+    auto& impl=*impl_;const auto found=impl.registered.find(id);
+    if(found==impl.registered.end())return false;
+    for(const auto& draw:impl.scene.draws)for(const auto& texture:draw.textures)if(texture.id==id)return false;
+    if(const auto texture=impl.scene.textures.find(id);texture!=impl.scene.textures.end())impl.scene.textures.erase(texture);
+    impl.registered.erase(found);
+    // Nothing remains to upload; textureRevisions keeps the id so a later
+    // registration never reuses an upload revision the target has seen.
+    if(const auto dirty=std::find(impl.dirtyTextures.begin(),impl.dirtyTextures.end(),id);dirty!=impl.dirtyTextures.end())impl.dirtyTextures.erase(dirty);
+    ++impl.textureUnregistrations;return true;
+}
 std::optional<SourceTextureInfo> SourceScene::textureInfo(std::string_view id) const {
     const auto& impl=*impl_;const auto installed=impl.scene.textures.find(id);
     if(installed==impl.scene.textures.end())return std::nullopt;
@@ -746,8 +792,9 @@ std::optional<SourceTextureInfo> SourceScene::textureInfo(std::string_view id) c
     const auto& d=replaced?runtime->second.description:installed->second.description;
     SourceTextureInfo info;info.pixelFormat=d.pixelFormat;info.levels=static_cast<unsigned>(d.mips.size());
     if(!d.mips.empty()){info.width=d.mips.front().width;info.height=d.mips.front().height;}
-    info.revision=impl.uploadRevision(id);info.replaced=replaced;
+    info.revision=impl.uploadRevision(id);info.replaced=replaced;info.registered=impl.registered.contains(id);
     info.pending=std::find(impl.dirtyTextures.begin(),impl.dirtyTextures.end(),id)!=impl.dirtyTextures.end();
+    info.minFilter=d.minFilter;info.magFilter=d.magFilter;info.mipFilter=d.mipFilter;info.addressU=d.addressU;info.addressV=d.addressV;
     return info;
 }
 bool SourceScene::assembleFrame(std::span<const SourceAssembledBatch> entries,const SourceFrameParameters& params) {
@@ -954,6 +1001,9 @@ SourceSceneStats SourceScene::stats()const noexcept {
     out.textures=s.textures.size();out.pipelines=s.pipelines.size();out.uniforms=s.uniforms.size();out.inactiveUniforms=s.inactiveUniforms;
     out.textureReplacements=impl_->textureReplacements;out.textureRestores=impl_->textureRestores;out.textureFlushes=impl_->textureFlushes;
     out.runtimeTextures=impl_->runtimeTextures.size();for(const auto& [id,t]:impl_->runtimeTextures){(void)id;out.runtimeTextureBytes+=t.pixels.size();out.retainedCPUBytes+=t.pixels.size();}
+    out.textureRegistrations=impl_->textureRegistrations;out.textureUnregistrations=impl_->textureUnregistrations;out.registeredTextures=impl_->registered.size();
+    // retainedCPUBytes counts registered pixels with scene.textures below.
+    for(const auto& [id,r]:impl_->registered){(void)r;if(const auto t=s.textures.find(id);t!=s.textures.end())for(const auto& mip:t->second.levels)out.registeredTextureBytes+=mip.storage.size();}
     for(const auto& [id,m]:s.meshes){(void)id;out.retainedCPUBytes+=m.vertices.size();}
     for(const auto& [id,g]:s.originalGeometry){(void)id;out.retainedCPUBytes+=g->vertices.size()+g->indices.size()*4+g->colors.size()*16;}
     for(const auto& [id,t]:s.textures){(void)id;for(const auto& mip:t.levels)out.retainedCPUBytes+=mip.storage.size();}
