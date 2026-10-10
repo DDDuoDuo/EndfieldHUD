@@ -1,24 +1,51 @@
-name: Windows clean port checks
+name: Windows port checks
+# Builds and runs the portable (Linux) and Windows suites of windows/, then
+# stages an unsigned developer package (portable zip, setup, size report) as
+# a workflow artifact. Nothing here creates a tag, release or Mac update.
 on:
   push:
     branches: [codex/windows-migration]
-    paths: ['windows/**', 'Sources/**', 'Resources/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'Sources/**', 'Resources/**', 'updates/**', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['windows/**', 'Sources/**', 'Resources/**', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'Sources/**', 'Resources/**', 'updates/**', '.github/workflows/windows.yml']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: windows-clean-port-${{ github.ref }}
+  group: windows-port-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  core:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-2022, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+  portable:
+    name: Portable suites (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Verify current macOS source authority
+        run: python windows/tools/check_source_authority.py
+      - name: Keep the macOS update feed untouched
+        # Windows builds never edit the Mac Sparkle feed (WINDOWS-MIGRATION.md section 10).
+        run: git diff --exit-code origin/main -- updates/appcast.xml
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libicu-dev libsqlite3-dev
+      - name: Configure
+        run: cmake -S windows -B build/portable -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build/portable --parallel 4
+      - name: Test
+        run: ctest --test-dir build/portable --output-on-failure --parallel 4 --timeout 900
+
+  windows:
+    name: Windows suites and developer package (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -34,10 +61,32 @@ jobs:
           python-version: '3.12'
       - name: Verify current macOS source authority
         run: python windows/tools/check_source_authority.py
-      - name: Configure isolated core tests
-        run: cmake -S windows -B build/windows-core -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+      - name: Show the runner
+        shell: pwsh
+        run: |
+          [Environment]::OSVersion.Version.ToString()
+          (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+          cmake --version
+      - name: Configure (MSVC, x64)
+        # The Mac-exported runtime inputs are not in the repository, so the
+        # staged package is an incomplete developer build (its setup refuses
+        # to install outside isolated tests) and the input-dependent suites
+        # (owner coverage, data-root and package contracts) are not registered.
+        run: cmake -S windows -B build/windows -A x64 -DBUILD_TESTING=ON -DEHUD_RELEASE_ALLOW_INCOMPLETE=ON
       - name: Build
-        run: cmake --build build/windows-core --config Release --parallel 2
-      - name: Test synthetic data and scene models
-        run: ctest --test-dir build/windows-core -C Release --output-on-failure
-      # No preview, installer, or release is produced by a core-only check.
+        id: build
+        run: cmake --build build/windows --config Release --parallel -- /nodeReuse:false
+      - name: Test
+        # Serial: hidden-window, WARP and installer suites share the session.
+        run: ctest --test-dir build/windows -C Release --output-on-failure --timeout 900
+      - name: Stage the unsigned developer package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: cmake --build build/windows --config Release --target endfieldhud_release
+      - name: Upload the developer package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: EndfieldHUD-windows-x64-unsigned-developer-${{ github.run_number }}
+          path: build/windows/packaging/dist/
+          if-no-files-found: error
+          retention-days: 7
