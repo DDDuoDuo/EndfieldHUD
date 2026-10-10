@@ -5,6 +5,15 @@
 # synthetic documents, hidden owned windows and WARP offscreen targets only.
 
 set(EHUD_NOTES_TARGETS "")
+# Portable Mac-to-Windows font name table for imported rich runs
+# (core/notes_font_names.hpp); part of the rich text model library.
+target_sources(hud_notes_rich PRIVATE core/notes_font_names.cpp)
+if(BUILD_TESTING)
+  add_executable(notes_font_names_tests tests/notes_font_names_tests.cpp)
+  target_link_libraries(notes_font_names_tests PRIVATE hud_notes_rich)
+  add_test(NAME notes_font_names_contracts COMMAND notes_font_names_tests)
+  list(APPEND EHUD_NOTES_TARGETS notes_font_names_tests)
+endif()
 if(WIN32)
   # Paragraph-chunked long-document editor for Notes text fields: typing cost
   # follows the edited chunk, not the document length (native/notes_long_editor).
