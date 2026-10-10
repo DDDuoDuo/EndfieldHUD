@@ -19,7 +19,11 @@ class SourceGraphics;
 class DesktopBackdrop;
 
 enum class Driver { hardware, warpForTests };
-enum class TextureColorSpace { sRGB, linear };
+// encodedSRGB retains associated encoded bytes for source Core Animation
+// groups. The default sRGB path continues to filter/blend in linear space.
+enum class TextureColorSpace { sRGB, linear, encodedSRGB };
+enum class NativeGroupColorSpace { linear, encodedSRGB };
+enum class NativeBlend { sourceOver, screen, weightedAdd };
 enum class TextureFilter { nearest, linear };
 enum class RenderTarget { composition, offscreenForTests };
 struct RendererOptions {
@@ -48,6 +52,7 @@ struct TextureData {
 struct NativeGroupTarget {
     core::Rect localBounds;
     double pixelsPerPoint{1};
+    NativeGroupColorSpace colorSpace{NativeGroupColorSpace::linear};
     bool operator==(const NativeGroupTarget&)const=default;
 };
 struct PlaneMask {
@@ -114,6 +119,12 @@ struct DrawObject {
     std::optional<PlaneShutter> shutter;
     std::optional<PlaneAlphaMask> alphaMask; // intersects ordinary masks/shutter
     std::optional<AngularMask> angularMask; // no texture or tessellation
+    // Screen and weightedAdd are supported only inside an encoded native group.
+    // weightedAdd is a bounded crossfade: every child must use it, at most two
+    // regular leaf draws, and their opacity weights sum to <=1. Their associated
+    // encoded RGBA contributions add before one normal output composition.
+    // Root/default linear groups and nested weighted inputs reject it.
+    NativeBlend blend{NativeBlend::sourceOver};
 };
 // Checks retained numeric/identity data with the exact GPU-uniform rules,
 // without querying or allocating device resources. Resource existence remains
@@ -199,7 +210,7 @@ public:
     static constexpr std::size_t maximumMeshes = 4096, maximumTextures = 2048, maximumObjects = 16384;
     static constexpr std::size_t maximumResourceBytes = 512 * 1024 * 1024;
     static constexpr std::size_t maximumRenderPixels = 4096 * 4096;
-    static constexpr std::size_t maximumNativeGroups=64,maximumNativeGroupPixels=4*1024*1024,
+    static constexpr std::size_t maximumNativeGroups=256,maximumNativeGroupPixels=4*1024*1024,
         maximumNativeGroupBytes=64*1024*1024;
     static constexpr std::size_t maximumMediaTargets=16,maximumMediaPixels=4*1024*1024,
         maximumMediaBytes=128*1024*1024;
@@ -260,6 +271,8 @@ public:
     // referenced mesh/texture replacements dirty the cached target. A group's
     // own output resources and every other group's output are forbidden inputs
     // (no nesting/cycles/source-material passes in this plain native API).
+    // Encoded groups may contain encoded leaf-group outputs (maximum depth2).
+    // Matching owned mesh/texture pairs are required; cycles/alpha inputs reject.
     bool setNativeGroupDraws(const std::string& id,std::span<const DrawObject>);
     // Borrowed stable IDs/local quad. Caller copies once into retained ordered
     // publication, then changes only numeric world/opacity/masks/shutter. The

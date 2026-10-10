@@ -91,6 +91,26 @@ void run(HWND hwnd,const wchar_t* shader){
     const auto siblingOnly=std::array{&sibling};composition.setScenes(renderer,siblingOnly);check(group.releaseResources(renderer),"Detach main group entry before retiring local resources");
     check(renderer.stats().nativeGroups==0&&renderer.stats().textures==1&&renderer.stats().meshes==1,"Group teardown preserves exactly the sibling assets");composition.present(renderer);renderer.draw(false);pixel(renderer.readback(),70,12,{0,255,0,255},"Sibling remains visible after group teardown");
     composition.detach(renderer);check(renderer.stats().resourceBytes==0,"Owned group and sibling resources fully retire");
+    // Source Map opts into encoded compositing. Existing menu groups below
+    // keep their default linear path and still exercise full overlap/retention.
+    {
+        gpu::LayerScene base(raster);base.load(leaf("encoded-base",0,0,8,8,.2,.2,.2),options);
+        gpu::NativeLayerGroup encodedGroup(base,"source-map",1,gpu::NativeGroupColorSpace::encodedSRGB);
+        const std::array<gpu::Vertex,4> vertices{{{{0,0,0},{0,0}},{{8,0,0},{1,0}},{{8,8,0},{1,1}},{{0,8,0},{0,1}}}};
+        constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};const std::array<std::uint8_t,4>rgba{204,204,204,128};
+        renderer.setMesh("encoded-beam-mesh",1,{vertices,indices});renderer.setTexture("encoded-beam-image",1,{1,1,rgba,gpu::TextureColorSpace::encodedSRGB});
+        gpu::DrawObject beam;beam.sourceID="encoded-beam";beam.meshID="encoded-beam-mesh";beam.textureID="encoded-beam-image";beam.blend=gpu::NativeBlend::screen;
+        const gpu::NativeGroupInsertion inserted{1,std::span(&beam,1),{0,0,8,8}};encodedGroup.uploadResources(renderer,{},inserted);encodedGroup.setPose(core::Matrix4::translation(8,8),.5f);
+        composition.setEntries(renderer,std::array{encodedGroup.entry()});composition.present(renderer);renderer.draw(false);
+        pixel(renderer.readback(),12,12,{66,66,66,128},"Encoded source group screens before applying its single final opacity");
+        const auto encodedStats=renderer.stats();beam.blend=gpu::NativeBlend::sourceOver;check(encodedGroup.updateLocal(renderer,inserted),"Blend-only inserted content invalidates retained local pixels");composition.present(renderer);renderer.draw(false);
+        pixel(renderer.readback(),12,12,{64,64,64,128},"Same retained Map group restores ordinary over after screen");
+        check(renderer.stats().nativeGroupTargetAllocations==encodedStats.nativeGroupTargetAllocations&&renderer.stats().objectUploads==encodedStats.objectUploads,"Group blend switch allocates neither target nor uniform");
+        const auto bytes=renderer.readback().pixels;auto malformed=beam;malformed.blend=static_cast<gpu::NativeBlend>(99);const gpu::NativeGroupInsertion badBlend{1,std::span(&malformed,1),{0,0,8,8}};
+        rejects([&]{encodedGroup.updateLocal(renderer,badBlend);},"Invalid inserted blend cannot mutate a published source group");renderer.draw(false);check(renderer.readback().pixels==bytes,"Failed blend update keeps source group pixels");
+        composition.detach(renderer);check(encodedGroup.releaseResources(renderer),"Encoded group retires through the original carrier lifetime");check(renderer.removeMesh(beam.meshID)&&renderer.removeTexture(beam.textureID),"Map beam assets release after group detachment");
+        check(renderer.stats().resourceBytes==0,"Encoded group leaves no target or image behind");
+    }
     // Exercise the actual ported Notes secondary menu, including its shadow,
     // overlapping plates, labels and last-painted border. A source root fade
     // must multiply the completed group, not all these leaves individually.

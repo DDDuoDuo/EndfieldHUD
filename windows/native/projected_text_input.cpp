@@ -27,7 +27,7 @@ bool validSelectionEnd(TsActiveSelEnd end){return end==TS_AE_NONE||end==TS_AE_ST
 struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionSink {
     std::atomic<ULONG> refs{1};const DWORD thread{GetCurrentThreadId()};HWND owner{};UINT message{};UINT_PTR generation{};
     core::text::Document*doc{};core::text::Layout*layout{};core::text::Placement placement{};
-    bool alive{true},isFocused{},posted{},pendingUpgrade{},cancelPending{};unsigned pendingChanges{};DWORD lock{},sinkMask{};
+    bool alive{true},isFocused{},posted{},pendingUpgrade{},cancelPending{},commitPending{};unsigned pendingChanges{};DWORD lock{},sinkMask{};
     bool deferredDetach{},restoreFocusOnDetach{};
     std::uint64_t adviceRevision{};
     ComPtr<ITextStoreACPSink>sink;ComPtr<IUnknown>sinkIdentity;
@@ -174,7 +174,7 @@ struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionS
     HRESULT STDMETHODCALLTYPE GetScreenExt(TsViewCookie cookie,RECT*out)override{const auto hr=ready();if(FAILED(hr))return hr;if(cookie!=viewCookie||!out)return E_INVALIDARG;*out={};if(IsIconic(owner)||!placement.visible)return S_OK;const auto r=core::text::projectedViewport(placement);return r?rectangle(*r,out):TS_E_NOLAYOUT;}
     HRESULT STDMETHODCALLTYPE GetWnd(TsViewCookie cookie,HWND*out)override{const auto hr=ready();if(FAILED(hr))return hr;if(cookie!=viewCookie||!out)return E_INVALIDARG;*out=owner;return S_OK;}
     HRESULT STDMETHODCALLTYPE OnStartComposition(ITfCompositionView*view,BOOL*accepted)override{
-        const auto hr=ready();if(FAILED(hr))return hr;if(!view||!accepted)return E_INVALIDARG;*accepted=FALSE;if(compositionView||doc->readOnly())return S_OK;
+        const auto hr=ready();if(FAILED(hr))return hr;if(!view||!accepted)return E_INVALIDARG;*accepted=FALSE;if(compositionView||cancelPending||commitPending||doc->readOnly())return S_OK;
         Keep hold(this);ComPtr<ITfRange>r;auto result=view->GetRange(&r);if(FAILED(result))return result;result=ready();if(FAILED(result))return result;Range rangeValue;result=extent(r.Get(),rangeValue);if(FAILED(result))return result;
         return protect([&]{doc->beginComposition(rangeValue);compositionView=view;*accepted=TRUE;post(compositionChange);return S_OK;});
     }
@@ -194,7 +194,7 @@ struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionS
         return protect([&]{doc->endComposition(false);compositionView.Reset();post(compositionChange);return S_OK;});
     }
     HRESULT cancel()noexcept{
-        const auto hr=ready();if(FAILED(hr))return hr;if(lock)return TS_E_NOLOCK;if(cancelPending)return E_UNEXPECTED;if(!doc->composition())return S_FALSE;Keep hold(this);cancelPending=true;cancelledChange.reset();
+        const auto hr=ready();if(FAILED(hr))return hr;if(lock)return TS_E_NOLOCK;if(cancelPending||commitPending)return E_UNEXPECTED;if(!doc->composition())return S_FALSE;Keep hold(this);cancelPending=true;cancelledChange.reset();
         auto ownedContext=context;auto ownedView=compositionView;
         if(ownedContext&&ownedView){ComPtr<ITfContextOwnerCompositionServices>service;auto result=ownedContext.As(&service);if(SUCCEEDED(result)&&alive)result=service->TerminateComposition(ownedView.Get());
             if(!alive)return E_UNEXPECTED;if(FAILED(result)){cancelPending=false;return result;}}
@@ -202,6 +202,26 @@ struct ProjectedTextInput::Store final:ITextStoreACP,ITfContextOwnerCompositionS
         // finished synchronously before restoring host text/formatting.
         if(doc&&doc->composition()){auto result=protect([&]{cancelledChange=doc->endComposition(true);compositionView.Reset();return S_OK;});if(FAILED(result)){cancelPending=false;return result;}}
         cancelPending=false;if(cancelledChange){const auto change=*cancelledChange;cancelledChange.reset();notifyText(change);}post(textChange|selectionChange|compositionChange|layoutChange);return S_OK;
+    }
+    HRESULT commit()noexcept{
+        const auto hr=ready();if(FAILED(hr))return hr;if(lock)return TS_E_NOLOCK;if(cancelPending||commitPending)return E_UNEXPECTED;if(!doc->composition())return S_FALSE;
+        Keep hold(this);commitPending=true;struct EndOperation{Store&s;~EndOperation(){s.commitPending=false;}}operation{*this};
+        auto ownedContext=context;auto ownedView=compositionView;
+        if(ownedContext){
+            if(!ownedView)return E_UNEXPECTED;
+            ComPtr<ITfContextOwnerCompositionServices>service;auto result=ownedContext.As(&service);
+            if(!alive)return E_UNEXPECTED;if(FAILED(result))return result;
+            result=service->TerminateComposition(ownedView.Get());
+            if(!alive)return E_UNEXPECTED;if(FAILED(result))return result;
+            // The documented connected operation calls OnEndComposition and
+            // clears the composing property before returning. Never pretend a
+            // native composition ended by clearing only our document marker.
+            if(doc->composition()||compositionView)return E_UNEXPECTED;
+        }else{
+            // No native context exists in isolated document/fake-sink tests.
+            const auto result=protect([&]{doc->endComposition(false);compositionView.Reset();return S_OK;});if(FAILED(result))return result;
+        }
+        post(compositionChange|selectionChange|layoutChange);return S_OK;
     }
     HRESULT connect(ITfThreadMgr&input,TfClientId client)noexcept{
         const auto hr=ready();if(FAILED(hr))return hr;if(lock||manager||client==TF_CLIENTID_NULL)return E_INVALIDARG;
@@ -269,6 +289,7 @@ HRESULT ProjectedTextInput::blur(bool cancel)noexcept{return store_->blur(cancel
 HRESULT ProjectedTextInput::stop()noexcept{return store_->stop();}
 bool ProjectedTextInput::focused()const noexcept{return GetCurrentThreadId()==store_->thread&&store_->isFocused;}
 HRESULT ProjectedTextInput::cancelComposition()noexcept{return store_->cancel();}
+HRESULT ProjectedTextInput::commitComposition()noexcept{return store_->commit();}
 HRESULT ProjectedTextInput::replaceFromHost(Range range,std::u16string_view text)noexcept{
     auto*s=store_;const auto hr=s->ready();if(FAILED(hr))return hr;if(s->lock||s->doc->composition())return TS_E_NOLOCK;if(s->doc->readOnly())return TS_E_READONLY;
     Store::Keep hold(s);return protect([&]{const auto change=s->doc->replace(range,text);s->post(textChange|selectionChange|layoutChange);s->notifyText(change);return S_OK;});

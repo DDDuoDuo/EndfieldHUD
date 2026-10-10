@@ -38,6 +38,12 @@ public:
     HRESULT stop() noexcept;
     bool focused()const noexcept;
     HRESULT cancelComposition() noexcept;
+    // Explicit source unmarkText/save semantics: end the exact owned TSF
+    // composition while preserving its provisional text/styles and undo group.
+    // S_FALSE means unmarked. TS_E_NOLOCK/TF_E_NOLOCK declines for caller retry
+    // after queued edits; failure never substitutes cancellation or host-only
+    // termination of a connected TSF composition. No paint or persistence.
+    HRESULT commitComposition() noexcept;
     // Host edits are rejected while TSF holds a lock or composition is active.
     // Successful host edits notify the advised TSF sink, outside document locks.
     HRESULT replaceFromHost(core::text::Range,std::u16string_view) noexcept;

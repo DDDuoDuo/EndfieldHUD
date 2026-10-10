@@ -94,12 +94,16 @@ void gpu(const wchar_t*shader){
         auto image=renderer.readback();auto alpha=[&](unsigned x,unsigned y){return image.pixels.at(std::size_t(y)*image.rowBytes+x*4+3);};
         check(std::abs(int(alpha(219,180))-97)<=1&&std::abs(int(alpha(219,158))-97)<=1,"Miter corner and line interior have the same single-layer alpha");
         check(alpha(220,180)==0,"Source stroke width does not expand into a rectangle");
-        const auto before=renderer.stats();for(unsigned i=0;i<120;++i){p.world=Matrix4::translation(double(i)*.001,0);check(!seam.update(p),"Pointer-only GPU seam has no mesh change");composition.present(renderer);}
+        const auto before=renderer.stats();allocations=0;counting=true;try{for(unsigned i=0;i<120;++i){p.world=Matrix4::translation(double(i)*.001,0);check(!seam.update(p),"Pointer-only GPU seam has no mesh change");check(!seam.uploadGeometry(renderer),"Unchanged long-ID geometry upload is a retained no-op");composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+        check(allocations==0,"Unchanged explicit geometry uploads and pointer poses allocate nothing");
         const auto after=renderer.stats();check(after.meshUploads==before.meshUploads&&after.textureUploads==before.textureUploads&&after.objectBufferAllocations==before.objectBufferAllocations,"Pointer frames retain all seam GPU resources");
-        for(unsigned i=0;i<18;++i){p.local.path=ModuleTransitionStyle::registrationAt(double(i)*.3/18,{-1,0});if(seam.update(p))seam.uploadGeometry(renderer);composition.present(renderer);}
+        for(unsigned i=0;i<18;++i){p.local.path=ModuleTransitionStyle::registrationAt(double(i)*.3/18,{-1,0});if(seam.update(p))check(seam.uploadGeometry(renderer),"Changed original geometry uploads its new retained revision");composition.present(renderer);}
         check(renderer.stats().meshes==1&&renderer.stats().textures==0&&renderer.stats().resourceBytes==before.resourceBytes,"Finite stroke morph keeps exactly one bounded mesh and no texture");
         seam.update({});composition.present(renderer);renderer.draw(false);image=renderer.readback();check(std::all_of(image.pixels.begin(),image.pixels.end(),[](auto c){return c==0;}),"Inactive retained seam draws fully transparent");
         check(!seam.releaseResources(renderer),"Published seam cannot retire its mesh prematurely");composition.detach(renderer);check(seam.releaseResources(renderer)&&renderer.stats().meshes==0,"Explicit seam retirement follows composition detach");
+        check(seam.uploadGeometry(renderer)&&renderer.stats().meshes==1,"Release clears the upload token so identical geometry can be republished");
+        check(!seam.uploadGeometry(renderer),"Reuploaded unchanged geometry is a no-op again");
+        check(seam.releaseResources(renderer)&&renderer.stats().meshes==0,"Reuploaded unpublished geometry retires cleanly");
         check(!IsWindowVisible(window),"Native seam fixture never shows or captures desktop content");
     }catch(...){DestroyWindow(window);UnregisterClassW(MAKEINTATOM(atom),type.hInstance);throw;}
     DestroyWindow(window);UnregisterClassW(MAKEINTATOM(atom),type.hInstance);

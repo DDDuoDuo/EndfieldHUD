@@ -50,7 +50,14 @@ SceneVertex SceneVS(VertexInput input) {
     result.linearColor = input.linearColor;
     return result;
 }
-float4 ScenePS(SceneVertex input) : SV_Target {
+float3 encodeSRGB(float3 linearRGB);
+float3 decodeSRGB(float3 encodedRGB) {
+    encodedRGB=saturate(encodedRGB);
+    return float3(encodedRGB.r<=.04045?encodedRGB.r/12.92:pow((encodedRGB.r+.055)/1.055,2.4),
+        encodedRGB.g<=.04045?encodedRGB.g/12.92:pow((encodedRGB.g+.055)/1.055,2.4),
+        encodedRGB.b<=.04045?encodedRGB.b/12.92:pow((encodedRGB.b+.055)/1.055,2.4));
+}
+float4 sceneColor(SceneVertex input,bool encodedInput,bool encodedOutput) {
     [loop] for (uint i = 0; i < maskCount; ++i) {
         float4 local = mul(masks[i].worldToLocal, input.worldPosition);
         clip(local.w - 0.0000001);
@@ -123,8 +130,20 @@ float4 ScenePS(SceneVertex input) : SV_Target {
             opacityFactor *= angularCoverage;
         }
     }
-    return float4(sampled.rgb * tint.rgb * opacityFactor, sampled.a * opacityFactor);
+    // This constant-folded default branch preserves the original shader math.
+    if(!encodedInput&&!encodedOutput)
+        return float4(sampled.rgb * tint.rgb * opacityFactor, sampled.a * opacityFactor);
+    if(sampled.a<=0)return 0;
+    float3 color=sampled.rgb/sampled.a;
+    if(encodedInput&&encodedOutput)color*=encodeSRGB(tint.rgb);
+    else if(encodedInput)color=decodeSRGB(color)*tint.rgb;
+    else color=encodeSRGB(color*tint.rgb);
+    return float4(color*sampled.a*opacityFactor,sampled.a*opacityFactor);
 }
+float4 ScenePS(SceneVertex input):SV_Target{return sceneColor(input,false,false);}
+float4 SceneEncodedInputPS(SceneVertex input):SV_Target{return sceneColor(input,true,false);}
+float4 SceneEncodedOutputPS(SceneVertex input):SV_Target{return sceneColor(input,false,true);}
+float4 SceneEncodedBothPS(SceneVertex input):SV_Target{return sceneColor(input,true,true);}
 
 struct CompositeVertex { float4 position : SV_Position; };
 CompositeVertex CompositeVS(uint id : SV_VertexID) {

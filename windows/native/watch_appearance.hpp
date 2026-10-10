@@ -10,6 +10,7 @@ public:
  const core::source::Json&captionTemplate()const noexcept{return caption_;}
  const core::source::Json&icon(std::string_view key,bool reportSlot)const;
  core::source::Json localIcon(std::string_view key,bool reportSlot,std::string_view surfaceID)const;
+ core::source::Json localOriginalIcon(std::string_view memoryKey,std::uint64_t revision,std::string_view surfaceID)const;
  std::size_t iconCount()const noexcept{return icons_.size();}
 private:
  struct Icon{core::source::Json tree;bool reportOnly{};};
@@ -19,6 +20,9 @@ core::source::Json compileDesktopCaption(const core::source::Json&sourceTemplate
  const core::source::DesktopCaptionPlan&,core::source::DesktopTextSize evaluatedSize,std::string_view surfaceID);
 struct WatchAppearanceEntry {
  std::uint64_t action{};std::string target,title,iconKey;bool module{true};
+ // Caller-supplied original application image, prepared once at binding time.
+ // Empty uses the source grid fallback. Borrowed raster image source owns pixels.
+ std::string originalImageKey;std::uint64_t originalImageRevision{};
  bool operator==(const WatchAppearanceEntry&)const=default;
 };
 struct WatchAppearance {

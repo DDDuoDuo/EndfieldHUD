@@ -40,6 +40,7 @@ private:
     std::optional<core::RegistrationPath> previousPath_;
     double previousWidth_{};
     Renderer* resourceOwner_{};
+    std::uint64_t uploadedGeometryRevision_{};
     ModuleRegistrationStats stats_;
 };
 } // namespace endfield::native

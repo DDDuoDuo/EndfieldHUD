@@ -13,6 +13,14 @@ Json font(double size,bool bold){return Json::Object{{"familyName",".AppleSystem
 WatchAppearanceTemplates::WatchAppearanceTemplates(const Json&j){need(j["schemaVersion"].integer()==1&&j["captionTemplate"]["kind"].string()=="text"&&j["icons"].isObject()&&!j["icons"].object().empty()&&j["icons"].object().size()<=256,"Invalid source appearance template asset");caption_=j["captionTemplate"];for(const auto&[key,v]:j["icons"].object()){need(!key.empty()&&key.size()<=256&&Json::validUtf8(key)&&v["tree"].isObject()&&v["reportOnly"].isBool(),"Invalid original icon template");icons_.emplace(key,Icon{v["tree"],v["reportOnly"].boolean()});}}
 const Json&WatchAppearanceTemplates::icon(std::string_view key,bool reportSlot)const{const auto it=icons_.find(key);need(it!=icons_.end(),"Missing original source icon template");need(reportSlot||!it->second.reportOnly,"Original Report artwork cannot replace a different source icon slot");return it->second.tree;}
 Json WatchAppearanceTemplates::localIcon(std::string_view key,bool report,std::string_view id)const{need(!id.empty()&&id.size()<=4096&&Json::validUtf8(id),"Invalid local icon identity");auto result=icon(key,report);identify(result,std::string(id));return result;}
+Json WatchAppearanceTemplates::localOriginalIcon(std::string_view key,std::uint64_t revision,std::string_view id)const{
+ need(!key.empty()&&key.size()<=512&&Json::validUtf8(key)&&key.find('\0')==key.npos&&revision&&revision<=9007199254740991ULL,"Invalid original application image identity");
+ auto result=localIcon("shortcut:original",false,id);auto children=result["children"].array();
+ need(children.size()==2&&children[0]["kind"].string()=="shape"&&children[1]["kind"].string()=="layer","Original shortcut image template changed");
+ children[0]["hidden"]=true;children[1]["hidden"]=false;
+ children[1]["contents"]=Json::Object{{"memoryImage",std::string(key)},{"revision",static_cast<std::int64_t>(revision)}};
+ result["children"]=std::move(children);return result;
+}
 Json compileDesktopCaption(const Json&original,const DesktopCaptionPlan&p,DesktopTextSize size,std::string_view id){
  need(original["kind"].string()=="text"&&!id.empty()&&id.size()<=4096&&Json::validUtf8(id)&&std::isfinite(size.width)&&std::isfinite(size.height)&&size.width>0&&size.height>0,"Invalid evaluated source caption geometry");auto result=original;identify(result,std::string(id));result["bounds"]=Json::Array{0,0,size.width,size.height};result["frame"]=result["bounds"];
  auto&text=result["text"];text["string"]=p.text;text["fontSize"]=p.fontSize;text["font"]=font(p.fontSize,p.bold);text["wrapped"]=p.wrapped;text["truncation"]=p.ellipsis?"end":"none";text["foregroundColor"]=rgba(p.color);return result;
@@ -33,11 +41,11 @@ struct NativeWatchAppearance::Impl {
 };
 NativeWatchAppearance::NativeWatchAppearance(const WatchAppearanceTemplates&t,const SceneDefinition&s,std::span<const NativeLabelBinding>b,LayerScene&l,LayerRasterizer&r,LayerRasterOptions o):impl_(std::make_unique<Impl>(t,s,b,l,r,std::move(o))){}
 NativeWatchAppearance::~NativeWatchAppearance()=default;
-void NativeWatchAppearance::setEntries(std::span<const WatchAppearanceEntry>entries){auto&i=*impl_;need(!entries.empty()&&entries.size()<=1024,"Invalid runtime source navigation entries");std::set<std::uint64_t>ids;for(const auto&e:entries){need(e.action&&ids.insert(e.action).second&&!e.target.empty()&&Json::validUtf8(e.target)&&Json::validUtf8(e.title)&&!e.iconKey.empty(),"Invalid runtime source navigation entry");}
+void NativeWatchAppearance::setEntries(std::span<const WatchAppearanceEntry>entries){auto&i=*impl_;need(!entries.empty()&&entries.size()<=1024,"Invalid runtime source navigation entries");std::set<std::uint64_t>ids;for(const auto&e:entries){need(e.action&&ids.insert(e.action).second&&!e.target.empty()&&Json::validUtf8(e.target)&&Json::validUtf8(e.title)&&!e.iconKey.empty(),"Invalid runtime source navigation entry");need(e.originalImageKey.empty()?e.originalImageRevision==0:(!e.module&&e.iconKey=="shortcut:original"&&e.originalImageRevision>0),"Original application image must belong to its original preset");}
  if(entries.size()==i.entries.size()&&std::equal(entries.begin(),entries.end(),i.entries.begin(),[](const auto&a,const auto&b){return a==b.value;}))return;
  std::vector<Impl::Entry>next;next.reserve(entries.size());const auto revision=i.entriesRevision+1;
  for(const auto&e:entries){const auto old=std::find_if(i.entries.begin(),i.entries.end(),[&](const auto&v){return v.value.action==e.action;});std::uint64_t caption=revision,icon=revision;
-  if(old!=i.entries.end()){const auto&v=old->value;if(v.target==e.target&&v.title==e.title&&v.module==e.module)caption=old->captionRevision;if(v.iconKey==e.iconKey)icon=old->iconRevision;}
+  if(old!=i.entries.end()){const auto&v=old->value;if(v.target==e.target&&v.title==e.title&&v.module==e.module)caption=old->captionRevision;if(v.iconKey==e.iconKey&&v.originalImageKey==e.originalImageKey&&v.originalImageRevision==e.originalImageRevision)icon=old->iconRevision;}
   next.push_back({e,caption,icon});}
  i.entries.swap(next);i.entriesRevision=revision;
 }
@@ -47,7 +55,7 @@ bool NativeWatchAppearance::update(const WatchContentCatalog::Actions&actions,co
  for(std::size_t n=0;n<i.surfaces.size();++n){auto&s=i.surfaces[n];const auto action=actions.find(s.binding.buttonID);if(action==actions.end())continue;const auto&item=i.entry(action->second);const auto&e=item.value;const auto place=std::find_if(placements.begin(),placements.end(),[&](const auto&p){return p.surfaceID==s.binding.surfaceID;});need(place!=placements.end(),"Missing current evaluated source label placement");const DesktopTextSize size{place->contentBounds.width,place->contentBounds.height};if(size.width<=0||size.height<=0){need(!place->visible,"Visible source label has empty bounds");continue;}
   const bool caption=s.binding.kind==NativeLabelKind::caption;Impl::Key key{e.action,caption?item.captionRevision:item.iconRevision,caption&&e.module&&a.selectedAction==e.action,caption?a.language:core::Language::english,caption&&e.module&&(e.target=="storage"||e.target=="activityMonitor")&&a.dark,caption&&e.module&&a.selectedAction==e.action&&e.target!="storage"&&e.target!="activityMonitor"?a.accentSRGB:std::array<double,3>{},caption?size:DesktopTextSize{32,32}};if(s.rendered==key)continue;Json content;
   if(caption){DesktopCaptionRequest request{e.target,e.title,s.authored,a.language,e.module,s.binding.rightButton,key.selected,a.dark,a.accentSRGB};const auto measure=[&](std::string_view text,double pointSize,bool bold,double width,bool wrapped){Json descriptor=Json::Object{{"string",std::string(text)},{"fontSize",pointSize},{"font",font(pointSize,bold)},{"wrapped",wrapped}};const auto result=i.raster.measureSourceText(s.binding.surfaceID,descriptor,width,i.options);return DesktopTextSize{result.width,result.height};};const auto plan=sourceDesktopCaption(request,measure);content=compileDesktopCaption(i.templates.captionTemplate(),plan,size,s.binding.surfaceID);++i.stats.captionsCompiled;
-  }else{content=i.templates.localIcon(e.iconKey,s.report,s.binding.surfaceID);++i.stats.iconsCompiled;}
+  }else{content=e.originalImageKey.empty()?i.templates.localIcon(e.iconKey,s.report,s.binding.surfaceID):i.templates.localOriginalIcon(e.originalImageKey,e.originalImageRevision,s.binding.surfaceID);++i.stats.iconsCompiled;}
   i.pending.push_back({n,key,std::move(content)});
  }
  ++i.stats.updates;if(i.pending.empty()){++i.stats.unchanged;return false;}bool changed{};

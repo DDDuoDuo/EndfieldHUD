@@ -188,6 +188,7 @@ NativeProjectedEditor::~NativeProjectedEditor(){auto i=impl_;if(!i)return;if(Get
 HRESULT NativeProjectedEditor::connect(ITfThreadMgr& manager,TfClientId client)noexcept{auto i=impl_;if(GetCurrentThreadId()!=i->thread)return RPC_E_WRONG_THREAD;return i->input->connect(manager,client);}
 HRESULT NativeProjectedEditor::focus(bool focused)noexcept{auto i=impl_;if(GetCurrentThreadId()!=i->thread)return RPC_E_WRONG_THREAD;i->highUnit.reset();i->dragging=false;return focused?i->input->focus():i->input->blur(true);}
 HRESULT NativeProjectedEditor::stop()noexcept{auto i=impl_;if(GetCurrentThreadId()!=i->thread)return RPC_E_WRONG_THREAD;i->highUnit.reset();i->dragging=false;const auto hr=i->input->stop();if(i->alive&&SUCCEEDED(hr))i->stopped=true;return hr;}
+HRESULT NativeProjectedEditor::commitComposition()noexcept{auto i=impl_;if(GetCurrentThreadId()!=i->thread)return RPC_E_WRONG_THREAD;i->highUnit.reset();return i->input->commitComposition();}
 bool NativeProjectedEditor::filterKeyMessage(UINT message,WPARAM key,LPARAM data)noexcept{auto i=impl_;return i->input->filterKeyMessage(message,key,data);}
 unsigned NativeProjectedEditor::takeChanges(UINT_PTR generation)noexcept{auto i=impl_;return i->input->takeChanges(generation);}
 ITextStoreACP* NativeProjectedEditor::textStore()const noexcept{return impl_->input->textStore();}
@@ -273,6 +274,8 @@ ProjectedEditorResult NativeProjectedEditor::character(std::uint32_t value,bool 
     if(scalar){i->highUnit.reset();if(value>0x10ffff||(value>=0xd800&&value<=0xdfff))return {true,false,false};if(value>0xffff){const auto v=value-0x10000;units={char16_t(0xd800+(v>>10)),char16_t(0xdc00+(v&1023))};size=2;}else{units[0]=value=='\r'?u'\n':char16_t(value);size=1;}}
     else {if(value>0xffff)return {true,false,false};const auto unit=char16_t(value);if(high(unit)){i->highUnit=unit;return {true,false,false};}if(low(unit)){if(!i->highUnit)return {true,false,false};units={*i->highUnit,unit};size=2;i->highUnit.reset();}else{i->highUnit.reset();units[0]=unit=='\r'?u'\n':unit;size=1;}}
     return i->replace(i->document.selection().range,{units.data(),size});}
+ProjectedEditorResult NativeProjectedEditor::replaceTextFromHost(text::Range range,std::u16string_view value){auto i=impl_;i->onThread();i->highUnit.reset();return i->replace(range,value);}
+ProjectedEditorResult NativeProjectedEditor::setSelectionFromHost(text::Selection selection){auto i=impl_;i->onThread();i->highUnit.reset();const auto previous=i->document.selection();const auto hr=i->input->selectFromHost(selection);if(hr==E_INVALIDARG||hr==TS_E_NOLOCK)return {true,false,false};checked(hr,"Restore projected editor selection");if(i->alive)i->revealPending=true;return {true,selection!=previous,false};}
 ProjectedEditorResult NativeProjectedEditor::pointerDown(core::Point point,bool extend){auto i=impl_;i->current();need(i->poseReady,"Set editor pose before pointer input");if(i->document.composition())return {};const auto at=text::projectedHit(i->document,*i->layout,point,i->placement,false,true);if(!at)return {};i->dragging=true;return i->select(*at,extend,false);}
 ProjectedEditorResult NativeProjectedEditor::pointerDrag(core::Point point){auto i=impl_;i->current();if(!i->dragging||i->document.composition()||!i->poseReady||!i->placement.visible)return {};
     // Source text view passes the actual unprojected point outside its viewport

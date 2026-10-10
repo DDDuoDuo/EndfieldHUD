@@ -297,6 +297,15 @@ void LayerComposition::setEntries(Renderer& renderer,std::span<const LayerCompos
     scenes_=std::move(next);draws_=std::move(nextDraws);inverseTransforms_=std::move(nextInverse);stagedAfter_=std::move(nextStage);
     if(!renderer_)publicationOwners.emplace_back(&renderer,this);renderer_=&renderer;
 }
+bool LayerComposition::supplementalBindingsMatch(std::span<const LayerCompositionEntry> order)const noexcept{
+    if(order.size()!=scenes_.size())return false;
+    for(std::size_t n=0;n<order.size();++n){const auto&input=order[n];const auto&entry=scenes_[n];
+        if(input.scene!=entry.scene||input.after.size()!=entry.after.size())return false;
+        for(std::size_t j=0;j<input.after.size();++j){const auto&a=input.after[j];const auto&b=stagedAfter_[entry.stageBegin+j];
+            if(a.sourceID!=b.sourceID||a.meshID!=b.meshID||a.textureID!=b.textureID)return false;
+        }
+    }return true;
+}
 bool LayerComposition::updateRetainedResources(Renderer& renderer,std::span<const LayerCompositionEntry> order){
     if(renderer_!=&renderer||publicationOwner(renderer)!=this||order.size()!=scenes_.size()||renderer.stats().objects!=draws_.size())return false;
     auto sameIdentity=[](const DrawObject&a,const DrawObject&b){return a.sourceID==b.sourceID&&a.meshID==b.meshID&&a.textureID==b.textureID;};
@@ -328,7 +337,7 @@ void LayerComposition::copyPrepared(const Entry&entry){
     const auto source=entry.scene->draws();
     for(std::size_t i=0;i<entry.count;++i){auto&target=draws_[entry.begin+i];const auto&draw=source[i];
         target.world=draw.world;target.linearTint=draw.linearTint;target.opacity=draw.opacity;
-        target.shutter=draw.shutter;target.alphaMask=draw.alphaMask;target.angularMask=draw.angularMask;
+        target.shutter=draw.shutter;target.alphaMask=draw.alphaMask;target.angularMask=draw.angularMask;target.blend=draw.blend;
         target.masks.resize(draw.masks.size());std::copy(draw.masks.begin(),draw.masks.end(),target.masks.begin());
     }
 }
@@ -345,7 +354,7 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
         for(std::size_t j=0;j<entry.after.size();++j){const auto&input=entry.after[j];auto&stage=stagedAfter_[entry.stageBegin+j];
             need(input.sourceID==stage.sourceID&&input.meshID==stage.meshID&&input.textureID==stage.textureID,"Supplemental draw identity changed; replace the composition entries");
             need(input.masks.size()<=8,"Too many supplemental draw masks");
-            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;stage.alphaMask=input.alphaMask;stage.angularMask=input.angularMask;
+            stage.world=transform*input.world;stage.opacity=input.opacity;stage.linearTint=input.linearTint;stage.shutter=input.shutter;stage.alphaMask=input.alphaMask;stage.angularMask=input.angularMask;stage.blend=input.blend;
             if(stage.shutter)stage.shutter->worldToLocal=stage.shutter->worldToLocal*inverseTransforms_[i];
             if(stage.alphaMask)stage.alphaMask->worldToLocal=stage.alphaMask->worldToLocal*inverseTransforms_[i];
             if(stage.angularMask)stage.angularMask->worldToLocal=stage.angularMask->worldToLocal*inverseTransforms_[i];
@@ -355,7 +364,7 @@ void LayerComposition::present(Renderer& renderer,std::span<const Matrix> transf
     }
     for(std::size_t i=0;i<scenes_.size();++i){const auto&entry=scenes_[i];entry.scene->prepare(transforms.empty()?Matrix{}:transforms[i],inverseTransforms_[i]);copyPrepared(entry);
         for(std::size_t j=0;j<entry.after.size();++j){const auto&stage=stagedAfter_[entry.stageBegin+j];auto&out=draws_[entry.begin+entry.count+j];
-            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;out.alphaMask=stage.alphaMask;out.angularMask=stage.angularMask;
+            out.world=stage.world;out.opacity=stage.opacity;out.linearTint=stage.linearTint;out.shutter=stage.shutter;out.alphaMask=stage.alphaMask;out.angularMask=stage.angularMask;out.blend=stage.blend;
             out.masks.resize(stage.masks.size());std::copy(stage.masks.begin(),stage.masks.end(),out.masks.begin());
         }
     }

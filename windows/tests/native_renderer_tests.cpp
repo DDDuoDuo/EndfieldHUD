@@ -1,4 +1,7 @@
 #include "native/renderer.hpp"
+#include "core/data/json.hpp"
+#include <fstream>
+#include <iterator>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -81,7 +84,7 @@ double encoded(double linear) {
 }
 void textureByteConversion(){
     std::array<std::uint8_t,256*4> input{};std::array<std::uint16_t,256*4> output{};
-    for(auto space:{TextureColorSpace::sRGB,TextureColorSpace::linear})for(unsigned alpha=0;alpha<256;++alpha){
+    for(auto space:{TextureColorSpace::sRGB,TextureColorSpace::linear,TextureColorSpace::encodedSRGB})for(unsigned alpha=0;alpha<256;++alpha){
         for(unsigned value=0;value<256;++value){const auto at=value*4;input[at]=static_cast<std::uint8_t>(value);input[at+1]=static_cast<std::uint8_t>(255-value);input[at+2]=static_cast<std::uint8_t>((value*73u+19u)%256u);input[at+3]=static_cast<std::uint8_t>(alpha);}
         output.fill(12345);detail::prepareTextureRGBA16(input,space,output);
         for(std::size_t at=0;at<input.size();at+=4){const double a=input[at+3]/255.0;
@@ -94,6 +97,52 @@ void textureByteConversion(){
     }
     output.fill(12345);rejects([&]{detail::prepareTextureRGBA16(std::span(input).first(3),TextureColorSpace::sRGB,output);},"Malformed conversion spans reject before writing");
     check(std::all_of(output.begin(),output.end(),[](auto value){return value==12345;}),"Rejected conversion preserves output bytes");
+}
+void screenCoverage(Renderer& renderer,const std::filesystem::path& shader){
+    using endfield::core::Matrix4;using ehud::data::Json;
+    std::ifstream file(shader.parent_path().parent_path()/"tests/fixtures/map-screen-source.json",std::ios::binary);
+    check(bool(file),"Original Map screen oracle is available");
+    const std::string bytes{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+    const auto oracle=Json::parse(bytes,64*1024);check(oracle["rows"].array().size()==96,"Actual CA oracle has all transparent/opaque/group cases");
+    auto linear=[](double e){return float(e<=.04045?e/12.92:std::pow((e+.055)/1.055,2.4));};
+    std::array<DrawObject,2> draws;for(unsigned i=0;i<2;++i){draws[i].sourceID="screen/"+std::to_string(i);draws[i].meshID="fixture.quad";}
+    const NativeGroupTarget target{{-1,-1,2,2},16,NativeGroupColorSpace::encodedSRGB};
+    std::uint64_t revision{};
+    for(const auto& row:oracle["rows"].array()){
+        const auto& b=row["background"].array();const auto& f=row["foreground"].array();
+        draws[0].linearTint={linear(b[0].number()),linear(b[1].number()),linear(b[2].number()),float(b[3].number())};
+        draws[1].textureID.clear();draws[1].linearTint={linear(f[0].number()),linear(f[1].number()),linear(f[2].number()),float(f[3].number())};
+        if(row["bitmap"].boolean()){
+            const auto a=std::lround(f[3].number()*255);std::array<std::uint8_t,4> rgba{};rgba[3]=static_cast<std::uint8_t>(a);
+            for(unsigned c=0;c<3;++c){const auto associated=std::lround(f[c].number()*f[3].number()*255);rgba[c]=a?static_cast<std::uint8_t>(std::clamp(std::lround(associated*255./a),0L,255L)):0;}
+            renderer.setTexture("screen.bitmap",++revision,{1,1,rgba,TextureColorSpace::encodedSRGB});
+            draws[1].textureID="screen.bitmap";draws[1].linearTint={1,1,1,1};
+        }
+        draws[1].opacity=float(row["beamOpacity"].number());draws[1].blend=row["screen"].boolean()?NativeBlend::screen:NativeBlend::sourceOver;
+        renderer.configureNativeGroup("source-map-screen",target,draws);auto output=renderer.nativeGroupOutput("source-map-screen");output.opacity=float(row["groupOpacity"].number());
+        renderer.setCamera({});renderer.setDrawList(std::span(&output,1));renderer.draw(false);
+        std::array<int,4> expected{};for(unsigned c=0;c<4;++c)expected[c]=int(row["bgra"].array()[c].integer());
+        pixel(renderer.readback(),16,16,expected,2,"Encoded Map group matches actual isolated Core Animation screen/over and whole-group opacity");
+    }
+    // Blend-only changes must dirty the retained group without a constant or
+    // resource upload; unchanged frames must leave the cached target intact.
+    draws[1].textureID.clear();draws[1].linearTint={.3f,.2f,.1f,.7f};draws[1].opacity=.72f;
+    renderer.configureNativeGroup("source-map-screen",target,draws);auto output=renderer.nativeGroupOutput("source-map-screen");renderer.setDrawList(std::span(&output,1));renderer.draw(false);
+    const auto before=renderer.stats();
+    for(unsigned n=0;n<120;++n){draws[1].blend=n%2?NativeBlend::screen:NativeBlend::sourceOver;renderer.setNativeGroupDraws("source-map-screen",draws);renderer.draw(false);}
+    const auto after=renderer.stats();check(after.objectUploads==before.objectUploads&&after.objectBufferAllocations==before.objectBufferAllocations&&after.textureUploads==before.textureUploads&&after.nativeGroupTargetAllocations==before.nativeGroupTargetAllocations,"Blend-only frames retain constants, textures and the single group target");
+    check(after.nativeGroupRenders>before.nativeGroupRenders,"Blend changes invalidate cached group pixels even when uniforms are equal");
+    const auto warm=renderer.stats();for(unsigned n=0;n<120;++n){check(!renderer.setNativeGroupDraws("source-map-screen",draws),"Identical screen children are unchanged");renderer.draw(false);}
+    check(renderer.stats().nativeGroupRenders==warm.nativeGroupRenders,"Unchanged encoded screen group does no local repaint");
+    const auto saved=renderer.readback().pixels;const auto prior=renderer.stats();auto invalid=draws;invalid[0].opacity=.1f;invalid[1].blend=static_cast<NativeBlend>(99);
+    rejects([&]{renderer.setNativeGroupDraws("source-map-screen",invalid);},"Unknown late blend rejects before updating earlier constants");
+    rejects([&]{renderer.setDrawList(draws);},"Root linear target rejects source-only screen blending");
+    rejects([&]{renderer.configureNativeGroup("linear-screen",{{-1,-1,2,2},16},draws);},"Default linear group cannot silently approximate encoded screen");
+    rejects([&]{renderer.configureNativeGroup("invalid-color",{{-1,-1,2,2},16,static_cast<NativeGroupColorSpace>(99)},{});},"Unknown group color space rejects before target creation");
+    rejects([&]{renderer.configureNativeGroup("source-map-screen",{{-1,-1,2,2},16},draws);},"Retained target cannot change its color contract in place");
+    rejects([&]{renderer.setNativeGroupDraws("source-map-screen",std::span(&output,1));},"Encoded groups preserve the explicit nested-group rejection");
+    renderer.draw(false);check(renderer.readback().pixels==saved&&renderer.stats().objectUploads==prior.objectUploads&&renderer.stats().nativeGroupTargetAllocations==prior.nativeGroupTargetAllocations,"Rejected screen states preserve prior pixels and all retained resources");
+    renderer.clearDrawList();check(renderer.removeNativeGroup("source-map-screen"),"Unpublished screen group retires its only target");check(renderer.removeTexture("screen.bitmap"),"Retired screen group releases its encoded image reference");
 }
 bool shutterContains(const endfield::core::ShutterPath& path, endfield::core::Point point) {
     // Independent polygon/ray crossing oracle, not the shader's half spaces.
@@ -383,6 +432,8 @@ void run(HWND window, const std::filesystem::path &shader, bool composition, boo
     pixel(image, 24, 8, {0, 0, 255, 255}, 1, "Nested plane masks intersect");
     pixel(image, 24, 24, {0, 0, 0, 0}, 0, "Nested masks cannot reveal outside either ancestor");
 
+    screenCoverage(renderer,shader);
+    renderer.setDrawList(std::span(&red,1));
     alphaCoverage(renderer, red);
     angularCoverage(renderer, red);
     roundedCoverage(renderer, red);

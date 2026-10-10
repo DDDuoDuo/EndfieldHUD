@@ -84,12 +84,16 @@ bool NativeModuleRegistration::update(const std::optional<ModuleRegistrationPlac
 }
 bool NativeModuleRegistration::uploadGeometry(Renderer&renderer){
     need(!resourceOwner_||resourceOwner_==&renderer,"Registration mesh belongs to another renderer");
+    need(renderer.stats().initialized,"Registration mesh requires an initialized renderer");
+    // Renderer accepts an owning ID. Check the retained revision before that
+    // call so long source IDs do not allocate on every unchanged HUD frame.
+    if(resourceOwner_&&uploadedGeometryRevision_==stats_.geometryRevision)return false;
     const bool uploaded=renderer.setMesh(draws_[0].meshID,stats_.geometryRevision,{mesh_.vertices,mesh_.indices});
-    resourceOwner_=&renderer;if(uploaded)++stats_.meshUploads;return uploaded;
+    resourceOwner_=&renderer;uploadedGeometryRevision_=stats_.geometryRevision;if(uploaded)++stats_.meshUploads;return uploaded;
 }
 bool NativeModuleRegistration::releaseResources(Renderer&renderer){
     need(!resourceOwner_||resourceOwner_==&renderer,"Registration resources belong to another renderer");
     if(!resourceOwner_)return true;
-    if(!renderer.stats().initialized||renderer.removeMesh(draws_[0].meshID)){resourceOwner_=nullptr;return true;}return false;
+    if(!renderer.stats().initialized||renderer.removeMesh(draws_[0].meshID)){resourceOwner_=nullptr;uploadedGeometryRevision_=0;return true;}return false;
 }
 } // namespace endfield::native

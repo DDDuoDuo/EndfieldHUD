@@ -60,6 +60,9 @@ public:
     HRESULT connect(ITfThreadMgr& alreadyActivatedManager,TfClientId)noexcept;
     HRESULT focus(bool focused)noexcept; // TS_E_NOLOCK: caller retries after queued change
     HRESULT stop()noexcept; // rolls back marked text only; caller saves/discards whole draft
+    // Source explicit save/unmark: preserves marked text instead of cancelling
+    // it. S_FALSE is already unmarked; lock HRESULTs require queued retry.
+    HRESULT commitComposition()noexcept;
     // Caller routes queued keys here BEFORE TranslateMessage/command handling,
     // including Escape and Return. A consumed IME key must not reach command().
     bool filterKeyMessage(UINT,WPARAM,LPARAM)noexcept;
@@ -98,6 +101,15 @@ public:
     bool richLayoutEnabled()const noexcept;
     ProjectedEditorResult command(ProjectedEditorCommand,bool extend=false);
     ProjectedEditorResult character(std::uint32_t value,bool unicodeScalar=false);
+    // Explicit caller normalization/edit through the SAME document/TSF path as
+    // typing. Invalid text/ranges, capacity, marked text, locks and read-only
+    // state decline atomically. Successful edits notify TSF outside its locks;
+    // caller then syncs/uploads. Does not paint or publish on its own.
+    ProjectedEditorResult replaceTextFromHost(core::text::Range,std::u16string_view);
+    // Restore an owner-normalized UTF16 selection through the same TSF store.
+    // Invalid ranges, active composition and store locks decline unchanged;
+    // success notifies selection only. Caller synchronizes painted adornments.
+    ProjectedEditorResult setSelectionFromHost(core::text::Selection);
     // Client PHYSICAL pixels. Host owns actual focus/capture. Call syncContent
     // before hit/cluster navigation after a Document text revision.
     ProjectedEditorResult pointerDown(core::Point,bool extend=false);

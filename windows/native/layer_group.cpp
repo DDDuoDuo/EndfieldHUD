@@ -10,8 +10,9 @@ void need(bool ok,const char* reason){if(!ok)throw std::invalid_argument(reason)
 bool valid(const core::Rect& r){return std::isfinite(r.x)&&std::isfinite(r.y)&&std::isfinite(r.width)&&std::isfinite(r.height)&&r.width>0&&r.height>0&&std::isfinite(r.x+r.width)&&std::isfinite(r.y+r.height);}
 bool contains(const core::Rect& a,const core::Rect& b){return a.x<=b.x&&a.y<=b.y&&a.x+a.width>=b.x+b.width&&a.y+a.height>=b.y+b.height;}
 }
-NativeLayerGroup::NativeLayerGroup(LayerScene& scene,std::string id,double density)
-    :local_(&scene),carrier_(*scene.rasterizer_),id_(std::move(id)),density_(density){
+NativeLayerGroup::NativeLayerGroup(LayerScene& scene,std::string id,double density,NativeGroupColorSpace colorSpace)
+    :local_(&scene),carrier_(*scene.rasterizer_),id_(std::move(id)),density_(density),colorSpace_(colorSpace){
+    need(colorSpace_==NativeGroupColorSpace::linear||colorSpace_==NativeGroupColorSpace::encodedSRGB,"Unknown retained native group color space");
     need(!id_.empty()&&id_.size()<=450&&std::isfinite(density_)&&density_>0&&density_<=16,"Invalid retained native group identity/density");
     need(!scene.groupOwner_&&!scene.compositionOwner_&&!scene.resourceOwner_,"Native group needs an unpublished local scene");
     static std::atomic<std::uint64_t> sequence{};
@@ -60,7 +61,7 @@ bool NativeLayerGroup::uploadResources(Renderer& renderer,std::optional<core::Re
     // Stage resources without publishing. Retained GPU group references keep
     // the old local assets alive if a later candidate fails validation.
     renderer_=&renderer;local_->uploadResources(renderer);
-    const bool changed=renderer.configureNativeGroup(id_,{bounds,density_},localDraws);
+    const bool changed=renderer.configureNativeGroup(id_,{bounds,density_,colorSpace_},localDraws);
     registered_=true;
     const auto& native=renderer.nativeGroupOutput(id_);
     if(output_[0].sourceID.empty()){

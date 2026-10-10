@@ -344,6 +344,14 @@ struct OverlayHost::Impl {
         }
         case WM_SETTINGCHANGE:
             if(w==0||w==SPI_SETWHEELSCROLLLINES||w==SPI_SETWHEELSCROLLCHARS)refreshWheelSettings();
+            // Calendar/clock owners reconcile locale and zone changes through
+            // this same event boundary. Native wheel settings are refreshed
+            // first even when the owner consumes the notification.
+            if(ready&&handlers&&handlers->appMessage){
+                const auto result=handlers->appMessage({target,message,w,l});
+                if(result)return static_cast<LRESULT>(*result);
+                if(window!=target||callbacks!=handlers)return 0;
+            }
             break;
         case WM_DISPLAYCHANGE:
             if(ready&&handlers&&handlers->displayChanged)handlers->displayChanged();

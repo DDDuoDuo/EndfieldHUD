@@ -148,6 +148,11 @@ public:
     // its numeric values, like scene poses, take effect in present(). Structural
     // changes still stage and publish a complete transactional replacement.
     void setEntries(Renderer&,std::span<const LayerCompositionEntry> paintOrder);
+    // Allocation-free host publication guard. A reused supplemental vector can
+    // keep its address/count while swapping sprite or selection-ring identities.
+    // Compare against the owned published snapshot, never a borrowed old span.
+    // False requires setEntries before present; numeric-only poses remain true.
+    bool supplementalBindingsMatch(std::span<const LayerCompositionEntry>)const noexcept;
     void upload(Renderer&);
     // Empty transforms use identity for every scene; otherwise exactly one per
     // scene. Validate the whole pose before modifying any retained draw record.

@@ -211,6 +211,18 @@ void retainedResourceComposition(Renderer&renderer,LayerRasterizer&raster,const 
     check(allocations==0&&renderer.stats().textureUploads==residentGPU.textureUploads&&composition.draws().data()==storage,"Already uploaded local content advances composition revision without allocation or duplicate uploads");composition.present(renderer);
     auto renamed=replacement;renamed.sourceID="retained-after-renamed";auto renamedOrder=replacementOrder;renamedOrder[1].after=std::span(&renamed,1);composition.setEntries(renderer,renamedOrder);
     check(composition.draws().data()!=storage&&composition.draws().back().sourceID==renamed.sourceID,"Changed supplemental identity retains the structural transactional fallback");
+    check(composition.supplementalBindingsMatch(renamedOrder),"Host guard recognizes the complete committed supplemental identities");
+    allocations=0;counting=true;bool stable=true;for(unsigned frame=0;frame<1000;++frame){renamed.opacity=float(frame%2);stable=stable&&composition.supplementalBindingsMatch(renamedOrder);}counting=false;
+    check(stable&&allocations==0,"Numeric-only frames verify bindings without allocation or replacing the composition");
+    const auto*sameAddress=renamedOrder[1].after.data();renamed.sourceID="same-buffer-new-body";
+    check(renamedOrder[1].after.data()==sameAddress&&!composition.supplementalBindingsMatch(renamedOrder),"Same-count same-address body replacement is a publication event");
+    rejects([&]{composition.present(renderer);},"Present still refuses uncommitted supplemental identities");
+    composition.setEntries(renderer,renamedOrder);composition.present(renderer);check(composition.supplementalBindingsMatch(renamedOrder),"Host replacement commits the changed identity before numeric presentation");
+    renamed.textureID="new-skill-selection-ring";check(!composition.supplementalBindingsMatch(renamedOrder),"Changing only a skill ring or sprite texture is detected");renamed.textureID.clear();
+    renamed.meshID="new-body-geometry";check(!composition.supplementalBindingsMatch(renamedOrder),"Changing only geometry is detected");renamed.meshID="retained-after-mesh";
+    auto noAfter=renamedOrder;noAfter[1].after={};check(!composition.supplementalBindingsMatch(noAfter),"Removed supplemental draw changes bindings");
+    auto wrongScene=renamedOrder;wrongScene[1].scene=&field;check(!composition.supplementalBindingsMatch(wrongScene),"Reordered scene cannot reuse unrelated supplemental snapshot");
+    check(composition.supplementalBindingsMatch(renamedOrder),"Rejected probes leave the committed identity snapshot unchanged");
     composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==1&&renderer.stats().objects==0,"Fast resource updates preserve normal borrowed retirement lifecycle");check(renderer.removeMesh("retained-after-mesh"),"Caller can retire supplemental mesh only after composition detach");
 }
 void roundedComposition(Renderer& renderer,LayerRasterizer& raster,const LayerRasterOptions& options){

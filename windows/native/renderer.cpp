@@ -133,6 +133,7 @@ void shutterUniforms(ObjectUniform& result, const PlaneShutter& shutter) {
 }
 ObjectUniform uniforms(const DrawObject &object) {
     identity(object.sourceID);
+    require(object.blend==NativeBlend::sourceOver||object.blend==NativeBlend::screen||object.blend==NativeBlend::weightedAdd,"Unknown native blend operation");
     require(object.masks.size() <= 8, "Too many plane masks");
     ObjectUniform result{};
     result.world = matrix(object.world);
@@ -187,6 +188,20 @@ ObjectUniform uniforms(const DrawObject &object) {
     }
     return result;
 }
+void validateNativeBlends(std::span<const DrawObject>objects,bool localGroup,NativeGroupColorSpace colorSpace){
+    std::size_t weighted{};double sum{};
+    for(const auto&object:objects){
+        require(object.blend==NativeBlend::sourceOver||(localGroup&&colorSpace==NativeGroupColorSpace::encodedSRGB),"Special blending requires an encoded source group");
+        if(object.blend==NativeBlend::weightedAdd){++weighted;sum+=object.opacity;}
+    }
+    if(weighted){
+        require(weighted==objects.size()&&weighted<=2,"Weighted crossfade requires at most two exclusively weighted leaves");
+        // Two normalized float weights may round a few ULPs above one. The
+        // bound prevents additive content from creating an unassociated/HDR
+        // result while allowing complementary scalar interpolation weights.
+        require(std::isfinite(sum)&&sum<=1.+2*std::numeric_limits<float>::epsilon(),"Weighted crossfade opacity sum exceeds one");
+    }
+}
 ComPtr<ID3DBlob> compile(const std::filesystem::path &path, const char *entry, const char *target) {
     ComPtr<ID3DBlob> program, errors;
     const HRESULT status = D3DCompileFromFile(path.c_str(), nullptr, nullptr, entry, target,
@@ -218,7 +233,7 @@ namespace detail {
 // storage. Partial alpha keeps the original operation order and rounding.
 void prepareTextureRGBA16(std::span<const std::uint8_t> input,TextureColorSpace colorSpace,std::span<std::uint16_t> output){
     require(input.size()%4==0&&output.size()==input.size(),"Invalid native texture conversion span");
-    require(colorSpace==TextureColorSpace::sRGB||colorSpace==TextureColorSpace::linear,"Invalid native texture color space");
+    require(colorSpace==TextureColorSpace::sRGB||colorSpace==TextureColorSpace::linear||colorSpace==TextureColorSpace::encodedSRGB,"Invalid native texture color space");
     const bool sRGB=colorSpace==TextureColorSpace::sRGB;
     const auto*opaque=sRGB?opaqueSRGB16Bytes().data():nullptr;
     const auto*linear=sRGB?linearSRGBBytes().data():nullptr;
@@ -285,19 +300,21 @@ void RendererCompositionSurface::bindResetObserver(void*owner,void(*callback)(vo
 void RendererCompositionSurface::unbindResetObserver(void*owner)noexcept{if(impl_->observer==owner){impl_->observer=nullptr;impl_->willReset=nullptr;}}
 
 struct Renderer::Impl {
+    struct NativeGroup;
     struct Mesh {
         ComPtr<ID3D11Buffer> vertices, indices;
         UINT indexCount{};
         std::uint64_t revision{};
         std::size_t bytes{};
-        bool groupOwned{};
+        bool groupOwned{};NativeGroup* group{};
     };
     struct Texture {
         ComPtr<ID3D11ShaderResourceView> view;
         TextureFilter filter{};
         std::uint64_t revision{};
         std::size_t bytes{};
-        bool groupOwned{};
+        bool groupOwned{};NativeGroup* group{};
+        bool encodedSRGB{};
         bool mediaOwned{};
         std::shared_ptr<RetainedMediaBytes>mediaPoster;
     };
@@ -306,6 +323,7 @@ struct Renderer::Impl {
         Mesh *mesh{};
         Texture *texture{},*alphaMask{};
         ObjectUniform values{};
+        NativeBlend blend{NativeBlend::sourceOver};
         ComPtr<ID3D11Buffer> constants;
     };
     struct NativeGroup {
@@ -318,7 +336,7 @@ struct Renderer::Impl {
         DrawObject output;
         std::vector<Draw> draws;
         std::vector<ObjectUniform> staged;
-        bool dirty{true};
+        bool dirty{true},visibleFrame{};unsigned depth{1};
     };
     DWORD ownerThread{GetCurrentThreadId()};
     HWND window{};
@@ -337,10 +355,10 @@ struct Renderer::Impl {
     ComPtr<ID3D11RenderTargetView> outputView, linearView;
     ComPtr<ID3D11ShaderResourceView> linearResource;
     ComPtr<ID3D11VertexShader> sceneVS, compositeVS;
-    ComPtr<ID3D11PixelShader> scenePS, compositePS,mediaPS;
+    ComPtr<ID3D11PixelShader> scenePS,encodedInputPS,encodedOutputPS,encodedBothPS,compositePS,mediaPS;
     ComPtr<ID3D11InputLayout> layout;
     ComPtr<ID3D11Buffer> cameraBuffer;
-    ComPtr<ID3D11BlendState> overBlend, replaceBlend;
+    ComPtr<ID3D11BlendState> overBlend, screenBlend, weightedBlend, replaceBlend;
     ComPtr<ID3D11RasterizerState> raster;
     ComPtr<ID3D11DepthStencilState> noDepth;
     ComPtr<ID3D11SamplerState> nearestSampler, linearSampler;
@@ -359,14 +377,39 @@ struct Renderer::Impl {
     bool sourcePassEnabled{true};
 
     bool assignDraws(std::vector<Draw>&,std::vector<ObjectUniform>&,
-        std::span<const DrawObject>,bool localGroup);
+        std::span<const DrawObject>,bool localGroup,NativeGroupColorSpace=NativeGroupColorSpace::linear);
     bool configureGroup(std::string,const NativeGroupTarget&,std::optional<std::span<const DrawObject>>);
+    // No allocation on numeric updates. Only a leaf may be borrowed by an
+    // encoded parent; therefore two explicit render passes suffice and cycles
+    // cannot enter the retained graph.
+    unsigned groupInputDepth(std::span<const DrawObject>objects,const NativeGroup*target,NativeGroupColorSpace colorSpace)const{
+        unsigned depth=1;
+        for(const auto&object:objects){
+            const auto mesh=meshes.find(object.meshID);
+            const auto texture=textures.find(object.textureID);
+            require(mesh!=meshes.end(),"Native group refers to a missing mesh");
+            require(object.textureID.empty()||texture!=textures.end(),"Native group refers to a missing texture");
+            auto*child=mesh->second.group;
+            const auto*textureGroup=texture==textures.end()?nullptr:texture->second.group;
+            if(child||textureGroup){
+                require(child&&child==textureGroup,"Native group output mesh and texture must belong to the same group");
+                require(child!=target,"Native group cannot consume its own output");
+                require(colorSpace==NativeGroupColorSpace::encodedSRGB&&child->requested.colorSpace==NativeGroupColorSpace::encodedSRGB,"Nested groups require source encoded color space");
+                require(child->depth==1,"Native group nesting exceeds two levels");
+                require(object.blend==NativeBlend::sourceOver,"Nested group output uses source-over composition");depth=2;
+            }
+            if(object.alphaMask){const auto mask=textures.find(object.alphaMask->textureID);require(mask!=textures.end()&&!mask->second.groupOwned,"Native group cannot consume a missing/group alpha-mask texture");}
+        }
+        if(target&&target->depth==1&&depth==2)for(const auto&[id,parent]:groups){(void)id;if(parent.get()==target)continue;for(const auto&draw:parent->draws)require(draw.mesh->group!=target,"A borrowed leaf cannot become a nested parent");}
+        return depth;
+    }
+
     void groupDrawBudget(const NativeGroup* replaced,std::size_t count)const{
         require(count<=Renderer::maximumObjects,"Native group draw count exceeds limits");
         for(const auto&[id,group]:groups){(void)id;if(group.get()==replaced)continue;
             require(group->draws.size()<=Renderer::maximumObjects-count,"Aggregate native group draw count exceeds limits");count+=group->draws.size();}
     }
-    void renderNativeDraws(std::span<const Draw>,ID3D11RenderTargetView*,ID3D11Buffer*,unsigned,unsigned,bool);
+    void renderNativeDraws(std::span<const Draw>,ID3D11RenderTargetView*,ID3D11Buffer*,unsigned,unsigned,bool,NativeGroupColorSpace=NativeGroupColorSpace::linear);
     bool meshReferenced(const Mesh* mesh)const{
         for(const auto&draw:draws)if(draw.mesh==mesh)return true;
         for(const auto&[id,group]:groups){(void)id;for(const auto&draw:group->draws)if(draw.mesh==mesh)return true;}return false;
@@ -414,6 +457,7 @@ struct Renderer::Impl {
         checked(device->CreateTexture2D(&description, &pixels, &resource), "Upload retained texture");
         Texture result;
         checked(device->CreateShaderResourceView(resource.Get(), nullptr, &result.view), "Create retained texture view");
+        result.encodedSRGB=input.colorSpace==TextureColorSpace::encodedSRGB;
         result.filter = input.filter; result.revision = revision; result.bytes = premultiplied.size() * sizeof(std::uint16_t);
         return result;
     }
@@ -490,6 +534,9 @@ struct Renderer::Impl {
         auto ps = compile(options.shaderPath, "ScenePS", "ps_5_0");
         checked(device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &sceneVS), "Create scene vertex shader");
         checked(device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &scenePS), "Create scene pixel shader");
+        ps=compile(options.shaderPath,"SceneEncodedInputPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&encodedInputPS),"Create encoded group input shader");
+        ps=compile(options.shaderPath,"SceneEncodedOutputPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&encodedOutputPS),"Create encoded group output shader");
+        ps=compile(options.shaderPath,"SceneEncodedBothPS","ps_5_0");checked(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&encodedBothPS),"Create encoded group resident shader");
         const D3D11_INPUT_ELEMENT_DESC elements[]{
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
             {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
@@ -512,6 +559,11 @@ struct Renderer::Impl {
         over.BlendOp = over.BlendOpAlpha = D3D11_BLEND_OP_ADD;
         over.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
         checked(device->CreateBlendState(&blend, &overBlend), "Create linear premultiplied over blending");
+        over.DestBlend=D3D11_BLEND_INV_SRC_COLOR;
+        checked(device->CreateBlendState(&blend,&screenBlend),"Create encoded premultiplied screen blending");
+        over.DestBlend=over.DestBlendAlpha=D3D11_BLEND_ONE;
+        checked(device->CreateBlendState(&blend,&weightedBlend),"Create encoded premultiplied weighted addition");
+        over.DestBlend=over.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
         over.BlendEnable = FALSE;
         checked(device->CreateBlendState(&blend, &replaceBlend), "Create output replacement blending");
         D3D11_RASTERIZER_DESC rasterDescription{};
@@ -615,7 +667,7 @@ bool Renderer::setTexture(std::string sourceID, std::uint64_t revision, TextureD
     require(existing != r.textures.end() || r.textures.size() < maximumTextures, "Retained texture count exceeds bounds");
     require(input.width > 0 && input.height > 0 && input.width <= 8192 && input.height <= 8192 &&
             std::uint64_t(input.width) * input.height * 4 == input.straightRGBA.size(), "Invalid straight RGBA8 texture dimensions");
-    require((input.colorSpace == TextureColorSpace::sRGB || input.colorSpace == TextureColorSpace::linear) &&
+    require((input.colorSpace == TextureColorSpace::sRGB || input.colorSpace == TextureColorSpace::linear || input.colorSpace == TextureColorSpace::encodedSRGB) &&
             (input.filter == TextureFilter::nearest || input.filter == TextureFilter::linear), "Invalid texture sampling policy");
     const auto previousBytes = existing == r.textures.end() ? 0 : existing->second.bytes;
     const auto nativeBytes = std::size_t(input.width) * input.height * 8;
@@ -675,16 +727,10 @@ void Renderer::retainMediaPoster(const RendererMediaTexture&handle){
     media.linear.Reset();r.media.erase(installed);
 }
 bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<ObjectUniform>&staged,
-    std::span<const DrawObject>objects,bool localGroup){
+    std::span<const DrawObject>objects,bool localGroup,NativeGroupColorSpace colorSpace){
     auto&r=*this;
     require(objects.size() <= maximumObjects, "Retained draw count exceeds bounds");
-    if(localGroup)for(const auto&object:objects){
-        const auto mesh=r.meshes.find(object.meshID);
-        const auto texture=r.textures.find(object.textureID);
-        require(mesh!=r.meshes.end()&&!mesh->second.groupOwned,"Native group cannot consume a group output mesh");
-        require(object.textureID.empty()||(texture!=r.textures.end()&&!texture->second.groupOwned),"Native group cannot consume a group output texture");
-        if(object.alphaMask){const auto mask=r.textures.find(object.alphaMask->textureID);require(mask!=r.textures.end()&&!mask->second.groupOwned,"Native group cannot consume a missing/group alpha-mask texture");}
-    }
+    validateNativeBlends(objects,localGroup,colorSpace);
     bool retained = objects.size() == activeDraws.size();
     for (std::size_t i = 0; retained && i < objects.size(); ++i) {
         const auto &object = objects[i]; const auto &draw = activeDraws[i];
@@ -705,6 +751,7 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
         {
             for (std::size_t i = 0; i < objects.size(); ++i) {
                 auto &draw = activeDraws[i]; const auto &value = staged[i];
+                if(draw.blend!=objects[i].blend){draw.blend=objects[i].blend;changed=true;}
                 if (std::memcmp(&value, &draw.values, sizeof(ObjectUniform)) == 0) continue;
                 D3D11_MAPPED_SUBRESOURCE mapped{};
                 checked(r.context->Map(draw.constants.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "Update retained object uniform");
@@ -729,7 +776,7 @@ bool Renderer::Impl::assignDraws(std::vector<Draw>&activeDraws,std::vector<Objec
         auto alpha=object.alphaMask?r.textures.find(object.alphaMask->textureID):r.textures.end();
         require(!object.alphaMask||alpha!=r.textures.end(),"Draw refers to an unregistered alpha-mask texture");
         draw.alphaMask=object.alphaMask?&alpha->second:&r.white;
-        draw.values = uniforms(object);
+        draw.values = uniforms(object);draw.blend=object.blend;
         if (i < activeDraws.size())
             draw.constants = activeDraws[i].constants;
         else {
@@ -768,6 +815,7 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
     std::optional<std::span<const DrawObject>>objects){
     identity(id);require(id.size()<=480,"Native group ID exceeds generated-identity bounds");
     const auto&b=requested.localBounds;const auto density=requested.pixelsPerPoint;
+    require(requested.colorSpace==NativeGroupColorSpace::linear||requested.colorSpace==NativeGroupColorSpace::encodedSRGB,"Unknown native group color space");
     require(std::isfinite(density)&&density>0&&density<=16,"Invalid native group density");
     require(std::isfinite(b.x)&&std::isfinite(b.y)&&std::isfinite(b.width)&&std::isfinite(b.height)&&b.width>0&&b.height>0,
         "Invalid native group local bounds");
@@ -778,24 +826,23 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
     const core::Rect coverage{left/density,top/density,pixelWidth/density,pixelHeight/density};
     for(double value:{coverage.x,coverage.y,coverage.x+coverage.width,coverage.y+coverage.height})
         require(std::isfinite(value)&&std::abs(value)<=std::numeric_limits<float>::max(),"Native group coverage exceeds GPU range");
+    const auto found=groups.find(id);
+    unsigned depth=found==groups.end()?1:found->second->depth;
     // Complete child validation happens before target allocation or any active
     // constants change, including combined bounds/content transactions.
     if(objects){require(objects->size()<=Renderer::maximumObjects,"Native group draw count exceeds limits");
-        for(const auto&object:*objects){(void)uniforms(object);const auto mesh=meshes.find(object.meshID);
-            const auto texture=textures.find(object.textureID);
-            require(mesh!=meshes.end()&&!mesh->second.groupOwned,"Native group cannot consume a missing/group output mesh");
-            require(object.textureID.empty()||(texture!=textures.end()&&!texture->second.groupOwned),"Native group cannot consume a missing/group output texture");
-            if(object.alphaMask){const auto mask=textures.find(object.alphaMask->textureID);require(mask!=textures.end()&&!mask->second.groupOwned,"Native group cannot consume a missing/group alpha-mask texture");}
-        }
+        for(const auto&object:*objects)(void)uniforms(object);
+        validateNativeBlends(*objects,true,requested.colorSpace);
+        depth=groupInputDepth(*objects,found==groups.end()?nullptr:found->second.get(),requested.colorSpace);
     }
-    const auto found=groups.find(id);
+    require(found==groups.end()||found->second->requested.colorSpace==requested.colorSpace,"Retire native group before changing its color space");
     if(objects)groupDrawBudget(found==groups.end()?nullptr:found->second.get(),objects->size());
     if(found!=groups.end()&&found->second->requested==requested){
-        if(!objects)return false;const auto changed=assignDraws(found->second->draws,found->second->staged,*objects,true);
-        found->second->dirty|=changed;return changed;
+        if(!objects)return false;const auto changed=assignDraws(found->second->draws,found->second->staged,*objects,true,requested.colorSpace);
+        found->second->depth=depth;found->second->dirty|=changed;return changed;
     }
     require(found!=groups.end()||groups.size()<Renderer::maximumNativeGroups,"Native group count exceeds limits");
-    auto candidate=std::make_unique<NativeGroup>();candidate->requested=requested;candidate->coverage=coverage;
+    auto candidate=std::make_unique<NativeGroup>();candidate->depth=depth;candidate->requested=requested;candidate->coverage=coverage;
     candidate->width=pixelWidth;candidate->height=pixelHeight;candidate->bytes=std::size_t(pixelWidth)*pixelHeight*8;
     candidate->output.sourceID="native-group:"+id;candidate->output.meshID=candidate->output.sourceID+"/quad";candidate->output.textureID=candidate->output.sourceID+"/color";
     const bool existing=found!=groups.end();const auto previous=existing?found->second->bytes:0;
@@ -815,21 +862,22 @@ bool Renderer::Impl::configureGroup(std::string id,const NativeGroupTarget&reque
     const std::array<Vertex,4>vertices{{{{x,y,0},{0,0},{1,1,1,1}},{{r,y,0},{1,0},{1,1,1,1}},{{r,bottomPoint,0},{1,1},{1,1,1,1}},{{x,bottomPoint,0},{0,1},{1,1,1,1}}}};
     constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};auto&mesh=stagedMeshes.begin()->second;
     mesh.vertices=immutableBuffer(device.Get(),D3D11_BIND_VERTEX_BUFFER,vertices.data(),sizeof(vertices));
-    mesh.indices=immutableBuffer(device.Get(),D3D11_BIND_INDEX_BUFFER,indices.data(),sizeof(indices));mesh.indexCount=6;mesh.bytes=quadBytes;mesh.groupOwned=true;
+    mesh.indices=immutableBuffer(device.Get(),D3D11_BIND_INDEX_BUFFER,indices.data(),sizeof(indices));mesh.indexCount=6;mesh.bytes=quadBytes;mesh.groupOwned=true;mesh.group=existing?found->second.get():candidate.get();
     D3D11_TEXTURE2D_DESC description{};description.Width=pixelWidth;description.Height=pixelHeight;description.MipLevels=description.ArraySize=description.SampleDesc.Count=1;
     description.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;description.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
     ComPtr<ID3D11Texture2D>targetTexture;checked(device->CreateTexture2D(&description,nullptr,&targetTexture),"Create retained native group target");
     checked(device->CreateRenderTargetView(targetTexture.Get(),nullptr,&candidate->target),"Create retained native group target view");
     auto&texture=stagedTextures.begin()->second;checked(device->CreateShaderResourceView(targetTexture.Get(),nullptr,&texture.view),"Create retained native group sampled output");
-    texture.filter=TextureFilter::linear;texture.bytes=candidate->bytes;texture.groupOwned=true;
+    texture.encodedSRGB=requested.colorSpace==NativeGroupColorSpace::encodedSRGB;
+    texture.filter=TextureFilter::linear;texture.bytes=candidate->bytes;texture.groupOwned=true;texture.group=existing?found->second.get():candidate.get();
     core::Matrix4 camera;camera.values={2./coverage.width,0,0,0,0,-2./coverage.height,0,0,0,0,0,0,-1-2*coverage.x/coverage.width,1+2*coverage.y/coverage.height,0,1};
     const auto groupCameraValues=matrix(camera);candidate->camera=immutableBuffer(device.Get(),D3D11_BIND_CONSTANT_BUFFER,groupCameraValues.data(),64);
-    if(objects){auto&destination=existing?*found->second:*candidate;(void)assignDraws(destination.draws,destination.staged,*objects,true);}
+    if(objects){auto&destination=existing?*found->second:*candidate;(void)assignDraws(destination.draws,destination.staged,*objects,true,requested.colorSpace);}
     // Map nodes never move after installation: currently published texture and
     // mesh pointers remain valid when their owned GPU objects are replaced.
     if(existing){auto&destination=*found->second;
         meshes.find(destination.output.meshID)->second=std::move(mesh);textures.find(destination.output.textureID)->second=std::move(texture);
-        destination.requested=requested;destination.coverage=coverage;destination.width=pixelWidth;destination.height=pixelHeight;destination.bytes=candidate->bytes;
+        destination.depth=depth;destination.requested=requested;destination.coverage=coverage;destination.width=pixelWidth;destination.height=pixelHeight;destination.bytes=candidate->bytes;
         destination.target=std::move(candidate->target);destination.camera=std::move(candidate->camera);destination.dirty=true;
     }else{
         stagedGroups.begin()->second=std::move(candidate);meshes.merge(stagedMeshes);textures.merge(stagedTextures);groups.merge(stagedGroups);
@@ -847,7 +895,8 @@ bool Renderer::configureNativeGroup(std::string id,const NativeGroupTarget&targe
 bool Renderer::setNativeGroupDraws(const std::string&id,std::span<const DrawObject>objects){
     require(impl_!=nullptr,"Renderer is not initialized");auto&r=*impl_;r.thread();const auto found=r.groups.find(id);require(found!=r.groups.end(),"Unknown native group");
     r.groupDrawBudget(found->second.get(),objects.size());
-    try{const auto changed=r.assignDraws(found->second->draws,found->second->staged,objects,true);found->second->dirty|=changed;return changed;}
+    const auto depth=r.groupInputDepth(objects,found->second.get(),found->second->requested.colorSpace);
+    try{const auto changed=r.assignDraws(found->second->draws,found->second->staged,objects,true,found->second->requested.colorSpace);found->second->depth=depth;found->second->dirty|=changed;return changed;}
     catch(const RendererError&){reset();throw;}
 }
 const DrawObject&Renderer::nativeGroupOutput(const std::string&id)const{
@@ -867,7 +916,7 @@ void Renderer::setCamera(const core::Matrix4 &viewProjection) {
     if (next != r.cameraValues) { r.cameraValues = next; r.cameraDirty = true; }
 }
 void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11RenderTargetView*passTarget,
-    ID3D11Buffer*passCamera,unsigned pixelWidth,unsigned pixelHeight,bool group){
+    ID3D11Buffer*passCamera,unsigned pixelWidth,unsigned pixelHeight,bool group,NativeGroupColorSpace colorSpace){
     auto&r=*this;
     const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(pixelWidth), static_cast<float>(pixelHeight), 0, 1};
     r.context->RSSetViewports(1, &viewport); r.context->RSSetState(r.raster.Get());
@@ -885,8 +934,12 @@ void Renderer::Impl::renderNativeDraws(std::span<const Draw>objects,ID3D11Render
     auto *camera = passCamera;
     r.context->VSSetConstantBuffers(0, 1, &camera);
     UINT stride = sizeof(Vertex), offset = 0;
+    auto*boundShader=r.scenePS.Get();auto boundBlend=NativeBlend::sourceOver;
     for (const auto &draw : objects) {
         if (draw.values.opacity == 0 || draw.values.tint[3] == 0) continue;
+        if(boundBlend!=draw.blend){r.context->OMSetBlendState(draw.blend==NativeBlend::screen?r.screenBlend.Get():draw.blend==NativeBlend::weightedAdd?r.weightedBlend.Get():r.overBlend.Get(),nullptr,UINT_MAX);boundBlend=draw.blend;}
+        auto*shader=colorSpace==NativeGroupColorSpace::encodedSRGB?(draw.texture->encodedSRGB?r.encodedBothPS.Get():r.encodedOutputPS.Get()):(draw.texture->encodedSRGB?r.encodedInputPS.Get():r.scenePS.Get());
+        if(shader!=boundShader){r.context->PSSetShader(shader,nullptr,0);boundShader=shader;}
         auto *vertices = draw.mesh->vertices.Get();
         r.context->IASetVertexBuffers(0, 1, &vertices, &stride, &offset);
         r.context->IASetIndexBuffer(draw.mesh->indices.Get(), DXGI_FORMAT_R32_UINT, 0);
@@ -920,12 +973,16 @@ void Renderer::draw(bool present) {
         r.context->Unmap(r.cameraBuffer.Get(), 0);
         r.cameraDirty = false; ++r.counters.cameraUploads;
     }
-    for(auto&[id,group]:r.groups){(void)id;if(!group->dirty)continue;
-        const auto*texture=&r.textures.find(group->output.textureID)->second;
-        const bool visible=std::any_of(r.draws.begin(),r.draws.end(),[&](const auto&draw){return (draw.texture==texture||draw.alphaMask==texture)&&draw.values.opacity>0&&draw.values.tint[3]>0;});
-        if(!visible)continue;
-        r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true);
+    // Mark only published positive-opacity routes. A child becomes visible
+    // through its retained parent; hidden modules still do no group rendering.
+    for(auto&[id,group]:r.groups){(void)id;group->visibleFrame=false;}
+    const auto expose=[](const Impl::Draw&draw){if(draw.values.opacity<=0||draw.values.tint[3]<=0)return;if(draw.texture->group)draw.texture->group->visibleFrame=true;if(draw.alphaMask->group)draw.alphaMask->group->visibleFrame=true;};
+    for(const auto&draw:r.draws)expose(draw);
+    for(auto&[id,group]:r.groups){(void)id;if(group->visibleFrame&&group->depth==2)for(const auto&draw:group->draws)expose(draw);}
+    for(unsigned depth=1;depth<=2;++depth)for(auto&[id,group]:r.groups){(void)id;if(group->depth!=depth||!group->dirty||!group->visibleFrame)continue;
+        r.renderNativeDraws(group->draws,group->target.Get(),group->camera.Get(),group->width,group->height,true,group->requested.colorSpace);
         group->dirty=false;++r.counters.nativeGroupRenders;
+        r.invalidate(&r.textures.find(group->output.textureID)->second);
     }
     r.renderNativeDraws(r.draws,r.linearView.Get(),r.cameraBuffer.Get(),r.width,r.height,false);
     ID3D11ShaderResourceView*emptyResource=nullptr;

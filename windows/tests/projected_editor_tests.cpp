@@ -366,6 +366,100 @@ void sourceStyles(HWND hwnd){
     ok(plainEditor.stop(),"Stop plain spacing fixture");ok(richEditor.stop(),"Stop rich spacing fixture");ok(breakEditor.stop(),"Stop no-wrap fixture");ok(editor.stop(),"Stop default-style fixture");check(!IsWindowVisible(hwnd),"Source-style fixtures remain hidden and activate no real input service");
 }
 
+void hostReplacement(HWND hwnd){
+    LayerRasterizer raster;LayerScene scene(raster);Buffer doc(u"abcdefghijklmnop",1024);
+    ProjectedEditorStyle style;style.width=240;style.height=80;LayerRasterOptions options;options.pixelsPerPoint=1;
+    NativeProjectedEditor editor(hwnd,doc,scene,style,options,{64},WM_APP+129,99);
+    ComPtr<Sink>sink;sink.Attach(new Sink);auto*store=editor.textStore();
+    ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_SEL_CHANGE|TS_AS_LAYOUT_CHANGE),"Observe explicit host normalization with fake TSF sink");
+    const auto painted=editor.layout().painted();const auto before=raster.stats();
+    const auto normalized=editor.replaceTextFromHost({0,16},u"中文🌙");
+    check(normalized.handled&&normalized.changed&&!normalized.finishRequested&&doc.text()==u"中文🌙"&&doc.selection().range==Range{4,4},"Explicit host replacement preserves whole UTF16 characters and caller selection");
+    check(sink->text==1&&sink->selection==1&&sink->last.acpStart==0&&sink->last.acpOldEnd==16&&sink->last.acpNewEnd==4,"Host replacement sends one exact text delta and selection notification outside locks");
+    check(raster.stats().rasterizations==before.rasterizations&&raster.stats().textLayoutsCreated==before.textLayoutsCreated&&editor.layout().painted()==painted,"Host normalization neither shapes nor paints before the caller synchronizes");
+    check(editor.syncContent()&&editor.layout().painted()->text()==doc.text()&&raster.stats().textLayoutsCreated==before.textLayoutsCreated+1,"Explicit synchronization paints the normalized document once");
+    const auto unchanged=std::u16string(doc.text());const auto revision=doc.revision();const auto notified=sink->text;
+    locked(store,sink.Get(),[&]{const auto result=editor.replaceTextFromHost({0,1},u"X");check(result.handled&&!result.changed&&doc.text()==unchanged&&sink->text==notified,"Locked TSF callback declines host normalization without mutation or sink echo");});
+    ComPtr<ITfContextOwnerCompositionSink>owner;ok(store->QueryInterface(IID_PPV_ARGS(&owner)),"Explicit host edit fixture has the same TSF composition owner");
+    ComPtr<FakeRange>range;range.Attach(new FakeRange(0,1));ComPtr<FakeView>view;view.Attach(new FakeView(range.Get()));
+    locked(store,sink.Get(),[&]{BOOL accepted{};ok(owner->OnStartComposition(view.Get(),&accepted),"Start isolated marked text before normalization");check(accepted!=FALSE,"Composition accepted by the existing owner");});
+    const auto marked=editor.replaceTextFromHost({0,1},u"X");check(marked.handled&&!marked.changed&&doc.composition()==std::optional(Range{0,1})&&doc.text()==unchanged&&sink->text==notified,"Host limits never truncate or rewrite marked composition");
+    locked(store,sink.Get(),[&]{ok(owner->OnEndComposition(view.Get()),"Commit isolated composition before host normalization");});
+    check(!doc.composition()&&doc.revision()==revision,"Composition commit without text change leaves document revision intact");
+    const std::u16string excess(65,u'x'),invalid(1,char16_t(0xd800));
+    check(!editor.replaceTextFromHost({0,4},excess).changed&&!editor.replaceTextFromHost({0,5},u"X").changed&&!editor.replaceTextFromHost({0,1},invalid).changed&&!editor.replaceTextFromHost({3,4},u"X").changed,"Capacity, invalid range, lone surrogate and split surrogate replacement decline atomically");
+    doc.setReadOnly(true);check(!editor.replaceTextFromHost({0,1},u"X").changed,"Read-only owner declines explicit host normalization");doc.setReadOnly(false);
+    check(doc.text()==unchanged&&doc.revision()==revision&&sink->text==notified&&doc.maximumUnits()==1024,"Rejected normalization never truncates storage or publishes a text notification");
+    check(!editor.character(0xd83d).changed,"Hold a partial WM_CHAR pair before explicit normalization");
+    check(editor.replaceTextFromHost({0,4},u"X").changed&&doc.text()==u"X","Host edit works after marked text ends");
+    check(!editor.character(0xde00).changed&&doc.text()==u"X","Host edit resets buffered surrogate input rather than appending an obsolete pair");
+    check(editor.syncContent()&&editor.layout().painted()->text()==u"X","Following host edit retains the same painted-document contract");
+    ok(store->UnadviseSink(sink.Get()),"Detach host normalization fixture sink");ok(editor.stop(),"Stop host normalization fixture without real TSF activation");
+    check(!IsWindowVisible(hwnd),"Explicit host normalization fixture remains hidden");
 }
-int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);sourceStyles(window.hwnd);singleLineField(renderer,window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
+void hostSelection(HWND hwnd){
+    LayerRasterizer raster;LayerScene scene(raster);Buffer doc(u"A🌙中Z",1024);
+    ProjectedEditorStyle style;style.width=240;style.height=80;LayerRasterOptions options;options.pixelsPerPoint=1;
+    NativeProjectedEditor editor(hwnd,doc,scene,style,options,{64},WM_APP+131,101);
+    ComPtr<Sink>sink;sink.Attach(new Sink);auto*store=editor.textStore();
+    ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_SEL_CHANGE|TS_AS_LAYOUT_CHANGE),"Observe host selection through the existing fake text store");
+    const auto original=std::u16string(doc.text());const auto revision=doc.revision();const auto painted=editor.layout().painted();const auto before=raster.stats();
+    const Selection next{{1,4},ActiveEnd::start,false};const auto selected=editor.setSelectionFromHost(next);
+    check(selected.handled&&selected.changed&&!selected.finishRequested&&doc.selection()==next,"Host normalization restores the requested UTF16 active endpoint");
+    check(sink->selection==1&&sink->text==0&&doc.text()==original&&doc.revision()==revision,"Selection sends one TSF notification without text mutation");
+    check(raster.stats().rasterizations==before.rasterizations&&raster.stats().textLayoutsCreated==before.textLayoutsCreated&&editor.layout().painted()==painted,"Selection restoration does not paint or reshape before owner synchronization");
+    locked(store,sink.Get(),[&]{check(!editor.setSelectionFromHost({{0,0},ActiveEnd::end,false}).changed&&doc.selection()==next&&sink->selection==1,"TSF write lock declines host selection without mutation or echo");});
+    check(!editor.setSelectionFromHost({{0,6},ActiveEnd::end,false}).changed&&!editor.setSelectionFromHost({{4,1},ActiveEnd::end,false}).changed&&doc.selection()==next&&sink->selection==1,"Out-of-bounds and reversed ACP restore decline atomically");
+    ComPtr<ITfContextOwnerCompositionSink>owner;ok(store->QueryInterface(IID_PPV_ARGS(&owner)),"Selection fixture borrows the existing composition sink");
+    ComPtr<FakeRange>range;range.Attach(new FakeRange(0,1));ComPtr<FakeView>view;view.Attach(new FakeView(range.Get()));
+    locked(store,sink.Get(),[&]{BOOL accepted{};ok(owner->OnStartComposition(view.Get(),&accepted),"Start synthetic marked selection");check(accepted!=FALSE,"Synthetic composition accepted");});
+    const auto marked=doc.selection();check(!editor.setSelectionFromHost({{0,0},ActiveEnd::end,false}).changed&&doc.selection()==marked&&sink->selection==1,"Host selection never moves a marked composition");
+    locked(store,sink.Get(),[&]{ok(owner->OnEndComposition(view.Get()),"End synthetic marked selection");});
+    check(editor.setSelectionFromHost({{4,4},ActiveEnd::end,false}).changed&&doc.selection().range==Range{4,4}&&sink->selection==2,"Unmarked owner selection is restored through TSF");
+    check(editor.syncContent()&&editor.layout().painted()==painted&&raster.stats().textLayoutsCreated==before.textLayoutsCreated,"Selection sync reuses the actual painted glyph layout");
+    ok(store->UnadviseSink(sink.Get()),"Detach host selection fixture sink");ok(editor.stop(),"Stop host selection fixture");
+}
+void explicitCompositionCommit(HWND hwnd){
+    namespace notes=endfield::core::notes;
+    LayerRasterizer raster;LayerScene scene(raster);notes::TextStyle bold;bold.bold=true;
+    notes::RichText attributed;attributed.runs={{0,3,bold,{}}};notes::RichDocument doc(u"original",attributed,1024);
+    doc.setSelection({{0,3},ActiveEnd::start,false});const auto originalPayload=doc.richText();const auto originalSelection=doc.selection();
+    ProjectedEditorStyle style;style.width=240;style.height=80;LayerRasterOptions options;options.pixelsPerPoint=1;
+    NativeProjectedEditor editor(hwnd,doc,scene,style,options,{1024},WM_APP+130,100);
+    ComPtr<FakeManager>manager;manager.Attach(new FakeManager);ok(editor.connect(*manager.Get(),7),"Explicit commit borrows the same fake TSF manager");
+    ComPtr<Sink>sink;sink.Attach(new Sink);auto*store=editor.textStore();ok(store->AdviseSink(__uuidof(ITextStoreACPSink),sink.Get(),TS_AS_TEXT_CHANGE|TS_AS_SEL_CHANGE|TS_AS_LAYOUT_CHANGE),"Explicit commit has isolated sink notifications");
+    ComPtr<ITfContextOwnerCompositionSink>owner;ok(store->QueryInterface(IID_PPV_ARGS(&owner)),"Explicit commit uses the actual composition owner interface");
+    ComPtr<FakeRange>range;range.Attach(new FakeRange(0,1));ComPtr<FakeView>view;view.Attach(new FakeView(range.Get()));
+    locked(store,sink.Get(),[&]{TS_TEXTCHANGE delta{};LONG a{},b{};ok(store->InsertTextAtSelection(0,L"中",1,&a,&b,&delta),"IME inserts provisional text before its composition");BOOL accepted{};ok(owner->OnStartComposition(view.Get(),&accepted),"IME starts rich marked text");check(accepted!=FALSE,"Explicit commit accepts original marked range");ok(store->SetText(0,0,1,L"中文😀",4,&delta),"IME updates the same provisional text with complete UTF16");});
+    const auto provisional=std::u16string(doc.text());const auto provisionalPayload=doc.richText();const auto provisionalSelection=doc.selection();const auto provisionalRevision=doc.revision();
+    check(provisional==u"中文😀ginal"&&doc.composition().has_value()&&sink->text==0,"Provisional rich text stays owned by the IME without text-store sink echo");
+    const auto painted=editor.layout().painted();const auto stats=raster.stats();
+    locked(store,sink.Get(),[&]{check(editor.commitComposition()==TS_E_NOLOCK&&doc.composition().has_value()&&doc.text()==provisional,"Explicit commit declines inside a TSF document lock without cancelling text");});
+    auto context=manager->documents[0]->context;unsigned terminations{};
+    context->terminate=[&](ITfCompositionView*owned){++terminations;check(owned==view.Get(),"Commit terminates only this exact retained composition view");return TF_E_NOLOCK;};
+    check(editor.commitComposition()==TF_E_NOLOCK&&doc.text()==provisional&&doc.composition().has_value(),"Native lock failure preserves marked text for event-driven retry");
+    context->terminate=[&](ITfCompositionView*){++terminations;return S_OK;};
+    check(editor.commitComposition()==E_UNEXPECTED&&doc.composition().has_value()&&doc.text()==provisional,"A defective native termination cannot fabricate a host-only commit");
+    context->terminate=[&](ITfCompositionView*owned){++terminations;check(editor.commitComposition()==E_UNEXPECTED,"Reentrant composition operation declines rather than recursively terminating");locked(store,sink.Get(),[&]{ok(owner->OnEndComposition(owned),"Native termination calls OnEndComposition under its own synchronous write lock");check(!doc.composition()&&doc.text()==provisional&&sink->text==0,"Commit clears only the marker and never restores provisional text or echoes a host edit");});return S_OK;};
+    ok(editor.commitComposition(),"Explicit source save commits current marked text through TSF");
+    check(terminations==3&&!doc.composition()&&doc.text()==provisional&&doc.richText()==provisionalPayload&&doc.selection()==provisionalSelection&&doc.revision()==provisionalRevision,"Successful commit preserves full text, formatting, selection and revision");
+    check(raster.stats().rasterizations==stats.rasterizations&&raster.stats().textLayoutsCreated==stats.textLayoutsCreated&&editor.layout().painted()==painted,"Commit performs no shaping, rasterization or immediate layout publication");
+    check(editor.commitComposition()==S_FALSE&&terminations==3,"Already unmarked document does not call a native service");
+    check(editor.syncContent()&&editor.layout().painted()->text()==doc.text(),"Caller paints committed text only when explicitly synchronizing");
+    check(editor.undo().changed&&doc.text()==u"original"&&doc.richText()==originalPayload&&doc.selection()==originalSelection,"Committed provisional rich edits remain one caller undo group with original selection");
+    ok(store->UnadviseSink(sink.Get()),"Detach explicit commit sink");ok(editor.stop(),"Stop committed editor without undoing retained document");
+    // An external COM callback may destroy the facade. The existing Store/Impl
+    // keep guards protect the call while terminal teardown rolls back unsaved
+    // composition and disconnects host pointers without a stale post or crash.
+    LayerScene destroyedScene(raster);Buffer destroyedDoc(u"keep",1024);auto destroyed=std::make_unique<NativeProjectedEditor>(hwnd,destroyedDoc,destroyedScene,style,options,PlainEditorFixtureCapacity{1024},WM_APP+131,101);
+    ComPtr<FakeManager>destroyedManager;destroyedManager.Attach(new FakeManager);ok(destroyed->connect(*destroyedManager.Get(),7),"Commit teardown fixture uses its own fake context");
+    ComPtr<Sink>destroyedSink;destroyedSink.Attach(new Sink);ComPtr<ITextStoreACP>retained=destroyed->textStore();ok(retained->AdviseSink(__uuidof(ITextStoreACPSink),destroyedSink.Get(),TS_AS_TEXT_CHANGE),"Observe isolated teardown composition");
+    ComPtr<ITfContextOwnerCompositionSink>destroyedOwner;ok(retained.As(&destroyedOwner),"Retain teardown composition interface");
+    locked(retained.Get(),destroyedSink.Get(),[&]{TS_TEXTCHANGE delta{};ok(retained->SetText(0,0,1,L"中",1,&delta),"Teardown fixture creates provisional text");BOOL accepted{};ok(destroyedOwner->OnStartComposition(view.Get(),&accepted),"Teardown fixture promotes provisional snapshot");check(accepted!=FALSE,"Teardown marked range accepted");});
+    auto destroyedContext=destroyedManager->documents[0]->context;destroyedContext->terminate=[&](ITfCompositionView*){destroyed.reset();return S_OK;};auto*raw=destroyed.get();
+    check(raw->commitComposition()==E_UNEXPECTED&&!destroyed&&destroyedDoc.text()==u"keep"&&!destroyedDoc.composition(),"Reentrant native teardown does not access dead host state or commit a cancelled facade");
+    check(!IsWindowVisible(hwnd),"Explicit commit fixtures never activate real IME or display a window");
+}
+}
+int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native shader path");const auto initialized=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);ok(initialized,"Fixture COM apartment initializes");{Window window;Renderer renderer;renderer.initialize(window.hwnd,512,256,{Driver::warpForTests,argv[1],RenderTarget::offscreenForTests});run(renderer,window.hwnd);scrolling(renderer,window.hwnd);sourceStyles(window.hwnd);singleLineField(renderer,window.hwnd);hostReplacement(window.hwnd);hostSelection(window.hwnd);explicitCompositionCommit(window.hwnd);renderer.reset();}CoUninitialize();std::cout<<checks<<" projected editor integration checks passed\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"Projected editor test failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

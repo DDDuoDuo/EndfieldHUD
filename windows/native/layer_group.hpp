@@ -21,7 +21,8 @@ public:
     // sourceID is a diagnostic label (at most 450 bytes). Each adapter gets a
     // distinct retained identity so an outgoing and incoming same-kind menu
     // can overlap without replacing each other's targets.
-    NativeLayerGroup(LayerScene& localScene,std::string sourceID,double pixelsPerPoint);
+    NativeLayerGroup(LayerScene& localScene,std::string sourceID,double pixelsPerPoint,
+        NativeGroupColorSpace colorSpace=NativeGroupColorSpace::linear);
     ~NativeLayerGroup();
     NativeLayerGroup(const NativeLayerGroup&)=delete;
     NativeLayerGroup& operator=(const NativeLayerGroup&)=delete;
@@ -48,6 +49,7 @@ public:
     bool releaseResources(Renderer&);
 private:
     LayerScene* local_{};LayerScene carrier_;std::string id_;double density_{};
+    NativeGroupColorSpace colorSpace_{NativeGroupColorSpace::linear};
     Renderer* renderer_{};std::uint64_t structureRevision_{},resourceRevision_{};
     bool registered_{};
     std::optional<core::Rect> retainedCoverage_;std::optional<NativeGroupInsertion> retainedInsertion_;
