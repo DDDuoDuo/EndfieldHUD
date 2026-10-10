@@ -169,6 +169,12 @@ data is kept while another EndfieldHUD holds the data root. The relocated copy
 stays in `%TEMP%` until the next Setup or uninstall run removes it. Unelevated
 code has no supported way to delete its own running image.
 
+**Administrator rights.** Setup never asks for them (`asInvoker`). It
+installs for the Windows account that runs it. If you start it with "Run as
+administrator" and enter another account's credentials, it installs for that
+other account. A Setup that closed EndfieldHUD restarts it in Setup's own
+context.
+
 **Command line.**
 
 - `--quiet` (also `/quiet`, `/S`) shows no window.

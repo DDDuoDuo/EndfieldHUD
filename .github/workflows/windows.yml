@@ -40,7 +40,7 @@ jobs:
       - name: Build
         run: cmake --build build/portable --parallel 4
       - name: Test
-        run: ctest --test-dir build/portable --output-on-failure --parallel 4 --timeout 900
+        run: ctest --test-dir build/portable --output-on-failure --timeout 900
 
   windows:
     name: Windows suites and developer package (windows-latest)
