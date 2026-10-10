@@ -10,7 +10,9 @@
 namespace ehud::migration {
 // invalid/newerVersion/tooLarge reject one store; the others fail the whole
 // import (corrupt = the export does not match its manifest or is unsafe).
-enum class MacImportErrorCode { invalid, newerVersion, tooLarge, unavailable, conflict, cancelled, corrupt };
+// alreadyImported: the destination holds an earlier import and the caller did
+// not choose MacImportOptions::replaceExistingImport (a distinct, retryable case).
+enum class MacImportErrorCode { invalid, newerVersion, tooLarge, unavailable, conflict, cancelled, corrupt, alreadyImported };
 class MacImportError final : public std::runtime_error {
 public:
     MacImportError(MacImportErrorCode code, std::string message) : std::runtime_error(std::move(message)), code_(code) {}

@@ -31,7 +31,8 @@ target_link_libraries(hud_mac_import_codec PUBLIC hud_data)
 add_library(hud_mac_import
   core/migration/mac_import_files.cpp
   core/migration/mac_import_relink.cpp
-  core/migration/mac_import.cpp)
+  core/migration/mac_import.cpp
+  core/migration/mac_import_outcome.cpp)
 target_include_directories(hud_mac_import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_mac_import PUBLIC hud_mac_import_codec hud_data hud_reader hud_calendar hud_event_log hud_map_store)
 if(WIN32)
@@ -44,7 +45,13 @@ add_library(hud_mac_import_service core/migration/mac_import_service.cpp)
 target_include_directories(hud_mac_import_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_mac_import_service PUBLIC hud_mac_import hud_utility)
 
-set(EHUD_MAC_IMPORT_TARGETS hud_mac_import_codec hud_mac_import hud_mac_import_service)
+# The Windows-only "Import macOS data…" flow and its card (portable model:
+# five-language content, confirmation-style card state and artwork).
+add_library(hud_mac_import_flow app/areas/mac_import_flow.cpp app/areas/mac_import_card.cpp)
+target_include_directories(hud_mac_import_flow PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_mac_import_flow PUBLIC hud_mac_import_service hud_settings hud_localization)
+
+set(EHUD_MAC_IMPORT_TARGETS hud_mac_import_codec hud_mac_import hud_mac_import_service hud_mac_import_flow)
 if(TARGET hud_archive AND TARGET hud_shortcuts AND TARGET hud_calendar_civil)
   add_library(hud_mac_import_native core/migration/mac_import_native.cpp)
   target_include_directories(hud_mac_import_native PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -57,6 +64,22 @@ if(TARGET hud_archive AND TARGET hud_shortcuts AND TARGET hud_calendar_civil)
   add_executable(mac_import_tool tools/mac_import_tool.cpp)
   target_link_libraries(mac_import_tool PRIVATE hud_mac_import_native)
   list(APPEND EHUD_MAC_IMPORT_TARGETS mac_import_tool)
+endif()
+
+# The macImport module area (app/module_owner.hpp, "Adding a module area"):
+# the import card above the HUD, opened from the Settings System row through
+# the area service app/areas/mac_import_handoff.hpp. Production commits through
+# the host's restart handoff; hidden coverage imports the Mac-generated golden
+# export into the area's own synthetic destination.
+if(WIN32 AND TARGET hud_mac_import_native AND TARGET hud_module_registry)
+  add_library(hud_mac_import_area STATIC app/areas/mac_import_module.cpp)
+  target_include_directories(hud_mac_import_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(hud_mac_import_area PUBLIC hud_module_registry hud_utility hud_mac_import_flow hud_mac_import_native PRIVATE user32)
+  list(APPEND EHUD_MAC_IMPORT_TARGETS hud_mac_import_area)
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "macImport|hud_mac_import_area|app/areas/mac_import_module.hpp|endfield::areas::macImportModule")
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREA_FIXTURES
+    "macImport.goldenExport|${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/mac_import_golden_export.json")
 endif()
 
 foreach(ehud_import_target IN LISTS EHUD_MAC_IMPORT_TARGETS)
@@ -85,6 +108,21 @@ if(BUILD_TESTING)
     target_link_libraries(mac_import_tests PRIVATE SQLite::SQLite3)
   endif()
   add_test(NAME mac_import_contracts COMMAND mac_import_tests ${EHUD_MAC_IMPORT_FIXTURES}/map-store-source.json)
+  # The import flow, card and restart-handoff outcome over synthetic exports.
+  add_executable(mac_import_flow_tests tests/mac_import_flow_tests.cpp)
+  target_link_libraries(mac_import_flow_tests PRIVATE hud_mac_import_flow hud_mac_import_service)
+  if(WIN32)
+    target_compile_definitions(mac_import_flow_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(mac_import_flow_tests PRIVATE winsqlite3)
+  else()
+    target_link_libraries(mac_import_flow_tests PRIVATE SQLite::SQLite3)
+  endif()
+  if(MSVC)
+    target_compile_options(mac_import_flow_tests PRIVATE /W4 /permissive- /EHsc)
+  else()
+    target_compile_options(mac_import_flow_tests PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  add_test(NAME mac_import_flow_contracts COMMAND mac_import_flow_tests)
   # Imported reminders through the unchanged Windows reminder plan/reconcile
   # (in-memory provider; the real notification center is never used).
   if(TARGET hud_calendar_notifications)

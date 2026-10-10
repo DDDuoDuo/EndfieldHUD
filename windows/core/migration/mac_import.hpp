@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 
 namespace ehud::migration {
 // One-time offline import of a user-supplied macOS export (WINDOWS-MIGRATION.md
@@ -114,6 +115,10 @@ public:
     const MacImportSummary& summary() const noexcept;
     MacImportProgress progress() const noexcept;
     bool committable() const;                         // staged, no unaccepted rejection
+    // Explicit consent, given while reviewing a staged import, to skip these
+    // rejected stores (same effect as MacImportOptions::acceptRejected without
+    // staging the export again). Only before the first commit step.
+    void acceptRejected(std::span<const MacImportStore>);
     // Bounded commit steps; call only after every module owner flushed and
     // closed its stores. Refreshes the Windows-only settings and the earlier
     // relink decisions from the current root, carries existing data the import

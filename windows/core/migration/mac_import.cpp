@@ -290,12 +290,16 @@ struct MacImportSession::Impl {
         const auto existing = files::ordinaryDirectory(destination);
         if (!existing && fs::exists(fs::symlink_status(destination))) fail(MacImportErrorCode::invalid, "Destination is not an ordinary directory");
         summary.destinationExisted = existing;
-        if (existing && macImportCompleted(destination)) {
-            if (!options.replaceExistingImport) fail(MacImportErrorCode::conflict, "macOS data was already imported here; choose replace to import again (a new backup is kept)");
-            summary.replacesPreviousImport = true;
-        }
+        // The export itself is checked first: a folder that is not an export
+        // is reported as such, never as "already imported".
+        if (!files::ordinaryFileSize(exportRoot / "manifest.json"))
+            fail(MacImportErrorCode::invalid, "The folder has no manifest.json; choose the folder created by the macOS exporter");
         manifestBytes = files::readFile(exportRoot / "manifest.json", 8 * MiB);
         manifest = decodeMacExportManifest(manifestBytes);
+        if (existing && macImportCompleted(destination)) {
+            if (!options.replaceExistingImport) fail(MacImportErrorCode::alreadyImported, "macOS data was already imported here; choose replace to import again (a new backup is kept)");
+            summary.replacesPreviousImport = true;
+        }
         summary.manifestSHA256 = manifest.sha256;
         summary.sourceVersion = manifest.appVersion;
         summary.sourceBuild = manifest.build;
@@ -779,7 +783,7 @@ struct MacImportSession::Impl {
         const auto existing = files::ordinaryDirectory(destination);
         if (!existing && fs::exists(fs::symlink_status(destination))) fail(MacImportErrorCode::invalid, "Destination is not an ordinary directory");
         if (existing && macImportCompleted(destination) && !summary.replacesPreviousImport) {
-            if (!options.replaceExistingImport) fail(MacImportErrorCode::conflict, "macOS data was already imported here; choose replace to import again (a new backup is kept)");
+            if (!options.replaceExistingImport) fail(MacImportErrorCode::alreadyImported, "macOS data was already imported here; choose replace to import again (a new backup is kept)");
             summary.replacesPreviousImport = true;
         }
         summary.destinationExisted = existing;
@@ -968,6 +972,12 @@ bool MacImportSession::committable() const {
     for (const auto store : impl_->summary.rejected())
         if (std::find(impl_->options.acceptRejected.begin(), impl_->options.acceptRejected.end(), store) == impl_->options.acceptRejected.end()) return false;
     return true;
+}
+void MacImportSession::acceptRejected(std::span<const MacImportStore> stores) {
+    auto& i = *impl_;
+    if (!i.staged || i.commitStarted || i.discarded) fail(MacImportErrorCode::conflict, "Rejected stores can be accepted only while reviewing a staged import");
+    for (const auto store : stores)
+        if (std::find(i.options.acceptRejected.begin(), i.options.acceptRejected.end(), store) == i.options.acceptRejected.end()) i.options.acceptRejected.push_back(store);
 }
 bool MacImportSession::commitNext() {
     auto& i = *impl_;

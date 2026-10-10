@@ -104,6 +104,45 @@ and apply the summary: `profileSyncLocked`, `launchAtLogin` (the Windows
 startup provider), `remindersNeedReconcile` (Calendar notifications), and
 `customShortcutUntranslated`.
 
+## 2a. The "Import macOS data…" card (`macImport` area)
+
+The Mac app has no import, so the Windows entry point reuses the HUD
+confirmation style (the red power button card: same plate, header line,
+caption, buttons, .16/.20 s reveal, .14 s dismissal, Cancel focused first)
+with a list and a progress bar added (`app/areas/mac_import_card.hpp`). The
+flow (`app/areas/mac_import_flow.hpp`, five HUD languages) is:
+
+1. **Entry.** The area publishes `app::MacImportEntry`
+   (`app/areas/mac_import_handoff.hpp`); the Settings System row
+   "Import macOS data…" calls `present()`.
+2. **Folder.** The host's shared file dialog. Choosing `manifest.json`
+   means its folder.
+3. **Staging.** `MacImportService` on the shared UtilityExecutor; the card
+   shows verified megabytes, then each data set as it is checked. Cancel
+   discards the private folder on the worker.
+4. **Replace.** An earlier import (`MacImportErrorCode::alreadyImported`)
+   asks for "Import Again" (`replaceExistingImport`, a new backup).
+5. **Review.** One row per data set (ready, relink count, not in export,
+   newer/unreadable and skipped). A rejected store is skipped only through the
+   explicit "Skip and Import" (`MacImportService::acceptRejected`, no second
+   staging).
+6. **Commit.** Production hands the reviewed session to the host's
+   `app::DataRootRestart` (`MacImportService::handOff`). The host runs the
+   accepted-quit path, which flushes and closes every owner's store, then
+   runs the commit on the main thread while nothing under the data root is
+   open (`commitMacImportSession`: backup, same-volume switch, rollback on
+   failure) and starts a fresh run over the same root, so every owner reopens
+   the imported data and applies its post-import intents on load (Calendar
+   reconcile, the profile lock from the account cache, launch at login). A
+   save failure cancels the quit: the review stays and can be confirmed again
+   or cancelled. Without the host service the review cannot be confirmed.
+7. **Report.** The commit records `<root>.mac-import-outcome.json` next to
+   the root (statuses, counts, backup folder, the importer's error text; no
+   record content). The next run's area shows it once (final report, then the
+   relink list read from `Migration/relink.json`) and removes it on Done.
+   Hidden coverage imports the golden export into the area's own synthetic
+   destination, in-process and through a synthetic restart handoff.
+
 ## 3. Relinking
 
 Mac bookmarks, security scopes and inode/volume identities cannot authorize
@@ -151,6 +190,11 @@ private `CFFIXED_USER_HOME`. It writes:
 `mac_import_contracts` also imports every case of the Swift-generated
 `map-store-source.json` (WorldMapStore v1–v5 and malformed archives). Each
 accepted map must reach the exact state the Mac writes back after migrating it.
+
+`mac_import_flow_contracts` drives the flow, the card state/artwork and the
+outcome note over synthetic exports (staging progress, review, consent,
+in-process commit, restart handoff accepted/declined/discarded, the next
+run's report and relink list, failures, five languages).
 
 ## 5. Acceptance tool
 

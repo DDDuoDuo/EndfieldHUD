@@ -2,6 +2,7 @@
 #include "app/utility_executor.hpp"
 #include "core/migration/mac_import.hpp"
 #include <memory>
+#include <span>
 
 namespace ehud::migration {
 // App-owned, event-driven wrapper that runs one MacImportSession on the shared
@@ -36,6 +37,16 @@ public:
     // until the new root is activated, then the commit completes.
     void cancel();
     void queueCapacityAvailable(); // resubmits a step that found the queue full
+    // Explicit consent (ready only) to skip these rejected stores without
+    // staging the export again; committable() follows. False otherwise.
+    bool acceptRejected(std::span<const MacImportStore>);
+    // Hands a reviewed, committable session to a caller that commits it after
+    // every module owner closed its stores (the production restart handoff:
+    // the commit then runs outside this service, e.g. after the Application
+    // was torn down). The service returns to idle; the returned session owns
+    // its private folder (discard() or its destructor removes it). Null unless
+    // state()==ready && committable() with no step queued or running.
+    std::shared_ptr<MacImportSession> handOff();
     State state() const noexcept;
     bool committable() const noexcept;
     std::size_t completedSteps() const noexcept;
@@ -43,6 +54,10 @@ public:
     const MacImportSummary* summary() const noexcept;           // valid from ready onward
     const std::optional<MacImportCommitResult>& result() const noexcept;
     const std::string& error() const noexcept;
+    // The MacImportError code of a failed/cancelled import (nullopt for other
+    // exceptions and before a failure). Lets the owner offer "replace" for an
+    // earlier import (conflict while opening) or retry after a busy file.
+    std::optional<MacImportErrorCode> errorCode() const noexcept;
     bool busy() const noexcept;    // a job is queued or running
     bool requiresFrames() const noexcept { return false; }
     std::optional<double> nextWakeTime() const noexcept { return {}; }
