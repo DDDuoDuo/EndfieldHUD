@@ -1610,3 +1610,11 @@ if(WIN32)
     add_test(NAME media_assembly_scene_contracts COMMAND media_assembly_scene_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly)
   endif()
 endif()
+
+# Per-area build fragments. Each module area keeps its targets and tests in
+# cmake/modules/<area>.cmake so independent work does not edit this file.
+file(GLOB EHUD_MODULE_FRAGMENTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules/*.cmake")
+list(SORT EHUD_MODULE_FRAGMENTS)
+foreach(ehud_fragment IN LISTS EHUD_MODULE_FRAGMENTS)
+  include("${ehud_fragment}")
+endforeach()
