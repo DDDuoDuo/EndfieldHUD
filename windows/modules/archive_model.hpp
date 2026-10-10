@@ -47,6 +47,9 @@ inline constexpr double archiveFoundationToUnix=978307200;
 std::u16string archiveUTF16(std::string_view);
 std::string archiveUTF8(std::u16string_view);
 void validateArchiveMedia(const ArchiveJson&); // supports preserved Mac or explicit additive Windows locator
+// A preserved Mac attachment (security-scoped bookmark): unusable on Windows
+// until its file is chosen again (ArchivePreview "mediaRelink").
+bool archiveMacMediaReference(const ArchiveJson&)noexcept;
 void validateArchiveCategory(const ArchiveCategory&,const ArchiveTextRules&);
 void validateArchiveEntry(const ArchiveEntry&,const ArchiveTextRules&);
 void validateArchiveSummary(const ArchiveSummary&,const ArchiveTextRules&);

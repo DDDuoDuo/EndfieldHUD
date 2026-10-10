@@ -31,6 +31,9 @@ struct ArchiveViewInput {
     std::optional<std::string>formattingField,statusMessage,mediaError;
     ArchiveColor formattingColor{1,1,1,1};
     std::size_t mediaIndex{};bool mediaPlaying{};double mediaTime{};
+    // The shown attachment is an imported Mac bookmark: its error text is
+    // also the "mediaRelink" action (choose the file again on Windows).
+    bool mediaRelinkable{};
 };
 struct ArchiveAction {
     std::string id,title;core::Rect rect;bool enabled{true},selected{};
