@@ -13,6 +13,12 @@ if(BUILD_TESTING)
   target_link_libraries(notes_font_names_tests PRIVATE hud_notes_rich)
   add_test(NAME notes_font_names_contracts COMMAND notes_font_names_tests)
   list(APPEND EHUD_NOTES_TARGETS notes_font_names_tests)
+  # Notes stores beyond the former 64 MiB in-memory bound open without loss.
+  add_executable(notes_store_capacity_tests tests/notes_store_capacity_tests.cpp)
+  target_link_libraries(notes_store_capacity_tests PRIVATE hud_data)
+  add_test(NAME notes_store_capacity_contracts COMMAND notes_store_capacity_tests)
+  set_tests_properties(notes_store_capacity_contracts PROPERTIES TIMEOUT 300)
+  list(APPEND EHUD_NOTES_TARGETS notes_store_capacity_tests)
 endif()
 if(WIN32)
   # Paragraph-chunked long-document editor for Notes text fields: typing cost

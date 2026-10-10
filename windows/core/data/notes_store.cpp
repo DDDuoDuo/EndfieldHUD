@@ -12,7 +12,11 @@
 
 namespace ehud::data {
 namespace {
-constexpr std::size_t payloadLimit=16*1024*1024, totalLimit=64*1024*1024;
+// Like the source NotesStore, every note lives in memory. One row stays
+// within 16 MiB (the source drawing and run limits fit well inside); the whole
+// store is bounded only against corrupt data, far above real Mac stores with
+// many drawings (an earlier 64 MiB bound refused to open those).
+constexpr std::size_t payloadLimit=16*1024*1024, totalLimit=std::size_t(1024)*1024*1024;
 void require(bool condition,const char* message) {if(!condition) throw StoreError(StoreErrorCode::invalid,message);}
 [[noreturn]] void unavailable(sqlite3* db) {
     throw StoreError(StoreErrorCode::unavailable,db?sqlite3_errmsg(db):"Notes database unavailable");
