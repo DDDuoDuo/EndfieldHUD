@@ -11,12 +11,15 @@
 #include "native/hypergryph_account_webview.hpp"
 #include <wrl.h>
 #include <WebView2.h>
+#include <algorithm>
 #include <cmath>
 #include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <random>
+#include <string>
+#include <vector>
 
 namespace {
 namespace h=endfield::modules::hypergryph;namespace p=endfield::modules::hypergryph::login_policy;namespace n=endfield::native;
@@ -184,6 +187,15 @@ std::string nonceIn(const std::wstring& script) {
 }
 std::string envelope(std::string_view channel,const std::string& body) {return "{\"channel\":\""+std::string(channel)+"\",\"body\":"+body+"}";}
 void click(HWND window,int id) {SendMessageW(window,WM_COMMAND,MAKEWPARAM(id,BN_CLICKED),0);}
+// UTF-8 text of a login-window control (empty when the control is absent).
+std::string text(HWND window,int id) {
+    const HWND control=GetDlgItem(window,id);if(!control) return {};
+    const int length=GetWindowTextLengthW(control);std::wstring value(std::size_t(length)+1,L'\0');
+    GetWindowTextW(control,value.data(),length+1);value.resize(std::size_t(length));
+    if(value.empty()) return {};
+    const int n=WideCharToMultiByte(CP_UTF8,0,value.data(),int(value.size()),nullptr,0,nullptr,nullptr);
+    std::string out(std::size_t(n),'\0');WideCharToMultiByte(CP_UTF8,0,value.data(),int(value.size()),out.data(),n,nullptr,nullptr);return out;
+}
 
 void run() {
     World w;world=&w;OwnerWindow owner;TempDirectory temp;double clock=1000;std::vector<std::string> tags;int schedules{};
@@ -191,6 +203,8 @@ void run() {
     std::filesystem::create_directories(temp.path/L"unrelated");
     n::WebViewLoginOptions o;o.owner=owner.hwnd;o.now=[&]{return clock;};o.scheduleChanged=[&]{++schedules;};
     o.diagnostic=[&](std::string_view t){tags.emplace_back(t);};o.profileRoot=temp.path;o.showWindows=false;
+    // The official download page is only ever requested, never opened, here.
+    std::vector<std::string> links;o.openLink=[&](std::string_view url){links.emplace_back(url);return true;};
     int completions{};std::optional<h::LoginResult> result;std::optional<h::LoginFailure> failure;
     const auto done=[&](std::optional<h::LoginResult> r,h::LoginFailure f){++completions;result=std::move(r);failure=f;};
     {
@@ -300,12 +314,52 @@ void run() {
         presenter.present(h::Region::mainland,done);click(loginWindow(),102);
         check(completions==6&&failure==h::LoginFailure::cancelled,"The consent Cancel button cancels");
 
-        // F. Every Connect queries the installed runtime; without one the
-        // login fails explicitly at once: no window, profile or browser.
+        // F. Every Connect queries the installed runtime. Without one the login
+        // window explains the prerequisite (localized) and links to Microsoft's
+        // official download page instead of a bundled bootstrapper: no
+        // profile or browser exists, and closing it reports the missing runtime.
+        using L=endfield::core::Language;
+        const auto runtime=h::webView2RuntimeStrings(L::english);
         const int queries=w.runtimeQueries;w.runtime.clear();
         presenter.present(h::Region::mainland,done);
-        check(completions==7&&failure==h::LoginFailure::pageUnavailable&&!result&&!presenter.isPresenting()&&!loginWindow()&&
-              w.environments==environments&&w.runtimeQueries==queries+1,"A missing WebView2 runtime reports the explicit failure without a window or browser");
+        HWND page=loginWindow();
+        check(completions==6&&presenter.isPresenting()&&page&&!IsWindowVisible(page)&&GetWindow(page,GW_OWNER)==owner.hwnd&&
+              w.environments==environments&&w.runtimeQueries==queries+1&&!presenter.nextDeadline(),"A missing runtime opens the explanation page in the owned login window, without a profile, browser or deadline");
+        check(text(page,110)==runtime.title&&text(page,111)==runtime.detail&&text(page,112)==std::string(h::webView2DownloadURL)&&text(page,105)==runtime.downloadLabel&&
+              text(page,106)==runtime.checkLabel&&text(page,102)=="Cancel"&&text(page,113).empty()&&!GetDlgItem(page,101),"The page names the runtime, shows the official download link, Check Again and Cancel");
+        check(std::find(tags.begin(),tags.end(),"runtime-missing")!=tags.end(),"The missing runtime is a fixed diagnostic tag");
+        click(page,105);
+        check(links==std::vector<std::string>{std::string(h::webView2DownloadURL)}&&presenter.isPresenting()&&w.environments==environments,
+              "The link asks for Microsoft's official download page; EndfieldHUD downloads and starts nothing itself");
+        click(page,106);
+        check(text(page,113)==runtime.stillMissing&&w.runtimeQueries==queries+2&&presenter.isPresenting()&&loginWindow()==page,"Check Again without a runtime says it is still missing and keeps the page");
+        SendMessageW(page,WM_CLOSE,0,0);
+        check(completions==7&&failure==h::LoginFailure::runtimeUnavailable&&!result&&!presenter.isPresenting()&&!loginWindow(),"Closing the page reports the missing runtime");
+        presenter.present(h::Region::mainland,done);click(loginWindow(),102);
+        check(completions==8&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow(),"The page's Cancel reports the missing runtime");
+        presenter.present(h::Region::mainland,done);presenter.cancel();
+        check(completions==9&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow()&&!presenter.isPresenting(),
+              "A controller cancel (the HUD hiding) closes the page and still names the missing runtime");
+        // Installed while the page is open: Check Again continues to the
+        // consent page in the same window (no restart), then the official site.
+        presenter.present(h::Region::global,done);page=loginWindow();
+        w.runtime=L"154.0.4258.62";click(page,106);
+        check(loginWindow()==page&&GetDlgItem(page,101)&&!GetDlgItem(page,105)&&!GetDlgItem(page,106)&&
+              text(page,110)==h::LoginSession::strings(h::Region::global,L::english).consentTitle&&text(page,112)==p::siteURL(h::Region::global)&&
+              presenter.isPresenting()&&w.environments==environments&&!presenter.nextDeadline(),"A runtime installed meanwhile continues to the consent page; still nothing before consent");
+        check(std::find(tags.begin(),tags.end(),"runtime-installed")!=tags.end(),"Finding the runtime is a fixed diagnostic tag");
+        click(page,101);w.pump();w.pump();
+        check(w.environments==environments+1&&lastEnvironment->controllers.size()==1&&
+              lastEnvironment->controllers[0]->view->navigations==std::vector<std::wstring>{L"https://www.skport.com/"},"Consent then opens the official site without restarting EndfieldHUD");
+        presenter.cancel();
+        check(completions==10&&failure==h::LoginFailure::cancelled&&lastEnvironment->controllers[0]->closed,"Cancel after consent disposes the browser");
+        lastEnvironment->exit();
+        // The page follows the UI language.
+        w.runtime.clear();presenter.setLanguage(L::japanese);presenter.present(h::Region::mainland,done);
+        const auto japanese=h::webView2RuntimeStrings(L::japanese);
+        check(text(loginWindow(),110)==japanese.title&&text(loginWindow(),105)==japanese.downloadLabel&&japanese.title!=runtime.title,"The explanation is localized");
+        SendMessageW(loginWindow(),WM_KEYDOWN,VK_ESCAPE,0);presenter.setLanguage(L::english);
+        check(completions==11&&failure==h::LoginFailure::runtimeUnavailable&&!loginWindow()&&links.size()==1,"Escape closes the page; nothing else asked for the download page");
         w.runtime=L"154.0.4258.62";
         check(n::WebViewLoginPresenter::runtimeVersion()==std::optional<std::wstring>(L"154.0.4258.62"),"The runtime version comes from the loader query");
 
@@ -316,7 +370,7 @@ void run() {
         check(presenter.isPresenting()&&std::filesystem::exists(lastProfile),"Presenting before teardown");
         check(!last->closed,"Browser open before teardown");
     }
-    check(completions==7&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
+    check(completions==11&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
     check(!std::filesystem::exists(w.userData),"Destroying the presenter removes its private profile");
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
     lastEnvironment.Reset();world=nullptr;

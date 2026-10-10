@@ -6,8 +6,10 @@
 #endif
 #include <windows.h>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 // Official-site login window over Microsoft Edge WebView2 (Evergreen runtime),
 // port of HypergryphAccountLogin. Created only after explicit Connect; the
@@ -18,6 +20,15 @@
 // data folder are released (the folder is removed once the browser exits).
 // Requires the WebView2 SDK headers/static loader (EHUD_WEBVIEW2_SDK_DIR);
 // without them the app uses UnavailableLoginPresenter instead.
+//
+// The Evergreen runtime is not bundled. When Connect finds none installed,
+// the same native window shows a localized explanation page instead of the
+// consent page (webView2RuntimeStrings): Microsoft's official download page
+// (webView2DownloadURL) opens in the user's browser on request, Check Again
+// asks the loader again and continues to the consent page once a runtime is
+// installed (no restart), and closing the page reports runtimeUnavailable.
+// The HUD hiding closes the page like any login (the controller cancels it).
+// No profile, browser process or download is started by EndfieldHUD itself.
 namespace endfield::native {
 struct WebViewLoginOptions {
     HWND owner{};                              // HUD window: the login stays above it
@@ -29,6 +40,9 @@ struct WebViewLoginOptions {
     // folders named EndfieldHUD-Login-* below it are created or swept.
     std::filesystem::path profileRoot;
     bool showWindows{true};                    // false only for hidden verification
+    // Opens Microsoft's official WebView2 download page in the user's default
+    // browser (default: ShellExecuteW "open"); tests record the request.
+    std::function<bool(std::string_view url)> openLink;
 };
 class WebViewLoginPresenter final:public modules::hypergryph::AccountLoginPresenter {
 public:
@@ -38,8 +52,9 @@ public:
     // query; no browser process is started). Checked at every Connect, so a
     // runtime installed while EndfieldHUD runs is used without a restart.
     static std::optional<std::wstring> runtimeVersion();
-    // Without a runtime the completion reports pageUnavailable at once (the
-    // Mac "Sign-in could not finish" text) and no window or browser exists.
+    // Without a runtime the window shows the explanation page (no profile or
+    // browser); however it closes (including cancel()), the completion
+    // reports runtimeUnavailable.
     void present(modules::hypergryph::Region,std::function<void(std::optional<modules::hypergryph::LoginResult>,modules::hypergryph::LoginFailure)>) override;
     void cancel() override;
     bool isPresenting() const override;

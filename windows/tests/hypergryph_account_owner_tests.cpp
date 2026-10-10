@@ -94,6 +94,12 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         const auto wake=owner.nextWakeTime(clock);const double untilNext=*expected->nextRecoveryAt-now;
         check(wake&&std::abs(*wake-(clock+untilNext))<1e-6&&untilNext>0&&untilNext<=432,"Only the next local recovery point is scheduled (no API refresh while reconnecting)");
         check(owner.activeRequests()==0,"No community request is ever started for a reconnect-required region");
+        // The import wrote the cache with inherited security: the owner applies
+        // the owner-only DACL in place on the shared queue (contents untouched).
+        const auto cacheFile=temp.path/L"Account"/L"profile-cache.json";
+        for(int i=0;i<100&&!gpu::ownerOnly(cacheFile);++i) {WaitForSingleObject(utilityEvent,20);executor.drain();}
+        check(gpu::ownerOnly(cacheFile)&&gpu::readBoundedFile(cacheFile,h::maximumCacheBytes)==std::optional<std::string>(h::encodeCacheBytes(importedCache(now,role))),
+              "The imported cache is re-secured owner-only in place, byte for byte");
         // Frames on the hidden WARP target.
         core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::account;core::ModulePresentation modules(core::Module::account);
         gpu::LayerComposition composition;std::vector<gpu::LayerCompositionEntry> all;

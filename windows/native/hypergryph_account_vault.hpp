@@ -52,6 +52,10 @@ public:
     bool exists() override;
     void write(const std::string&) override;      // queues the latest bytes (throws only when oversized)
     bool flush();                                 // waits for the accepted write, then writes newer bytes
+    // Startup: an existing cache written by another tool (the offline Mac
+    // import commits it with inherited security) receives the owner-only DACL
+    // in place, on the shared queue ahead of any write; contents untouched.
+    void secureExisting();
     bool idle() const noexcept;                   // nothing accepted or pending
     std::uint64_t writesStarted() const noexcept;
 private:
@@ -60,6 +64,9 @@ private:
 // Shared helpers (exposed for tests): owner-only atomic replacement and the
 // check that a file's DACL grants access only to the current user.
 void writeOwnerOnlyFile(const std::filesystem::path&,const std::string& bytes);
+// Applies the owner-only protected DACL to an existing regular file in place;
+// false when the file does not exist.
+bool restrictToOwner(const std::filesystem::path&);
 std::optional<std::string> readBoundedFile(const std::filesystem::path&,std::size_t maximum);
 bool ownerOnly(const std::filesystem::path&);
 #endif

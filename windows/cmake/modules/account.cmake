@@ -38,8 +38,11 @@ if(BUILD_TESTING)
   target_link_libraries(hypergryph_account_canvas_tests PRIVATE hud_hypergryph_account)
   add_test(NAME hypergryph_account_canvas_contracts COMMAND hypergryph_account_canvas_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
+  # Also the Mac import -> restart contract: the import tool's codec
+  # (hud_mac_import_codec, cmake/modules/import.cmake) produces the cache a
+  # fresh controller reads.
   add_executable(hypergryph_account_controller_tests tests/hypergryph_account_controller_tests.cpp)
-  target_link_libraries(hypergryph_account_controller_tests PRIVATE hud_hypergryph_account)
+  target_link_libraries(hypergryph_account_controller_tests PRIVATE hud_hypergryph_account hud_mac_import_codec)
   add_test(NAME hypergryph_account_controller_contracts COMMAND hypergryph_account_controller_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-source.json)
   # Profile sync across module areas: pending update/lock replay on attach.
@@ -87,7 +90,7 @@ if(WIN32)
     add_executable(hypergryph_account_webview_tests tests/hypergryph_account_webview_tests.cpp native/hypergryph_account_webview.cpp)
     target_include_directories(hypergryph_account_webview_tests BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/hypergryph_account_webview2_stub)
     target_compile_definitions(hypergryph_account_webview_tests PRIVATE EHUD_HAS_WEBVIEW2 _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(hypergryph_account_webview_tests PRIVATE hud_hypergryph_account rpcrt4 ole32 user32 gdi32)
+    target_link_libraries(hypergryph_account_webview_tests PRIVATE hud_hypergryph_account rpcrt4 ole32 user32 gdi32 shell32)
     add_test(NAME hypergryph_account_webview_contracts COMMAND hypergryph_account_webview_tests)
   endif()
 endif()
@@ -104,7 +107,9 @@ endif()
 # (build/native/include/WebView2.h and build/native/<arch>/WebView2LoaderStatic.lib).
 # Only the x64 static loader is vendored; other architectures build without
 # the official login (UnavailableLoginPresenter: Connect reports the explicit
-# failure). At run time the installed Evergreen WebView2 runtime is required.
+# failure). At run time the installed Evergreen WebView2 runtime is required;
+# it is not redistributed (no bootstrapper): without it Connect shows the
+# localized explanation page linking to Microsoft's official download page.
 set(EHUD_WEBVIEW2_SDK_DIR "" CACHE PATH "Optional Microsoft.Web.WebView2 SDK package root (default: the vendored pinned package)")
 if(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
   set(ehud_webview2_arch arm64)
@@ -154,7 +159,7 @@ if(WIN32 AND ehud_webview2_loader)
   # The SDK header is third-party: include it as a system directory.
   target_include_directories(hud_hypergryph_account_webview SYSTEM PRIVATE "${ehud_webview2_include}")
   target_compile_definitions(hud_hypergryph_account_webview PUBLIC EHUD_HAS_WEBVIEW2 PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_hypergryph_account_webview PUBLIC hud_hypergryph_account PRIVATE "${ehud_webview2_loader}" rpcrt4 ole32 user32 gdi32 advapi32 version shlwapi)
+  target_link_libraries(hud_hypergryph_account_webview PUBLIC hud_hypergryph_account PRIVATE "${ehud_webview2_loader}" rpcrt4 ole32 user32 gdi32 advapi32 version shlwapi shell32)
   message(STATUS "Account Linking official login: WebView2 SDK (${ehud_webview2_arch}) from ${ehud_webview2_loader}")
 endif()
 
@@ -190,6 +195,31 @@ if(WIN32)
   endif()
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "account|hud_account_area|app/areas/account_module.hpp|endfield::areas::accountModule")
+  # The WebView2 SDK's static loader is linked into EndfieldHUD.exe, so its
+  # licence and third-party notices ship in the package (BSD-style licence:
+  # binary redistributions reproduce the notice). Hidden coverage checks the
+  # staged copies.
+  if(ehud_webview2_loader AND NOT EHUD_WEBVIEW2_SDK_DIR)
+    set(ehud_webview2_notices "${CMAKE_CURRENT_SOURCE_DIR}/third_party/webview2")
+  elseif(ehud_webview2_loader)
+    set(ehud_webview2_notices "${EHUD_WEBVIEW2_SDK_DIR}")
+  else()
+    set(ehud_webview2_notices "")
+  endif()
+  if(ehud_webview2_notices AND EXISTS "${ehud_webview2_notices}/LICENSE.txt" AND EXISTS "${ehud_webview2_notices}/NOTICE.txt")
+    target_compile_definitions(hud_account_area PRIVATE EHUD_ACCOUNT_WEBVIEW2_NOTICES)
+    foreach(ehud_notice IN ITEMS License:LICENSE.txt Notice:NOTICE.txt)
+      string(REPLACE ":" ";" ehud_notice "${ehud_notice}")
+      list(GET ehud_notice 0 ehud_notice_id)
+      list(GET ehud_notice 1 ehud_notice_file)
+      if(COMMAND ehud_app_resource)
+        ehud_app_resource(account.webview2${ehud_notice_id} file "${ehud_webview2_notices}/${ehud_notice_file}" "licenses/webview2/${ehud_notice_file}")
+      else()
+        set_property(GLOBAL APPEND PROPERTY EHUD_APP_RESOURCE_SPECS
+          "account.webview2${ehud_notice_id}|file|${ehud_webview2_notices}/${ehud_notice_file}|licenses/webview2/${ehud_notice_file}")
+      endif()
+    endforeach()
+  endif()
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREA_FIXTURES
     "account.coverage|${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/hypergryph-account-coverage.json")
   # Header wallet sprites and numerals (pinned by GaugeAssets::load), staged
@@ -203,7 +233,9 @@ if(WIN32)
   if(BUILD_TESTING)
     # Synthetic coverage providers and the oracle-derived coverage fixture
     # (tools/hypergryph_account_coverage_fixture.py): no network or browser.
-    add_executable(hypergryph_account_area_tests tests/hypergryph_account_area_tests.cpp)
+    # The HUD window's UIA root (app/hud_automation.cpp, unchanged host
+    # source) is compiled in to drive the area's ModuleOwner hooks under it.
+    add_executable(hypergryph_account_area_tests tests/hypergryph_account_area_tests.cpp app/hud_automation.cpp)
     target_compile_definitions(hypergryph_account_area_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
     target_link_libraries(hypergryph_account_area_tests PRIVATE hud_account_area uiautomationcore oleaut32 ole32)
     add_test(NAME hypergryph_account_area_contracts COMMAND hypergryph_account_area_tests

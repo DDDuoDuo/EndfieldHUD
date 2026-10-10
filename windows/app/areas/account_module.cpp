@@ -18,6 +18,7 @@
 #include <uiautomation.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -60,6 +61,72 @@ h::LocalDateFields utcFields(h::Time time) {
     return {value.tm_mon + 1, value.tm_mday, value.tm_hour, value.tm_min, value.tm_sec};
 }
 
+// Hidden coverage only: the host's per-owner UI Automation group
+// (app/hud_automation.cpp) as the hooks see it: the fragments' parent and
+// fragment root, whose children and hit test come from the owner hooks. The
+// host's own root over these hooks is exercised by the area unit test.
+class CoverageAutomationGroup final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IRawElementProviderFragmentRoot {
+public:
+    explicit CoverageAutomationGroup(const ModuleOwner& owner) : owner_(owner) {}
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderSimple)) *out = static_cast<IRawElementProviderSimple*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragment)) *out = static_cast<IRawElementProviderFragment*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragmentRoot)) *out = static_cast<IRawElementProviderFragmentRoot*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    IFACEMETHODIMP_(ULONG) Release() override { const ULONG n = --refs_; if (!n) delete this; return n; }
+    IFACEMETHODIMP get_ProviderOptions(ProviderOptions* out) override {
+        if (!out) return E_POINTER;
+        *out = ProviderOptions(ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
+        return S_OK;
+    }
+    IFACEMETHODIMP GetPatternProvider(PATTERNID, IUnknown** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP GetPropertyValue(PROPERTYID id, VARIANT* out) override {
+        if (!out) return E_POINTER;
+        VariantInit(out);
+        if (id == UIA_ControlTypePropertyId) { out->vt = VT_I4; out->lVal = UIA_GroupControlTypeId; }
+        return S_OK;
+    }
+    IFACEMETHODIMP get_HostRawElementProvider(IRawElementProviderSimple** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP Navigate(NavigateDirection direction, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        const auto n = owner_.automationCount();
+        if (!n || (direction != NavigateDirection_FirstChild && direction != NavigateDirection_LastChild)) return S_OK;
+        return owner_.automationChild(direction == NavigateDirection_FirstChild ? 0 : n - 1, out);
+    }
+    IFACEMETHODIMP GetRuntimeId(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP get_BoundingRectangle(UiaRect* out) override { if (!out) return E_POINTER; *out = {}; return S_OK; }
+    IFACEMETHODIMP GetEmbeddedFragmentRoots(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP SetFocus() override { return S_OK; }
+    IFACEMETHODIMP get_FragmentRoot(IRawElementProviderFragmentRoot** out) override {
+        if (!out) return E_POINTER;
+        *out = this;
+        AddRef();
+        return S_OK;
+    }
+    IFACEMETHODIMP ElementProviderFromPoint(double x, double y, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        return owner_.automationFromPoint(x, y, out);
+    }
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+
+private:
+    ~CoverageAutomationGroup() = default;
+    const ModuleOwner& owner_;
+    std::atomic<ULONG> refs_{1};
+};
+// Same COM object (IUnknown identity).
+bool sameObject(IUnknown* a, IUnknown* b) {
+    Microsoft::WRL::ComPtr<IUnknown> x, y;
+    return a && b && SUCCEEDED(a->QueryInterface(IID_PPV_ARGS(&x))) && SUCCEEDED(b->QueryInterface(IID_PPV_ARGS(&y))) && x.Get() == y.Get();
+}
+
 // Hidden coverage only: synthetic providers, a pinned wall clock and a
 // private profile store in the area's own coverage root.
 struct CoverageWorld {
@@ -75,6 +142,10 @@ struct CoverageWorld {
     std::vector<std::string> events;              // accountAction metadata, in order
     h::AccountProfileSink* externalSink{};        // a Personal Profile area attaching in coverage (observed only)
     unsigned externalAttaches{};
+    // The host's UIA group for this owner (one per registration, like the host's).
+    Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> automationGroup;
+    // Staged WebView2 SDK licence and notices (empty without the loader).
+    fs::path webview2License, webview2Notice;
     // Coverage progress (module cycles repeat the same interactions after the first).
     bool linked{}, finished{};
     h::AccountPresentation reference;
@@ -133,6 +204,9 @@ public:
     ~AccountModule() override {
         host_.withdraw(AccountProfileLink::key);
         relay_.attach(nullptr);
+        // The UIA peers borrow the owner; they are disconnected first.
+        automation_.reset();
+        if (world_) world_->automationGroup.Reset();
         owner_.reset();
     }
     AccountModule(const AccountModule&) = delete;
@@ -173,7 +247,10 @@ public:
     bool pointer(const PointerEvent& e, double t) override { return owner_->pointer(e, t); }
     bool wheel(const WheelEvent& e, double t) override { return owner_->wheel(e, t); }
     bool key(const KeyEvent& e, double t) override { return owner_->key(e, modified(e), t); }
-    bool message(const NativeMessage& m, double t) override { return owner_->message(m, t); }
+    bool message(const NativeMessage& m, double t) override {
+        if (m.message == message_ && (!m.window || m.window == window_)) automationWake_ = false;
+        return owner_->message(m, t);
+    }
     void focus(bool v, double t) override { if (!v) owner_->cancelInteraction(t); }
     void cancelInteraction(double t) override { owner_->cancelInteraction(t); }
     bool flush(double t) override { return owner_->flush(t); }
@@ -197,21 +274,48 @@ public:
         if (step.module) moduleStep(step); else areaStep(step);
     }
 
-    // The host's UI Automation view of this owner (native/account_automation.hpp):
-    // the Mac's transparent AX buttons over the projected face and the header
-    // wallet. The HUD window's UIA root provider (host) lists the fragments.
+    // --- UI Automation (ModuleOwner hooks) -------------------------------------
+    // The Mac's transparent AX buttons over the projected face and the header
+    // wallet (native/account_automation.hpp) under this owner's group of the
+    // HUD window's root provider (app/hud_automation.hpp). Created on the first
+    // refresh, i.e. only once a UIA client asked the HUD; refreshed on content
+    // events only.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!automation_ || automationRoot_ != root) {
+            automation_.reset();
+            automation_ = std::make_unique<native::NativeAccountAutomation>(automationHost(root));
+            automationRoot_ = root;
+        }
+        return automation_->refresh();
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
+
+    // Logical client rect -> physical client pixels -> screen pixels.
+    std::optional<core::Rect> screenRect(core::Rect r) const {
+        const double scale = host_.metrics().scale;
+        POINT origin{0, 0};
+        if (!(scale > 0) || !ClientToScreen(static_cast<HWND>(window_), &origin)) return std::nullopt;
+        return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
+    }
     native::AccountAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
         native::AccountAutomationHost view;
         view.root = root;
         view.controls = [this] { return owner_->accessibleControls(); };
-        view.toScreen = [this](core::Rect r) -> std::optional<core::Rect> {
-            // Logical client -> physical client pixels -> screen pixels.
-            const double scale = host_.metrics().scale;
-            POINT origin{0, 0};
-            if (!(scale > 0) || !ClientToScreen(static_cast<HWND>(window_), &origin)) return std::nullopt;
-            return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
+        view.toScreen = [this](core::Rect r) { return screenRect(r); };
+        view.invoke = [this](std::string_view id) {
+            const bool done = owner_->performAccessible(id, host_.now());
+            if (done) wakeAfterAutomation();
+            return done;
         };
-        view.invoke = [this](std::string_view id) { return owner_->performAccessible(id, host_.now()); };
         return view;
     }
 
@@ -234,6 +338,19 @@ private:
     h::AccountProfileRelay relay_;
     std::unique_ptr<tools::AccountLinkingOwner> owner_;
     std::uint64_t workRevision_{};
+    std::unique_ptr<native::NativeAccountAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{}; // held (AddRef'd) by automation_
+    bool automationWake_{};                             // a UIA press posted the registered message
+
+    // A UIA press runs inside a COM call, outside the host's input routes. The
+    // registered message brings the host's content refresh (frame demand,
+    // deadlines, the UIA tree) exactly as a routed click does. One at a time;
+    // hidden coverage routes it through ModuleCoverage::message itself.
+    void wakeAfterAutomation() {
+        if (automationWake_) return;
+        if (world_) { automationWake_ = true; return; }
+        automationWake_ = PostMessageW(static_cast<HWND>(window_), message_, 0, 0) != FALSE;
+    }
 
     bool syncWorkMode(double t) {
         const auto* work = host_.workMode();
@@ -303,17 +420,23 @@ private:
             return value.value;
         }
         void settleAnimations() { for (unsigned n = 0; n < 24; ++n) frame(1. / 60); }
-        // UI Automation over the real owner: the peer under a control's
-        // projected screen centre, its AutomationId and Invoke.
-        Microsoft::WRL::ComPtr<IRawElementProviderFragment> peer(native::NativeAccountAutomation& automation, std::string_view id) {
+        // UI Automation through the ModuleOwner hooks: the peer under a
+        // control's projected screen centre (owner hook and the group's hit
+        // test agree), its AutomationId and Invoke.
+        IRawElementProviderFragmentRoot* group() {
+            if (!w.automationGroup) w.automationGroup.Attach(static_cast<IRawElementProviderFragmentRoot*>(new CoverageAutomationGroup(self)));
+            return w.automationGroup.Get();
+        }
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> peer(std::string_view id) {
             std::optional<core::Rect> client;
             for (const auto& c : self.owner_->accessibleControls()) if (c.id == id) client = c.rect;
             step.check(client.has_value(), "The control has an accessibility peer");
-            const auto screen = self.automationHost(nullptr).toScreen(*client);
+            const auto screen = self.screenRect(*client);
             step.check(screen.has_value(), "The peer projects to screen pixels");
-            Microsoft::WRL::ComPtr<IRawElementProviderFragment> element;
-            step.check(SUCCEEDED(automation.fromPoint(screen->x + screen->width / 2, screen->y + screen->height / 2, &element)) && element,
-                       "UIA hit testing finds the projected peer");
+            const double x = screen->x + screen->width / 2, y = screen->y + screen->height / 2;
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> element, viaGroup;
+            step.check(self.automationFromPoint(x, y, &element) == S_OK && element, "UIA hit testing through the owner hook finds the projected peer");
+            step.check(SUCCEEDED(group()->ElementProviderFromPoint(x, y, &viaGroup)) && viaGroup.Get() == element.Get(), "The group's hit test reaches the same peer");
             Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
             VARIANT automationId;
             VariantInit(&automationId);
@@ -328,6 +451,10 @@ private:
             step.check(SUCCEEDED(element.As(&invoker)), "Account peers are buttons with Invoke");
             t += .05;
             const HRESULT hr = invoker->Invoke();
+            // A successful press posts the registered wake; route it as the
+            // host would (never SendMessage in coverage).
+            if (self.automationWake_)
+                step.check(step.message(self.message_, 0, 0) && !self.automationWake_, "A UIA press wakes the host through the registered message");
             frame();
             return hr;
         }
@@ -406,10 +533,11 @@ private:
             step.check(owner_->gauge().model().value() == d.expectedGauge() && !owner_->gauge().model().canOpen(),
                        "The unlinked header wallet shows Work Mode minutes");
             {
-                native::NativeAccountAutomation automation(automationHost(nullptr));
-                step.check(automation.refresh() && automation.size() == d.canvas().accessibleActions().size(),
-                           "UIA lists the face's peers; the unlinked wallet has none");
-                step.check(d.invoke(d.peer(automation, "account:refresh")) == UIA_E_ELEMENTNOTENABLED, "A disabled peer refuses Invoke");
+                step.check(automationRefresh(d.group()) && automationCount() == d.canvas().accessibleActions().size(),
+                           "UIA lists the face's peers through the owner hooks; the unlinked wallet has none");
+                step.check(d.invoke(d.peer("account:refresh")) == UIA_E_ELEMENTNOTENABLED && !automationWake_, "A disabled peer refuses Invoke and wakes nothing");
+                automationDisconnect();
+                step.check(automationCount() == 0, "Disconnecting removes every peer");
             }
             step.check(d.click("region") && d.canvas().menu() == h::AccountCanvasModel::Menu::region, "Region opens its shaped menu");
             step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen(), "Escape closes only the menu");
@@ -485,22 +613,46 @@ private:
         step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen(), "The recovery popover opens");
         step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes it");
         {
-            // The same controls through UI Automation (Mac AX press).
-            native::NativeAccountAutomation automation(automationHost(nullptr));
-            step.check(automation.refresh() && automation.size() == d.canvas().accessibleActions().size() + 1, "UIA lists the face and the wallet");
-            const auto role = d.peer(automation, "account:role");
-            step.check(d.invoke(role) == S_OK && d.canvas().menu() == h::AccountCanvasModel::Menu::role && automation.refresh(),
-                       "Invoking the role peer opens its menu and restructures the tree");
+            // The same controls through the ModuleOwner UIA hooks (Mac AX
+            // press), under this owner's group as the host lists them.
+            auto* group = d.group();
+            (void)automationRefresh(group);
+            const auto faceControls = d.canvas().accessibleActions().size();
+            step.check(automationCount() == faceControls + 1, "UIA lists the face and the wallet");
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> first, last, parent, fromGroup;
+            Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> fragmentRoot;
+            step.check(automationChild(0, &first) == S_OK && first && SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) && sameObject(parent.Get(), group) &&
+                       SUCCEEDED(first->get_FragmentRoot(&fragmentRoot)) && sameObject(fragmentRoot.Get(), group),
+                       "Fragments are children of the owner's group, which is also their fragment root");
+            step.check(SUCCEEDED(group->QueryInterface(IID_PPV_ARGS(&parent))) && SUCCEEDED(parent->Navigate(NavigateDirection_FirstChild, &fromGroup)) &&
+                       fromGroup.Get() == first.Get() && automationChild(automationCount(), &last) < 0 && !last, "The group's children are the owner's fragments in order");
+            const auto invokes = automation_->stats().invokes;
+            const auto role = d.peer("account:role");
+            step.check(d.invoke(role) == S_OK && d.canvas().menu() == h::AccountCanvasModel::Menu::role && automationRefresh(group),
+                       "Invoking the role peer opens its menu; the host's refresh restructures the tree");
             Microsoft::WRL::ComPtr<IRawElementProviderSimple> stale;
             VARIANT name;
             VariantInit(&name);
             step.check(SUCCEEDED(role.As(&stale)) && stale->GetPropertyValue(UIA_NamePropertyId, &name) == UIA_E_ELEMENTNOTAVAILABLE,
                        "Peers hidden by the menu are disconnected");
-            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automation.refresh(), "Escape closes the menu; the face peers return");
-            step.check(d.invoke(d.peer(automation, "wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && automation.refresh() &&
-                       automation.size() == d.canvas().accessibleActions().size() + 2, "The wallet peer opens the popover and exposes its Refresh");
+            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automationRefresh(group), "Escape closes the menu; the face peers return");
+            step.check(d.invoke(d.peer("wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && automationRefresh(group) &&
+                       automationCount() == faceControls + 2, "The wallet peer opens the popover and exposes its Refresh");
             step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes the popover");
-            step.check(automation.stats().invokes == 2 && controller().presentation() == w.reference, "UIA presses change nothing else");
+            step.check(automation_->stats().invokes == invokes + 2 && controller().presentation() == w.reference, "UIA presses change nothing else");
+            // HUD concealed: every fragment disconnects; the next refresh
+            // (HUD shown again) lists fresh ones under the same group.
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> current;
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> listed;
+            VARIANT label;
+            VariantInit(&label);
+            (void)automationRefresh(group);
+            step.check(automationChild(0, &current) == S_OK && SUCCEEDED(current.As(&listed)) && listed->GetPropertyValue(UIA_NamePropertyId, &label) == S_OK &&
+                       label.vt == VT_BSTR, "A listed peer answers with its label");
+            VariantClear(&label);
+            automationDisconnect();
+            step.check(automationCount() == 0 && listed->GetPropertyValue(UIA_NamePropertyId, &label) == UIA_E_ELEMENTNOTAVAILABLE, "Disconnecting ends every peer");
+            step.check(automationRefresh(group) && automationCount() == faceControls + 1, "The next refresh connects fresh peers");
         }
         (void)pointer({PointerKind::leave, PointerButton::none, 0, 0}, d.t);
         d.settleAnimations();
@@ -515,6 +667,18 @@ private:
         step.check(!owner_->message({window_, WM_APP + 0x0FFF, 0, 0}, d.t) && owner_->message({window_, message_, 0, 0}, d.t),
                    "Only the registered account wake is consumed by this owner");
         step.check(!w.host.queued() && !w.host.activeRequests() && !owner_->activeRequests(), "No account work is pending between steps");
+#ifdef EHUD_ACCOUNT_WEBVIEW2_NOTICES
+        if (step.cycle == 0) {
+            // The static WebView2 loader is in EndfieldHUD.exe: its licence
+            // and notices are staged in the verified package.
+            const auto starts = [](const fs::path& file, std::string_view text) {
+                const auto bytes = file.empty() ? std::nullopt : ehud::data::detail::readFile(file, 64 * 1024);
+                return bytes && bytes->rfind(text, 0) == 0;
+            };
+            step.check(starts(w.webview2License, "Copyright (C) Microsoft Corporation") && starts(w.webview2Notice, "NOTICES AND INFORMATION"),
+                       "The WebView2 SDK licence and notices ship in the package");
+        }
+#endif
         d.frame();
         if (step.cycle < 2 || w.finished || !w.linked) return;
         // ---- Last cycle, after the retained raster comparison: failure paths.
@@ -530,6 +694,13 @@ private:
             d.settle();
             step.check(controller().record().linked && says(controller().presentation().statusMessage, "Sign-in could not finish. Please try again."),
                        "An unfinished sign-in reports the Mac failure and keeps the link");
+            // Windows: no WebView2 Runtime, and the explanation page was closed.
+            controller().perform(reconnect);
+            step.check(w.login.isPresenting() && w.login.finish(std::nullopt, h::LoginFailure::runtimeUnavailable), "The runtime explanation page closes");
+            d.settle();
+            step.check(controller().record().linked && !controller().isPresentingLogin() &&
+                       controller().presentation().statusMessage == h::webView2RuntimeStrings(host_.appearance().language).status,
+                       "A missing WebView2 Runtime is named on the face and the link is kept");
         }
         // Expired community session: cached sanity stays, a new sign-in is required.
         w.wall += 6;
@@ -574,6 +745,8 @@ std::unique_ptr<ModuleOwner> buildAccountModule(const ApplicationModuleContext& 
         const auto fixture = c.fixture ? c.fixture(coverageFixture) : fs::path{};
         if (fixture.empty() || c.coverageRoot.empty()) throw std::runtime_error("Account coverage needs its declared fixture and coverage root");
         world = std::make_unique<CoverageWorld>(loadAccountCoverageFixture(fixture), c.coverageRoot);
+        world->webview2License = c.resource("account.webview2License");
+        world->webview2Notice = c.resource("account.webview2Notice");
     }
     return std::make_unique<AccountModule>(c, resources, std::move(world));
 }

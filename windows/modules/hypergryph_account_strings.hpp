@@ -18,4 +18,17 @@ inline constexpr std::string_view macConsentDetailChinese=
 inline constexpr std::string_view macVaultFailure="Keychain could not be updated. Try again.";
 inline constexpr std::string_view macVaultFailureChinese="无法更新钥匙串，请重试。";
 std::string accountText(std::string_view english,std::string_view chinese,core::Language,AccountWording);
+
+// Windows only: the official sign-in needs the Microsoft Edge WebView2
+// Runtime (Evergreen), which EndfieldHUD does not bundle. The Mac signs in
+// through WKWebView, which is always present, so these texts have no Mac
+// counterpart; they appear only when the loader finds no installed runtime.
+// The explanation page links to Microsoft's official download page (opened
+// in the user's browser) instead of shipping the bootstrapper.
+inline constexpr std::string_view webView2DownloadURL="https://developer.microsoft.com/microsoft-edge/webview2/#download-section";
+struct WebView2RuntimeStrings {
+    std::string title,detail,site,downloadLabel,checkLabel,stillMissing; // explanation page in the login window
+    std::string status;                                                  // Account face status line after the page closes
+};
+WebView2RuntimeStrings webView2RuntimeStrings(core::Language);
 }

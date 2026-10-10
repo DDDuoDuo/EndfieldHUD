@@ -128,6 +128,26 @@ void wording() {
             check(windows.find(word)==std::string::npos&&vault.find(word)==std::string::npos,"Windows wording never mentions the Mac Keychain");
         check(h::accountText("Retry","重试",l,h::AccountWording::windows)==endfield::core::localized("Retry","重试",l),"Other account strings are the Mac catalog text");
     }
+    // WebView2 Runtime explanation (Windows only): every language names the
+    // runtime, links to Microsoft's official page and never offers a bundled
+    // installer; the face status fits the Mac status line (one line, 376 pt).
+    const auto parsed=h::parseURL(h::webView2DownloadURL);
+    check(parsed&&parsed->scheme=="https"&&parsed->host==std::optional<std::string>("developer.microsoft.com")&&
+          std::string_view(h::webView2DownloadURL).find("/microsoft-edge/webview2/")!=std::string_view::npos,"The download link is Microsoft's official WebView2 page over HTTPS");
+    std::vector<std::string> titles;
+    for(const auto l:{L::english,L::simplifiedChinese,L::traditionalChinese,L::japanese,L::korean}) {
+        const auto r=h::webView2RuntimeStrings(l);
+        for(const auto* value:{&r.title,&r.detail,&r.downloadLabel,&r.checkLabel,&r.stillMissing,&r.status}) check(!value->empty(),"Every runtime text is present");
+        check(r.title.find("WebView2")!=std::string::npos&&r.detail.find("WebView2")!=std::string::npos&&r.status.find("WebView2")!=std::string::npos,"The texts name the WebView2 Runtime");
+        check(r.detail.find(r.checkLabel)!=std::string::npos,"The explanation refers to the Check Again button by its label");
+        check(r.site==std::string(h::webView2DownloadURL),"The page shows the official download link");
+        check(r.status.find('\n')==std::string::npos&&r.status.size()<=96,"The face status is one short line");
+        for(const std::string_view word:{"Keychain","Mac","bootstrapper","Bootstrapper"}) check(r.detail.find(word)==std::string::npos,"No Mac or bundled-installer wording");
+        titles.push_back(r.title);
+    }
+    std::sort(titles.begin(),titles.end());
+    check(std::adjacent_find(titles.begin(),titles.end())==titles.end(),"Each language has its own text");
+    check(h::webView2RuntimeStrings(L::system).title==h::webView2RuntimeStrings(L::english).title,"System falls back to English like the shared catalog");
 }
 }
 int main(int argc,char** argv) {

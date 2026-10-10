@@ -1,6 +1,7 @@
 #include "native/hypergryph_account_webview.hpp"
 #if defined(_WIN32)&&defined(EHUD_HAS_WEBVIEW2)
 #include <rpc.h>
+#include <shellapi.h>
 #include <wrl.h>
 #include <WebView2.h>
 #include <algorithm>
@@ -59,13 +60,16 @@ constexpr wchar_t windowClass[]=L"EndfieldHUDAccountLogin";
 // Completion is finished from the login window's own queue, never inside a
 // WebView2 event handler that would close its own controller.
 constexpr UINT finishMessage=WM_APP+1;
-enum Control:int {continueID=101,cancelID=102,retryID=103,toolbarCancelID=104};
+enum Control:int {continueID=101,cancelID=102,retryID=103,toolbarCancelID=104,downloadID=105,checkID=106,titleID=110,detailID=111,siteID=112,noteID=113};
 }
 struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     struct Popup {HWND window{};ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> view;};
     WebViewLoginOptions options;std::optional<h::LoginSession> session;std::size_t reported{};
     std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> completion;
-    HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{};HFONT titleFont{},bodyFont{},monoFont{};
+    HWND window{},title{},detail{},site{},continueButton{},cancelButton{},status{},retry{},toolbarCancel{},download{},check{},note{};HFONT titleFont{},bodyFont{},monoFont{};
+    // Region of the Connect that found no WebView2 Runtime: the window shows
+    // the explanation page (no session, profile or browser) while set.
+    std::optional<h::Region> runtimeRegion;
     ComPtr<ICoreWebView2Environment> environment;ComPtr<ICoreWebView2Controller> controller;ComPtr<ICoreWebView2> view;std::vector<Popup> popups;
     // Environments kept alive only until their browser process exits, so the
     // temporary profile can be deleted (no browser process outlives a login).
@@ -96,9 +100,18 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                 return 0;
             case WM_COMMAND:
                 if(LOWORD(w)==continueID) keep->consent();
-                else if(LOWORD(w)==cancelID||LOWORD(w)==toolbarCancelID) keep->finish(std::nullopt,h::LoginFailure::cancelled);
+                else if(LOWORD(w)==cancelID||LOWORD(w)==toolbarCancelID) keep->dismiss();
                 else if(LOWORD(w)==retryID) keep->retryPage();
+                else if(LOWORD(w)==downloadID) keep->openDownloadPage();
+                else if(LOWORD(w)==checkID) keep->recheckRuntime();
                 return 0;
+            // Text sits on the window background (Mac panel), not on 3D-face boxes.
+            case WM_CTLCOLORSTATIC:
+                if(hwnd==keep->window) {
+                    const HDC dc=reinterpret_cast<HDC>(w);SetTextColor(dc,GetSysColor(COLOR_WINDOWTEXT));SetBkColor(dc,GetSysColor(COLOR_WINDOW));
+                    return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+                }
+                break;
             case WM_SIZE: if(hwnd==keep->window) keep->layout();else keep->layoutPopup(hwnd);return 0;
             // Mac windowDidBecomeKey: a popup reads its own page, the main panel the main page.
             case WM_ACTIVATE:
@@ -108,8 +121,8 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
                     keep->readCredential(target);
                 }
                 break;
-            case WM_KEYDOWN: if(w==VK_ESCAPE&&hwnd==keep->window) {keep->finish(std::nullopt,h::LoginFailure::cancelled);return 0;}break;
-            case WM_CLOSE: if(hwnd==keep->window) keep->finish(std::nullopt,h::LoginFailure::cancelled);else keep->closePopup(hwnd);return 0;
+            case WM_KEYDOWN: if(w==VK_ESCAPE&&hwnd==keep->window) {keep->dismiss();return 0;}break;
+            case WM_CLOSE: if(hwnd==keep->window) keep->dismiss();else keep->closePopup(hwnd);return 0;
         }
         return DefWindowProcW(hwnd,message,w,l);
     }
@@ -117,29 +130,81 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         HWND hwnd=CreateWindowExW(0,cls,text.c_str(),WS_CHILD|WS_VISIBLE|style,0,0,10,10,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
         SendMessageW(hwnd,WM_SETFONT,reinterpret_cast<WPARAM>(font),TRUE);return hwnd;
     }
-    void present(h::Region region) {
-        session.emplace(region,nonce());reported=0;++generation;
+    // Mac NSPanel 860x650 points, minimum 680x540; above the HUD (topmost
+    // owned window), centred on it. Shared by the consent and runtime pages.
+    bool createWindow(h::Region region) {
         const auto strings=h::LoginSession::strings(region,options.language);
         const double scale=dpiScale(options.owner);
-        // Mac NSPanel 860x650 points, minimum 680x540; above the HUD (topmost owned window).
         window=CreateWindowExW(WS_EX_TOPMOST,windowClass,wide(strings.title).c_str(),WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_THICKFRAME|WS_MINIMIZEBOX,
             CW_USEDEFAULT,CW_USEDEFAULT,int(860*scale),int(650*scale),options.owner,nullptr,GetModuleHandleW(nullptr),this);
-        if(!window) {session.reset();throw std::runtime_error("Login window could not be created");}
+        if(!window) return false;
         const auto px=[&](double v){return -int(std::lround(v*scale));};
         titleFont=CreateFontW(px(20),0,0,0,FW_SEMIBOLD,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
         bodyFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
         monoFont=CreateFontW(px(13),0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
-        title=control(L"STATIC",wide(strings.consentTitle),SS_CENTER,0,titleFont);
-        detail=control(L"STATIC",wide(strings.consentDetail),SS_CENTER,0,bodyFont);
-        site=control(L"STATIC",wide(strings.site),SS_CENTER,0,monoFont);
-        continueButton=control(L"BUTTON",wide(strings.continueLabel),BS_DEFPUSHBUTTON|WS_TABSTOP,continueID,bodyFont);
-        cancelButton=control(L"BUTTON",wide(strings.cancelLabel),BS_PUSHBUTTON|WS_TABSTOP,cancelID,bodyFont);
         RECT owner{},frame{};
         if(options.owner&&GetWindowRect(options.owner,&owner)&&GetWindowRect(window,&frame))
             SetWindowPos(window,HWND_TOPMOST,(owner.left+owner.right)/2-(frame.right-frame.left)/2,(owner.top+owner.bottom)/2-(frame.bottom-frame.top)/2,0,0,SWP_NOSIZE|(options.showWindows?0u:SWP_NOACTIVATE));
-        layout();
-        if(options.showWindows) {ShowWindow(window,SW_SHOWNORMAL);SetForegroundWindow(window);SetFocus(continueButton);}
+        return true;
     }
+    void show(HWND focus) {
+        layout();
+        if(options.showWindows) {ShowWindow(window,SW_SHOWNORMAL);SetForegroundWindow(window);SetFocus(focus);}
+    }
+    void consentPage() {
+        const auto strings=h::LoginSession::strings(session->region(),options.language);
+        title=control(L"STATIC",wide(strings.consentTitle),SS_CENTER,titleID,titleFont);
+        detail=control(L"STATIC",wide(strings.consentDetail),SS_CENTER,detailID,bodyFont);
+        site=control(L"STATIC",wide(strings.site),SS_CENTER,siteID,monoFont);
+        continueButton=control(L"BUTTON",wide(strings.continueLabel),BS_DEFPUSHBUTTON|WS_TABSTOP,continueID,bodyFont);
+        cancelButton=control(L"BUTTON",wide(strings.cancelLabel),BS_PUSHBUTTON|WS_TABSTOP,cancelID,bodyFont);
+    }
+    void present(h::Region region) {
+        session.emplace(region,nonce());reported=0;++generation;
+        if(!createWindow(region)) {session.reset();throw std::runtime_error("Login window could not be created");}
+        consentPage();show(continueButton);
+    }
+    // No WebView2 Runtime installed: the localized explanation page with the
+    // official download link (a read-only, selectable URL and a button that
+    // opens it in the user's browser), Check Again and Cancel.
+    void presentRuntime(h::Region region) {
+        session.reset();reported=0;runtimeRegion=region;++generation;
+        if(!createWindow(region)) {runtimeRegion.reset();throw std::runtime_error("Login window could not be created");}
+        const auto text=h::webView2RuntimeStrings(options.language);
+        const auto strings=h::LoginSession::strings(region,options.language);
+        title=control(L"STATIC",wide(text.title),SS_CENTER,titleID,titleFont);
+        detail=control(L"STATIC",wide(text.detail),SS_CENTER,detailID,bodyFont);
+        site=control(L"EDIT",wide(text.site),ES_CENTER|ES_READONLY|ES_AUTOHSCROLL|WS_TABSTOP,siteID,monoFont);
+        download=control(L"BUTTON",wide(text.downloadLabel),BS_DEFPUSHBUTTON|WS_TABSTOP,downloadID,bodyFont);
+        check=control(L"BUTTON",wide(text.checkLabel),BS_PUSHBUTTON|WS_TABSTOP,checkID,bodyFont);
+        cancelButton=control(L"BUTTON",wide(strings.cancelLabel),BS_PUSHBUTTON|WS_TABSTOP,cancelID,bodyFont);
+        note=control(L"STATIC",L"",SS_CENTER,noteID,bodyFont);
+        if(options.diagnostic) options.diagnostic("runtime-missing");
+        show(download);
+    }
+    void openDownloadPage() {
+        if(!runtimeRegion||!window) return;
+        const std::string url(h::webView2DownloadURL);
+        const bool opened=options.openLink?options.openLink(url):
+            reinterpret_cast<INT_PTR>(ShellExecuteW(window,L"open",wide(url).c_str(),nullptr,nullptr,SW_SHOWNORMAL))>32;
+        if(options.diagnostic) options.diagnostic(opened?"runtime-download-opened":"runtime-download-failed");
+    }
+    // Check Again: a runtime installed while EndfieldHUD runs continues to the
+    // consent page in the same window; otherwise the page says it is missing.
+    void recheckRuntime() {
+        if(!runtimeRegion||!window) return;
+        if(!WebViewLoginPresenter::runtimeVersion()) {
+            if(note) SetWindowTextW(note,wide(h::webView2RuntimeStrings(options.language).stillMissing).c_str());
+            return;
+        }
+        const auto region=*runtimeRegion;runtimeRegion.reset();
+        for(HWND* child:{&title,&detail,&site,&download,&check,&cancelButton,&note}) if(*child) {DestroyWindow(*child);*child=nullptr;}
+        session.emplace(region,nonce());reported=0;
+        if(options.diagnostic) options.diagnostic("runtime-installed");
+        consentPage();show(continueButton);
+    }
+    // The user's Cancel / Esc / close.
+    void dismiss() {finish(std::nullopt,h::LoginFailure::cancelled);}
     void fit(ICoreWebView2Controller* target,ICoreWebView2* webview,HWND host) {
         if(!target||!webview) return;
         // Mac fitCommunityPage: the community's fixed 1200 px header gets 1280 CSS px.
@@ -151,6 +216,14 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
     void layout() {
         if(!window) return;RECT r{};GetClientRect(window,&r);const int width=r.right,height=r.bottom;const double s=dpiScale(window);
         const auto v=[&](double x){return int(std::lround(x*s));};
+        if(runtimeRegion) {
+            const int column=int(width*.76),left=(width-column)/2;int y=height/2-v(210);
+            MoveWindow(title,left,y,column,v(30),TRUE);y+=v(52);MoveWindow(detail,left,y,column,v(112),TRUE);y+=v(130);
+            MoveWindow(site,left,y,column,v(20),TRUE);y+=v(42);MoveWindow(download,(width-v(300))/2,y,v(300),v(42),TRUE);y+=v(56);
+            MoveWindow(check,(width-v(160))/2,y,v(160),v(36),TRUE);y+=v(50);MoveWindow(cancelButton,(width-v(110))/2,y,v(110),v(36),TRUE);y+=v(52);
+            MoveWindow(note,left,y,column,v(20),TRUE);
+            return;
+        }
         if(!session||!session->consented()) {
             const int column=int(width*.76),left=(width-column)/2;int y=height/2-v(170);
             MoveWindow(title,left,y,column,v(30),TRUE);y+=v(52);MoveWindow(detail,left,y,column,v(96),TRUE);y+=v(118);
@@ -345,7 +418,22 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         pendingResult=std::move(result);pendingFailure=failure;finishing=true;
         if(!window||!PostMessageW(window,finishMessage,0,0)) {finishing=false;auto value=std::move(pendingResult);pendingResult.reset();finish(std::move(value),failure);}
     }
+    void destroyWindow() {
+        if(window) {DestroyWindow(window);window=nullptr;}
+        status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=download=check=note=nullptr;
+        for(HFONT* font:{&titleFont,&bodyFont,&monoFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+    }
     void finish(std::optional<h::LoginResult> result,h::LoginFailure failure) {
+        if(runtimeRegion) {
+            // Runtime page: nothing but the window exists. However it closes
+            // (the user, Escape, the HUD hiding), the missing runtime is why
+            // no sign-in happened, so the face can name it.
+            runtimeRegion.reset();++generation;destroyWindow();
+            auto callback=std::move(completion);completion={};
+            if(options.scheduleChanged) options.scheduleChanged();
+            if(callback) callback(std::nullopt,h::LoginFailure::runtimeUnavailable);
+            return;
+        }
         if(!session||!session->presenting()) return;
         if(finishing) {finishing=false;if(!result) result=std::move(pendingResult);pendingResult.reset();}
         session->finish(result?h::LoginSession::Outcome::completed:failure==h::LoginFailure::expired?h::LoginSession::Outcome::expired:h::LoginSession::Outcome::cancelled);
@@ -355,9 +443,7 @@ struct WebViewLoginPresenter::Impl:std::enable_shared_from_this<Impl> {
         if(view) view->Stop();
         if(controller) controller->Close();controller.Reset();view.Reset();
         auto env=std::move(environment);environment.Reset();auto folder=std::move(userData);userData.clear();
-        if(window) {DestroyWindow(window);window=nullptr;}
-        status=retry=toolbarCancel=title=detail=site=continueButton=cancelButton=nullptr;
-        for(HFONT* font:{&titleFont,&bodyFont,&monoFont}) if(*font) {DeleteObject(*font);*font=nullptr;}
+        destroyWindow();
         // The private profile is deleted once its browser process has exited.
         retire(std::move(env),std::move(folder));
         auto callback=std::move(completion);completion={};
@@ -383,11 +469,14 @@ std::optional<std::wstring> WebViewLoginPresenter::runtimeVersion() {
 }
 void WebViewLoginPresenter::present(h::Region region,std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> completion) {
     if(isPresenting()) {completion(std::nullopt,h::LoginFailure::alreadyPresenting);return;}
-    if(!runtimeVersion()) {completion(std::nullopt,h::LoginFailure::pageUnavailable);return;}
-    impl_->completion=std::move(completion);impl_->present(region);
+    impl_->completion=std::move(completion);
+    // Every Connect asks the loader, so a runtime installed meanwhile is used
+    // at once; without one the window explains the prerequisite instead.
+    if(!runtimeVersion()) {impl_->presentRuntime(region);return;}
+    impl_->present(region);
 }
 void WebViewLoginPresenter::cancel() {impl_->finish(std::nullopt,h::LoginFailure::cancelled);}
-bool WebViewLoginPresenter::isPresenting() const {return impl_->session&&impl_->session->presenting();}
+bool WebViewLoginPresenter::isPresenting() const {return (impl_->session&&impl_->session->presenting())||impl_->runtimeRegion.has_value();}
 void WebViewLoginPresenter::setLanguage(core::Language language) {impl_->options.language=language;impl_->setStatus();}
 std::optional<double> WebViewLoginPresenter::nextDeadline() const {return impl_->session?impl_->session->nextDeadline():std::nullopt;}
 void WebViewLoginPresenter::deadline(double now) {

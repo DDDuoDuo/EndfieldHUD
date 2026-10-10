@@ -4,11 +4,15 @@
 #include "modules/hypergryph_account_controller.hpp"
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "core/data/file_io.hpp"
+#include "core/migration/mac_import_codecs.hpp"
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 #include <cstdlib>
 #include <deque>
 #include <iostream>
+#include <memory>
+#include <vector>
 
 namespace h=endfield::modules::hypergryph;
 using ehud::data::Json;
@@ -248,6 +252,18 @@ void lifecycle() {
     withLogin.perform(connect);check(presenter.presenting,"A second Connect while presenting is ignored");
     presenter.presenting=false;auto done=std::move(presenter.done);done(std::nullopt,h::LoginFailure::pageUnavailable);
     check(withLogin.presentation().statusMessage=="Sign-in could not finish. Please try again.","Failed login reports the Mac message");
+    // Windows: the user closed the WebView2 Runtime explanation page.
+    withLogin.perform(connect);presenter.presenting=false;done=std::move(presenter.done);done(std::nullopt,h::LoginFailure::runtimeUnavailable);
+    check(withLogin.presentation().statusMessage==h::webView2RuntimeStrings(endfield::core::Language::english).status&&
+          withLogin.presentation().status==h::AccountPresentation::Status::failed&&!withLogin.record().linked&&!withLogin.isPresentingLogin(),
+          "A missing WebView2 Runtime names the prerequisite on the face");
+    {
+        auto macOptions=o;macOptions.wording=h::AccountWording::mac;Presenter macPresenter;
+        h::HypergryphAccountController mac(api,vault,queue,nullptr,nullptr,&macPresenter,nullptr,macOptions);
+        mac.setVisible(true,true);mac.perform(connect);macPresenter.presenting=false;auto macDone=std::move(macPresenter.done);
+        macDone(std::nullopt,h::LoginFailure::runtimeUnavailable);
+        check(mac.presentation().statusMessage=="Sign-in could not finish. Please try again.","Mac wording (oracle replays) keeps the Mac failure text");
+    }
     withLogin.perform(connect);presenter.presenting=false;done=std::move(presenter.done);
     done(h::LoginResult{h::Region::global,"SYNTHETIC-G","synthetic-gt","synthetic-gd"},h::LoginFailure::cancelled);queue.pump();
     check(withLogin.record().linked&&vault.values.count(h::Region::global),"Successful login commits the scoped credential to the vault and links the region");
@@ -364,12 +380,78 @@ void importCache() {
     check(bytes.find("cred")==std::string::npos&&bytes.find("signingToken")==std::string::npos,"Cache never contains credentials");
 }
 }
+// The Mac import, then the restart the host performs for it (DataRootRestart:
+// every owner is destroyed, the import commits, a fresh run reads the root).
+// The import tool's Account/profile-cache.json is the Mac controller's own
+// cache (oracle trace) with every linked region marked requiresReconnect and
+// credential-like keys stripped. A fresh controller over it shows the same
+// roles, header wallet and sanity as over the Mac bytes, asks for a new
+// Windows sign-in, requests nothing and keeps the profile lock the import
+// reported; a new sign-in resumes syncing.
+void macImportRestart(const Json& oracle) {
+    const Json* mac=nullptr;
+    for(const auto& entry:oracle["trace"].array()) {
+        const auto& cache=entry["after"]["cache"];
+        if(!cache.isObject()||!cache["records"].contains("mainland")) continue;
+        const auto& record=cache["records"]["mainland"];
+        if(record["linked"].boolean()&&!record["requiresReconnect"].boolean()&&cache["syncProfile"].boolean()&&record["snapshots"].object().size()==2) {mac=&cache;break;}
+    }
+    check(mac!=nullptr,"The Mac oracle trace has a linked cache with both header games");
+    Json withSecret=*mac;withSecret["records"]["mainland"]["cred"]="SYNTHETIC-LEAK";
+    const auto macBytes=withSecret.encode();
+    const auto imported=ehud::migration::importMacAccountCache(macBytes);
+    check(imported.bytes.find("SYNTHETIC-LEAK")==std::string::npos&&!imported.strippedKeys.empty()&&imported.disconnectedRegions==std::vector<std::string>{"mainland"},
+          "The import strips credential-like keys and disconnects the linked region");
+    const auto decoded=h::decodeCacheBytes(imported.bytes);
+    check(decoded&&decoded==h::importMacAccountCache(mac->encode()),"The import tool's cache is the Mac cache with the linked region disconnected, nothing else");
+    double now{};
+    for(const auto& [id,snapshot]:(*mac)["records"]["mainland"]["snapshots"].object()) now=std::max(now,num(snapshot["observedAt"]));
+    h::AccountControllerOptions o;o.now=[&]{return now;};o.localDate=utc;
+    const auto open=[&](FakeAPI& api,FakeVault& vault,ManualQueue& queue,MemoryFile& file,ProfileSink& sink,h::AccountLoginPresenter* login) {
+        api.now=[&now]{return now;};
+        return std::make_unique<h::HypergryphAccountController>(api,vault,queue,&file,&sink,login,nullptr,o);
+    };
+    // Reference: the same cache as the Mac wrote it (linked, as on the Mac).
+    FakeAPI macAPI;FakeVault macVault;ManualQueue macQueue;MemoryFile macFile;ProfileSink macSink;macFile.bytes=mac->encode();
+    const auto reference=open(macAPI,macVault,macQueue,macFile,macSink,nullptr);
+    // The restarted Windows owner over the committed import.
+    struct Presenter:h::AccountLoginPresenter {
+        bool presenting{};std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> done;
+        void present(h::Region,std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> c) override {presenting=true;done=std::move(c);}
+        void cancel() override {}
+        bool isPresenting() const override {return presenting;}
+    } presenter;
+    FakeAPI api;FakeVault vault;ManualQueue queue;MemoryFile file;ProfileSink sink;file.bytes=imported.bytes;
+    const auto restarted=open(api,vault,queue,file,sink,&presenter);
+    const auto& record=restarted->record();
+    check(record.linked&&record.requiresReconnect&&record.roles==reference->record().roles&&record.snapshots==reference->record().snapshots&&
+          record.selectedRoleID==reference->record().selectedRoleID,"The restarted owner reads the imported roles and snapshots");
+    const auto p=restarted->presentation();
+    check(p.isLinked&&p.statusMessage=="Sign in again to continue syncing."&&p.roles.size()==reference->presentation().roles.size()&&
+          p.headerMode==reference->presentation().headerMode,"The face lists the cached roles and asks for a new Windows sign-in");
+    for(const h::WorkModeGaugeInput work:{h::WorkModeGaugeInput{true,1500,0},h::WorkModeGaugeInput{false,0,90}})
+        check(restarted->gaugeValue(work).value==reference->gaugeValue(work).value&&restarted->gaugeValue(work).value.find(" / ")!=std::string::npos,
+              "The header wallet shows the cached sanity exactly as before the import");
+    const auto s=restarted->sanityPresentation(),r=reference->sanityPresentation();
+    check(s&&r&&s->current==r->current&&s->maximum==r->maximum&&s->nextRecoveryAt==r->nextRecoveryAt&&s->fullRecoveryAt==r->fullRecoveryAt,"Sanity recovery projects identically");
+    check(restarted->gameSyncActive()==imported.profileSyncLocked&&sink.locked==imported.profileSyncLocked,"The profile lock is the one the import reported");
+    restarted->setVisible(true,true);restarted->tick();now+=3600;restarted->tick();queue.pump();
+    check(api.calls.empty()&&api.pending.empty()&&!restarted->hasActiveRequest(),"Nothing is requested without a Windows credential");
+    check(file.bytes==std::optional<std::string>(imported.bytes),"Reading the import rewrites nothing");
+    // A fresh sign-in on Windows resumes syncing for the same region.
+    h::AccountAction connect;connect.kind=h::AccountAction::Kind::connect;connect.region=h::AccountPresentation::RegionChoice::china;restarted->perform(connect);
+    check(presenter.presenting&&restarted->presentation().status==h::AccountPresentation::Status::connecting,"Connect opens the official login");
+    presenter.presenting=false;auto done=std::move(presenter.done);
+    done(h::LoginResult{h::Region::mainland,"SYNTHETIC-W","synthetic-wt","synthetic-wd"},h::LoginFailure::cancelled);queue.pump();
+    check(vault.values.count(h::Region::mainland)&&!api.pending.empty()&&api.pending.front().kind=="bindings","The new credential is stored and the first sync starts");
+}
 int main(int argc,char** argv) {
     try {
         check(argc==2,"Pass tests/fixtures/hypergryph-account-source.json");
         const auto bytes=ehud::data::detail::readFile(argv[1],4*1024*1024);check(bytes.has_value(),"Read bounded account oracle");
         const auto fixture=Json::parse(*bytes,4*1024*1024);
         replay(fixture["controller"]);lifecycle();guardWake();vaultWording();avatarSync();avatarPolicy(fixture["avatar"]);identitySync();importCache();
+        macImportRestart(fixture["controller"]);
         std::cout<<"PASS "<<checks<<" Hypergryph account controller checks\n";return 0;
     } catch(const std::exception& e) {std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

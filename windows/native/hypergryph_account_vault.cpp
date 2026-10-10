@@ -85,6 +85,15 @@ void writeOwnerOnlyFile(const std::filesystem::path& path,const std::string& byt
     }
     if(!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {DeleteFileW(temporary.c_str());fail("Account file replacement failed");}
 }
+bool restrictToOwner(const std::filesystem::path& path) {
+    ordinary(path,false);
+    if(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES) return false;
+    OwnerOnlySecurity security;
+    const DWORD result=SetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()),SE_FILE_OBJECT,DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,
+        nullptr,nullptr,reinterpret_cast<PACL>(security.acl.data()),nullptr);
+    if(result!=ERROR_SUCCESS) fail("Account file security could not be restricted");
+    return true;
+}
 std::optional<std::string> readBoundedFile(const std::filesystem::path& path,std::size_t maximum) {
     ordinary(path,false);
     Handle input;input.value=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
@@ -197,6 +206,13 @@ QueuedAccountCacheFile::~QueuedAccountCacheFile() {
     i.executor.invalidate(i.route,false);
 }
 std::optional<std::string> QueuedAccountCacheFile::read() {return readBoundedFile(impl_->path,h::maximumCacheBytes);}
+void QueuedAccountCacheFile::secureExisting() {
+    auto& i=*impl_;const auto file=i.path;
+    // One FIFO worker: this runs before any later write on the queue. A full
+    // queue or a failure leaves the file as it was; the next cache write
+    // replaces it owner-only anyway.
+    (void)i.executor.submit(i.route,[file]{if(GetFileAttributesW(file.c_str())!=INVALID_FILE_ATTRIBUTES&&!ownerOnly(file)) (void)restrictToOwner(file);},[](std::exception_ptr){});
+}
 bool QueuedAccountCacheFile::exists() {return GetFileAttributesW(impl_->path.c_str())!=INVALID_FILE_ATTRIBUTES;}
 void QueuedAccountCacheFile::write(const std::string& bytes) {
     if(bytes.size()>h::maximumCacheBytes) fail("Account cache is too large");

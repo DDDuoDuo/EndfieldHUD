@@ -205,8 +205,40 @@ void services() {
     }
     executor.shutdown();CloseHandle(event);
 }
+// The run after a Mac import restart: the import committed
+// Account\profile-cache.json with inherited security and no credentials. The
+// fresh owner reads it (cached roles, a fresh Windows sign-in required, no
+// request) and the file is re-secured owner-only in place, byte for byte.
+void importedCache() {
+    TempDirectory temp;HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);check(event!=nullptr,"Utility wake event");
+    endfield::app::UtilityExecutor executor([event]{SetEvent(event);});double clock=0;
+    const auto directory=temp.path/L"Account";const auto file=directory/L"profile-cache.json";
+    std::filesystem::create_directories(directory);
+    h::AccountCache imported;imported.syncProfile=true;imported.header="arknights";
+    h::Role role;role.region=h::Region::mainland;role.game=h::Game::arknights;role.bindingUID="88001";role.roleID="88001";role.serverID="1";role.isDefault=true;
+    h::Snapshot snapshot;snapshot.role=role;snapshot.observedAt=812692800;snapshot.stamina=h::Stamina{120,135,{},{}};
+    h::RegionRecord record;record.linked=true;record.requiresReconnect=true;record.roles={role};record.selectedRoleID=role.id();record.snapshots[role.id()]=snapshot;
+    imported.records["mainland"]=record;
+    const auto bytes=h::encodeCacheBytes(imported);
+    {std::ofstream out(file,std::ios::binary);out<<bytes;}
+    check(!n::ownerOnly(file),"The imported cache starts with inherited security");
+    {
+        n::HypergryphAccountServicesOptions options;options.accountDirectory=directory;options.notify=[event]{SetEvent(event);};options.hostClock=[&]{return clock;};
+        options.wallClock=[]{return 812692800.0;};
+        n::HypergryphAccountServices bundle(executor,options);auto& c=bundle.controller();
+        check(c.record().linked&&c.record().requiresReconnect&&c.record().roles.size()==1&&c.cache().header=="arknights"&&c.cache().syncProfile,
+              "The restarted owner reads the imported roles and settings");
+        check(c.presentation().statusMessage=="Sign in again to continue syncing."&&c.gaugeValue({false,0,0}).value=="120 / 135","Cached sanity stays visible while a new sign-in is required");
+        c.setVisible(true,true);c.tick();
+        for(int i=0;i<100&&!n::ownerOnly(file);++i) {WaitForSingleObject(event,20);executor.drain();bundle.drain();}
+        check(n::ownerOnly(file)&&n::readBoundedFile(file,h::maximumCacheBytes)==std::optional<std::string>(bytes),"The imported cache is re-secured owner-only in place, byte for byte");
+        check(bundle.transport().activeRequests()==0&&!c.hasActiveRequest(),"Nothing is requested without a Windows credential");
+        check(!n::DpapiAccountVault(directory).load(h::Region::mainland),"No credential exists after the import");
+    }
+    executor.shutdown();CloseHandle(event);
+}
 int main() {
     const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
-    try {vault();heads();transport();clientPlumbing();avatar();queuedCache();services();if(SUCCEEDED(hr)) CoUninitialize();std::cout<<"PASS "<<checks<<" Windows account platform checks\n";return 0;}
+    try {vault();heads();transport();clientPlumbing();avatar();queuedCache();services();importedCache();if(SUCCEEDED(hr)) CoUninitialize();std::cout<<"PASS "<<checks<<" Windows account platform checks\n";return 0;}
     catch(const std::exception& e) {if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

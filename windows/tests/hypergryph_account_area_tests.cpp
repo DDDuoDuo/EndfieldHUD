@@ -3,10 +3,13 @@
 // output for the current Mac oracle fixture; the in-process community host
 // answers only the fixed endpoints and never completes inside start(); the
 // fake official-site host follows the WebView2 presenter's completion rules;
-// the UI Automation peers behave like the Mac's transparent AX buttons.
-// No network, browser, credential store or real account is used.
+// the UI Automation peers behave like the Mac's transparent AX buttons, and
+// the HUD window's UIA root (app/hud_automation.cpp, compiled into this test)
+// lists them through the ModuleOwner hooks exactly as the area implements
+// them. No network, browser, credential store or real account is used.
 #ifdef _WIN32
 #include "app/areas/account_coverage.hpp"
+#include "app/hud_automation.hpp"
 #include "core/data/file_io.hpp"
 #include "modules/hypergryph_account_crypto.hpp"
 #include "native/account_automation.hpp"
@@ -16,6 +19,8 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace {
 namespace h = endfield::modules::hypergryph;
@@ -147,6 +152,125 @@ void automation() {
     a.disconnect();
     check(a.size() == 0 && invoke->Invoke() == UIA_E_ELEMENTNOTAVAILABLE, "Disconnecting the tree ends every peer");
 }
+
+// The area's ModuleOwner UIA hooks (app/areas/account_module.cpp) over a fake
+// owner view, so the host root can be driven without the whole application.
+class PeerOwner final : public endfield::app::ModuleOwner {
+public:
+    PeerOwner(std::vector<endfield::native::AccountAutomationControl>& controls, std::vector<std::string>& pressed) : controls_(controls), pressed_(pressed) {}
+    ~PeerOwner() override { automation_.reset(); }
+    std::string_view name() const noexcept override { return "account"; }
+    bool presents(endfield::core::Module m) const noexcept override { return m == endfield::core::Module::account; }
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!automation_ || root_ != root) {
+            automation_.reset();
+            endfield::native::AccountAutomationHost host;
+            host.root = root;
+            host.controls = [this] { return controls_; };
+            host.toScreen = [](endfield::core::Rect r) -> std::optional<endfield::core::Rect> { return endfield::core::Rect{100 + r.x * 2, 50 + r.y * 2, r.width * 2, r.height * 2}; };
+            host.invoke = [this](std::string_view id) { pressed_.emplace_back(id); return true; };
+            automation_ = std::make_unique<endfield::native::NativeAccountAutomation>(std::move(host));
+            root_ = root;
+            ++created;
+        }
+        return automation_->refresh();
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
+    unsigned created{};
+
+private:
+    std::vector<endfield::native::AccountAutomationControl>& controls_;
+    std::vector<std::string>& pressed_;
+    std::unique_ptr<endfield::native::NativeAccountAutomation> automation_;
+    IRawElementProviderFragmentRoot* root_{};
+};
+class PlainOwner final : public endfield::app::ModuleOwner {
+public:
+    std::string_view name() const noexcept override { return "notes"; }
+};
+std::wstring property(IUnknown* element, PROPERTYID id) {
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+    VARIANT value;
+    VariantInit(&value);
+    std::wstring out;
+    if (element && SUCCEEDED(element->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPropertyValue(id, &value)) && value.vt == VT_BSTR && value.bstrVal)
+        out = value.bstrVal;
+    VariantClear(&value);
+    return out;
+}
+bool same(IUnknown* a, IUnknown* b) {
+    Microsoft::WRL::ComPtr<IUnknown> x, y;
+    return a && b && SUCCEEDED(a->QueryInterface(IID_PPV_ARGS(&x))) && SUCCEEDED(b->QueryInterface(IID_PPV_ARGS(&y))) && x.Get() == y.Get();
+}
+void hostRoot() {
+    namespace n = endfield::native;
+    using Microsoft::WRL::ComPtr;
+    WNDCLASSW type{};
+    type.lpfnWndProc = DefWindowProcW;
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = L"EndfieldAccountAutomationRootFixture";
+    const ATOM atom = RegisterClassW(&type);
+    check(atom != 0, "Register the hidden HUD stand-in");
+    const HWND window = CreateWindowExW(WS_EX_TOOLWINDOW, type.lpszClassName, L"HUD fixture", WS_POPUP, 0, 0, 800, 600, nullptr, nullptr, type.hInstance, nullptr);
+    check(window && !IsWindowVisible(window), "The HUD stand-in stays hidden");
+    std::vector<n::AccountAutomationControl> controls{{"account:connect", "Connect", {10, 10, 100, 20}, true},
+                                                     {"account:refresh", "Refresh", {120, 10, 20, 20}, false},
+                                                     {"wallet:toggle", "Arknights: Endfield · Sanity 343 / 360", {300, 0, 168, 42}, true}};
+    std::vector<std::string> pressed;
+    PlainOwner plain;
+    PeerOwner account(controls, pressed);
+    std::vector<endfield::app::ModuleOwner*> owners{&plain, &account};
+    {
+        endfield::app::HudAutomationSource source;
+        source.owners = [&](std::vector<endfield::app::ModuleOwner*>& out) { out.insert(out.end(), owners.begin(), owners.end()); };
+        source.refresh = [](endfield::app::ModuleOwner& o, IRawElementProviderFragmentRoot* root) { return o.automationRefresh(root); };
+        source.name = [](const endfield::app::ModuleOwner& o) { return o.presents(endfield::core::Module::account) ? std::string("Account") : std::string(o.name()); };
+        endfield::app::HudAutomation hud(window, std::move(source));
+        check(hud.refresh() && hud.groups() == 1 && account.automationCount() == 3 && account.created == 1, "The root lists one group: the owner with fragments");
+        ComPtr<IRawElementProviderFragment> root, group, first, second, last, parent, hit;
+        check(SUCCEEDED(hud.root()->QueryInterface(IID_PPV_ARGS(&root))) && SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, &group)) && group,
+              "The HUD root's first child is the account group");
+        check(property(group.Get(), UIA_NamePropertyId) == L"Account" && property(group.Get(), UIA_AutomationIdPropertyId) == L"module.account",
+              "The group is named after the module it presents");
+        check(SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &first)) && property(first.Get(), UIA_AutomationIdPropertyId) == L"account:connect" &&
+              SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) && same(parent.Get(), group.Get()), "Account peers are the group's children and navigate back to it");
+        check(SUCCEEDED(first->Navigate(NavigateDirection_NextSibling, &second)) && property(second.Get(), UIA_AutomationIdPropertyId) == L"account:refresh" &&
+              SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &last)) && property(last.Get(), UIA_AutomationIdPropertyId) == L"wallet:toggle",
+              "Siblings and the last child follow the owner's order");
+        UiaRect bounds{};
+        check(SUCCEEDED(group->get_BoundingRectangle(&bounds)) && bounds.left == 120 && bounds.top == 50 && bounds.width == 1036 - 120 && bounds.height == 84,
+              "The group spans its peers' projected screen rects");
+        check(SUCCEEDED(hud.root()->ElementProviderFromPoint(100 + 384 * 2, 50 + 21 * 2, &hit)) && hit.Get() == last.Get(), "The root's hit test reaches the wallet peer");
+        ComPtr<IInvokeProvider> invoke;
+        check(SUCCEEDED(hit.As(&invoke)) && SUCCEEDED(invoke->Invoke()) && pressed == std::vector<std::string>{"wallet:toggle"}, "Invoke through the root performs the press");
+        // A content event: the popover adds its Refresh, the refresh control goes.
+        controls.erase(controls.begin() + 1);
+        controls.push_back({"wallet:refresh", "Refresh", {320, 50, 60, 20}, true});
+        check(hud.refresh() && account.automationCount() == 3 && hud.stats().structureChanges >= 2, "The host refresh reports the owner's restructured tree");
+        check(property(second.Get(), UIA_NamePropertyId).empty(), "The removed peer is disconnected");
+        // HUD concealed: every fragment disconnects, the group stays.
+        hud.disconnectOwners();
+        check(account.automationCount() == 0 && hud.groups() == 0 && property(last.Get(), UIA_NamePropertyId).empty(), "Concealing disconnects every account peer");
+        check(hud.refresh() && hud.groups() == 1 && account.automationCount() == 3 && account.created == 1, "Showing again lists fresh peers under the same group");
+        ComPtr<IRawElementProviderFragment> again;
+        check(SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, &again)) && same(again.Get(), group.Get()), "The group keeps its identity");
+        // The owner leaves the registry (failure isolation or destruction).
+        hud.remove(account);
+        check(account.automationCount() == 0 && hud.groups() == 0 && property(group.Get(), UIA_NamePropertyId).empty(), "Removing the owner disconnects its peers and group");
+        hud.shutdown();
+    }
+    DestroyWindow(window);
+    UnregisterClassW(type.lpszClassName, type.hInstance);
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
@@ -157,6 +281,7 @@ int wmain(int argc, wchar_t** argv) {
         communityHost(argv[1]);
         loginHost(argv[1]);
         automation();
+        hostRoot();
         if (SUCCEEDED(com)) CoUninitialize();
         std::cout << "PASS " << checks << " account area provider checks\n";
         return 0;

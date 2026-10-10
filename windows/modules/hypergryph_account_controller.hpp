@@ -97,7 +97,9 @@ public:
 };
 // Official-site login (WebView2 on Windows). completion runs on the owner thread.
 struct LoginResult {Region region{};std::string cred;std::optional<std::string> signingToken,deviceID;};
-enum class LoginFailure {cancelled,expired,alreadyPresenting,unsupportedNavigation,pageUnavailable};
+// runtimeUnavailable (Windows only): the installed WebView2 Runtime is missing
+// and the user closed the explanation page (webView2RuntimeStrings).
+enum class LoginFailure {cancelled,expired,alreadyPresenting,unsupportedNavigation,pageUnavailable,runtimeUnavailable};
 class AccountLoginPresenter {
 public:
     virtual ~AccountLoginPresenter()=default;

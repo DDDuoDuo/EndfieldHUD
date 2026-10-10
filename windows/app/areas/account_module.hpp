@@ -10,6 +10,15 @@
 // presented Module::account. Profile sync reaches the Personal Profile area
 // through AccountProfileLink (app/areas/account_profile_link.hpp).
 //
+// UI Automation: the ModuleOwner hooks list the Mac's transparent AX buttons
+// (native/account_automation.hpp: the active face, then the wallet and its
+// open popover) under this owner's group of the HUD window's root provider.
+// A UIA Invoke performs the click's action and posts the area's registered
+// message, so the host refreshes frames, deadlines and the tree exactly as
+// after a routed click. Without the Evergreen WebView2 Runtime, Connect shows
+// the localized explanation page linking to Microsoft's download page
+// (native/hypergryph_account_webview.hpp); nothing is bundled or downloaded.
+//
 // Hidden coverage builds the same owner over synthetic providers (an
 // in-process community host replaying oracle envelopes, an in-memory vault,
 // a fake official-site host driving the real LoginSession policy, a private

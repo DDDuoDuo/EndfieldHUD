@@ -324,7 +324,11 @@ struct HypergryphAccountController::Impl:std::enable_shared_from_this<Impl> {
             auto self=weak.lock();if(!self) return;self->loginActive=false;
             if(result) self->acceptLogin(result->cred,result->region,result->signingToken,result->deviceID);
             else {
-                if(failure!=LoginFailure::cancelled) self->statusMessage=self->t("Sign-in could not finish. Please try again.","登录未完成，请重试。");
+                // Windows: a missing WebView2 Runtime names its prerequisite
+                // (no Mac counterpart; Mac wording keeps the Mac text).
+                if(failure==LoginFailure::runtimeUnavailable&&self->options.wording==AccountWording::windows)
+                    self->statusMessage=webView2RuntimeStrings(self->options.language).status;
+                else if(failure!=LoginFailure::cancelled) self->statusMessage=self->t("Sign-in could not finish. Please try again.","登录未完成，请重试。");
                 self->changed();
             }
         });
