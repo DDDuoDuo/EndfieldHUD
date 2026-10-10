@@ -438,6 +438,15 @@ void ProfileArea::coverageCard(app::ModuleCoverage& step) {
     const auto lifetime = 3600 + work_->trackedWorkSeconds(now);
     step.check(std::abs(ehud::data::ProfileStore(coverageRoot_).value().accumulatedWorkSeconds - lifetime) < 1e-6 && owner_->serviceStatus() && !owner_->serviceStatus()->dirty,
                "The flushed lifetime is the stored hours plus the live Work Mode total");
+    // A language event relocalizes Authority/MAX on the card (content event
+    // only); the host's own appearance is restored before the next frame.
+    auto other = appearance_;
+    other.language = resolved(appearance_.language) == core::Language::simplifiedChinese ? core::Language::english : core::Language::simplifiedChinese;
+    const auto before = feed_.revision();
+    owner_->setAppearance(profileAppearance(other), now);
+    step.check(feed_.revision() > before && owner_->card()->captions()[3].text == core::localized("Authority", "权限等级", other.language), "A language change republishes the localized card");
+    owner_->setAppearance(profileAppearance(appearance_), now);
+    step.check(owner_->card()->captions()[3].text == core::localized("Authority", "权限等级", resolved(appearance_.language)), "The host language returns");
     const auto fixture = fixture_ ? fixture_("profile.idCardCaptions") : fs::path{};
     step.check(!fixture.empty(), "The exported caption fixture is declared");
     const auto bytes = ehud::data::detail::readFile(fixture, 8 * 1024 * 1024);
