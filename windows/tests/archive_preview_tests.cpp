@@ -76,6 +76,9 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::down,'V'},time,control),"Ctrl+V pastes at the title end");paint();
   check(state.selected()->title==title+title&&state.selected()->titleRichText&&state.selected()->titleRichText->runs.size()==runs*2,"The pasted title repeats its formatting");
   check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->title==title,"One undo removes the paste");paint();
+  // Windows word keys in a field: Ctrl+Backspace deletes the word before the caret.
+  check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::down,VK_BACK},time,control)&&preview.key({app::KeyKind::character,0x7f},time,none)&&state.selected()->title.empty(),"Ctrl+Backspace deletes the one-word title; DEL inserts nothing");
+  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->title==title,"Undo restores the deleted word");paint();
   // A paste that grows a short body past its single layout reopens it chunked.
   click(42,125);check(preview.activeField()==std::optional<std::string>("body"),"Body field for the clipboard");const auto body=state.selected()->body;
   std::string paste;for(unsigned n=0;n<120;++n)paste+=std::string(600,static_cast<char>('a'+n%26))+"\n";clipboard->writeText({mod::archiveUTF16(paste),std::nullopt});

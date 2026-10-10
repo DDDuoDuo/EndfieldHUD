@@ -75,7 +75,7 @@ struct NotesPreview::Impl {
     std::optional<std::string>relinkNote,relinkTarget;
     std::function<void(std::string_view)>actionSink;
     // Read once per paste key and written once per cut/copy key; no listener.
-    std::shared_ptr<gpu::NotesClipboard>clipboard{gpu::systemNotesClipboard()};
+    std::shared_ptr<gpu::NotesClipboard>clipboard{gpu::systemNotesClipboard()};gpu::NotesClickCount editorClicks;
     app::ClientMetrics metrics;Matrix workspaceWorld,confirmWorld;core::Projection controlsProjection,confirmationProjection,workspaceProjection;
     std::vector<Track>tracks;std::vector<gpu::LayerCompositionEntry>composed;
     std::array<double,4>toolbarStarted{-1,-1,-1,-1};
@@ -247,7 +247,10 @@ struct NotesPreview::Impl {
         if(confirmAt(p,time,true))return true;
         if(const auto hit=workspace->hitTest(p)){
             const std::string id(hit->noteID),verb(hit->verb);const auto basePoint=workspaceProjection.unproject(p);if(!basePoint)return true;const auto point=*basePoint;
-            if(hit->kind==gpu::NativeNotesWorkspaceHit::Kind::editor){workspace->editor()->pointerDown(p,(e.modifiers&MK_SHIFT)!=0);editorDrag=true;editSync();return true;}
+            if(hit->kind==gpu::NativeNotesWorkspaceHit::Kind::editor){const bool shift=(e.modifiers&MK_SHIFT)!=0;const auto clicks=shift?1:editorClicks.press(e.kind==app::PointerKind::doubleClick,{e.x,e.y},time);
+                workspace->editor()->pointerDown(p,shift);editorDrag=true;editSync();
+                // Source double-click selects the word, triple-click the paragraph.
+                if(clicks>1){(clicks==2?workspace->selectEditorWord():workspace->selectEditorParagraph());editorDrag=false;editSync();}return true;}
             if(verb.starts_with("format")&&formatMenu&&workspace->editingNoteID()==std::optional<std::string_view>(id)){
                 drawingFormatNote.reset();if(const auto selected=workspace->editor()->selectionStyle()){const auto*n=state->note(id);formatNoteRect={n->x,n->y,n->width,n->height};formatMenu->open(verb,*selected,time);}return true;}
             if(workspace->editor()){if(formatMenu)formatMenu->close(time);if(!workspace->finishEditing().finished)return true;}
@@ -391,8 +394,11 @@ bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModi
     if((e.kind==app::KeyKind::down&&e.value==VK_RETURN&&(i.workspace->editingItemID()||(keys.control&&!keys.shift&&!keys.alt&&!keys.system)))||(i.workspace->editingItemID()&&(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&(e.value=='\r'||e.value=='\n'))){
         if(i.workspace->editorDocument()->composition())return true;if(!i.workspace->finishEditing().finished)i.pendingCancel=true;return true;
     }
+    // Ctrl+Backspace also queues DEL (0x7F), which is not text.
+    if((e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&e.value==0x7f)return true;
     if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)result=editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);
     else if(e.kind==app::KeyKind::down&&keys.control&&(e.value=='Z'||e.value=='Y'))result=e.value=='Y'||keys.shift?editor->redo():editor->undo();
+    else if(e.kind==app::KeyKind::down&&keys.control&&!keys.alt&&!keys.system&&(e.value==VK_LEFT||e.value==VK_RIGHT||e.value==VK_BACK||e.value==VK_DELETE))result=i.workspace->editorNavigationKey(e.value,true,keys.shift);
     else if(e.kind==app::KeyKind::down){std::optional<gpu::ProjectedEditorCommand>command;using C=gpu::ProjectedEditorCommand;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_UP:command=C::up;break;case VK_DOWN:command=C::down;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;case VK_ESCAPE:command=C::finish;break;case 'A':if(keys.control)command=C::selectAll;break;}if(command)result=editor->command(*command,keys.shift);}
     if(result.finishRequested){if(i.formatMenu)i.formatMenu->close(event.time);i.workspace->finishEditing();return true;}if(result.handled)i.editSync();return result.handled;
 }

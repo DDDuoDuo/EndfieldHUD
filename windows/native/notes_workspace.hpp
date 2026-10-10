@@ -4,6 +4,7 @@
 #include "native/projected_editor.hpp"
 #include "native/notes_long_editor.hpp"
 #include "native/notes_clipboard.hpp"
+#include "native/notes_text_navigation.hpp"
 #include "native/notes_image_playback.hpp"
 #include "native/notes_video_playback.hpp"
 #include "native/media_request_broker.hpp"
@@ -204,6 +205,12 @@ public:
     std::optional<NotesClipboardText> copyEditorSelection()const;
     ProjectedEditorResult deleteEditorSelection();
     ProjectedEditorResult pasteIntoEditor(const NotesClipboardText&);
+    // Word navigation keys of the open field (Ctrl+Left/Right with Shift
+    // extending, Ctrl+Backspace/Delete) and the source double-click word and
+    // triple-click paragraph selections around its caret.
+    ProjectedEditorResult editorNavigationKey(unsigned virtualKey,bool control,bool shift);
+    ProjectedEditorResult selectEditorWord();
+    ProjectedEditorResult selectEditorParagraph();
     bool beginGesture(std::string_view,core::Point,modules::NotesState::Gesture);
     bool dragTo(core::Point); // movement retains content; resize is an explicit content event
     bool endGesture();

@@ -12,6 +12,9 @@ if(WIN32)
   # Edit-menu clipboard for Notes/Archive fields (native/notes_clipboard):
   # keypress-only reads/writes, CF_HDROP media paste through the Shelf codec.
   target_sources(hud_native PRIVATE native/notes_clipboard.cpp)
+  # Word/paragraph navigation and multi-click selection (OS icu.dll word rules
+  # loaded on demand, character-class fallback): native/notes_text_navigation.
+  target_sources(hud_native PRIVATE native/notes_text_navigation.cpp)
   target_link_libraries(hud_native PRIVATE hud_shelf_transfer shell32)
 
   if(BUILD_TESTING)
@@ -36,6 +39,11 @@ if(WIN32)
     target_link_libraries(notes_clipboard_tests PRIVATE hud_native)
     add_test(NAME notes_clipboard_contracts COMMAND notes_clipboard_tests)
     list(APPEND EHUD_NOTES_TARGETS notes_clipboard_tests)
+    add_executable(notes_text_navigation_tests tests/notes_text_navigation_tests.cpp)
+    target_compile_definitions(notes_text_navigation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_text_navigation_tests PRIVATE hud_native)
+    add_test(NAME notes_text_navigation_contracts COMMAND notes_text_navigation_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_text_navigation_tests)
 
     # The Notes owner suites that need the Mac-exported Notes controls bundle
     # (app.cmake's runtime inputs). They build in CMakeLists.txt; registering

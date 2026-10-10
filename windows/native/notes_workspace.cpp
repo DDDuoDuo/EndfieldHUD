@@ -520,6 +520,11 @@ unsigned NativeNotesWorkspace::takeEditorChanges(UINT_PTR generation){auto&i=*im
 HRESULT NativeNotesWorkspace::focusEditor(bool focus)noexcept{if(GetCurrentThreadId()!=impl_->thread)return RPC_E_WRONG_THREAD;if(!impl_->field)return S_FALSE;const auto hr=impl_->field->native->focus(focus);if(SUCCEEDED(hr))impl_->field->focused=focus;return hr;}
 std::optional<NotesClipboardText>NativeNotesWorkspace::copyEditorSelection()const{const auto&i=*impl_;if(!i.field)return std::nullopt;return notesClipboardSelection(i.field->document,i.field->rich&&i.field->native->richLayoutEnabled());}
 ProjectedEditorResult NativeNotesWorkspace::deleteEditorSelection(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};return notesClipboardDeleteSelection(*i.field->native,i.field->document);}
+ProjectedEditorResult NativeNotesWorkspace::editorNavigationKey(unsigned key,bool control,bool shift){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};return notesNavigationKey(*i.field->native,i.field->document,key,control,shift);}
+ProjectedEditorResult NativeNotesWorkspace::selectEditorWord(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};const auto&d=i.field->document;const auto s=d.selection();
+    return notesSelectRange(*i.field->native,d,notesWordAt(d.text(),s.activeEnd==text::ActiveEnd::start?s.range.start:s.range.end));}
+ProjectedEditorResult NativeNotesWorkspace::selectEditorParagraph(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};const auto&d=i.field->document;const auto s=d.selection();
+    return notesSelectRange(*i.field->native,d,notesParagraphAt(d.text(),s.activeEnd==text::ActiveEnd::start?s.range.start:s.range.end));}
 ProjectedEditorResult NativeNotesWorkspace::pasteIntoEditor(const NotesClipboardText&value){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};
     const auto range=i.field->document.selection().range;const auto resulting=i.field->document.text().size()-(range.end-range.start)+value.text.size();i.promoteField(resulting);
     return notesClipboardPaste(*i.field->native,i.field->document,value,i.field->rich!=nullptr);}

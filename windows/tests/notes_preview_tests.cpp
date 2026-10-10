@@ -843,6 +843,23 @@ void clipboardKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesContro
     check(wide(savedNotes(f.root.path).front().text)==text+text&&clipboard->writes==2,"Nothing changed without a clipboard");
     f.release();
 }
+// Source double-click word and triple-click paragraph selection inside an
+// open field, and Windows word keys, through the owner's pointer/key routes.
+void wordSelection(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();const auto text=wide(original.text);const core::Point at{original.x+30,original.y+45};
+    check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true),"A double-click opens the note");
+    check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true)&&f.key(app::KeyKind::character,'Z')&&f.key(app::KeyKind::down,VK_ESCAPE),"A double-click inside the field selects a word, which typing replaces");f.tick(.2);
+    const auto edited=wide(savedNotes(f.root.path).front().text);std::size_t a{};while(a<edited.size()&&a<text.size()&&edited[a]==text[a])++a;
+    check(a<edited.size()&&edited[a]==u'Z'&&edited.size()<text.size()+1,"Exactly one non-empty range became Z");const auto b=static_cast<std::uint32_t>(text.size()-(edited.size()-a-1));
+    const auto word=gpu::notesWordAt(text,static_cast<std::uint32_t>(a));check(word.start==a&&word.end==b&&edited.substr(a+1)==text.substr(b),"The replaced range is the double-clicked word");
+    check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true),"Reopen the note");
+    check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true)&&f.pointer(app::PointerKind::down,at)&&(f.pointer(app::PointerKind::up,at),true)&&f.key(app::KeyKind::character,'Q')&&f.key(app::KeyKind::down,VK_ESCAPE),"A triple-click selects the paragraph, which typing replaces");f.tick(.2);
+    const auto paragraph=gpu::notesParagraphAt(edited,static_cast<std::uint32_t>(a));check(wide(savedNotes(f.root.path).front().text)==edited.substr(0,paragraph.start)+u"Q"+edited.substr(paragraph.end),"The paragraph and its line break became Q");
+    const tools::NotesKeyModifiers control{true,false,false,false};const auto before=wide(savedNotes(f.root.path).front().text);
+    check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true)&&f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::down,VK_BACK,control)&&f.key(app::KeyKind::character,0x7f)&&f.key(app::KeyKind::down,VK_ESCAPE),"Ctrl+Backspace at the end deletes the last word; its DEL character inserts nothing");f.tick(.2);
+    check(wide(savedNotes(f.root.path).front().text)==before.substr(0,gpu::notesPreviousWordStart(before,static_cast<std::uint32_t>(before.size()))),"Exactly the last word was deleted");
+    f.release();
+}
 void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
     gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Preference event begins a real isolated Notes draft");
@@ -917,6 +934,7 @@ int wmain(int argc, wchar_t** argv) {
         preferencesPreview(window.hwnd,renderer,assets);
         deletionKeys(window.hwnd,renderer,assets);
         clipboardKeys(window.hwnd,renderer,assets);
+        wordSelection(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

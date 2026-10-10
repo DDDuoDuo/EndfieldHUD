@@ -44,6 +44,10 @@ public:
             for(char16_t c:std::u16string_view(u"末尾 tail")){const auto before=editor->stats().chunkLayouts;
                 step.check(workspace.editor()->character(c,false).changed,"Typing reaches the chunked document");workspace.syncEditor();workspace.updatePose(pose);
                 step.check(editor->stats().chunkLayouts-before<=2,"A keystroke lays out only its own chunk");}
+            // Windows word keys in the chunked field (ICU word rules from the OS).
+            const auto size=static_cast<std::uint32_t>(workspace.editorDocument()->text().size());
+            step.check(workspace.editorNavigationKey(VK_LEFT,true,false).changed&&workspace.editorDocument()->selection().range.start==size-4,"Ctrl+Left reaches the last word's start");
+            step.check(workspace.editorNavigationKey(VK_RIGHT,true,false).changed&&workspace.editorDocument()->selection().range.start==size,"Ctrl+Right returns to the end");
             const auto finished=workspace.finishEditing();
             step.check(finished.finished&&finished.saved&&state.note(longID)->text==text+"末尾 tail","The chunked field commits the complete edited note");
             // An Edit-menu paste (workspace draft edit; no system clipboard) that
