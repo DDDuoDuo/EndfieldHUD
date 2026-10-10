@@ -1181,3 +1181,150 @@ the README is the host's verification log.
   - the import restart on the real data root;
   - the section 9 gate with `--data-root`.
 
+## Checkpoint 123 (batch 3): consolidated status
+
+This entry sums up batch 3 as a whole: the prep stage, the area stages and the
+host integration recorded above. Code is at `3007768`; later commits only
+change documentation. No part of this batch ran on the laptop's interactive
+desktop. All evidence below comes from automated hidden runs, and none of
+them touched the user's data, accounts or desktop.
+
+### Test runs
+
+| Run | Result |
+| --- | --- |
+| Host slot, full MSVC x64 Release build | 341 of 344 suites pass. The three failures are environmental and fail the same way on the unchanged parent: `projection_composition_contracts` and `projection_workspace_contracts` (no composition swap chain in the SSH session), and `packet_export_contracts` (no Mac `Sources/` in the slot). |
+| `application_owner_coverage` | 54 module results, 19 production lifecycle checks, 10 host integration checks, 12 registered areas, ID card connected. |
+| `application_session_end_coverage` | 15 lifecycle checks, 10 host integration checks. |
+| Area slots (before the host stage) | Each area's own suites plus both coverage runs passed, for example Media Assembly 19 tests, Now Playing 25, Power 17, App shortcuts 16, Shelf 15, packaging 10, Reader/Calendar/Map/Minigame 43, Notes 62. |
+| Prep slot | 300 of 303, with the same three environmental failures. The portable data suites also pass on the Mac under clang, libc++ and AddressSanitizer. |
+
+Not run in this batch: the GitHub Actions workflow `windows.yml`, the section 9
+gate (`package_perf_gate`) against `EndfieldHUD.exe`, and any visible run.
+
+### What `EndfieldHUD.exe` contains
+
+- **15 built-in owners:** Notes (including Projection), File Shelf, Clipboard,
+  Archive, Volume, Event Log, Work Mode, the Power page, Settings (System,
+  Display, Hotkeys, About), Storage, Activity Monitor, Reader, Calendar, Map
+  and the minigame, plus the quit confirmation card.
+- **8 production module areas** (generated `hud_application_areas`):
+
+  | Area | Factory | Registered by |
+  | --- | --- | --- |
+  | `mediaAssembly` | `endfield::areas::mediaAssemblyModule` | `cmake/modules/media_assembly.cmake` |
+  | `nowPlaying` | `endfield::areas::nowPlayingModule` | `cmake/modules/now_playing.cmake` |
+  | `profile` | `endfield::areas::profileModule` | `cmake/modules/profile.cmake` |
+  | `account` | `endfield::areas::accountModule` | `cmake/modules/account.cmake` |
+  | `powerCharge` | `endfield::power::powerModule` | `cmake/modules/power.cmake` |
+  | `appShortcuts` | `endfield::areas::appShortcutModule` | `cmake/modules/app_shortcut.cmake` |
+  | `macImport` | `endfield::areas::macImportModule` | `cmake/modules/import.cmake` |
+  | `calendarReminders` | `endfield::areas::calendarRemindersModule` | `cmake/modules/local.cmake` |
+
+  `calendarReminders` constructs only when the installer's notification
+  identity matches the running executable, and never in `--data-root` runs.
+- **4 coverage-only areas**, linked only into `watch_session_preview`:
+  `areaProbe`, `systemProviders`, `notesLongDocument` and `fileShelfCoverage`.
+- Notes and File Shelf now open persistent roots, so the executable can open an
+  existing data root. This closes the checkpoint 122 limitation. It was checked
+  on temporary roots only (`application_data_root_contracts`, 136 checks).
+- New vendored inputs: the WebView2 SDK header and x64 static loader. QuickJS-NG,
+  zlib and the Noto Sans SC/KR fonts were vendored earlier. All are listed in
+  `CREDITS.md`.
+
+### Verified, by suite
+
+Except for packaging, every area below is also exercised by both owner
+coverage runs.
+
+| Area | Suites | Main evidence |
+| --- | --- | --- |
+| Area contract (prep) | `application_registry_contracts` (58), `application_data_root_contracts` (136), `application_persistence_contracts`, `data_store_contracts` (144), `json_contracts` (328), `watch_preview_argument_contracts` | Fragment registration and generation, broadcasts with failure isolation, persistent Notes/Shelf roots, Mac ProfileStore load normalization, the libc++ `Json` fix |
+| Media Assembly | The 14 `media_assembly_*` suites, `endfieldhud_package_contracts`, `endfieldhud_install_contracts` | Highlights/Shadows matches 720 Core Image samples (worst float error 2.4e-7); `sourceUnavailable` and the player re-check; packaged assets |
+| Now Playing | All `now_playing_*` suites, including the new `now_playing_runtime_volume_contracts` and `now_playing_automation_contracts` | Coverage: 6 steps, 95 checks; per-app volume over the real `AudioRuntime` with injected backends |
+| Personal Profile | 12 `profile_*`/`id_card_*` suites, including `id_card_presenter_contracts`; `source_scene_contracts`, `work_mode_contracts` | Coverage: 73 checks; runtime `desktop.profile.*` textures (CPU side); lifetime hours counted once |
+| Account Linking | 11 `hypergryph_account_*` suites | Coverage: 6 steps, 211 checks, against a fake official site and the Mac oracle envelopes; WebView2 pins checked at configure |
+| Power | `power_area_contracts` (118), `power_owner_contracts` (30), `charge_badge_preview_contracts` and the other charge/power suites | Badge, alert cadence on the shared timer, position editing, sleep/wake, always mode |
+| App shortcuts | 11 `app_shortcut_*` suites, including `app_shortcut_icons_contracts` | Close-first launch, relink of imported records, navigation plan, original icons |
+| Mac import UI | `mac_import_flow_contracts` (282), `mac_import_contracts` (753) and the plist, settings, reconcile, native, tool and exporter suites | Every card step; three coverage cycles including a synthetic restart handoff |
+| System providers | `event_log_time_contracts` (1,536 checks, 486 Mac oracle cases), `clipboard_provider_contracts`, `activity_{catalog,provider,preview,state}_contracts`, `storage_files_contracts` | Local Event Log times, clipboard statuses and copy events, Activity names/icons/telemetry |
+| Reader, Calendar, Map | `reader_pdf_title_contracts` (65 PDFKit cases), `reader_localization_contracts`, `reader_accessibility_contracts`, `map_accessibility_contracts`, `calendar_notification_identity_contracts`, `calendar_reminder_area_contracts` | PDF titles, five-language Reader errors, reminder identity lookup in a private registry subtree |
+| Notes, Archive, Projection | `notes_long_editor_contracts` (166,924), `notes_clipboard_contracts`, `notes_text_navigation_contracts`, `notes_store_capacity_contracts`, `notes_font_names_contracts`, `notes_media_relink_contracts`, `archive_preview_contracts`, `notes_workspace_owner_contracts` | Chunked long documents, clipboard codecs, word navigation, cards of any size, stores over 64 MiB |
+| File Shelf | `file_shelf_files_contracts` (357), `file_shelf_transfer_contracts` (4,338), `shelf_file_preview_contracts` (530), `shelf_services_contracts` (112) | Identity relocation, generic preview, drag images, virtual-file refusal, Event Log records |
+| Packaging | `packaging_installer_contracts` (385), `packaging_format_contracts` (1,105), `endfieldhud_release_contracts`, `packaging_perf_*`, `packaging_ehudz01_contracts` (35), `packaging_identity_consistency` | Install, upgrade, rollback and uninstall in temporary folders and a private HKCU subtree; release staging; gate evaluation against a stand-in app |
+| Host | `application_root_contracts` and the 10 host checks in each coverage run | `--data-root`/`--toggle`, the UIA root over Volume, the Shelf navigation drop hit test, `DataRootRestart` in production only, the Import row, the long-work executor drain |
+
+### Corrections to the host entry above
+
+- App shortcuts does not implement `ModuleOwner::drop`. Only Media Assembly
+  does: its `drop` has the virtual's signature. A file dropped while Add App
+  is shown is therefore refused, and the "no drag and drop onto Add App" gap
+  still applies.
+- Media Assembly now compiles its played-frame colour pass, because
+  `NotesVideoRequest::frameFilter` exists. The full suite passes, but the
+  pass has not run on real playback, since coverage never plays.
+- `calendar_notification_setup` is still built and tested inert
+  (`calendar_notification_setup_inert`). It is not shipped, because
+  `packaging/installer.cpp` writes and removes the identity itself.
+
+### Not verified yet
+
+These paths are compiled but have never run, either by design or because they
+need the desktop.
+
+- **Host paths:** real `IFileOpenDialog`/`IFileSaveDialog` and `ChooseColorW`
+  dialogs from every area; production `updateSettings`, `openModule` and
+  `closeOverlay`; broadcasts from real `WM_POWERBROADCAST`, display, session,
+  activation and audio messages; the accepted `DataRootRestart` path; GPU
+  device-loss recovery; display reposition and the DPI fit; tray inking;
+  About links; Reduce Motion from "Animation effects"; HUD drops from
+  Explorer; the UIA root with Narrator or Inspect; clipboard suspension on
+  sleep or lock; Mac font mapping in the rasterizer.
+- **OS providers:** production Volume on the shared `AudioRuntime` with real
+  WASAPI; Now Playing over GSMTC, the network and real mixer sessions; real
+  battery changes, the alert window and badge routing; launching shortcuts
+  and activating existing windows; Activity icons and packaged names; the
+  Storage volume name; Shelf drags, drag images, preview handlers and paste;
+  the Notes system clipboard; ICU on Windows builds older than 1903; Calendar
+  toasts with an installed identity; WebView2 login (China and Global) and the
+  community API; Media Assembly playback through `IMFMediaEngine`; profile
+  textures uploaded to D3D11; a real Mac export imported into the real root;
+  the interactive Setup and uninstall windows and SmartScreen; the minigame's
+  1/30 s low-power tick.
+- **Performance:** no section 9 numbers exist for `EndfieldHUD.exe`. The gate
+  can now start it with `--data-root`. Frame pacing still needs an ETW
+  recorder.
+- The user's real `%LOCALAPPDATA%\EndfieldHUD\v1` root has never been opened
+  by a test.
+
+### Still open in code
+
+- UIA: Now Playing, Media Assembly and Account still have to implement the
+  `ModuleOwner` automation hooks. Reader, Map, Calendar and minigame
+  descriptors need projection and invoke APIs. The Power position editor and
+  the navigation entries have no provider.
+- The Power badge is still returned from `floatingEntries()`, so it composes
+  above pinned Notes. The source places it below the Notes workspace through
+  `planeEntries()`.
+- The profile area does not yet request the single-file image filter. It
+  takes the first regular file chosen.
+- No module updates `Migration/relink.json`. Notes, Archive and App shortcuts
+  relink their own records, but none calls `MacRelinkLedger::markResolved` or
+  `reconcile`, so the import card's relink list does not reflect those
+  relinks. Reader books and imported Shelf items have no relink action.
+- App shortcuts: no drop or paste onto Add App, no packaged-app choice or
+  logos, and no original icons in the right-side navigation.
+- Settings Display still lacks the custom accent colour picker, the
+  center-logo import and rendering, and clickable clock style indicators.
+  The cursor does not change shape over editors or grips.
+- Packaging: no updater, unsigned builds, the Evergreen WebView2 runtime is a
+  prerequisite, and only the x64 loader is vendored. The staged package
+  ships the font licences and the OrbiPom folder (with Matter's licence). It
+  does not ship QuickJS-NG's `LICENSE` or the WebView2 SDK's `LICENSE.txt`
+  and `NOTICE.txt`, although both are compiled into `EndfieldHUD.exe`.
+- A post-shutdown import commit that is killed leaves a `<root>.import-*`
+  folder, which is not swept at startup.
+- The portable no-ICU configure still fails at the Now Playing targets.
+
+Recorded platform gaps (capability, reason, fallback) are collected in
+`WINDOWS-MIGRATION.md`, section 6, "Windows platform gaps".

@@ -135,7 +135,11 @@ flow (`app/areas/mac_import_flow.hpp`, five HUD languages) is:
    the imported data and applies its post-import intents on load (Calendar
    reconcile, the profile lock from the account cache, launch at login). A
    save failure cancels the quit: the review stays and can be confirmed again
-   or cancelled. Without the host service the review cannot be confirmed.
+   or cancelled. Since checkpoint 123 the host publishes `DataRootRestart`
+   in production only (`app/application.cpp`, restart loop in
+   `app/main.cpp`), and the fresh run opens on System. Development previews
+   and hidden coverage do not publish it, so there the review cannot be
+   confirmed through the host; coverage plays the host's role itself.
 7. **Report.** The commit records `<root>.mac-import-outcome.json` next to
    the root (statuses, counts, backup folder, the importer's error text; no
    record content). The next run's area shows it once (final report, then the
@@ -154,6 +158,15 @@ path or name. The pure transformations `relinkedReaderBook`,
 (native, through the App Shortcuts editor transaction) and `ShelfRelinkSlot`
 (the shelf owner's `FileShelfStore::Creation`) keep each record's id, order,
 progress, bookmarks and unknown fields, and replace only the locator.
+
+**Status (checkpoint 123).** The ledger and the transforms are tested
+(`mac_import_contracts`, `mac_import_native_contracts`), but no module owner
+calls `markResolved` or `reconcile` yet. Notes (footer action), Archive (the
+attachment's error text) and App Shortcuts (choosing an app while editing)
+relink their own records through their own pickers, without updating
+`Migration/relink.json`, so the import card's relink list still shows those
+items. Reader books and imported Shelf items have no relink action yet. The
+contract below describes the intended owner behaviour.
 
 An owner writes the relinked record first and then calls `markResolved`. When
 it loads, it passes its unresolved entries through `reconcile(store, check)`,
@@ -195,6 +208,30 @@ accepted map must reach the exact state the Mac writes back after migrating it.
 outcome note over synthetic exports (staging progress, review, consent,
 in-process commit, restart handoff accepted/declined/discarded, the next
 run's report and relink list, failures, five languages).
+
+## 4a. Verification status (checkpoint 123)
+
+Verified on the laptop by hidden tests only: `mac_import_contracts` (753
+checks), `mac_import_flow_contracts` (282), the plist, settings, reconcile,
+native, tool and exporter suites, and the `macImport` area's three cycles in
+`application_owner_coverage`. Those cycles cover an in-process golden import;
+replace plus a synthetic restart, declined and then accepted, with the next
+run's report; and an invalid folder, cancelled staging and keyboard input.
+
+Not verified yet:
+
+- the production `DataRootRestart` path end to end (accepted quit, commit,
+  fresh run);
+- the real shared folder dialog;
+- an export of real user data, larger than the golden fixture;
+- the real `%LOCALAPPDATA%\EndfieldHUD\v1` root;
+- the card's text fit on a real display (longest CJK and Korean messages,
+  DPI).
+
+A process killed during the post-shutdown commit leaves its private
+`<root>.import-*` folder, which is not swept at startup. The importer never
+deletes backups. The commit runs between two runs, so it shows no progress
+while it works; staging progress and the final report are shown.
 
 ## 5. Acceptance tool
 

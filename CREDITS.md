@@ -39,6 +39,20 @@ User-supplied portraits, logos and reference recordings retain their owners' rig
 
 Account integration references include [endfield-wallpaper](https://github.com/Entropy-Increase-Team/endfield-wallpaper), [endfield-gacha](https://github.com/bhaoo/endfield-gacha), [skland-plugin](https://github.com/erzaozi/skland-plugin), and [astrbot_plugin_arknights_sanity](https://github.com/fxquarter/astrbot_plugin_arknights_sanity).
 
+## Windows build
+
+The native Windows port in `windows/` adds the third-party components below. The vendored libraries and fonts are unmodified and kept with their licenses and a provenance file that pins the upstream source and SHA-256 hashes. Sparkle and MediaRemote Adapter are used only by the macOS app. The Windows build otherwise relies on components that ship with Windows, such as `winsqlite3`, `icu.dll`, Media Foundation and WIC, and on the separately installed Evergreen WebView2 Runtime. None of these is redistributed.
+
+| Project | Use and license |
+| --- | --- |
+| [QuickJS-NG 0.17.0](https://github.com/quickjs-ng/quickjs/tree/6d46d07d04041b40f4f49eaa7fdebe44c314c699), commit `6d46d07d04041b40f4f49eaa7fdebe44c314c699` | Runs the original OrbiPom scripts and Matter.js in the Windows minigame. Engine sources only. MIT, Fabrice Bellard, Charlie Gordon and Ben Noordhuis. [License](windows/third_party/quickjs-ng/LICENSE) · [provenance](windows/third_party/quickjs-ng/provenance.json). |
+| [Microsoft Edge WebView2 SDK 1.0.4191.47](https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47) (`Microsoft.Web.WebView2`) | `WebView2.h` and the x64 static loader, linked into `EndfieldHUD.exe` for the short-lived official account sign-in. Microsoft's BSD-style SDK license, with third-party notices. [License](windows/third_party/webview2/LICENSE.txt) · [notices](windows/third_party/webview2/NOTICE.txt) · [provenance](windows/third_party/webview2/provenance.json). |
+| [zlib 1.3.2](https://zlib.net/) | Inflate and CRC subset, used to read EPUB files in the Windows Reader and to verify EHUDZ01 payloads when packaging. zlib License, Jean-loup Gailly and Mark Adler. [License](windows/third_party/zlib/LICENSE) · [manifest](windows/third_party/zlib/manifest.json). |
+| [Noto Sans SC and Noto Sans KR](https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl), version 2.004 (variable weight), google/fonts commit `a85815a42757630ce188fdad368c2dfc444d4773` | The Windows HUD's bundled text fonts, loaded privately through DirectWrite; Korean text uses Noto Sans KR. SIL Open Font License 1.1, copyright 2014-2021 Adobe, Reserved Font Name "Source". [SC license](windows/assets/fonts/NotoSansSC-OFL.txt) · [KR license](windows/assets/fonts/NotoSansKR-OFL.txt) · [manifest](windows/assets/fonts/manifest.json). |
+| [EarTrumpet](https://github.com/File-New-Project/EarTrumpet), commit `154980811087fb7c423d806e2d9816733db6a7a5` | Adapted interface declarations for the undocumented default-audio-device switch. They compile only under a research define that no build sets, so they are not part of the app. MIT, with EarTrumpet's excluded-entities clause. [Notice](windows/native/audio_default_device_notice.txt). |
+
+The Windows package currently ships the font licenses and the OrbiPom resource folder, which contains Matter.js's license. It does not yet include the QuickJS-NG license or the WebView2 SDK license and notices, although both are compiled into `EndfieldHUD.exe`. This is an open packaging item.
+
 ## Map data
 
 Terrain is a simplified derivative of NOAA NCEI's [ETOPO 2022](https://doi.org/10.25921/fd45-gt74), under CC0/public-domain terms. Country outlines use [Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) public-domain data. The map is a decorative overview, not a navigation or survey map.
