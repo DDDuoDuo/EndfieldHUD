@@ -2,6 +2,7 @@
 #include "core/data/json.hpp"
 #include "core/scene.hpp"
 #include "native/system_services.hpp"
+#include "native/audio_endpoint_snapshot.hpp"
 #include <functional>
 #include <memory>
 
@@ -30,6 +31,9 @@ struct VolumeSnapshot {
     // the original source list order. No process/route inference is performed.
     std::vector<VolumeApplication>applications;
     std::optional<std::string>status,applicationMessage,perAppStatus;
+    // Owned routes were restored because the default output changed; shown
+    // as the source per-app status until the next explicit per-app command.
+    bool routingStopped{};
     bool operator==(const VolumeSnapshot&)const=default;
 };
 struct VolumeStrings {
@@ -43,10 +47,12 @@ struct VolumeStrings {
         unsupportedBalance{"Balance is unavailable for this device"},missingBalance{"Balance unavailable"},
         deviceControls{"Use this device's controls"},noHeadphones{"No headphones or Bluetooth audio devices"},
         headphones{"Headphones"},outputSuffix{" · Output"},noApps{"No adjustable audio apps"},
-        unsupportedApps{"App volume is not available from the current audio provider"},
+        unsupportedApps{"Active audio app information is unavailable."},
         noConnectedDevices{"No connected devices"},starting{"Starting…"},stopping{"Stopping…"},
-        restore{"100% to restore"},unsupportedRoute{"Unsupported route"};
+        restore{"100% to restore"},unsupportedRoute{"Unsupported route"},
+        appRoutingStopped{"App routing stopped because the output device changed."};
     static VolumeStrings simplifiedChinese();
+    bool operator==(const VolumeStrings&)const=default;
 };
 struct VolumeControl {std::string id,label,title;core::Rect rect;bool enabled{true},highlighted{},leftAligned{};};
 struct VolumeSlider {std::string id,label;core::Rect rect;std::optional<core::Rect>visibleRect;std::optional<double>value;double minimum{},maximum{1};bool enabled{};};
@@ -71,6 +77,7 @@ public:
     VolumeController&operator=(const VolumeController&)=delete;
     bool setActive(bool);
     bool receiveSnapshot(VolumeSnapshot);
+    // False (no rebuild, no artwork reshape) when the strings are unchanged.
     bool setStrings(VolumeStrings);
     bool mouseDown(core::Point,double time,bool reduceMotion=false);
     bool mouseDragged(core::Point);void mouseUp()noexcept;
@@ -94,9 +101,13 @@ private:
     struct Impl;std::unique_ptr<Impl>impl_;
 };
 // Pure mapping of the shared Windows provider's supported master, input,
-// balance, headphone and explicit relative application-route fields. Icons
-// remain asynchronous shared-cache bindings supplied by the presentation owner.
-// Endpoint-control selection is NOT public default-device switching.
+// balance, headphone/Bluetooth and explicit relative application-route fields.
+// Icons remain asynchronous shared-cache bindings supplied by the presentation
+// owner. Endpoint-control selection is NOT public default-device switching.
+VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&);
+// Adapter for the older SystemServices audio snapshot (no Bluetooth or
+// fixed-volume information; the controlled endpoint stands for the output).
+AudioEndpointSnapshot audioEndpointSnapshotFromSystem(const AudioSnapshot&);
 VolumeSnapshot volumeSnapshotFromSystemAudio(const AudioSnapshot&);
 struct VolumeStyle {bool dark{true};VolumeColor accent{250./255,212./255,31./255,1};bool operator==(const VolumeStyle&)const=default;};
 struct VolumeSurface {std::string id;core::Matrix4 local;float opacity{1};std::optional<core::Rect>clip;std::string feedback;bool rim{};};

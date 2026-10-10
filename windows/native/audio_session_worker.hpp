@@ -32,8 +32,23 @@ struct AudioSessionRecord {
     std::optional<float> volume;
     std::int32_t error{};
     std::optional<AudioApplicationExecutable> executable;
+    // IAudioSessionControl2::GetSessionIdentifier: the cross-instance key under
+    // which Windows persists an application's mixer level. Used only by the
+    // owned-attenuation recovery journal, never to merge processes.
+    std::string persistentID;
+    // GetApplicationUserModelId of the exact PID+creation-time process, when
+    // the process has one (packaged/explicit identity). Never inferred.
+    std::string appUserModelID;
+    // The exact PID+creation-time process has terminated while this session
+    // object is still held. Reported once so owned attenuation can be restored
+    // on the still-existing session (Windows persists the level per app); the
+    // backend releases the session on its next read. Never listed as an app.
+    bool exited{};
     bool operator==(const AudioSessionRecord&)const=default;
 };
+// Native float scalars are compared with this tolerance everywhere a readback
+// must prove that a value is still the one this owner wrote.
+inline constexpr float audioSessionScalarTolerance=2e-6f;
 enum class AudioApplicationRouteState { direct,active,failed };
 struct AudioApplicationRoute {
     std::string id;
@@ -44,6 +59,8 @@ struct AudioApplicationRoute {
     std::optional<float>gain;
     std::int32_t error{};
     std::optional<AudioApplicationExecutable> executable;
+    // Shared by every session of this process; empty when unknown/conflicting.
+    std::string appUserModelID;
     bool operator==(const AudioApplicationRoute&)const=default;
 };
 struct AudioSessionSnapshot {

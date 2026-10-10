@@ -48,7 +48,28 @@ AudioDefaultDeviceResult AudioDefaultDeviceSelector::select(AudioDefaultFlow flo
 }
 } // namespace endfield::native
 
-#ifdef _WIN32
+#if defined(_WIN32)&&!defined(ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG)
+namespace endfield::native {
+// Platform gap (default build): Windows has no documented public API that
+// changes the default playback or recording endpoint (MMDevice API and
+// Windows.Media.Devices.MediaDevice only READ the defaults). The project rule
+// forbids shipping undocumented interfaces, so the native access reports an
+// unsupported capability and never creates a COM object, reads an endpoint or
+// changes routing. Volume's device chooser therefore stays disabled, exactly
+// like the source when kAudioHardwarePropertyDefaultOutputDevice is not
+// settable; Windows Settings > System > Sound remains the way to switch.
+AudioDefaultDeviceAccess nativeAudioDefaultDeviceAccess(){
+    constexpr auto unsupported=status(0x80004001); // E_NOTIMPL
+    AudioDefaultDeviceAccess access;
+    access.capability=[]{AudioDefaultDeviceCapability c;c.status=unsupported;return c;};
+    access.validateEndpoint=[](std::wstring_view,AudioDefaultFlow){return unsupported;};
+    access.current=[](AudioDefaultFlow,AudioDefaultRole,std::wstring&){return unsupported;};
+    access.select=[](std::wstring_view,AudioDefaultRole){return unsupported;};
+    return access;
+}
+}
+#elif defined(_WIN32)
+// Explicit opt-in research build only (never set by the project CMake files).
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif

@@ -41,6 +41,26 @@ void transactions(){Fake f;AudioSessionRoutes routes;routes.update(f.records,f);
     invalid=bad.records;invalid[1].pid=43;rejected=false;try{rollback.update(invalid,bad);}catch(...){rejected=true;}check(rejected,"A process key cannot bind two PIDs");
     invalid=bad.records;invalid[0].processKey="99:200";invalid[0].pid=99;rejected=false;try{rollback.update(invalid,bad);}catch(...){rejected=true;}check(rejected&&rollback.applications()[0].id=="42:100","An existing leased session cannot be reassigned to another process before mutation");
 }
+void pausedPlayer(){Fake f;for(auto&r:f.records)r.active=false;AudioSessionRoutes routes;routes.update(f.records,f);
+    check(routes.applications().size()==1&&routes.applications()[0].available&&routes.applications()[0].state==AudioApplicationRouteState::direct,"A paused player (inactive, unexpired sessions) stays listed and adjustable, like the source's remembered output process");
+    check(routes.setGain("42:100",.5f,f)==0&&f.records[0].volume==.2f&&f.records[1].volume==.4f,"Paused-player volume applies relatively to every session immediately");
+    f.records[1].controllable=false;f.records[1].volume.reset();routes.update(f.records,f);
+    check(routes.applications()[0].state==AudioApplicationRouteState::failed,"A session that becomes uncontrollable fails the owned route instead of guessing");
+    check(routes.stop("42:100",f)<0&&f.records[0].volume==.4f,"Cleanup restores every readable session and reports the unreadable one");
+    AudioSessionRoutes fresh;Fake g;for(auto&r:g.records)r.active=false;g.records[1].controllable=false;g.records[1].volume.reset();fresh.update(g.records,g);
+    check(fresh.applications().empty(),"A process with any uncontrollable session is never offered (no partial control)");
+}
+void exitedProcess(){Fake f;AudioSessionRoutes routes;routes.update(f.records,f);check(routes.setGain("42:100",.5f,f)==0&&f.records[0].volume==.2f,"Owned attenuation before the player quits");
+    for(auto&r:f.records){r.exited=true;r.active=false;}routes.update(f.records,f);
+    check(f.records[0].volume==.4f&&f.records[1].volume==.8f,"A terminated owned process is restored on its still-held sessions (Windows persists the level; the source tap ended)");
+    check(routes.applications().empty(),"A terminated process is never listed");
+    f.records.clear();routes.update(f.records,f);check(routes.applications().empty(),"Released sessions leave nothing owned");
+    Fake g;AudioSessionRoutes failing;failing.update(g.records,g);failing.setGain("42:100",.5f,g);g.failWrite=1;g.writes=0;for(auto&r:g.records)r.exited=true;failing.update(g.records,g);
+    check(failing.applications().size()==1&&failing.applications()[0].state==AudioApplicationRouteState::failed&&!failing.applications()[0].available,"A failed restore of a terminated process is reported, never offered for new attenuation");
+    check(failing.setGain("42:100",.3f,g)<0,"A terminated process cannot take a new gain");
+    g.records.clear();failing.update(g.records,g);check(failing.applications().empty(),"Its route ends when the backend releases the sessions");
+    Fake h;h.records[1].exited=true;AudioSessionRoutes fresh;fresh.update(h.records,h);check(fresh.applications().empty(),"A process with a terminated session is not offered");
+}
 void appearanceMetadata(){Fake f;AudioSessionRoutes routes;AudioApplicationExecutable e;e.path="C:\\explicit-synthetic\\app.exe";e.identity.objectID[0]=1;e.identity.volumeSerial=9;f.records[0].executable=e;routes.update(f.records,f);
     check(routes.applications()[0].executable==e&&f.calls.empty(),"Captured regular-file appearance metadata flows through existing process grouping without audio writes");
     f.records[1].executable=e;routes.update(f.records,f);check(routes.applications()[0].executable==e,"Matching process sessions share one exact icon source");
@@ -77,4 +97,4 @@ void lifecycle(){auto state=std::make_shared<WorkerState>();std::mutex noticeMut
     check(!worker.activate(L"fixture endpoint")&&!worker.setGain("42:100",.5f),"Closed worker rejects stale queued UI commands");
 }
 }
-int main(){try{transactions();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{transactions();pausedPlayer();exitedProcess();appearanceMetadata();lifecycle();std::cout<<"PASS "<<checks<<" synthetic audio-session worker checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

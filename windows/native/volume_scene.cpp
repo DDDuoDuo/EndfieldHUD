@@ -34,7 +34,7 @@ std::string utf8(std::wstring_view value){
     return result;
 }
 }
-VolumeStrings VolumeStrings::simplifiedChinese(){VolumeStrings s;s.title="音量";s.outputDevice="输出设备";s.inputDevice="输入设备";s.subtitle="设备与应用音量";s.chooseConnected="选择已连接的设备";s.output="输出";s.input="输入";s.noDevice="无设备";s.volume="音量";s.balance="平衡";s.outputVolume="输出音量";s.balanceLabel="左右声道平衡";s.appVolumeSuffix=" 音量";s.unavailable="不可用";s.mute="静音";s.unmute="取消静音";s.headphonesBluetooth="耳机 / 蓝牙";s.appVolume="应用音量";s.back="返回";s.chooseOutput="选择输出设备";s.chooseInput="选择输入设备";s.selected="，已选择";s.previousPage="上一页";s.nextPage="下一页";s.centered="居中";s.unsupportedBalance="此设备不支持声道平衡";s.missingBalance="声道平衡不可用";s.deviceControls="请使用设备自身的音量控制";s.noHeadphones="未连接耳机或蓝牙音频设备";s.headphones="耳机";s.outputSuffix=" · 输出";s.noApps="暂无可调节音量的应用";s.unsupportedApps="当前音频提供方暂不支持应用音量";s.noConnectedDevices="无已连接设备";s.starting="正在启动…";s.stopping="正在停止…";s.restore="回到 100% 恢复";s.unsupportedRoute="暂不支持此路由";return s;}
+VolumeStrings VolumeStrings::simplifiedChinese(){VolumeStrings s;s.title="音量";s.outputDevice="输出设备";s.inputDevice="输入设备";s.subtitle="设备与应用音量";s.chooseConnected="选择已连接的设备";s.output="输出";s.input="输入";s.noDevice="无设备";s.volume="音量";s.balance="平衡";s.outputVolume="输出音量";s.balanceLabel="左右声道平衡";s.appVolumeSuffix=" 音量";s.unavailable="不可用";s.mute="静音";s.unmute="取消静音";s.headphonesBluetooth="耳机 / 蓝牙";s.appVolume="应用音量";s.back="返回";s.chooseOutput="选择输出设备";s.chooseInput="选择输入设备";s.selected="，已选择";s.previousPage="上一页";s.nextPage="下一页";s.centered="居中";s.unsupportedBalance="此设备不支持声道平衡";s.missingBalance="声道平衡不可用";s.deviceControls="请使用设备自身的音量控制";s.noHeadphones="未连接耳机或蓝牙音频设备";s.headphones="耳机";s.outputSuffix=" · 输出";s.noApps="暂无可调节音量的应用";s.unsupportedApps="活跃音频应用信息不可用。";s.noConnectedDevices="无已连接设备";s.starting="正在启动…";s.stopping="正在停止…";s.restore="回到 100% 恢复";s.unsupportedRoute="暂不支持此路由";s.appRoutingStopped="输出设备已更改，应用混音已停止。";return s;}
 struct VolumeController::Impl {
     VolumeSnapshot snapshot;VolumeCallbacks callbacks;VolumeStrings strings;bool active{},headphones{},busy{};
     std::optional<bool>chooser;std::optional<std::string>dragged;std::string selected{"volume"};std::size_t page{};double scroll{},accumulation{};
@@ -71,12 +71,17 @@ struct VolumeController::Impl {
     }
     struct Call {Impl&i;explicit Call(Impl&v):i(v){need(!i.busy,"Reentrant Volume mutation");i.busy=true;}~Call(){i.busy=false;}};
 };
-VolumeController::VolumeController(VolumeSnapshot s,VolumeCallbacks callbacks,VolumeStrings strings):impl_(std::make_unique<Impl>()){validate(s);impl_->snapshot=std::move(s);impl_->callbacks=std::move(callbacks);setStrings(std::move(strings));}
+namespace {
+void validateStrings(const VolumeStrings&s){
+    for(const auto*value:{&s.title,&s.outputDevice,&s.inputDevice,&s.subtitle,&s.chooseConnected,&s.output,&s.input,&s.noDevice,&s.volume,&s.balance,&s.outputVolume,&s.balanceLabel,&s.appVolumeSuffix,&s.unavailable,&s.mute,&s.unmute,&s.headphonesBluetooth,&s.appVolume,&s.back,&s.chooseOutput,&s.chooseInput,&s.selected,&s.previousPage,&s.nextPage,&s.centered,&s.unsupportedBalance,&s.missingBalance,&s.deviceControls,&s.noHeadphones,&s.headphones,&s.outputSuffix,&s.noApps,&s.unsupportedApps,&s.noConnectedDevices,&s.starting,&s.stopping,&s.restore,&s.unsupportedRoute,&s.appRoutingStopped})string(*value,false);
+}
+}
+VolumeController::VolumeController(VolumeSnapshot s,VolumeCallbacks callbacks,VolumeStrings strings):impl_(std::make_unique<Impl>()){validate(s);validateStrings(strings);impl_->snapshot=std::move(s);impl_->callbacks=std::move(callbacks);impl_->strings=std::move(strings);impl_->rebuild();}
 VolumeController::~VolumeController()=default;
 bool VolumeController::setActive(bool value){auto&i=*impl_;if(i.active==value)return false;Impl::Call call(i);i.active=value;if(!value){i.dragged.reset();i.chooser.reset();i.selected="volume";i.page=0;i.scroll=0;i.accumulation=0;i.actionStarted.reset();i.rebuild();}if(i.callbacks.setActive)i.callbacks.setActive(value);return true;}
 bool VolumeController::receiveSnapshot(VolumeSnapshot snapshot){validate(snapshot);auto&i=*impl_;if(i.snapshot==snapshot)return false;if(i.dragged){const bool writable=i.dragged->starts_with("app:")?snapshot.applicationActivitySupported: *i.dragged=="volume"?snapshot.canSetVolume&&snapshot.volume.has_value():snapshot.canSetBalance&&snapshot.balance.has_value();if(snapshot.outputID!=i.snapshot.outputID||!writable)i.dragged.reset();}i.snapshot=std::move(snapshot);i.rebuild();if(i.dragged){const auto s=std::find_if(i.sliders.begin(),i.sliders.end(),[&](const auto&v){return v.id==*i.dragged;});if(s==i.sliders.end()||!s->enabled)i.dragged.reset();}return true;}
 bool VolumeController::setStrings(VolumeStrings s){
-    for(const auto*value:{&s.title,&s.outputDevice,&s.inputDevice,&s.subtitle,&s.chooseConnected,&s.output,&s.input,&s.noDevice,&s.volume,&s.balance,&s.outputVolume,&s.balanceLabel,&s.appVolumeSuffix,&s.unavailable,&s.mute,&s.unmute,&s.headphonesBluetooth,&s.appVolume,&s.back,&s.chooseOutput,&s.chooseInput,&s.selected,&s.previousPage,&s.nextPage,&s.centered,&s.unsupportedBalance,&s.missingBalance,&s.deviceControls,&s.noHeadphones,&s.headphones,&s.outputSuffix,&s.noApps,&s.unsupportedApps,&s.noConnectedDevices,&s.starting,&s.stopping,&s.restore,&s.unsupportedRoute})string(*value,false);
+    validateStrings(s);if(impl_->strings==s)return false;
     impl_->strings=std::move(s);impl_->rebuild();return true;
 }
 bool VolumeController::setSlider(std::string_view id,double value){auto&i=*impl_;if(!i.active||!std::isfinite(value))return false;const auto slider=std::find_if(i.sliders.begin(),i.sliders.end(),[&](const auto&s){return s.id==id;});if(slider==i.sliders.end()||!slider->enabled)return false;
@@ -115,9 +120,17 @@ VolumeActionSample VolumeController::actionSample(double time)const{const auto&i
     sample.transform.values[11]=p;sample.transform.values[12]=i.actionDirection*11*remaining;sample.transform.values[14]=z;sample.transform.values[15]=1+p*z;
     sample.reveal={i.actionDirection>0?10*remaining:0,0,400-10*remaining,334};sample.active=true;return sample;
 }
-VolumeSnapshot volumeSnapshotFromSystemAudio(const AudioSnapshot&audio){VolumeSnapshot s;s.outputID=utf8(audio.controlled_device_id.empty()?audio.default_device_id:audio.controlled_device_id);s.inputID=utf8(audio.default_input_device_id);for(const auto&d:audio.devices)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones});if(audio.available&&!audio.paused){if(audio.volume)s.volume=*audio.volume;s.muted=audio.muted;s.balance=audio.balance;s.canSetVolume=s.volume.has_value();s.canSetMute=s.muted.has_value();s.canSetBalance=audio.can_set_balance&&s.balance.has_value();}
-    s.applicationActivitySupported=audio.application_supported&&!audio.applications_paused&&!audio.paused;
+VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&audio){VolumeSnapshot s;s.outputID=utf8(audio.defaultOutputID);s.inputID=utf8(audio.defaultInputID);
+    for(const auto&d:audio.outputs)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});
+    if(audio.available&&!audio.paused){s.volume=audio.volume?std::optional<double>(*audio.volume):std::nullopt;s.muted=audio.muted;s.balance=audio.balance?std::optional<double>(*audio.balance):std::nullopt;s.canSetVolume=audio.canSetVolume&&s.volume.has_value();s.canSetMute=audio.canSetMute&&s.muted.has_value();s.canSetBalance=audio.canSetBalance&&s.balance.has_value();}
+    s.applicationActivitySupported=audio.applicationsSupported&&!audio.applicationsPaused&&!audio.paused;s.routingStopped=audio.routesStoppedByDeviceChange;
     for(const auto&a:audio.applications){VolumeApplication app;app.id=a.id;app.name=utf8(a.name);app.pid=a.pid;app.available=a.available&&s.applicationActivitySupported;app.state=a.state==AudioApplicationRouteState::active?VolumeAppState::active:a.state==AudioApplicationRouteState::failed?VolumeAppState::failed:VolumeAppState::direct;if(a.gain)app.gain=*a.gain;app.executable=a.executable;s.applications.push_back(std::move(app));}return s;}
+AudioEndpointSnapshot audioEndpointSnapshotFromSystem(const AudioSnapshot&audio){AudioEndpointSnapshot e;e.paused=audio.paused;e.available=audio.available;
+    for(const auto&d:audio.devices)e.outputs.push_back({d.id,d.name,d.headphones,false});for(const auto&d:audio.inputs)e.inputs.push_back({d.id,d.name,d.headphones,false});
+    e.defaultOutputID=audio.controlled_device_id.empty()?audio.default_device_id:audio.controlled_device_id;e.defaultInputID=audio.default_input_device_id;
+    e.volume=audio.volume;e.muted=audio.muted;e.balance=audio.balance;e.canSetVolume=audio.volume.has_value();e.canSetMute=audio.muted.has_value();e.canSetBalance=audio.can_set_balance&&audio.balance.has_value();
+    e.error=audio.error;e.inputError=audio.input_error;e.applicationsSupported=audio.application_supported;e.applicationsPaused=audio.applications_paused;e.applications=audio.applications;e.applicationError=audio.application_error;return e;}
+VolumeSnapshot volumeSnapshotFromSystemAudio(const AudioSnapshot&audio){return volumeSnapshotFromEndpoints(audioEndpointSnapshotFromSystem(audio));}
 
 namespace {
 Json rect(Rect r){return Json::Array{r.x,r.y,r.width,r.height};}Json color(VolumeColor c){return Json::Object{{"sRGB",Json::Array{c[0],c[1],c[2],c[3]}}};}
@@ -168,7 +181,7 @@ VolumeScenePlan prepareVolumeScene(const VolumeController&controller,VolumeStyle
                     a.text(prefix+"/name",app.name,{nameX,y,nameWidth,15},10.5,a.primary,"Medium");a.text(prefix+"/state",state,{nameX,y+15,nameWidth,12},8,a.muted);const auto gain=app.state==VolumeAppState::direct?std::optional<double>{1}:app.gain;a.text(prefix+"/value",gain?percent(*gain):"—",{339,y+6,46,16},10,a.primary,"Regular","right");}
                 a.clip.reset();const auto max=std::max(0.,double(appCount)*31-64);if(max>0){const auto height=std::max(12.,64*64/(max+64));a.fillRect("volume/app-track",{392,234,2,64},alpha(a.muted,.2));a.fillRect("volume/app-thumb",{392,234+(64-height)*controller.applicationScroll()/max,2,height},a.muted);}
             }
-            a.text("volume/per-app-status",s.perAppStatus.value_or(""),{12,300,controller.pageCount()>1?245.:376.,31},8.5,a.muted,"Regular","left",true);
+            a.text("volume/per-app-status",s.perAppStatus.value_or(s.routingStopped?labels.appRoutingStopped:std::string{}),{12,300,controller.pageCount()>1?245.:376.,31},8.5,a.muted,"Regular","left",true);
         }
     }
     if(controller.pageCount()>1)a.text("volume/page",std::to_string(controller.pageIndex()+1)+" / "+std::to_string(controller.pageCount()),{299,307,54,15},10,a.muted,"Regular","center");for(std::size_t n=0;n<controller.actions().size();++n)if(controller.actions()[n].id=="audio:previous"||controller.actions()[n].id=="audio:next")a.button(controller.actions()[n],n);

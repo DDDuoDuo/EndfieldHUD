@@ -39,11 +39,13 @@ public:
 private:AudioDefaultDeviceAccess access_;AudioDefaultDeviceResult result_;bool busy_{};
 };
 #ifdef _WIN32
-// Optional undocumented PolicyConfig ABI, pinned in audio_default_device.cpp.
-// Lazy: construction performs no native calls. capability() checks OS version
-// and COM QueryInterface only; it does not enumerate/read/switch real endpoints.
-// Unsupported OS/interface returns a failed capability, never an ABI guess.
-// Uses/release on the constructing owner thread. No service or worker exists.
+// Default build: Windows has no documented API to change the default endpoint,
+// so this access always reports an unsupported capability (E_NOTIMPL) and never
+// touches COM or audio. The selector above stays as the guarded transaction
+// for a future documented API. The previous undocumented PolicyConfig ABI
+// (EarTrumpet-derived, see audio_default_device_notice.txt) compiles only with
+// the explicit research define ENDFIELD_AUDIO_UNDOCUMENTED_POLICY_CONFIG, which
+// no project build sets.
 AudioDefaultDeviceAccess nativeAudioDefaultDeviceAccess();
 #endif
 } // namespace endfield::native

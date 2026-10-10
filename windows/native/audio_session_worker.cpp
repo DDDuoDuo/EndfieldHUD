@@ -15,7 +15,7 @@ bool validAudioApplicationExecutable(const AudioApplicationExecutable&e)noexcept
 namespace {
 constexpr std::int32_t invalid=static_cast<std::int32_t>(0x80070057u),unexpected=static_cast<std::int32_t>(0x8000ffffu),notFound=static_cast<std::int32_t>(0x80070490u),changedState=static_cast<std::int32_t>(0x8000000cu);
 bool scalar(float v){return std::isfinite(v)&&v>=0&&v<=1;}
-bool same(float a,float b){return std::abs(a-b)<=2e-6f;}
+bool same(float a,float b){return std::abs(a-b)<=audioSessionScalarTolerance;}
 bool identity(std::string_view s){return !s.empty()&&s.size()<=4096&&s.find('\0')==s.npos;}
 template<class F>std::int32_t call(F&&f)noexcept{try{return f();}catch(...){return unexpected;}}
 }
@@ -28,13 +28,19 @@ public:
     std::vector<AudioApplicationRoute>apps;
     const AudioSessionRecord*record(std::string_view id)const{const auto i=std::find_if(records.begin(),records.end(),[&](const auto&r){return r.id==id;});return i==records.end()?nullptr:&*i;}
     void rebuild(){
-        struct Group{std::size_t index{};bool active{},writable{true},iconConflict{};};std::map<std::string,Group,std::less<>>indices;std::vector<AudioApplicationRoute>next;
+        struct Group{std::size_t index{};bool active{},writable{true},iconConflict{},identityConflict{};};std::map<std::string,Group,std::less<>>indices;std::vector<AudioApplicationRoute>next;
         for(const auto&r:records){if(r.processKey.empty()||!r.pid)continue;auto found=indices.find(r.processKey);
-            if(found==indices.end()){indices.emplace(r.processKey,Group{next.size(),r.active,r.controllable&&r.volume.has_value()});next.push_back({r.processKey,r.name,r.pid,false,AudioApplicationRouteState::direct,{},r.error,r.executable});}
-            else{auto&group=found->second;group.active=group.active||r.active;group.writable=group.writable&&r.controllable&&r.volume.has_value();if(r.error<0)next[group.index].error=r.error;
-                auto&app=next[group.index];if(!group.iconConflict&&r.executable){if(app.executable&&*app.executable!=*r.executable){app.executable.reset();group.iconConflict=true;}else app.executable=r.executable;}}
+            if(found==indices.end()){indices.emplace(r.processKey,Group{next.size(),r.active,r.controllable&&r.volume.has_value()&&!r.exited});next.push_back({r.processKey,r.name,r.pid,false,AudioApplicationRouteState::direct,{},r.error,r.executable,r.appUserModelID});}
+            else{auto&group=found->second;group.active=group.active||r.active;group.writable=group.writable&&r.controllable&&r.volume.has_value()&&!r.exited;if(r.error<0)next[group.index].error=r.error;
+                auto&app=next[group.index];if(!group.iconConflict&&r.executable){if(app.executable&&*app.executable!=*r.executable){app.executable.reset();group.iconConflict=true;}else app.executable=r.executable;}
+                // One process has one AppUserModelID. A disagreement is never
+                // resolved by picking one; Now Playing then finds no match.
+                if(!group.identityConflict&&!r.appUserModelID.empty()){if(app.appUserModelID.empty())app.appUserModelID=r.appUserModelID;else if(app.appUserModelID!=r.appUserModelID){app.appUserModelID.clear();group.identityConflict=true;}}}
         }
-        for(const auto&[_,group]:indices)next[group.index].available=group.active&&group.writable;
+        // Source: a paused player stays listed while its process lives (HAL
+        // remembers its output devices). A Windows session persists Inactive
+        // until it expires, so any live writable session lists the app.
+        for(const auto&[_,group]:indices)next[group.index].available=group.writable;
         for(auto&a:next)if(const auto found=owned.find(a.id);found!=owned.end()){a.state=found->second.error<0?AudioApplicationRouteState::failed:AudioApplicationRouteState::active;a.gain=found->second.gain;a.error=found->second.error;}
         next.erase(std::remove_if(next.begin(),next.end(),[](const auto&a){return !a.available&&a.state==AudioApplicationRouteState::direct;}),next.end());apps=std::move(next);
     }
@@ -59,13 +65,18 @@ AudioSessionRoutes&AudioSessionRoutes::operator=(AudioSessionRoutes&&)noexcept=d
 const std::vector<AudioApplicationRoute>&AudioSessionRoutes::applications()const noexcept{return impl_->apps;}
 void AudioSessionRoutes::update(std::span<const AudioSessionRecord>records,AudioSessionBackend&backend){
     if(records.size()>maximumSessions)throw std::invalid_argument("Audio session budget exceeded");std::map<std::string,std::uint32_t,std::less<>>processes;std::map<std::string,bool,std::less<>>ids;std::size_t bytes{};
-    for(const auto&r:records){if(!identity(r.id)||(!r.processKey.empty()&&!identity(r.processKey))||r.name.size()>4096||r.name.find(L'\0')!=r.name.npos||(!r.processKey.empty()&&!r.pid)||(!r.processKey.empty()&&!processes.emplace(r.processKey,r.pid).second&&processes.at(r.processKey)!=r.pid)||!ids.emplace(r.id,true).second||(r.volume&&!scalar(*r.volume))||(r.executable&&(r.processKey.empty()||!validAudioApplicationExecutable(*r.executable))))throw std::invalid_argument("Invalid native audio session identity/state");bytes+=r.id.size()+r.processKey.size()+r.name.size()*sizeof(wchar_t);if(r.executable)bytes+=r.executable->path.size()+(r.executable->identity.volumeUUID?r.executable->identity.volumeUUID->size():0);if(bytes>8*1024*1024)throw std::invalid_argument("Audio session metadata budget exceeded");}
+    for(const auto&r:records){if(!identity(r.id)||(!r.processKey.empty()&&!identity(r.processKey))||r.name.size()>4096||r.name.find(L'\0')!=r.name.npos||(!r.processKey.empty()&&!r.pid)||(!r.processKey.empty()&&!processes.emplace(r.processKey,r.pid).second&&processes.at(r.processKey)!=r.pid)||!ids.emplace(r.id,true).second||(r.volume&&!scalar(*r.volume))||(r.executable&&(r.processKey.empty()||!validAudioApplicationExecutable(*r.executable)))||r.persistentID.size()>4096||r.persistentID.find('\0')!=r.persistentID.npos||r.appUserModelID.size()>1024||r.appUserModelID.find('\0')!=r.appUserModelID.npos||(!r.appUserModelID.empty()&&r.processKey.empty()))throw std::invalid_argument("Invalid native audio session identity/state");bytes+=r.id.size()+r.processKey.size()+r.name.size()*sizeof(wchar_t)+r.persistentID.size()+r.appUserModelID.size();if(r.executable)bytes+=r.executable->path.size()+(r.executable->identity.volumeUUID?r.executable->identity.volumeUUID->size():0);if(bytes>8*1024*1024)throw std::invalid_argument("Audio session metadata budget exceeded");}
     auto&i=*impl_;for(const auto&r:records)if(const auto*previous=i.record(r.id);previous&&(previous->processKey!=r.processKey||previous->pid!=r.pid))throw std::invalid_argument("Native audio session identity was reassigned");i.records.assign(records.begin(),records.end());
+    // Source: a tap ends with its process and the app plays at full volume
+    // next time. Windows persists the session level per app, so a terminated
+    // owned process is restored while its sessions still exist.
+    std::vector<std::string>ended;for(const auto&[id,o]:i.owned)if(std::any_of(o.members.begin(),o.members.end(),[&](const auto&m){const auto*r=i.record(m.id);return r&&r->exited;}))ended.push_back(id);
+    for(const auto&id:ended)(void)stop(id,backend);
     for(auto owned=i.owned.begin();owned!=i.owned.end();){auto&o=owned->second;
         o.members.erase(std::remove_if(o.members.begin(),o.members.end(),[&](const auto&m){return !i.record(m.id);}),o.members.end());
         if(o.members.empty()){owned=i.owned.erase(owned);continue;}
         if(o.error>=0){for(const auto&m:o.members){const auto*r=i.record(m.id);if(!r->controllable||!r->volume||!same(*r->volume,m.expected)){o.error=changedState;break;}}
-            if(o.error>=0){bool added=false;for(const auto&r:i.records)if(r.processKey==owned->first&&std::none_of(o.members.begin(),o.members.end(),[&](const auto&m){return m.id==r.id;})){if(!r.controllable||!r.volume){o.error=changedState;break;}o.members.push_back({r.id,*r.volume,*r.volume,false});added=true;}
+            if(o.error>=0){bool added=false;for(const auto&r:i.records)if(r.processKey==owned->first&&!r.exited&&std::none_of(o.members.begin(),o.members.end(),[&](const auto&m){return m.id==r.id;})){if(!r.controllable||!r.volume){o.error=changedState;break;}o.members.push_back({r.id,*r.volume,*r.volume,false});added=true;}
                 if(added&&o.error>=0)o.error=i.apply(o,o.gain,backend);}}
         ++owned;
     }
