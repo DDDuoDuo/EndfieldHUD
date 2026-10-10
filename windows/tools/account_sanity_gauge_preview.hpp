@@ -45,6 +45,10 @@ public:
     // coordinates through the current projected header pose (UIA, coverage);
     // empty before the first posed frame or when it does not project.
     std::optional<core::Point> clientPoint(core::Point local) const;
+    // Projected bounding box of a gauge-local rect (logical client
+    // coordinates) and the accessibility press of a gauge action.
+    std::optional<core::Rect> clientRect(core::Rect local) const;
+    bool perform(std::string_view id,double time);
     native::NativeSanityGaugeStats sceneStats() const noexcept;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();

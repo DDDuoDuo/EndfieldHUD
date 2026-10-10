@@ -2,12 +2,16 @@
 // signed client and login policy. The coverage fixture must be the generator's
 // output for the current Mac oracle fixture; the in-process community host
 // answers only the fixed endpoints and never completes inside start(); the
-// fake official-site host follows the WebView2 presenter's completion rules.
+// fake official-site host follows the WebView2 presenter's completion rules;
+// the UI Automation peers behave like the Mac's transparent AX buttons.
 // No network, browser, credential store or real account is used.
 #ifdef _WIN32
 #include "app/areas/account_coverage.hpp"
 #include "core/data/file_io.hpp"
 #include "modules/hypergryph_account_crypto.hpp"
+#include "native/account_automation.hpp"
+#include <uiautomation.h>
+#include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -98,17 +102,66 @@ void loginHost(const std::filesystem::path& coverage) {
     check(std::find(tags.begin(), tags.end(), "cancelled") != tags.end(), "The cancelled session records its outcome tag");
     check(!login.finish(std::nullopt, h::LoginFailure::cancelled), "Nothing is finished twice");
 }
+// The Mac's transparent AX buttons as UIA fragments over a fake owner view.
+void automation() {
+    namespace n = endfield::native;
+    using Microsoft::WRL::ComPtr;
+    std::vector<n::AccountAutomationControl> controls{{"account:connect", "Connect", {10, 10, 100, 20}, true},
+                                                     {"account:refresh", "Refresh", {120, 10, 20, 20}, false},
+                                                     {"wallet:toggle", "Arknights: Endfield · Sanity 343 / 360", {300, 0, 168, 42}, true}};
+    std::vector<std::string> pressed;
+    n::AccountAutomationHost host;
+    host.controls = [&] { return controls; };
+    host.toScreen = [](endfield::core::Rect r) -> std::optional<endfield::core::Rect> { return endfield::core::Rect{100 + r.x * 2, 50 + r.y * 2, r.width * 2, r.height * 2}; };
+    host.invoke = [&](std::string_view id) { pressed.emplace_back(id); return true; };
+    n::NativeAccountAutomation a(host);
+    check(a.refresh() && a.size() == 3 && !a.refresh(), "Peers are listed once; an unchanged refresh keeps the structure");
+    ComPtr<IRawElementProviderFragment> connect, wallet, none;
+    check(SUCCEEDED(a.fromPoint(100 + 60 * 2, 50 + 20 * 2, &connect)) && connect && SUCCEEDED(a.fromPoint(10, 10, &none)) && !none,
+          "Hit testing maps physical screen pixels to the projected peer");
+    ComPtr<IRawElementProviderSimple> simple;
+    VARIANT value;
+    VariantInit(&value);
+    check(SUCCEEDED(connect.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId, &value)) && value.vt == VT_I4 &&
+          value.lVal == UIA_ButtonControlTypeId, "Peers are buttons");
+    VariantClear(&value);
+    check(SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId, &value)) && value.vt == VT_BSTR && std::wstring_view(value.bstrVal) == L"Connect",
+          "The accessibility label is the UIA name");
+    VariantClear(&value);
+    ComPtr<IInvokeProvider> invoke;
+    check(SUCCEEDED(connect.As(&invoke)) && SUCCEEDED(invoke->Invoke()) && pressed == std::vector<std::string>{"account:connect"}, "Invoke presses the control");
+    ComPtr<IRawElementProviderFragment> refresh;
+    ComPtr<IInvokeProvider> disabled;
+    check(SUCCEEDED(a.child(1, &refresh)) && SUCCEEDED(refresh.As(&disabled)) && disabled->Invoke() == UIA_E_ELEMENTNOTENABLED && pressed.size() == 1,
+          "A disabled peer refuses Invoke");
+    UiaRect bounds{};
+    check(SUCCEEDED(a.child(2, &wallet)) && SUCCEEDED(wallet->get_BoundingRectangle(&bounds)) && bounds.left == 700 && bounds.top == 50 && bounds.width == 336,
+          "Bounds are the projected screen rect");
+    // The wallet label changes in place; a vanished control disconnects.
+    controls[2].label = "Arknights: Endfield · Sanity 344 / 360";
+    controls.erase(controls.begin() + 1);
+    check(a.refresh() && a.size() == 2 && a.stats().created == 3 && a.stats().disconnected == 1, "Identity is kept per id; removed peers disconnect");
+    check(refresh.As(&simple) == S_OK && simple->GetPropertyValue(UIA_NamePropertyId, &value) == UIA_E_ELEMENTNOTAVAILABLE, "A disconnected peer is unavailable");
+    ComPtr<IRawElementProviderFragment> walletAgain;
+    check(SUCCEEDED(a.child(1, &walletAgain)) && walletAgain.Get() == wallet.Get(), "The wallet keeps its COM identity across refreshes");
+    a.disconnect();
+    check(a.size() == 0 && invoke->Invoke() == UIA_E_ELEMENTNOTAVAILABLE, "Disconnecting the tree ends every peer");
+}
 } // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    const auto com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     try {
         check(argc == 3, "Pass hypergryph-account-coverage.json and hypergryph-account-source.json");
         fixture(argv[1], argv[2]);
         communityHost(argv[1]);
         loginHost(argv[1]);
+        automation();
+        if (SUCCEEDED(com)) CoUninitialize();
         std::cout << "PASS " << checks << " account area provider checks\n";
         return 0;
     } catch (const std::exception& e) {
+        if (SUCCEEDED(com)) CoUninitialize();
         std::cerr << "FAIL after " << checks << ": " << e.what() << '\n';
         return 1;
     }

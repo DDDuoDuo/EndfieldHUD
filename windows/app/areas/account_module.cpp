@@ -8,12 +8,15 @@
 #include "modules/hypergryph_account_identity_sync.hpp"
 #include "modules/hypergryph_account_profile_relay.hpp"
 #include "modules/work_mode.hpp"
+#include "native/account_automation.hpp"
 #include "native/hypergryph_account_vault.hpp"
 #include "tools/account_linking_owner.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <uiautomation.h>
+#include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -194,6 +197,24 @@ public:
         if (step.module) moduleStep(step); else areaStep(step);
     }
 
+    // The host's UI Automation view of this owner (native/account_automation.hpp):
+    // the Mac's transparent AX buttons over the projected face and the header
+    // wallet. The HUD window's UIA root provider (host) lists the fragments.
+    native::AccountAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
+        native::AccountAutomationHost view;
+        view.root = root;
+        view.controls = [this] { return owner_->accessibleControls(); };
+        view.toScreen = [this](core::Rect r) -> std::optional<core::Rect> {
+            // Logical client -> physical client pixels -> screen pixels.
+            const double scale = host_.metrics().scale;
+            POINT origin{0, 0};
+            if (!(scale > 0) || !ClientToScreen(static_cast<HWND>(window_), &origin)) return std::nullopt;
+            return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
+        };
+        view.invoke = [this](std::string_view id) { return owner_->performAccessible(id, host_.now()); };
+        return view;
+    }
+
     // --- AccountProfileLink ---------------------------------------------------
     void attachProfile(h::AccountProfileSink* sink) override {
         // Hidden coverage keeps account sync on its private store; another
@@ -282,6 +303,34 @@ private:
             return value.value;
         }
         void settleAnimations() { for (unsigned n = 0; n < 24; ++n) frame(1. / 60); }
+        // UI Automation over the real owner: the peer under a control's
+        // projected screen centre, its AutomationId and Invoke.
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> peer(native::NativeAccountAutomation& automation, std::string_view id) {
+            std::optional<core::Rect> client;
+            for (const auto& c : self.owner_->accessibleControls()) if (c.id == id) client = c.rect;
+            step.check(client.has_value(), "The control has an accessibility peer");
+            const auto screen = self.automationHost(nullptr).toScreen(*client);
+            step.check(screen.has_value(), "The peer projects to screen pixels");
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> element;
+            step.check(SUCCEEDED(automation.fromPoint(screen->x + screen->width / 2, screen->y + screen->height / 2, &element)) && element,
+                       "UIA hit testing finds the projected peer");
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+            VARIANT automationId;
+            VariantInit(&automationId);
+            step.check(SUCCEEDED(element.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId, &automationId)) &&
+                       automationId.vt == VT_BSTR && std::wstring_view(automationId.bstrVal) == std::wstring(id.begin(), id.end()),
+                       "The hit peer carries the control's automation id");
+            VariantClear(&automationId);
+            return element;
+        }
+        HRESULT invoke(const Microsoft::WRL::ComPtr<IRawElementProviderFragment>& element) {
+            Microsoft::WRL::ComPtr<IInvokeProvider> invoker;
+            step.check(SUCCEEDED(element.As(&invoker)), "Account peers are buttons with Invoke");
+            t += .05;
+            const HRESULT hr = invoker->Invoke();
+            frame();
+            return hr;
+        }
     };
 
     void fakeOfficialSite(Driver& d) {
@@ -356,6 +405,12 @@ private:
                        "A fresh data root starts unlinked");
             step.check(owner_->gauge().model().value() == d.expectedGauge() && !owner_->gauge().model().canOpen(),
                        "The unlinked header wallet shows Work Mode minutes");
+            {
+                native::NativeAccountAutomation automation(automationHost(nullptr));
+                step.check(automation.refresh() && automation.size() == d.canvas().accessibleActions().size(),
+                           "UIA lists the face's peers; the unlinked wallet has none");
+                step.check(d.invoke(d.peer(automation, "account:refresh")) == UIA_E_ELEMENTNOTENABLED, "A disabled peer refuses Invoke");
+            }
             step.check(d.click("region") && d.canvas().menu() == h::AccountCanvasModel::Menu::region, "Region opens its shaped menu");
             step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen(), "Escape closes only the menu");
             step.check(d.click("header") && d.canvas().menu() == h::AccountCanvasModel::Menu::header && capturesPointer() && capturesKeys(),
@@ -429,6 +484,24 @@ private:
         const auto toggle = d.gaugePoint("toggle");
         step.check(toggle && d.press(*toggle) && owner_->gauge().model().popoverOpen(), "The recovery popover opens");
         step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes it");
+        {
+            // The same controls through UI Automation (Mac AX press).
+            native::NativeAccountAutomation automation(automationHost(nullptr));
+            step.check(automation.refresh() && automation.size() == d.canvas().accessibleActions().size() + 1, "UIA lists the face and the wallet");
+            const auto role = d.peer(automation, "account:role");
+            step.check(d.invoke(role) == S_OK && d.canvas().menu() == h::AccountCanvasModel::Menu::role && automation.refresh(),
+                       "Invoking the role peer opens its menu and restructures the tree");
+            Microsoft::WRL::ComPtr<IRawElementProviderSimple> stale;
+            VARIANT name;
+            VariantInit(&name);
+            step.check(SUCCEEDED(role.As(&stale)) && stale->GetPropertyValue(UIA_NamePropertyId, &name) == UIA_E_ELEMENTNOTAVAILABLE,
+                       "Peers hidden by the menu are disconnected");
+            step.check(d.keyDown(VK_ESCAPE) && !d.canvas().isPopoverOpen() && automation.refresh(), "Escape closes the menu; the face peers return");
+            step.check(d.invoke(d.peer(automation, "wallet:toggle")) == S_OK && owner_->gauge().model().popoverOpen() && automation.refresh() &&
+                       automation.size() == d.canvas().accessibleActions().size() + 2, "The wallet peer opens the popover and exposes its Refresh");
+            step.check(d.keyDown(VK_ESCAPE) && !owner_->gauge().model().popoverOpen(), "Escape closes the popover");
+            step.check(automation.stats().invokes == 2 && controller().presentation() == w.reference, "UIA presses change nothing else");
+        }
         (void)pointer({PointerKind::leave, PointerButton::none, 0, 0}, d.t);
         d.settleAnimations();
         step.check(w.host.requests().size() == w.referenceRequests && controller().presentation() == w.reference && !w.host.rejected(),

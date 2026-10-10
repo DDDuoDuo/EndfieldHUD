@@ -114,6 +114,22 @@ std::optional<core::Point> AccountSanityGaugePreview::clientPoint(core::Point lo
     const auto p=i.projection.project(local);if(!p) return std::nullopt;
     return core::Point{p->x/i.metrics.scale,p->y/i.metrics.scale};
 }
+std::optional<core::Rect> AccountSanityGaugePreview::clientRect(core::Rect r) const {
+    if(!impl_->scene.visible()) return std::nullopt;
+    double left{},top{},right{},bottom{};bool first=true;
+    for(const core::Point corner:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}) {
+        const auto p=clientPoint(corner);if(!p||!std::isfinite(p->x)||!std::isfinite(p->y)) return std::nullopt;
+        if(first) {left=right=p->x;top=bottom=p->y;first=false;} else {left=std::min(left,p->x);right=std::max(right,p->x);top=std::min(top,p->y);bottom=std::max(bottom,p->y);}
+    }
+    return core::Rect{left,top,right-left,bottom-top};
+}
+bool AccountSanityGaugePreview::perform(std::string_view id,double t) {
+    auto& i=*impl_;i.advance(t);if(!i.scene.visible()) return false;
+    const auto actions=i.model.accessibleActions(i.options.language);
+    const auto hit=std::find_if(actions.begin(),actions.end(),[&](const auto& a){return a.id==id;});
+    if(hit==actions.end()||!hit->enabled||!i.model.perform(id)) return false;
+    i.scene.sync(i.model,i.options.language,i.time,i.options.reduceMotion);return true;
+}
 std::vector<h::GaugeAction> AccountSanityGaugePreview::accessibleActions() const {return impl_->model.accessibleActions(impl_->options.language);}
 gpu::NativeSanityGaugeStats AccountSanityGaugePreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountSanityGaugePreview::upload(gpu::Renderer& r) {if(impl_->posed) impl_->scene.upload(r);}

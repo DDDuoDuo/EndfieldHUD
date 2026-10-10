@@ -105,6 +105,25 @@ std::optional<double> AccountPreview::nextWakeTime(double hostTime) const {
 }
 bool AccountPreview::deadline(double t) {auto& i=*impl_;i.advance(t);i.controller.tick();const auto before=i.canvas.contentRevision();i.sync();return i.canvas.contentRevision()!=before;}
 const h::AccountCanvasModel& AccountPreview::canvas() const noexcept {return impl_->canvas;}
+bool AccountPreview::accessible() const noexcept {return impl_->active&&impl_->pose.has_value();}
+std::optional<core::Rect> AccountPreview::clientRect(core::Rect r) const {
+    const auto& i=*impl_;if(!accessible()||!(i.metrics.scale>0)) return std::nullopt;
+    double left{},top{},right{},bottom{};bool first=true;
+    for(const core::Point corner:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}) {
+        const auto p=i.projection.project(corner);if(!p||!std::isfinite(p->x)||!std::isfinite(p->y)) return std::nullopt;
+        const double x=p->x/i.metrics.scale,y=p->y/i.metrics.scale;
+        if(first) {left=right=x;top=bottom=y;first=false;} else {left=std::min(left,x);right=std::max(right,x);top=std::min(top,y);bottom=std::max(bottom,y);}
+    }
+    return core::Rect{left,top,right-left,bottom-top};
+}
+bool AccountPreview::perform(std::string_view id,double t) {
+    // HUDAccountInteraction AX press -> canvas.perform(id) (accessibilityPerformPress refuses disabled peers).
+    auto& i=*impl_;i.advance(t);if(!accessible()) return false;
+    const auto controls=i.canvas.accessibleActions();
+    const auto hit=std::find_if(controls.begin(),controls.end(),[&](const auto& c){return c.id==id;});
+    if(hit==controls.end()||!hit->enabled) return false;
+    i.canvas.perform(id);i.sync();i.feedback();return true;
+}
 gpu::NativeAccountSceneStats AccountPreview::sceneStats() const noexcept {return impl_->scene.stats();}
 void AccountPreview::upload(gpu::Renderer& r) {
     auto& i=*impl_;if(!i.pose) return;

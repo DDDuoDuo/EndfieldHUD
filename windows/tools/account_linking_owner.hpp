@@ -4,6 +4,7 @@
 #include "app/utility_executor.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
+#include "native/account_automation.hpp"
 #include "native/hypergryph_account_services.hpp"
 #include "tools/account_preview.hpp"
 #include "tools/account_sanity_gauge_preview.hpp"
@@ -102,12 +103,18 @@ public:
     void workModeChanged(double time);
     // Local wall-clock presentation changed (time zone / clock change).
     void localTimeChanged(double time);
+    // Accessibility peers (Mac transparent AX buttons): the active Account
+    // face ("account:<control id>"), then the header wallet and its open
+    // recovery popover ("wallet:<action id>"), with projected logical client
+    // rects; a press performs exactly the click's action.
+    std::vector<native::AccountAutomationControl> accessibleControls() const;
+    bool performAccessible(std::string_view id,double time);
 
     modules::hypergryph::HypergryphAccountController& controller() noexcept;
     const AccountPreview& module() const noexcept;
     const AccountSanityGaugePreview& gauge() const noexcept;
     std::size_t activeRequests() const;                 // in-flight WinHTTP requests (diagnostics/tests)
-    bool officialLoginAvailable() const noexcept;       // WebView2 build and runtime present
+    bool officialLoginAvailable() const noexcept;       // WebView2 login built in (the runtime is checked at each Connect)
 private:
     struct Impl;std::shared_ptr<Impl> impl_;
 };

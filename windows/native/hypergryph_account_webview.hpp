@@ -6,6 +6,8 @@
 #endif
 #include <windows.h>
 #include <filesystem>
+#include <optional>
+#include <string>
 
 // Official-site login window over Microsoft Edge WebView2 (Evergreen runtime),
 // port of HypergryphAccountLogin. Created only after explicit Connect; the
@@ -32,6 +34,12 @@ class WebViewLoginPresenter final:public modules::hypergryph::AccountLoginPresen
 public:
     explicit WebViewLoginPresenter(WebViewLoginOptions);
     ~WebViewLoginPresenter() override;
+    // The installed WebView2 runtime the loader would use (official loader
+    // query; no browser process is started). Checked at every Connect, so a
+    // runtime installed while EndfieldHUD runs is used without a restart.
+    static std::optional<std::wstring> runtimeVersion();
+    // Without a runtime the completion reports pageUnavailable at once (the
+    // Mac "Sign-in could not finish" text) and no window or browser exists.
     void present(modules::hypergryph::Region,std::function<void(std::optional<modules::hypergryph::LoginResult>,modules::hypergryph::LoginFailure)>) override;
     void cancel() override;
     bool isPresenting() const override;

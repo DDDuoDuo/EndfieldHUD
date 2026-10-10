@@ -44,6 +44,13 @@ public:
     std::optional<double> nextWakeTime(double hostTime) const;
     bool deadline(double hostTime);
     const modules::hypergryph::AccountCanvasModel& canvas() const noexcept;
+    // Accessibility peers (Mac HUDAccountInteraction.layoutAccessibility):
+    // the transparent buttons exist only while the face is active; a canvas
+    // rect maps to its projected bounding box in logical client coordinates,
+    // and a press performs the control exactly like a click.
+    bool accessible() const noexcept;
+    std::optional<core::Rect> clientRect(core::Rect canvas) const;
+    bool perform(std::string_view id,double time);
     native::NativeAccountSceneStats sceneStats() const noexcept;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry> entries();

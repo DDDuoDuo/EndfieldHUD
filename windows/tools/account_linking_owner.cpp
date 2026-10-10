@@ -62,9 +62,10 @@ AccountLinkingOwner::AccountLinkingOwner(app::UtilityExecutor& executor,gpu::Lay
     s.profile=i.options.profile;s.initialAvatarFilename=i.options.initialAvatarFilename;
     if(i.options.login) s.login=i.options.login;
 #ifdef EHUD_HAS_WEBVIEW2
-    // Official login only with an installed Evergreen runtime; otherwise the
-    // controller receives the explicit "unavailable" result (no browser).
-    else if(i.options.officialLogin&&gpu::webView2RuntimeVersion()) {
+    // Official login through WebView2. Each Connect checks the installed
+    // runtime; without one the controller receives the explicit
+    // "unavailable" result and no window or browser is created.
+    else if(i.options.officialLogin) {
         gpu::WebViewLoginOptions l;l.owner=window;l.language=i.options.language;l.now=i.options.clock;
         l.scheduleChanged=[weak]{if(auto self=weak.lock();self&&self->options.invalidate) self->options.invalidate();};
         i.login=std::make_unique<gpu::WebViewLoginPresenter>(std::move(l));s.login=i.login.get();i.webView=true;
@@ -163,6 +164,21 @@ void AccountLinkingOwner::profileAvatarChanged(const std::optional<std::string>&
 void AccountLinkingOwner::profileAvatarBaseline(const std::optional<std::string>& filename) {impl_->services->controller().profileAvatarBaseline(filename);}
 void AccountLinkingOwner::workModeChanged(double t) {auto& i=*impl_;i.advance(t);i.gauge->contentChanged(i.time);}
 void AccountLinkingOwner::localTimeChanged(double t) {auto& i=*impl_;i.advance(t);i.module->presentationChanged(i.time);i.gauge->contentChanged(i.time);}
+std::vector<gpu::AccountAutomationControl> AccountLinkingOwner::accessibleControls() const {
+    const auto& i=*impl_;std::vector<gpu::AccountAutomationControl> out;
+    if(i.module->accessible())
+        for(const auto& c:i.module->canvas().accessibleActions())
+            if(const auto r=i.module->clientRect(c.rect)) out.push_back({"account:"+c.id,c.label,*r,c.enabled});
+    for(const auto& a:i.gauge->accessibleActions())
+        if(const auto r=i.gauge->clientRect(a.rect)) out.push_back({"wallet:"+a.id,a.label,*r,a.enabled});
+    return out;
+}
+bool AccountLinkingOwner::performAccessible(std::string_view id,double t) {
+    auto& i=*impl_;i.advance(t);
+    if(id.rfind("account:",0)==0) return i.module->perform(id.substr(8),i.time);
+    if(id.rfind("wallet:",0)==0) return i.gauge->perform(id.substr(7),i.time);
+    return false;
+}
 h::HypergryphAccountController& AccountLinkingOwner::controller() noexcept {return impl_->services->controller();}
 const AccountPreview& AccountLinkingOwner::module() const noexcept {return *impl_->module;}
 const AccountSanityGaugePreview& AccountLinkingOwner::gauge() const noexcept {return *impl_->gauge;}

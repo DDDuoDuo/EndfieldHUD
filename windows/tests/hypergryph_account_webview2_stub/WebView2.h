@@ -2,14 +2,14 @@
 // TEST-ONLY COMPILE/BEHAVIOUR STUB. THIS IS NOT THE MICROSOFT WEBVIEW2 SDK.
 //
 // It declares only the subset of WebView2 COM interfaces, methods, enums and
-// the loader entry point that native/hypergryph_account_webview.cpp uses, with
+// the loader entry points that native/hypergryph_account_webview.cpp uses, with
 // the parameter types of the public WebView2 API documentation, so the login
 // presenter can be compiled and driven by in-process fakes
 // (tests/hypergryph_account_webview_tests.cpp) on a machine without the SDK.
 // Interface IDs below are placeholders, method order is not the real vtable
 // layout, and nothing here is ABI compatible with WebView2Loader or the
-// Evergreen runtime. Production builds use the official SDK header via
-// EHUD_WEBVIEW2_SDK_DIR (see cmake/modules/account.cmake).
+// Evergreen runtime. Production builds use the pinned official SDK header
+// (third_party/webview2, see cmake/modules/account.cmake).
 #include <unknwn.h>
 #include <EventToken.h>
 
@@ -145,3 +145,4 @@ EHUD_WEBVIEW2_STUB_INTERFACE("5e1b0001-0000-4000-8000-00000000ae27") ICoreWebVie
 
 STDAPI CreateCoreWebView2EnvironmentWithOptions(PCWSTR browserExecutableFolder,PCWSTR userDataFolder,
     ICoreWebView2EnvironmentOptions* environmentOptions,ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler* environmentCreatedHandler);
+STDAPI GetAvailableCoreWebView2BrowserVersionString(PCWSTR browserExecutableFolder,LPWSTR* versionInfo);

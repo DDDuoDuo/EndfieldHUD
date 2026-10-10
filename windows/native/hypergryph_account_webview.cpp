@@ -11,9 +11,10 @@
 #include <stdexcept>
 #include <vector>
 
-// BUILT ONLY WITH THE WEBVIEW2 SDK (EHUD_WEBVIEW2_SDK_DIR): written against
-// the official WebView2 SDK API and not compiled in the default tree. Every
-// policy/lifecycle decision is the tested, browser-independent LoginSession.
+// Built against the pinned official WebView2 SDK (third_party/webview2, or
+// EHUD_WEBVIEW2_SDK_DIR) for EndfieldHUD.exe, and against the test-only
+// interface stub for hypergryph_account_webview_tests. Every policy/lifecycle
+// decision is the tested, browser-independent LoginSession.
 namespace endfield::native {
 namespace {
 namespace h=modules::hypergryph;namespace p=modules::hypergryph::login_policy;
@@ -372,8 +373,17 @@ WebViewLoginPresenter::~WebViewLoginPresenter() {
     for(auto& entry:i.retired) {std::error_code e;std::filesystem::remove_all(entry.folder,e);}
     i.retired.clear();
 }
+std::optional<std::wstring> WebViewLoginPresenter::runtimeVersion() {
+    LPWSTR version{};
+    const HRESULT hr=GetAvailableCoreWebView2BrowserVersionString(nullptr,&version);
+    std::optional<std::wstring> out;
+    if(SUCCEEDED(hr)&&version&&*version) out=std::wstring(version);
+    if(version) CoTaskMemFree(version);
+    return out;
+}
 void WebViewLoginPresenter::present(h::Region region,std::function<void(std::optional<h::LoginResult>,h::LoginFailure)> completion) {
     if(isPresenting()) {completion(std::nullopt,h::LoginFailure::alreadyPresenting);return;}
+    if(!runtimeVersion()) {completion(std::nullopt,h::LoginFailure::pageUnavailable);return;}
     impl_->completion=std::move(completion);impl_->present(region);
 }
 void WebViewLoginPresenter::cancel() {impl_->finish(std::nullopt,h::LoginFailure::cancelled);}

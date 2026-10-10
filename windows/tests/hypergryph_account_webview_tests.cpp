@@ -29,7 +29,7 @@ std::wstring wide(std::string_view s) {
 }
 LPWSTR dup(const std::wstring& s) {auto* out=static_cast<LPWSTR>(CoTaskMemAlloc((s.size()+1)*sizeof(wchar_t)));std::copy(s.begin(),s.end(),out);out[s.size()]=0;return out;}
 
-struct World {std::deque<std::function<void()>> queue;std::wstring userData;int environments{};void pump() {while(!queue.empty()) {auto f=std::move(queue.front());queue.pop_front();f();}}};
+struct World {std::deque<std::function<void()>> queue;std::wstring userData;int environments{},runtimeQueries{};std::wstring runtime{L"154.0.4258.62"};void pump() {while(!queue.empty()) {auto f=std::move(queue.front());queue.pop_front();f();}}};
 World* world{};
 void pumpWindows() {MSG m{};while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE)) {TranslateMessage(&m);DispatchMessageW(&m);}}
 
@@ -158,6 +158,11 @@ STDAPI CreateCoreWebView2EnvironmentWithOptions(PCWSTR,PCWSTR folder,ICoreWebVie
     world->userData=folder?folder:L"";++world->environments;auto env=Make<Environment>();lastEnvironment=env;
     ComPtr<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler> keep(handler);
     world->queue.push_back([keep,env]{keep->Invoke(S_OK,env.Get());});return S_OK;
+}
+// The loader's installed-runtime query (the stub declares it); empty: no runtime.
+STDAPI GetAvailableCoreWebView2BrowserVersionString(PCWSTR folder,LPWSTR* version) {
+    ++world->runtimeQueries;*version=nullptr;if(folder||world->runtime.empty()) return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+    *version=dup(world->runtime);return S_OK;
 }
 namespace {
 struct OwnerWindow {
@@ -295,6 +300,15 @@ void run() {
         presenter.present(h::Region::mainland,done);click(loginWindow(),102);
         check(completions==6&&failure==h::LoginFailure::cancelled,"The consent Cancel button cancels");
 
+        // F. Every Connect queries the installed runtime; without one the
+        // login fails explicitly at once: no window, profile or browser.
+        const int queries=w.runtimeQueries;w.runtime.clear();
+        presenter.present(h::Region::mainland,done);
+        check(completions==7&&failure==h::LoginFailure::pageUnavailable&&!result&&!presenter.isPresenting()&&!loginWindow()&&
+              w.environments==environments&&w.runtimeQueries==queries+1,"A missing WebView2 runtime reports the explicit failure without a window or browser");
+        w.runtime=L"154.0.4258.62";
+        check(n::WebViewLoginPresenter::runtimeVersion()==std::optional<std::wstring>(L"154.0.4258.62"),"The runtime version comes from the loader query");
+
         // E. Destruction while a browser is open: no callback, browser closed.
         presenter.present(h::Region::mainland,done);click(loginWindow(),101);w.pump();w.pump();
         auto last=lastEnvironment->controllers[0];const std::filesystem::path lastProfile=w.userData;
@@ -302,7 +316,7 @@ void run() {
         check(presenter.isPresenting()&&std::filesystem::exists(lastProfile),"Presenting before teardown");
         check(!last->closed,"Browser open before teardown");
     }
-    check(completions==6&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
+    check(completions==7&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
     check(!std::filesystem::exists(w.userData),"Destroying the presenter removes its private profile");
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
     lastEnvironment.Reset();world=nullptr;
