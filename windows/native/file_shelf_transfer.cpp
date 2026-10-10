@@ -1,5 +1,6 @@
 #include "native/file_shelf_transfer.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <utility>
@@ -8,6 +9,8 @@
 #include <ole2.h>
 #include <shlobj.h>
 #include <shldisp.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
 #endif
 
 namespace endfield::native {
@@ -48,6 +51,34 @@ std::vector<std::string> decodeShelfDropPaths(std::span<const std::uint8_t> byte
         utf8(path,c);bound(path.size()<=32768);
     }require(ended&&path.empty(),"Unterminated DROPFILES list");return paths;
 }
+ShelfDragImage composeShelfDragImage(std::span<const ShelfDragIcon> icons,unsigned side,unsigned offset){
+    require(side>0&&side<=shelfDragImageMaximumSide&&offset<=side,"Invalid shelf drag image geometry");
+    const auto frames=std::min(icons.size(),shelfDragImageMaximumFrames);if(!frames)return {};
+    for(std::size_t n=0;n<frames;++n){const auto& icon=icons[n];
+        require(icon.width&&icon.height&&icon.width<=1024&&icon.height<=1024&&icon.premultipliedBGRA.size()==std::size_t(icon.width)*icon.height*4,"Invalid shelf drag icon pixels");}
+    ShelfDragImage image;image.width=image.height=side+offset*unsigned(frames-1);
+    image.premultipliedBGRA.assign(std::size_t(image.width)*image.height*4,0);
+    for(std::size_t n=0;n<frames;++n){
+        const auto& icon=icons[n];const double scale=std::min(double(side)/icon.width,double(side)/icon.height);
+        const auto width=std::max(1u,unsigned(std::lround(icon.width*scale))),height=std::max(1u,unsigned(std::lround(icon.height*scale)));
+        // Frame n sits n offsets right of and above frame 0 (y grows downward).
+        const unsigned left=unsigned(n)*offset+(side-std::min(side,width))/2,top=unsigned(frames-1-n)*offset+(side-std::min(side,height))/2;
+        const auto sample=[&](double x,double y,unsigned channel){
+            x=std::clamp(x,0.0,double(icon.width-1));y=std::clamp(y,0.0,double(icon.height-1));
+            const auto x0=unsigned(x),y0=unsigned(y),x1=std::min(x0+1,icon.width-1),y1=std::min(y0+1,icon.height-1);const double fx=x-x0,fy=y-y0;
+            const auto at=[&](unsigned px,unsigned py){return double(icon.premultipliedBGRA[(std::size_t(py)*icon.width+px)*4+channel]);};
+            return (at(x0,y0)*(1-fx)+at(x1,y0)*fx)*(1-fy)+(at(x0,y1)*(1-fx)+at(x1,y1)*fx)*fy;
+        };
+        for(unsigned y=0;y<height&&top+y<image.height;++y)for(unsigned x=0;x<width&&left+x<image.width;++x){
+            const double sx=(x+.5)*icon.width/width-.5,sy=(y+.5)*icon.height/height-.5;
+            std::array<double,4> source{};for(unsigned c=0;c<4;++c)source[c]=sample(sx,sy,c);
+            auto* target=image.premultipliedBGRA.data()+(std::size_t(top+y)*image.width+left+x)*4;const double keep=1-source[3]/255;
+            for(unsigned c=0;c<4;++c)target[c]=std::uint8_t(std::clamp(std::lround(source[c]+target[c]*keep),0L,255L));
+        }
+    }
+    image.cursorX=int(side/2);image.cursorY=int(offset*unsigned(frames-1)+side/2);
+    return image;
+}
 
 #ifdef _WIN32
 namespace {
@@ -80,14 +111,14 @@ std::vector<std::string> incoming(IDataObject& object){
     GlobalRead data(medium.value.hGlobal);return decodeShelfDropPaths({data.data,size});
 }
 struct Formats final:IEnumFORMATETC {
-    std::atomic<ULONG> refs{1};std::array<FORMATETC,2> values;ULONG index{};
-    explicit Formats(CLIPFORMAT preferred):values{{{CF_HDROP,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL},{preferred,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL}}}{}
+    std::atomic<ULONG> refs{1};std::vector<FORMATETC> values;ULONG index{};
+    explicit Formats(std::vector<FORMATETC> list):values(std::move(list)){}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out)override{if(!out)return E_POINTER;*out=nullptr;if(id!=IID_IUnknown&&id!=IID_IEnumFORMATETC)return E_NOINTERFACE;*out=static_cast<IEnumFORMATETC*>(this);AddRef();return S_OK;}
     ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}ULONG STDMETHODCALLTYPE Release()override{const auto n=--refs;if(!n)delete this;return n;}
     HRESULT STDMETHODCALLTYPE Next(ULONG count,FORMATETC* out,ULONG* fetched)override{if(!out||(!fetched&&count!=1))return E_POINTER;ULONG n{};while(n<count&&index<values.size())out[n++]=values[index++];if(fetched)*fetched=n;return n==count?S_OK:S_FALSE;}
     HRESULT STDMETHODCALLTYPE Skip(ULONG n)override{const auto left=ULONG(values.size())-index;index+=std::min(n,left);return n<=left?S_OK:S_FALSE;}
     HRESULT STDMETHODCALLTYPE Reset()override{index=0;return S_OK;}
-    HRESULT STDMETHODCALLTYPE Clone(IEnumFORMATETC** out)override{if(!out)return E_POINTER;*out=nullptr;try{auto* copy=new Formats(values[1].cfFormat);copy->index=index;*out=copy;return S_OK;}catch(...){return failure();}}
+    HRESULT STDMETHODCALLTYPE Clone(IEnumFORMATETC** out)override{if(!out)return E_POINTER;*out=nullptr;try{auto* copy=new Formats(values);copy->index=index;*out=copy;return S_OK;}catch(...){return failure();}}
 };
 struct TransferData {
     ShelfCopyBundle bundle;ShelfDragTransfer::Resolver resolver;std::vector<ShelfRecord> records;std::vector<std::uint8_t> bytes;
@@ -119,20 +150,53 @@ HRESULT mediumFor(std::span<const std::uint8_t> bytes,const std::shared_ptr<Tran
 
 std::vector<std::string> readShelfTransferPaths(IDataObject&object){return incoming(object);}
 
+// Shell-private formats the drag-image helper and drop targets keep on the
+// source object (DragImageBits, DragContext, DragWindow, DropDescription...).
+// Bounded byte copies; formats that could report a performed move/paste back
+// to this copy-only source, and the two formats it owns, are refused.
+// The helper keeps DragContext as a stream; other formats are HGLOBALs.
+struct StoredFormat {CLIPFORMAT format{};DWORD tymed{TYMED_HGLOBAL};std::vector<std::uint8_t> bytes;};
+// Bounded copy of an HGLOBAL or the whole stream (read from its start, cursor restored).
+HRESULT copyMedium(const STGMEDIUM& medium,std::size_t limit,std::vector<std::uint8_t>& out){
+    if(medium.tymed==TYMED_HGLOBAL){if(!medium.hGlobal)return DV_E_STGMEDIUM;const auto size=GlobalSize(medium.hGlobal);if(size>limit)return E_OUTOFMEMORY;out.resize(size);
+        if(size){const auto* source=static_cast<const std::uint8_t*>(GlobalLock(medium.hGlobal));if(!source)return E_OUTOFMEMORY;std::memcpy(out.data(),source,size);GlobalUnlock(medium.hGlobal);}return S_OK;}
+    if(medium.tymed!=TYMED_ISTREAM||!medium.pstm)return DV_E_TYMED;
+    STATSTG stat{};if(const auto hr=medium.pstm->Stat(&stat,STATFLAG_NONAME);FAILED(hr))return hr;if(stat.cbSize.QuadPart>limit)return E_OUTOFMEMORY;
+    LARGE_INTEGER zero{};ULARGE_INTEGER position{};if(const auto hr=medium.pstm->Seek(zero,STREAM_SEEK_CUR,&position);FAILED(hr))return hr;
+    if(const auto hr=medium.pstm->Seek(zero,STREAM_SEEK_SET,nullptr);FAILED(hr))return hr;
+    out.resize(std::size_t(stat.cbSize.QuadPart));ULONG read{};HRESULT hr=out.empty()?S_OK:medium.pstm->Read(out.data(),ULONG(out.size()),&read);
+    LARGE_INTEGER restore{};restore.QuadPart=LONGLONG(position.QuadPart);medium.pstm->Seek(restore,STREAM_SEEK_SET,nullptr);
+    if(FAILED(hr))return hr;if(read!=out.size())return STG_E_READFAULT;return S_OK;
+}
+inline constexpr std::size_t storedFormatLimit=16,storedFormatBytes=16*1024*1024,storedTotalBytes=32*1024*1024;
 struct ShelfDragTransfer::Object final:IDataObject,IDropSource,IDataObjectAsyncCapability {
     std::atomic<ULONG> refs{1};Notice notice;std::shared_ptr<TransferData> data;ShelfDragChanges changes;
-    CLIPFORMAT preferred{};bool extracting{},cancelled{},started{},completed{},running{},asyncMode{true},asyncActive{};
+    CLIPFORMAT preferred{};std::array<CLIPFORMAT,3> refused{};std::vector<StoredFormat> stored;
+    bool extracting{},cancelled{},started{},completed{},running{},asyncMode{true},asyncActive{};
     Object(ShelfCopyBundle bundle,Resolver resolver,ShelfTransferRoute route):notice(route),data(std::make_shared<TransferData>(std::move(bundle),std::move(resolver))){
         preferred=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));require(preferred!=0,"Cannot register copy-only transfer format");
+        refused={static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PERFORMEDDROPEFFECT)),static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PASTESUCCEEDED)),
+            static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_LOGICALPERFORMEDDROPEFFECT))};
     }
+    const StoredFormat* find(CLIPFORMAT format)const noexcept{for(const auto& value:stored)if(value.format==format)return &value;return nullptr;}
+    HRESULT storedFormat(const FORMATETC* f)const noexcept{if(!f)return E_POINTER;if(!find(f->cfFormat))return DV_E_FORMATETC;if(f->ptd)return DV_E_DVTARGETDEVICE;if(f->dwAspect!=DVASPECT_CONTENT)return DV_E_DVASPECT;if(f->lindex!=-1)return DV_E_LINDEX;if(!(f->tymed&(TYMED_HGLOBAL|TYMED_ISTREAM)))return DV_E_TYMED;return S_OK;}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out)override{if(!out)return E_POINTER;*out=nullptr;
         if(id==IID_IUnknown||id==IID_IDataObject)*out=static_cast<IDataObject*>(this);else if(id==IID_IDropSource)*out=static_cast<IDropSource*>(this);
         else if(id==__uuidof(IDataObjectAsyncCapability))*out=static_cast<IDataObjectAsyncCapability*>(this);else return E_NOINTERFACE;AddRef();return S_OK;}
     ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}ULONG STDMETHODCALLTYPE Release()override{const auto n=--refs;if(!n)delete this;return n;}
     HRESULT format(const FORMATETC* f)const noexcept{if(!f)return E_POINTER;if(f->cfFormat!=CF_HDROP&&f->cfFormat!=preferred)return DV_E_FORMATETC;if(f->ptd)return DV_E_DVTARGETDEVICE;if(f->dwAspect!=DVASPECT_CONTENT)return DV_E_DVASPECT;if(f->lindex!=-1)return DV_E_LINDEX;if(!(f->tymed&TYMED_HGLOBAL))return DV_E_TYMED;return S_OK;}
-    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f)override{return format(f);}
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f)override{if(f&&find(f->cfFormat))return storedFormat(f);return format(f);}
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f,STGMEDIUM* out)override{
-        if(!out)return E_POINTER;*out={};if(!notice.ownerThread())return RPC_E_WRONG_THREAD;const auto valid=format(f);if(FAILED(valid))return valid;if(extracting)return RPC_E_CALL_REJECTED;
+        if(!out)return E_POINTER;*out={};if(!notice.ownerThread())return RPC_E_WRONG_THREAD;
+        if(f&&find(f->cfFormat)){const auto valid=storedFormat(f);if(FAILED(valid))return valid;
+            // An independent copy the receiver frees: an HGLOBAL, or a new
+            // stream at its start when the format was stored as a stream.
+            const auto* value=find(f->cfFormat);const auto& bytes=value->bytes;HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE|GMEM_ZEROINIT,std::max<std::size_t>(bytes.size(),1));if(!memory)return E_OUTOFMEMORY;
+            if(!bytes.empty()){auto* target=GlobalLock(memory);if(!target){GlobalFree(memory);return E_OUTOFMEMORY;}std::memcpy(target,bytes.data(),bytes.size());GlobalUnlock(memory);}
+            if((f->tymed&TYMED_ISTREAM)&&(value->tymed==TYMED_ISTREAM||!(f->tymed&TYMED_HGLOBAL))){IStream* stream{};const auto hr=CreateStreamOnHGlobal(memory,TRUE,&stream);if(FAILED(hr)){GlobalFree(memory);return hr;}
+                ULARGE_INTEGER size{};size.QuadPart=bytes.size();stream->SetSize(size);out->tymed=TYMED_ISTREAM;out->pstm=stream;out->pUnkForRelease=nullptr;return S_OK;}
+            out->tymed=TYMED_HGLOBAL;out->hGlobal=memory;out->pUnkForRelease=nullptr;return S_OK;}
+        const auto valid=format(f);if(FAILED(valid))return valid;if(extracting)return RPC_E_CALL_REJECTED;
         Call call(static_cast<IDataObject*>(this),notice);extracting=true;
         struct Reset {bool& value;~Reset(){value=false;}}reset{extracting};
         try{if(f->cfFormat==CF_HDROP){data->validate();return mediumFor(data->bytes,data,out);}
@@ -141,9 +205,28 @@ struct ShelfDragTransfer::Object final:IDataObject,IDropSource,IDataObjectAsyncC
     }
     HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*,STGMEDIUM*)override{return DATA_E_FORMATETC;}
     HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC* in,FORMATETC* out)override{if(!in||!out)return E_POINTER;*out=*in;out->ptd=nullptr;return DATA_S_SAMEFORMATETC;}
-    // No performed MOVE/delete-on-paste format can mutate shelf/original files.
-    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*,STGMEDIUM*,BOOL)override{return E_NOTIMPL;}
-    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD direction,IEnumFORMATETC** out)override{if(!out)return E_POINTER;*out=nullptr;if(direction!=DATADIR_GET)return E_NOTIMPL;try{*out=new Formats(preferred);return S_OK;}catch(...){return failure();}}
+    // No performed MOVE/delete-on-paste format can mutate shelf/original files:
+    // those are refused, as are the path list and its preferred effect. Other
+    // Shell-private formats are kept as bounded copies for the drag session.
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC* f,STGMEDIUM* medium,BOOL release)override{
+        if(!f||!medium)return E_POINTER;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;
+        if(f->cfFormat==CF_HDROP||f->cfFormat==preferred||std::find(refused.begin(),refused.end(),f->cfFormat)!=refused.end())return E_NOTIMPL;
+        if(f->ptd||f->dwAspect!=DVASPECT_CONTENT||f->lindex!=-1)return DV_E_FORMATETC;
+        if(!(medium->tymed&(TYMED_HGLOBAL|TYMED_ISTREAM))||!(f->tymed&medium->tymed))return DV_E_TYMED;
+        try{
+            std::vector<std::uint8_t> bytes;if(const auto copied=copyMedium(*medium,storedFormatBytes,bytes);FAILED(copied))return copied;
+            std::size_t total=bytes.size();for(const auto& value:stored)if(value.format!=f->cfFormat)total+=value.bytes.size();
+            auto existing=std::find_if(stored.begin(),stored.end(),[&](const auto& value){return value.format==f->cfFormat;});
+            if(total>storedTotalBytes||(existing==stored.end()&&stored.size()>=storedFormatLimit))return E_OUTOFMEMORY;
+            if(existing!=stored.end()){existing->bytes=std::move(bytes);existing->tymed=medium->tymed;}else stored.push_back({f->cfFormat,medium->tymed,std::move(bytes)});
+        }catch(...){return failure();}
+        // On success the object owns a released medium (IDataObject::SetData).
+        if(release)ReleaseStgMedium(medium);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD direction,IEnumFORMATETC** out)override{if(!out)return E_POINTER;*out=nullptr;if(direction!=DATADIR_GET)return E_NOTIMPL;
+        try{std::vector<FORMATETC> list{{CF_HDROP,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL},{preferred,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL}};
+            for(const auto& value:stored)list.push_back({value.format,nullptr,DVASPECT_CONTENT,-1,value.tymed});*out=new Formats(std::move(list));return S_OK;}catch(...){return failure();}}
     HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*,DWORD,IAdviseSink*,DWORD* connection)override{if(connection)*connection=0;return OLE_E_ADVISENOTSUPPORTED;}
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD)override{return OLE_E_ADVISENOTSUPPORTED;}
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA** out)override{if(out)*out=nullptr;return OLE_E_ADVISENOTSUPPORTED;}
@@ -167,31 +250,77 @@ HRESULT ShelfDragTransfer::run(DWORD* out)noexcept{if(!out)return E_POINTER;*out
     object->AddRef();object->running=true;const auto hr=DoDragDrop(object,object,DROPEFFECT_COPY,out);*out&=DROPEFFECT_COPY;object->running=false;object->finish(hr,*out);object->Release();return hr;
 }
 void ShelfDragTransfer::cancel()noexcept{if(object_->notice.ownerThread())object_->cancelled=true;}
+HRESULT ShelfDragTransfer::setDragImage(const ShelfDragImage& image)noexcept{
+    auto* object=object_;if(!object->notice.ownerThread())return RPC_E_WRONG_THREAD;if(object->running||object->completed)return E_UNEXPECTED;
+    if(!image.width||!image.height||image.width>shelfDragImageMaximumSide*2||image.height>shelfDragImageMaximumSide*2||image.premultipliedBGRA.size()!=std::size_t(image.width)*image.height*4)return E_INVALIDARG;
+    Microsoft::WRL::ComPtr<IDragSourceHelper> helper;
+    if(const auto created=CoCreateInstance(CLSID_DragDropHelper,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&helper));FAILED(created))return created;
+    // Let targets that set a drop description show it with the image.
+    Microsoft::WRL::ComPtr<IDragSourceHelper2> flags;if(SUCCEEDED(helper.As(&flags)))flags->SetFlags(DSH_ALLOWDROPDESCRIPTIONTEXT);
+    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(info.bmiHeader);info.bmiHeader.biWidth=LONG(image.width);info.bmiHeader.biHeight=-LONG(image.height);
+    info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+    void* bits{};HBITMAP bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);if(!bitmap||!bits){if(bitmap)DeleteObject(bitmap);return E_OUTOFMEMORY;}
+    std::memcpy(bits,image.premultipliedBGRA.data(),image.premultipliedBGRA.size());
+    SHDRAGIMAGE value{};value.sizeDragImage={LONG(image.width),LONG(image.height)};value.ptOffset={image.cursorX,image.cursorY};value.hbmpDragImage=bitmap;value.crColorKey=CLR_NONE;
+    // The drag-image manager owns the bitmap only after a successful call.
+    if(const auto initialized=helper->InitializeFromBitmap(&value,static_cast<IDataObject*>(object));FAILED(initialized)){DeleteObject(bitmap);return initialized;}
+    return S_OK;
+}
+std::size_t ShelfDragTransfer::storedFormats()const noexcept{return object_->stored.size();}
 void ShelfDragTransfer::complete(HRESULT result,DWORD effect)noexcept{if(object_->notice.ownerThread())object_->finish(result,effect);}
 ShelfDragChanges ShelfDragTransfer::takeChanges(UINT_PTR generation)noexcept{if(!object_->notice.drain(generation))return {};return std::exchange(object_->changes,{});}
 
 struct ShelfDropTarget::Object final:IDropTarget {
     std::atomic<ULONG> refs{1};Notice notice;std::shared_ptr<const Callbacks> callbacks;ShelfDropChanges changes;
     bool alive{true},enabled{true},registered{},offered{},busy{};std::uint64_t revision{};
-    Object(ShelfTransferRoute route,Callbacks value):notice(route,true),callbacks(std::make_shared<const Callbacks>(std::move(value))){require(bool(callbacks->acceptsPoint)&&bool(callbacks->commit),"Incomplete shelf drop callbacks");}
+    // Virtual-file-only offer of the current drag and its once-per-drag notice.
+    bool virtualOffered{},virtualNoticed{};std::array<CLIPFORMAT,2> descriptors{};
+    // Optional Shell drag image over the HUD; entered once per drag session.
+    bool images{},imageEntered{};Microsoft::WRL::ComPtr<IDropTargetHelper> helper;
+    Object(ShelfTransferRoute route,Callbacks value):notice(route,true),callbacks(std::make_shared<const Callbacks>(std::move(value))){
+        require(bool(callbacks->acceptsPoint)&&bool(callbacks->commit),"Incomplete shelf drop callbacks");
+        descriptors={static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW")),static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor"))};
+    }
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out)override{if(!out)return E_POINTER;*out=nullptr;if(id!=IID_IUnknown&&id!=IID_IDropTarget)return E_NOINTERFACE;*out=static_cast<IDropTarget*>(this);AddRef();return S_OK;}
     ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}ULONG STDMETHODCALLTYPE Release()override{const auto n=--refs;if(!n)delete this;return n;}
     void hover(bool value)noexcept{if(changes.hovering==value)return;changes.hovering=value;changes.feedbackChanged=true;notice.signal();}
-    void error(const char* text)noexcept{try{changes.error=text;notice.signal();}catch(...){}}
+    void error(const char* text,std::optional<StoreErrorCode> code={})noexcept{try{changes.error=text;changes.errorCode=code;notice.signal();}catch(...){}}
+    void virtualNotice()noexcept{if(virtualNoticed)return;virtualNoticed=true;changes.virtualFiles=true;notice.signal();}
     bool accepts(POINTL point){const auto snapshot=callbacks;const auto version=revision;return alive&&enabled&&snapshot&&snapshot->acceptsPoint(point)&&alive&&enabled&&version==revision;}
+    // Virtual files only: some descriptor format without any CF_HDROP offer.
+    bool virtualOnly(IDataObject& source,std::uint64_t version){
+        for(const auto descriptor:descriptors){if(!descriptor)continue;FORMATETC format{descriptor,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
+            const auto hr=source.QueryGetData(&format);if(!alive||version!=revision)return false;if(SUCCEEDED(hr))return true;}
+        return false;
+    }
+    // IDropTargetHelper calls run after this target's own decision, with the
+    // effect actually returned, and never decide acceptance themselves.
+    void imageEnter(IDataObject* source,POINTL point,DWORD effect)noexcept{if(!helper||!source)return;POINT p{point.x,point.y};if(SUCCEEDED(helper->DragEnter(owner,source,&p,effect)))imageEntered=true;}
+    void imageOver(POINTL point,DWORD effect)noexcept{if(!helper||!imageEntered)return;POINT p{point.x,point.y};helper->DragOver(&p,effect);}
+    void imageLeave()noexcept{if(!helper||!imageEntered)return;imageEntered=false;helper->DragLeave();}
+    void imageDrop(IDataObject* source,POINTL point,DWORD effect)noexcept{if(!helper||!imageEntered||!source){imageEntered=false;return;}imageEntered=false;POINT p{point.x,point.y};helper->Drop(source,&p,effect);}
+    struct ImageScope {Object& o;IDataObject* source;POINTL point;DWORD* effect;enum Kind{enter,over,drop}kind;
+        ~ImageScope(){const auto value=effect?*effect:DROPEFFECT_NONE;if(kind==enter)o.imageEnter(source,point,value);else if(kind==over)o.imageOver(point,value);else o.imageDrop(source,point,value);}};
     HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* source,DWORD,POINTL point,DWORD* effect)override{
         if(!effect)return E_POINTER;const auto allowed=*effect;*effect=DROPEFFECT_NONE;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;if(busy)return RPC_E_CALL_REJECTED;
-        Call call(this,notice);if(!alive||!enabled||!source)return S_OK;busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};const auto version=++revision;offered=false;
+        Call call(this,notice);ImageScope image{*this,source,point,effect,ImageScope::enter};
+        virtualOffered=virtualNoticed=false;
+        if(!alive||!enabled||!source)return S_OK;busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};const auto version=++revision;offered=false;
         FORMATETC format{CF_HDROP,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
         const auto hr=source->QueryGetData(&format);if(!alive||version!=revision)return S_OK;offered=SUCCEEDED(hr);
-        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;return S_OK;}catch(...){hover(false);return failure();}
+        if(!offered)virtualOffered=virtualOnly(*source,version);
+        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;
+            else if(virtualOffered&&(allowed&DROPEFFECT_COPY)&&accepts(point))virtualNotice();return S_OK;}catch(...){hover(false);return failure();}
     }
-    HRESULT STDMETHODCALLTYPE DragOver(DWORD,POINTL point,DWORD* effect)override{if(!effect)return E_POINTER;const auto allowed=*effect;*effect=DROPEFFECT_NONE;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;if(busy)return RPC_E_CALL_REJECTED;Call call(this,notice);busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};
-        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;return S_OK;}catch(...){hover(false);return failure();}}
-    HRESULT STDMETHODCALLTYPE DragLeave()override{if(!notice.ownerThread())return RPC_E_WRONG_THREAD;Call call(this,notice);++revision;offered=false;hover(false);return S_OK;}
+    HRESULT STDMETHODCALLTYPE DragOver(DWORD,POINTL point,DWORD* effect)override{if(!effect)return E_POINTER;const auto allowed=*effect;*effect=DROPEFFECT_NONE;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;if(busy)return RPC_E_CALL_REJECTED;Call call(this,notice);
+        ImageScope image{*this,nullptr,point,effect,ImageScope::over};busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};
+        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;
+            else if(virtualOffered&&!virtualNoticed&&(allowed&DROPEFFECT_COPY)&&accepts(point))virtualNotice();return S_OK;}catch(...){hover(false);return failure();}}
+    HRESULT STDMETHODCALLTYPE DragLeave()override{if(!notice.ownerThread())return RPC_E_WRONG_THREAD;Call call(this,notice);++revision;offered=virtualOffered=false;hover(false);imageLeave();return S_OK;}
     HRESULT STDMETHODCALLTYPE Drop(IDataObject* source,DWORD,POINTL point,DWORD* effect)override{
         if(!effect)return E_POINTER;const auto allowed=*effect;*effect=DROPEFFECT_NONE;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;if(busy)return RPC_E_CALL_REJECTED;Call call(this,notice);
-        offered=false;hover(false);if(!source||!(allowed&DROPEFFECT_COPY)||changes.committed)return S_OK;
+        ImageScope image{*this,source,point,effect,ImageScope::drop};
+        offered=virtualOffered=false;hover(false);if(!source||!(allowed&DROPEFFECT_COPY)||changes.committed)return S_OK;
         busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};
         try{if(!accepts(point))return S_OK;const auto version=revision;
             auto paths=incoming(*source); // external COM + medium release finish here
@@ -201,11 +330,11 @@ struct ShelfDropTarget::Object final:IDropTarget {
             // is synchronous and owns its dependencies until it returns.
             if(!snapshot->commit(paths)){error("Shelf references could not be committed");return S_OK;}
             *effect=DROPEFFECT_COPY;
-            if(alive){changes.committed=true;changes.paths=std::move(paths);changes.error.reset();notice.signal();}
+            if(alive){changes.committed=true;changes.paths=std::move(paths);changes.error.reset();changes.errorCode.reset();notice.signal();}
             return S_OK;
-        }catch(const std::exception& e){error(e.what());return S_OK;}catch(...){error("Shelf drop failed");return S_OK;}
+        }catch(const StoreError& e){error(e.what(),e.code());return S_OK;}catch(const std::exception& e){error(e.what());return S_OK;}catch(...){error("Shelf drop failed");return S_OK;}
     }
-    void stop()noexcept{if(!alive)return;alive=false;enabled=false;offered=false;++revision;callbacks.reset();notice.detach();if(registered){registered=false;RevokeDragDrop(owner);}}
+    void stop()noexcept{if(!alive)return;alive=false;enabled=false;offered=virtualOffered=false;++revision;callbacks.reset();imageLeave();helper.Reset();notice.detach();if(registered){registered=false;RevokeDragDrop(owner);}}
     HWND owner{notice.route.owner};
 };
 ShelfDropTarget::ShelfDropTarget(ShelfTransferRoute route,Callbacks callbacks):object_(new Object(route,std::move(callbacks))){}
@@ -214,7 +343,11 @@ IDropTarget* ShelfDropTarget::dropTarget()const noexcept{return object_;}
 HRESULT ShelfDropTarget::registerTarget()noexcept{auto* object=object_;if(!object->notice.ownerThread())return RPC_E_WRONG_THREAD;if(!object->alive)return E_UNEXPECTED;if(object->registered)return S_FALSE;
     const auto hr=RegisterDragDrop(object->owner,object);if(SUCCEEDED(hr))object->registered=true;return hr;
 }
-void ShelfDropTarget::setEnabled(bool value)noexcept{auto* object=object_;if(!object->notice.ownerThread()||!object->alive||object->enabled==value)return;object->enabled=value;++object->revision;if(!value){object->offered=false;object->hover(false);}}
+void ShelfDropTarget::setEnabled(bool value)noexcept{auto* object=object_;if(!object->notice.ownerThread()||!object->alive||object->enabled==value)return;object->enabled=value;++object->revision;if(!value){object->offered=object->virtualOffered=false;object->hover(false);}}
+void ShelfDropTarget::setDragImages(bool value)noexcept{auto* object=object_;if(!object->notice.ownerThread()||!object->alive||object->images==value)return;object->images=value;
+    if(!value){object->imageLeave();object->helper.Reset();return;}
+    // In-process Shell helper only; unavailable helpers leave drags image-less.
+    if(FAILED(CoCreateInstance(CLSID_DragDropHelper,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&object->helper))))object->helper.Reset();}
 void ShelfDropTarget::stop()noexcept{if(object_&&object_->notice.ownerThread())object_->stop();}
 ShelfDropChanges ShelfDropTarget::takeChanges(UINT_PTR generation){auto* object=object_;if(!object->notice.drain(generation))return {};auto result=std::move(object->changes);object->changes={};object->changes.hovering=result.hovering;return result;}
 #endif

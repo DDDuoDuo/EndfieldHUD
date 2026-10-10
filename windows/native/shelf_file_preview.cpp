@@ -11,6 +11,13 @@ bool validShelfPreviewReference(std::string_view id,const ehud::data::ShelfFileM
         value.name.find('\0')==std::string::npos&&!value.isDirectory&&value.kind==ehud::data::ShelfFileKind::regular&&
         (!value.identity.volumeUUID||ehud::data::validUUID(*value.identity.volumeUUID));
 }
+bool validShelfPreviewFallbackReference(std::string_view id,const ehud::data::ShelfFileMetadata&value)noexcept{
+    using Kind=ehud::data::ShelfFileKind;
+    const bool consistent=value.kind==Kind::symbolicLink||(value.kind==Kind::directory&&value.isDirectory)||(value.kind==Kind::regular&&!value.isDirectory);
+    return consistent&&ehud::data::validUUID(id)&&ehud::data::validWindowsFilePath(value.windowsPath)&&
+        !value.name.empty()&&value.name.size()<=4096&&ehud::data::Json::validUtf8(value.name)&&value.name.find('\0')==std::string::npos&&
+        (!value.identity.volumeUUID||ehud::data::validUUID(*value.identity.volumeUUID));
+}
 }
 #ifdef _WIN32
 #include "native/file_shelf_files.hpp"
@@ -24,6 +31,8 @@ bool validShelfPreviewReference(std::string_view id,const ehud::data::ShelfFileM
 #include <propsys.h>
 #include <shobjidl.h>
 #include <shlwapi.h>
+#include <shellapi.h>
+#include <commoncontrols.h>
 #include <wrl/client.h>
 
 namespace endfield::native {
@@ -96,6 +105,12 @@ public:
     });}
     HRESULT STDMETHODCALLTYPE Clone(IStream**out)override{return protect([&]{if(!out)return E_POINTER;*out=nullptr;std::lock_guard lock(file_->mutex);*out=new ReadOnlyFileStream(file_,position_);return S_OK;});}
 };
+ShelfPreviewDescription describeDefault(const ShelfFileMetadata&metadata){
+    ShelfPreviewDescription value{metadata.name,{}};if(!metadata.typeDescription.empty())value.details.push_back(metadata.typeDescription);
+    if(metadata.byteCount)value.details.push_back(std::to_string(*metadata.byteCount)+" bytes");return value;
+}
+// Bounded UTF-16 copy for GDI text; invalid text becomes empty, never throws.
+std::wstring displayText(std::string_view value){if(value.empty()||value.size()>4096)return {};try{return wide(value);}catch(...){return {};}}
 HRESULT createHandler(const ShelfFileMetadata&metadata,IPreviewHandler**out)noexcept{return protect([&]{
     if(!out)return E_POINTER;*out=nullptr;const auto name=wide(metadata.name);const auto separator=name.find_last_of(L'.');if(separator==std::wstring::npos||separator+1==name.size())return HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
     const auto extension=name.substr(separator);if(extension.size()>255)return E_INVALIDARG;
@@ -155,8 +170,50 @@ struct NativeShelfFilePreview::State::Session:std::enable_shared_from_this<Sessi
     std::weak_ptr<State>state;std::string id;std::uint64_t token{};ShelfFileAccess original,currentAccess;
     HWND window{};ComPtr<IPreviewHandler>handler;ComPtr<IObjectWithSite>withSite;ComPtr<IStream>stream;ComPtr<Frame>frame;
     unsigned depth{};bool closing{},cleaned{},restoreFocus{},hadForeground{},ready{};
+    // Generic preview: one type icon, two fonts for the current DPI, the text.
+    bool fallback{};HICON icon{};HFONT titleFont{},detailFont{};UINT fontDPI{};std::wstring title;std::vector<std::wstring>details;
     explicit Session(const std::shared_ptr<State>&owner):state(owner){}
-    ~Session(){close(false);}
+    ~Session(){close(false);releaseFallback();}
+    void releaseFallback()noexcept{if(icon)DestroyIcon(std::exchange(icon,nullptr));if(titleFont)DeleteObject(std::exchange(titleFont,nullptr));if(detailFont)DeleteObject(std::exchange(detailFont,nullptr));fontDPI=0;}
+    // Unloads a handler that could not show this item, keeping the window.
+    void unloadHandler()noexcept{
+        ready=false;auto retainedHandler=std::move(handler);auto retainedSite=std::move(withSite);auto retainedStream=std::move(stream);auto retainedFrame=std::move(frame);
+        if(retainedHandler)call([&]{return retainedHandler->Unload();});if(retainedSite)call([&]{return retainedSite->SetSite(nullptr);});
+    }
+    void showFallback(const ShelfFileMetadata&metadata,const ShelfPreviewDescription&description){
+        title=displayText(description.title);if(title.empty())title=displayText(metadata.name);details.clear();
+        for(const auto&line:description.details){if(details.size()==4)break;if(auto text=displayText(line);!text.empty())details.push_back(std::move(text));}
+        // Type icon from the system image list for the NAME only (USEFILEATTRIBUTES):
+        // no file access and no per-file icon handler, so a hung or hostile
+        // handler cannot run here. Jumbo when available, else the large icon.
+        const bool folder=metadata.isDirectory||metadata.kind==ShelfFileKind::directory;
+        const auto name=folder?std::wstring(L"folder"):displayText(metadata.name);SHFILEINFOW info{};
+        if(!name.empty()&&SHGetFileInfoW(name.c_str(),folder?FILE_ATTRIBUTE_DIRECTORY:FILE_ATTRIBUTE_NORMAL,&info,static_cast<UINT>(sizeof(info)),SHGFI_USEFILEATTRIBUTES|SHGFI_SYSICONINDEX)){
+            ComPtr<IImageList>list;if(SUCCEEDED(SHGetImageList(SHIL_JUMBO,IID_PPV_ARGS(&list))))list->GetIcon(info.iIcon,ILD_TRANSPARENT,&icon);
+            if(!icon&&SUCCEEDED(SHGetImageList(SHIL_EXTRALARGE,IID_PPV_ARGS(&list))))list->GetIcon(info.iIcon,ILD_TRANSPARENT,&icon);
+        }
+        fallback=true;ready=true;if(window)InvalidateRect(window,nullptr,TRUE);
+    }
+    void fonts(UINT dpi)noexcept{
+        if(dpi==fontDPI&&titleFont&&detailFont)return;if(titleFont)DeleteObject(std::exchange(titleFont,nullptr));if(detailFont)DeleteObject(std::exchange(detailFont,nullptr));
+        NONCLIENTMETRICSW metrics{};metrics.cbSize=sizeof(metrics);if(!SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS,sizeof(metrics),&metrics,0,dpi))return;
+        auto base=metrics.lfMessageFont;detailFont=CreateFontIndirectW(&base);base.lfHeight=base.lfHeight*3/2;base.lfWeight=FW_SEMIBOLD;titleFont=CreateFontIndirectW(&base);fontDPI=dpi;
+    }
+    // Centered column: icon, name, then the detail lines (system colours, so
+    // high-contrast themes apply). Also serves WM_PRINTCLIENT for verification.
+    void paint(HDC dc)noexcept{
+        RECT client{};if(!window||!GetClientRect(window,&client))return;FillRect(dc,&client,GetSysColorBrush(COLOR_WINDOW));
+        UINT dpi=GetDpiForWindow(window);if(!dpi)dpi=96;fonts(dpi);const int width=client.right-client.left,height=client.bottom-client.top;if(width<=0||height<=0)return;
+        const int iconSize=std::max(32,std::min({MulDiv(256,int(dpi),96),height*9/20,width*3/5}));const int gap=MulDiv(16,int(dpi),96),lineGap=MulDiv(4,int(dpi),96);
+        const auto measure=[&](HFONT font,const std::wstring&text){RECT r{0,0,width,0};const auto old=SelectObject(dc,font);DrawTextW(dc,text.c_str(),int(text.size()),&r,DT_CALCRECT|DT_SINGLELINE|DT_NOPREFIX);SelectObject(dc,old);return int(r.bottom-r.top);};
+        const int titleHeight=title.empty()?0:measure(titleFont,title);int detailHeight{};for(const auto&line:details)detailHeight+=measure(detailFont,line)+lineGap;
+        int y=std::max(0,(height-(iconSize+gap+titleHeight+lineGap*2+detailHeight))/2);
+        if(icon)DrawIconEx(dc,(width-iconSize)/2,y,icon,iconSize,iconSize,0,nullptr,DI_NORMAL);y+=iconSize+gap;
+        SetBkMode(dc,TRANSPARENT);const int margin=MulDiv(24,int(dpi),96);
+        const auto line=[&](HFONT font,COLORREF color,const std::wstring&text){if(text.empty())return;const auto lineHeight=measure(font,text);RECT r{margin,y,std::max(margin+1,width-margin),y+lineHeight};
+            const auto old=SelectObject(dc,font);SetTextColor(dc,color);DrawTextW(dc,text.c_str(),int(text.size()),&r,DT_CENTER|DT_SINGLELINE|DT_END_ELLIPSIS|DT_NOPREFIX);SelectObject(dc,old);y+=lineHeight+lineGap;};
+        line(titleFont,GetSysColor(COLOR_WINDOWTEXT),title);y+=lineGap;for(const auto&text:details)line(detailFont,GetSysColor(COLOR_GRAYTEXT),text);
+    }
     template<class F>HRESULT call(F&&body){++depth;struct Scope{Session*self;~Scope(){--self->depth;if(self->closing&&!self->depth)self->cleanup();}}scope{this};return body();}
     void close(bool restore)noexcept{restoreFocus=restoreFocus||restore;hadForeground=hadForeground||(window&&GetForegroundWindow()==window);closing=true;if(window)ShowWindow(window,SW_HIDE);if(!depth)cleanup();}
     void cleanup()noexcept{
@@ -165,7 +222,7 @@ struct NativeShelfFilePreview::State::Session:std::enable_shared_from_this<Sessi
         // Remove all owned fields before COM/native callbacks can reenter.
         if(retainedHandler)retainedHandler->Unload();if(retainedSite)retainedSite->SetSite(nullptr);
         retainedHandler.Reset();retainedSite.Reset();retainedStream.Reset();retainedFrame.Reset();if(popup&&IsWindow(popup))DestroyWindow(popup);
-        currentAccess.close();original.close();const auto owner=state.lock();
+        releaseFallback();fallback=false;currentAccess.close();original.close();const auto owner=state.lock();
         if(restoreFocus&&hadForeground&&owner&&owner->alive&&owner->options.visible&&owner->route.owner&&IsWindowVisible(owner->route.owner)){SetForegroundWindow(owner->route.owner);SetFocus(owner->route.owner);}
     }
     bool usable()const noexcept{const auto owner=state.lock();return !closing&&owner&&owner->current(token)&&owner->active.get()==this&&window&&IsWindow(window);}
@@ -178,6 +235,16 @@ struct NativeShelfFilePreview::State::Session:std::enable_shared_from_this<Sessi
         try{
             if(message==WM_NCDESTROY&&self->window==hwnd){self->window=nullptr;const auto owner=self->state.lock();if(owner&&owner->active==self)owner->close(false);else self->close(false);}
             if(message==WM_CLOSE){const auto owner=self->state.lock();if(owner&&owner->active==self)owner->close(true);else self->close(false);return 0;}
+            // Per-monitor DPI: take the suggested rectangle; WM_SIZE then updates
+            // the handler rectangle or repaints the generic preview.
+            if(message==WM_DPICHANGED&&lParam){const auto*suggested=reinterpret_cast<const RECT*>(lParam);
+                SetWindowPos(hwnd,nullptr,suggested->left,suggested->top,suggested->right-suggested->left,suggested->bottom-suggested->top,SWP_NOZORDER|SWP_NOACTIVATE);return 0;}
+            if(self->fallback&&!self->closing){
+                if(message==WM_PAINT){PAINTSTRUCT paint{};if(const auto dc=BeginPaint(hwnd,&paint)){self->paint(dc);EndPaint(hwnd,&paint);}return 0;}
+                if(message==WM_PRINTCLIENT){self->paint(reinterpret_cast<HDC>(wParam));return 0;}
+                if(message==WM_ERASEBKGND)return 1;
+                if(message==WM_SIZE){InvalidateRect(hwnd,nullptr,FALSE);return 0;}
+            }
             if(message==WM_SIZE&&self->ready&&self->handler&&!self->closing){RECT area{};if(GetClientRect(hwnd,&area)&&area.right>0&&area.bottom>0){auto handler=self->handler;const auto hr=self->call([&]{return handler->SetRect(&area);});if(FAILED(hr)){const auto owner=self->state.lock();if(owner&&owner->active==self){++owner->counts.failures;owner->event(ShelfPreviewEventKind::failed,hr,self->id);owner->close(false);}}}return 0;}
             if(message==WM_SETFOCUS&&self->ready&&self->handler&&!self->closing){auto handler=self->handler;self->call([&]{return handler->SetFocus();});return 0;}
             if(message==WM_KEYDOWN||message==WM_SYSKEYDOWN){const auto owner=self->state.lock();MSG key{hwnd,message,wParam,lParam,0,{}};if(owner&&owner->active==self&&owner->key(key))return 0;}
@@ -216,23 +283,40 @@ void NativeShelfFilePreview::State::work()noexcept{
     // the old preview without restoring HUD focus before opening the new item.
     if(active&&active->id==request.id){close(true);return;}
     auto previous=std::move(active);if(previous){++counts.closes;event(ShelfPreviewEventKind::closed,S_OK,previous->id);previous->close(false);if(!current(request.token))return;}
-    std::shared_ptr<Session>session;
+    std::shared_ptr<Session>session;bool generic{};HRESULT reason{S_OK};
     const auto result=protect([&]{
         session=std::make_shared<Session>(shared_from_this());session->id=std::move(request.id);session->token=request.token;session->original=std::move(request.access);active=session;
         ShelfRecord record;const auto&metadata=session->original.metadata();record.id=session->id;record.windowsPath=metadata.windowsPath;record.name=metadata.name;record.identity=metadata.identity;record.isDirectory=metadata.isDirectory;
         auto resolved=services.resolve(record);if(!current(session->token)||active!=session)return E_ABORT;
-        need(resolved.open()&&metadata.identity.matches(resolved.metadata().identity)&&validShelfPreviewReference(session->id,resolved.metadata()),"Original preview reference is unavailable");session->currentAccess=std::move(resolved);session->createWindow();if(!session->usable())return E_ABORT;
-        ComPtr<IPreviewHandler>handler;checked(services.createHandler(session->currentAccess.metadata(),&handler));if(!session->usable())return E_ABORT;need(bool(handler),"Preview provider returned no handler");session->handler=std::move(handler);
-        ComPtr<IObjectWithSite>site;checked(session->call([&]{return session->handler.As(&site);}));if(!session->usable())return E_ABORT;session->withSite=std::move(site);session->frame.Attach(new Session::Frame(session));
-        {auto target=session->withSite;auto frame=session->frame;checked(session->call([&]{return target->SetSite(static_cast<IPreviewHandlerFrame*>(frame.Get()));}));}if(!session->usable())return E_ABORT;
-        ComPtr<IInitializeWithStream>initialize;{auto target=session->handler;checked(session->call([&]{return target.As(&initialize);}));}if(!session->usable())return E_ABORT;
-        ComPtr<IStream>stream;checked(services.openStream(session->currentAccess,&stream));if(!session->usable())return E_ABORT;need(bool(stream),"Preview provider returned no stream");session->stream=std::move(stream);
-        {auto source=session->stream;checked(session->call([&]{return initialize->Initialize(source.Get(),STGM_READ);}));}if(!session->usable())return E_ABORT;
-        RECT area{};if(!GetClientRect(session->window,&area))return HRESULT_FROM_WIN32(GetLastError());
-        {auto target=session->handler;const auto hwnd=session->window;checked(session->call([&]{return target->SetWindow(hwnd,&area);}));}if(!session->usable())return E_ABORT;
-        {auto target=session->handler;checked(session->call([&]{return target->DoPreview();}));}if(!session->usable())return E_ABORT;session->ready=true;
-        if(options.visible){if(!SetWindowPos(session->window,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW))return HRESULT_FROM_WIN32(GetLastError());if(!session->usable())return E_ABORT;SetForegroundWindow(session->window);if(!session->usable())return E_ABORT;auto target=session->handler;session->call([&]{return target->SetFocus();});if(!session->usable())return E_ABORT;}
-        ++counts.opens;event(ShelfPreviewEventKind::opened,S_OK,session->id);return S_OK;
+        need(resolved.open()&&metadata.identity.matches(resolved.metadata().identity),"Original preview reference is unavailable");
+        const bool streamable=validShelfPreviewReference(session->id,resolved.metadata());
+        need(streamable||(options.fallback&&validShelfPreviewFallbackReference(session->id,resolved.metadata())),"Original preview reference is unavailable");
+        session->currentAccess=std::move(resolved);session->createWindow();if(!session->usable())return E_ABORT;
+        // A registered stream handler first; Quick Look's generic preview when
+        // none can show this item (and the option allows it).
+        const auto handled=streamable?protect([&]{
+            ComPtr<IPreviewHandler>handler;checked(services.createHandler(session->currentAccess.metadata(),&handler));if(!session->usable())return E_ABORT;need(bool(handler),"Preview provider returned no handler");session->handler=std::move(handler);
+            ComPtr<IObjectWithSite>site;checked(session->call([&]{return session->handler.As(&site);}));if(!session->usable())return E_ABORT;session->withSite=std::move(site);session->frame.Attach(new Session::Frame(session));
+            {auto target=session->withSite;auto frame=session->frame;checked(session->call([&]{return target->SetSite(static_cast<IPreviewHandlerFrame*>(frame.Get()));}));}if(!session->usable())return E_ABORT;
+            ComPtr<IInitializeWithStream>initialize;{auto target=session->handler;checked(session->call([&]{return target.As(&initialize);}));}if(!session->usable())return E_ABORT;
+            ComPtr<IStream>stream;checked(services.openStream(session->currentAccess,&stream));if(!session->usable())return E_ABORT;need(bool(stream),"Preview provider returned no stream");session->stream=std::move(stream);
+            {auto source=session->stream;checked(session->call([&]{return initialize->Initialize(source.Get(),STGM_READ);}));}if(!session->usable())return E_ABORT;
+            RECT area{};if(!GetClientRect(session->window,&area))return HRESULT_FROM_WIN32(GetLastError());
+            {auto target=session->handler;const auto hwnd=session->window;checked(session->call([&]{return target->SetWindow(hwnd,&area);}));}if(!session->usable())return E_ABORT;
+            {auto target=session->handler;checked(session->call([&]{return target->DoPreview();}));}if(!session->usable())return E_ABORT;session->ready=true;return S_OK;
+        }):HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
+        if(handled==E_ABORT||!session->usable())return E_ABORT;
+        if(FAILED(handled)){
+            if(!options.fallback)return handled;
+            session->unloadHandler();if(!session->usable())return E_ABORT;
+            const auto&current=session->currentAccess.metadata();session->showFallback(current,services.describe?services.describe(current):describeDefault(current));
+            if(!session->usable())return E_ABORT;generic=true;reason=handled;
+        }
+        if(options.visible){if(!SetWindowPos(session->window,HWND_TOP,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW))return HRESULT_FROM_WIN32(GetLastError());if(!session->usable())return E_ABORT;SetForegroundWindow(session->window);if(!session->usable())return E_ABORT;
+            if(generic)SetFocus(session->window);else{auto target=session->handler;session->call([&]{return target->SetFocus();});}if(!session->usable())return E_ABORT;}
+        ++counts.opens;if(generic)++counts.fallbacks;
+        if(!alive)return S_OK;try{if(events.size()==8)events.erase(events.begin());events.push_back({ShelfPreviewEventKind::opened,generic?reason:S_OK,session->id,generic});if(!eventsPosted)eventsPosted=post(ShelfPreviewNotice::events);}catch(...){}
+        return S_OK;
     });
     if(FAILED(result)&&session&&active==session){active.reset();++counts.failures;event(ShelfPreviewEventKind::failed,result,session->id);session->close(false);}
     else if(FAILED(result)&&!session&&current(request.token)){++counts.failures;event(ShelfPreviewEventKind::failed,result,request.id);}
@@ -247,7 +331,8 @@ NativeShelfFilePreview::NativeShelfFilePreview(ShelfPreviewRoute route,ShelfPrev
 }
 NativeShelfFilePreview::~NativeShelfFilePreview(){const auto state=std::move(state_);if(!state)return;if(state->thread!=GetCurrentThreadId())std::terminate();state->alive=false;state->events.clear();state->close(false,false);state->route={};}
 bool NativeShelfFilePreview::request(std::string id,ehud::data::ShelfFileAccess access){
-    const auto state=state_;state->owner();need(access.open()&&validShelfPreviewReference(id,access.metadata()),"Preview requires a supported validated reference");if(!state->alive||!state->route.owner)return false;
+    const auto state=state_;state->owner();
+    need(access.open()&&(validShelfPreviewReference(id,access.metadata())||(state->options.fallback&&validShelfPreviewFallbackReference(id,access.metadata()))),"Preview requires a supported validated reference");if(!state->alive||!state->route.owner)return false;
     State::Request request{std::move(id),std::move(access),++state->token};auto oldPending=std::move(state->pending);state->pending.reset();state->pending=std::move(request);++state->counts.requests;
     if(!state->workPosted)state->workPosted=state->post(ShelfPreviewNotice::work);if(!state->workPosted){state->pending.reset();return false;}return true;
 }
@@ -258,7 +343,7 @@ std::vector<ShelfPreviewEvent>NativeShelfFilePreview::drain(UINT_PTR generation)
 void NativeShelfFilePreview::close(bool restore){const auto state=state_;state->owner();state->close(restore);}
 void NativeShelfFilePreview::setRoute(ShelfPreviewRoute route){const auto state=state_;state->owner();validateRoute(route);state->route={};state->close(false);state->events.clear();state->eventsPosted=false;if(state->alive)state->route=route;}
 bool NativeShelfFilePreview::preTranslate(const MSG&message){const auto state=state_;state->owner();const auto session=state->active;if(!session||!session->window||(message.hwnd!=session->window&&!IsChild(session->window,message.hwnd)))return false;return state->key(message);}
-ShelfPreviewStats NativeShelfFilePreview::stats()const{const auto state=state_;state->owner();auto result=state->counts;result.queued=state->pending.has_value();result.active=state->active&&!state->active->closing&&state->active->ready;result.visible=result.active&&IsWindowVisible(state->active->window);return result;}
+ShelfPreviewStats NativeShelfFilePreview::stats()const{const auto state=state_;state->owner();auto result=state->counts;result.queued=state->pending.has_value();result.active=state->active&&!state->active->closing&&state->active->ready;result.visible=result.active&&IsWindowVisible(state->active->window);result.fallback=result.active&&state->active->fallback;return result;}
 HWND NativeShelfFilePreview::window()const{const auto state=state_;state->owner();return state->active?state->active->window:nullptr;}
 } // namespace endfield::native
 #endif

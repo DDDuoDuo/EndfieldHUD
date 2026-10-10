@@ -1,5 +1,6 @@
 #include "native/file_shelf_transfer.hpp"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -42,6 +43,29 @@ void codec(){
     // Arbitrary nonfilesystem bytes exercise bounded decoding without I/O.
     std::uint32_t random=0x52912;for(unsigned i=0;i<4000;++i){std::vector<std::uint8_t> noise(24+i%80);for(auto& byte:noise){random=random*1664525u+1013904223u;byte=std::uint8_t(random>>24);}rejects([&]{(void)decodeShelfDropPaths(noise);},"Malformed small payload rejects safely");}
 }
+void dragImageComposition(){
+    // Two 2x2 premultiplied BGRA icons: opaque red and half-transparent blue.
+    const std::vector<std::uint8_t> red{0,0,255,255,0,0,255,255,0,0,255,255,0,0,255,255},blue{128,0,0,128,128,0,0,128,128,0,0,128,128,0,0,128};
+    const std::vector<ShelfDragIcon> icons{{2,2,red},{2,2,blue}};
+    const auto image=composeShelfDragImage(icons,4,2);
+    check(image.width==6&&image.height==6&&image.premultipliedBGRA.size()==6u*6u*4u,"Two frames: side plus one offset in both directions");
+    check(image.cursorX==2&&image.cursorY==4,"The pointer sits at the centre of the first frame");
+    const auto at=[&](unsigned x,unsigned y){const auto* p=image.premultipliedBGRA.data()+(std::size_t(y)*image.width+x)*4;return std::array<std::uint8_t,4>{p[0],p[1],p[2],p[3]};};
+    check((at(0,5)==std::array<std::uint8_t,4>{0,0,255,255}),"The first frame is at the bottom left (Mac frame 0)");
+    check((at(5,0)==std::array<std::uint8_t,4>{128,0,0,128}),"The second frame is offset up and right");
+    check((at(3,3)==std::array<std::uint8_t,4>{128,0,127,255}),"Later frames composite source-over in premultiplied space");
+    check((at(5,5)==std::array<std::uint8_t,4>{0,0,0,0})&&(at(0,0)==std::array<std::uint8_t,4>{0,0,0,0}),"Uncovered corners stay transparent");
+    const std::vector<ShelfDragIcon> many(7,ShelfDragIcon{2,2,red});const auto pile=composeShelfDragImage(many,4,2);
+    check(pile.width==4+4*2&&pile.height==pile.width,"At most five frames are drawn, like the Mac drag offsets");
+    check(composeShelfDragImage({},4,2).premultipliedBGRA.empty(),"No icons produce no image");
+    const std::vector<std::uint8_t> wide(64u*32u*4u,255);const std::vector<ShelfDragIcon> rect{{64,32,wide}};const auto fitted=composeShelfDragImage(rect,32,5);
+    const auto alpha=[&](unsigned x,unsigned y){return fitted.premultipliedBGRA[(std::size_t(y)*fitted.width+x)*4+3];};
+    check(fitted.width==32&&alpha(16,16)==255&&alpha(16,2)==0&&alpha(16,29)==0,"A non-square icon keeps its aspect, centred in its frame");
+    rejects([&]{const std::vector<ShelfDragIcon> bad{{2,2,std::span<const std::uint8_t>(red.data(),8)}};(void)composeShelfDragImage(bad,4,2);},"Mismatched icon pixels reject");
+    rejects([&]{(void)composeShelfDragImage(icons,0,0);},"Empty frame size rejects");
+    rejects([&]{(void)composeShelfDragImage(icons,shelfDragImageMaximumSide+1,2);},"Oversized frames reject");
+    rejects([&]{(void)composeShelfDragImage(icons,4,5);},"An offset larger than the frame rejects");
+}
 #ifdef _WIN32
 using Microsoft::WRL::ComPtr;
 void ok(HRESULT value,const char* message){check(SUCCEEDED(value),message);}
@@ -75,11 +99,12 @@ struct MediumCounter final:IUnknown {
 struct FakeData final:IDataObject {
     std::atomic<ULONG>refs{1};unsigned queries{},gets{};std::vector<std::uint8_t> bytes;std::shared_ptr<unsigned> releases=std::make_shared<unsigned>();
     std::function<void()> onQuery,onGet,onMediumRelease;HRESULT getResult{S_OK};
+    bool strictFormats{}; // answer only CF_HDROP (Shell drag-image helpers ask for their own formats)
     FakeData():bytes(encodeShelfDropPaths(std::vector<std::string>{"C:\\synthetic\\file.txt","C:\\synthetic\\folder"})){}
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** out)override{if(!out)return E_POINTER;*out=nullptr;if(iid!=IID_IUnknown&&iid!=IID_IDataObject)return E_NOINTERFACE;*out=static_cast<IDataObject*>(this);AddRef();return S_OK;}
     ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}ULONG STDMETHODCALLTYPE Release()override{const auto n=--refs;if(!n)delete this;return n;}
     HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f)override{++queries;if(onQuery)onQuery();return f&&f->cfFormat==CF_HDROP&&f->tymed==TYMED_HGLOBAL?S_OK:DV_E_FORMATETC;}
-    HRESULT STDMETHODCALLTYPE GetData(FORMATETC*,STGMEDIUM* out)override{++gets;if(onGet)onGet();if(FAILED(getResult))return getResult;*out={};
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC* f,STGMEDIUM* out)override{if(strictFormats&&(!f||f->cfFormat!=CF_HDROP)){if(out)*out={};return DV_E_FORMATETC;}++gets;if(onGet)onGet();if(FAILED(getResult))return getResult;*out={};
         auto memory=GlobalAlloc(GMEM_MOVEABLE|GMEM_ZEROINIT,bytes.size());if(!memory)return E_OUTOFMEMORY;auto* target=GlobalLock(memory);if(!target){GlobalFree(memory);return E_OUTOFMEMORY;}std::memcpy(target,bytes.data(),bytes.size());GlobalUnlock(memory);
         out->tymed=TYMED_HGLOBAL;out->hGlobal=memory;out->pUnkForRelease=new MediumCounter(memory,releases,onMediumRelease);return S_OK;}
     HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*,STGMEDIUM*)override{return E_NOTIMPL;}HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*,FORMATETC*)override{return E_NOTIMPL;}
@@ -169,11 +194,88 @@ void incomingFailureAndReentry(){
     target=make([&](std::span<const std::string>){++commits;target.reset();return true;});retained=target->dropTarget();effect=DROPEFFECT_COPY;
     ok(retained->Drop(data.Get(),0,{0,0},&effect),"Owner may close after successful storage transaction");check(!target&&effect==DROPEFFECT_COPY&&commits==2,"Completed persistence stays successful when owner closes, without late UI callbacks");retained.Reset();window.drain();
 }
+// Virtual files only (FILEDESCRIPTORW/FILECONTENTS, no CF_HDROP).
+struct VirtualData final:IDataObject {
+    std::atomic<ULONG>refs{1};unsigned queries{},gets{};CLIPFORMAT descriptor=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"));
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** out)override{if(!out)return E_POINTER;*out=nullptr;if(iid!=IID_IUnknown&&iid!=IID_IDataObject)return E_NOINTERFACE;*out=static_cast<IDataObject*>(this);AddRef();return S_OK;}
+    ULONG STDMETHODCALLTYPE AddRef()override{return ++refs;}ULONG STDMETHODCALLTYPE Release()override{const auto n=--refs;if(!n)delete this;return n;}
+    HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f)override{++queries;return f&&f->cfFormat==descriptor&&(f->tymed&TYMED_HGLOBAL)?S_OK:DV_E_FORMATETC;}
+    HRESULT STDMETHODCALLTYPE GetData(FORMATETC*,STGMEDIUM* out)override{++gets;if(out)*out={};return DV_E_FORMATETC;}
+    HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC*,STGMEDIUM*)override{return E_NOTIMPL;}HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC*,FORMATETC*)override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE SetData(FORMATETC*,STGMEDIUM*,BOOL)override{return E_NOTIMPL;}HRESULT STDMETHODCALLTYPE EnumFormatEtc(DWORD,IEnumFORMATETC**)override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*,DWORD,IAdviseSink*,DWORD*)override{return OLE_E_ADVISENOTSUPPORTED;}HRESULT STDMETHODCALLTYPE DUnadvise(DWORD)override{return OLE_E_ADVISENOTSUPPORTED;}HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**)override{return OLE_E_ADVISENOTSUPPORTED;}
+};
+void virtualFilesRefused(){
+    Window window;ComPtr<VirtualData> data;data.Attach(new VirtualData);unsigned commits{};
+    ShelfDropTarget target(window.route(),{[](POINTL p){return p.x>=0&&p.x<100&&p.y>=0&&p.y<100;},[&](std::span<const std::string>){++commits;return true;}});
+    auto* native=target.dropTarget();DWORD effect=DROPEFFECT_COPY;ok(native->DragEnter(data.Get(),0,{5,5},&effect),"Virtual-only DragEnter is handled");
+    check(effect==DROPEFFECT_NONE&&data->gets==0,"Virtual files are refused without reading any content");
+    check(window.drain()==1,"The refusal is one coalesced owner notice");auto changes=target.takeChanges(generation);
+    check(changes.virtualFiles&&!changes.hovering&&!changes.committed&&!changes.error,"The owner learns a virtual-file drag was refused over the Shelf");
+    for(unsigned i=0;i<20;++i){effect=DROPEFFECT_COPY;ok(native->DragOver(0,{5,5},&effect),"Repeated virtual hover");check(effect==DROPEFFECT_NONE,"Virtual hover stays refused");}
+    check(window.drain()==0&&!target.takeChanges(generation).virtualFiles,"The explanation is reported once per drag");
+    effect=DROPEFFECT_COPY;ok(native->Drop(data.Get(),0,{5,5},&effect),"A forced virtual drop is contained");check(effect==DROPEFFECT_NONE&&commits==0,"A forced virtual drop commits no reference");
+    window.drain();(void)target.takeChanges(generation);
+    effect=DROPEFFECT_COPY;ok(native->DragEnter(data.Get(),0,{105,5},&effect),"Virtual drag outside the Shelf");check(effect==DROPEFFECT_NONE&&window.drain()==0,"Outside the projected Shelf nothing is reported");
+    effect=DROPEFFECT_COPY;ok(native->DragOver(0,{5,5},&effect),"The drag moves over the Shelf");check(window.drain()==1&&target.takeChanges(generation).virtualFiles,"Entering the Shelf later in the same drag reports once");
+    ok(native->DragLeave(),"Leave ends the drag");effect=DROPEFFECT_COPY;ok(native->DragEnter(data.Get(),0,{5,5},&effect),"A new drag enters");
+    check(window.drain()==1&&target.takeChanges(generation).virtualFiles,"A new drag reports again");
+    effect=DROPEFFECT_MOVE;ok(native->DragEnter(data.Get(),0,{5,5},&effect),"Move-only virtual drag");check(effect==DROPEFFECT_NONE&&window.drain()==0,"A move-only offer is not explained as a copy");
+    ComPtr<FakeData> files;files.Attach(new FakeData);effect=DROPEFFECT_COPY;ok(native->DragEnter(files.Get(),0,{5,5},&effect),"Ordinary files still enter");
+    check(effect==DROPEFFECT_COPY&&files->queries==1,"A CF_HDROP offer never queries descriptor formats");window.drain();
+    ok(native->DragLeave(),"Leave");window.drain();target.stop();
+}
+void storedShellFormats(){
+    Window window;Files files;auto transfer=std::make_unique<ShelfDragTransfer>(files.bundle(),files.resolver(),window.route());auto* object=transfer->dataObject();
+    const auto bitsFormat=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"DragImageBits"));const std::array<std::uint8_t,6> bytes{1,2,3,4,5,6};
+    const auto medium=[&](std::span<const std::uint8_t> value){STGMEDIUM out{};out.tymed=TYMED_HGLOBAL;out.hGlobal=GlobalAlloc(GMEM_MOVEABLE,value.size());auto* p=GlobalLock(out.hGlobal);std::memcpy(p,value.data(),value.size());GlobalUnlock(out.hGlobal);return out;};
+    FORMATETC format{bitsFormat,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};auto first=medium(bytes);
+    ok(object->SetData(&format,&first,TRUE),"Shell-private drag-image data is kept");check(transfer->storedFormats()==1,"One private format stored");
+    ok(object->QueryGetData(&format),"Stored private format is advertised");STGMEDIUM out{};ok(object->GetData(&format,&out),"Stored private format is returned");
+    check(out.tymed==TYMED_HGLOBAL&&!out.pUnkForRelease&&GlobalSize(out.hGlobal)>=bytes.size()&&std::memcmp(GlobalLock(out.hGlobal),bytes.data(),bytes.size())==0,"Receivers get an independent copy");GlobalUnlock(out.hGlobal);ReleaseStgMedium(&out);
+    auto second=medium(std::array<std::uint8_t,2>{9,9});ok(object->SetData(&format,&second,FALSE),"Replacing a format without release copies it");ReleaseStgMedium(&second);check(transfer->storedFormats()==1,"Replacement keeps one entry");
+    ComPtr<IEnumFORMATETC> formats;ok(object->EnumFormatEtc(DATADIR_GET,&formats),"Formats enumerate");FORMATETC values[4]{};ULONG fetched{};formats->Next(4,values,&fetched);
+    check(fetched==3&&values[0].cfFormat==CF_HDROP&&values[2].cfFormat==bitsFormat,"Paths, preferred copy and the stored private format are advertised");
+    // Stream-backed private data (the helper's DragContext) round-trips from its start.
+    const auto contextFormat=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"DragContext"));FORMATETC streamFormat{contextFormat,nullptr,DVASPECT_CONTENT,-1,TYMED_ISTREAM};
+    ComPtr<IStream> written;ok(CreateStreamOnHGlobal(nullptr,TRUE,&written),"Own synthetic stream");ULONG count{};ok(written->Write("context",7,&count),"Synthetic stream filled");
+    STGMEDIUM streamMedium{};streamMedium.tymed=TYMED_ISTREAM;streamMedium.pstm=written.Get();ok(object->SetData(&streamFormat,&streamMedium,FALSE),"A stream-backed private format is kept");
+    LARGE_INTEGER zero{};ULARGE_INTEGER cursor{};written->Seek(zero,STREAM_SEEK_CUR,&cursor);check(cursor.QuadPart==7,"The caller's stream cursor is restored");
+    STGMEDIUM back{};ok(object->GetData(&streamFormat,&back),"The stream-backed format is returned");char text[8]{};ULONG read{};
+    check(back.tymed==TYMED_ISTREAM&&back.pstm&&SUCCEEDED(back.pstm->Read(text,8,&read))&&read==7&&std::string_view(text,7)=="context","Receivers read an independent stream from its start");ReleaseStgMedium(&back);
+    check(transfer->storedFormats()==2,"Two private formats stored");
+    for(const auto* name:{L"Performed DropEffect",L"Paste Succeeded",L"Logical Performed DropEffect",L"Preferred DropEffect"}){
+        FORMATETC refused{static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name)),nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};auto value=medium(std::array<std::uint8_t,4>{DROPEFFECT_MOVE,0,0,0});
+        check(object->SetData(&refused,&value,TRUE)==E_NOTIMPL,"Move/paste results and the preferred effect can never be written back");ReleaseStgMedium(&value);}
+    FORMATETC paths{CF_HDROP,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};auto forged=medium(encodeShelfDropPaths(std::vector<std::string>{"C:\\forged.txt"}));
+    check(object->SetData(&paths,&forged,TRUE)==E_NOTIMPL,"The outgoing path list cannot be replaced");ReleaseStgMedium(&forged);
+    STGMEDIUM real{};ok(object->GetData(&paths,&real),"Outgoing paths still validate the leased group");check(mediumPaths(real).size()==2,"The leased group is unchanged");ReleaseStgMedium(&real);
+    check(transfer->storedFormats()==2,"Refused writes store nothing");
+    // Shell drag-image helper: present on desktop Windows; reported, not faked, when absent.
+    const std::vector<std::uint8_t> pixels(64u*64u*4u,200);const std::vector<ShelfDragIcon> icons{{64,64,pixels}};const auto image=composeShelfDragImage(icons,48,5);
+    auto drag=std::make_unique<ShelfDragTransfer>(files.bundle(),files.resolver(),window.route());
+    if(const auto attached=drag->setDragImage(image);SUCCEEDED(attached)){check(drag->storedFormats()>0,"The Shell drag-image helper stores its data on the copy-only object");
+        STGMEDIUM still{};ok(drag->dataObject()->GetData(&paths,&still),"Paths remain available with a drag image");ReleaseStgMedium(&still);}
+    else{std::cout<<"SKIP Shell drag-image helper unavailable in this session (HRESULT 0x"<<std::hex<<static_cast<unsigned long>(attached)<<std::dec<<")\n";}
+    check(drag->setDragImage(ShelfDragImage{})==E_INVALIDARG,"An empty image is rejected");
+    drag->complete(DRAGDROP_S_CANCEL,DROPEFFECT_NONE);check(drag->setDragImage(image)==E_UNEXPECTED,"No image is attached after the drag ended");
+    drag.reset();transfer.reset();window.drain();check(files.shared->active==0,"Stored formats never retain file leases");
+}
+void incomingDragImages(){
+    Window window;ComPtr<FakeData> data;data.Attach(new FakeData);data->strictFormats=true;unsigned commits{};
+    ShelfDropTarget target(window.route(),{[](POINTL p){return p.x>=0&&p.x<100&&p.y>=0&&p.y<100;},[&](std::span<const std::string>){++commits;return true;}});
+    target.setDragImages(true);auto* native=target.dropTarget();DWORD effect=DROPEFFECT_COPY;
+    ok(native->DragEnter(data.Get(),0,{5,5},&effect),"Enter with the Shell drag-image helper");check(effect==DROPEFFECT_COPY,"Drag images never change acceptance");
+    effect=DROPEFFECT_COPY;ok(native->DragOver(0,{150,5},&effect),"Over a refused point");check(effect==DROPEFFECT_NONE,"Refusal is unchanged");
+    effect=DROPEFFECT_COPY;ok(native->Drop(data.Get(),0,{5,5},&effect),"Drop with drag images");check(effect==DROPEFFECT_COPY&&commits==1,"Commit is unchanged by drag images");
+    window.drain();(void)target.takeChanges(generation);target.setDragImages(false);
+    effect=DROPEFFECT_COPY;ok(native->DragEnter(data.Get(),0,{5,5},&effect),"Enter after disabling images");ok(native->DragLeave(),"Leave");window.drain();target.stop();
+}
 #endif
 }
-int main(){try{codec();
+int main(){try{codec();dragImageComposition();
 #ifdef _WIN32
-    Ole ole;outgoing();asyncAndFailures();explicitPaste();incomingTarget();incomingFailureAndReentry();
+    Ole ole;outgoing();asyncAndFailures();explicitPaste();incomingTarget();incomingFailureAndReentry();virtualFilesRefused();storedShellFormats();incomingDragImages();
 #else
     std::cout<<"SKIP native OLE fixture: Windows required; no clipboard/files/window accessed\n";
 #endif

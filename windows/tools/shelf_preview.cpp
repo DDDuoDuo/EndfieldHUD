@@ -9,12 +9,17 @@
 #include "native/module_registration.hpp"
 #include "core/data/file_io.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <map>
+#include <set>
 #include <sstream>
 #include <iomanip>
 #include <utility>
+#include <ole2.h>
+#include <shlobj.h>
+#include <wrl/client.h>
 
 namespace endfield::tools {
 namespace {
@@ -38,6 +43,89 @@ constexpr UINT iconMessage=WM_APP+187;
 constexpr UINT pickerMessage=WM_APP+188;
 constexpr UINT previewMessage=WM_APP+189;
 std::atomic<UINT_PTR> nextGeneration{1};
+// Windows-only text (no Mac source pair exists): English, Simplified Chinese,
+// Traditional Chinese, Japanese, Korean; grammar mirrors the source strings.
+struct TextRow {std::string_view en,zhHans,zhHant,ja,ko;};
+constexpr std::array<TextRow,12> windowsText{{
+    {"Reveal in File Explorer: ","在文件资源管理器中显示：","在檔案總管中顯示：","エクスプローラーで表示：","파일 탐색기에서 보기: "},
+    {"Preview: ","预览：","預覽：","プレビュー：","미리 보기: "},
+    {"The file chooser could not open.","无法打开文件选择窗口。","無法開啟檔案選擇視窗。","ファイル選択ウインドウを開けませんでした。","파일 선택 창을 열 수 없습니다."},
+    {"Preview could not open. Select the file and try again.","无法打开预览，请选中文件后重试。","無法開啟預覽，請選中檔案後重試。","プレビューを開けませんでした。ファイルを選択してもう一度お試しください。","미리 보기를 열지 못했습니다. 파일을 선택하고 다시 시도하세요."},
+    {"This item isn't a file on disk. Save it to a folder first, then add it.","此项目不是磁盘上的文件。请先将其保存到文件夹，再添加。","此項目不是磁碟上的檔案。請先將其儲存到資料夾，再新增。","この項目はディスク上のファイルではありません。フォルダに保存してから追加してください。","이 항목은 디스크에 있는 파일이 아닙니다. 먼저 폴더에 저장한 다음 추가하세요."},
+    {"Choose a file or folder that is available on this PC.","请选择此电脑上可访问的文件或文件夹。","請選擇此電腦上可存取的檔案或資料夾。","このPCでアクセスできるファイルまたはフォルダを選択してください。","이 PC에서 사용할 수 있는 파일이나 폴더를 선택하세요."},
+    {"the original may have been deleted, or it is not accessible.","原始项目可能已被删除或无法访问。","原始項目可能已被刪除或無法存取。","元の項目が削除されたか、アクセスできない可能性があります。","원본 항목이 삭제되었거나 액세스할 수 없습니다."},
+    {"The shelf has too many references to save.","暂存架引用过多，无法保存。","暫存架引用過多，無法儲存。","シェルフの参照が多すぎて保存できません。","보관함 참조가 너무 많아 저장할 수 없습니다."},
+    {"The saved shelf changed outside this window. Restart EndfieldHUD before making changes.","暂存架数据已在外部更改，请重新启动 EndfieldHUD 后再编辑。","暫存架資料已在外部更改，請重新啟動 EndfieldHUD 後再編輯。","保存済みのシェルフが外部で変更されました。EndfieldHUDを再起動してから編集してください。","다른 창이나 앱에서 보관함이 변경되었습니다. EndfieldHUD를 재시작한 후 변경하세요."},
+    {"This file shelf was saved by a newer version of EndfieldHUD.","此暂存架由较新版本的 EndfieldHUD 保存。","此暫存架由較新版本的 EndfieldHUD 儲存。","このファイルシェルフは新しいバージョンのEndfieldHUDで保存されています。","이 파일 보관함은 더 최신 버전의 EndfieldHUD에서 저장되었습니다."},
+    {"Modified {0}","修改时间：{0}","修改時間：{0}","更新日時：{0}","수정일: {0}"},
+    {"Unable to show the file in File Explorer","无法在文件资源管理器中显示文件","無法在檔案總管中顯示檔案","エクスプローラーでファイルを表示できません","파일 탐색기에서 파일을 표시할 수 없습니다"},
+}};
+static_assert(windowsText.size()==std::size_t(ShelfText::revealFailed)+1);
+std::string_view pick(const TextRow&row,core::Language language){
+    switch(language){case core::Language::simplifiedChinese:return row.zhHans;case core::Language::traditionalChinese:return row.zhHant;
+    case core::Language::japanese:return row.ja;case core::Language::korean:return row.ko;default:return row.en;}
+}
+const wchar_t* localeName(core::Language language){
+    switch(language){case core::Language::english:return L"en-US";case core::Language::simplifiedChinese:return L"zh-CN";case core::Language::traditionalChinese:return L"zh-TW";
+    case core::Language::japanese:return L"ja-JP";case core::Language::korean:return L"ko-KR";default:return LOCALE_NAME_USER_DEFAULT;}
+}
+std::string narrow(std::wstring_view value){
+    if(value.empty())return {};const auto count=WideCharToMultiByte(CP_UTF8,0,value.data(),int(value.size()),nullptr,0,nullptr,nullptr);if(count<=0)return {};
+    std::string out(std::size_t(count),'\0');if(WideCharToMultiByte(CP_UTF8,0,value.data(),int(value.size()),out.data(),count,nullptr,nullptr)!=count)return {};return out;
+}
+std::wstring widen(std::string_view value){
+    if(value.empty())return {};const auto count=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),int(value.size()),nullptr,0);if(count<=0)return {};
+    std::wstring out(std::size_t(count),L'\0');if(MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,value.data(),int(value.size()),out.data(),count)!=count)return {};return out;
+}
+// Last-write time in the HUD language's date/time format (no content access).
+std::string modifiedText(const std::string&path,core::Language language){
+    const auto wide=widen(path);if(wide.empty()||wide.size()>=32000)return {};
+    const auto extended=wide.starts_with(L"\\\\")?L"\\\\?\\UNC\\"+wide.substr(2):L"\\\\?\\"+wide;
+    WIN32_FILE_ATTRIBUTE_DATA data{};if(!GetFileAttributesExW(extended.c_str(),GetFileExInfoStandard,&data))return {};
+    FILETIME local{};SYSTEMTIME time{};if(!FileTimeToLocalFileTime(&data.ftLastWriteTime,&local)||!FileTimeToSystemTime(&local,&time))return {};
+    std::array<wchar_t,128>date{},clock{};const auto*name=localeName(language);
+    if(!GetDateFormatEx(name,DATE_LONGDATE,&time,nullptr,date.data(),int(date.size()),nullptr)||!GetTimeFormatEx(name,TIME_NOSECONDS,&time,nullptr,clock.data(),int(clock.size())))return {};
+    return narrow(date.data())+" "+narrow(clock.data());
+}
+// FileShelfStrings for Windows: the source strings with the platform names
+// replaced (File Explorer for Finder, Preview for Quick Look).
+mod::FileShelfStrings windowsStrings(core::Language language){
+    auto strings=mod::fileShelfStrings(language);strings.revealPrefix=shelfText(ShelfText::revealPrefix,language);strings.previewPrefix=shelfText(ShelfText::previewPrefix,language);return strings;
+}
+std::string lowered(std::string_view value){std::string out(value);for(auto&c:out)if(c>='A'&&c<='Z')c=char(c-'A'+'a');return out;}
+bool contains(std::string_view text,std::string_view part){return lowered(text).find(lowered(part))!=std::string::npos;}
+// Shared, language-current text for preview descriptions; the preview
+// service callback owns this, never the Shelf owner or its state.
+struct PreviewText {core::Language language{core::Language::simplifiedChinese};mod::FileShelfStrings strings=windowsStrings(core::Language::simplifiedChinese);};
+}
+std::string shelfText(ShelfText value,core::Language language){return std::string(pick(windowsText[std::size_t(value)],language));}
+std::string shelfErrorText(const std::exception&error,mod::FileShelfState::Failure failure,core::Language language){
+    using F=mod::FileShelfState::Failure;using C=data::StoreErrorCode;const std::string_view message=error.what();
+    const auto persistence=[&]{return core::localized("The file shelf could not be saved or opened: ","无法保存或打开暂存架：",language)+std::string(message);};
+    const auto unavailable=[&]{return core::localized("This item is unavailable: ","此项目不可用：",language)+shelfText(ShelfText::unavailableReason,language);};
+    if(contains(message,"no longer on the shelf"))return core::localized("This item is no longer on the shelf.","此项目已不在暂存架中。",language);
+    if(contains(message,"different item occupies"))return core::localized("The original item is unavailable. A different item now occupies its old location.","原始项目不可用，其他项目已占用了原来的位置。",language);
+    const auto*store=dynamic_cast<const data::StoreError*>(&error);
+    if(!store)return persistence();
+    switch(store->code()){
+    case C::changedOnDisk:return shelfText(ShelfText::changedOnDisk,language);
+    case C::newerVersion:return shelfText(ShelfText::newerVersion,language);
+    case C::tooLarge:if(contains(message,"archive byte bound"))return shelfText(ShelfText::tooManyReferences,language);return failure==F::importing?shelfText(ShelfText::chooseAvailable,language):unavailable();
+    case C::unavailable:case C::invalid:
+        if(failure==F::importing)return shelfText(ShelfText::chooseAvailable,language);
+        if(failure==F::action||failure==F::refreshing)return unavailable();
+        return persistence();
+    }
+    return persistence();
+}
+std::optional<std::string> shelfKnownMessage(std::string_view message,core::Language language){
+    // Mac importPasteboard ignores a clipboard without file URLs silently.
+    if(message=="Drop source did not provide filesystem paths")return std::string{};
+    if(message=="Shelf references could not be committed"||message=="Shelf drop failed")return shelfErrorText(std::runtime_error(std::string(message)),mod::FileShelfState::Failure::changing,language);
+    if(contains(message,"no longer on the shelf")||contains(message,"different item occupies"))return shelfErrorText(std::runtime_error(std::string(message)),mod::FileShelfState::Failure::action,language);
+    for(const auto prefix:{"Cannot acquire shelf file metadata","Shelf reference ","This shelf provider does not support","Filesystem does not provide","Original shelf item","Outgoing shelf reference changed","Preview requires","Original preview reference"})
+        if(message.starts_with(prefix))return shelfErrorText(data::StoreError(data::StoreErrorCode::unavailable,std::string(message)),mod::FileShelfState::Failure::action,language);
+    return std::nullopt;
 }
 struct ShelfPreview::Impl {
     struct DropState {
@@ -46,10 +134,13 @@ struct ShelfPreview::Impl {
         // Commit can reenter a route transition. Its deferred notice still
         // belongs to the callback snapshot that completed the transaction.
         std::optional<bool> committedExternal;
+        // Names of references a Shelf-route drop added (shelfAdded records).
+        std::vector<std::string> addedNames;
     };
     struct Selection {std::string id;double fromY{},fromZ{},toY{},toZ{},start{};};
     HWND hwnd;gpu::LayerRasterizer&raster;const gpu::NativeShelfAssets&assets;ShelfPreviewOptions options;
-    gpu::NativeFileShelfFiles files{{"文件","文件夹"}};
+    // Bookmark-equivalent resolution and Shell type names (FileShelfStore.swift).
+    gpu::NativeFileShelfFiles files{{"文件","文件夹"},{true,true}};
     std::shared_ptr<data::FileShelfStore>store;std::unique_ptr<mod::FileShelfState>state;
     mod::ShelfPresentation presentation;mod::ShelfPresentationStyle appearance=style();
     gpu::LayerImageSource memoryImages;std::shared_ptr<const gpu::LayerMemoryImage>emptyIcon;
@@ -58,7 +149,8 @@ struct ShelfPreview::Impl {
     gpu::NativeModuleRegistration registration{"shelf.registration"};
     std::shared_ptr<DropState>dropState=std::make_shared<DropState>();std::unique_ptr<gpu::ShelfDropTarget>drop;
     std::unique_ptr<gpu::NativeShelfFilePicker>picker;
-    std::unique_ptr<gpu::NativeShelfFilePreview>preview;
+    std::unique_ptr<gpu::NativeShelfFilePreview>preview;std::shared_ptr<PreviewText>previewText=std::make_shared<PreviewText>();
+    std::function<void(mod::EventKind,mod::EventMetadata)>recordEvent;
     std::vector<gpu::NativeShelfImage>images;std::vector<gpu::ShelfIconRequest>requests;
     std::vector<Selection>selectionTracks;std::vector<gpu::ShelfSelectionPose>selectionPoses;
     std::map<std::string,gpu::ShelfIconRequest,std::less<>>requestVersions;
@@ -88,7 +180,8 @@ struct ShelfPreview::Impl {
         actions.chooseFiles=[this]{request({ShelfPreviewAction::Kind::choose,{}});};
         actions.preview=[this](auto id){request({ShelfPreviewAction::Kind::preview,std::string(id)});};
         actions.reveal=[this](auto id){request({ShelfPreviewAction::Kind::reveal,std::string(id)});};actions.formatFileSize=byteLabel;
-        auto strings=mod::FileShelfStrings::simplifiedChinese();strings.revealPrefix="在资源管理器中显示：";
+        actions.describeError=[this](const std::exception&error,mod::FileShelfState::Failure failure){return shelfErrorText(error,failure,language);};
+        recordEvent=std::move(options.recordEvent);auto strings=windowsStrings(language);
         state=std::make_unique<mod::FileShelfState>(snapshot(*store),std::move(persistence),std::move(actions),std::move(strings));
         const std::array<std::uint8_t,4> transparent{};emptyIcon=memoryImages.publish("shelf.pending-icon",1,1,1,transparent);
         gpu::LayerRasterOptions ro;ro.pixelsPerPoint=2;ro.assetRoot=assets.root();ro.memoryImages=&memoryImages;
@@ -96,14 +189,24 @@ struct ShelfPreview::Impl {
         geometry.load(emptyPlane(),ro);surface=std::make_unique<gpu::NativeModuleSurface>(geometry,core::Module::fileShelf);
         if(options.nativeIcons)icons=std::make_unique<gpu::NativeShelfIconProvider>(memoryImages,files.platform().resolve,gpu::ShelfIconRoute{hwnd,iconMessage,generation});
         picker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{hwnd,pickerMessage,generation},gpu::ShelfPickerLabels{"添加到文件暂存架","添加引用","添加选中的文件与文件夹"});
-        preview=std::make_unique<gpu::NativeShelfFilePreview>(gpu::ShelfPreviewRoute{hwnd,previewMessage,generation});
+        // Shell preview handlers, and Quick Look's generic preview for folders
+        // and handler-less types; resolution follows moved/renamed originals.
+        gpu::ShelfPreviewServices previewServices;previewServices.resolve=files.platform().resolve;
+        previewServices.describe=[text=previewText](const data::ShelfFileMetadata&metadata){return describe(*text,metadata);};
+        preview=std::make_unique<gpu::NativeShelfFilePreview>(gpu::ShelfPreviewRoute{hwnd,previewMessage,generation},gpu::ShelfPreviewOptions{options.visiblePanels,800,600,true},std::move(previewServices));
         dropState->hwnd=hwnd;
         if(options.registerDropTarget){
             auto shared=dropState;auto retainedStore=store;
             drop=std::make_unique<gpu::ShelfDropTarget>(gpu::ShelfTransferRoute{hwnd,noticeMessage,generation},gpu::ShelfDropTarget::Callbacks{
                 [shared](POINTL p){const auto route=shared->external;shared->noticeExternal=bool(route);if(route)return route->acceptsPoint(p);if(!shared->enabled)return false;POINT point{p.x,p.y};if(!ScreenToClient(shared->hwnd,&point))return false;const auto local=shared->projection.unproject({double(point.x),double(point.y)});return local&&contains(mod::FileShelfState::bounds(),*local);},
-                [shared,retainedStore](auto paths){const auto route=shared->external;shared->noticeExternal=bool(route);const bool committed=route?route->commit(paths):(retainedStore->add(paths),true);if(committed)shared->committedExternal=bool(route);return committed;}});
+                [shared,retainedStore](auto paths){const auto route=shared->external;shared->noticeExternal=bool(route);
+                    if(route){const bool committed=route->commit(paths);if(committed)shared->committedExternal=true;return committed;}
+                    std::set<std::string,std::less<>>before;for(const auto&item:retainedStore->items())before.insert(item.id);
+                    retainedStore->add(paths);shared->committedExternal=false;
+                    for(const auto&item:retainedStore->items())if(!before.contains(item.id))shared->addedNames.push_back(item.name);return true;}});
             need(SUCCEEDED(drop->registerTarget()),"Register Windows Shelf file drop target");drop->setEnabled(false);
+            // Incoming drags keep their Shell drag image across the HUD.
+            drop->setDragImages(options.nativeIcons);
         }
         images.reserve(10);requests.reserve(8);selectionTracks.reserve(16);selectionPoses.reserve(8);composed.reserve(12);
     }
@@ -130,14 +233,48 @@ struct ShelfPreview::Impl {
             case mod::FileShelfState::EventKind::toolbar:toolbarStart=e.animated?time:-1;break;
             case mod::FileShelfState::EventKind::dropTrace:dropStart=e.animated?time:-1;break;
             case mod::FileShelfState::EventKind::collectionReveal:revealStart=e.animated?time:-1;revealDirection=e.direction;break;
+            // SystemHUDView: onItemsAdded / onItemRemoved / onShelfCleared.
+            case mod::FileShelfState::EventKind::itemsAdded:for(const auto&name:e.values)emit(mod::EventKind::shelfAdded,{{"filename",name}});break;
+            case mod::FileShelfState::EventKind::itemRemoved:for(const auto&name:e.values)emit(mod::EventKind::shelfRemoved,{{"filename",name}});break;
+            case mod::FileShelfState::EventKind::shelfCleared:emit(mod::EventKind::shelfCleared,{{"count",std::to_string(e.count)}});break;
             default:break;
         }
+    }
+    void emit(mod::EventKind kind,mod::EventMetadata metadata)const{if(recordEvent)recordEvent(kind,std::move(metadata));}
+    static gpu::ShelfPreviewDescription describe(const PreviewText&text,const data::ShelfFileMetadata&metadata){
+        gpu::ShelfPreviewDescription value{metadata.name,{}};
+        const mod::FileShelfItem item{{},metadata.name,metadata.windowsPath,metadata.typeDescription,metadata.byteCount,metadata.isDirectory,{}};
+        auto kind=mod::FileShelfState::typeLabel(item,text.strings);if(!metadata.isDirectory&&metadata.byteCount)kind+=" · "+byteLabel(*metadata.byteCount);value.details.push_back(std::move(kind));
+        if(auto modified=modifiedText(metadata.windowsPath,text.language);!modified.empty()){const std::array<std::string_view,1>argument{modified};
+            value.details.push_back(core::renderTranslation(shelfText(ShelfText::modified,text.language),argument).value_or(modified));}
+        return value;
+    }
+    // Mac beginOutgoingDrag frames: side = clamp(projected card height * 0.7,
+    // 36, 72) points, each later item 5 points up and right, at most five.
+    void dragImage(gpu::ShelfDragTransfer&transfer,std::span<const std::string>ids){
+        if(!options.nativeIcons||ids.empty())return;
+        std::vector<std::shared_ptr<const gpu::LayerMemoryImage>>pixels;std::vector<gpu::ShelfDragIcon>icons;
+        for(const auto&id:ids){if(icons.size()==gpu::shelfDragImageMaximumFrames)break;const auto found=requestVersions.find(id);if(found==requestVersions.end())continue;
+            auto image=memoryImages.acquire(found->second.imageKey,found->second.revision);if(!image||image->width()<2||image->height()<2)continue;
+            icons.push_back({image->width(),image->height(),image->premultipliedBGRA()});pixels.push_back(std::move(image));}
+        if(icons.empty())return;
+        double cardPoints=52;
+        if(const auto card=state->card(ids.front());card&&pose){const auto top=projection.project({card->full.x,card->full.y}),bottom=projection.project({card->full.x,card->full.y+card->full.height});
+            if(top&&bottom&&metrics.scale>0)cardPoints=std::hypot(bottom->x-top->x,bottom->y-top->y)/metrics.scale;}
+        const double scale=metrics.scale>0?metrics.scale:1;
+        const auto side=unsigned(std::lround(std::clamp(cardPoints*.7,36.,72.)*scale)),offset=unsigned(std::lround(5*scale));
+        // Without the Shell helper the drag keeps the system cursor only.
+        (void)transfer.setDragImage(gpu::composeShelfDragImage(icons,std::min(side,gpu::shelfDragImageMaximumSide),std::min(offset,side)));
     }
     void drainDrop(){
         if(!drop)return;auto changes=drop->takeChanges(generation);bool changedState{};
         if(changes.committed){const bool external=dropState->committedExternal.value_or(dropState->noticeExternal);dropState->committedExternal.reset();
-            if(!external){state->refreshFromStore();std::vector<std::string>ids;for(const auto&file:store->items())if(std::find(changes.paths.begin(),changes.paths.end(),file.windowsPath)!=changes.paths.end())ids.push_back(file.id);state->revealItems(ids);revealStart=time;revealDirection=1;changedState=true;}}
-        if(!dropState->noticeExternal){if(changes.feedbackChanged){state->setDropTarget(changes.hovering);changedState=true;}if(changes.error){state->showError(*changes.error);changedState=true;}}
+            if(!external){state->refreshFromStore();std::vector<std::string>ids;for(const auto&file:store->items())if(std::find(changes.paths.begin(),changes.paths.end(),file.windowsPath)!=changes.paths.end())ids.push_back(file.id);state->revealItems(ids);revealStart=time;revealDirection=1;changedState=true;
+                for(auto&name:std::exchange(dropState->addedNames,{}))emit(mod::EventKind::shelfAdded,{{"filename",std::move(name)}});}}
+        if(!dropState->noticeExternal){if(changes.feedbackChanged){state->setDropTarget(changes.hovering);changedState=true;}
+            if(changes.error){auto text=changes.errorCode?shelfErrorText(data::StoreError(*changes.errorCode,*changes.error),mod::FileShelfState::Failure::importing,language):shelfKnownMessage(*changes.error,language).value_or(*changes.error);
+                if(!text.empty()){state->showError(std::move(text));changedState=true;}}
+            if(changes.virtualFiles){state->showError(shelfText(ShelfText::virtualFiles,language));changedState=true;}}
         if(changedState)changed();
     }
     void content(){
@@ -160,11 +297,12 @@ ShelfPreview::ShelfPreview(HWND h,native::LayerRasterizer&r,const native::Native
 ShelfPreview::~ShelfPreview()=default;
 void ShelfPreview::resize(const app::ClientMetrics&m){impl_->metrics=m;}
 void ShelfPreview::setLanguage(core::Language language){auto&i=*impl_;if(language==i.language)return;
-    auto strings=mod::fileShelfStrings(language);auto style=mod::shelfPresentationStyle(language,i.appearance);
-    // Platform action only: retain source grammar but name the actual Windows shell.
-    const auto finder=strings.revealPrefix.find("Finder");if(finder!=std::string::npos)strings.revealPrefix.replace(finder,6,language==core::Language::traditionalChinese?"檔案總管":"Explorer");
-    const auto zh=strings.revealPrefix.find("访达");if(zh!=std::string::npos)strings.revealPrefix.replace(zh,std::string("访达").size(),"资源管理器");
+    // Platform actions only: retain source grammar but name the actual Windows
+    // shell (File Explorer for Finder, Preview for Quick Look).
+    auto strings=windowsStrings(language);auto style=mod::shelfPresentationStyle(language,i.appearance);
     const auto add=core::localized("Add references","添加引用",language);gpu::ShelfPickerLabels labels{core::localized("Add to Temporary File Shelf","添加到文件暂存架",language),add,add};
+    // Preview descriptions run on this thread inside the preview's own turn.
+    i.previewText->language=language;i.previewText->strings=strings;
     i.state->setStrings(std::move(strings));i.picker->setLabels(std::move(labels));i.appearance=std::move(style);i.language=language;i.dirty=true;
 }
 void ShelfPreview::setAppearance(bool dark,mod::ShelfColor accent){auto value=impl_->appearance;value.dark=dark;value.accent=accent;value.lightDropColor.reset();setAppearance(std::move(value));}
@@ -221,9 +359,9 @@ bool ShelfPreview::key(const app::KeyEvent&e,double t){auto&i=*impl_;const Impl:
 bool ShelfPreview::message(const app::NativeMessage&m,double t){auto&i=*impl_;if(m.wParam!=i.generation)return false;
     // The native modal pump must not borrow this owner's event instant or state
     // mutation guard. Nested animation/input callbacks get their current times.
-    if(m.message==pickerMessage){i.picker->handleMessage(m.wParam,m.lParam);if(auto result=i.picker->drain(m.wParam)){if(SUCCEEDED(result->result)&&!result->paths.empty())importFiles(result->paths,t);else if(!result->canceled())showError("无法打开文件选择窗口。",t);}return true;}
+    if(m.message==pickerMessage){i.picker->handleMessage(m.wParam,m.lParam);if(auto result=i.picker->drain(m.wParam)){if(SUCCEEDED(result->result)&&!result->paths.empty())importFiles(result->paths,t);else if(!result->canceled())showError(shelfText(ShelfText::pickerFailed,i.language),t);}return true;}
     if(m.message==previewMessage){i.preview->handleMessage(m.wParam,m.lParam);for(const auto&notice:i.preview->drain(m.wParam)){
-        if(notice.kind==gpu::ShelfPreviewEventKind::failed)showError("Windows 未提供此文件的预览程序。",t);
+        if(notice.kind==gpu::ShelfPreviewEventKind::failed)showError(shelfText(ShelfText::previewFailed,i.language),t);
         else if(notice.kind==gpu::ShelfPreviewEventKind::revealRequested)i.request({ShelfPreviewAction::Kind::reveal,notice.itemID});}return true;}
     const Impl::Event event(i,t);
     if(m.message==noticeMessage&&i.drop){i.drainDrop();return true;}
@@ -231,11 +369,30 @@ bool ShelfPreview::message(const app::NativeMessage&m,double t){auto&i=*impl_;if
 }
 bool ShelfPreview::pointerLocked()const{return impl_->dragCandidate.has_value()||impl_->nativeDrag;}
 bool ShelfPreview::preservesFocusOnLoss()const{const auto&i=*impl_;const auto picker=i.picker->stats();const auto preview=i.preview->stats();return i.nativeDrag||picker.queued||picker.presenting||preview.queued||preview.active||preview.visible||i.state->dropTarget();}
+ShelfPanelState ShelfPreview::panels()const{const auto&i=*impl_;const auto picker=i.picker->stats();const auto preview=i.preview->stats();
+    return {picker.queued||picker.presenting,preview.active,preview.visible,preview.fallback,preview.opens,preview.fallbacks,preview.failures};}
 std::optional<ShelfPreviewAction>ShelfPreview::takeAction(){return std::exchange(impl_->action,{});}
 bool ShelfPreview::importFiles(std::span<const std::string>paths,double t){auto&i=*impl_;const Impl::Event event(i,t);const bool value=i.state->importFiles(paths);i.changed();return value;}
-void ShelfPreview::showError(std::string message,double t){auto&i=*impl_;const Impl::Event event(i,t);i.state->showError(std::move(message));i.changed();}
+bool ShelfPreview::paste(double t){auto&i=*impl_;
+    Microsoft::WRL::ComPtr<IDataObject>source;if(FAILED(OleGetClipboard(&source))||!source)return false;
+    FORMATETC files{CF_HDROP,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
+    if(SUCCEEDED(source->QueryGetData(&files))){std::vector<std::string>paths;try{paths=gpu::readShelfTransferPaths(*source.Get());}catch(const std::exception&error){source.Reset();showError(error,t);return false;}
+        source.Reset();return importFiles(paths,t);}
+    for(const auto*name:{L"FileGroupDescriptorW",L"FileGroupDescriptor"}){FORMATETC descriptor{static_cast<CLIPFORMAT>(RegisterClipboardFormatW(name)),nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
+        if(descriptor.cfFormat&&SUCCEEDED(source->QueryGetData(&descriptor))){source.Reset();showError(shelfText(ShelfText::virtualFiles,i.language),t);return false;}}
+    return false;
+}
+void ShelfPreview::showError(std::string message,double t){auto&i=*impl_;if(auto known=shelfKnownMessage(message,i.language)){if(known->empty())return;message=std::move(*known);}
+    const Impl::Event event(i,t);i.state->showError(std::move(message));i.changed();}
+void ShelfPreview::showError(const std::exception&error,double t){auto&i=*impl_;showError(shelfErrorText(error,mod::FileShelfState::Failure::action,i.language),t);}
 void ShelfPreview::requestFiles(){impl_->picker->request();}
-void ShelfPreview::requestPreview(std::string_view id){auto&i=*impl_;i.preview->request(std::string(id),i.store->access(id));}
+void ShelfPreview::requestPreview(std::string_view id){auto&i=*impl_;
+    try{i.preview->request(std::string(id),i.store->access(id));}catch(const std::exception&error){showError(error,i.time);}}
+void ShelfPreview::refresh(double t){auto&i=*impl_;const Impl::Event event(i,t);
+    try{i.store->refresh();}catch(const std::exception&error){i.state->showError(shelfErrorText(error,mod::FileShelfState::Failure::refreshing,i.language));}
+    i.state->refreshFromStore();i.changed();}
+bool ShelfPreview::perform(std::string_view action,double t){auto&i=*impl_;const Impl::Event event(i,t);if(i.nativeDrag)return false;i.state->perform(action);i.changed();return true;}
+void ShelfPreview::setEventRecorder(std::function<void(modules::EventKind,modules::EventMetadata)>value){impl_->recordEvent=std::move(value);}
 bool ShelfPreview::filterKey(const app::NativeMessage&m){MSG message{};message.hwnd=static_cast<HWND>(m.window);message.message=m.message;message.wParam=m.wParam;message.lParam=m.lParam;return impl_->preview->preTranslate(message);}
 void ShelfPreview::cancelPanels(){impl_->picker->cancel();impl_->preview->close(false);}
 void ShelfPreview::cancelInteraction(){auto&i=*impl_;i.dragCandidate.reset();i.pressed=false;i.action.reset();}
@@ -255,7 +412,8 @@ void ShelfPreview::setExternalDropCallbacks(std::optional<gpu::ShelfDropTarget::
 }
 IDropTarget*ShelfPreview::fileDropTarget()const noexcept{return impl_->drop?impl_->drop->dropTarget():nullptr;}
 data::ShelfFileAccess ShelfPreview::access(std::string_view id){return impl_->store->access(id);}
-std::unique_ptr<gpu::ShelfDragTransfer>ShelfPreview::prepareDrag(std::string_view id){auto&i=*impl_;auto ids=i.state->dragSelection(id);return std::make_unique<gpu::ShelfDragTransfer>(i.store->prepareCopy(ids),i.files.platform().resolve);}
+std::unique_ptr<gpu::ShelfDragTransfer>ShelfPreview::prepareDrag(std::string_view id){auto&i=*impl_;auto ids=i.state->dragSelection(id);
+    auto transfer=std::make_unique<gpu::ShelfDragTransfer>(i.store->prepareCopy(ids),i.files.platform().resolve);i.dragImage(*transfer,ids);return transfer;}
 const mod::FileShelfState&ShelfPreview::state()const{return *impl_->state;}
 void ShelfPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadAnimations(r);}
 std::span<const gpu::LayerCompositionEntry>ShelfPreview::entries(){auto&i=*impl_;i.composed.clear();if(i.pose){for(const auto&e:i.scene->entries())i.composed.push_back(e);i.composed.push_back({&i.geometry,i.registration.draws()});}return i.composed;}

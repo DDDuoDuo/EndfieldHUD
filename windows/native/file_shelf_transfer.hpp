@@ -13,11 +13,31 @@
 namespace endfield::native {
 // Explicit first-slice bounds, not macOS limits. No truncation or materializing
 // virtual files. This codec accepts only Unicode CF_HDROP / existing-path form;
-// ANSI HDROP, FILECONTENTS, CIDA and cloud hydration are separate capabilities.
+// ANSI HDROP, CIDA and cloud hydration are separate capabilities.
+//
+// Virtual files (CFSTR_FILEDESCRIPTORW/FILECONTENTS: e-mail attachments,
+// browser images, entries inside a zip folder) are a recorded parity decision,
+// not an omission: they have no filesystem object, and the Shelf (like the Mac
+// original, which accepts file URLs only and promises "Files stay in their
+// original locations") stores references, never app-owned copies. The drop
+// target recognises such a drag over the Shelf, refuses it (DROPEFFECT_NONE, so
+// the source keeps its data) and reports ShelfDropChanges::virtualFiles once,
+// so the owner shows a visible explanation instead of failing silently.
 inline constexpr std::size_t shelfTransferMaximumBytes=4*1024*1024;
 inline constexpr std::size_t shelfTransferMaximumPaths=4096;
 std::vector<std::uint8_t> encodeShelfDropPaths(std::span<const std::string>);
 std::vector<std::string> decodeShelfDropPaths(std::span<const std::uint8_t>);
+
+// Outgoing drag image (HUDFileShelfInteraction.beginOutgoingDrag): one square
+// icon frame per dragged item, the first centred on the pointer and each later
+// item offset by `offset` pixels up and right (Mac frame + index*5, at most
+// five frames), later frames drawn above earlier ones. Icons are tight
+// premultiplied BGRA rows, resampled bilinearly to `side`. Portable and pure.
+struct ShelfDragIcon {unsigned width{},height{};std::span<const std::uint8_t> premultipliedBGRA;};
+struct ShelfDragImage {unsigned width{},height{};std::vector<std::uint8_t> premultipliedBGRA;int cursorX{},cursorY{};};
+inline constexpr std::size_t shelfDragImageMaximumFrames=5;
+inline constexpr unsigned shelfDragImageMaximumSide=512;
+ShelfDragImage composeShelfDragImage(std::span<const ShelfDragIcon>,unsigned side,unsigned offset);
 
 #ifdef _WIN32
 // Explicit user paste/drop extraction. Caller retains the IDataObject; its
@@ -56,6 +76,15 @@ public:
     // run calls this after DoDragDrop; also available to an injected loop/test.
     // First completion wins. Does not release async/medium-owned file leases.
     void complete(HRESULT,DWORD)noexcept;
+    // Shell drag image (IDragSourceHelper::InitializeFromBitmap) before run().
+    // The helper keeps its private formats (DragImageBits, DragContext, drop
+    // descriptions...) on this data object through SetData; they are bounded
+    // copies, never file data. A failure (no Shell helper, e.g. outside an
+    // interactive desktop) leaves the drag with the system cursor only.
+    // Copy-only semantics are unchanged either way.
+    HRESULT setDragImage(const ShelfDragImage&)noexcept;
+    // Shell-private formats stored through SetData (test observation).
+    std::size_t storedFormats()const noexcept;
     ShelfDragChanges takeChanges(UINT_PTR generation)noexcept;
 private:
     struct Object;Object* object_{};
@@ -65,6 +94,10 @@ struct ShelfDropChanges {
     bool feedbackChanged{},hovering{},committed{};
     std::vector<std::string> paths;
     std::optional<std::string> error;
+    // Store failure category of `error` (FileShelfStore::add), when known.
+    std::optional<ehud::data::StoreErrorCode> errorCode;
+    // A virtual-file-only drag (see above) was refused over the target; once per drag.
+    bool virtualFiles{};
 };
 class ShelfDropTarget final {
 public:
@@ -85,6 +118,10 @@ public:
     IDropTarget* dropTarget()const noexcept; // borrowed; supports synthetic calls
     HRESULT registerTarget()noexcept;
     void setEnabled(bool)noexcept;
+    // Shell drag images over the registered HWND (IDropTargetHelper): the
+    // source's drag image keeps following the pointer across the HUD for every
+    // drag, accepted or not. Off by default (owned hidden fixtures).
+    void setDragImages(bool)noexcept;
     void stop()noexcept;
     // Drain in owner message handling, outside COM callbacks; no UI callback is
     // invoked internally. A pending committed notice must drain before new drop.

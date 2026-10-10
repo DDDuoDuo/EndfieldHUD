@@ -20,6 +20,12 @@ void pure(){
     value=metadata();value.kind=d::ShelfFileKind::directory;value.isDirectory=true;check(!n::validShelfPreviewReference(firstID,value),"Folder is not fabricated as file stream");
     value=metadata();value.name.clear();check(!n::validShelfPreviewReference(firstID,value),"Missing native title rejects");value.name=std::string(4097,'a');check(!n::validShelfPreviewReference(firstID,value),"Title memory bound rejects rather than truncates");
     value=metadata();value.name="bad\xff";check(!n::validShelfPreviewReference(firstID,value),"Malformed title UTF8 rejects");value=metadata();value.identity.volumeUUID="bad";check(!n::validShelfPreviewReference(firstID,value),"Malformed optional volume pin rejects");
+    value=metadata();check(n::validShelfPreviewFallbackReference(firstID,value),"Ordinary files can also be described generically");
+    value.kind=d::ShelfFileKind::directory;value.isDirectory=true;check(n::validShelfPreviewFallbackReference(firstID,value),"Folders are described, never opened as streams");
+    value=metadata();value.kind=d::ShelfFileKind::symbolicLink;check(n::validShelfPreviewFallbackReference(firstID,value),"Selected links are described without following them");
+    value=metadata();value.kind=d::ShelfFileKind::directory;check(!n::validShelfPreviewFallbackReference(firstID,value),"Inconsistent folder metadata rejects");
+    value=metadata();value.windowsPath="relative";check(!n::validShelfPreviewFallbackReference(firstID,value),"Generic preview keeps explicit path validation");
+    value=metadata();check(!n::validShelfPreviewFallbackReference("bad-id",value),"Generic preview keeps item ID validation");
 }
 }
 #ifdef _WIN32
@@ -128,6 +134,50 @@ void teardownDuringExternalCalls(){
     Fixture fixture;auto preview=fixture.make();fixture.onResolve=[&]{preview.reset();};preview->request(firstID,lease(fixture.leases));const auto message=fixture.owner.next();auto*borrowed=preview.get();check(borrowed->handleMessage(message.wParam,message.lParam)&&!preview&&fixture.factories==0&&fixture.leases.acquired==fixture.leases.released,"Provider reentry suppresses stale handler/window creation");fixture.owner.discard();
     fixture.onResolve={};preview=fixture.make();fixture.open(*preview);const auto popup=preview->window();DestroyWindow(popup);fixture.events(*preview);check(!preview->stats().active&&!preview->window()&&fixture.leases.acquired==fixture.leases.released,"External owned-popup destruction unloads and balances access");
 }
+d::ShelfFileMetadata folderMetadata(){auto value=metadata();value.windowsPath="C:\\explicit-synthetic\\Folder";value.name="Folder";value.typeDescription="Folder";value.kind=d::ShelfFileKind::directory;value.isDirectory=true;return value;}
+// Renders the popup client through WM_PRINTCLIENT (the window stays hidden).
+std::size_t paintedPixels(HWND popup){
+    RECT client{};check(GetClientRect(popup,&client)&&client.right>0&&client.bottom>0,"Generic preview has a client area");
+    BITMAPINFO info{};info.bmiHeader.biSize=sizeof(info.bmiHeader);info.bmiHeader.biWidth=client.right;info.bmiHeader.biHeight=-client.bottom;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
+    void*bits{};HBITMAP bitmap=CreateDIBSection(nullptr,&info,DIB_RGB_COLORS,&bits,nullptr,0);check(bitmap&&bits,"Owned verification bitmap");HDC dc=CreateCompatibleDC(nullptr);const auto old=SelectObject(dc,bitmap);
+    SendMessageW(popup,WM_PRINTCLIENT,reinterpret_cast<WPARAM>(dc),PRF_CLIENT);GdiFlush();
+    const auto background=GetSysColor(COLOR_WINDOW);const std::uint32_t expected=(GetRValue(background)<<16)|(GetGValue(background)<<8)|GetBValue(background);
+    std::size_t different{};const auto*pixel=static_cast<const std::uint32_t*>(bits);for(LONG n=0;n<client.right*client.bottom;++n)if((pixel[n]&0xffffff)!=expected)++different;
+    std::size_t backgroundPixels=std::size_t(client.right)*std::size_t(client.bottom)-different;
+    SelectObject(dc,old);DeleteDC(dc);DeleteObject(bitmap);check(backgroundPixels>different,"The generic preview paints on the system window background");return different;
+}
+void genericPreview(){
+    Fixture fixture;unsigned describes{};auto services=fixture.services();
+    services.describe=[&](const d::ShelfFileMetadata&value){++describes;check(value.identity.objectID[0]==1,"Description uses the resolved original");return n::ShelfPreviewDescription{"Synthetic title",{"Synthetic kind · 6 bytes","Modified today"}};};
+    auto preview=std::make_unique<n::NativeShelfFilePreview>(fixture.owner.route(61),n::ShelfPreviewOptions{false,600,400,true},services);
+    // No registered handler: Quick Look's generic preview in the same popup.
+    fixture.factoryResult=HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);check(preview->request(firstID,lease(fixture.leases)),"Generic preview request queues");fixture.dispatch(*preview);
+    auto events=fixture.events(*preview,61);
+    check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::opened&&events[0].fallback&&events[0].result==HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION),"A type without a handler opens the generic preview and reports why");
+    const auto popup=preview->window();const auto stats=preview->stats();
+    check(popup&&!IsWindowVisible(popup)&&stats.active&&stats.fallback&&!stats.visible&&stats.fallbacks==1&&fixture.streams==0&&describes==1,"Generic preview is hidden in the fixture, reads no stream and describes once");
+    check(paintedPixels(popup)>0,"The icon, name and details are drawn");
+    std::array<BYTE,256>keys{};SetKeyboardState(keys.data());check(preview->preTranslate(MSG{popup,WM_KEYDOWN,VK_ESCAPE,0,0,{}}),"Escape closes the generic preview");
+    events=fixture.events(*preview,61);check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::closed&&!preview->window()&&fixture.leases.acquired==fixture.leases.released,"Closing balances every reference lease");
+    // A handler that fails to render is unloaded; the generic preview replaces it.
+    fixture.factoryResult=S_OK;fixture.log->previewResult=E_FAIL;preview->request(firstID,lease(fixture.leases));fixture.dispatch(*preview);events=fixture.events(*preview,61);
+    check(events.size()==1&&events[0].fallback&&events[0].result==E_FAIL&&fixture.log->unloads==1&&fixture.log->sites==2&&preview->stats().fallback,"A failing handler is unloaded before the generic preview is shown");
+    check(paintedPixels(preview->window())>0,"The replacement generic preview paints");preview->close(false);fixture.events(*preview,61);fixture.log->previewResult=S_OK;
+    // A real handler still wins when it renders.
+    preview->request(firstID,lease(fixture.leases));fixture.dispatch(*preview);events=fixture.events(*preview,61);
+    check(events.size()==1&&!events[0].fallback&&events[0].result==S_OK&&!preview->stats().fallback,"A working stream handler is used instead of the generic preview");preview->close(false);fixture.events(*preview,61);
+    // Folders never reach a handler or a stream.
+    const auto factories=fixture.factories,streams=fixture.streams;unsigned folderLeases{};
+    auto folderServices=services;folderServices.resolve=[&](const d::ShelfRecord&record){check(record.isDirectory,"Folder identity is resolved as a folder");++folderLeases;return d::ShelfFileAccess{folderMetadata(),[&]{--folderLeases;}};};
+    auto folders=std::make_unique<n::NativeShelfFilePreview>(fixture.owner.route(62),n::ShelfPreviewOptions{false,600,400,true},folderServices);
+    ++folderLeases;check(folders->request(firstID,d::ShelfFileAccess{folderMetadata(),[&]{--folderLeases;}}),"Folder preview request queues");fixture.dispatch(*folders);events=fixture.events(*folders,62);
+    check(events.size()==1&&events[0].fallback&&fixture.factories==factories&&fixture.streams==streams&&folders->stats().fallback,"Folders open the generic preview without handler or stream");
+    check(paintedPixels(folders->window())>0,"The folder preview paints");folders->close(false);fixture.events(*folders,62);check(folderLeases==0,"Folder preview releases its leases");
+    // Without the option the previous explicit contract is unchanged.
+    auto strict=std::make_unique<n::NativeShelfFilePreview>(fixture.owner.route(63),n::ShelfPreviewOptions{false,600,400},folderServices);
+    rejects([&]{strict->request(firstID,d::ShelfFileAccess{folderMetadata(),[]{}});},"Without the generic preview a folder request still rejects");
+    preview.reset();folders.reset();strict.reset();fixture.owner.discard();check(fixture.leases.acquired==fixture.leases.released,"Every generic preview lease balances");
+}
 std::string pathText(const std::filesystem::path&path){const auto text=path.u8string();return {reinterpret_cast<const char*>(text.data()),text.size()};}
 void actualOwnedReadOnlyStream(){
     const auto root=std::filesystem::temp_directory_path()/("endfield-preview-stream-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));check(std::filesystem::create_directory(root),"Own new temporary preview fixture directory");
@@ -145,7 +195,7 @@ void actualOwnedReadOnlyStream(){
     check(FAILED(n::openShelfPreviewStream({},&rejected))&&!rejected,"Closed reference never implicitly reads a user file");
 }
 }
-int main(){try{pure();COM com;queuedIdentityAndLifetime();toggleReplacementAndKeys();failedAndCanceled();teardownDuringExternalCalls();actualOwnedReadOnlyStream();std::cout<<"PASS "<<checks<<" Shelf native preview/lease checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
+int main(){try{pure();COM com;queuedIdentityAndLifetime();toggleReplacementAndKeys();failedAndCanceled();teardownDuringExternalCalls();genericPreview();actualOwnedReadOnlyStream();std::cout<<"PASS "<<checks<<" Shelf native preview/lease checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
 #else
 int main(){try{pure();std::cout<<"PASS "<<checks<<" portable Shelf preview checks; Windows handler/stream fixtures not executed\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
 #endif

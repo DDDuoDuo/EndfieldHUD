@@ -10,6 +10,14 @@ namespace endfield::native {
 // a stored symbolic-link reference or treats a folder as an ordinary stream.
 bool validShelfPreviewReference(std::string_view itemID,
     const ehud::data::ShelfFileMetadata&)noexcept;
+// The generic (fallback) preview also describes folders and selected links:
+// they are named and shown with their type icon, never opened or followed.
+bool validShelfPreviewFallbackReference(std::string_view itemID,
+    const ehud::data::ShelfFileMetadata&)noexcept;
+// Caller-localized text of the generic preview (title plus at most four lines).
+struct ShelfPreviewDescription {
+    std::string title;std::vector<std::string> details;
+};
 }
 
 #ifdef _WIN32
@@ -25,14 +33,22 @@ struct ShelfPreviewOptions {
     // Native Quick Look equivalent, outside the HUD projection. A false value
     // is only for owned hidden fixtures; production shows after DoPreview.
     bool visible{true};int clientWidth{800},clientHeight{600};
+    // Quick Look's generic preview: when no stream preview handler can show the
+    // item (folders, selected links, unregistered types, a handler that fails
+    // to initialize or render) the same owned popup shows the Shell type icon
+    // (system image list for the name only: no file access or per-file handler
+    // code), the name and ShelfPreviewServices::describe lines. Off: such items
+    // report `failed` as before.
+    bool fallback{};
 };
 enum class ShelfPreviewNotice:LPARAM {work=1,events=2};
 enum class ShelfPreviewEventKind {opened,closed,failed,revealRequested};
 struct ShelfPreviewEvent {
     ShelfPreviewEventKind kind{};HRESULT result{S_OK};std::string itemID;
+    bool fallback{}; // opened: the generic preview is shown (result: why no handler showed it)
 };
 struct ShelfPreviewStats {
-    bool queued{},active{},visible{};std::uint64_t requests{},opens{},closes{},failures{},notices{};
+    bool queued{},active{},visible{},fallback{};std::uint64_t requests{},opens{},closes{},failures{},notices{},fallbacks{};
 };
 struct ShelfPreviewServices {
     // Independent provider callbacks; never capture a Store or UI object. The
@@ -42,6 +58,9 @@ struct ShelfPreviewServices {
     std::function<ehud::data::ShelfFileAccess(const ehud::data::ShelfRecord&)>resolve;
     std::function<HRESULT(const ehud::data::ShelfFileMetadata&,IPreviewHandler**)>createHandler;
     std::function<HRESULT(const ehud::data::ShelfFileAccess&,IStream**)>openStream;
+    // Generic preview text for the current metadata (owner language). Default:
+    // name, the stored type description and the byte count.
+    std::function<ShelfPreviewDescription(const ehud::data::ShelfFileMetadata&)>describe;
 };
 // Read-only, seekable stream for an explicitly selected ordinary file. Opens a
 // no-recall/no-final-reparse handle, compares FILE_ID_INFO to the lease and
@@ -76,7 +95,9 @@ private:
 };
 // Handler support is explicit: registered out-of-process IPreviewHandler plus
 // IInitializeWithStream and IObjectWithSite are required. Missing/file-only
-// handlers, folders and links report failure; no unrelated app is launched.
+// handlers, folders and links show the generic preview when
+// ShelfPreviewOptions::fallback is set, and otherwise report failure; no
+// unrelated app is launched either way.
 // Third-party handlers can block synchronous COM calls; no forced abort or
 // unbounded replacement service is created. Native visual/handler coverage
 // requires actual Windows testing and is not inferred from injected fixtures.

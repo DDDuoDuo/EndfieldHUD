@@ -12,6 +12,7 @@
 #endif
 #include <windows.h>
 #include <winioctl.h>
+#include <shellapi.h>
 #endif
 using namespace ehud::data;
 using namespace endfield::native;
@@ -30,6 +31,17 @@ void guards(){
 #ifndef _WIN32
     rejects(StoreErrorCode::unavailable,[&]{(void)files.acquire("C:\\synthetic\\file.txt");},"Non-Windows builds explicitly decline native I/O");
 #endif
+}
+void pathHelpers(){
+    // GetFinalPathNameByHandleW DOS results become ordinary store paths.
+    check(relocatedShelfPath("\\\\?\\C:\\Users\\a\\b.txt")=="C:\\Users\\a\\b.txt","Extended drive path converts to the ordinary form");
+    check(relocatedShelfPath("\\\\?\\UNC\\server\\share\\x.txt")=="\\\\server\\share\\x.txt","Extended UNC path converts to the ordinary share form");
+    check(relocatedShelfPath("\\\\?\\C:\\").empty()&&relocatedShelfPath("C:\\a\\b.txt").empty()&&relocatedShelfPath("\\\\?\\Volume{00000000-0000-0000-0000-000000000000}\\a").empty()&&
+        relocatedShelfPath("\\\\?\\C:\\a\\file:stream").empty(),"Bare roots, unprefixed, volume-GUID and invalid paths are not store paths");
+    check(shelfPathInRecycleBin("C:\\$Recycle.Bin\\S-1-5-21\\$R1A2B3C.txt")&&shelfPathInRecycleBin("D:\\$RECYCLE.BIN\\x")&&shelfPathInRecycleBin("C:/data/$recycle.bin/x"),"Recycle Bin components match case-insensitively with either separator");
+    check(!shelfPathInRecycleBin("C:\\Recycle.Bin\\x")&&!shelfPathInRecycleBin("C:\\a\\$Recycle.Bins\\x")&&!shelfPathInRecycleBin("C:\\a\\x$Recycle.Bin"),"Only an exact $Recycle.Bin component matches");
+    check(shelfPathVolumeRoot("C:\\a\\b.txt")=="C:\\"&&shelfPathVolumeRoot("c:/a")=="c:\\"&&shelfPathVolumeRoot("\\\\server\\share\\a\\b")=="\\\\server\\share\\"&&shelfPathVolumeRoot("//server/share")=="\\\\server\\share\\","Drive and share roots derive from the text only");
+    check(shelfPathVolumeRoot("\\\\server").empty()&&shelfPathVolumeRoot("relative\\a").empty()&&shelfPathVolumeRoot("\\\\\\x").empty(),"Paths without a drive or share root have none");
 }
 #ifdef _WIN32
 std::string utf8(const std::filesystem::path& path){const auto value=path.u8string();return {reinterpret_cast<const char*>(value.data()),value.size()};}
@@ -161,11 +173,62 @@ void unsupportedReparse(){
     check(handles()==before,"Unsupported reparse rejection releases acquired metadata handle");
     check(RemoveDirectoryW(junction.c_str())!=FALSE&&std::filesystem::exists(target),"Fixture removes only junction; provider never changes its target");
 }
+// Bookmark-equivalent resolution: the original object is reopened by its
+// 128-bit identity after renames and moves, never by name or path guessing.
+void relocation(){
+    Temporary temp;const auto file=temp.root/"original.txt",folder=temp.root/"folder",inner=folder/"inner.txt";
+    write(file,"relocate me");std::filesystem::create_directory(folder);write(inner,"inner bytes");
+    NativeFileShelfFiles strict,relocating({"File","Folder"},{true,false});const auto before=handles();
+    auto metadataOf=[&](const std::filesystem::path& path){auto access=relocating.acquire(utf8(path));auto value=access.metadata();access.close();return value;};
+    const auto original=metadataOf(file),folderMetadata=metadataOf(folder),innerMetadata=metadataOf(inner);
+    const auto renamed=temp.root/"renamed.txt";check(MoveFileW(file.c_str(),renamed.c_str())!=FALSE,"Fixture renames its own original");
+    rejects(StoreErrorCode::unavailable,[&]{(void)strict.resolve(record(original));},"Without relocation a renamed original stays unavailable");
+    {auto found=relocating.resolve(record(original));const auto& value=found.metadata();
+        check(value.windowsPath==utf8(renamed)&&value.name=="renamed.txt"&&value.identity.matches(original.identity)&&value.byteCount==original.byteCount&&value.kind==ShelfFileKind::regular,"A renamed original is reopened by identity at its current path");
+        const auto blocked=temp.root/"blocked.txt";const auto blockedResult=MoveFileW(renamed.c_str(),blocked.c_str());const auto blockedError=blockedResult?ERROR_SUCCESS:GetLastError();
+        if(blockedResult||blockedError!=ERROR_SHARING_VIOLATION){HANDLE probe=CreateFileW(renamed.c_str(),DELETE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,nullptr);const auto probeError=probe==INVALID_HANDLE_VALUE?GetLastError():ERROR_SUCCESS;if(probe!=INVALID_HANDLE_VALUE)CloseHandle(probe);
+            std::cerr<<"Identity lease diagnostic: renameResult="<<blockedResult<<" renameError="<<blockedError<<" deleteOpenError="<<probeError<<" leaseOpen="<<found.open()<<" blockedExists="<<std::filesystem::exists(blocked)<<'\n';}
+        check(!blockedResult&&blockedError==ERROR_SHARING_VIOLATION,"The identity lease withholds rename like a path lease");}
+    const auto movedFolder=temp.root/"moved";std::filesystem::create_directory(movedFolder);const auto moved=movedFolder/"renamed.txt";
+    check(MoveFileW(renamed.c_str(),moved.c_str())!=FALSE,"Fixture moves its own original to another folder");write(file,"replacement at the original path");
+    {auto found=relocating.resolve(record(original));check(found.metadata().windowsPath==utf8(moved)&&found.metadata().identity.matches(original.identity),"A replacement at the old path never hides the moved original");}
+    check(read(file)=="replacement at the original path"&&read(moved)=="relocate me","Relocation reads and changes no file contents");
+    const auto renamedFolder=temp.root/"folder renamed";check(MoveFileW(folder.c_str(),renamedFolder.c_str())!=FALSE,"Fixture renames its own folder");
+    {auto found=relocating.resolve(record(innerMetadata));check(found.metadata().windowsPath==utf8(renamedFolder/"inner.txt"),"A file under a renamed ancestor is followed by identity");}
+    {auto found=relocating.resolve(record(folderMetadata));check(found.metadata().windowsPath==utf8(renamedFolder)&&found.metadata().isDirectory&&found.metadata().kind==ShelfFileKind::directory,"A renamed folder reference is followed by identity");}
+    const auto bin=temp.root/"$Recycle.Bin";std::filesystem::create_directory(bin);const auto recycled=bin/"$R0A1B2C.txt";
+    check(MoveFileW(moved.c_str(),recycled.c_str())!=FALSE,"Fixture moves its original into a Recycle Bin folder");
+    rejects(StoreErrorCode::unavailable,[&]{(void)relocating.resolve(record(original));},"An original in a Recycle Bin folder is deleted for the user and stays unavailable");
+    check(DeleteFileW(recycled.c_str())!=FALSE,"Fixture deletes its own original");
+    rejects(StoreErrorCode::unavailable,[&]{(void)relocating.resolve(record(original));},"A deleted original stays unavailable; nothing else is chosen");
+    auto foreign=original;foreign.identity.volumeSerial^=0x5a5a5a5au;
+    rejects(StoreErrorCode::unavailable,[&]{(void)relocating.resolve(record(foreign));},"Another volume's identity is never matched on this volume");
+    {
+        const auto stored=temp.root/"stored.txt";write(stored,"store");FileShelfStore store(temp.root/"metadata",relocating.platform());const std::vector<std::string> tokens{utf8(stored)};
+        check(store.add(tokens)==1,"Relocating provider imports a reference");const auto storedRenamed=temp.root/"stored renamed.txt";
+        check(MoveFileW(stored.c_str(),storedRenamed.c_str())!=FALSE,"Fixture renames the stored original");store.refresh();
+        check(store.items()[0].windowsPath==utf8(storedRenamed)&&store.items()[0].name=="stored renamed.txt"&&!store.items()[0].availabilityError,"Refresh renews the stored path and name like a stale bookmark");
+        FileShelfStore reopened(temp.root/"metadata",strict.platform());check(reopened.items().size()==1&&reopened.items()[0].windowsPath==utf8(storedRenamed),"The renewed path is saved");
+        check(reopened.clear()&&read(storedRenamed)=="store","Clearing the renewed reference leaves the original intact");
+    }
+    check(handles()==before,"Relocation retains no volume or object handles");
+}
+std::string utf8Wide(const wchar_t* value){return utf8(std::filesystem::path(value));}
+void shellTypeNames(){
+    Temporary temp;const auto file=temp.root/"typed.txt",folder=temp.root/"folder",plain=temp.root/"plain";write(file,"typed");write(plain,"no extension");std::filesystem::create_directory(folder);
+    NativeFileShelfFiles typed({"Fallback file","Fallback folder"},{false,true});
+    const auto oracle=[](const wchar_t* name){SHFILEINFOW info{};return SHGetFileInfoW(name,FILE_ATTRIBUTE_NORMAL,&info,sizeof(info),SHGFI_TYPENAME|SHGFI_USEFILEATTRIBUTES)&&info.szTypeName[0]?utf8Wide(info.szTypeName):std::string("Fallback file");};
+    {auto access=typed.acquire(utf8(file));check(access.metadata().typeDescription==oracle(L"typed.txt"),"Files use the Shell's registered type name for their extension");}
+    {auto access=typed.acquire(utf8(plain));check(access.metadata().typeDescription==oracle(L"plain"),"An extension-less file uses the Shell's generic name or the fallback label");}
+    {auto access=typed.acquire(utf8(folder));check(access.metadata().typeDescription=="Fallback folder","Folders keep the caller's localized label");}
+    {NativeFileShelfFiles untyped({"Fallback file","Fallback folder"});auto access=untyped.acquire(utf8(file));check(access.metadata().typeDescription=="Fallback file","Without the option no Shell lookup changes the caller's label");}
+    check(read(file)=="typed","Type names read no file contents");
+}
 #endif
 }
-int main(){try{guards();
+int main(){try{guards();pathHelpers();
 #ifdef _WIN32
-    actualMetadataAndLifetime();replacementAndStoreBundle();links();unsupportedReparse();
+    actualMetadataAndLifetime();replacementAndStoreBundle();links();unsupportedReparse();relocation();shellTypeNames();
 #else
     std::cout<<"SKIP native filesystem cases: Windows required; no real files opened\n";
 #endif

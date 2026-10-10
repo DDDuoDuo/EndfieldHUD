@@ -1,5 +1,6 @@
 #pragma once
 #include "core/scene.hpp"
+#include <exception>
 #include <functional>
 #include <map>
 #include <optional>
@@ -48,12 +49,18 @@ public:
         std::function<void(std::string_view)> remove;
         std::function<void()> clear;
     };
+    // Operation whose failure is being described (FileShelfStoreError context).
+    enum class Failure {importing,changing,refreshing,action};
     struct PlatformActions {
         std::function<void()> chooseFiles;
         std::function<void(std::string_view)> preview,reveal;
         // Optional source-equivalent ByteCountFormatter replacement. No size
         // approximation is invented if the owner has not supplied a formatter.
         std::function<std::string(std::int64_t)> formatFileSize;
+        // Optional user-facing text for a failed store/platform operation in the
+        // owner's language (Mac FileShelfStoreError.errorDescription). Without
+        // it the exception text is shown. Must not throw or reenter the state.
+        std::function<std::string(const std::exception&,Failure)> describeError;
     };
     struct Modifiers {bool shift{},toggle{};}; // toggle = Mac Command / host mapping
     struct Action {std::string id,label;Rect rect;};
@@ -120,6 +127,8 @@ public:
     std::vector<Action> cardActions(std::string_view,bool clipped=true) const;
     std::string statusText() const;
     std::string typeLabel(const Item&) const;
+    // FileShelfCanvas.typeLabel with explicit strings (preview descriptions).
+    static std::string typeLabel(const Item&,const FileShelfStrings&);
     std::string sizeLabel(const Item&) const;
     static constexpr Rect bounds(){return {0,0,400,334};}
     static constexpr Rect contentRect(){return {9,40,382,248};}
@@ -151,5 +160,6 @@ private:
     static bool contains(Rect,Point) noexcept; // CGRect excludes maximum edges
     std::string actionID(std::string_view,std::string_view) const;
     void request(const std::function<void(std::string_view)>&,std::string_view);
+    std::string describe(const std::exception&,Failure) const;
 };
 } // namespace endfield::modules

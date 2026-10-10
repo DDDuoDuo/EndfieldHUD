@@ -77,7 +77,7 @@ void FileShelfState::load(std::vector<Item> next,std::optional<std::string_view>
 }
 void FileShelfState::refreshFromStore(std::optional<std::string_view> revealing){writable();std::vector<Item> next;if(store_.snapshot){Call c(busy_);next=store_.snapshot();}load(std::move(next),revealing);}
 void FileShelfState::setReduceMotion(bool value){writable();if(reduceMotion_==value)return;reduceMotion_=value;if(value)event(EventKind::settle);}
-void FileShelfState::activate(){writable();active_=true;if(!store_.refresh)return;try{{Call c(busy_);store_.refresh();}}catch(const std::exception& e){showError(e.what());}refreshFromStore();}
+void FileShelfState::activate(){writable();active_=true;if(!store_.refresh)return;try{{Call c(busy_);store_.refresh();}}catch(const std::exception& e){showError(describe(e,Failure::refreshing));}refreshFromStore();}
 void FileShelfState::deactivate(){writable();active_=false;pending_.reset();event(EventKind::settle);if(confirmingClear_||drop_){confirmingClear_=false;drop_=false;++revision_;}}
 bool FileShelfState::revealRow(std::size_t i){const auto before=scroll_;const double top=double(i/2)*80;if(top<scroll_)scroll_=top;else if(top+80>scroll_+248)scroll_=top+80-248;scroll_=std::clamp(scroll_,0.0,maximumOffset());return before!=scroll_;}
 void FileShelfState::setScrollOffset(double value){const auto next=std::clamp(value,0.0,maximumOffset());if(next==scroll_)return;scroll_=next;pending_.reset();confirmingClear_=false;++revision_;event(EventKind::settle);}
@@ -118,7 +118,11 @@ std::vector<std::string> FileShelfState::dragSelection(std::string_view primary)
 }
 void FileShelfState::setDropTarget(bool value){writable();if(drop_==value)return;drop_=value;++revision_;event(EventKind::dropTrace,active_&&!reduceMotion_&&value);}
 void FileShelfState::showError(std::string value){writable();text(value);error_=std::move(value);++revision_;}
-void FileShelfState::request(const std::function<void(std::string_view)>& callback,std::string_view id){if(!callback)return;const std::string stable(id);try{Call c(busy_);callback(stable);}catch(const std::exception& e){showError(e.what());}}
+std::string FileShelfState::describe(const std::exception& e,Failure failure)const{
+    if(platform_.describeError)try{Call c(busy_);auto text=platform_.describeError(e,failure);if(!text.empty()&&ehud::data::Json::validUtf8(text))return text;}catch(const std::exception&){}
+    return e.what();
+}
+void FileShelfState::request(const std::function<void(std::string_view)>& callback,std::string_view id){if(!callback)return;const std::string stable(id);try{Call c(busy_);callback(stable);}catch(const std::exception& e){showError(describe(e,Failure::action));}}
 void FileShelfState::previewSelection(){writable();if(selected_){const auto* n=item(*selected_);if(n&&!n->availabilityError)request(platform_.preview,n->id);}}
 void FileShelfState::revealSelection(){writable();if(selected_){const auto* n=item(*selected_);if(n&&!n->availabilityError)request(platform_.reveal,n->id);}}
 void FileShelfState::revealItems(std::span<const std::string> ids){writable();std::set<std::string,std::less<>> selected;std::optional<std::size_t> last;
@@ -135,13 +139,13 @@ bool FileShelfState::importFiles(std::span<const std::string> tokens){writable()
         load(std::move(after));error_.reset();confirmingClear_=false;
         if(count>0){selected_=items_.empty()?std::nullopt:std::optional(items_.back().id);selectedIDs_=std::move(added);anchor_=selected_;if(selected_)revealRow(indices_.find(*selected_)->second);}
         if(!names.empty()){event(EventKind::collectionReveal,active_&&!reduceMotion_,1);event(EventKind::itemsAdded,false,0,std::move(names));}return true;
-    }catch(const std::exception& e){const std::string message=e.what();refreshFromStore();showError(message);return false;}
+    }catch(const std::exception& e){const std::string message=describe(e,Failure::importing);refreshFromStore();showError(message);return false;}
 }
 void FileShelfState::remove(std::span<const std::string> ids){if(!store_.remove){showError(strings_.storageUnavailable);return;}
     try{
         for(const auto& id:ids){std::optional<std::string> name;{Call c(busy_);const auto before=store_.snapshot();for(const auto& n:before)if(n.id==id){name=n.name;break;}store_.remove(id);}if(name)event(EventKind::itemRemoved,false,0,{*name});}
         error_.reset();refreshFromStore();event(EventKind::collectionReveal,active_&&!reduceMotion_,-1);
-    }catch(const std::exception& e){const std::string message=e.what();refreshFromStore();showError(message);}
+    }catch(const std::exception& e){const std::string message=describe(e,Failure::changing);refreshFromStore();showError(message);}
 }
 void FileShelfState::deleteSelection(){writable();std::vector<std::string> ids;for(const auto& n:items_)if(selectedIDs_.contains(n.id))ids.push_back(n.id);if(!ids.empty())remove(ids);}
 std::string FileShelfState::actionID(std::string_view id,std::string_view verb)const{return "shelf:"+std::string(id)+":"+std::string(verb);}
@@ -160,13 +164,13 @@ std::vector<FileShelfState::Action> FileShelfState::accessibleActions()const{
         out.push_back({actionID(n.id,"select"),std::move(details),c->clipped});auto actions=cardActions(n.id);for(auto& a:actions)out.push_back(std::move(a));}}return out;
 }
 void FileShelfState::perform(std::string_view action){writable();
-    if(action=="shelf:add"){if(!store_.snapshot){showError(strings_.storageUnavailable);return;}if(platform_.chooseFiles)try{Call c(busy_);platform_.chooseFiles();}catch(const std::exception& e){showError(e.what());}return;}
+    if(action=="shelf:add"){if(!store_.snapshot){showError(strings_.storageUnavailable);return;}if(platform_.chooseFiles)try{Call c(busy_);platform_.chooseFiles();}catch(const std::exception& e){showError(describe(e,Failure::action));}return;}
     if(action=="shelf:clear"){if(items_.empty())return;confirmingClear_=true;++revision_;event(EventKind::toolbar,active_&&!reduceMotion_);return;}
     if(action=="shelf:cancelClear"){confirmingClear_=false;++revision_;event(EventKind::toolbar,active_&&!reduceMotion_);return;}
     if(action=="shelf:confirmClear"){
         if(!confirmingClear_||!store_.clear)return;try{std::size_t count;{Call c(busy_);count=store_.snapshot().size();store_.clear();}
             error_.reset();selected_.reset();selectedIDs_.clear();anchor_.reset();confirmingClear_=false;refreshFromStore();event(EventKind::collectionReveal,active_&&!reduceMotion_,-1);if(count)event(EventKind::shelfCleared,false,0,{},count);
-        }catch(const std::exception& e){showError(e.what());}return;
+        }catch(const std::exception& e){showError(describe(e,Failure::changing));}return;
     }
     if(!action.starts_with("shelf:"))return;const auto tail=action.substr(6);const auto separator=tail.find(':');if(separator==std::string_view::npos)return;
     const auto id=tail.substr(0,separator),verb=tail.substr(separator+1);const auto* n=item(id);if(!n)return;
@@ -184,16 +188,17 @@ bool FileShelfState::mouseDown(Point p,int clicks,Modifiers modifiers){writable(
 }
 std::string FileShelfState::statusText()const{if(drop_)return strings_.drop;if(error_)return *error_;if(items_.empty())return strings_.emptyStatus;return countText(selectedIDs_.size()>1?strings_.selectedStatus:strings_.itemsStatus,selectedIDs_.size()>1?selectedIDs_.size():items_.size());}
 std::string FileShelfState::sizeLabel(const Item& n)const{if(n.isDirectory||!n.byteCount)return "—";if(!platform_.formatFileSize)throw std::logic_error("Shelf file-size formatter is required");Call c(busy_);return platform_.formatFileSize(*n.byteCount);}
-std::string FileShelfState::typeLabel(const Item& n)const{
+std::string FileShelfState::typeLabel(const Item& n)const{return typeLabel(n,strings_);}
+std::string FileShelfState::typeLabel(const Item& n,const FileShelfStrings& text){
     auto path=std::string_view(n.lastKnownPath);while(path.size()>1&&(path.back()=='/'||path.back()=='\\'))path.remove_suffix(1);const auto slash=path.find_last_of("/\\");if(slash!=std::string_view::npos)path.remove_prefix(slash+1);const auto dot=path.find_last_of('.');std::string ext=dot==std::string_view::npos||dot==0?"":std::string(path.substr(dot+1));
     for(auto& c:ext)if(c>='A'&&c<='Z')c=char(c-'A'+'a');
     const auto oneOf=[&](std::initializer_list<std::string_view> list){return std::find(list.begin(),list.end(),ext)!=list.end();};
-    if(n.isDirectory){if(oneOf({"app","bundle","framework","plugin","pages","numbers","key","rtfd","playground","xcodeproj","xcworkspace"})&&!n.typeDescription.empty())return n.typeDescription;return strings_.folder;}
-    std::string prefix;if(oneOf({"jpg","jpeg","png","heic","heif","gif","tif","tiff","bmp","webp","svg"}))prefix=strings_.image;
+    if(n.isDirectory){if(oneOf({"app","bundle","framework","plugin","pages","numbers","key","rtfd","playground","xcodeproj","xcworkspace"})&&!n.typeDescription.empty())return n.typeDescription;return text.folder;}
+    std::string prefix;if(oneOf({"jpg","jpeg","png","heic","heif","gif","tif","tiff","bmp","webp","svg"}))prefix=text.image;
     else if(ext=="pdf")return "PDF";
-    else if(oneOf({"mov","mp4","m4v","avi","mkv","webm"}))prefix=strings_.video;
-    else if(oneOf({"zip","rar","7z","tar","gz","bz2","xz","tgz"}))prefix=strings_.archive;
-    else return n.typeDescription.empty()?strings_.file:n.typeDescription;
+    else if(oneOf({"mov","mp4","m4v","avi","mkv","webm"}))prefix=text.video;
+    else if(oneOf({"zip","rar","7z","tar","gz","bz2","xz","tgz"}))prefix=text.archive;
+    else return n.typeDescription.empty()?text.file:n.typeDescription;
     for(auto& c:ext)if(c>='a'&&c<='z')c=char(c-'a'+'A');return prefix+" · "+ext;
 }
 } // namespace endfield::modules
