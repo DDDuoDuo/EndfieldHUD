@@ -41,6 +41,10 @@ struct NativeNotesWorkspaceOptions {
     // chunked long editor, bounded by maximumDocumentUnits (the text service's
     // 4 Mi-unit ACP safety maximum, within the store's 16 MiB payload) and one
     // painted paragraph; their typing cost follows the edited chunk.
+    // Cards with retained artwork. When more notes are shown (the source draws
+    // every note), the top cards by source layer order keep artwork and the
+    // ones beneath are culled until room returns; the open field's note is
+    // always kept. A paint or theme change may briefly hold replacements too.
     std::size_t maximumRetainedCards{128};std::uint32_t maximumEditorUnits{65536};
     std::uint32_t chunkedEditorUnits{4096},maximumDocumentUnits{core::text::Buffer::safetyMaximumUnits};NativeNotesLongEditorOptions longEditor;
     UINT ownerMessage{WM_APP+181};
@@ -76,6 +80,7 @@ struct NativeNotesWorkspaceStats {
     std::uint64_t stateSynchronizations{},cardContentUpdates{},cardPlacementUpdates{},poseCardVisits{},editorContentUpdates{};
     std::size_t deletingCards{};
     std::uint64_t promotedFields{}; // short drafts reopened in the chunked editor by a paste
+    std::size_t culledCards{}; // shown notes beneath the retained-card budget (no artwork)
 };
 using NativeNotesCardToken=std::uint64_t;
 struct NativeNotesCardMotion {

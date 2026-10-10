@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -107,6 +108,31 @@ void run(HWND hwnd,gpu::Renderer&renderer){
     check(workspace.stats().retiredCards==2,"Appearance replacement retains former card scenes until republished");publish();
     composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner detach releases only workspace resources");
 }
+// More shown notes than the retained budget: the top cards by layer order keep
+// artwork, the rest are culled (not drawn, not hit) until budget returns.
+void culling(HWND hwnd,gpu::Renderer&renderer){
+    std::vector<data::Note> records;for(int n=0;n<12;++n){char id[40];std::snprintf(id,sizeof id,"00000000-0000-4000-8000-0000000001%02d",n);records.push_back(note(id,"Card "+std::to_string(n),20+n*30.,20+n*10.,n));}
+    std::size_t saves{},removals{};mod::NotesState state(records,{[&](const data::Note&){++saves;},[&](std::string_view){++removals;}});state.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
+    auto budget=options();budget.maximumRetainedCards=8;gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),budget);gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Culled artwork retires after publication");};
+    double time{};workspace.updatePose(pose(time));publish();
+    check(workspace.stats().cards==8&&workspace.stats().culledCards==4&&workspace.entries().size()==8,"Twelve shown notes keep eight retained cards and cull four");
+    for(int n=0;n<12;++n)check((workspace.card(records[n].id)!=nullptr)==(n>=4),"Exactly the top eight by layer order keep artwork");
+    check(!workspace.hitTest({25,25})&&workspace.hitTest({145,65})&&workspace.hitTest({145,65})->noteID==records[4].id,"A culled card is not hit; the lowest retained one is");
+    check(saves==0&&removals==0,"Culling never writes records");
+    // Deleting a retained card gives its budget to the next card beneath.
+    check(workspace.requestDeletion(records[11].id)&&workspace.confirmDeletion(records[11].id)&&removals==1,"Delete the top card");workspace.updatePose(pose(time+=1));publish();
+    check(workspace.stats().cards==8&&workspace.stats().culledCards==3&&workspace.card(records[3].id)&&!workspace.card(records[2].id),"The next card beneath becomes retained");
+    // Selecting raises a card to the top, so it is always retained.
+    check(workspace.select(records[0].id)&&workspace.card(records[0].id)&&!workspace.card(records[3].id)&&workspace.stats().culledCards==3,"A selected card rises and takes the budget from the lowest");
+    workspace.updatePose(pose(time+=1));publish();workspace.updatePose(pose(time+=1));publish();
+    // A theme change with a full budget restages every retained card.
+    auto light=style();light.palette=mod::NotesPalette::source(false,{.1,.2,.8,1});light.editor={{.96,.96,.96,1},light.palette.accent};check(workspace.setStyle(light)&&workspace.stats().cards==8,"A theme change with a full budget succeeds");
+    workspace.updatePose(pose(time+=1));publish();workspace.updatePose(pose(time+=1));publish();check(!workspace.requiresFrames(time),"The workspace settles");
+    const auto rasterBefore=raster.stats().rasterizations;allocations=0;counting=true;for(unsigned n=0;n<60;++n)workspace.updatePose(pose(time+=1./60));counting=false;
+    check(allocations==0&&raster.stats().rasterizations==rasterBefore,"Warm frames with culled cards allocate and rasterize nothing");
+    composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Culling leaves no GPU resources behind");
+}
 void boundaries(HWND hwnd){
     auto longNote=note(one,std::string(65537,'a'));mod::NotesState longState({longNote},{[](const auto&){},[](auto){}});longState.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
     {gpu::NativeNotesWorkspace workspace(hwnd,longState,raster,style(),options());const auto before=longState.revision();rejects([&]{workspace.beginEditing(one);},"Short-editor capacity rejects complete long document before editing");
@@ -116,7 +142,11 @@ void boundaries(HWND hwnd){
     mod::NotesState tinyState({note(one,"")},{[](const auto&){},[](auto){}});tinyState.setWorkspaceBounds({0,0,100,50});
     {gpu::NativeNotesWorkspace workspace(hwnd,tinyState,raster,style(),options());const auto before=tinyState.revision();rejects([&]{workspace.beginEditing(one);},"Tiny field rejects source-editor ordering limitation before state changes");check(!tinyState.editing()&&tinyState.revision()==before,"Tiny editor rejection retains settled card/state");}
     mod::NotesState limited({note(one,"")},{[](const auto&){},[](auto){}});auto oneCard=options();oneCard.maximumRetainedCards=1;
-    {gpu::NativeNotesWorkspace workspace(hwnd,limited,raster,style(),oneCard);const auto before=limited.revision();rejects([&]{workspace.createText(two,123);},"Explicit retained capacity rejects creation before persistence");check(limited.revision()==before&&limited.notes().size()==1,"Card capacity failure preserves original records");}
+    {gpu::NativeNotesWorkspace workspace(hwnd,limited,raster,style(),oneCard);
+        check(workspace.createText(two,123)&&workspace.stats().cards==1&&workspace.stats().culledCards==1&&workspace.card(two)&&!workspace.card(one),"Beyond its retained budget the new top card keeps artwork and the one beneath is culled, as the source has no card limit");
+        check(workspace.createText(three,124)&&workspace.card(three)&&!workspace.card(two)&&workspace.stats().culledCards==2,"Each new top card takes the budget");
+        const auto before=limited.revision();rejects([&]{workspace.createText("00000000-0000-4000-8000-000000000004",125);},"Without publication the transient retained ceiling rejects creation before persistence");
+        check(limited.revision()==before&&limited.notes().size()==3,"Card capacity failure preserves original records");workspace.finishEditing(false);}
 }
 void scrolling(HWND hwnd,gpu::Renderer&renderer){
     std::string text;for(unsigned n=0;n<48;++n)text+="Line "+std::to_string(n)+" 终末地 😀\n";
@@ -247,7 +277,7 @@ void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
 }
 }
 int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native hud.hlsl path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Owned COM test apartment");
-    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
+    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);culling(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes workspace owner contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes workspace owner failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

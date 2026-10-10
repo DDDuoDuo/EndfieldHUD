@@ -127,15 +127,33 @@ struct NativeNotesWorkspace::Impl {
         s.token=(++motionSerial<<10)|s.tokenIndex;tokenSlots[s.tokenIndex]=&s;
     }
     void unregister(Slot&s){if(s.tokenIndex<tokenCapacity&&tokenSlots[s.tokenIndex]==&s)tokenSlots[s.tokenIndex]=nullptr;}
+    // Shown notes that keep artwork: all of them within the budget (minus
+    // hidden-but-retained cards of the other section); beyond it the top ones
+    // by source layer order (zIndex, then record order), the open field's note
+    // always included. Retiring and deleting cards are transient: they leave
+    // after publication within retainedCeiling(). One flag per record.
+    std::vector<char> admission(bool notesSelected)const{
+        const auto&notes=state.notes();std::vector<char> admit(notes.size(),0);std::vector<std::size_t> shown;shown.reserve(notes.size());
+        for(std::size_t n=0;n<notes.size();++n)if(notesSelected||notes[n].isPinned)shown.push_back(n);
+        std::size_t hidden{};for(const auto&[id,s]:slots)if(const auto*n=state.note(id);n&&!(notesSelected||n->isPinned))++hidden;
+        const auto capacity=options.maximumRetainedCards>hidden?options.maximumRetainedCards-hidden:0;
+        if(shown.size()<=capacity){for(const auto n:shown)admit[n]=1;return admit;}
+        std::stable_sort(shown.begin(),shown.end(),[&](std::size_t a,std::size_t b){return notes[a].zIndex!=notes[b].zIndex?notes[a].zIndex>notes[b].zIndex:a>b;});
+        for(std::size_t k=0;k<shown.size()&&k<capacity;++k)admit[shown[k]]=1;
+        if(field)for(const auto n:shown)if(notes[n].id==field->id&&!admit[n]){admit[n]=1;for(auto it=shown.rbegin();it!=shown.rend();++it)if(*it!=n&&admit[*it]){admit[*it]=0;break;}break;}
+        return admit;
+    }
+    // Transient ceiling: retiring replacements and a theme's staged copies.
+    std::size_t retainedCeiling()const noexcept{return options.maximumRetainedCards*3;}
     void preflight(core::Rect bounds,bool notesSelected)const{
-        std::size_t newSlots{};
-        for(const auto&n:state.notes())if(notesSelected||n.isPinned){presentationRecord(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(n.kind==ehud::data::NoteKind::drawing&&n.drawing&&(!existing||existing->drawingPayload!=n.drawing))(void)mod::NotesDrawing(*n.drawing);if(!existing)++newSlots;}
-        need(slots.size()+deletingCards.size()+retiredCards.size()+newSlots<=options.maximumRetainedCards,"Notes retained-card capacity reached; retire detached cards before adding more");
+        std::size_t newSlots{};const auto admit=admission(notesSelected);std::size_t index{};
+        for(const auto&n:state.notes())if(admit[index++]){presentationRecord(n);geometry(constrainedRect(n,bounds),field&&field->id==n.id);const auto*existing=find(n.id);if(n.kind==ehud::data::NoteKind::text&&n.richText&&(!existing||!existing->measurement||existing->measurement->measured.sourceRichPayload!=n.richText||existing->measurement->measured.text!=(n.text.empty()?style.strings.placeholder:n.text)))(void)mod::decodeNotesRichText(n.text,n.richText);if(n.kind==ehud::data::NoteKind::drawing&&n.drawing&&(!existing||existing->drawingPayload!=n.drawing))(void)mod::NotesDrawing(*n.drawing);if(!existing)++newSlots;}
+        need(slots.size()+deletingCards.size()+retiredCards.size()+newSlots<=retainedCeiling(),"Notes retained-card capacity reached; retire detached cards before adding more");
     }
     std::shared_ptr<Media>mediaFor(Slot&s,const Note&n){
         if(!mediaRecord(n))return{};
         if(s.media&&s.media->payload==n.media&&s.media->legacyName==n.imageName)return s.media;
-        need(mediaAssets.size()<options.maximumRetainedCards,"Retire detached media resources before replacing more references");
+        need(mediaAssets.size()<retainedCeiling(),"Retire detached media resources before replacing more references");
         auto asset=std::make_shared<Media>();asset->payload=n.media;asset->legacyName=n.imageName;
         if(newMediaLease&&newMediaLease->first==n.id)asset->accessLease=newMediaLease->second;
         asset->key="notes.media."+std::to_string(mediaOwnerID)+"."+std::to_string(++mediaSerial);
@@ -261,14 +279,16 @@ struct NativeNotesWorkspace::Impl {
     }
     bool sync(bool force=false){
         check();editorOwnership();force|=fontRevision!=raster.fontRevision();if(!force&&synchronized==state.revision())return false;preflight(state.workspaceBounds(),state.notesSelected());const auto priorComposition=compositionRevision;
-        bool changed{};std::size_t ordinal{};
+        bool changed{};std::size_t ordinal{};const auto admit=admission(state.notesSelected());std::size_t culled{};
         for(const auto&n:state.notes()){
-            auto*s=find(n.id);const bool visible=state.notesSelected()||n.isPinned;
+            auto*s=find(n.id);const bool shown=state.notesSelected()||n.isPinned;const bool visible=shown&&admit[ordinal];
+            // A shown note beneath the budget gives its artwork up (retired after publication).
+            if(shown&&!visible){++culled;if(s){if(brushSlot==s){brushSlot->drawingScene->setBrush({},drawingWidth,style.palette.primary);brushSlot=nullptr;brushPhysical.reset();}const auto it=slots.find(n.id);unregister(*it->second);retiredCards.push_back(std::move(it->second));slots.erase(it);s=nullptr;changed=true;}++ordinal;continue;}
             if(!s&&visible){auto fresh=std::make_unique<Slot>(n.id);s=fresh.get();slots.emplace(n.id,std::move(fresh));issueToken(*s);changed=true;}
             if(s)changed=refresh(*s,n,ordinal,force)||changed;++ordinal;
         }
         for(auto it=slots.begin();it!=slots.end();)if(!state.note(it->first)){if(brushSlot==it->second.get()){brushSlot->drawingScene->setBrush({},drawingWidth,style.palette.primary);brushSlot=nullptr;brushPhysical.reset();}measurer.remove(it->first);if(it->second->deleted)deletingCards.push_back(std::move(it->second));else{unregister(*it->second);retiredCards.push_back(std::move(it->second));}it=slots.erase(it);changed=true;}else ++it;
-        rebuildEntries();synchronized=state.revision();fontRevision=raster.fontRevision();++stats.stateSynchronizations;
+        stats.culledCards=culled;rebuildEntries();synchronized=state.revision();fontRevision=raster.fontRevision();++stats.stateSynchronizations;
         syncMediaVisibility(!deletingCards.empty()||std::any_of(active.begin(),active.end(),[](const auto*s){return s->outgoing;}));if(pose)applyPose(*pose);return changed||compositionRevision!=priorComposition;
     }
     // Source HUDProjectedTextEditor scroll indicator: 3 pt wide at the
@@ -301,7 +321,7 @@ struct NativeNotesWorkspace::Impl {
     // A text note's current draft reopened in the chunked editor (promotion).
     struct Draft {std::u16string value;std::optional<core::notes::RichText>rich;text::Selection selection;core::notes::TextStyle typing;double scrollOffset{};};
     std::unique_ptr<Field>prepareField(const Note&n,core::Rect r,std::optional<std::string>itemID={},const mod::NotesChecklistEdit*itemEdit=nullptr,std::optional<Draft>draft={}){
-        textRecord(n);geometry(r,true);need(retiredFields.size()<options.maximumRetainedCards,"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
+        textRecord(n);geometry(r,true);need(retiredFields.size()<retainedCeiling(),"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
         std::shared_ptr<const NativeNotesTextMeasurement>measured;std::u16string value;std::optional<core::notes::RichText>rich;
         double width=r.width-18,height=std::max(1.,r.height-58),fontSize=12,offset=find(n.id)?find(n.id)->scrollOffset:0;
         if(itemID){need(itemEdit&&n.kind==ehud::data::NoteKind::todo,"Checklist edit requires measured source viewport");const auto child=std::find_if(n.items.begin(),n.items.end(),[&](const auto&v){return v.id==*itemID;});need(child!=n.items.end(),"Missing checklist editor row");
@@ -364,7 +384,7 @@ NativeNotesWorkspace::~NativeNotesWorkspace(){try{impl_->hideMedia();}catch(...)
 bool NativeNotesWorkspace::syncState(){return impl_->sync();}
 std::uint64_t NativeNotesWorkspace::fontRevision()const noexcept{return impl_->fontRevision;}
 bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*impl_;i.check();validateStyle(style);if(sameStyle(i.style,style)&&i.fontRevision==i.raster.fontRevision())return false;endDrawing();updateDrawingHover({});
-    need(i.slots.size()*2+i.deletingCards.size()+i.retiredCards.size()<=i.options.maximumRetainedCards,"Retire detached Notes cards before changing their native appearance");
+    need(i.slots.size()*2+i.deletingCards.size()+i.retiredCards.size()<=i.retainedCeiling(),"Retire detached Notes cards before changing their native appearance");
     // A theme/localization event does not end the owner's sampled closing
     // transition. Stage replacement identities with their outgoing holds even
     // when NotesState already marks those unpinned cards target-hidden.
@@ -437,7 +457,7 @@ bool NativeNotesWorkspace::collectRetired(Renderer&r){auto&i=*impl_;i.check();fo
 bool NativeNotesWorkspace::releaseResources(Renderer&r){auto&i=*impl_;i.check();bool done=collectRetired(r);if(i.field)done=i.field->scene.releaseResources(r)&&done;for(auto&[id,s]:i.slots){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;done=s->native->releaseEditorIndicator(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&s:i.deletingCards){done=s->native->scene().releaseResources(r)&&done;done=s->native->releaseMedia(r)&&done;done=s->native->releaseEditorIndicator(r)&&done;if(s->drawingScene)done=s->drawingScene->releaseResources(r)&&done;}for(auto&a:i.mediaAssets)if(a->uploaded){if(r.removeTexture(a->key)){a->uploaded=false;a->uploadedFrame=0;}else done=false;}if(i.options.mediaBroker){i.hideMedia();for(auto&a:i.mediaAssets){if(a->request)done=i.retireImage(a->key)&&done;if(a->videoRequest)done=i.retireVideo(a->key)&&done;}}else if(i.options.videoPlayback){i.options.videoPlayback->hide(i.mediaTime);done=i.options.videoPlayback->collectRetired()&&done;}return done;}
 bool NativeNotesWorkspace::select(std::optional<std::string>id){auto&i=*impl_;i.check();if(i.drawingGesture&&(!id||*id!=i.drawingGesture->id))endDrawing();if(i.field&&(!id||*id!=i.field->id))i.finishRequired();const bool changed=i.state.select(std::move(id));i.sync();return changed;}
 bool NativeNotesWorkspace::createText(std::string id,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(ehud::data::validUUID(id)&&!i.state.note(id)&&std::isfinite(createdAt),"Invalid new Notes identity/time");
-    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards&&i.state.notes().size()<10000,"Notes retained-card or record capacity reached");Note prototype{.id=id,.kind=ehud::data::NoteKind::text,.width=210,.height=140,.createdAt=createdAt};
+    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.retainedCeiling()&&i.state.notes().size()<10000,"Notes retained-card or record capacity reached");Note prototype{.id=id,.kind=ehud::data::NoteKind::text,.width=210,.height=140,.createdAt=createdAt};
     const auto r=constrainedRect(prototype,i.state.workspaceBounds());auto next=i.prepareField(prototype,r);i.finishRequired();const bool changed=i.state.createText(std::move(id),createdAt);if(!changed)return false;i.generation=next->generation;i.field=std::move(next);i.sync();i.action("createdText");return true;}
 bool NativeNotesWorkspace::beginEditing(std::string_view id){auto&i=*impl_;i.check();if(i.field&&i.field->id==id)return false;const auto*n=i.state.note(id);need(n&&i.state.visible(id),"Cannot edit an unavailable Notes card");
     auto next=i.prepareField(*n,i.state.card(id)->rect);i.finishRequired();i.state.select(next->id);i.state.beginEditing(next->id);i.generation=next->generation;i.field=std::move(next);i.sync();return true;}
@@ -446,10 +466,10 @@ bool NativeNotesWorkspace::beginEditingItem(std::string_view id,std::string_view
     const auto edit=s->checklist->beginEditing(static_cast<std::size_t>(row-rows.begin()),s->scrollOffset);auto next=i.prepareField(*n,i.state.card(noteID)->rect,childID,&edit);
     i.state.select(noteID);i.state.beginEditingItem(noteID,childID,edit.localRect,edit.editorScrollOffset);s->scrollOffset=edit.noteScrollOffset;i.generation=next->generation;i.field=std::move(next);i.sync();return true;
 }
-bool NativeNotesWorkspace::createChecklist(std::string id,std::string firstID,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+bool NativeNotesWorkspace::createChecklist(std::string id,std::string firstID,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.retainedCeiling(),"Notes retained-card capacity reached");
     Note prototype{.id=id,.kind=ehud::data::NoteKind::todo,.width=228,.height=154,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()),true);i.finishRequired();const bool changed=i.state.createChecklist(id,firstID,createdAt);if(!changed)return false;i.sync();i.action("createdTODO");beginEditingItem(id,firstID);return true;
 }
-bool NativeNotesWorkspace::createDrawing(std::string id,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+bool NativeNotesWorkspace::createDrawing(std::string id,double createdAt){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.retainedCeiling(),"Notes retained-card capacity reached");
     Note prototype{.id=id,.kind=ehud::data::NoteKind::drawing,.width=300,.height=240,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()));i.finishRequired();endDrawing();const bool changed=i.state.createDrawing(std::move(id),createdAt);i.sync();if(changed)i.action("createdDrawing");return changed;
 }
 bool NativeNotesWorkspace::beginDrawing(std::string_view id,core::Point physical){auto&i=*impl_;i.check();auto*s=i.find(id);if(!i.pose||!s||!s->drawing||!s->visible||s->outgoing||s->deleted)return false;
@@ -484,7 +504,7 @@ double NativeNotesWorkspace::drawingWidth()const noexcept{return impl_->drawingW
 bool NativeNotesWorkspace::drawingErasing()const noexcept{return impl_->erasing;}
 NativeNotesDrawingIssue NativeNotesWorkspace::drawingIssue()const noexcept{return impl_->drawingIssue;}
 bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::string reference,core::Point point,std::shared_ptr<void>access){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;
-    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.retainedCeiling(),"Notes retained-card capacity reached");
     // Source aspect-derived media dimensions are at most300x260 before the
     // workspace cap. Validate that upper bound before the persistence boundary.
     Note prototype{.id=id,.kind=ehud::data::NoteKind::image,.width=300,.height=260,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()));
@@ -493,7 +513,7 @@ bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::stri
     struct Clear {decltype(i.newMediaLease)&value;~Clear(){value.reset();}}clear{i.newMediaLease};i.sync();i.action("createdMedia");return true;
 }
 bool NativeNotesWorkspace::createManagedImage(std::string id,double createdAt,std::string imageName,unsigned pixelWidth,unsigned pixelHeight,core::Point point){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;
-    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.retainedCeiling(),"Notes retained-card capacity reached");
     // Source managed-image cards are at most 210x184 before the workspace cap.
     Note prototype{.id=id,.kind=ehud::data::NoteKind::image,.width=210,.height=184,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()));
     i.finishRequired();if(!i.state.createManagedImage(std::move(id),createdAt,std::move(imageName),pixelWidth,pixelHeight,point))return false;i.sync();return true;
