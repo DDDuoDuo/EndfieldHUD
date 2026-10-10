@@ -27,18 +27,21 @@ public:
     void coverage(app::ModuleCoverage& step)override{
         if(step.module)return; // presents no module; one module-less step per cycle
         const auto rasterBefore=raster_.stats().entries;const auto text=longText();
-        const std::string longID="0000000C-0000-4000-8000-000000000001",shortID="0000000C-0000-4000-8000-000000000002";
+        const std::string longID="0000000C-0000-4000-8000-000000000001",shortID="0000000C-0000-4000-8000-000000000002",largeID="0000000C-0000-4000-8000-000000000003";
         std::optional<std::string> savedLong,savedShort;
         std::u16string paste;for(unsigned n=0;n<60;++n)paste+=u"粘贴的段落 pasted paragraph\n";
         {
-            mod::NotesState state({{.id=longID,.kind=data::NoteKind::text,.text=text,.x=60,.y=60,.width=300,.height=240,.createdAt=1},{.id=shortID,.kind=data::NoteKind::text,.text="short",.x=420,.y=60,.width=240,.height=145,.createdAt=2}},
-                {[&](const data::Note& n){(n.id==longID?savedLong:savedShort)=n.text;},[](std::string_view){throw std::runtime_error("Coverage never deletes");}});
-            state.setWorkspaceBounds({0,0,1280,800});
+            mod::NotesState state({{.id=longID,.kind=data::NoteKind::text,.text=text,.x=60,.y=60,.width=300,.height=240,.createdAt=1},{.id=shortID,.kind=data::NoteKind::text,.text="short",.x=420,.y=60,.width=240,.height=145,.createdAt=2},
+                // A card beyond LayerScene's local group area (split surfaces).
+                {.id=largeID,.kind=data::NoteKind::text,.text="large",.x=20,.y=20,.width=1500,.height=950,.zIndex=-1,.createdAt=3}},
+                {[&](const data::Note& n){if(n.id==longID)savedLong=n.text;else if(n.id==shortID)savedShort=n.text;},[](std::string_view){throw std::runtime_error("Coverage never deletes");}});
+            state.setWorkspaceBounds({0,0,1600,1000});
             gpu::NativeNotesWorkspaceStyle style;style.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};
             gpu::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.ownerMessage=message_;options.maximumEditorUnits=1024;
             if(manager_&&client_!=TF_CLIENTID_NULL){options.activatedTextManager=manager_;options.textClient=client_;}
             gpu::NativeNotesWorkspace workspace(window_,state,raster_,style,options);
-            gpu::NativeNotesWorkspacePose pose;pose.screenToClip=gpu::layerViewportProjection(1280,800);pose.pixelWidth=1280;pose.pixelHeight=800;pose.time=step.time;workspace.updatePose(pose);
+            gpu::NativeNotesWorkspacePose pose;pose.screenToClip=gpu::layerViewportProjection(1600,1000);pose.pixelWidth=1600;pose.pixelHeight=1000;pose.time=step.time;workspace.updatePose(pose);
+            step.check(workspace.card(largeID)&&workspace.stats().culledCards==0,"A card beyond the local group area is retained in the application");
             step.check(workspace.beginEditing(longID)&&workspace.editor()&&workspace.editor()->chunked(),"A long note opens in the paragraph-chunked editor inside the application");
             auto* editor=workspace.editor()->longEditor();const auto chunks=editor->stats().chunks;step.check(chunks>8,"The long note spans many chunks");
             for(char16_t c:std::u16string_view(u"末尾 tail")){const auto before=editor->stats().chunkLayouts;
