@@ -215,6 +215,8 @@ struct NativeMediaAssemblyGpuProcessor::Impl {
     IDXGISurface*surface{};ComPtr<ID3D11Texture2D>surfaceTexture;ComPtr<ID3D11RenderTargetView>surfaceTarget;unsigned surfaceWidth{},surfaceHeight{};
     ComPtr<ID3D11Texture2D>processed;ComPtr<ID3D11RenderTargetView>processedTarget;ComPtr<ID3D11ShaderResourceView>processedView;unsigned processedWidth{},processedHeight{};
     ComPtr<ID3D11Texture2D>output,staging;ComPtr<ID3D11RenderTargetView>outputTarget;unsigned outputWidth{},outputHeight{};
+    // Still export bands: one RGBA8 target and staging pair, reused.
+    ComPtr<ID3D11Texture2D>band,bandStaging;ComPtr<ID3D11RenderTargetView>bandTarget;unsigned bandWidth{},bandHeight{};
     MediaAssemblyGpuStats statistics;
 
     void texture(ComPtr<ID3D11Texture2D>&t,unsigned w,unsigned h,DXGI_FORMAT format,UINT bind,D3D11_USAGE usage=D3D11_USAGE_DEFAULT,UINT cpu=0){
@@ -350,6 +352,26 @@ void NativeMediaAssemblyGpuProcessor::renderToMemory(unsigned w,unsigned h,std::
     D3D11_MAPPED_SUBRESOURCE mapped{};check(i.context->Map(i.staging.Get(),0,D3D11_MAP_READ,0,&mapped),"read back export frame");
     for(unsigned y=0;y<h;++y)std::memcpy(bgra.data()+std::size_t(y)*stride,static_cast<const std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,std::size_t(w)*4);
     i.context->Unmap(i.staging.Get(),0);++i.statistics.renders;++i.statistics.readbacks;
+}
+
+void NativeMediaAssemblyGpuProcessor::renderRows(unsigned first,unsigned count,std::span<std::uint8_t>rgba,std::size_t stride){
+    auto&i=*impl_;need(i.configured&&i.source,"configure a source first");const unsigned w=i.plan.outputWidth;
+    need(count&&first<=i.plan.outputHeight&&count<=i.plan.outputHeight-first,"rows outside the edit plan");
+    need(stride>=std::size_t(w)*4&&rgba.size()>=stride*(count-1)+std::size_t(w)*4,"export rows are too short");
+    if(!i.band||i.bandWidth!=w||i.bandHeight<count){
+        i.bandTarget.Reset();i.texture(i.band,w,count,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET);check(i.device->CreateRenderTargetView(i.band.Get(),nullptr,&i.bandTarget),"create band target");
+        i.texture(i.bandStaging,w,count,DXGI_FORMAT_R8G8B8A8_UNORM,0,D3D11_USAGE_STAGING,D3D11_CPU_ACCESS_READ);i.bandWidth=w;i.bandHeight=count;
+    }
+    // The band's first output row is row `first` of the plan: shift the
+    // pixel map's origin by `first` rows.
+    auto k=i.edit;k.mode[1]|=(i.sourcePremultiplied?flagSourcePremultiplied:0)|flagOutputPremultiplied;
+    const long long ox=k.map0[0]+static_cast<long long>(first)*k.map1[0],oy=k.map0[1]+static_cast<long long>(first)*k.map1[1];
+    need(ox>=-65536&&ox<=65536&&oy>=-65536&&oy<=65536,"geometry out of range");k.map0[0]=std::int32_t(ox);k.map0[1]=std::int32_t(oy);
+    i.pass(i.process.Get(),i.sourceView.Get(),i.bandTarget.Get(),w,count,k);
+    i.context->CopyResource(i.bandStaging.Get(),i.band.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};check(i.context->Map(i.bandStaging.Get(),0,D3D11_MAP_READ,0,&mapped),"read back export rows");
+    for(unsigned y=0;y<count;++y)std::memcpy(rgba.data()+std::size_t(y)*stride,static_cast<const std::uint8_t*>(mapped.pData)+std::size_t(y)*mapped.RowPitch,std::size_t(w)*4);
+    i.context->Unmap(i.bandStaging.Get(),0);++i.statistics.renders;++i.statistics.readbacks;
 }
 
 void prepareMediaAssemblyGpuShaders(){(void)bytecode();}

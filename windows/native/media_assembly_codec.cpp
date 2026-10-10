@@ -340,8 +340,10 @@ modules::MediaAssemblyPreviewImage NativeMediaAssemblyEngine::previewSource(cons
 }
 
 namespace {
-// Streams processor rows into one WIC frame in the encoder's pixel format.
-void encodeImage(IWICImagingFactory*wic,const std::filesystem::path&temp,m::MediaAssemblyImageFormat format,const m::MediaAssemblyFrameProcessor&processor,const m::MediaAssemblyPixels&source,m::MediaAssemblyExportTicket&ticket){
+// Rows [first, first+count) of the edited image as RGBA8 in an alpha mode.
+using ExportRows=std::function<void(unsigned first,unsigned count,std::span<std::uint8_t>rows,std::size_t stride,m::MediaAssemblyOutputAlpha)>;
+// Streams edited rows into one WIC frame in the encoder's pixel format.
+void encodeImage(IWICImagingFactory*wic,const std::filesystem::path&temp,m::MediaAssemblyImageFormat format,unsigned w,unsigned h,const ExportRows&produce,m::MediaAssemblyExportTicket&ticket){
     ComPtr<IWICStream>stream;check(wic->CreateStream(&stream),m::MediaAssemblyError::exportFailed);check(stream->InitializeFromFilename(temp.c_str(),GENERIC_WRITE),m::MediaAssemblyError::exportFailed);
     ComPtr<IWICBitmapEncoder>encoder;check(wic->CreateEncoder(encoderContainer(format),nullptr,&encoder),m::MediaAssemblyError::unsupportedExport);check(encoder->Initialize(stream.Get(),WICBitmapEncoderNoCache),m::MediaAssemblyError::exportFailed);
     ComPtr<IWICBitmapFrameEncode>frame;ComPtr<IPropertyBag2>props;check(encoder->CreateNewFrame(&frame,&props),m::MediaAssemblyError::exportFailed);
@@ -349,7 +351,7 @@ void encodeImage(IWICImagingFactory*wic,const std::filesystem::path&temp,m::Medi
         // kCGImageDestinationLossyCompressionQuality 0.95.
         PROPBAG2 option{};option.pstrName=const_cast<LPOLESTR>(L"ImageQuality");VARIANT value{};VariantInit(&value);value.vt=VT_R4;value.fltVal=.95f;props->Write(1,&option,&value);
     }
-    check(frame->Initialize(props.Get()),m::MediaAssemblyError::exportFailed);const unsigned w=processor.width(),h=processor.height();check(frame->SetSize(w,h),m::MediaAssemblyError::exportFailed);
+    check(frame->Initialize(props.Get()),m::MediaAssemblyError::exportFailed);check(frame->SetSize(w,h),m::MediaAssemblyError::exportFailed);
     // The original encodes its associated RGBA8 createCGImage result: PNG/HEIC
     // store it unassociated, TIFF keeps associated alpha, JPEG drops alpha.
     WICPixelFormatGUID requested=format==m::MediaAssemblyImageFormat::jpeg?GUID_WICPixelFormat24bppBGR:format==m::MediaAssemblyImageFormat::tiff?GUID_WICPixelFormat32bppPBGRA:GUID_WICPixelFormat32bppBGRA;
@@ -359,7 +361,7 @@ void encodeImage(IWICImagingFactory*wic,const std::filesystem::path&temp,m::Medi
     const unsigned band=std::max(1u,std::min(h,(16u*1024u*1024u)/std::max(1u,w*4)));std::vector<std::uint8_t>rows(std::size_t(w)*band*4),packed(std::size_t(w)*band*4);
     for(unsigned y=0;y<h;y+=band){
         if(ticket.cancelled())fail(m::MediaAssemblyError::cancelled);const unsigned n=std::min(band,h-y);
-        processor.render(source,y,n,rows,std::size_t(w)*4,(bgra&&!pbgra)?m::MediaAssemblyOutputAlpha::straight:m::MediaAssemblyOutputAlpha::premultiplied);
+        produce(y,n,rows,std::size_t(w)*4,(bgra&&!pbgra)?m::MediaAssemblyOutputAlpha::straight:m::MediaAssemblyOutputAlpha::premultiplied);
         const unsigned stride=bgr24?((w*3+3)&~3u):w*4;if(packed.size()<std::size_t(stride)*n)packed.resize(std::size_t(stride)*n);
         for(unsigned r=0;r<n;++r){const auto*s=rows.data()+std::size_t(r)*w*4;auto*d=packed.data()+std::size_t(r)*stride;
             for(unsigned x=0;x<w;++x){if(bgr24){d[x*3]=s[x*4+2];d[x*3+1]=s[x*4+1];d[x*3+2]=s[x*4];}else{d[x*4]=s[x*4+2];d[x*4+1]=s[x*4+1];d[x*4+2]=s[x*4];d[x*4+3]=s[x*4+3];}}}
@@ -392,8 +394,26 @@ std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportR
         const m::MediaAssemblyFrameProcessor processor(source.width,source.height,r.adjustments,lookup,true,stickers);
         if(ticket.cancelled())fail(m::MediaAssemblyError::cancelled);
         need(processor.width()<=65536&&processor.height()<=65536,m::MediaAssemblyError::unsupportedExport);
+        // The source CIContext renders the whole composition on the GPU. An
+        // opaque still within the D3D11 texture limit does the same here: the
+        // job's own device edits geometry and colour in row bands and the CPU
+        // composites the stickers over each band. A translucent still stays
+        // on the exact CPU processor (associated 8-bit rows would amplify
+        // rounding once unassociated); any GPU failure finishes on the CPU.
+        const m::MediaAssemblyPixels pixels{source.width,source.height,std::size_t(source.width)*4,source.straightRGBA,false};
+        std::unique_ptr<NativeMediaAssemblyGpuProcessor>gpu;
+        bool opaque=true;for(std::size_t i=3;i<source.straightRGBA.size()&&opaque;i+=4)opaque=source.straightRGBA[i]==255;
+        const bool large=std::uint64_t(processor.width())*processor.height()>=impl_->options.gpuStillPixels;
+        if(opaque&&large&&impl_->options.exportDevice&&std::max(source.width,source.height)<=16384)if(auto device=impl_->options.exportDevice())try{
+            gpu=std::make_unique<NativeMediaAssemblyGpuProcessor>(std::move(device));gpu->setSource(source.width,source.height,source.straightRGBA,std::size_t(source.width)*4,false);
+            const auto edited=gpu->configure(r.adjustments,lookup,false);if(edited.outputWidth!=processor.width()||edited.outputHeight!=processor.height())gpu.reset();
+        }catch(const std::exception&){gpu.reset();}
+        std::uint64_t gpuRows{},cpuRows{};
+        struct Count {Impl&i;std::uint64_t&g,&c;~Count(){std::lock_guard l(i.lock);if(g)++i.statistics.gpuStillExports;if(c)++i.statistics.cpuStillExports;}}count{*impl_,gpuRows,cpuRows};
         ticket.setProgress(.7);
-        encodeImage(wic.Get(),tempPath,plan.format.image,processor,{source.width,source.height,std::size_t(source.width)*4,source.straightRGBA,false},ticket);
+        encodeImage(wic.Get(),tempPath,plan.format.image,processor.width(),processor.height(),[&](unsigned y,unsigned n,std::span<std::uint8_t>rows,std::size_t stride,m::MediaAssemblyOutputAlpha mode){
+            if(gpu)try{gpu->renderRows(y,n,rows,stride);processor.compositeStickers(y,n,rows,stride,mode);gpuRows+=n;return;}catch(const std::exception&){gpu.reset();}
+            processor.render(pixels,y,n,rows,stride,mode);cpuRows+=n;},ticket);
     }else{
         Platform mf;const auto range=r.adjustments.timeRange(d.duration);if(!range)fail(m::MediaAssemblyError::invalidAdjustment);
         if(!r.adjustments.stickers.empty())fail(m::MediaAssemblyError::unsupported);

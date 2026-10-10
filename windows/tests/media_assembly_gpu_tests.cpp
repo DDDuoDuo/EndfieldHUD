@@ -99,6 +99,20 @@ void run(const fs::path&assets){
             check(r.worst<=1,"GPU render matches the CPU MediaAssemblyEngine.apply within one level: "+c.name);
         }
     }
+    // 1b. Still export rows: band renders at the plan's own size equal one
+    // full-height render exactly and the CPU associated rows within a level.
+    for(const auto&c:cases()){
+        gpu.setSource(w,h,opaque,std::size_t(w)*4,false);const auto plan=gpu.configure(c.a,cube(c.a.filter),false);
+        const m::MediaAssemblyFrameProcessor cpu(w,h,c.a,cube(c.a.filter),false,{},false);
+        const auto expected=cpu.render({w,h,std::size_t(w)*4,opaque,false},m::MediaAssemblyOutputAlpha::premultiplied);
+        const std::size_t row=std::size_t(plan.outputWidth)*4,stride=row+12;std::vector<std::uint8_t>banded(stride*plan.outputHeight),whole(stride*plan.outputHeight);
+        for(unsigned y=0;y<plan.outputHeight;y+=7){const unsigned n=std::min(7u,plan.outputHeight-y);gpu.renderRows(y,n,std::span(banded).subspan(std::size_t(y)*stride),stride);}
+        gpu.renderRows(0,plan.outputHeight,whole,stride);
+        std::vector<std::uint8_t>packed(expected.size()),packedWhole(expected.size());
+        for(unsigned y=0;y<plan.outputHeight;++y){std::copy_n(banded.data()+std::size_t(y)*stride,row,packed.data()+std::size_t(y)*row);std::copy_n(whole.data()+std::size_t(y)*stride,row,packedWhole.data()+std::size_t(y)*row);}
+        check(packed==packedWhole,"Row bands equal one full-height render: "+c.name);
+        check(compare(packed,expected,"rows "+c.name).worst<=1,"GPU still-export rows match the CPU associated rows within one level: "+c.name);
+    }
     // 2. Export path: associated output, even-size bilinear resample, raw
     // rotation folded into the geometry (no CPU rotate copy).
     for(unsigned rotation:{0u,90u,180u,270u})for(const auto&c:cases()){

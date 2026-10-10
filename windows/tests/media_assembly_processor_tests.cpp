@@ -168,6 +168,17 @@ void frames(const J&fixture,Cubes&cubes,const fs::path&root){
         // Geometry, colour and sticker compositing (Core Image's 2^-1.2
         // halving prefilter + bilinear) are exact within RGBA8 rounding.
         check(worst<=1&&mean<.05,"Frame is pixel exact within rounding: "+f["name"].string());
+        if(include&&!a.stickers.empty()){
+            // GPU still export split: associated colour rows from an equivalent
+            // evaluation, then the sticker step alone (compositeStickers).
+            const m::MediaAssemblyFrameProcessor colourOnly(w,h,a,cubes.get(a.filter),false);std::vector<std::uint8_t>split(out.size());
+            colourOnly.render(pixels,0,colourOnly.height(),split,std::size_t(processor.width())*4);
+            counting=true;allocations=0;processor.compositeStickers(0,processor.height(),split,std::size_t(processor.width())*4);counting=false;
+            check(allocations==0,"The sticker step allocates nothing");
+            int splitWorst{};for(std::size_t i=0;i<out.size();++i)splitWorst=std::max(splitWorst,std::abs(int(out[i])-int(split[i])));
+            std::cout<<"frame "<<f["name"].string()<<" colour rows + sticker step worst="<<splitWorst<<'\n';
+            check(splitWorst<=1,"Colour rows plus the sticker step equal the full render within one level: "+f["name"].string());
+        }
     }
 }
 

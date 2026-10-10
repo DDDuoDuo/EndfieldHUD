@@ -63,6 +63,13 @@ void halve(std::vector<std::array<float,4>>&texels,unsigned&width,unsigned&heigh
     texels=std::move(next);width=w2;height=h2;
 }
 std::uint8_t byte(float v)noexcept{return static_cast<std::uint8_t>(std::floor(std::clamp(v,0.f,1.f)*255.f+.5f));}
+// One associated working pixel as RGBA8 in the requested alpha mode.
+void store(std::uint8_t*o,const MediaAssemblyRGBA&p,MediaAssemblyOutputAlpha mode)noexcept{
+    const float a=unit(p.a);o[3]=byte(a);
+    if(mode==MediaAssemblyOutputAlpha::premultiplied){o[0]=byte(std::min(p.r,a));o[1]=byte(std::min(p.g,a));o[2]=byte(std::min(p.b,a));}
+    else if(a<=0){o[0]=o[1]=o[2]=0;}
+    else{o[0]=byte(std::min(p.r,a)/a);o[1]=byte(std::min(p.g,a)/a);o[2]=byte(std::min(p.b,a)/a);}
+}
 }
 
 double MediaAssemblyColorPipeline::srgbEncode(double x)noexcept{return x<=.0031308?12.92*x:1.055*std::pow(x,1/2.4)-.055;}
@@ -284,24 +291,36 @@ void MediaAssemblyFrameProcessor::render(const MediaAssemblyPixels&s,unsigned fi
     const double H=plan_.outputHeight;
     for(unsigned row=0;row<count;++row){
         const unsigned y=first+row;auto*out=target.data()+std::size_t(row)*stride;const double py=H-y-.5;
+        for(unsigned x=0;x<plan_.outputWidth;++x)store(out+std::size_t(x)*4,stickersOver(color_.apply(source(s,x,y)),x+.5,py),mode);
+    }
+}
+// Source-over of every sticker at output pixel centre (px, py), y-up.
+MediaAssemblyRGBA MediaAssemblyFrameProcessor::stickersOver(MediaAssemblyRGBA p,double px,double py)const noexcept{
+    for(const auto&k:stickers_){
+        if(px<k.minX-1||px>k.maxX+1||py<k.minY-1||py>k.maxY+1)continue;
+        const auto&m=k.inverse;const double u=m[0]*px+m[1]*py+m[2]-.5,v=m[3]*px+m[4]*py+m[5]-.5;
+        const double fu=std::floor(u),fv=std::floor(v);const int i0=int(fu),j0=int(fv);const float wx=float(u-fu),wy=float(v-fv);
+        std::array<float,4>acc{};
+        for(int dj=0;dj<2;++dj)for(int di=0;di<2;++di){
+            const int i=i0+di,j=j0+dj;if(i<0||j<0||i>=int(k.width)||j>=int(k.height))continue;
+            const float w=(di?wx:1-wx)*(dj?wy:1-wy);const auto&t=k.texels[std::size_t(j)*k.width+std::size_t(i)];
+            for(int c=0;c<4;++c)acc[c]+=w*t[c];
+        }
+        const float keep=1-acc[3];p={acc[0]+p.r*keep,acc[1]+p.g*keep,acc[2]+p.b*keep,acc[3]+p.a*keep};
+    }
+    return p;
+}
+void MediaAssemblyFrameProcessor::compositeStickers(unsigned first,unsigned count,std::span<std::uint8_t>rows,std::size_t stride,MediaAssemblyOutputAlpha mode)const{
+    need(first<=plan_.outputHeight&&count<=plan_.outputHeight-first&&stride>=std::size_t(plan_.outputWidth)*4&&(count==0||rows.size()>=stride*(count-1)+std::size_t(plan_.outputWidth)*4),"Invalid Media Assembly output rows");
+    const double H=plan_.outputHeight;
+    for(unsigned row=0;row<count;++row){
+        const unsigned y=first+row;auto*out=rows.data()+std::size_t(row)*stride;const double py=H-y-.5;
         for(unsigned x=0;x<plan_.outputWidth;++x){
-            auto p=color_.apply(source(s,x,y));const double px=x+.5;
-            for(const auto&k:stickers_){
-                if(px<k.minX-1||px>k.maxX+1||py<k.minY-1||py>k.maxY+1)continue;
-                const auto&m=k.inverse;const double u=m[0]*px+m[1]*py+m[2]-.5,v=m[3]*px+m[4]*py+m[5]-.5;
-                const double fu=std::floor(u),fv=std::floor(v);const int i0=int(fu),j0=int(fv);const float wx=float(u-fu),wy=float(v-fv);
-                std::array<float,4>acc{};
-                for(int dj=0;dj<2;++dj)for(int di=0;di<2;++di){
-                    const int i=i0+di,j=j0+dj;if(i<0||j<0||i>=int(k.width)||j>=int(k.height))continue;
-                    const float w=(di?wx:1-wx)*(dj?wy:1-wy);const auto&t=k.texels[std::size_t(j)*k.width+std::size_t(i)];
-                    for(int c=0;c<4;++c)acc[c]+=w*t[c];
-                }
-                const float keep=1-acc[3];p={acc[0]+p.r*keep,acc[1]+p.g*keep,acc[2]+p.b*keep,acc[3]+p.a*keep};
-            }
-            auto*o=out+std::size_t(x)*4;const float a=unit(p.a);o[3]=byte(a);
-            if(mode==MediaAssemblyOutputAlpha::premultiplied){o[0]=byte(std::min(p.r,a));o[1]=byte(std::min(p.g,a));o[2]=byte(std::min(p.b,a));}
-            else if(a<=0){o[0]=o[1]=o[2]=0;}
-            else{o[0]=byte(std::min(p.r,a)/a);o[1]=byte(std::min(p.g,a)/a);o[2]=byte(std::min(p.b,a)/a);}
+            auto*o=out+std::size_t(x)*4;const double px=x+.5;
+            // Associated RGBA8 in. An opaque pixel no sticker covers is final
+            // in either alpha mode (associated equals straight).
+            if(o[3]==255&&std::none_of(stickers_.begin(),stickers_.end(),[&](const Sticker&k){return !(px<k.minX-1||px>k.maxX+1||py<k.minY-1||py>k.maxY+1);}))continue;
+            store(o,stickersOver({o[0]/255.f,o[1]/255.f,o[2]/255.f,o[3]/255.f},px,py),mode);
         }
     }
 }

@@ -148,6 +148,13 @@ public:
         std::size_t stride,MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
     // Convenience full-frame render.
     std::vector<std::uint8_t>render(const MediaAssemblyPixels&source,MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
+    // The sticker step alone: output rows [first, first+count) already hold
+    // the geometry and colour result as associated RGBA8 (an equivalent GPU
+    // evaluation, native/media_assembly_gpu); the stickers are composited
+    // over them exactly as render() does and the rows are rewritten in the
+    // requested alpha mode.
+    void compositeStickers(unsigned first,unsigned count,std::span<std::uint8_t>rows,std::size_t stride,
+        MediaAssemblyOutputAlpha=MediaAssemblyOutputAlpha::premultiplied)const;
 private:
     // Sticker texels after the original affine down-scale chain: 2x2 box
     // halvings (y-up, transparent padding) until the remaining scale reaches
@@ -157,6 +164,7 @@ private:
     // Geometry is a pixel permutation: source = origin + x*column + y*row.
     std::array<long long,2>origin_{},column_{},row_{};
     MediaAssemblyRGBA source(const MediaAssemblyPixels&,unsigned x,unsigned y)const noexcept;
+    MediaAssemblyRGBA stickersOver(MediaAssemblyRGBA associated,double px,double py)const noexcept;
 };
 // Bilinear associated resample used by the original AVVideoComposition path
 // (CIImage.transformed(by: scale) after apply). Even target sizes come from

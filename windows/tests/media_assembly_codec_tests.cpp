@@ -145,6 +145,40 @@ void stills(const fs::path&root,const fs::path&assets){
         fs::remove(moved);fs::remove(original);check(failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable&&n::mediaAssemblyLocate(utf8(original),doc->identity)==utf8(original),
             "A moved original that is gone asks to be chosen again");
         fs::remove(folder);}
+    {// Opaque stills: the export job's GPU device edits row bands and the CPU
+     // composites the stickers (source CIContext); same result as the exact CPU export.
+        const auto photo=root/L"opaque photo.png";writeImage(photo,GUID_ContainerFormatPng,301,203,gradient(301,203,false));
+        auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(photo)));doc->id="opaque";
+        m::MediaAssemblyAdjustments e;e.exposure=.4;e.saturation=1.3;e.temperature=5200;e.tint=10;e.highlights=.6;e.shadows=.3;e.curve={0,.2,.55,.8,1};e.filter=m::MediaAssemblyFilter::filter3;
+        e.crop={.1,.05,.8,.9};e.rotationQuarterTurns=3;e.mirrored=true;
+        e.stickers.push_back({"a",m::MediaAssemblyStickerKind::sticker7,.4,.5,.5,20});e.stickers.push_back({"b",m::MediaAssemblyStickerKind::sticker2,.8,.2,.3,-35});
+        const auto warp=[]()->std::shared_ptr<void>{Microsoft::WRL::ComPtr<ID3D11Device>device;const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_10_0;
+            if(FAILED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,&level,1,D3D11_SDK_VERSION,&device,nullptr,nullptr)))return {};
+            return std::shared_ptr<void>(device.Detach(),[](void*p){static_cast<ID3D11Device*>(p)->Release();});};
+        n::NativeMediaAssemblyEngine viaGpu({assets,{},{},warp,0}),viaCpu({assets,{},{},[]{return std::shared_ptr<void>{};},0});
+        {n::NativeMediaAssemblyEngine threshold({assets,{},{},warp});m::MediaAssemblyExportTicket t;
+            check(threshold.exportMedia({doc,e,utf8(root/L"below.png"),false,"s0",false},t)==utf8(root/L"below.png")&&threshold.stats().cpuStillExports==1&&threshold.stats().gpuStillExports==0,
+                "A still below the GPU size threshold finishes on the CPU without a device");fs::remove(root/L"below.png");}
+        const auto gpuOut=root/L"opaque-gpu.png",cpuOut=root/L"opaque-cpu.png";m::MediaAssemblyExportTicket t1,t2;
+        check(viaGpu.exportMedia({doc,e,utf8(gpuOut),false,"s1",false},t1)==utf8(gpuOut)&&viaCpu.exportMedia({doc,e,utf8(cpuOut),false,"s2",false},t2)==utf8(cpuOut)&&temporaries(root)==0,"GPU and CPU still exports commit");
+        check(viaGpu.stats().gpuStillExports==1&&viaGpu.stats().cpuStillExports==0&&viaCpu.stats().cpuStillExports==1&&viaCpu.stats().gpuStillExports==0,"An opaque still exports on the job's GPU device; without one on the CPU");
+        unsigned gw{},gh{},cw{},ch{};const auto onGpu=readImage(gpuOut,gw,gh),onCpu=readImage(cpuOut,cw,ch);
+        int worst{};std::size_t over{};for(std::size_t i=0;i<onGpu.size()&&i<onCpu.size();++i){const int delta=std::abs(int(onGpu[i])-int(onCpu[i]));worst=std::max(worst,delta);over+=delta>1;}
+        std::cout<<"gpu/cpu still export "<<gw<<"x"<<gh<<" worst="<<worst<<" over1="<<over<<" of "<<onGpu.size()<<'\n';
+        check(gw==cw&&gh==ch&&onGpu.size()==onCpu.size()&&worst<=2,"The GPU still export matches the exact CPU export within two levels, stickers included");
+        // A translucent still stays on the exact CPU processor.
+        const auto clear=root/L"translucent.png";writeImage(clear,GUID_ContainerFormatPng,40,30,gradient(40,30,true));auto see=std::make_shared<m::MediaAssemblyDocumentInfo>(viaGpu.open(utf8(clear)));
+        {m::MediaAssemblyExportTicket t;check(viaGpu.exportMedia({see,e,utf8(root/L"translucent-out.png"),false,"s3",false},t)==utf8(root/L"translucent-out.png")&&viaGpu.stats().gpuStillExports==1&&viaGpu.stats().cpuStillExports==1,
+            "A translucent still exports on the exact CPU processor");}
+        // Time (printed): a 12 MP heavy edit on the hardware export device vs the CPU.
+        const auto big=root/L"twelve.jpg";writeImage(big,GUID_ContainerFormatJpeg,4000,3000,gradient(4000,3000,false));
+        auto large=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(big)));large->id="twelve";const bool hardware=bool(n::createMediaAssemblyExportDevice());
+        n::NativeMediaAssemblyEngine onDevice({assets});const auto timed=[&](n::NativeMediaAssemblyEngine&with,const fs::path&out,const char*id){
+            m::MediaAssemblyExportTicket t;const auto started=GetTickCount64();check(with.exportMedia({large,e,utf8(out),false,id,false},t)==utf8(out),"12 MP export commits");return GetTickCount64()-started;};
+        const auto deviceMs=timed(onDevice,root/L"twelve-device.jpg","s4"),cpuMs=timed(viaCpu,root/L"twelve-cpu.jpg","s5");
+        std::cout<<"12 MP heavy still export: export device "<<(hardware?"hardware":"none")<<" "<<deviceMs<<" ms (gpu stills "<<onDevice.stats().gpuStillExports<<"), CPU "<<cpuMs<<" ms\n";
+        check(onDevice.stats().gpuStillExports==(hardware?1u:0u),"A hardware export device takes the opaque 12 MP still");
+        for(const auto*name:{L"twelve.jpg",L"twelve-device.jpg",L"twelve-cpu.jpg"})fs::remove(root/name);}
     std::cout<<"HEIC encoding available: "<<(engine.heicEncoder()?"yes":"no")<<'\n';
     {
         // Source CGImageDestinationCopyTypeIdentifiers filtering: HEIC is only
