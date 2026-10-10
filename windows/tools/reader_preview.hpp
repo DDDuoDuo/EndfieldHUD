@@ -48,6 +48,13 @@ public:
     bool beginImport(std::uint64_t,double);
     bool receiveImport(std::uint64_t,modules::ReaderBook,double);
     bool receiveImportError(std::uint64_t,std::optional<std::string>,double);
+    // Source documentDropURLs(.reader)/ReaderInteraction.importFiles: a file
+    // drop is accepted over the interactive Reader canvas while no menu, pan
+    // or picker owns it (a running validation is replaced, as on the Mac).
+    // beginDrop closes any menu and returns the generation the root passes to
+    // beginImport and its validated-file import of modules::readerDroppedReference.
+    bool acceptsDrop(core::Point client)const;
+    std::optional<std::uint64_t>beginDrop(double);
     void queueCapacityAvailable();
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);

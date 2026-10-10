@@ -20,6 +20,26 @@ if(BUILD_TESTING)
   list(APPEND EHUD_LOCAL_TARGETS reader_pdf_title_tests)
 endif()
 
+# --- Accessibility contracts for the shared UI Automation provider -------------
+# Source names, order and geometry of the Reader canvas/menus and of the Map
+# status, toolbar and pins (Calendar and the minigame have theirs in the
+# integrity fragment). Portable; the HUD's UIA root consumes them.
+add_library(hud_local_accessibility modules/reader_accessibility.cpp modules/map_accessibility.cpp)
+target_include_directories(hud_local_accessibility PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_local_accessibility PUBLIC hud_reader_localization hud_map hud_localization)
+list(APPEND EHUD_LOCAL_TARGETS hud_local_accessibility)
+if(BUILD_TESTING)
+  # tools/reader_accessibility_reference.py -> reader-accessibility-source.json
+  add_executable(reader_accessibility_tests tests/reader_accessibility_tests.cpp)
+  target_link_libraries(reader_accessibility_tests PRIVATE hud_local_accessibility)
+  add_test(NAME reader_accessibility_contracts COMMAND reader_accessibility_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/reader-accessibility-source.json)
+  # tools/map_accessibility_reference.py -> map_accessibility_source.json
+  add_executable(map_accessibility_tests tests/map_accessibility_tests.cpp)
+  target_link_libraries(map_accessibility_tests PRIVATE hud_local_accessibility)
+  add_test(NAME map_accessibility_contracts COMMAND map_accessibility_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/map_accessibility_source.json)
+  list(APPEND EHUD_LOCAL_TARGETS reader_accessibility_tests map_accessibility_tests)
+endif()
+
 # --- Reader display-time localization -----------------------------------------
 # Mac Reader captions/ReaderError pairs through the shared five-language
 # catalog plus the Windows-only chooser/picker/import rows. Portable; the

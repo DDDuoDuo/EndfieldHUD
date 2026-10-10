@@ -66,4 +66,7 @@ void validateReaderLibrary(const ReaderLibrary&);
 ReaderBook windowsReaderReference(std::string id,std::string path,std::string title);
 std::string_view readerReferencePath(const ReaderBook&)noexcept;
 bool readerSupportedExtension(std::string_view extension)noexcept;
+// Source documentDropURLs(.reader): the FIRST dropped file whose extension is
+// pdf, epub or txt (any case); others are ignored. Nothing is opened here.
+std::optional<std::string>readerDroppedReference(std::span<const std::string>paths);
 } // namespace endfield::modules
