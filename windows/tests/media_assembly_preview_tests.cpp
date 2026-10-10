@@ -16,6 +16,8 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <array>
+#include <vector>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -166,18 +168,29 @@ void parity(n::Renderer&r,HWND hwnd,const fs::path&assets){
     check(worst<=3&&over*1000<=gpu.pixels.size(),"GPU-edited previews compose like CPU-edited previews");
 }
 // Fake IMFMediaEngine for the shared broker (no codec, audio device or file).
-struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{};unsigned opens{},seeks{},frames{};};
+struct Probe {n::NativeNotesVideoPlayback::Notify notify;double position{};bool playing{},fresh{true},stopped{};unsigned opens{},seeks{},frames{};std::string path;ComPtr<IDXGISurface>surface;};
+// Every played frame is this straight BGRA8 colour (opaque, distinct channels).
+constexpr std::array<std::uint8_t,4>playedBGRA{40,120,200,255};
+std::array<std::uint8_t,4>firstPixel(IDXGISurface*surface){
+    ComPtr<ID3D11Texture2D>texture;check(surface&&SUCCEEDED(surface->QueryInterface(IID_PPV_ARGS(&texture))),"Frame-server surface is a texture");
+    D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;desc.MiscFlags=0;
+    ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11Texture2D>staging;check(SUCCEEDED(device->CreateTexture2D(&desc,nullptr,&staging)),"Staging readback");
+    ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);context->CopyResource(staging.Get(),texture.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{};check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Map readback");
+    std::array<std::uint8_t,4>out{};std::copy_n(static_cast<const std::uint8_t*>(mapped.pData),4,out.begin());context->Unmap(staging.Get(),0);return out;
+}
 class FakeEngine final:public n::NativeNotesVideoPlayback::Engine {
     std::shared_ptr<Probe>p_;
 public:explicit FakeEngine(std::shared_ptr<Probe>p):p_(std::move(p)){}~FakeEngine()override{stop();}
-    HRESULT open(const n::NotesVideoRequest&)override{++p_->opens;p_->notify(n::NativeNotesVideoPlayback::ready|n::NativeNotesVideoPlayback::firstFrame,S_OK);return S_OK;}
+    HRESULT open(const n::NotesVideoRequest&q)override{++p_->opens;p_->path=q.path;p_->notify(n::NativeNotesVideoPlayback::ready|n::NativeNotesVideoPlayback::firstFrame,S_OK);return S_OK;}
     HRESULT metadata(n::NotesVideoMetadata&out)override{out={4,4,10};return S_OK;}
     HRESULT play()override{p_->playing=true;p_->fresh=true;return S_OK;}HRESULT pause()override{p_->playing=false;return S_OK;}
     HRESULT seek(double t)override{p_->position=t;++p_->seeks;p_->fresh=true;p_->notify(n::NativeNotesVideoPlayback::seeked,S_OK);return S_OK;}
     double currentTime()const override{return p_->position;}
     HRESULT tick(std::int64_t&pts)override{pts=static_cast<std::int64_t>(p_->position*10000000);if(!p_->fresh)return S_FALSE;p_->fresh=false;return S_OK;}
     HRESULT transfer(void*raw,unsigned width,unsigned height)override{ComPtr<ID3D11Texture2D>texture;const auto hr=static_cast<IDXGISurface*>(raw)->QueryInterface(IID_PPV_ARGS(&texture));if(FAILED(hr))return hr;ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);
-        std::vector<std::uint8_t>pixels(std::size_t(width)*height*4,200);context->UpdateSubresource(texture.Get(),0,nullptr,pixels.data(),width*4,0);++p_->frames;return S_OK;}
+        std::vector<std::uint8_t>pixels(std::size_t(width)*height*4);for(std::size_t i=0;i<pixels.size();i+=4)std::copy(playedBGRA.begin(),playedBGRA.end(),pixels.begin()+std::ptrdiff_t(i));
+        context->UpdateSubresource(texture.Get(),0,nullptr,pixels.data(),width*4,0);p_->surface=static_cast<IDXGISurface*>(raw);++p_->frames;return S_OK;}
     void stop()noexcept override{p_->playing=false;p_->stopped=true;}
 };
 void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixture){
@@ -220,7 +233,47 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     check(wakes<=2,"Playback ends on its single end-of-range deadline");
     check(!session.wantsPlayback()&&!session.view().playing&&!owner.stats().videoShown&&!probe->playing,"Trim end stops playback and shows the poster");
     owner.perform("play",now);drain();for(int k=0;k<6;++k)frame();check(probe->playing&&probe->position<duration*.1,"Replaying near the end restarts at the trim start");
+    // Colour edits while playing (source AVVideoComposition): the edit
+    // releases the player and the next one carries the colour filter, which
+    // edits each played frame in place on the renderer's device.
+    check(owner.stats().filteredPlayers==0&&!owner.playbackFrameFilter(),"Geometry-only edits need no played-frame filter");
+    {const auto starts=owner.stats().playbackStarts;
+        check(owner.perform("tools",now)&&owner.perform("adjust",now)&&owner.setAccessibleValue("brightness",.25,now),"Brightness while playing");
+        drain();for(int k=0;k<10;++k){frame();drain();}
+        const auto filter=owner.playbackFrameFilter();
+        check(owner.stats().playbackStarts==starts+1&&probe->playing&&owner.stats().filteredPlayers==1&&filter&&*filter,"The resumed player carries the colour-edit filter");
+        // The CPU original of the source compositor: colour chain only (the
+        // geometry stays in texture coordinates), linear working space.
+        auto colour=session.adjustments();colour.crop={};colour.rotationQuarterTurns=0;colour.mirrored=false;colour.trimStart=0;colour.trimEnd.reset();colour.stickers.clear();
+        const std::vector<std::uint8_t>rgba{playedBGRA[2],playedBGRA[1],playedBGRA[0],playedBGRA[3]};
+        const auto expected=m::MediaAssemblyFrameProcessor(1,1,colour,{},false,{},true).render({1,1,4,rgba,false},m::MediaAssemblyOutputAlpha::straight);
+        const auto close=[&](const std::array<std::uint8_t,4>&bgra){return std::abs(int(bgra[0])-int(expected[2]))<=1&&std::abs(int(bgra[1])-int(expected[1]))<=1&&std::abs(int(bgra[2])-int(expected[0]))<=1&&bgra[3]==expected[3];};
+        check(std::abs(int(expected[0])-int(rgba[0]))>8,"Brightness visibly changes the played colour");
+        {   // The attached filter itself, on a frame-server surface of the renderer.
+            const auto target=r.createMediaTexture("media.assembly.test.played",4,4);
+            ComPtr<ID3D11Texture2D>texture;check(SUCCEEDED(static_cast<IDXGISurface*>(target->targetSurface())->QueryInterface(IID_PPV_ARGS(&texture))),"Media target texture");
+            ComPtr<ID3D11Device>device;texture->GetDevice(&device);ComPtr<ID3D11DeviceContext>context;device->GetImmediateContext(&context);
+            std::vector<std::uint8_t>pixels(4*4*4);for(std::size_t i=0;i<pixels.size();i+=4)std::copy(playedBGRA.begin(),playedBGRA.end(),pixels.begin()+std::ptrdiff_t(i));
+            context->UpdateSubresource(texture.Get(),0,nullptr,pixels.data(),16,0);const auto frames=owner.stats().filteredFrames;(*filter)(target->targetSurface());
+            const auto edited=firstPixel(static_cast<IDXGISurface*>(target->targetSurface()));
+            check(close(edited)&&owner.stats().filteredFrames==frames+1,"The played-frame filter edits a frame in place like the CPU video compositor ("+std::to_string(edited[2])+","+std::to_string(edited[1])+","+std::to_string(edited[0])+" vs "+std::to_string(expected[0])+","+std::to_string(expected[1])+","+std::to_string(expected[2])+")");
+            check(r.removeTexture("media.assembly.test.played"),"Test media target released");}
+        std::cout<<"played-frame filter: hook "<<owner.stats().frameFilterHook<<", broker route "<<owner.stats().frameFilterRoute<<", frames edited in playback "<<owner.stats().filteredFrames-1<<'\n';
+        if(owner.stats().frameFilterRoute){
+            // End to end: frames played through the shared broker arrive edited.
+            check(owner.stats().filteredFrames>1&&probe->surface&&close(firstPixel(probe->surface.Get())),"Frames played through the shared broker carry the colour edits");
+        }
+        check(owner.perform("toolBack",now)&&owner.perform("tools",now)&&!owner.presentation().drawer(),"Leaving the adjust tool and drawer");}
     owner.perform("play",now);for(int k=0;k<4;++k)frame();check(!probe->playing&&!owner.stats().videoShown,"Pause releases the player");
+    check(!owner.playbackFrameFilter(),"A released player keeps no filter");
+    // Source bookmark: a renamed or moved original keeps playing where it now is.
+    {const auto folder=temp.path/L"moved";fs::create_directory(folder);const auto moved=folder/L"renamed movie.mp4";
+        const auto rename=[&](const fs::path&from,const fs::path&to){std::error_code e;for(int k=0;k<100;++k){fs::rename(from,to,e);if(!e)return true;drain();frame();}return false;};
+        check(rename(movie,moved),"The owned movie is renamed into another folder");
+        const auto opened=engines.size();check(owner.perform("play",now),"Play the moved original");drain();for(int k=0;k<6;++k){frame();drain();}
+        check(engines.size()==opened+1&&probe->playing&&!session.error()&&n::mediaAssemblySamePath(probe->path,n::mediaAssemblyUTF8(moved)),"The player opens the moved original where it now is");
+        owner.perform("play",now);for(int k=0;k<4;++k)frame();check(!probe->playing,"Paused again");
+        check(rename(moved,movie),"The owned movie is moved back");fs::remove(folder);}
     // Source makePlaybackItem: a changed or removed original never reaches a player.
     {const auto opened=engines.size();drain();for(int k=0;k<4;++k){frame();drain();}
         // A released poster/preview reader may still hold the owned file for a
@@ -236,6 +289,7 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
         check(owner.perform("play",now),"Play with a removed original");drain();for(int k=0;k<4;++k){frame();drain();}
         check(session.error()==m::MediaAssemblyError::sourceUnavailable&&!session.wantsPlayback()&&engines.size()==opened,"A removed original asks to be chosen again before playback"+state());}
     owner.setOverlayVisible(false,now);frame();composition.detach(r);owner.release(r);released=true;broker.hideVideos(client,now);broker.collectRetired();
+    for(auto&e:engines)e->surface.Reset(); // borrowed frame-server surfaces leave with the renderer
 }
 }
 int wmain(int argc,wchar_t**argv){Apartment apartment;try{frameFilterHook();check(SUCCEEDED(apartment.hr)&&argc==4,"Pass HLSL, resources/media-assembly and the pinned silent movie");Window window;n::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests,true});run(renderer,window.hwnd,fs::absolute(argv[2]));renderer.reset();

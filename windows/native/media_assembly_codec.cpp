@@ -149,22 +149,63 @@ GUID encoderContainer(m::MediaAssemblyImageFormat f){
 }
 }
 
+namespace {
+struct Handle {HANDLE value{INVALID_HANDLE_VALUE};~Handle(){if(value!=INVALID_HANDLE_VALUE)CloseHandle(value);}bool valid()const noexcept{return value!=INVALID_HANDLE_VALUE;}};
+constexpr DWORD shareAll=FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
+// Volume serial and 128-bit file ID of an open object (FILE_ID_INFO; the
+// 64-bit file index zero-extended where a file system lacks it).
+bool objectIdentity(HANDLE h,const BY_HANDLE_FILE_INFORMATION&info,m::MediaAssemblyFileIdentity&id){
+    FILE_ID_INFO full{};
+    if(GetFileInformationByHandleEx(h,FileIdInfo,&full,sizeof full)){id.volume=full.VolumeSerialNumber;std::copy_n(full.FileId.Identifier,16,id.file.begin());return true;}
+    id.volume=info.dwVolumeSerialNumber;id.file={};const std::uint64_t index=(std::uint64_t(info.nFileIndexHigh)<<32)|info.nFileIndexLow;
+    for(int i=0;i<8;++i)id.file[std::size_t(i)]=std::uint8_t(index>>(8*i));return true;
+}
+bool sameObject(HANDLE h,const m::MediaAssemblyFileIdentity&want){
+    BY_HANDLE_FILE_INFORMATION info{};m::MediaAssemblyFileIdentity id;
+    return GetFileInformationByHandle(h,&info)&&!(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_DEVICE))&&objectIdentity(h,info,id)&&id.volume==want.volume&&id.file==want.file;
+}
+}
 std::optional<m::MediaAssemblyFileIdentity>mediaAssemblyFileIdentity(const std::filesystem::path&path){
-    HANDLE file=CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
-    if(file==INVALID_HANDLE_VALUE){const auto e=GetLastError();if(e==ERROR_FILE_NOT_FOUND||e==ERROR_PATH_NOT_FOUND)return {};fail(m::MediaAssemblyError::unavailable);}
-    struct Close {HANDLE h;~Close(){CloseHandle(h);}}close{file};
-    BY_HANDLE_FILE_INFORMATION info{};if(!GetFileInformationByHandle(file,&info))fail(m::MediaAssemblyError::unavailable);
+    Handle file;file.value=CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+    if(!file.valid()){const auto e=GetLastError();if(e==ERROR_FILE_NOT_FOUND||e==ERROR_PATH_NOT_FOUND)return {};fail(m::MediaAssemblyError::unavailable);}
+    BY_HANDLE_FILE_INFORMATION info{};if(!GetFileInformationByHandle(file.value,&info))fail(m::MediaAssemblyError::unavailable);
     if(info.dwFileAttributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DEVICE))fail(m::MediaAssemblyError::unavailable);
-    m::MediaAssemblyFileIdentity id;FILE_ID_INFO full{};
-    if(GetFileInformationByHandleEx(file,FileIdInfo,&full,sizeof full)){id.volume=full.VolumeSerialNumber;std::copy_n(full.FileId.Identifier,16,id.file.begin());}
-    else{id.volume=info.dwVolumeSerialNumber;const std::uint64_t index=(std::uint64_t(info.nFileIndexHigh)<<32)|info.nFileIndexLow;for(int i=0;i<8;++i)id.file[std::size_t(i)]=std::uint8_t(index>>(8*i));}
+    m::MediaAssemblyFileIdentity id;objectIdentity(file.value,info,id);
     id.bytes=(std::uint64_t(info.nFileSizeHigh)<<32)|info.nFileSizeLow;id.modified=std::int64_t((std::uint64_t(info.ftLastWriteTime.dwHighDateTime)<<32)|info.ftLastWriteTime.dwLowDateTime);
     return id;
+}
+std::string mediaAssemblyLocate(const std::string&utf8,const m::MediaAssemblyFileIdentity&identity){
+    const auto path=mediaAssemblyPath(utf8);
+    // 1. The stored path still names the original object (the common case).
+    {Handle at;at.value=CreateFileW(path.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT,nullptr);
+        if(at.valid()&&sameObject(at.value,identity))return utf8;}
+    // 2. Bookmark equivalent: the original object by its file ID. Any handle
+    // on the original volume is the hint: the nearest existing ancestor of
+    // the stored path, verified by its volume serial.
+    std::error_code ignored;auto ancestor=path.parent_path();
+    while(!ancestor.empty()&&!std::filesystem::is_directory(ancestor,ignored)){auto up=ancestor.parent_path();if(up==ancestor)return utf8;ancestor=std::move(up);}
+    if(ancestor.empty())return utf8;
+    Handle hint;hint.value=CreateFileW(ancestor.c_str(),FILE_READ_ATTRIBUTES,shareAll,nullptr,OPEN_EXISTING,FILE_FLAG_BACKUP_SEMANTICS,nullptr);
+    BY_HANDLE_FILE_INFORMATION volume{};m::MediaAssemblyFileIdentity hintID;
+    if(!hint.valid()||!GetFileInformationByHandle(hint.value,&volume)||!objectIdentity(hint.value,volume,hintID)||hintID.volume!=identity.volume)return utf8;
+    FILE_ID_DESCRIPTOR descriptor{};descriptor.dwSize=sizeof descriptor;descriptor.Type=ExtendedFileIdType;
+    std::copy(identity.file.begin(),identity.file.end(),descriptor.ExtendedFileId.Identifier);
+    Handle object;object.value=OpenFileById(hint.value,&descriptor,FILE_READ_ATTRIBUTES,shareAll,nullptr,FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OPEN_REPARSE_POINT);
+    if(!object.valid()||!sameObject(object.value,identity))return utf8;
+    // Its current DOS path ("\\?\C:\..." or "\\?\UNC\server\share\...").
+    std::wstring final(MAX_PATH,L'\0');
+    for(int attempt=0;attempt<2;++attempt){
+        const DWORD n=GetFinalPathNameByHandleW(object.value,final.data(),DWORD(final.size()),FILE_NAME_NORMALIZED|VOLUME_NAME_DOS);
+        if(!n)return utf8;if(n<final.size()){final.resize(n);break;}final.assign(n,L'\0');if(attempt)return utf8;
+    }
+    if(final.starts_with(L"\\\\?\\UNC\\"))final=L"\\\\"+final.substr(8);else if(final.starts_with(L"\\\\?\\"))final.erase(0,4);
+    return mediaAssemblyUTF8(std::filesystem::path(final));
 }
 m::MediaAssemblyFileOperations mediaAssemblyFileOperations(){
     return {[](const std::string&p){return mediaAssemblyFileIdentity(mediaAssemblyPath(p));},
         [](const std::string&from,const std::string&to,bool replace){return MoveFileExW(mediaAssemblyPath(from).c_str(),mediaAssemblyPath(to).c_str(),MOVEFILE_WRITE_THROUGH|(replace?MOVEFILE_REPLACE_EXISTING:0))!=FALSE;},
-        [](const std::string&p){DeleteFileW(mediaAssemblyPath(p).c_str());}};
+        [](const std::string&p){DeleteFileW(mediaAssemblyPath(p).c_str());},
+        [](const std::string&p,const m::MediaAssemblyFileIdentity&id){return mediaAssemblyLocate(p,id);}};
 }
 bool mediaAssemblySamePath(const std::string&a,const std::string&b){
     std::error_code ea,eb;const auto pa=std::filesystem::weakly_canonical(mediaAssemblyPath(a),ea),pb=std::filesystem::weakly_canonical(mediaAssemblyPath(b),eb);
@@ -265,15 +306,18 @@ MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeVideoFrame(const m::MediaAs
 // re-check, cached bounded decode and the filter cube.
 std::pair<std::shared_ptr<const MediaAssemblyBitmap>,std::shared_ptr<const MediaAssemblyCube>>NativeMediaAssemblyEngine::previewInputs(const m::MediaAssemblyDocumentInfo&d,const m::MediaAssemblyAdjustments&a,double time){
     if(!a.valid())fail(m::MediaAssemblyError::invalidAdjustment);Apartment com;
-    // Source NotesMediaFactory.resolve (missing or not a regular file:
-    // NotesMediaError.unavailable), then the identity re-check.
-    std::optional<m::MediaAssemblyFileIdentity>identity;
-    try{identity=mediaAssemblyFileIdentity(mediaAssemblyPath(d.path));}catch(const m::MediaAssemblyFailure&f){if(f.error()==m::MediaAssemblyError::unavailable)fail(m::MediaAssemblyError::sourceUnavailable);throw;}
+    // Source NotesMediaFactory.resolve (the bookmark follows a renamed or
+    // moved original; missing or not a regular file: NotesMediaError.
+    // unavailable), then the identity re-check.
+    std::optional<m::MediaAssemblyFileIdentity>identity;std::string at;
+    try{at=mediaAssemblyLocate(d.path,d.identity);identity=mediaAssemblyFileIdentity(mediaAssemblyPath(at));}
+    catch(const m::MediaAssemblyFailure&f){if(f.error()==m::MediaAssemblyError::unavailable)fail(m::MediaAssemblyError::sourceUnavailable);throw;}
     if(!identity)fail(m::MediaAssemblyError::sourceUnavailable);if(*identity!=d.identity)fail(m::MediaAssemblyError::changedOnDisk);
+    std::optional<m::MediaAssemblyDocumentInfo>moved;if(at!=d.path){moved=d;moved->path=std::move(at);}const auto&source=moved?*moved:d;
     const double sourceTime=d.video?time:0;std::shared_ptr<const MediaAssemblyBitmap>image;std::uint64_t generation{};
     {std::lock_guard g(impl_->lock);generation=impl_->generation;if(impl_->cached&&impl_->cached->id==d.id&&impl_->cached->time==sourceTime){image=impl_->cached->image;++impl_->statistics.previewCacheHits;}}
     if(!image){
-        auto decoded=std::make_shared<MediaAssemblyBitmap>(d.video?decodeVideoFrame(d,time,maximumPreviewDimension):decodeStill(d,maximumPreviewDimension));image=decoded;
+        auto decoded=std::make_shared<MediaAssemblyBitmap>(source.video?decodeVideoFrame(source,time,maximumPreviewDimension):decodeStill(source,maximumPreviewDimension));image=decoded;
         std::lock_guard g(impl_->lock);++impl_->statistics.previewDecodes;if(generation==impl_->generation)impl_->cached=Impl::Cached{d.id,sourceTime,image};
     }
     std::shared_ptr<const MediaAssemblyCube>cube;if(a.filter!=m::MediaAssemblyFilter::none){std::lock_guard g(impl_->lock);cube=impl_->assets.cube(a.filter);}
@@ -336,7 +380,9 @@ std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportR
     {std::lock_guard g(impl_->lock);++impl_->statistics.exports;}
     auto plan=m::mediaAssemblyPrepareExport(r,ops,ticket,mediaAssemblySamePath);
     struct Temporary {const m::MediaAssemblyFileOperations&ops;std::string path;bool armed{true};~Temporary(){if(armed)try{ops.remove(path);}catch(...){}}}temporary{ops,plan.temporary};
-    const auto&d=*r.document;const auto tempPath=mediaAssemblyPath(plan.temporary);
+    // The original is read where the plan located it (renamed or moved).
+    std::optional<m::MediaAssemblyDocumentInfo>moved;if(!plan.source.empty()&&plan.source!=r.document->path){moved=*r.document;moved->path=plan.source;}
+    const auto&d=moved?*moved:*r.document;const auto tempPath=mediaAssemblyPath(plan.temporary);
     std::shared_ptr<const MediaAssemblyCube>cube;if(r.adjustments.filter!=m::MediaAssemblyFilter::none){std::lock_guard g(impl_->lock);cube=impl_->assets.cube(r.adjustments.filter);}
     const auto lookup=cube?cube->rgb8():std::span<const std::uint8_t>{};
     if(!d.video){

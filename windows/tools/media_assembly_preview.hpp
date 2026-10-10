@@ -13,13 +13,17 @@
 #include <functional>
 namespace endfield::tools {
 struct MediaAssemblyShelfAccess {std::string path;std::shared_ptr<void>lease;};
-// Played-frame filter hook of the shared frame server (requested shared
-// change: NotesVideoRequest::frameFilter, a shared_ptr<const
+// Played-frame filter hook of the shared frame server
+// (NotesVideoRequest::frameFilter, a shared_ptr<const
 // std::function<void(void*)>> called on the UI thread with the borrowed
 // straight BGRA8 IDXGISurface* between IMFMediaEngine::TransferVideoFrame and
 // Renderer::commitMediaTexture). Detected at compile time so this owner builds
 // with or without it; true when the filter was attached.
 template<class Request>constexpr bool mediaAssemblyFrameFilterHook=requires(Request&q){q.frameFilter=std::shared_ptr<const std::function<void(void*)>>{};};
+// The shared media broker re-creates each movie request from its scoped
+// catalog entry (core::ScopedMediaRequest); a request's frameFilter reaches
+// the frame server only when that entry carries it (requested shared change).
+template<class Scoped>constexpr bool mediaAssemblyBrokerFilterRoute=requires(Scoped&q){q.frameFilter;};
 template<class Request>bool attachMediaAssemblyFrameFilter(Request&request,std::function<void(void*)>filter){
     if constexpr(mediaAssemblyFrameFilterHook<Request>){request.frameFilter=std::make_shared<const std::function<void(void*)>>(std::move(filter));return true;}
     else{(void)request;(void)filter;return false;}
@@ -53,15 +57,23 @@ struct MediaAssemblyPreviewStats {
     std::uint64_t previewUploads{},menuBuilds{},dialogs{},playbackStarts{},playbackReleases{};std::size_t retainedTextures{};
     // GPU-edited previews and their media-texture (re)allocations.
     std::uint64_t gpuPreviews{},gpuTargets{};bool gpuActive{};
-    std::uint64_t filteredPlayers{}; // players whose frames get colour edits in place
+    std::uint64_t filteredPlayers{}; // player requests carrying the colour-edit filter
+    std::uint64_t filteredFrames{};  // played frames edited in place by that filter
     bool frameFilterHook{};          // the shared frame server offers the hook
+    bool frameFilterRoute{};         // the shared broker carries it to the frame server
     bool videoShown{};
 };
 // GPU: with a Renderer created with the mediaVideo option, bounded previews
 // (stills and paused movie frames) are edited on that same device into one
-// retained media texture (NativeMediaAssemblyGpuProcessor); played frames get
-// colour edits in place once the frame server offers frameFilter. Otherwise,
-// or after a device failure, previews are edited on the utility worker.
+// retained media texture (NativeMediaAssemblyGpuProcessor). Played frames get
+// the colour edits in place on that device through the frame server's
+// frameFilter (source AVVideoComposition, Core Image linear working space);
+// crop, mirror and quarter turns map through texture coordinates. Without
+// compiled processor shaders (or after a device failure) played frames keep
+// the geometry only: a per-frame CPU pass (GPU readback, ~100 ns per pixel,
+// upload) would stall the UI thread for tens of milliseconds per frame.
+// Otherwise, or after a device failure, previews are edited on the utility
+// worker.
 // UI Automation: native::NativeMediaAssemblyAccessibility wraps
 // accessibility()/perform()/setAccessibleValue() as fragments for the host's
 // HUD root provider.
@@ -119,6 +131,9 @@ public:
     native::MediaAssemblySceneStats sceneStats()const noexcept;
     bool sceneClosing()const noexcept;
     MediaAssemblyPreviewStats stats()const noexcept;
+    // The played-frame filter attached to the current player request: null
+    // without a player, for geometry-only edits or without GPU shaders.
+    std::shared_ptr<const std::function<void(void*)>>playbackFrameFilter()const noexcept;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);

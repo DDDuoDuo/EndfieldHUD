@@ -15,6 +15,17 @@ std::string mediaAssemblyUTF8(const std::filesystem::path&);
 // last-write time of a regular file. nullopt when the path does not exist;
 // MediaAssemblyFailure(unavailable) for directories/reparse points/IO errors.
 std::optional<modules::MediaAssemblyFileIdentity>mediaAssemblyFileIdentity(const std::filesystem::path&);
+// Source NotesMediaFactory.resolve (security-scoped bookmark) equivalent:
+// where the original object of `identity` (volume serial + 128-bit file ID)
+// is now. The stored path while it still names that object; otherwise the
+// object reopened by its file ID on the same volume (OpenFileById, verified
+// volume serial; the nearest existing ancestor of the stored path is the
+// volume hint) at its current path (GetFinalPathNameByHandleW), as a Mac
+// bookmark follows a renamed or moved file; otherwise the stored path. No
+// directory search; other volumes, file systems without stable file IDs and
+// shares without file-ID opens cannot match. Size and write time are not
+// compared here: callers re-check the full identity (changedOnDisk).
+std::string mediaAssemblyLocate(const std::string&utf8Path,const modules::MediaAssemblyFileIdentity&identity);
 // MoveFileExW(WRITE_THROUGH[|REPLACE_EXISTING]); exclusive move fails if the
 // target exists (renamex_np RENAME_EXCL equivalent). remove deletes a file.
 modules::MediaAssemblyFileOperations mediaAssemblyFileOperations();

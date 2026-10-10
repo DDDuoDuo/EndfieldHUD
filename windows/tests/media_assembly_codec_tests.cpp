@@ -128,6 +128,23 @@ void stills(const fs::path&root,const fs::path&assets){
         check(failure([&]{engine.preview(*fresh,{},0);})==m::MediaAssemblyError::sourceUnavailable,"A removed original asks to be chosen again before a preview");
         m::MediaAssemblyExportTicket u;check(failure([&]{engine.exportMedia({fresh,{},utf8(root/L"gone-export.png"),false,"t10",false},u);})==m::MediaAssemblyError::sourceUnavailable&&!fs::exists(root/L"gone-export.png")&&temporaries(root)==0,"...and before an export");
         fs::create_directory(gone);check(failure([&]{engine.preview(*fresh,{},0);})==m::MediaAssemblyError::sourceUnavailable,"A directory in its place is not the original");fs::remove(gone);}
+    {// Source bookmark: a renamed or moved original is found again by its file ID.
+        const auto original=root/L"moving.png";fs::copy_file(png,original);auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(original)));doc->id="moving";
+        check(n::mediaAssemblyLocate(utf8(original),doc->identity)==utf8(original),"An unmoved original stays at its stored path");
+        const auto folder=root/L"moved here";fs::create_directory(folder);const auto moved=folder/L"renamed ü.png";fs::rename(original,moved);
+        check(n::mediaAssemblySamePath(n::mediaAssemblyLocate(utf8(original),doc->identity),utf8(moved)),"A renamed and moved original is found again by its file ID");
+        const auto shown=engine.preview(*doc,{},0);check(shown.width==64&&shown.height==48,"Preview reads a moved original where it now is");
+        const auto deferred=engine.previewSource(*doc,{},0);check(deferred.deferred()&&deferred.source->width==64,"Deferred preview reads it there too");
+        {m::MediaAssemblyExportTicket u;const auto out=root/L"from-moved.png";
+            check(engine.exportMedia({doc,{},utf8(out),false,"mv1",false},u)==utf8(out)&&fs::exists(out)&&fs::exists(moved)&&!fs::exists(original)&&temporaries(root)==0,"Export reads a moved original where it now is");}
+        fs::copy_file(jpeg,original);engine.clearCaches();
+        check(n::mediaAssemblySamePath(n::mediaAssemblyLocate(utf8(original),doc->identity),utf8(moved))&&engine.preview(*doc,{},0).width==64,"A different file at the stored path does not replace the original");
+        {m::MediaAssemblyExportTicket u;check(engine.exportMedia({doc,{},utf8(original),true,"mv2",false},u)==utf8(original)&&n::mediaAssemblyFileIdentity(moved)==doc->identity&&temporaries(root)==0,
+            "Overwrite original writes the document's own path and leaves the moved original untouched");}
+        std::ofstream(moved,std::ios::app|std::ios::binary)<<'z';check(failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::changedOnDisk,"A moved original that changed is reported");
+        fs::remove(moved);fs::remove(original);check(failure([&]{engine.preview(*doc,{},0);})==m::MediaAssemblyError::sourceUnavailable&&n::mediaAssemblyLocate(utf8(original),doc->identity)==utf8(original),
+            "A moved original that is gone asks to be chosen again");
+        fs::remove(folder);}
     std::cout<<"HEIC encoding available: "<<(engine.heicEncoder()?"yes":"no")<<'\n';
     {
         // Source CGImageDestinationCopyTypeIdentifiers filtering: HEIC is only

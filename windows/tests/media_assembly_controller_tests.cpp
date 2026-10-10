@@ -81,6 +81,39 @@ void commit(){
     disk.files.erase("C:/m/a.png");check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,ops,t,same);})==m::MediaAssemblyError::sourceUnavailable,"Missing source asks to be chosen again (NotesMediaFactory.resolve)");
 }
 
+// Source NotesMediaFactory.resolve follows a renamed or moved original (the
+// bookmark); the file operations' locate is its Windows equivalent.
+void moved(){
+    Disk disk;disk.files["C:/m/a.png"]=disk.make();auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(m::MediaAssemblyDocumentInfo{"doc",false,{100,80},0});doc->path="C:/m/a.png";doc->container="png";doc->identity=disk.files["C:/m/a.png"];
+    auto same=[](const std::string&a,const std::string&b){return a==b;};auto ops=disk.ops();unsigned located{};
+    ops.locate=[&](const std::string&path,const m::MediaAssemblyFileIdentity&id){
+        ++located;const auto object=[&](const m::MediaAssemblyFileIdentity&f){return f.volume==id.volume&&f.file==id.file;};
+        if(const auto it=disk.files.find(path);it!=disk.files.end()&&object(it->second))return path;
+        for(const auto&[p,f]:disk.files)if(object(f))return p;
+        return path;};
+    m::MediaAssemblyExportRequest r{doc,{},"C:/m/out.png",false,"v1",false};m::MediaAssemblyExportTicket t;
+    auto plan=m::mediaAssemblyPrepareExport(r,ops,t,same);check(plan.source=="C:/m/a.png"&&located==1,"An unmoved original is read at its stored path");
+    // Renamed into another folder: same object, so the export reads it there.
+    disk.files["C:/n/b.png"]=disk.files.at("C:/m/a.png");disk.files.erase("C:/m/a.png");
+    r.temporaryID="v2";plan=m::mediaAssemblyPrepareExport(r,ops,t,same);check(plan.source=="C:/n/b.png"&&!plan.replacesSource,"A moved original is read where it now is");
+    disk.files[plan.temporary]=disk.make();check(m::mediaAssemblyCommitExport(plan,r,ops,t)=="C:/m/out.png"&&disk.files.contains("C:/m/out.png"),"The commit re-checks the moved original where it now is");
+    // A different file at the stored path is not the original.
+    disk.files["C:/m/a.png"]=disk.make();r.destination="C:/m/out2.png";r.temporaryID="v3";plan=m::mediaAssemblyPrepareExport(r,ops,t,same);check(plan.source=="C:/n/b.png","A new file at the stored path does not replace the original");
+    disk.files.erase("C:/m/a.png");
+    // Overwrite original writes the document's own path (source sourceURL).
+    r.destination=doc->path;r.overwrite=true;r.temporaryID="v4";plan=m::mediaAssemblyPrepareExport(r,ops,t,same);
+    check(plan.target=="C:/m/a.png"&&plan.source=="C:/n/b.png"&&plan.replacesSource&&!plan.existing,"Overwrite original targets the document's own path");
+    // Writing over the moved original itself replaces the source as well.
+    r.destination="C:/n/b.png";r.temporaryID="v5";plan=m::mediaAssemblyPrepareExport(r,ops,t,same);check(plan.replacesSource&&plan.existing,"Writing over the moved original replaces the source");
+    doc->container="jpeg";check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,ops,t,same);})==m::MediaAssemblyError::unsupportedExport,"...and keeps its container rule");doc->container="png";
+    // Moved and changed: reported; moved away for good: chosen again.
+    r.destination="C:/m/out3.png";r.overwrite=false;r.temporaryID="v6";disk.files["C:/n/b.png"].bytes+=1;
+    check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,ops,t,same);})==m::MediaAssemblyError::changedOnDisk,"A moved original that changed is reported");
+    disk.files.erase("C:/n/b.png");check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,ops,t,same);})==m::MediaAssemblyError::sourceUnavailable,"A moved original that is gone asks to be chosen again");
+    // Without locate (a portable provider) only the stored path counts.
+    disk.files["C:/n/c.png"]=doc->identity;auto plain=disk.ops();check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,plain,t,same);})==m::MediaAssemblyError::sourceUnavailable,"Without locate a moved original is unavailable");
+}
+
 struct Executor {
     struct Job {std::function<void()>work;std::function<void(std::exception_ptr)>done;};
     std::deque<Job>jobs;std::size_t capacity{32};
@@ -229,6 +262,6 @@ void menus(){
 }
 }
 int main(){
-    try{errors();documents();formats();ticket();commit();controller();deferred();keys();accessibility();menus();std::cout<<"PASS "<<checks<<" Media Assembly controller checks\n";return 0;}
+    try{errors();documents();formats();ticket();commit();moved();controller();deferred();keys();accessibility();menus();std::cout<<"PASS "<<checks<<" Media Assembly controller checks\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

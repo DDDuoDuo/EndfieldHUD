@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <utility>
 
 namespace endfield::modules {
 namespace {
@@ -68,15 +69,16 @@ MediaAssemblyExportPlan mediaAssemblyPrepareExport(const MediaAssemblyExportRequ
     if(!r.document||!r.adjustments.valid()||r.destination.empty())fail(MediaAssemblyError::invalidAdjustment);
     const auto&d=*r.document;
     // Source NotesMediaFactory.resolve before the identity check.
-    std::optional<MediaAssemblyFileIdentity>source;
-    try{source=ops.identity(d.path);}catch(const MediaAssemblyFailure&f){if(f.error()==MediaAssemblyError::unavailable)fail(MediaAssemblyError::sourceUnavailable);throw;}
+    std::optional<MediaAssemblyFileIdentity>source;std::string at=d.path;
+    try{if(ops.locate)at=ops.locate(d.path,d.identity);source=ops.identity(at);}
+    catch(const MediaAssemblyFailure&f){if(f.error()==MediaAssemblyError::unavailable)fail(MediaAssemblyError::sourceUnavailable);throw;}
     if(!source)fail(MediaAssemblyError::sourceUnavailable);
     if(*source!=d.identity)fail(MediaAssemblyError::changedOnDisk);
     MediaAssemblyExportPlan plan;plan.target=r.destination;plan.existing=ops.identity(plan.target);
     if(!r.overwrite&&plan.existing)fail(MediaAssemblyError::exists);
     plan.temporary=mediaAssemblyTemporaryPath(plan.target,r.temporaryID);
     const auto format=mediaAssemblyExportFormat(mediaAssemblyExtension(plan.target),d.video,r.heicEncoder);if(!format)fail(MediaAssemblyError::unsupportedExport);
-    plan.format=*format;plan.replacesSource=same&&same(plan.target,d.path);
+    plan.format=*format;plan.replacesSource=same&&(same(plan.target,d.path)||(at!=d.path&&same(plan.target,at)));plan.source=std::move(at);
     if(!d.video&&plan.replacesSource&&!mediaAssemblyOverwriteCompatible(d.container,format->image))fail(MediaAssemblyError::unsupportedExport);
     return plan;
 }
@@ -84,7 +86,7 @@ std::string mediaAssemblyCommitExport(const MediaAssemblyExportPlan&plan,const M
     struct Cleanup {const MediaAssemblyFileOperations&ops;const std::string&path;~Cleanup(){try{ops.remove(path);}catch(...){}}}cleanup{ops,plan.temporary};
     if(beforeCommit)beforeCommit();
     ticket.commit([&]{
-        const auto source=ops.identity(r.document->path);if(!source||*source!=r.document->identity)fail(MediaAssemblyError::changedOnDisk);
+        const auto source=ops.identity(plan.source.empty()?r.document->path:plan.source);if(!source||*source!=r.document->identity)fail(MediaAssemblyError::changedOnDisk);
         if(ops.identity(plan.target)!=plan.existing)fail(MediaAssemblyError::changedOnDisk);
         if(!ops.move(plan.temporary,plan.target,r.overwrite))fail(MediaAssemblyError::exportFailed);
     });

@@ -10,6 +10,7 @@
 #include <functional>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace endfield::tools {
 namespace {
@@ -69,7 +70,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     std::shared_ptr<const mod::MediaAssemblyBitmap>gpuSource;
     // Played frames: colour edits in place on the same device, configured once
     // per player (any edit releases the player, like the source).
-    std::unique_ptr<gpu::NativeMediaAssemblyGpuProcessor>playbackProcessor;std::uint64_t filteredPlayers{};
+    std::unique_ptr<gpu::NativeMediaAssemblyGpuProcessor>playbackProcessor;std::uint64_t filteredPlayers{},filteredFrames{};
     // Secondary menus (one live, closing ones fade out then retire).
     struct Menu {mod::MediaAssemblyMenuKind kind{};P origin;double opened{},closed{};bool closing{},uploaded{};std::unique_ptr<ControlMenu>control;std::unique_ptr<NotesMenu>notes;std::string documentID;};
     std::unique_ptr<Menu>menu;std::vector<std::unique_ptr<Menu>>closing,dead;std::uint64_t menuSerial{};bool menuPressed{};std::size_t menuFocus{};
@@ -82,11 +83,18 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         std::string texture;unsigned width{},height{};std::array<gpu::Vertex,4>quad{};bool meshDirty{},meshUploaded{},shown{};
         // Position from the shared frame clock, re-anchored on each engine
         // progress report; one end-of-range deadline instead of an observer.
-        bool playing{};double anchorTime{},anchorPosition{};std::optional<double>endDeadline;}video;
+        bool playing{};double anchorTime{},anchorPosition{};std::optional<double>endDeadline;
+        // The colour-edit filter attached to this player's request, and the
+        // frame revision when playback was first seen: the live texture
+        // replaces the edited poster only with a frame played after that (the
+        // frame server's own time-zero poster is never shown unedited).
+        std::shared_ptr<const std::function<void(void*)>>filter;bool playingSeen{};std::uint64_t playingRevision{};}video;
     // Source preparePlayer/makePlaybackItem: every new player first re-resolves
     // the original and re-checks its identity on the utility queue; a passed
     // check is consumed by exactly one player request for that document.
-    struct PlayerCheck {std::uint64_t token{};bool pending{};std::optional<std::string>passed;}playerCheck;
+    // The path is where the original is now (bookmark equivalent: a renamed
+    // or moved original is found again by its file ID on its volume).
+    struct PlayerCheck {std::uint64_t token{};bool pending{};std::optional<std::string>passed;std::string path;}playerCheck;
     std::array<gpu::LayerCompositionEntry,16>composed;std::size_t count{};MediaAssemblyPreviewStats statistics;
     Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&q,std::shared_ptr<mod::MediaAssemblyEngine>e,MediaAssemblyPreviewOptions o):raster(r),executor(q),route(q.makeRoute()),engine(std::move(e)),options(std::move(o)),assets(options.raster.assetRoot),geometry(r),surface(prepare(),core::Module::mediaAssembly){
         need(engine&&bool(options.uuid),"Media Assembly owner requires its engine and identity source");if(options.exportExecutor)exportRoute=options.exportExecutor->makeRoute();closing.reserve(4);dead.reserve(4);retiredTextures.reserve(4);
@@ -131,7 +139,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     }
     void releaseVideo(){
         if(!video.requested)return;if(options.broker)options.broker->hideVideos(options.client,time);
-        video.requested=video.started=video.shown=video.playing=false;video.endDeadline.reset();video.retiring.push_back(std::move(video.key));video.key.clear();++statistics.playbackReleases;
+        video.requested=video.started=video.shown=video.playing=video.playingSeen=false;video.endDeadline.reset();video.filter.reset();video.retiring.push_back(std::move(video.key));video.key.clear();++statistics.playbackReleases;
         if(playbackProcessor)playbackProcessor->releaseTargets();presentPreview();
     }
     // Source preparePlayer/beginPlayback/releasePlayer and the end-of-range
@@ -141,21 +149,23 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         return options.broker&&options.broker->hasVideoPlayback()&&doc&&doc->video&&s.active()&&s.wantsPlayback()&&!s.cropPreview()&&!s.exporting()&&input;
     }
     // A missing original (or one that is no longer a regular file) asks to be
-    // chosen again; a different file at the path is changedOnDisk. On failure
+    // chosen again; a changed original is changedOnDisk. Like the source
+    // bookmark, a renamed or moved original is played where it now is. On failure
     // playback stops (wantsPlayback=false) and the error is shown, as in the
     // source; a full queue retries on the next playback sync.
     void checkPlayer(const std::shared_ptr<const mod::MediaAssemblyDocumentInfo>&doc){
         if(playerCheck.pending)return;
-        const auto token=++playerCheck.token;const std::weak_ptr<Impl>weak=weak_from_this();auto result=std::make_shared<std::optional<mod::MediaAssemblyError>>();
+        const auto token=++playerCheck.token;const std::weak_ptr<Impl>weak=weak_from_this();
+        struct Result {std::optional<mod::MediaAssemblyError>error;std::string path;};auto result=std::make_shared<Result>();
         playerCheck.pending=executor.submit(route,[doc,result]{
-            try{const auto identity=gpu::mediaAssemblyFileIdentity(gpu::mediaAssemblyPath(doc->path));
-                if(!identity)*result=mod::MediaAssemblyError::sourceUnavailable;else if(*identity!=doc->identity)*result=mod::MediaAssemblyError::changedOnDisk;}
-            catch(const mod::MediaAssemblyFailure&f){*result=f.error()==mod::MediaAssemblyError::unavailable?mod::MediaAssemblyError::sourceUnavailable:f.error();}
+            try{result->path=gpu::mediaAssemblyLocate(doc->path,doc->identity);const auto identity=gpu::mediaAssemblyFileIdentity(gpu::mediaAssemblyPath(result->path));
+                if(!identity)result->error=mod::MediaAssemblyError::sourceUnavailable;else if(*identity!=doc->identity)result->error=mod::MediaAssemblyError::changedOnDisk;}
+            catch(const mod::MediaAssemblyFailure&f){result->error=f.error()==mod::MediaAssemblyError::unavailable?mod::MediaAssemblyError::sourceUnavailable:f.error();}
         },[weak,token,doc,result](std::exception_ptr error){
             const auto i=weak.lock();if(!i||!i->alive||token!=i->playerCheck.token)return;i->playerCheck.pending=false;
             const auto&current=i->controller->session().document();if(!current||current->id!=doc->id||!i->playerWanted())return;
-            if(error&&!*result)*result=mod::MediaAssemblyError::unavailable;
-            if(*result){i->controller->togglePlayback(i->time);i->controller->report(**result);}else i->playerCheck.passed=doc->id;
+            if(error&&!result->error)result->error=mod::MediaAssemblyError::unavailable;
+            if(result->error){i->controller->togglePlayback(i->time);i->controller->report(*result->error);}else{i->playerCheck.passed=doc->id;i->playerCheck.path=std::move(result->path);}
             i->syncPlayback();i->changed();
         });
     }
@@ -172,8 +182,8 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         if(!video.requested){
             if(video.previews&&controller->completedPreviews()==video.previews)return;
             if(playerCheck.passed!=doc->id){checkPlayer(doc);return;}
-            playerCheck.passed.reset();
-            video.key="media.assembly.video."+std::to_string(++video.revision);gpu::NotesVideoRequest r{video.key,doc->path,video.revision,1024,doc->duration,{},false};attachFrameFilter(r,s.adjustments());
+            playerCheck.passed.reset();auto path=std::exchange(playerCheck.path,{});if(path.empty())path=doc->path;
+            video.key="media.assembly.video."+std::to_string(++video.revision);gpu::NotesVideoRequest r{video.key,std::move(path),video.revision,1024,doc->duration,{},false};attachFrameFilter(r,s.adjustments());
             options.broker->setVideos(options.client,++video.generation,std::span(&r,1),time);
             video.requested=true;video.started=false;video.document=doc->id;video.adjustments=s.adjustments();video.previews=0;
         }
@@ -187,6 +197,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         }
         if(!video.started)return;
         const bool playing=rec->state==mod::NotesMediaState::playing;
+        if(playing&&!video.playingSeen){video.playingSeen=true;video.playingRevision=rec->frameRevision;}
         // Re-anchor only when the engine actually reports a new position.
         if(playing&&(!video.playing||rec->currentTime!=video.anchorPosition)){video.anchorTime=time;video.anchorPosition=rec->currentTime;}
         video.playing=playing;const double position=playing?video.anchorPosition+(time-video.anchorTime):rec->currentTime;
@@ -202,32 +213,42 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
         // Source periodic observer granularity (0.25 s): no per-frame content
         // rebuild while the engine plays; state changes apply immediately.
         if(playing!=s.view().playing||std::abs(position-s.currentTime())>=.25)controller->playbackSession().playbackChanged(playing,position);
-        video.shown=playing&&!video.texture.empty();
+        video.shown=playing&&!video.texture.empty()&&rec->frameRevision>video.playingRevision;
         if(playing&&video.endDeadline&&time>=*video.endDeadline){
             // forwardPlaybackEndTime: stop at the trim end and show a fresh poster.
             if(rec->wantsPlayback)options.broker->toggleVideo(options.client,video.key,time);controller->playbackSession().playbackEnded();releaseVideo();changed();return;
         }
         presentPreview();
     }
-    // Source AVVideoComposition for played frames. The shared frame server
-    // exposes a per-request filter hook (frameFilter, see the shared-file
-    // request); when present, colour edits run in place between the engine's
-    // transfer and the renderer commit (linear working space, like the
-    // source compositor). Without the hook, geometry still maps through
-    // texture coordinates and paused/exported frames carry every edit.
+    // Source AVVideoComposition for played frames: the colour edits run in
+    // place on the renderer's media device between the engine's transfer and
+    // the renderer commit (Core Image's linear working space, like the source
+    // compositor); geometry maps through texture coordinates. The current
+    // edits are used directly; only a filter cube comes from the deferred
+    // preview of the same filter. Without compiled shaders (never compiled on
+    // the UI thread), a media device or that cube, played frames keep the
+    // geometry only; paused frames and exports always carry every edit.
     template<class Request>void attachFrameFilter(Request&request,const mod::MediaAssemblyAdjustments&current){
-        if(!mediaAssemblyFrameFilterHook<Request>||!processor||!renderer||!shown||!shown->deferred()||*shown->edits!=current)return;
-        // Colour-only identity edits need no pass at all.
-        if(mod::MediaAssemblyColorPipeline(current,shown->lookup,true,false).identity())return;
-        try{
-            if(!playbackProcessor)playbackProcessor=std::make_unique<gpu::NativeMediaAssemblyGpuProcessor>(renderer->mediaDevice());
-            playbackProcessor->configure(current,shown->lookup,true);
-        }catch(const std::exception&){playbackProcessor.reset();return;}
-        const std::weak_ptr<Impl>weak=weak_from_this();
-        if(attachMediaAssemblyFrameFilter(request,[weak](void*surface){
-            const auto i=weak.lock();if(!i||!i->playbackProcessor||!surface)return;
-            try{i->playbackProcessor->processInPlace(static_cast<IDXGISurface*>(surface));}catch(const std::exception&){i->playbackProcessor.reset();}
-        }))++filteredPlayers;
+        if constexpr(mediaAssemblyFrameFilterHook<Request>){
+            if(!renderer||!gpu::mediaAssemblyGpuShadersReady())return;
+            std::span<const std::uint8_t>lookup;
+            if(current.filter!=mod::MediaAssemblyFilter::none){
+                if(!shown||!shown->deferred()||shown->edits->filter!=current.filter||shown->lookup.empty())return;
+                lookup=shown->lookup;
+            }
+            // Colour-only identity edits need no pass at all.
+            if(mod::MediaAssemblyColorPipeline(current,lookup,true,false).identity())return;
+            try{
+                if(!playbackProcessor)playbackProcessor=std::make_unique<gpu::NativeMediaAssemblyGpuProcessor>(renderer->mediaDevice());
+                playbackProcessor->configure(current,lookup,true);
+            }catch(const std::exception&){playbackProcessor.reset();return;}
+            const std::weak_ptr<Impl>weak=weak_from_this();
+            if(attachMediaAssemblyFrameFilter(request,[weak](void*surface){
+                const auto i=weak.lock();if(!i||!i->alive||!i->playbackProcessor||!surface)return;
+                // A device failure leaves the remaining frames geometry-only.
+                try{i->playbackProcessor->processInPlace(static_cast<IDXGISurface*>(surface));++i->filteredFrames;}catch(const std::exception&){i->playbackProcessor.reset();}
+            })){++filteredPlayers;video.filter=request.frameFilter;}
+        }else{(void)request;(void)current;}
     }
     // ---- menus ----
     void retire(std::unique_ptr<Menu>m,bool animated){if(!m)return;if(animated&&!options.reduceMotion&&m->uploaded){m->closing=true;m->closed=time;closing.push_back(std::move(m));}else dead.push_back(std::move(m));}
@@ -490,7 +511,8 @@ const mod::MediaAssemblyPresentation&MediaAssemblyPreview::presentation()const n
 gpu::MediaAssemblySceneStats MediaAssemblyPreview::sceneStats()const noexcept{return impl_->scene->stats();}
 bool MediaAssemblyPreview::sceneClosing()const noexcept{return impl_->scene->closingMedia();}
 MediaAssemblyPreviewStats MediaAssemblyPreview::stats()const noexcept{auto s=impl_->statistics;s.videoShown=impl_->video.shown;s.gpuActive=impl_->processor!=nullptr;
-    s.filteredPlayers=impl_->filteredPlayers;s.frameFilterHook=mediaAssemblyFrameFilterHook<gpu::NotesVideoRequest>;s.retainedTextures=impl_->retiredTextures.size()+(impl_->texture.empty()?0:1);return s;}
+    s.filteredPlayers=impl_->filteredPlayers;s.filteredFrames=impl_->filteredFrames;s.frameFilterHook=mediaAssemblyFrameFilterHook<gpu::NotesVideoRequest>;s.frameFilterRoute=mediaAssemblyBrokerFilterRoute<core::ScopedMediaRequest>;s.retainedTextures=impl_->retiredTextures.size()+(impl_->texture.empty()?0:1);return s;}
+std::shared_ptr<const std::function<void(void*)>>MediaAssemblyPreview::playbackFrameFilter()const noexcept{return impl_->video.filter;}
 namespace {constexpr std::array<std::uint32_t,6>videoIndices{0,1,2,0,2,3};}
 void MediaAssemblyPreview::upload(gpu::Renderer&r){
     auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Media Assembly resources belong to another renderer");i.renderer=&r;

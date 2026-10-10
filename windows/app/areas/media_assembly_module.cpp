@@ -11,6 +11,7 @@
 #include "tools/media_assembly_preview.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <deque>
 #include <filesystem>
@@ -81,6 +82,83 @@ void writeSyntheticPNG(const fs::path& path, unsigned w, unsigned h, unsigned se
     ok(frame->Commit(), "PNG frame commit"); ok(encoder->Commit(), "PNG commit"); ok(stream->Commit(STGC_DEFAULT), "PNG stream commit");
 }
 
+// Hidden coverage only: stands in for the owner's group under the HUD
+// window's UI Automation root (app/hud_automation.cpp). The host passes that
+// group to automationRefresh() as the fragments' parent and fragment root and
+// routes hit tests and first/last child navigation to the owner hooks; this
+// stand-in does the same, so coverage drives exactly the hooks the root calls.
+class CoverageAutomationGroup final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IRawElementProviderFragmentRoot {
+public:
+    explicit CoverageAutomationGroup(const app::ModuleOwner& owner) : owner_(owner) {}
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderSimple)) *out = static_cast<IRawElementProviderSimple*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragment)) *out = static_cast<IRawElementProviderFragment*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragmentRoot)) *out = static_cast<IRawElementProviderFragmentRoot*>(this);
+        else return E_NOINTERFACE;
+        AddRef(); return S_OK;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    IFACEMETHODIMP_(ULONG) Release() override { const ULONG n = --refs_; if (!n) delete this; return n; }
+    IFACEMETHODIMP get_ProviderOptions(ProviderOptions* out) override {
+        if (!out) return E_POINTER;
+        *out = ProviderOptions(ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading); return S_OK;
+    }
+    IFACEMETHODIMP GetPatternProvider(PATTERNID, IUnknown** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP GetPropertyValue(PROPERTYID, VARIANT* out) override { if (!out) return E_POINTER; VariantInit(out); return S_OK; }
+    IFACEMETHODIMP get_HostRawElementProvider(IRawElementProviderSimple** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP Navigate(NavigateDirection direction, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        const auto n = owner_.automationCount();
+        if (!n || (direction != NavigateDirection_FirstChild && direction != NavigateDirection_LastChild)) return S_OK;
+        const long hr = owner_.automationChild(direction == NavigateDirection_FirstChild ? 0 : n - 1, out);
+        if (hr < 0 && *out) { (*out)->Release(); *out = nullptr; }
+        return S_OK;
+    }
+    IFACEMETHODIMP GetRuntimeId(SAFEARRAY** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        int ids[2]{UiaAppendRuntimeId, 0x4d410001};
+        SAFEARRAY* a = SafeArrayCreateVector(VT_I4, 0, 2);
+        if (!a) return E_OUTOFMEMORY;
+        for (LONG i = 0; i < 2; ++i) if (FAILED(SafeArrayPutElement(a, &i, &ids[i]))) { SafeArrayDestroy(a); return E_FAIL; }
+        *out = a; return S_OK;
+    }
+    IFACEMETHODIMP get_BoundingRectangle(UiaRect* out) override { if (!out) return E_POINTER; *out = {}; return S_OK; }
+    IFACEMETHODIMP GetEmbeddedFragmentRoots(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP SetFocus() override { return S_OK; }
+    IFACEMETHODIMP get_FragmentRoot(IRawElementProviderFragmentRoot** out) override {
+        if (!out) return E_POINTER;
+        *out = this; AddRef(); return S_OK;
+    }
+    IFACEMETHODIMP ElementProviderFromPoint(double x, double y, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        const long hr = owner_.automationFromPoint(x, y, out);
+        if (hr < 0 && *out) { (*out)->Release(); *out = nullptr; }
+        return hr < 0 ? HRESULT(hr) : S_OK;
+    }
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+private:
+    ~CoverageAutomationGroup() = default;
+    const app::ModuleOwner& owner_;
+    std::atomic<ULONG> refs_{1};
+};
+// COM identity: both pointers answer the same IUnknown.
+bool sameObject(IUnknown* a, IUnknown* b) {
+    if (!a || !b) return false;
+    ComPtr<IUnknown> x, y;
+    return SUCCEEDED(a->QueryInterface(IID_PPV_ARGS(&x))) && SUCCEEDED(b->QueryInterface(IID_PPV_ARGS(&y))) && x.Get() == y.Get();
+}
+std::wstring automationText(IRawElementProviderFragment* fragment, PROPERTYID id) {
+    ComPtr<IRawElementProviderSimple> simple; VARIANT v; VariantInit(&v); std::wstring out;
+    if (fragment && SUCCEEDED(fragment->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPropertyValue(id, &v)) && v.vt == VT_BSTR && v.bstrVal)
+        out.assign(v.bstrVal, SysStringLen(v.bstrVal));
+    VariantClear(&v); return out;
+}
+
 class MediaAssemblyModule final : public app::ModuleOwner {
 public:
     MediaAssemblyModule(const app::ApplicationModuleContext& c, fs::path assets)
@@ -145,6 +223,8 @@ public:
         } catch (...) { detachClient(); throw; }
     }
     ~MediaAssemblyModule() override {
+        // UI Automation fragments call into the owner: disconnect them first.
+        automation_.reset();
         // The owner hides its player and cancels an explicit export first;
         // then this area's broker channels are retired and the client detached.
         preview_.reset();
@@ -208,29 +288,56 @@ public:
         return false;
     }
     // Source HUDMediaAssemblyInteraction.importFiles (first file; ignored while
-    // exporting). Signature-compatible with a host drop route for module
-    // areas (requested): it binds as soon as ModuleOwner declares it.
-    bool drop(std::span<const std::string> paths, core::Point, double t) { return preview_->importFiles(paths, t); }
+    // exporting): the host's one OLE drop target offers drops on the HUD here
+    // while Media Assembly is the selected module.
+    bool drop(std::span<const std::string> paths, core::Point, double t) override { return preview_->importFiles(paths, t); }
+
+    // UI Automation (ModuleOwner hooks; source HUDMediaAssemblyInteraction.
+    // layoutAccessibility): the projected AX buttons and sliders are fragments
+    // under this owner's group of the HUD window's root provider. Created on
+    // the first refresh (a UIA client asked the HUD); refreshed on the host's
+    // content events, never per frame. Unpresented or hidden: no fragments.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        // The group is stable for the registration; a different one replaces
+        // (and disconnects) the fragments parented to the old group.
+        if (automation_ && automationRoot_ != root) automation_.reset();
+        if (!automation_) {
+            automation_ = std::make_unique<gpu::NativeMediaAssemblyAccessibility>(accessibilityHost(root));
+            automationRoot_ = root;
+        }
+        return automation_->refresh();
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
 
     // The host's UI Automation view of this owner (native/media_assembly_
     // accessibility.hpp): the source AX elements already projected into
     // logical client points, Invoke = perform, RangeValue = the accessible
-    // slider route, rectangles in physical screen pixels. The HUD window's UIA
-    // root provider (host) lists the fragments NativeMediaAssemblyAccessibility
-    // creates from it.
+    // slider route, rectangles in physical screen pixels.
     gpu::MediaAssemblyAccessibilityHost accessibilityHost(IRawElementProviderFragmentRoot* root) {
         gpu::MediaAssemblyAccessibilityHost h;
         h.root = root;
         h.elements = [this] { return preview_->accessibility(); };
-        h.invoke = [this](std::string_view id) { return preview_->perform(id, host_.now()); };
-        h.setValue = [this](std::string_view id, double value) { return preview_->setAccessibleValue(id, value, host_.now()); };
-        h.toScreen = [this](core::Rect r) {
-            POINT origin{};
-            (void)ClientToScreen(window_, &origin);
-            const double scale = host_.metrics().scale;
-            return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
-        };
+        h.invoke = [this](std::string_view id) { const bool done = preview_->perform(id, host_.now()); if (done) automationActed(); return done; };
+        h.setValue = [this](std::string_view id, double value) { const bool done = preview_->setAccessibleValue(id, value, host_.now()); if (done) automationActed(); return done; };
+        h.toScreen = [this](core::Rect r) { return toScreen(r); };
         return h;
+    }
+    // Logical client rectangle -> physical screen pixels (DPI scale, then
+    // the HUD window's client origin).
+    core::Rect toScreen(core::Rect r) const {
+        POINT origin{};
+        (void)ClientToScreen(window_, &origin);
+        const double scale = host_.metrics().scale;
+        return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
     }
 
     void coverage(app::ModuleCoverage& step) override {
@@ -255,7 +362,19 @@ private:
     std::vector<gpu::MediaAssemblyDialogRequest> dialogs_;
     std::weak_ptr<int> shelfLease_;
     unsigned coveredCycles_{};
+    IRawElementProviderFragmentRoot* automationRoot_{}; // the host's group (AddRef'd by automation_)
+    std::unique_ptr<gpu::NativeMediaAssemblyAccessibility> automation_;
     std::unique_ptr<tools::MediaAssemblyPreview> preview_; // destroyed first (declared last)
+
+    // A UIA Invoke/SetValue is a content event the host does not route (no
+    // owner input call): the fragments follow the new layout at once and the
+    // group raises StructureChanged, as the host's own refresh does.
+    void automationActed() {
+        if (!automation_ || !automation_->refresh() || !automationRoot_ || !UiaClientsAreListening()) return;
+        ComPtr<IRawElementProviderSimple> group;
+        if (SUCCEEDED(automationRoot_->QueryInterface(IID_PPV_ARGS(&group))))
+            (void)UiaRaiseStructureChangedEvent(group.Get(), StructureChangeType_ChildrenInvalidated, nullptr, 0);
+    }
 
     void detachClient() noexcept {
         if (!broker_ || !client_) return;
@@ -373,33 +492,60 @@ private:
         run.present();
         // Inline adjustment through the accessible slider route.
         step.check(owner.perform("adjust", run.t) && owner.presentation().tool() == mod::MediaAssemblyTool::adjust, "Adjust opens its inline parameters");
-        {   // UI Automation over the real owner (fragments on the hidden HUD
-            // window; rooted by the host's UIA root provider when it exists).
-            gpu::NativeMediaAssemblyAccessibility automation(accessibilityHost(nullptr));
+        {   // UI Automation through the ModuleOwner hooks the HUD window's root
+            // provider calls, under a stand-in for this owner's group.
+            ComPtr<CoverageAutomationGroup> group; group.Attach(new CoverageAutomationGroup(*this));
+            IRawElementProviderFragmentRoot* root = group.Get();
             const auto ax = owner.accessibility(); const auto close = core::localized("Close", "关闭", host_.appearance().language);
-            step.check(automation.refresh() && automation.size() == ax.size() && !ax.empty(), "One UIA fragment per projected source control");
-            const auto property = [](IRawElementProviderFragment* fragment, PROPERTYID id) {
-                Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple; VARIANT v; VariantInit(&v); std::wstring out;
-                if (SUCCEEDED(fragment->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPropertyValue(id, &v)) && v.vt == VT_BSTR) out.assign(v.bstrVal, SysStringLen(v.bstrVal));
-                VariantClear(&v); return out;
-            };
+            const auto ascii = [](std::string_view s) { return std::wstring(s.begin(), s.end()); };
+            step.check(automationRefresh(root) && automationCount() == ax.size() && !ax.empty(), "One UIA fragment per projected source control under the owner's group");
+            step.check(!automationRefresh(root) && automationCount() == ax.size(), "An unchanged layout refreshes without a structure change");
+            {   ComPtr<IRawElementProviderFragment> first, last, parent; ComPtr<IRawElementProviderFragmentRoot> fragmentRoot;
+                step.check(SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &first)) && first && SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &last)) && last &&
+                           automationText(first.Get(), UIA_AutomationIdPropertyId) == ascii(ax.front().id) && automationText(last.Get(), UIA_AutomationIdPropertyId) == ascii(ax.back().id),
+                           "The group's first and last children are the first and last projected controls");
+                step.check(SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) && sameObject(parent.Get(), root) &&
+                           SUCCEEDED(first->get_FragmentRoot(&fragmentRoot)) && sameObject(fragmentRoot.Get(), root),
+                           "Fragments report the owner's group as parent and fragment root"); }
             const auto closeAt = std::find_if(ax.begin(), ax.end(), [](const auto& e) { return e.id == "closeMedia"; });
             step.check(closeAt != ax.end() && closeAt->name == close && closeAt->rect.width > 0 && closeAt->rect.height > 0, "The x is projected into client coordinates as Close");
-            const auto screen = accessibilityHost(nullptr).toScreen(closeAt->rect);
+            const auto screen = toScreen(closeAt->rect);
             ComPtr<IRawElementProviderFragment> closeElement; UiaRect bounds{};
-            step.check(SUCCEEDED(automation.fromPoint(screen.x + screen.width / 2, screen.y + screen.height / 2, &closeElement)) && closeElement &&
-                       property(closeElement.Get(), UIA_AutomationIdPropertyId) == L"closeMedia" && SUCCEEDED(closeElement->get_BoundingRectangle(&bounds)) &&
+            step.check(SUCCEEDED(group->ElementProviderFromPoint(screen.x + screen.width / 2, screen.y + screen.height / 2, &closeElement)) && closeElement &&
+                       automationText(closeElement.Get(), UIA_AutomationIdPropertyId) == L"closeMedia" && SUCCEEDED(closeElement->get_BoundingRectangle(&bounds)) &&
                        bounds.left == screen.x && bounds.top == screen.y && bounds.width == screen.width && bounds.height == screen.height,
-                       "UIA hit testing finds Close at its projected screen rectangle");
+                       "UIA hit testing through the group finds Close at its projected screen rectangle");
+            const auto element = [&](std::wstring_view id) {
+                ComPtr<IRawElementProviderFragment> found;
+                for (std::size_t n = 0; n < automationCount() && !found; ++n) {
+                    ComPtr<IRawElementProviderFragment> fragment;
+                    if (automationChild(n, &fragment) >= 0 && fragment && automationText(fragment.Get(), UIA_AutomationIdPropertyId) == id) found = fragment;
+                }
+                return found;
+            };
             // The first inline parameter row (Brightness) is visible; rows
             // scrolled out of the inline rectangle are not listed (source AX).
             ComPtr<IRangeValueProvider> brightness;
-            for (std::size_t n = 0; n < automation.size() && !brightness; ++n) {
-                ComPtr<IRawElementProviderFragment> fragment;
-                if (SUCCEEDED(automation.child(n, &fragment)) && property(fragment.Get(), UIA_AutomationIdPropertyId) == L"brightness") (void)fragment.As(&brightness);
-            }
+            if (const auto fragment = element(L"brightness")) (void)fragment.As(&brightness);
             step.check(brightness && SUCCEEDED(brightness->SetValue(.25)) && std::abs(session.adjustments().brightness - .25) < 1e-9, "UIA RangeValue sets Brightness through the accessible slider route");
-            automation.disconnect();
+            // Invoke routes like a click; the fragments follow the new layout
+            // at once (a UIA action is no host input event).
+            ComPtr<IInvokeProvider> back;
+            if (const auto fragment = element(L"toolBack")) (void)fragment.As(&back);
+            step.check(back && SUCCEEDED(back->Invoke()) && !owner.presentation().tool() && automationCount() == owner.accessibility().size() &&
+                       !element(L"brightness") && element(L"adjust"), "UIA Invoke leaves the tool and the fragments follow the tools drawer");
+            step.check(!automationRefresh(root), "The acted-on layout is already current for the host's next refresh");
+            ComPtr<IInvokeProvider> adjust;
+            if (const auto fragment = element(L"adjust")) (void)fragment.As(&adjust);
+            step.check(adjust && SUCCEEDED(adjust->Invoke()) && owner.presentation().tool() == mod::MediaAssemblyTool::adjust && element(L"brightness"), "UIA Invoke opens Adjust again");
+            // Concealing disconnects every fragment; a held one is gone.
+            automationDisconnect();
+            ComPtr<IRawElementProviderSimple> held; VARIANT stale; VariantInit(&stale);
+            step.check(automationCount() == 0 && SUCCEEDED(closeElement.As(&held)) && held->GetPropertyValue(UIA_NamePropertyId, &stale) == UIA_E_ELEMENTNOTAVAILABLE,
+                       "Disconnect removes every fragment and a held one is no longer available");
+            VariantClear(&stale);
+            step.check(automationRefresh(root) && automationCount() == owner.accessibility().size(), "The next refresh connects the current fragments again");
+            automationDisconnect();
         }
         run.settle();
         step.check(run.key(VK_ESCAPE) && !owner.presentation().tool(), "Escape leaves the active tool first");
@@ -514,6 +660,19 @@ private:
         step.check(events_.imported == coveredCycles_ * (movieFixture_.empty() ? 3u : 4u) && events_.exported == 2 * coveredCycles_ &&
                    events_.edited >= coveredCycles_, "Event Log actions follow the source rules");
         step.check(answers_.empty() && owner.stats().playbackStarts == 0, "Every injected dialog answer was consumed; no player started");
+        // Production looks these up by exact type (coverage keeps its synthetic
+        // Shelf provider): a type drift would silently empty "Choose from Shelf".
+        step.check(host_.find<app::UtilityExecutor>(longWorkKey) && host_.find<ShelfChoices>(shelfChoicesKey) && host_.find<ShelfOpen>(shelfOpenKey),
+                   "The host publishes the long-work executor and the Shelf services with the exact types the area looks up");
+        step.check(owner.stats().frameFilterHook, "The shared frame server offers the played-frame filter hook");
+        {   // The host's refresh after the module step: the fragments follow the
+            // owner (none while Media Assembly is not the accepting module).
+            ComPtr<CoverageAutomationGroup> group; group.Attach(new CoverageAutomationGroup(*this));
+            (void)automationRefresh(group.Get());
+            step.check(automationCount() == owner.accessibility().size(), "UIA fragments follow the parked owner");
+            automationDisconnect();
+            step.check(automationCount() == 0, "Disconnected UIA fragments leave the owner's group empty");
+        }
     }
 };
 }

@@ -64,6 +64,12 @@ struct MediaAssemblyFileOperations {
     // replace=false must fail if the target exists (RENAME_EXCL equivalent).
     std::function<bool(const std::string&from,const std::string&to,bool replace)>move;
     std::function<void(const std::string&)>remove;
+    // Optional bookmark equivalent (source NotesMediaFactory.resolve): where
+    // the original object (volume + file ID of the identity) is now. The
+    // stored path while it still names that object; otherwise the object's
+    // current path when found again (renamed or moved on its volume); the
+    // stored path when it is not found. Absent: always the stored path.
+    std::function<std::string(const std::string&path,const MediaAssemblyFileIdentity&)>locate;
 };
 struct MediaAssemblyExportRequest {
     std::shared_ptr<const MediaAssemblyDocumentInfo>document;MediaAssemblyAdjustments adjustments;
@@ -72,10 +78,13 @@ struct MediaAssemblyExportRequest {
 struct MediaAssemblyExportPlan {
     std::string target,temporary;std::optional<MediaAssemblyFileIdentity>existing;MediaAssemblyExportFormat format;
     bool replacesSource{};
+    std::string source; // where the original is read and re-checked (ops.locate)
 };
-// Source Engine.export preparation: cancellation, valid edits, unchanged
-// source identity, destination identity captured, overwrite/exists rule,
-// format support and same-container overwrite of the original. Throws.
+// Source Engine.export preparation: cancellation, valid edits, the original
+// resolved (ops.locate) with an unchanged identity, destination identity
+// captured, overwrite/exists rule, format support and same-container
+// overwrite of the original. "Overwrite original" targets the document's own
+// path (source document.sourceURL), even when the original moved. Throws.
 MediaAssemblyExportPlan mediaAssemblyPrepareExport(const MediaAssemblyExportRequest&,const MediaAssemblyFileOperations&,
     const MediaAssemblyExportTicket&,const std::function<bool(const std::string&,const std::string&)>&samePath);
 // Source finish(): under ticket.commit, re-check source and destination
