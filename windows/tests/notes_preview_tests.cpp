@@ -19,6 +19,7 @@
 #include <new>
 #include <stdexcept>
 #include <string_view>
+#include <wrl/client.h>
 
 namespace { std::atomic<bool> counting{}; std::atomic<std::size_t> allocations{}; }
 void* operator new(std::size_t n) {
@@ -811,6 +812,37 @@ void deletionKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControl
     f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.key(app::KeyKind::down,VK_DELETE),"Another module keeps Delete for its own fields");
     f.release();
 }
+// Stands in for the system clipboard: every copy and paste crosses the real
+// data-object codec, and the system clipboard is never opened.
+struct SyntheticClipboard final:gpu::NotesClipboard{
+    Microsoft::WRL::ComPtr<IDataObject> data;std::vector<std::string> files;unsigned textReads{},fileReads{},writes{};
+    std::optional<gpu::NotesClipboardText> readText(std::uint32_t maximum)override{++textReads;return data?gpu::readNotesClipboardData(*data.Get(),maximum):std::nullopt;}
+    std::vector<std::string> readFiles()override{++fileReads;return files;}
+    bool writeText(const gpu::NotesClipboardText&v)override{++writes;data=gpu::makeNotesClipboardData(v);return true;}
+};
+std::u16string wide(std::string_view s){std::u16string out(static_cast<std::size_t>(MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),nullptr,0)),u'\0');MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),reinterpret_cast<wchar_t*>(out.data()),static_cast<int>(out.size()));return out;}
+void clipboardKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();const auto text=wide(original.text);
+    auto clipboard=std::make_shared<SyntheticClipboard>();f.preview->setClipboard(clipboard);const tools::NotesKeyModifiers control{true,false,false,false},shift{false,true,false,false};
+    // Source Command-V with Notes selected and no field: media files only.
+    check(!f.key(app::KeyKind::down,'V',control)&&clipboard->fileReads==1&&clipboard->textReads==0,"With no field open, Ctrl+V looks only for pasted media files");
+    clipboard->files={"relative-not-a-windows-path.png"};check(!f.key(app::KeyKind::down,'V',control)&&f.preview->mediaError().has_value(),"Pasted files reach the media import, which rejects an invalid path visibly");clipboard->files.clear();
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Open the sample note");
+    check(f.key(app::KeyKind::down,'C',control)&&clipboard->writes==0,"Ctrl+C with a collapsed caret is consumed and copies nothing");
+    check(f.key(app::KeyKind::down,'A',control)&&f.key(app::KeyKind::down,'C',control)&&clipboard->writes==1,"Ctrl+A then Ctrl+C copies the note");
+    const auto copied=clipboard->readText(gpu::notesClipboardMaximumUnits);check(copied&&copied->text==text&&!copied->rich,"The copy is the whole note; an unformatted note copies text alone");
+    check(f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::character,0x16),"Ctrl+V pastes at the end; its control character inserts nothing");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Finish the pasting session");f.tick(.2);check(wide(savedNotes(f.root.path).front().text)==text+text,"The pasted copy is saved");
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_HOME),"Reopen at the document start");
+    for(int n=0;n<3;++n)f.key(app::KeyKind::down,VK_RIGHT,shift);
+    check(f.key(app::KeyKind::down,'X',control)&&clipboard->writes==2,"Ctrl+X writes the selection");const auto cut=clipboard->readText(gpu::notesClipboardMaximumUnits);check(cut&&cut->text==text.substr(0,3),"The cut text is the selected three units");
+    check(f.key(app::KeyKind::down,VK_ESCAPE),"Finish the cutting session");f.tick(.2);check(wide(savedNotes(f.root.path).front().text)==(text+text).substr(3),"Cut removes the selection from the saved note");
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_HOME)&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::down,VK_ESCAPE),"Paste the cut text back at the start");f.tick(.2);
+    check(wide(savedNotes(f.root.path).front().text)==text+text,"The cut text pastes back exactly");
+    f.preview->setClipboard(nullptr);check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,'V',control)&&f.key(app::KeyKind::down,VK_ESCAPE),"Without a clipboard the keys are consumed and inert");f.tick(.2);
+    check(wide(savedNotes(f.root.path).front().text)==text+text&&clipboard->writes==2,"Nothing changed without a clipboard");
+    f.release();
+}
 void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
     gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Preference event begins a real isolated Notes draft");
@@ -884,6 +916,7 @@ int wmain(int argc, wchar_t** argv) {
         editingRecovery(window.hwnd,renderer,assets);
         preferencesPreview(window.hwnd,renderer,assets);
         deletionKeys(window.hwnd,renderer,assets);
+        clipboardKeys(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

@@ -9,6 +9,7 @@ namespace endfield::notes {
 namespace {
 namespace gpu=native;namespace mod=modules;namespace data=ehud::data;
 void require(bool value,const char* why){if(!value)throw std::runtime_error(std::string("Notes coverage area: ")+why);}
+std::string utf8(std::u16string_view s){if(s.empty())return {};const auto n=WideCharToMultiByte(CP_UTF8,0,reinterpret_cast<const wchar_t*>(s.data()),static_cast<int>(s.size()),nullptr,0,nullptr,nullptr);std::string out(static_cast<std::size_t>(n),'\0');WideCharToMultiByte(CP_UTF8,0,reinterpret_cast<const wchar_t*>(s.data()),static_cast<int>(s.size()),out.data(),n,nullptr,nullptr);return out;}
 // A deterministic long multilingual note: many short and long paragraphs.
 std::string longText(){
     std::string out;out.reserve(160000);
@@ -28,12 +29,13 @@ public:
         const auto rasterBefore=raster_.stats().entries;const auto text=longText();
         const std::string longID="0000000C-0000-4000-8000-000000000001",shortID="0000000C-0000-4000-8000-000000000002";
         std::optional<std::string> savedLong,savedShort;
+        std::u16string paste;for(unsigned n=0;n<60;++n)paste+=u"粘贴的段落 pasted paragraph\n";
         {
             mod::NotesState state({{.id=longID,.kind=data::NoteKind::text,.text=text,.x=60,.y=60,.width=300,.height=240,.createdAt=1},{.id=shortID,.kind=data::NoteKind::text,.text="short",.x=420,.y=60,.width=240,.height=145,.createdAt=2}},
                 {[&](const data::Note& n){(n.id==longID?savedLong:savedShort)=n.text;},[](std::string_view){throw std::runtime_error("Coverage never deletes");}});
             state.setWorkspaceBounds({0,0,1280,800});
             gpu::NativeNotesWorkspaceStyle style;style.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};
-            gpu::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.ownerMessage=message_;
+            gpu::NativeNotesWorkspaceOptions options;options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;options.ownerMessage=message_;options.maximumEditorUnits=1024;
             if(manager_&&client_!=TF_CLIENTID_NULL){options.activatedTextManager=manager_;options.textClient=client_;}
             gpu::NativeNotesWorkspace workspace(window_,state,raster_,style,options);
             gpu::NativeNotesWorkspacePose pose;pose.screenToClip=gpu::layerViewportProjection(1280,800);pose.pixelWidth=1280;pose.pixelHeight=800;pose.time=step.time;workspace.updatePose(pose);
@@ -44,9 +46,13 @@ public:
                 step.check(editor->stats().chunkLayouts-before<=2,"A keystroke lays out only its own chunk");}
             const auto finished=workspace.finishEditing();
             step.check(finished.finished&&finished.saved&&state.note(longID)->text==text+"末尾 tail","The chunked field commits the complete edited note");
-            step.check(workspace.beginEditing(shortID)&&!workspace.editor()->chunked()&&workspace.finishEditing().finished,"A short note keeps the single-layout editor");
+            // An Edit-menu paste (workspace draft edit; no system clipboard) that
+            // grows a short note past its single layout reopens it chunked.
+            step.check(workspace.beginEditing(shortID)&&!workspace.editor()->chunked(),"A short note opens in the single-layout editor");
+            step.check(workspace.pasteIntoEditor({paste,std::nullopt}).changed&&workspace.editor()->chunked()&&workspace.stats().promotedFields==1,"A long paste reopens the short draft in the chunked editor");
+            workspace.syncEditor();workspace.updatePose(pose);step.check(workspace.finishEditing().saved,"The pasted note saves");
         }
-        step.check(savedLong==text+"末尾 tail"&&(!savedShort||*savedShort=="short"),"The edited note persists its complete text; the unchanged one keeps its own");
+        step.check(savedLong==text+"末尾 tail"&&savedShort=="short"+utf8(paste),"Both edited notes persist their complete text");
         step.check(raster_.stats().entries==rasterBefore,"Released Notes artwork leaves the shared raster cache as it was");
         step.check(IsWindow(window_)&&!IsWindowVisible(window_),"The HUD window stays hidden");
         ++cycles_;

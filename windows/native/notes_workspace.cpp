@@ -74,7 +74,7 @@ struct NativeNotesWorkspace::Impl {
     struct Field {
         std::string id;std::optional<std::string>itemID;double initialScrollOffset{};
         std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*history{};core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeNotesEditor> native;
-        std::uint64_t initialDocumentRevision{};
+        std::uint64_t initialDocumentRevision{};bool focused{};
         UINT_PTR generation{}; // scene/document outlive the adapter on destruction
         Field(std::string name,std::u16string value,std::optional<core::notes::RichText> formatting,std::uint32_t capacity,LayerRasterizer&r,std::optional<std::string>row={})
             :id(std::move(name)),itemID(std::move(row)),ownedDocument(std::make_unique<core::notes::RichDocument>(std::move(value),std::move(formatting),capacity)),document(*ownedDocument),history(static_cast<core::notes::RichDocument*>(ownedDocument.get())),rich(itemID?nullptr:history),scene(r){initialDocumentRevision=document.revision();}
@@ -298,20 +298,26 @@ struct NativeNotesWorkspace::Impl {
         }
         pose=p;lastTime=p.time;mediaTime=std::max(mediaTime,p.time);projection=nextProjection;return changed;
     }
-    std::unique_ptr<Field>prepareField(const Note&n,core::Rect r,std::optional<std::string>itemID={},const mod::NotesChecklistEdit*itemEdit=nullptr){
+    // A text note's current draft reopened in the chunked editor (promotion).
+    struct Draft {std::u16string value;std::optional<core::notes::RichText>rich;text::Selection selection;core::notes::TextStyle typing;double scrollOffset{};};
+    std::unique_ptr<Field>prepareField(const Note&n,core::Rect r,std::optional<std::string>itemID={},const mod::NotesChecklistEdit*itemEdit=nullptr,std::optional<Draft>draft={}){
         textRecord(n);geometry(r,true);need(retiredFields.size()<options.maximumRetainedCards,"Retire detached Notes editors before opening another field");need(generation!=std::numeric_limits<UINT_PTR>::max(),"Notes editor generation exhausted");
         std::shared_ptr<const NativeNotesTextMeasurement>measured;std::u16string value;std::optional<core::notes::RichText>rich;
         double width=r.width-18,height=std::max(1.,r.height-58),fontSize=12,offset=find(n.id)?find(n.id)->scrollOffset:0;
         if(itemID){need(itemEdit&&n.kind==ehud::data::NoteKind::todo,"Checklist edit requires measured source viewport");const auto child=std::find_if(n.items.begin(),n.items.end(),[&](const auto&v){return v.id==*itemID;});need(child!=n.items.end(),"Missing checklist editor row");
             value=utf16(child->text,options.maximumEditorUnits);auto*slot=find(n.id);need(slot&&slot->rowMeasurements.contains(*itemID),"Checklist editor has no retained measurement");measured=slot->rowMeasurements.at(*itemID).text;
             width=itemEdit->localRect.width;height=itemEdit->localRect.height;fontSize=11;offset=itemEdit->editorScrollOffset;
-        }else{need(n.kind==ehud::data::NoteKind::text,"Checklist must choose an item editor");value=utf16(n.text,options.maximumDocumentUnits);measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);rich=mod::decodeNotesRichText(n.text,n.richText);}
+        }else{need(n.kind==ehud::data::NoteKind::text,"Checklist must choose an item editor");measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);
+            if(draft){value=std::move(draft->value);rich=std::move(draft->rich);offset=draft->scrollOffset;}else{value=utf16(n.text,options.maximumDocumentUnits);rich=mod::decodeNotesRichText(n.text,n.richText);}}
         // Long text notes use the paragraph-chunked editor: an edit lays out only
         // its own chunk. Checklist rows and short notes keep the single layout.
-        const bool chunked=!itemID&&value.size()>options.chunkedEditorUnits;if(!chunked&&value.size()>options.maximumEditorUnits)throw NativeNotesEditorCapacityError{};
+        const bool chunked=!itemID&&(draft||value.size()>options.chunkedEditorUnits);if(!chunked&&value.size()>options.maximumEditorUnits)throw NativeNotesEditorCapacityError{};
         const auto capacity=chunked?options.maximumDocumentUnits:options.maximumEditorUnits;
         auto next=std::make_unique<Field>(n.id,std::move(value),std::move(rich),capacity,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
-        const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});
+        // A promoted draft always commits its own text and runs.
+        if(draft){next->initialScrollOffset=find(n.id)?find(n.id)->scrollOffset:0;next->initialDocumentRevision=0;next->document.setSelection(draft->selection);
+            if(draft->selection.range.start==draft->selection.range.end)next->history->restoreTypingStyle(draft->typing);}
+        else{const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});}
         ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
         if(chunked){try{next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeNotesLongEditor>(hwnd,*next->rich,next->scene,raster,std::move(e),options.raster,options.ownerMessage,next->generation,ProjectedEditorTextMode::rich,options.longEditor));}
             catch(const NativeNotesLongParagraphError&){throw NativeNotesEditorCapacityError{};}}
@@ -337,6 +343,20 @@ struct NativeNotesWorkspace::Impl {
         if(itemID)if(auto*s=find(noteID);s&&s->checklist){const auto rows=s->checklist->rows();const auto row=std::find_if(rows.begin(),rows.end(),[&](const auto&v){return v.itemID==*itemID;});if(row!=rows.end()){const auto next=s->checklist->finishEditingOffset(static_cast<std::size_t>(row-rows.begin()),s->scrollOffset,initial,offset);if(next!=s->scrollOffset){s->scrollOffset=next;auto input=presentationInput(*s);s->presentation.updateContent(state,input);s->native->syncContent();++stats.cardContentUpdates;++compositionRevision;if(pose)applyPose(*pose);}}}return {true,saved};
     }
     void finishRequired(){need(finish(true).finished,"Notes editor is held by TSF; retry this owner action after its queued notification");}
+    // A paste that grows a short text note past the single-layout field
+    // reopens its unsaved draft in the chunked editor first (text, runs,
+    // selection, scroll and focus kept; nothing is saved). The undo history
+    // restarts with that paste. False keeps the current field unchanged.
+    bool promoteField(std::size_t resultingUnits){
+        auto&f=*field;if(f.itemID||!f.rich||f.native->chunked()||resultingUnits<=options.maximumEditorUnits||resultingUnits>options.maximumDocumentUnits||f.document.composition())return false;
+        const auto*n=state.note(f.id);const auto card=state.card(f.id);if(!n||!card)return false;
+        Draft draft{std::u16string(f.document.text()),f.rich->richText(),f.document.selection(),f.rich->typingStyle(),f.native->scrollOffset()};
+        std::unique_ptr<Field>next;try{next=prepareField(*n,card->rect,std::nullopt,nullptr,std::move(draft));}catch(const NativeNotesEditorCapacityError&){return false;}
+        if(FAILED(f.native->stop()))return false;const bool focused=f.focused;if(focused)(void)f.native->focus(false);
+        generation=next->generation;retiredFields.push_back(std::move(field));field=std::move(next);
+        if(focused&&SUCCEEDED(field->native->focus(true)))field->focused=true;
+        ++stats.promotedFields;++compositionRevision;rebuildEntries();if(pose)applyPose(*pose);return true;
+    }
 };
 
 NativeNotesWorkspace::NativeNotesWorkspace(HWND h,mod::NotesState&s,LayerRasterizer&r,NativeNotesWorkspaceStyle st,NativeNotesWorkspaceOptions o):impl_(std::make_unique<Impl>(h,s,r,std::move(st),std::move(o))){impl_->sync();}
@@ -497,7 +517,12 @@ const text::Document*NativeNotesWorkspace::editorDocument()const noexcept{return
 std::optional<std::string_view>NativeNotesWorkspace::editingNoteID()const noexcept{return impl_->field?std::optional<std::string_view>(impl_->field->id):std::nullopt;}
 UINT_PTR NativeNotesWorkspace::editorGeneration()const noexcept{return impl_->field?impl_->field->generation:0;}
 unsigned NativeNotesWorkspace::takeEditorChanges(UINT_PTR generation){auto&i=*impl_;i.check();if(!i.field||i.field->generation!=generation)return 0;const auto flags=i.field->native->takeChanges(generation);if(flags)syncEditor();return flags;}
-HRESULT NativeNotesWorkspace::focusEditor(bool focus)noexcept{if(GetCurrentThreadId()!=impl_->thread)return RPC_E_WRONG_THREAD;return impl_->field?impl_->field->native->focus(focus):S_FALSE;}
+HRESULT NativeNotesWorkspace::focusEditor(bool focus)noexcept{if(GetCurrentThreadId()!=impl_->thread)return RPC_E_WRONG_THREAD;if(!impl_->field)return S_FALSE;const auto hr=impl_->field->native->focus(focus);if(SUCCEEDED(hr))impl_->field->focused=focus;return hr;}
+std::optional<NotesClipboardText>NativeNotesWorkspace::copyEditorSelection()const{const auto&i=*impl_;if(!i.field)return std::nullopt;return notesClipboardSelection(i.field->document,i.field->rich&&i.field->native->richLayoutEnabled());}
+ProjectedEditorResult NativeNotesWorkspace::deleteEditorSelection(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};return notesClipboardDeleteSelection(*i.field->native,i.field->document);}
+ProjectedEditorResult NativeNotesWorkspace::pasteIntoEditor(const NotesClipboardText&value){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return {};
+    const auto range=i.field->document.selection().range;const auto resulting=i.field->document.text().size()-(range.end-range.start)+value.text.size();i.promoteField(resulting);
+    return notesClipboardPaste(*i.field->native,i.field->document,value,i.field->rich!=nullptr);}
 bool NativeNotesWorkspace::beginGesture(std::string_view id,core::Point start,mod::NotesState::Gesture kind){auto&i=*impl_;i.check();if(!i.state.visible(id)||!std::isfinite(start.x)||!std::isfinite(start.y))return false;i.finishRequired();const auto c=*i.state.card(id);
     Impl::Drag next{std::string(id),c.rect,start,kind};const bool changed=i.state.beginGesture(id,start,kind);if(changed)i.drag=std::move(next);i.sync();return changed;}
 bool NativeNotesWorkspace::dragTo(core::Point p){auto&i=*impl_;i.check();if(!i.drag||!std::isfinite(p.x)||!std::isfinite(p.y))return false;

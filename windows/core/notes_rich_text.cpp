@@ -116,6 +116,8 @@ Json encodeRichText(const RichText&rich,std::u16string_view value){
     for(const auto&r:rich.runs){Json run{r.extra};run["location"]=static_cast<std::int64_t>(r.location);run["length"]=static_cast<std::int64_t>(r.length);run["style"]=encodeStyle(r.style);runs.push_back(std::move(run));}j["runs"]=std::move(runs);return j;
 }
 
+RichText richTextSlice(std::span<const TextRun>runs,text::Range range){need(range.start<=range.end,"Invalid Notes rich-text slice");RichText rich;rich.runs=clipped(runs,range);return rich;}
+
 struct RichDocument::Impl {
     struct Delta {std::uint32_t start{},beforeLength{},afterLength{};bool textEdit{};std::u16string beforeText,afterText;std::vector<TextRun>beforeRuns,afterRuns;};
     struct Group {std::vector<Delta>changes;text::Selection before,after;TextStyle beforeTyping,afterTyping;std::size_t bytes{};};
@@ -126,6 +128,7 @@ struct RichDocument::Impl {
     HistoryBudget budget;Groups undo,redo,pending,composing;std::size_t historyBytes{};
     std::optional<text::Selection>inputSelection;std::optional<TextStyle>inputTyping;
     std::optional<Snapshot>preparedSnapshot,snapshot;std::optional<text::Range>composition;
+    struct Insertion {std::vector<TextRun>runs;std::uint32_t length{};};std::optional<Insertion>insertion;
     Impl(std::u16string textValue,std::optional<RichText>rich,std::uint32_t limit,HistoryBudget b):value(std::move(textValue)),initiallyRich(rich.has_value()),maximum(limit),budget(b){
         need(limit>0&&limit<=static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())&&value.size()<=limit&&text::Buffer::validUTF16(value),"Invalid explicit rich-document text capacity/UTF-16");
         need(b.maximumGroups>0&&b.maximumBytes>0,"Undo budget must retain at least the current group");
@@ -186,10 +189,12 @@ text::Change RichDocument::replace(text::Range range,std::u16string_view replace
     auto&i=*impl_;i.writable();need(validRange(i.value,range)&&boundary(i.value,range.start)&&boundary(i.value,range.end)&&text::Buffer::validUTF16(replacement),"Invalid rich-document UTF-16 replacement");
     need(replacement.size()<=i.maximum-(i.value.size()-(range.end-range.start)),"Replacement exceeds explicit rich-document capacity; input is not truncated");
     const auto count=static_cast<std::uint32_t>(replacement.size());const auto newEnd=range.start+count;text::Change change{range.start,range.end,newEnd};
-    std::vector<TextRun>inserted;if(count)append(inserted,{0,count,i.typing,{}});
+    // A pending rich paste styles exactly its own replacement; any replace consumes it.
+    auto pasted=std::move(i.insertion);i.insertion.reset();const bool styledPaste=pasted&&pasted->length==count&&count;
+    std::vector<TextRun>inserted;if(styledPaste)inserted=std::move(pasted->runs);else if(count)append(inserted,{0,count,i.typing,{}});
     auto nextRuns=replaced(i.styled,range,count,inserted);const text::Selection nextSelection{{newEnd,newEnd},text::ActiveEnd::end,false};
     if(std::u16string_view(i.value).substr(range.start,range.end-range.start)==replacement&&nextRuns==i.styled){i.selection=nextSelection;return change;}
-    auto nextTyping=i.typing;Impl::Delta delta{range.start,range.end-range.start,count,true,std::u16string(i.value.data()+range.start,range.end-range.start),std::u16string(replacement),clipped(i.styled,range),inserted};
+    auto nextTyping=styledPaste?at(inserted,count-1):i.typing;Impl::Delta delta{range.start,range.end-range.start,count,true,std::u16string(i.value.data()+range.start,range.end-range.start),std::u16string(replacement),clipped(i.styled,range),inserted};
     if(i.inputSelection&&!i.composition&&!i.preparedSnapshot)i.preparedSnapshot=i.copySnapshot();
     Impl::Groups local;auto&existing=i.composition?i.composing:i.pending;
     std::optional<TextStyle>previousTyping;std::optional<text::Selection>previousSelection;std::size_t previousBytes{};
@@ -234,6 +239,13 @@ bool RichDocument::applyFormat(const FormatChange&change){
     auto nextTyping=changed(i.typing,change,enable);Impl::Delta delta{range.start,range.end-range.start,range.end-range.start,false,{},{},clipped(i.styled,range),inserted};Impl::Groups local;i.record(std::move(delta),local,i.selection,nextTyping);
     i.styled=std::move(nextRuns);i.typing=std::move(nextTyping);++i.revision;i.commit(local);return true;
 }
+void RichDocument::setInsertionRuns(std::vector<TextRun>runs,std::uint32_t length){
+    need(runs.size()<=RichText::maximumRuns,"Pasted Notes formatting exceeds the source run limit");std::uint64_t previous{};
+    for(const auto&r:runs){need(r.location>=previous&&r.length>0&&r.location<=length&&r.length<=length-r.location&&r.style.valid(),"Pasted Notes formatting does not match its text");previous=std::uint64_t(r.location)+r.length;}
+    std::vector<TextRun>next;next.reserve(runs.size());for(auto&r:runs)append(next,std::move(r));impl_->insertion=Impl::Insertion{std::move(next),length};
+}
+void RichDocument::clearInsertionRuns()noexcept{impl_->insertion.reset();}
+void RichDocument::restoreTypingStyle(TextStyle style){auto&i=*impl_;i.hostEdit();need(style.valid()&&i.selection.range.start==i.selection.range.end,"A restored typing style needs a valid style and a collapsed selection");i.typing=std::move(style);}
 bool RichDocument::canUndo()const noexcept{return !impl_->readonly&&!impl_->inputSelection&&!impl_->composition&&!impl_->undo.empty();}
 bool RichDocument::canRedo()const noexcept{return !impl_->readonly&&!impl_->inputSelection&&!impl_->composition&&!impl_->redo.empty();}
 bool RichDocument::undo(){return impl_->history(true);}bool RichDocument::redo(){return impl_->history(false);}

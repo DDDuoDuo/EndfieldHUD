@@ -3,6 +3,7 @@
 #include "native/notes_text_measure.hpp"
 #include "native/projected_editor.hpp"
 #include "native/notes_long_editor.hpp"
+#include "native/notes_clipboard.hpp"
 #include "native/notes_image_playback.hpp"
 #include "native/notes_video_playback.hpp"
 #include "native/media_request_broker.hpp"
@@ -73,6 +74,7 @@ struct NativeNotesWorkspaceStats {
     std::size_t cards{},visibleCards{},retiredCards{},retiredEditors{};
     std::uint64_t stateSynchronizations{},cardContentUpdates{},cardPlacementUpdates{},poseCardVisits{},editorContentUpdates{};
     std::size_t deletingCards{};
+    std::uint64_t promotedFields{}; // short drafts reopened in the chunked editor by a paste
 };
 using NativeNotesCardToken=std::uint64_t;
 struct NativeNotesCardMotion {
@@ -195,6 +197,13 @@ public:
     UINT_PTR editorGeneration()const noexcept;
     unsigned takeEditorChanges(UINT_PTR generation);
     HRESULT focusEditor(bool)noexcept;
+    // Source Edit menu Cut/Copy/Paste on the open field; the owner reads and
+    // writes the clipboard, these only edit the unsaved draft (one undo group
+    // each). A paste that grows a short text note past maximumEditorUnits
+    // first reopens the draft in the chunked editor (see promotedFields).
+    std::optional<NotesClipboardText> copyEditorSelection()const;
+    ProjectedEditorResult deleteEditorSelection();
+    ProjectedEditorResult pasteIntoEditor(const NotesClipboardText&);
     bool beginGesture(std::string_view,core::Point,modules::NotesState::Gesture);
     bool dragTo(core::Point); // movement retains content; resize is an explicit content event
     bool endGesture();

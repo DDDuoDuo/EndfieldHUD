@@ -60,6 +60,10 @@ public:
     // after each accepted mutation; the root records Event Log noteAction with
     // the name only. Empty by default. UI thread; must not reenter this owner.
     void setActionSink(std::function<void(std::string_view action)>);
+    // Edit-menu clipboard (Ctrl+X/C/V in a field, Ctrl+V media files with no
+    // field open). Defaults to the system clipboard, touched only on those
+    // keys; tests inject a synthetic one. Null disables clipboard keys.
+    void setClipboard(std::shared_ptr<native::NotesClipboard>);
     bool showMediaError(std::string,double time); // existing source status row; no dialog/throw-close
     void select(core::Module,double time);
     core::Module selected()const noexcept;

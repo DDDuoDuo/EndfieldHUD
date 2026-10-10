@@ -74,6 +74,8 @@ struct NotesPreview::Impl {
     // and the note an in-flight import replaces (one file, same media family).
     std::optional<std::string>relinkNote,relinkTarget;
     std::function<void(std::string_view)>actionSink;
+    // Read once per paste key and written once per cut/copy key; no listener.
+    std::shared_ptr<gpu::NotesClipboard>clipboard{gpu::systemNotesClipboard()};
     app::ClientMetrics metrics;Matrix workspaceWorld,confirmWorld;core::Projection controlsProjection,confirmationProjection,workspaceProjection;
     std::vector<Track>tracks;std::vector<gpu::LayerCompositionEntry>composed;
     std::array<double,4>toolbarStarted{-1,-1,-1,-1};
@@ -302,6 +304,7 @@ bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*
 bool NotesPreview::refreshSharedMedia(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);need(i.sharedMedia.broker!=nullptr,"Notes shared refresh requires the app media broker");return i.mediaCompletion(event.time);}
 const std::optional<std::string>&NotesPreview::mediaError()const noexcept{return impl_->mediaError;}
 void NotesPreview::setActionSink(std::function<void(std::string_view)>sink){impl_->actionSink=std::move(sink);}
+void NotesPreview::setClipboard(std::shared_ptr<native::NotesClipboard>clipboard){impl_->clipboard=std::move(clipboard);}
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
 void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
@@ -371,7 +374,18 @@ bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModi
         const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
         if(keys.control||keys.shift||keys.alt||keys.system)return false;const auto selected=i.state->selection();if(!selected||!i.state->visible(*selected))return false;
         if(i.workspace->requestDeletion(*selected))i.confirmationStarted=event.time;return true;}
+    // Source HUDNotesInteraction.keyDown: Command-V with Notes selected and no
+    // field open imports pasted media files at canvas point (110,75).
+    if(!editor&&i.moduleInput&&i.moduleVisible&&i.modules.requested()==core::Module::notes&&e.kind==app::KeyKind::down&&e.value=='V'&&i.clipboard&&i.state->notesSelected()){
+        const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
+        if(!keys.control||keys.shift||keys.alt||keys.system)return false;const auto paths=i.clipboard->readFiles();return !paths.empty()&&i.beginImport(paths,{110,75});}
     if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
+    // Source Edit menu Cut/Copy/Paste (AppDelegate) on the open field.
+    if(e.kind==app::KeyKind::down&&keys.control&&!keys.shift&&!keys.alt&&!keys.system&&(e.value=='X'||e.value=='C'||e.value=='V')){
+        if(!i.clipboard||i.workspace->editorDocument()->composition())return true;
+        if(e.value=='V'){if(const auto text=i.clipboard->readText(gpu::notesClipboardMaximumUnits))result=i.workspace->pasteIntoEditor(*text);}
+        else if(const auto copied=i.workspace->copyEditorSelection();copied&&i.clipboard->writeText(*copied)&&e.value=='X')result=i.workspace->deleteEditorSelection();
+        if(result.changed)i.editSync();return true;}
     // Original TODO fields finish on unconsumed Return; imported/pasted line
     // breaks still remain valid data. TSF receives keys before this owner.
     if((e.kind==app::KeyKind::down&&e.value==VK_RETURN&&(i.workspace->editingItemID()||(keys.control&&!keys.shift&&!keys.alt&&!keys.system)))||(i.workspace->editingItemID()&&(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&(e.value=='\r'||e.value=='\n'))){

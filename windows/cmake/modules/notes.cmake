@@ -9,6 +9,10 @@ if(WIN32)
   # Paragraph-chunked long-document editor for Notes text fields: typing cost
   # follows the edited chunk, not the document length (native/notes_long_editor).
   target_sources(hud_native PRIVATE native/notes_long_editor.cpp)
+  # Edit-menu clipboard for Notes/Archive fields (native/notes_clipboard):
+  # keypress-only reads/writes, CF_HDROP media paste through the Shelf codec.
+  target_sources(hud_native PRIVATE native/notes_clipboard.cpp)
+  target_link_libraries(hud_native PRIVATE hud_shelf_transfer shell32)
 
   if(BUILD_TESTING)
     # Geometry, pixel and behaviour parity with the single-layout editor, TSF
@@ -25,6 +29,13 @@ if(WIN32)
     target_link_libraries(notes_media_relink_tests PRIVATE hud_native)
     add_test(NAME notes_media_relink_contracts COMMAND notes_media_relink_tests)
     list(APPEND EHUD_NOTES_TARGETS notes_media_relink_tests)
+    # Clipboard codecs, rich paste runs, cut/copy/paste and short-to-chunked
+    # promotion through a real workspace; synthetic data objects only.
+    add_executable(notes_clipboard_tests tests/notes_clipboard_tests.cpp)
+    target_compile_definitions(notes_clipboard_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(notes_clipboard_tests PRIVATE hud_native)
+    add_test(NAME notes_clipboard_contracts COMMAND notes_clipboard_tests)
+    list(APPEND EHUD_NOTES_TARGETS notes_clipboard_tests)
 
     # The Notes owner suites that need the Mac-exported Notes controls bundle
     # (app.cmake's runtime inputs). They build in CMakeLists.txt; registering

@@ -23,6 +23,14 @@ namespace gpu=endfield::native;namespace mod=endfield::modules;namespace app=end
 unsigned checks{};void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
 struct Temporary {std::filesystem::path root=std::filesystem::canonical(std::filesystem::temp_directory_path())/("EndfieldHUD-Archive-Owner-"+data::makeUUID());Temporary(){check(!std::filesystem::exists(root),"New explicit fixture directory");std::filesystem::create_directory(root);}~Temporary(){std::error_code error;std::filesystem::remove_all(root,error);}};
 struct Window {HWND hwnd{};Window(){hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP,L"STATIC",L"Owned hidden Archive owner fixture",WS_OVERLAPPED,0,0,1280,800,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Owned no-redirection hidden fixture HWND");}~Window(){if(hwnd)DestroyWindow(hwnd);}};
+// Stands in for the system clipboard through the real data-object codec;
+// the system clipboard is never opened.
+struct SyntheticClipboard final:gpu::NotesClipboard{
+ Microsoft::WRL::ComPtr<IDataObject> data;unsigned writes{};
+ std::optional<gpu::NotesClipboardText> readText(std::uint32_t maximum)override{return data?gpu::readNotesClipboardData(*data.Get(),maximum):std::nullopt;}
+ std::vector<std::string> readFiles()override{return {};}
+ bool writeText(const gpu::NotesClipboardText&v)override{++writes;data=gpu::makeNotesClipboardData(v);return true;}
+};
 mod::ArchiveExecutor immediate(){return {[](auto work,auto done){std::exception_ptr error;try{work();}catch(...){error=std::current_exception();}done(error);return true;}};}
 void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std::filesystem::path&assetRoot){
  const auto bytes=data::detail::readFile(fixturePath,2*1024*1024);check(bytes.has_value(),"Original compact Archive fixture exists");const auto fixture=J::parse(*bytes,2*1024*1024);Window window;Temporary temporary;gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;const auto rules=gpu::nativeArchiveTextRules();auto repository=std::make_shared<mod::ArchiveSQLiteRepository>(temporary.root/"Archive",rules);mod::ArchiveState state(repository,immediate(),rules);
@@ -59,6 +67,24 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(state.selected()->body.size()==body.size()+6&&state.selected()->body.find("末尾")!=std::string::npos,"Typing in a long body keeps every other byte of the document");
   check(preview.finishEditing(time),"Long body editing finishes");paint();check(state.deleteSelected(),"Remove the long-body document again");state.flush();paint();
   check(!repository->entry(longID)&&state.entries().size()==1,"The long-body fixture leaves only the original document");state.select(documentID);paint();}
+ // Source Edit menu Cut/Copy/Paste in the Archive fields.
+ {auto clipboard=std::make_shared<SyntheticClipboard>();preview.setClipboard(clipboard);const tools::ArchiveKeyModifiers control{true,false,false},none{};
+  const auto title=state.selected()->title;const auto runs=state.selected()->titleRichText?state.selected()->titleRichText->runs.size():0;
+  click(42,62);check(preview.activeField()==std::optional<std::string>("title"),"Title field for the clipboard");
+  check(preview.key({app::KeyKind::down,'A'},time,control)&&preview.key({app::KeyKind::down,'C'},time,control)&&clipboard->writes==1,"Ctrl+A then Ctrl+C copies the rich title");
+  const auto copied=clipboard->readText(gpu::notesClipboardMaximumUnits);check(copied&&mod::archiveUTF8(copied->text)==title&&copied->rich&&copied->rich->runs.size()==runs,"The copy carries the title text and runs");
+  check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::down,'V'},time,control),"Ctrl+V pastes at the title end");paint();
+  check(state.selected()->title==title+title&&state.selected()->titleRichText&&state.selected()->titleRichText->runs.size()==runs*2,"The pasted title repeats its formatting");
+  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->title==title,"One undo removes the paste");paint();
+  // A paste that grows a short body past its single layout reopens it chunked.
+  click(42,125);check(preview.activeField()==std::optional<std::string>("body"),"Body field for the clipboard");const auto body=state.selected()->body;
+  std::string paste;for(unsigned n=0;n<120;++n)paste+=std::string(600,static_cast<char>('a'+n%26))+"\n";clipboard->writeText({mod::archiveUTF16(paste),std::nullopt});
+  check(preview.key({app::KeyKind::down,VK_END},time,none)&&preview.key({app::KeyKind::down,'V'},time,control)&&preview.activeField()==std::optional<std::string>("body"),"A long paste keeps the body field focused");paint();
+  check(state.selected()->body==body+paste&&paste.size()>65536,"The long paste reaches the body beyond the single-layout limit");
+  check(preview.key({app::KeyKind::down,'Z'},time,control)&&state.selected()->body==body,"Undo after the promotion removes the paste");paint();
+  check(preview.key({app::KeyKind::down,'A'},time,control)&&preview.key({app::KeyKind::down,'X'},time,control)&&state.selected()->body.empty()&&clipboard->writes==3,"Ctrl+X cuts the selected body");
+  check(preview.key({app::KeyKind::down,'V'},time,control)&&state.selected()->body==body,"The cut body pastes back");check(preview.finishEditing(time),"Clipboard editing finishes");paint();
+  preview.setClipboard(nullptr);}
  click(370,17);check(state.selected().has_value(),"Delete first opens source confirmation without mutating storage");click(254,210);check(!state.selected()&&state.entries().empty()&&!repository->entry(documentID),"Confirmed source deletion removes document from explicit temporary SQLite");
  settings.module=core::Module::power;modules.select(core::Module::power,time+=1);preview.update({},settings,modules.sample(time+.05).presentation,1,time+.05);check(!state.active()&&!preview.key({app::KeyKind::character,'X'},time+.05),"Module transition immediately disables editor/input while retaining outgoing artwork");preview.upload(renderer);composition.setEntries(renderer,preview.entries());composition.present(renderer);preview.update({},settings,modules.sample(time+1).presentation,1,time+1);check(preview.entries().empty()&&!preview.requiresFrames(time+1),"Completed section departure has no Archive frame demand");composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.detach(renderer);preview.release(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0&&renderer.stats().nativeGroups==0&&!IsWindowVisible(window.hwnd),"Archive fixture tears down borrowed composition resources and never activates real TSF or UI");renderer.reset();
 }

@@ -3,6 +3,7 @@
 #include "native/archive_scene.hpp"
 #include "native/projected_editor.hpp"
 #include "native/notes_long_editor.hpp"
+#include "native/notes_clipboard.hpp"
 #include "modules/notes_controls.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -46,6 +47,8 @@ struct ArchivePreviewOptions {
 // only limit is one paragraph per painted leaf. Nothing is ever truncated.
 // Source rich title/date single-line inset + natural one-point spacing remains
 // an explicit shared-editor layout gap. Body uses the actual natural +1 seam.
+// Modifier state for one key event; absent means the thread's key state.
+struct ArchiveKeyModifiers {bool control{},shift{},system{};};
 class ArchivePreview final {
 public:
     ArchivePreview(modules::ArchiveState&,HWND,native::LayerRasterizer&,
@@ -60,7 +63,7 @@ public:
     bool requiresFrames(double)const;std::optional<double>nextWakeTime()const noexcept;
     bool deadline(double);void queueCapacityAvailable();
     bool covers(core::Point logical)const;bool pointer(const app::PointerEvent&,double);
-    bool wheel(const app::WheelEvent&,double);bool key(const app::KeyEvent&,double);
+    bool wheel(const app::WheelEvent&,double);bool key(const app::KeyEvent&,double,std::optional<ArchiveKeyModifiers> =std::nullopt);
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
     void focus(bool,double);void cancelInteraction(double);bool pointerLocked()const noexcept;
     // false means marked text or a TSF transaction must finish first. No routine
@@ -89,6 +92,10 @@ public:
     void collected(native::Renderer&);void release(native::Renderer&);
     const modules::ArchiveState&state()const noexcept;
     std::optional<std::string>activeField()const;
+    // Edit-menu Cut/Copy/Paste (Ctrl+X/C/V) in the focused field. Defaults to
+    // the system clipboard, touched only on those keys; tests inject a
+    // synthetic one. Null disables the keys.
+    void setClipboard(std::shared_ptr<native::NotesClipboard>);
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

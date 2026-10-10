@@ -40,6 +40,10 @@ struct RichText {
 // substitution, attachment import or JSON/file I/O is hidden here.
 RichText decodeRichText(const Json&,std::u16string_view);
 Json encodeRichText(const RichText&,std::u16string_view);
+// Runs of the UTF-16 [range) of a document, relative to range.start and
+// sparse like the source model (omitted ranges use TextStyle()). A clipboard
+// copy of a rich selection; valid for that selection's text.
+RichText richTextSlice(std::span<const TextRun>,text::Range);
 
 enum class FormatKind {font,size,color,bold,italic,underline,strikethrough};
 struct FormatChange {
@@ -91,6 +95,16 @@ public:
     // trait over the whole range. No expensive native font enumeration here.
     TextStyle selectionStyle()const;
     bool applyFormat(const FormatChange&);
+    // Source NSTextView rich paste: the NEXT replace() whose replacement has
+    // exactly `length` UTF-16 units takes these relative runs (sorted, valid
+    // for that text; omitted ranges use TextStyle()) instead of the typing
+    // style, in the same undo group, and typing continues in the last pasted
+    // style. Any replace() consumes the request; clearInsertionRuns drops it.
+    void setInsertionRuns(std::vector<TextRun>,std::uint32_t length);
+    void clearInsertionRuns()noexcept;
+    // An owner reopening a draft (a field promoted to another editor) restores
+    // the collapsed caret's pending typing style; not an undoable edit.
+    void restoreTypingStyle(TextStyle);
     bool canUndo()const noexcept;
     bool canRedo()const noexcept;
     bool undo();bool redo();
