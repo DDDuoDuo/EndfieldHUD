@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cmath>
 #include <iostream>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -168,8 +169,34 @@ void run(){
     check(root->count()==1,"Destruction releases the borrowed window root");
     root->Release();
 }
+
+// The COM boundary: a throwing owner callback or projection never unwinds
+// into the UIA client; the call fails and the tree stays usable.
+void throwingCallbacks(){
+    Fixture fixture;auto*root=new Root();
+    {
+        auto host=fixture.host(root);bool throwing=false;const auto screen=host.toScreen;
+        host.toScreen=[&throwing,screen](c::Rect r)->std::optional<c::Rect>{if(throwing)throw std::runtime_error("synthetic projection failure");return screen(r);};
+        host.invoke=[](std::string_view)->bool{throw std::runtime_error("synthetic owner failure");};
+        host.setValue=[](std::string_view,double)->bool{throw std::bad_alloc();};
+        n::NativeNowPlayingAutomation tree(std::move(host));root->tree=&tree;
+        check(tree.refresh()&&tree.size()==6,"The tree lists the projected controls");
+        ComPtr<IInvokeProvider>play;check(SUCCEEDED(find(tree,L"playPause").As(&play)),"Invoke pattern");
+        check(play->Invoke()==E_FAIL&&property(find(tree,L"playPause").Get(),UIA_NamePropertyId)==L"Play","A throwing invoke fails the call and leaves the element usable");
+        ComPtr<IRangeValueProvider>seek;check(SUCCEEDED(find(tree,L"seek").As(&seek)),"RangeValue pattern");
+        check(seek->SetValue(30)==E_OUTOFMEMORY,"An allocation failure while seeking is reported as E_OUTOFMEMORY");
+        auto next=find(tree,L"next");ComPtr<IRawElementProviderSimple>simple;check(SUCCEEDED(next.As(&simple)),"Simple provider");
+        throwing=true;UiaRect r{};VARIANT offscreen;VariantInit(&offscreen);ComPtr<IRawElementProviderFragment>hit;
+        check(next->get_BoundingRectangle(&r)==E_FAIL&&simple->GetPropertyValue(UIA_IsOffscreenPropertyId,&offscreen)==E_FAIL&&offscreen.vt==VT_EMPTY&&
+            tree.fromPoint(10,10,&hit)==E_FAIL&&!hit,"A throwing projection fails bounds, offscreen and hit tests");
+        throwing=false;
+        check(SUCCEEDED(next->get_BoundingRectangle(&r))&&r.width>0&&tree.fromPoint(NAN,0,&hit)==E_INVALIDARG&&!hit,"The projection recovers; non-finite hit tests are refused");
+    }
+    check(root->count()==1,"Destruction releases the root after failed callbacks");
+    root->Release();
 }
-int main(){Apartment apartment;try{check(SUCCEEDED(apartment.hr),"Owned test STA");run();std::cout<<"PASS "<<checks<<" Now Playing UI Automation checks (synthetic presentation; no window, media session or audio)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int main(){Apartment apartment;try{check(SUCCEEDED(apartment.hr),"Owned test STA");run();throwingCallbacks();std::cout<<"PASS "<<checks<<" Now Playing UI Automation checks (synthetic presentation; no window, media session or audio)\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){return 0;}
 #endif

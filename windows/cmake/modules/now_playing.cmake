@@ -2,6 +2,16 @@
 # Tests use synthetic fixtures and injected providers/transports/audio routes
 # only: no real GSMTC session, network request, audio route or user data.
 
+# Every Now Playing target folds text with ICU (the OS icu.dll on Windows, a
+# local ICU elsewhere) and builds on hud_now_playing/hud_archive. A portable
+# configure without ICU leaves the whole area out, like the other ICU users
+# (CMakeLists.txt: hud_shortcuts, hud_archive, ...), instead of linking
+# ICU::uc/ICU::i18n targets that do not exist.
+if(NOT TARGET hud_now_playing OR NOT TARGET hud_archive OR NOT (WIN32 OR (TARGET ICU::uc AND TARGET ICU::i18n)))
+  message(STATUS "Now Playing area: ICU not found; Now Playing lyric, web, volume, fixture and area targets are skipped")
+  return()
+endif()
+
 # Lyric sources (embedded LRC, LRCLIB, NetEase public catalog) with the source
 # matcher, URL rules, decoders, caches and precedence, plus the playing-app
 # volume bridge rules. Portable.

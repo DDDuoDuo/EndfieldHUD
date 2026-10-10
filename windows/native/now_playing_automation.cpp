@@ -5,6 +5,7 @@
 #include <atomic>
 #include <climits>
 #include <cmath>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,9 @@ std::atomic<int>nextRuntime{1};
 VARIANT text(std::string_view s){VARIANT v;VariantInit(&v);v.vt=VT_BSTR;v.bstrVal=SysAllocString(wide(s).c_str());return v;}
 VARIANT flag(bool b){VARIANT v;VariantInit(&v);v.vt=VT_BOOL;v.boolVal=b?VARIANT_TRUE:VARIANT_FALSE;return v;}
 VARIANT number(double d){VARIANT v;VariantInit(&v);v.vt=VT_R8;v.dblVal=d;return v;}
+// COM boundary: no C++ exception from the owner callbacks (invoke, setValue,
+// toScreen) or an allocation may cross into the UIA client's call.
+template<class F>HRESULT guarded(F&&f)noexcept{try{return f();}catch(const std::bad_alloc&){return E_OUTOFMEMORY;}catch(...){return E_FAIL;}}
 // One projected source control, in canvas coordinates.
 struct Data {
     std::string id,name,help,valueText;core::Rect rect;bool slider{},enabled{};
@@ -76,6 +80,12 @@ public:
     HRESULT valueText(IUnknown**out);
     IFACEMETHODIMP GetPropertyValue(PROPERTYID id,VARIANT*out)override{
         if(!out)return E_POINTER;VariantInit(out);if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;
+        const HRESULT hr=guarded([&]{property(id,*out);return S_OK;});
+        if(FAILED(hr))VariantClear(out);
+        return hr;
+    }
+    void property(PROPERTYID id,VARIANT&value){
+        VARIANT*out=&value;
         switch(id){
         case UIA_NamePropertyId:*out=text(data.name);break;
         case UIA_HelpTextPropertyId:if(!data.help.empty())*out=text(data.help);break;
@@ -89,7 +99,6 @@ public:
         case UIA_FrameworkIdPropertyId:*out=text("EndfieldHUD");break;
         default:break;
         }
-        return S_OK;
     }
     IFACEMETHODIMP get_HostRawElementProvider(IRawElementProviderSimple**out)override{if(!out)return E_POINTER;*out=nullptr;return S_OK;}
     // IRawElementProviderFragment
@@ -113,7 +122,7 @@ public:
     }
     IFACEMETHODIMP get_BoundingRectangle(UiaRect*out)override{
         if(!out)return E_POINTER;*out={};const auto s=state.lock();if(!s||!connected)return UIA_E_ELEMENTNOTAVAILABLE;
-        if(const auto r=s->screen(data.rect))*out={r->x,r->y,r->width,r->height};return S_OK;
+        return guarded([&]{if(const auto r=s->screen(data.rect))*out={r->x,r->y,r->width,r->height};return S_OK;});
     }
     IFACEMETHODIMP GetEmbeddedFragmentRoots(SAFEARRAY**out)override{if(!out)return E_POINTER;*out=nullptr;return S_OK;}
     IFACEMETHODIMP SetFocus()override{return connected?S_OK:UIA_E_ELEMENTNOTAVAILABLE;}
@@ -126,16 +135,16 @@ public:
         if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;if(!data.enabled)return UIA_E_ELEMENTNOTENABLED;
         const auto s=state.lock();if(!s||!s->host.invoke)return UIA_E_ELEMENTNOTAVAILABLE;
         // The action may refresh the tree; keep this element and its id alive.
-        const ComPtr<NowPlayingAutomationElement>self(this);const std::string id=data.id;++s->statistics.invokes;
-        return s->host.invoke(id)?S_OK:UIA_E_INVALIDOPERATION;
+        const ComPtr<NowPlayingAutomationElement>self(this);++s->statistics.invokes;
+        return guarded([&]{const std::string id=data.id;return s->host.invoke(id)?S_OK:UIA_E_INVALIDOPERATION;});
     }
     // IRangeValueProvider: source NSSlider value and increments.
     IFACEMETHODIMP SetValue(double value)override{
         if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;if(!data.enabled)return UIA_E_ELEMENTNOTENABLED;
         if(!std::isfinite(value)||value<data.minimum||value>data.maximum)return E_INVALIDARG;
         const auto s=state.lock();if(!s||!s->host.setValue)return UIA_E_ELEMENTNOTAVAILABLE;
-        const ComPtr<NowPlayingAutomationElement>self(this);const std::string id=data.id;++s->statistics.values;
-        return s->host.setValue(id,value)?S_OK:UIA_E_INVALIDOPERATION;
+        const ComPtr<NowPlayingAutomationElement>self(this);++s->statistics.values;
+        return guarded([&]{const std::string id=data.id;return s->host.setValue(id,value)?S_OK:UIA_E_INVALIDOPERATION;});
     }
     IFACEMETHODIMP get_Value(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=data.shown();return S_OK;}
     // A disabled slider, or one without a reported value, cannot be adjusted.
@@ -166,7 +175,7 @@ public:
     IFACEMETHODIMP SetValue(LPCWSTR)override{return element->connected?UIA_E_INVALIDOPERATION:UIA_E_ELEMENTNOTAVAILABLE;}
     IFACEMETHODIMP get_Value(BSTR*out)override{
         if(!out)return E_POINTER;*out=nullptr;if(!element->connected)return UIA_E_ELEMENTNOTAVAILABLE;
-        *out=SysAllocString(wide(element->data.valueText).c_str());return *out?S_OK:E_OUTOFMEMORY;
+        return guarded([&]{*out=SysAllocString(wide(element->data.valueText).c_str());return *out?S_OK:E_OUTOFMEMORY;});
     }
     IFACEMETHODIMP get_IsReadOnly(BOOL*out)override{if(!out)return E_POINTER;if(!element->connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=TRUE;return S_OK;}
 private:
@@ -221,9 +230,11 @@ HRESULT NativeNowPlayingAutomation::child(std::size_t index,IRawElementProviderF
 }
 HRESULT NativeNowPlayingAutomation::fromPoint(double x,double y,IRawElementProviderFragment**out)const{
     if(!out)return E_POINTER;*out=nullptr;const auto&s=*state_;
-    for(auto it=s.order.rbegin();it!=s.order.rend();++it)if(const auto r=s.screen((*it)->data.rect))
-        if(x>=r->x&&y>=r->y&&x<r->x+r->width&&y<r->y+r->height)return (*it)->QueryInterface(IID_PPV_ARGS(out));
-    return S_OK;
+    if(!std::isfinite(x)||!std::isfinite(y))return E_INVALIDARG;
+    return guarded([&]{
+        for(auto it=s.order.rbegin();it!=s.order.rend();++it)if(const auto r=s.screen((*it)->data.rect))
+            if(x>=r->x&&y>=r->y&&x<r->x+r->width&&y<r->y+r->height)return (*it)->QueryInterface(IID_PPV_ARGS(out));
+        return S_OK;});
 }
 void NativeNowPlayingAutomation::disconnect()noexcept{
     auto&s=*state_;for(auto&e:s.order){e->disconnect();++s.statistics.disconnected;}

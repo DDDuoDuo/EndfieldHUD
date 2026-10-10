@@ -62,6 +62,84 @@ struct Wake {
     }
 };
 
+// Hidden-coverage stand-in for this owner's group under the HUD window's UIA
+// root (app/hud_automation.cpp): it hands the ModuleOwner hooks a stable
+// fragment root and forwards child navigation and hit tests to them exactly
+// as the host's group does. It is never returned for a window, so no UIA
+// client can reach it.
+class CoverageGroup final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IRawElementProviderFragmentRoot {
+public:
+    explicit CoverageGroup(const app::ModuleOwner& owner) noexcept : owner_(owner) {}
+    CoverageGroup(const CoverageGroup&) = delete;
+    CoverageGroup& operator=(const CoverageGroup&) = delete;
+    IRawElementProviderFragmentRoot* root() noexcept { return this; }
+    ULONG references() const noexcept { return refs_.load(); }
+    IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IRawElementProviderSimple)) *out = static_cast<IRawElementProviderSimple*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragment)) *out = static_cast<IRawElementProviderFragment*>(this);
+        else if (riid == __uuidof(IRawElementProviderFragmentRoot)) *out = static_cast<IRawElementProviderFragmentRoot*>(this);
+        else return E_NOINTERFACE;
+        AddRef();
+        return S_OK;
+    }
+    IFACEMETHODIMP_(ULONG) AddRef() override { return ++refs_; }
+    IFACEMETHODIMP_(ULONG) Release() override { const ULONG n = --refs_; if (!n) delete this; return n; }
+    IFACEMETHODIMP get_ProviderOptions(ProviderOptions* out) override {
+        if (!out) return E_POINTER;
+        *out = ProviderOptions(ProviderOptions_ServerSideProvider | ProviderOptions_UseComThreading);
+        return S_OK;
+    }
+    IFACEMETHODIMP GetPatternProvider(PATTERNID, IUnknown** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP GetPropertyValue(PROPERTYID, VARIANT* out) override { if (!out) return E_POINTER; VariantInit(out); return S_OK; }
+    IFACEMETHODIMP get_HostRawElementProvider(IRawElementProviderSimple** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP Navigate(NavigateDirection direction, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        const auto count = owner_.automationCount();
+        if (!count || (direction != NavigateDirection_FirstChild && direction != NavigateDirection_LastChild)) return S_OK;
+        return owner_.automationChild(direction == NavigateDirection_FirstChild ? 0 : count - 1, out);
+    }
+    IFACEMETHODIMP GetRuntimeId(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP get_BoundingRectangle(UiaRect* out) override { if (!out) return E_POINTER; *out = {}; return S_OK; }
+    IFACEMETHODIMP GetEmbeddedFragmentRoots(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+    IFACEMETHODIMP SetFocus() override { return S_OK; }
+    IFACEMETHODIMP get_FragmentRoot(IRawElementProviderFragmentRoot** out) override {
+        if (!out) return E_POINTER;
+        AddRef();
+        *out = this;
+        return S_OK;
+    }
+    IFACEMETHODIMP ElementProviderFromPoint(double x, double y, IRawElementProviderFragment** out) override {
+        if (!out) return E_POINTER;
+        *out = nullptr;
+        return owner_.automationFromPoint(x, y, out);
+    }
+    IFACEMETHODIMP GetFocus(IRawElementProviderFragment** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
+
+private:
+    ~CoverageGroup() = default;
+    const app::ModuleOwner& owner_;
+    std::atomic<ULONG> refs_{1};
+};
+// COM identity (the same object behind two interface pointers).
+bool sameObject(IUnknown* a, IUnknown* b) {
+    Microsoft::WRL::ComPtr<IUnknown> x, y;
+    return a && b && SUCCEEDED(a->QueryInterface(IID_PPV_ARGS(&x))) && SUCCEEDED(b->QueryInterface(IID_PPV_ARGS(&y))) && x.Get() == y.Get();
+}
+std::wstring automationID(IRawElementProviderFragment* fragment) {
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;
+    VARIANT value;
+    VariantInit(&value);
+    std::wstring id;
+    if (fragment && SUCCEEDED(fragment->QueryInterface(IID_PPV_ARGS(&simple))) && SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId, &value)) &&
+        value.vt == VT_BSTR && value.bstrVal)
+        id.assign(value.bstrVal, SysStringLen(value.bstrVal));
+    VariantClear(&value);
+    return id;
+}
+
 class NowPlayingArea final : public app::ModuleOwner {
 public:
     explicit NowPlayingArea(const app::ApplicationModuleContext& c)
@@ -116,6 +194,10 @@ public:
     }
     ~NowPlayingArea() override {
         wake_->alive.store(false, std::memory_order_release);
+        // UIA fragments call into the preview: disconnect and drop them first
+        // (clients still holding one get UIA_E_ELEMENTNOTAVAILABLE).
+        automation_.reset();
+        automationRoot_ = nullptr;
         // The preview withdraws the audio vote and stops the provider; then
         // the downloads and the service go, all before the shared executor,
         // the AudioRuntime and the HWND.
@@ -192,9 +274,39 @@ public:
         else idleCoverage(step);
     }
 
-    // The host's UI Automation view of this owner (native/now_playing_automation.hpp):
-    // projected source buttons and sliders while Now Playing accepts input. The
-    // HUD window's UIA root provider (host) lists the fragments it creates.
+    // UI Automation (app/module_owner.hpp): the projected source controls
+    // (HUDNowPlayingInteraction.layoutAccessibility) under this owner's group
+    // of the HUD window's root. The fragments are created on the host's first
+    // refresh, i.e. once a UIA client asked the window; a new group (the host
+    // rebuilt its tree) replaces them, so no fragment keeps a dead parent.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!root) return false;
+        bool replaced = false;
+        if (automation_ && automationRoot_ != root) {
+            replaced = automation_->size() > 0;
+            automation_.reset(); // disconnects its fragments and releases the old group
+            automationRoot_ = nullptr;
+        }
+        if (!automation_) {
+            automation_ = std::make_unique<gpu::NativeNowPlayingAutomation>(automationHost(root));
+            automationRoot_ = root;
+        }
+        return automation_->refresh() || replaced;
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
+
+private:
+    // The owner's UIA view (native/now_playing_automation.hpp): projected
+    // source buttons and sliders while Now Playing accepts input.
     gpu::NowPlayingAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
         gpu::NowPlayingAutomationHost h;
         h.root = root;
@@ -205,21 +317,35 @@ public:
                 if (modules::nowPlayingActionID(action) == id) {
                     const double t = host_.now();
                     observe(t);
-                    return preview_->perform(action, t);
+                    const bool performed = preview_->perform(action, t);
+                    if (performed) automationActed();
+                    return performed;
                 }
             return false;
         };
         h.setValue = [this](std::string_view id, double value) {
             const double t = host_.now();
             observe(t);
-            if (id == "seek") return preview_->setSlider(NowPlayingSliderKind::seek, value, t);
-            if (id == "appVolume") return preview_->setSlider(NowPlayingSliderKind::volume, value, t);
-            return false;
+            bool performed = false;
+            if (id == "seek") performed = preview_->setSlider(NowPlayingSliderKind::seek, value, t);
+            else if (id == "appVolume") performed = preview_->setSlider(NowPlayingSliderKind::volume, value, t);
+            if (performed) automationActed();
+            return performed;
         };
         return h;
     }
+    // A UIA action is a content event no host call reports (App volume opens
+    // or closes the menu, which adds or removes its slider): re-list
+    // at once and, like the host after its own refresh, tell listening
+    // clients that this group's children changed. Runs inside the element's
+    // Invoke/SetValue, which keeps that element alive across the refresh.
+    void automationActed() {
+        if (!automation_ || !automation_->refresh() || !automationRoot_ || !UiaClientsAreListening()) return;
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> group;
+        if (SUCCEEDED(automationRoot_->QueryInterface(IID_PPV_ARGS(&group))))
+            (void)UiaRaiseStructureChangedEvent(group.Get(), StructureChangeType_ChildrenInvalidated, nullptr, 0);
+    }
 
-private:
     // A 440-point canvas rect -> physical screen pixels through the current
     // module plane (bounds of its projected corners); none while not presented.
     std::optional<core::Rect> screenRect(core::Rect r) const {
@@ -310,6 +436,12 @@ private:
             step.check(ax.status == "EndfieldHUD Fixture 1 \xc2\xb7 Local verification \xc2\xb7 Now Playing" && ax.buttons.size() == 5 &&
                        ax.sliders.size() == 1 && ax.sliders.front().id == "seek", "Accessible status, five buttons and the seek slider");
         }
+        // UI Automation through the ModuleOwner hooks, as the HUD window's root
+        // drives them: one stable group, refreshed on content events.
+        auto* group = coverageGroup();
+        (void)automationRefresh(group->root());
+        step.check(automationCount() == 6 && !automationRefresh(group->root()),
+                   "The UIA hooks list the five projected buttons and the seek slider under the owner's group");
 
         // Settled paused frames: no rasterization, provider work or deadline.
         {
@@ -354,14 +486,21 @@ private:
             settle(step);
             step.check(std::abs(position() - 84) < 1 && recorded(events + 4, "seek"), "Seek release emits one successful command");
 
-            // UI Automation over the real owner: projected fragments on the hidden
-            // HUD window (rooted by the host's UIA root provider when it exists).
-            gpu::NativeNowPlayingAutomation automation(automationHost(nullptr));
-            step.check(automation.refresh() && automation.size() == 6, "UIA lists the five projected buttons and the seek slider");
+            // UI Automation over the real owner through its hooks: navigation
+            // and hit tests enter through the group like a UIA client's.
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> first, parent, sibling, seekElement;
+            Microsoft::WRL::ComPtr<IRawElementProviderFragmentRoot> fragmentRoot;
+            step.check(SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &first)) && first && automationID(first.Get()) == L"lyrics" &&
+                       SUCCEEDED(first->Navigate(NavigateDirection_Parent, &parent)) && sameObject(parent.Get(), group->root()) &&
+                       SUCCEEDED(first->get_FragmentRoot(&fragmentRoot)) && sameObject(fragmentRoot.Get(), group->root()) &&
+                       SUCCEEDED(first->Navigate(NavigateDirection_NextSibling, &sibling)) && automationID(sibling.Get()) == L"previous",
+                       "UIA fragments navigate in source order under the owner's group, their parent and fragment root");
+            step.check(SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &seekElement)) && automationID(seekElement.Get()) == L"seek",
+                       "The seek slider is the group's last child");
             const auto nextScreen = screenRect(view.actions()[static_cast<std::size_t>(NowPlayingAction::next)].rect);
             Microsoft::WRL::ComPtr<IRawElementProviderFragment> nextElement;
-            step.check(nextScreen && SUCCEEDED(automation.fromPoint(nextScreen->x + nextScreen->width / 2, nextScreen->y + nextScreen->height / 2, &nextElement)) && nextElement,
-                       "UIA hit testing finds Next at its projected screen position");
+            step.check(nextScreen && SUCCEEDED(group->ElementProviderFromPoint(nextScreen->x + nextScreen->width / 2, nextScreen->y + nextScreen->height / 2, &nextElement)) &&
+                       automationID(nextElement.Get()) == L"next", "UIA hit testing finds Next at its projected screen position");
             UiaRect bounds{};
             step.check(SUCCEEDED(nextElement->get_BoundingRectangle(&bounds)) && bounds.left == nextScreen->x && bounds.top == nextScreen->y &&
                        bounds.width == nextScreen->width && bounds.height == nextScreen->height, "UIA bounds are the projected control in screen pixels");
@@ -374,11 +513,13 @@ private:
             settle(step);
             present(.3);
             step.check(title() == "EndfieldHUD Fixture 1" && recorded(events + 6, "previous"), "Previous returns to the first fixture track");
-            Microsoft::WRL::ComPtr<IRawElementProviderFragment> seekElement;
+            // The consumed owner wakes were content events: the host refreshes.
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> seekAfter;
             Microsoft::WRL::ComPtr<IRangeValueProvider> seekRange;
             double step5{};
-            step.check(!automation.refresh() && SUCCEEDED(automation.child(automation.size() - 1, &seekElement)) && SUCCEEDED(seekElement.As(&seekRange)) &&
-                       SUCCEEDED(seekRange->get_SmallChange(&step5)) && step5 == 5, "The UIA seek slider keeps its identity and the source 5 s increment");
+            step.check(!automationRefresh(group->root()) && SUCCEEDED(automationChild(automationCount() - 1, &seekAfter)) && sameObject(seekAfter.Get(), seekElement.Get()) &&
+                       SUCCEEDED(seekAfter.As(&seekRange)) && SUCCEEDED(seekRange->get_SmallChange(&step5)) && step5 == 5,
+                       "The UIA seek slider keeps its identity and the source 5 s increment");
             step.check(SUCCEEDED(seekRange->SetValue(42)), "UIA RangeValue seeks to an exact position");
             settle(step);
             step.check(std::abs(position() - 42) < 1e-9 && recorded(events + 7, "seek"), "Accessible seek restores 42 seconds");
@@ -389,30 +530,73 @@ private:
             step.check(preview_->perform(NowPlayingAction::lyrics, t) && view.lyricsSelected(), "Lyrics toggle restores the lyric rows");
             present(.3);
 
-            // Playing-app volume: the per-app route through the audio bridge.
+            // Playing-app volume: the per-app route through the audio bridge,
+            // opened and set through UI Automation.
             const auto accepted = audioFixture_->accepted();
             const auto revision = audioFixture_->applicationsRevision();
-            step.check(preview_->perform(NowPlayingAction::volume, t) && capturesPointer() && view.sliderCount() == 2 && covers({1, 1}),
-                       "The volume menu opens and captures the pointer");
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> volumeButton, appVolume;
+            Microsoft::WRL::ComPtr<IInvokeProvider> openVolume;
+            Microsoft::WRL::ComPtr<IRangeValueProvider> appVolumeRange;
+            step.check(SUCCEEDED(automationChild(static_cast<std::size_t>(NowPlayingAction::volume), &volumeButton)) && automationID(volumeButton.Get()) == L"volume" &&
+                       SUCCEEDED(volumeButton.As(&openVolume)) && SUCCEEDED(openVolume->Invoke()) && capturesPointer() && view.sliderCount() == 2 && covers({1, 1}),
+                       "UIA Invoke opens the volume menu, which captures the pointer");
+            step.check(automationCount() == 7 && SUCCEEDED(group->Navigate(NavigateDirection_LastChild, &appVolume)) && automationID(appVolume.Get()) == L"appVolume" &&
+                       SUCCEEDED(appVolume.As(&appVolumeRange)), "The App volume slider joins the UIA tree as soon as the menu opens");
             {
                 const auto ax = preview_->accessibility(t);
-                step.check(ax.sliders.size() == 2 && ax.sliders[1].enabled && ax.sliders[1].value && std::abs(*ax.sliders[1].value - 1) < 1e-9,
+                double shown{};
+                step.check(ax.sliders.size() == 2 && ax.sliders[1].enabled && ax.sliders[1].value && std::abs(*ax.sliders[1].value - 1) < 1e-9 &&
+                           SUCCEEDED(appVolumeRange->get_Value(&shown)) && std::abs(shown - 1) < 1e-9,
                            "The accessible app-volume slider reports the route at 100%");
             }
             present(.2);
-            step.check(preview_->setSlider(NowPlayingSliderKind::volume, .4, t) && audioFixture_->accepted() == accepted + 1 && audioFixture_->pending(),
-                       "A volume change becomes one asynchronous route write");
+            step.check(SUCCEEDED(appVolumeRange->SetValue(.4)) && audioFixture_->accepted() == accepted + 1 && audioFixture_->pending(),
+                       "A UIA volume change becomes one asynchronous route write");
             settle(step);
             const auto& route = audioFixture_->process();
             step.check(audioFixture_->applicationsRevision() > revision && route.state == gpu::AudioApplicationRouteState::active && route.gain &&
                        std::abs(*route.gain - .4f) < 1e-6f && view.input().volume && std::abs(*view.input().volume - .4) < 1e-6,
                        "The confirmed route gain returns through the audio publication");
+            {
+                double shown{};
+                step.check(!automationRefresh(group->root()) && SUCCEEDED(appVolumeRange->get_Value(&shown)) && std::abs(shown - .4) < 1e-6,
+                           "UIA reports the confirmed app volume on the same slider");
+            }
             step.check(preview_->setSlider(NowPlayingSliderKind::volume, 1, t), "Volume returns to 100%");
             settle(step);
             step.check(route.gain && std::abs(*route.gain - 1) < 1e-6f && view.input().volume && std::abs(*view.input().volume - 1) < 1e-6 &&
                        playbackEvents_ == events + 7, "Volume changes are not playback actions");
             step.check(preview_->key({app::KeyKind::down, VK_ESCAPE}, false, t) && !capturesPointer() && !covers({1, 1}), "Escape dismisses the volume menu");
+            {
+                // Escape is a consumed key (a content event): the host refreshes.
+                double shown{};
+                step.check(automationRefresh(group->root()) && automationCount() == 6 && appVolumeRange->get_Value(&shown) == UIA_E_ELEMENTNOTAVAILABLE,
+                           "Closing the menu disconnects the App volume slider");
+            }
             present(.5);
+
+            // Concealing disconnects every fragment; the next refresh connects
+            // fresh ones. A new host group re-parents them and frees the old.
+            automationDisconnect();
+            UiaRect gone{};
+            step.check(automationCount() == 0 && nextElement->get_BoundingRectangle(&gone) == UIA_E_ELEMENTNOTAVAILABLE &&
+                       invokeNext->Invoke() == UIA_E_ELEMENTNOTAVAILABLE && title() == "EndfieldHUD Fixture 1",
+                       "Disconnected UIA fragments answer ElementNotAvailable and perform nothing");
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> reconnected;
+            step.check(automationRefresh(group->root()) && automationCount() == 6 && SUCCEEDED(automationChild(3, &reconnected)) &&
+                       automationID(reconnected.Get()) == L"next" && !sameObject(reconnected.Get(), nextElement.Get()), "The next refresh connects fresh fragments");
+            {
+                Microsoft::WRL::ComPtr<CoverageGroup> other;
+                other.Attach(new CoverageGroup(*this));
+                const auto held = group->references();
+                Microsoft::WRL::ComPtr<IRawElementProviderFragment> moved, movedParent;
+                step.check(automationRefresh(other->root()) && automationCount() == 6 && group->references() < held && other->references() > 1 &&
+                           SUCCEEDED(automationChild(0, &moved)) && SUCCEEDED(moved->Navigate(NavigateDirection_Parent, &movedParent)) &&
+                           sameObject(movedParent.Get(), other->root()), "A new host group re-parents the fragments and releases the previous group");
+                movedParent.Reset();
+                moved.Reset();
+                step.check(automationRefresh(group->root()) && automationCount() == 6 && other->references() == 1, "Returning to the owner's group releases the other one");
+            }
         }
 
         // Every cycle ends in the same presented state (bounded, repeatable caches).
@@ -433,8 +617,12 @@ private:
         const auto starts = *starts_;
         step.present(step.time + .1);
         {
-            gpu::NativeNowPlayingAutomation automation(automationHost(nullptr));
-            step.check(!automation.refresh() && automation.size() == 0, "Unpresented Now Playing exposes no UIA fragments");
+            // The host refreshes on selection and closing: nothing stays listed.
+            auto* group = coverageGroup();
+            (void)automationRefresh(group->root());
+            Microsoft::WRL::ComPtr<IRawElementProviderFragment> child;
+            step.check(automationCount() == 0 && !automationRefresh(group->root()) && SUCCEEDED(group->Navigate(NavigateDirection_FirstChild, &child)) && !child,
+                       "Unpresented Now Playing exposes no UIA fragments");
         }
         step.check(!service_->snapshot().active && !presentation().active() && !preview_->nextWakeTime() && !pointerLocked() && !capturesPointer(),
                    "Unpresented Now Playing keeps no provider, deadline or input");
@@ -444,6 +632,10 @@ private:
                    "Audio publications are ignored while Now Playing is hidden");
     }
     const modules::NowPlayingPresentation& presentation() const { return preview_->presentation(); }
+    CoverageGroup* coverageGroup() {
+        if (!coverageGroup_) coverageGroup_.Attach(new CoverageGroup(*this));
+        return coverageGroup_.Get();
+    }
 
     app::ApplicationHost& host_;
     app::UtilityExecutor& utility_;
@@ -459,6 +651,11 @@ private:
     std::shared_ptr<gpu::NowPlayingWeb> web_;
     std::unique_ptr<gpu::NowPlayingAudioFixture> audioFixture_;
     std::unique_ptr<tools::NowPlayingPreview> preview_;
+    // UIA fragments (after the preview they call into; reset first) and the
+    // host group they hang under (owned by automation_ while it exists).
+    std::unique_ptr<gpu::NativeNowPlayingAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{};
+    Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_; // hidden coverage only
     bool sized_{};
     // Coverage evidence (never user content: action and source only).
     unsigned playbackEvents_{}, eventsAfterFirstCycle_{};
