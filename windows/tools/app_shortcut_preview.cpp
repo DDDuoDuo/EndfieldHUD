@@ -69,6 +69,29 @@ struct AppShortcutPreview::Impl {
         switch(a.kind){case m::ShortcutActionKind::name:begin();return true;case m::ShortcutActionKind::icon:return state.selectIcon(a.value,time);case m::ShortcutActionKind::cancel:state.cancelDraft(time);return true;case m::ShortcutActionKind::choose:{ShortcutRequest r;r.kind=ShortcutRequestKind::choose;return enqueue(std::move(r));}case m::ShortcutActionKind::save:{if(!state.candidate())return false;ShortcutRequest r;r.kind=ShortcutRequestKind::save;r.candidate=state.candidate();r.editingID=state.editingID();r.name=state.draftName();r.icon=state.draftIcon();return enqueue(std::move(r));}default:break;}
         const auto found=std::find_if(state.file().items.begin(),state.file().items.end(),[&](const auto&v){return v.id==a.value;});if(found==state.file().items.end()||state.editing())return false;ShortcutRequest r;r.record=*found;r.kind=a.kind==m::ShortcutActionKind::edit?ShortcutRequestKind::edit:a.kind==m::ShortcutActionKind::remove?ShortcutRequestKind::remove:ShortcutRequestKind::launch;if(r.kind==ShortcutRequestKind::edit)r.editingID=found->id;return enqueue(std::move(r));
     }
+    // AppDelegate Edit menu (cut:/copy:/paste:) over the name field. Pasted
+    // text replaces the selection through the editor's host-edit path; the
+    // field then normalizes it like typing (line breaks, 128 characters).
+    bool clipboardKey(const std::shared_ptr<Field>&current,std::uint32_t key){
+        auto clip=options.clipboard;auto editor=current->editor;if(!clip||!editor)return false;
+        if(current->document.composition())return true;
+        syncField();if(!alive||field!=current)return true;
+        const auto range=current->document.selection().range;const auto start=std::min(range.start,range.end),end=std::max(range.start,range.end);
+        if(key=='V'){
+            auto pasted=clip->readText(g::notesClipboardMaximumUnits);if(!alive||field!=current||!pasted||pasted->text.empty())return true;
+            auto value=std::move(pasted->text);const std::size_t kept=current->document.text().size()-(end-start),room=kept<65536?65536-kept:0;
+            if(value.size()>room){value.resize(room);if(!value.empty()&&value.back()>=0xd800&&value.back()<=0xdbff)value.pop_back();}
+            if(value.empty())return true;
+            (void)editor->replaceTextFromHost({start,end},value);
+        }else{
+            if(start==end)return true;
+            const std::u16string selected(current->document.text().substr(start,end-start));
+            if(!clip->writeText({selected,std::nullopt})||!alive||field!=current)return true;
+            if(key=='X')(void)editor->replaceTextFromHost({start,end},u"");
+        }
+        if(alive&&field==current)syncField();
+        return true;
+    }
     void deactivate(){const auto token=++lifecycle;finish(true);if(!alive||token!=lifecycle)return;cancelRead();pressed=fieldDragging=externalDrag=false;pointerPoint.reset();state.setActive(false,time);active=false;input=false;scene.setFeedback({},false,reduced,time);}
 };
 AppShortcutPreview::AppShortcutPreview(HWND w,g::LayerRasterizer&r,const g::NativeAppShortcutAssets&a,ITfThreadMgr*m,TfClientId c,AppShortcutPreviewOptions o):impl_(std::make_shared<Impl>(w,r,a,m,c,std::move(o))){}
@@ -94,10 +117,12 @@ bool AppShortcutPreview::pointer(const app::PointerEvent&e,double t){auto i=impl
 }
 bool AppShortcutPreview::scroll(core::Point p,double delta,double t){auto i=impl_;i->clock(t);if(!i->input||i->panel()||i->field||i->busy())return false;const auto q=i->local(p);return q&&i->state.scroll(*q,delta);}
 bool AppShortcutPreview::wheel(const app::WheelEvent&e,double t){if(e.horizontal)return false;return scroll({e.x,e.y},-e.steps*(e.linesPerStep==UINT32_MAX?252.:12.*e.linesPerStep),t);}
-bool AppShortcutPreview::key(const app::KeyEvent&e,double t){return key(e,e.alt||GetKeyState(VK_SHIFT)<0||GetKeyState(VK_CONTROL)<0||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0,t);}
-bool AppShortcutPreview::key(const app::KeyEvent&e,bool modified,double t){auto i=impl_;i->clock(t);if(!i->input||i->panel())return false;if(auto current=i->field){auto editor=current->editor;if(!editor)return false;const auto event=i->eventRevision;const auto valid=[&]{return i->alive&&i->field==current&&event==i->eventRevision;};const bool shift=GetKeyState(VK_SHIFT)<0,control=GetKeyState(VK_CONTROL)<0,system=e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0;
+namespace {ShortcutKeyModifiers keyboardModifiers(const app::KeyEvent&e){ShortcutKeyModifiers k;k.shift=GetKeyState(VK_SHIFT)<0;k.control=GetKeyState(VK_CONTROL)<0;k.system=e.alt||GetKeyState(VK_MENU)<0||GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0;k.modified=k.shift||k.control||k.system;return k;}}
+bool AppShortcutPreview::key(const app::KeyEvent&e,double t){return key(e,keyboardModifiers(e),t);}
+bool AppShortcutPreview::key(const app::KeyEvent&e,bool modified,double t){auto k=keyboardModifiers(e);k.modified=modified;return key(e,k,t);}
+bool AppShortcutPreview::key(const app::KeyEvent&e,const ShortcutKeyModifiers&k,double t){const bool modified=k.modified;auto i=impl_;i->clock(t);if(!i->input||i->panel())return false;if(auto current=i->field){auto editor=current->editor;if(!editor)return false;const auto event=i->eventRevision;const auto valid=[&]{return i->alive&&i->field==current&&event==i->eventRevision;};const bool shift=k.shift,control=k.control,system=k.system;
     if(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter){if(e.value=='\r'||e.value=='\n'||e.value=='\t'||e.value==27)return true;if(control||system)return false;editor->character(e.value,e.kind==app::KeyKind::unicodeCharacter);if(valid())i->syncField();return true;}if(e.kind!=app::KeyKind::down)return false;if(!modified&&!current->document.composition()){if(e.value==VK_ESCAPE){i->finish(false);return true;}if(e.value==VK_RETURN||e.value==VK_TAB){i->finish(true);return true;}}if(system)return false;using C=g::ProjectedEditorCommand;
-    if(control){if(e.value=='A')editor->command(C::selectAll);else if(e.value=='Z'){if(shift)editor->redo();else editor->undo();}else if(e.value=='Y')editor->redo();else return false;if(valid())i->syncField();return true;}
+    if(control){if(!shift&&(e.value=='C'||e.value=='X'||e.value=='V'))return i->clipboardKey(current,e.value);if(e.value=='A')editor->command(C::selectAll);else if(e.value=='Z'){if(shift)editor->redo();else editor->undo();}else if(e.value=='Y')editor->redo();else return false;if(valid())i->syncField();return true;}
     std::optional<C>command;switch(e.value){case VK_LEFT:command=C::left;break;case VK_RIGHT:command=C::right;break;case VK_HOME:command=C::documentStart;break;case VK_END:command=C::documentEnd;break;case VK_BACK:command=C::backspace;break;case VK_DELETE:command=C::deleteForward;break;default:return false;}i->syncField();if(!valid())return true;editor->command(*command,shift);if(valid())i->syncField();return true;}
     if(e.kind==app::KeyKind::down&&!modified&&e.value==VK_ESCAPE&&i->state.editing()&&!i->busy()){i->state.cancelDraft(i->time);return true;}return false;
 }
@@ -118,6 +143,23 @@ bool AppShortcutPreview::completeCandidate(std::uint64_t token,m::ShortcutCandid
 bool AppShortcutPreview::completeFile(std::uint64_t token,m::ShortcutFile value,double t){auto i=impl_;i->clock(t);if(!i->flight||i->flight->generation!=token)return false;need(writeRequest(i->flight->kind),"Shortcut file completion requires committed write");if(i->flight->kind==ShortcutRequestKind::save)i->state.saved(std::move(value),i->time);else i->state.replaceItems(std::move(value));i->flight.reset();return true;}
 bool AppShortcutPreview::completeRequest(std::uint64_t token,std::optional<std::string>error,double t){auto i=impl_;i->clock(t);if(!i->flight||i->flight->generation!=token)return false;need(error||!writeRequest(i->flight->kind),"Successful Shortcut write needs committed file");if(error)i->state.showError(std::move(error));i->flight.reset();return true;}
 bool AppShortcutPreview::busy()const noexcept{return impl_->busy();}
+bool AppShortcutPreview::acceptsInput()const noexcept{return impl_->input;}
+std::optional<core::Rect>AppShortcutPreview::clientRect(core::Rect r)const{
+    const auto&i=*impl_;if(!i.input||!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(i.metrics.scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const core::Point c:{core::Point{r.x,r.y},core::Point{r.x+r.width,r.y},core::Point{r.x,r.y+r.height},core::Point{r.x+r.width,r.y+r.height}}){
+        const auto q=i.projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);
+    }
+    const double scale=i.metrics.scale;return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}
+std::optional<std::string>AppShortcutPreview::fieldText()const{const auto current=impl_->field;if(!current)return std::nullopt;return m::archiveUTF8(current->document.text());}
+bool AppShortcutPreview::setFieldText(std::string_view text,double t){
+    auto i=impl_;i->clock(t);auto current=i->field;if(!i->input||!current||!current->editor||current->document.composition()||!ehud::data::Json::validUtf8(text))return false;
+    auto editor=current->editor;const auto value=m::archiveUTF16(text);if(value.size()>65536)return false;
+    const auto result=editor->replaceTextFromHost({0,static_cast<std::uint32_t>(current->document.text().size())},value);
+    if(i->alive&&i->field==current)i->syncField();return result.changed||current->document.text()==value;
+}
 const m::AppShortcutState&AppShortcutPreview::state()const noexcept{return impl_->state;}
 void AppShortcutPreview::upload(g::Renderer&r){auto i=impl_;if(i->pose){i->registration.uploadGeometry(r);i->scene.uploadAnimations(r);}}
 std::span<const g::LayerCompositionEntry>AppShortcutPreview::entries(){auto i=impl_;i->composed.clear();if(i->pose){for(const auto&e:i->scene.entries())i->composed.push_back(e);if(i->field&&i->active){i->field->published=true;i->composed.push_back({&i->field->background,{}});i->composed.push_back({&i->field->glyphs,{}});i->composed.push_back({&i->field->border,{}});}i->composed.push_back({&i->geometry,i->registration.draws()});}return i->composed;}

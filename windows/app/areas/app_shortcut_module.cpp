@@ -5,11 +5,14 @@
 #include "core/data/file_io.hpp"
 #include "core/localization.hpp"
 #include "modules/app_shortcut_navigation.hpp"
+#include "modules/app_shortcut_presentation.hpp"
 #include "modules/app_shortcut_tasks.hpp"
 #include "native/app_shortcut_assets.hpp"
+#include "native/app_shortcut_automation.hpp"
 #include "native/app_shortcut_icons.hpp"
 #include "native/layer_image_source.hpp"
 #include "native/app_shortcut_text.hpp"
+#include "native/notes_clipboard.hpp"
 #include "tools/app_shortcut_preview.hpp"
 #include <algorithm>
 #include <array>
@@ -28,6 +31,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <uiautomation.h>
+#include <wrl/client.h>
 
 namespace endfield::areas {
 namespace {
@@ -39,9 +44,55 @@ using Entries = std::span<const g::LayerCompositionEntry>;
 using J = m::ShortcutJson;
 
 void need(bool value, const char* why) { if (!value) throw std::runtime_error(std::string("App shortcuts: ") + why); }
-std::string text(core::Language l, std::string_view english, std::string_view chinese) { return core::localized(english, chinese, l); }
+// Windows-only texts (the Mac catalog names macOS and EndfieldCharge), in
+// the five source languages; every other text comes from the shared catalog.
+struct WindowsText { std::string_view english, simplified, traditional, japanese, korean; };
+constexpr std::array<WindowsText, 8> windowsTexts{{
+    {"Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。", "請選擇 Windows 應用程式（.exe）或其捷徑（.lnk）。",
+     "Windowsアプリ（.exe）またはそのショートカット（.lnk）を選択してください。", "Windows 앱(.exe) 또는 해당 바로가기(.lnk)를 선택하세요."},
+    {"Edit this shortcut and choose its Windows application.", "请编辑此快捷方式并选择对应的 Windows 应用。", "請編輯此捷徑並選擇對應的 Windows 應用程式。",
+     "このショートカットを編集して、対応するWindowsアプリを選択してください。", "이 바로가기를 편집하고 해당 Windows 앱을 선택하세요."},
+    {"These app shortcuts were saved by a newer version of EndfieldHUD.", "这些快捷方式由较新版本的 EndfieldHUD 保存。", "這些捷徑由較新版本的 EndfieldHUD 儲存。",
+     "これらのショートカットは新しいバージョンのEndfieldHUDで保存されています。", "이 앱 바로가기는 더 최신 버전의 EndfieldHUD에서 저장되었습니다."},
+    {"App shortcuts changed outside this window. Restart EndfieldHUD before editing.", "应用快捷方式已在外部更改，请重启 EndfieldHUD 后再编辑。", "應用程式捷徑已在外部更改，請重啟 EndfieldHUD 後再編輯。",
+     "アプリのショートカットが外部で変更されました。EndfieldHUDを再起動してから編集してください。", "다른 창이나 앱에서 바로가기가 변경되었습니다. EndfieldHUD를 재시작한 후 편집하세요."},
+    {"The application is unavailable.", "应用不可用。", "應用程式不可用。", "アプリを利用できません。", "앱을 사용할 수 없습니다."},
+    {"File picker is busy", "文件选择器正忙", "檔案選擇器忙碌中", "ファイル選択画面は使用中です", "파일 선택기가 사용 중입니다"},
+    {"File picker is unavailable", "文件选择器不可用", "檔案選擇器無法使用", "ファイル選択画面を利用できません", "파일 선택기를 사용할 수 없습니다"},
+    {"Applications", "应用程序", "應用程式", "アプリケーション", "응용 프로그램"},
+}};
+std::string text(core::Language l, std::string_view english, std::string_view chinese) {
+    for (const auto& t : windowsTexts) if (t.english == english) switch (l) {
+        case core::Language::simplifiedChinese: return std::string(t.simplified);
+        case core::Language::traditionalChinese: return std::string(t.traditional);
+        case core::Language::japanese: return std::string(t.japanese);
+        case core::Language::korean: return std::string(t.korean);
+        default: return std::string(t.english);
+    }
+    return core::localized(english, chinese, l);
+}
+// AppShortcutStoreError.invalidApplication for Windows targets.
+std::string invalidApplicationText(core::Language l) {
+    return text(l, "Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。");
+}
 std::string lower(std::string value) { for (auto& c : value) if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a'); return value; }
 std::string suffix(std::string_view path) { const auto dot = path.rfind('.'); return dot == path.npos ? std::string{} : lower(std::string(path.substr(dot))); }
+// A Windows application file the Add App canvas takes (Mac: one .app URL).
+bool applicationFile(std::string_view path) { const auto kind = suffix(path); return kind == ".exe" || kind == ".lnk"; }
+// Asks the shared dialog for its applications mode once the host's request
+// declares it (a dependent check, so this compiles before and after).
+template <class Request> void useApplicationsMode(Request& request) {
+    if constexpr (requires(Request& r) { r.applications = true; }) request.applications = true;
+}
+// A chosen application: an .exe/.lnk file, or a packaged application named
+// "shell:AppsFolder\<AUMID>" (the shared dialog's applications mode).
+std::optional<g::AppShortcutSelection> chosenApplication(std::string_view path) {
+    constexpr std::string_view folder = "shell:appsfolder\\";
+    if (path.size() > folder.size() && lower(std::string(path.substr(0, folder.size()))) == folder)
+        return g::AppShortcutSelection{g::AppShortcutSelectionKind::packagedApp, std::string(path.substr(folder.size()))};
+    if (applicationFile(path)) return g::AppShortcutSelection{g::AppShortcutSelectionKind::file, std::string(path)};
+    return std::nullopt;
+}
 
 // Mac AppShortcutStoreError.errorDescription (Windows product name). Failures
 // without a store code are "unavailable" for OS work and "persistence" for
@@ -66,9 +117,14 @@ std::string errorText(core::Language l, std::optional<m::ShortcutErrorCode> code
 // Combines the source catalog's module entries with the committed saved apps
 // (HUDDesktopWatchNavigation.entries(shortcuts:)). Plans are content events:
 // the host calls plan() on preference/list changes, never on warm frames.
+// `image(id)` names a saved app's published original application icon
+// (SystemHUDView.appNavigationPresentations: icon only for the "original"
+// preset), shared from `images` with the navigation that paints it.
 class NavigationPlanner {
 public:
-    app::AppShortcutNavigation::Plan plan(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right, const m::ShortcutFile& file) {
+    template <class Image>
+    app::AppShortcutNavigation::Plan plan(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right, const m::ShortcutFile& file,
+                                          Image&& image, const std::shared_ptr<g::LayerImageSource>& images) {
         try {
             const bool sameBase = navigation_ && modules.size() == baseActions_.size() && right.size() == baseRight_.size() &&
                 std::equal(right.begin(), right.end(), baseRight_.begin()) &&
@@ -90,7 +146,15 @@ public:
                     const auto found = std::find_if(modules.begin(), modules.end(), [&](const auto& v) { return v.action == e.action; });
                     need(found != modules.end(), "a planned module entry left the catalog");
                     entries_.push_back(*found);
-                } else entries_.push_back({e.action, e.target, e.title, e.iconKey, false, {}, 0});
+                } else {
+                    g::WatchAppearanceEntry entry{e.action, e.target, e.title, e.iconKey, false};
+                    if (e.iconKey == "shortcut:original")
+                        if (const auto id = navigation_->shortcutID(e.action))
+                            if (const auto reference = image(*id); reference && !reference->key.empty() && reference->revision) {
+                                entry.originalImageKey = reference->key;entry.originalImageRevision = reference->revision;entry.originalImages = images;
+                            }
+                    entries_.push_back(std::move(entry));
+                }
             }
             right_.assign(navigation_->rightActions().begin(), navigation_->rightActions().end());
         } catch (const std::exception&) {
@@ -125,7 +189,13 @@ struct SyntheticApplications {
 g::AppShortcutOS syntheticOS(std::shared_ptr<SyntheticApplications> self) {
         return {[self](const g::AppShortcutSelection& s) {
                     ++self->inspected;
-                    if (s.kind != g::AppShortcutSelectionKind::file) throw m::ShortcutError(m::ShortcutErrorCode::unavailable);
+                    if (s.kind == g::AppShortcutSelectionKind::packagedApp) {
+                        // A synthetic packaged application (never an installed one).
+                        if (!s.value.starts_with("Synthetic.")) throw m::ShortcutError(m::ShortcutErrorCode::unavailable);
+                        g::AppShortcutResolved r;r.selection = s;r.name = "Packaged Synthetic";r.applicationKey = "package:" + lower(s.value);
+                        r.launchKind = g::AppShortcutLaunchKind::packagedApp;r.appUserModelID = s.value;
+                        return r;
+                    }
                     const auto stem = fs::path(std::u8string(s.value.begin(), s.value.end())).stem().u8string();
                     const std::string name(stem.begin(), stem.end());
                     if (name.starts_with("Missing")) throw m::ShortcutError(m::ShortcutErrorCode::unavailable);
@@ -154,6 +224,32 @@ g::AppShortcutIconExtractor syntheticIcons(std::shared_ptr<SyntheticApplications
     };
 }
 
+// Hidden coverage: an in-memory clipboard; the system clipboard is never read
+// or written there.
+struct SyntheticClipboard final : g::NotesClipboard {
+    std::optional<g::NotesClipboardText> value;
+    std::vector<std::string> files;
+    unsigned textReads{}, fileReads{}, writes{};
+    std::optional<g::NotesClipboardText> readText(std::uint32_t maximum) override {
+        ++textReads;
+        if (!value || value->text.size() > maximum) return std::nullopt;
+        return value;
+    }
+    std::vector<std::string> readFiles() override { ++fileReads; return files; }
+    bool writeText(const g::NotesClipboardText& text) override { ++writes; value = text; return true; }
+};
+
+// Keyboard modifiers of a routed key (HUDAppShortcutInteraction.keyDown).
+tools::ShortcutKeyModifiers keyboardModifiers(const app::KeyEvent& e) {
+    tools::ShortcutKeyModifiers k;
+    k.shift = GetKeyState(VK_SHIFT) < 0;k.control = GetKeyState(VK_CONTROL) < 0;
+    k.system = e.alt || GetKeyState(VK_MENU) < 0 || GetKeyState(VK_LWIN) < 0 || GetKeyState(VK_RWIN) < 0;
+    k.modified = k.shift || k.control || k.system;
+    return k;
+}
+
+constexpr std::string_view nameFieldID = "apps:name:field";
+
 class AppShortcutArea final : public app::ModuleOwner, public app::AppShortcutNavigation {
 public:
     AppShortcutArea(const app::ApplicationModuleContext& c, fs::path assets, fs::path directory, std::shared_ptr<SyntheticApplications> synthetic)
@@ -164,7 +260,11 @@ public:
         const auto& a = host_.appearance();
         appearance_ = {a.dark, a.language, a.accent};language_ = a.language;
         tools::AppShortcutPreviewOptions options;options.appearance = appearance_;options.textMessage = textMessage_;
-        options.raster.memoryImages = &images_; // original application icons (AppShortcutStore.icon(for:))
+        options.raster.memoryImages = images_.get(); // original application icons (AppShortcutStore.icon(for:))
+        // Edit-menu clipboard of the name field and Command-V application import.
+        if (synthetic_) {syntheticClipboard_ = std::make_shared<SyntheticClipboard>();clipboard_ = syntheticClipboard_;}
+        else clipboard_ = g::systemNotesClipboard();
+        options.clipboard = clipboard_;
         extractor_ = synthetic_ ? syntheticIcons(synthetic_) : g::windowsAppShortcutIconExtractor();
         iconRoute_ = utility_.makeRoute();
         auto* manager = static_cast<ITfThreadMgr*>(c.textManager);
@@ -178,6 +278,7 @@ public:
         loadPending_ = true;pump();
     }
     ~AppShortcutArea() override {
+        automation_.reset(); // UIA peers disconnect before the canvas they read
         *alive_ = false;observer_ = {};
         host_.withdraw(app::appShortcutNavigationService);
         tasks_.reset(); // suppresses completions; accepted writes/launches still finish on the executor
@@ -219,11 +320,11 @@ public:
     bool pointerLocked() const override { return preview_->pointerLocked(); }
     bool pointer(const app::PointerEvent& e, double t) override { const bool used = preview_->pointer(e, t);pump();return used; }
     bool wheel(const app::WheelEvent& e, double t) override { return preview_->wheel(e, t); }
-    bool key(const app::KeyEvent& e, double t) override { const bool used = preview_->key(e, t);pump();return used; }
+    bool key(const app::KeyEvent& e, double t) override { return key(e, keyboardModifiers(e), t); }
     bool filterKey(const app::NativeMessage& m) override { return preview_->filterKey(m); }
     bool message(const app::NativeMessage& m, double t) override { return preview_->message(m, t); }
     void focus(bool value, double t) override { preview_->focus(value, t); }
-    void cancelInteraction(double t) override { preview_->cancelInteraction(t); }
+    void cancelInteraction(double t) override { dropHovering_ = false;preview_->cancelInteraction(t); }
     bool finishEditing(double t) override { return preview_->finishEditing(true, t); }
     bool flush(double) override {
         // Bounded durable drain at quit/session end: an accepted save/remove
@@ -233,6 +334,51 @@ public:
         }
         return !(tasks_->busy() && inflight_ && durable(inflight_->kind));
     }
+    // SystemHUDView.performDragOperation -> acceptsAppShortcutDrop: exactly one
+    // application file over the 400x334 canvas while + Add App is interactive
+    // opens its draft (importPasteboard -> AppShortcutCanvas.importURLs).
+    bool drop(std::span<const std::string> paths, core::Point point, double t) override {
+        if (dropHovering_) {dropHovering_ = false;preview_->setExternalDrag(false, t);} // endFileDrop
+        if (paths.size() != 1 || !applicationFile(paths.front()) || !importable() || !preview_->covers(point)) return false;
+        const bool used = preview_->inspectSelection({g::AppShortcutSelectionKind::file, paths.front()}, t);
+        pump();host_.requestFrame();
+        return used;
+    }
+    // Drag feedback (SystemHUDView.draggingUpdated -> acceptsAppShortcutDrop ->
+    // beginExternalDrag / endExternalDrag): while exactly one application file
+    // is dragged over the canvas it shows its drop target and locks input; a
+    // leave, cancel or drop (point none) ends it. True when a drop there would
+    // be taken. This is the signature of the host's drag-over route
+    // (ModuleOwner::dropHover, requested from the host); until the host
+    // declares it, hidden coverage drives it directly.
+    bool dropHover(std::span<const std::string> paths, std::optional<core::Point> point, double t) {
+        const bool accepts = point && paths.size() == 1 && applicationFile(paths.front()) && importable() && preview_->covers(*point);
+        if (accepts != dropHovering_) {
+            preview_->setExternalDrag(accepts, t);
+            dropHovering_ = accepts && preview_->state().dropTarget();
+            host_.requestFrame();
+        }
+        return dropHovering_;
+    }
+    // HUDAppShortcutInteraction.layoutAccessibility: one peer per canvas
+    // action, and the open name field (created on the first client request).
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!automation_ || root != automationRoot_) {
+            automation_.reset(); // a new group root (stable per registration) gets new peers
+            automationRoot_ = root;automation_ = std::make_unique<g::NativeAppShortcutAutomation>(automationHost(root));
+        }
+        return automation_->refresh();
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) {if (out) *out = nullptr;return E_INVALIDARG;}
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) {if (out) *out = nullptr;return S_OK;}
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
     bool hostEvent(const app::HostEvent& e, double t) override {
         using K = app::HostEvent::Kind;
         switch (e.kind) {
@@ -245,9 +391,7 @@ public:
     void coverage(app::ModuleCoverage& step) override;
 
     // --- AppShortcutNavigation -------------------------------------------------
-    Plan plan(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right) override {
-        return planner_.plan(modules, right, preview_->state().file());
-    }
+    Plan plan(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right) override { return planNavigation(modules, right); }
     bool activate(std::uint64_t action, double t) override {
         const auto id = planner_.shortcutID(action);
         if (!id) return false;
@@ -339,11 +483,23 @@ private:
 
     // HUDAppShortcutInteraction.chooseApplication through the host's one
     // shared dialog (it owns the focus-loss exemption and the cancellation on
-    // a module switch or close). Hidden coverage resolves it synthetically.
+    // a module switch or close): one existing file, no multiple selection,
+    // listed through the application filter (NSOpenPanel allowedContentTypes
+    // [.applicationBundle]); links are not dereferenced, so a chosen .lnk is
+    // saved as the shell link itself. Hidden coverage resolves it synthetically.
+    static app::ApplicationFileRequest chooserRequest(core::Language l) {
+        app::ApplicationFileRequest request{text(l, "Choose an application", "选择应用"), text(l, "Choose", "选择"), text(l, "Choose", "选择")};
+        request.singleFile = true;request.filterName = text(l, "Applications", "应用程序");request.filterSpec = "*.exe;*.lnk";
+        // The shared dialog's applications mode (requested from the host:
+        // start in AppsFolder and return a packaged application as
+        // "shell:AppsFolder\\<AUMID>") is used as soon as the request has it.
+        useApplicationsMode(request);
+        return request;
+    }
     void choose(std::uint64_t generation) {
         chooser_ = generation;
         if (coverageMode()) {++coverageChooserRequests_;return;}
-        const app::ApplicationFileRequest request{text(language_, "Choose an application", "选择应用"), text(language_, "Choose", "选择"), text(language_, "Choose", "选择")};
+        const auto request = chooserRequest(language_);
         std::weak_ptr<bool> alive = alive_;
         if (!host_.chooseFiles(request, [this, alive, generation](app::ApplicationFileResult result) {
                 if (const auto token = alive.lock(); token && *token) chosen(generation, std::move(result));
@@ -357,11 +513,10 @@ private:
         if (result.cancelled) preview_->completeRequest(generation, {}, t);
         else if (result.failed) preview_->completeRequest(generation, text(language_, "File picker is unavailable", "文件选择器不可用"), t);
         else if (result.paths.size() != 1) preview_->completeRequest(generation, text(language_, "Choose one application to customize.", "请选择一个应用进行设置。"), t);
-        else if (const auto kind = suffix(result.paths.front()); kind != ".exe" && kind != ".lnk")
-            preview_->completeRequest(generation, text(language_, "Choose a Windows application (.exe) or its shortcut (.lnk).", "请选择 Windows 应用程序（.exe）或其快捷方式（.lnk）。"), t);
+        else if (const auto selection = chosenApplication(result.paths.front()); !selection) preview_->completeRequest(generation, invalidApplicationText(language_), t);
         else {
             preview_->completeRequest(generation, {}, t);
-            (void)preview_->inspectSelection({g::AppShortcutSelectionKind::file, std::move(result.paths.front())}, t);
+            (void)preview_->inspectSelection(*selection, t);
         }
         pump();host_.requestFrame();
     }
@@ -398,7 +553,7 @@ private:
             case LaunchPhase::closed: cancelPendingLaunch(t);break;          // a forced close interrupted it
             default: break;
         }
-        overlayVisible_ = false;
+        overlayVisible_ = false;dropHovering_ = false;
         preview_->cancelInteraction(t);preview_->setOverlayVisible(false, t);
         pump(); // consume the preview's cancelled reads
     }
@@ -421,12 +576,93 @@ private:
         host_.openModule(core::Module::addApp);
     }
 
+    // --- Keys, paste and drop -----------------------------------------------------
+    bool key(const app::KeyEvent& e, const tools::ShortcutKeyModifiers& k, double t) {
+        // HUDAppShortcutInteraction.keyDown: Command-V without the name editor
+        // imports the pasteboard's application file.
+        if (e.kind == app::KeyKind::down && e.value == 'V' && k.control && !k.shift && !k.system && !preview_->editingName() && preview_->acceptsInput()) {
+            const bool used = pasteApplications(t);
+            pump();if (used) host_.requestFrame();
+            return used;
+        }
+        const bool used = preview_->key(e, k, t);pump();return used;
+    }
+    // HUDAppShortcutInteraction.importPasteboard guard: active, no chooser.
+    bool importable() const { return overlayVisible_ && preview_->acceptsInput() && preview_->state().active() && !chooser_ && !preview_->presentingPanel(); }
+    // importPasteboard(.general): the clipboard's file paths (CF_HDROP), read
+    // once on this explicit key; none leaves the key unhandled.
+    bool pasteApplications(double t) {
+        if (!importable() || !clipboard_) return false;
+        auto paths = clipboard_->readFiles();
+        if (paths.empty()) return false;
+        // AppShortcutCanvas.importURLs: exactly one application.
+        if (paths.size() != 1) {preview_->showError(text(language_, "Choose one application to customize.", "请选择一个应用进行设置。"), t);return true;}
+        if (!applicationFile(paths.front())) {preview_->showError(invalidApplicationText(language_), t);return true;}
+        return preview_->inspectSelection({g::AppShortcutSelectionKind::file, std::move(paths.front())}, t);
+    }
+
+    // --- UI Automation --------------------------------------------------------------
+    g::AppShortcutAutomationHost automationHost(IRawElementProviderFragmentRoot* root) {
+        g::AppShortcutAutomationHost view;
+        view.root = root;
+        view.controls = [this] { return accessibleControls(); };
+        view.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> {
+            // Canvas -> logical client (current module plane) -> screen pixels.
+            const auto client = preview_->clientRect(canvas);
+            const double scale = host_.metrics().scale;
+            POINT origin{0, 0};
+            if (!client || !(scale > 0) || !ClientToScreen(window_, &origin)) return std::nullopt;
+            return core::Rect{origin.x + client->x * scale, origin.y + client->y * scale, client->width * scale, client->height * scale};
+        };
+        view.invoke = [this](std::string_view id) { return performAccessible(id, now()); };
+        view.setText = [this](std::string_view id, std::string_view value) {
+            if (id != nameFieldID) return false;
+            const bool used = preview_->setFieldText(value, now());
+            host_.requestFrame();return used;
+        };
+        return view;
+    }
+    // AppShortcutCanvas.accessibleActions (without the name action while its
+    // field is open) with accessibilityStatus as help, then the name field.
+    std::vector<g::AppShortcutAutomationControl> accessibleControls() const {
+        std::vector<g::AppShortcutAutomationControl> out;
+        if (!overlayVisible_ || !preview_->acceptsInput()) return out;
+        const auto& s = preview_->state();
+        const auto help = s.error() ? *s.error() : s.editing() ? text(language_, "Edit app shortcut", "编辑应用快捷方式") : text(language_, "Application shortcuts", "应用快捷方式");
+        const auto field = preview_->fieldText();
+        out.reserve(s.actions().size() + 1);
+        for (const auto& action : s.actions()) {
+            if (field && action.kind == m::ShortcutActionKind::name) continue;
+            out.push_back({m::shortcutActionID(action), m::shortcutActionLabel(action, s, language_), help, action.rect});
+        }
+        if (field) out.push_back({std::string(nameFieldID), text(language_, "Shortcut name", "快捷方式名称"),
+            text(language_, "Return applies the name. Save shortcut stores your changes.", "回车应用名称，点击保存快捷方式以保存修改。"),
+            m::shortcutNameRect, g::AppShortcutAutomationKind::edit, *field});
+        return out;
+    }
+    // HUDAppShortcutInteraction.activateAction: the click's action.
+    bool performAccessible(std::string_view id, double t) {
+        if (!overlayVisible_ || !preview_->acceptsInput()) return false;
+        const auto actions = preview_->state().actions();
+        const auto found = std::find_if(actions.begin(), actions.end(), [&](const auto& a) { return m::shortcutActionID(a) == id; });
+        if (found == actions.end()) return false;
+        const auto action = *found; // perform may rebuild the action list
+        const bool used = preview_->perform(action, t);
+        pump();host_.requestFrame();
+        return used;
+    }
+
     // --- Original application icons ---------------------------------------------
-    // The draft ("" key) and the visible saved rows that use the App icon
-    // preset; at most 16 retained references (the shared image cache keeps 24).
+    // The draft ("" key), the visible saved rows and then the navigation's
+    // other saved apps, in stored order, that use the App icon preset
+    // (AppShortcutCanvas rows and SystemHUDView.appNavigationPresentations);
+    // at most 20 retained references (the shared image cache keeps 24
+    // identities, so nothing this owner names is evicted). Further App icon
+    // shortcuts keep the source grid until one of these is released.
     struct IconWant { std::string id, applicationKey; g::AppShortcutSelection selection; };
     struct IconEntry { std::string applicationKey; std::uint64_t revision{}, used{}; bool attempted{}; };
-    static constexpr std::size_t maximumIcons = 16;
+    static constexpr std::size_t maximumIcons = 20;
+    static_assert(maximumIcons < g::LayerImageSource::maximumCachedImages);
     static std::string iconKey(std::string_view id) { return "appShortcut.icon." + (id.empty() ? std::string("draft") : std::string(id)); }
     static std::string applicationKey(const J& locator) {
         try {const auto& key = locator["windowsTarget"]["applicationKey"];return key.isString() ? key.string() : std::string{};}
@@ -436,22 +672,24 @@ private:
         const auto& s = preview_->state();iconStateRevision_ = s.revision();
         wanted_.clear();
         const auto want = [&](std::string id, const J& locator) {
+            if (wanted_.size() >= maximumIcons || std::any_of(wanted_.begin(), wanted_.end(), [&](const auto& w) { return w.id == id; })) return;
             if (const auto selection = g::appShortcutIconSelection(locator)) wanted_.push_back({std::move(id), applicationKey(locator), *selection});
         };
         if (s.editing() && s.candidate()) want({}, s.candidate()->locator);
         const auto& items = s.file().items;
         const auto first = std::min(items.size(), static_cast<std::size_t>(s.scrollOffset() / 52)), end = std::min(items.size(), first + 7);
         for (auto n = first; n < end; ++n) if (items[n].iconPreset == "original") want(items[n].id, items[n].locator);
+        for (const auto& item : items) if (item.iconPreset == "original") want(item.id, item.locator);
         for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
         // Removed shortcuts and the least recently shown beyond the bound.
         std::erase_if(icons_, [&](const auto& entry) {
             const bool removed = !entry.first.empty() && std::none_of(items.begin(), items.end(), [&](const auto& v) { return v.id == entry.first; });
-            if (removed && entry.second.revision) images_.retire(iconKey(entry.first));
+            if (removed && entry.second.revision) images_->retire(iconKey(entry.first));
             return removed;
         });
         while (icons_.size() > maximumIcons) {
             const auto oldest = std::min_element(icons_.begin(), icons_.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
-            if (oldest->second.revision) images_.retire(iconKey(oldest->first));
+            if (oldest->second.revision) images_->retire(iconKey(oldest->first));
             icons_.erase(oldest);
         }
         publishIcons();scheduleIcon();
@@ -464,6 +702,19 @@ private:
             if (id.empty()) images.draft = reference;else images.items.emplace(id, reference);
         }
         preview_->setOriginalImages(std::move(images));
+        // The navigation names the same snapshots: rebind it whenever a saved
+        // app's published icon changed or was released.
+        std::map<std::string, std::uint64_t, std::less<>> navigation;
+        for (const auto& [id, entry] : icons_) if (!id.empty() && entry.revision) navigation.emplace(id, entry.revision);
+        if (navigation != navigationImages_) {navigationImages_ = std::move(navigation);if (observer_) observer_();}
+    }
+    std::optional<m::ShortcutImageReference> navigationImage(std::string_view id) const {
+        const auto found = icons_.find(id);
+        if (id.empty() || found == icons_.end() || !found->second.revision) return std::nullopt;
+        return m::ShortcutImageReference{iconKey(id), found->second.revision};
+    }
+    Plan planNavigation(std::span<const g::WatchAppearanceEntry> modules, std::span<const std::uint64_t> right) {
+        return planner_.plan(modules, right, preview_->state().file(), [this](std::string_view id) { return navigationImage(id); }, images_);
     }
     void scheduleIcon() {
         if (iconJob_) return;
@@ -490,14 +741,20 @@ private:
         entry.applicationKey = key;entry.attempted = true;
         if (pixels) {
             const auto revision = ++iconRevision_;
-            try {(void)images_.publish(iconKey(id), revision, pixels->width, pixels->height, pixels->straightRGBA);entry.revision = revision;}
+            try {(void)images_->publish(iconKey(id), revision, pixels->width, pixels->height, pixels->straightRGBA);entry.revision = revision;}
             catch (const std::bad_alloc&) {throw;}
             catch (const std::exception&) {} // rejected image: the source grid fallback remains
-        } else if (entry.revision) {images_.retire(iconKey(id));entry.revision = 0;}
+        } else if (entry.revision) {images_->retire(iconKey(id));entry.revision = 0;}
         publishIcons();scheduleIcon();host_.requestFrame();
     }
 
-    void notify() { ++listRevision_;if (observer_) observer_(); }
+    // The committed list changed: icons follow it at once (also before the
+    // HUD first opens, so the navigation has them), then the host rebinds.
+    void notify() {
+        ++listRevision_;
+        if (preview_->state().revision() != iconStateRevision_) refreshIcons();
+        if (observer_) observer_();
+    }
     void completed(m::ShortcutTaskResult r) {
         if (!inflight_ || inflight_->token != r.token) {pump();return;}
         const auto f = *std::exchange(inflight_, std::nullopt);const auto t = now();
@@ -550,7 +807,10 @@ private:
     std::shared_ptr<SyntheticApplications> synthetic_;
     g::NativeAppShortcutAssets assets_;
     std::shared_ptr<bool> alive_;
-    g::LayerImageSource images_; // outlives the preview whose raster options borrow it
+    // Outlives the preview whose raster options borrow it; shared with the
+    // navigation entries that name its snapshots.
+    std::shared_ptr<g::LayerImageSource> images_{std::make_shared<g::LayerImageSource>()};
+    std::map<std::string, std::uint64_t, std::less<>> navigationImages_;
     g::AppShortcutIconExtractor extractor_;
     app::UtilityExecutor::Route iconRoute_{};
     std::vector<IconWant> wanted_;
@@ -562,13 +822,17 @@ private:
     core::Language language_{core::Language::english};
     std::unique_ptr<tools::AppShortcutPreview> preview_;
     std::unique_ptr<m::AppShortcutTasks> tasks_; // destroyed before the preview its completions update
+    std::shared_ptr<g::NotesClipboard> clipboard_;
+    std::shared_ptr<SyntheticClipboard> syntheticClipboard_; // hidden coverage
+    std::unique_ptr<g::NativeAppShortcutAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{}; // the host's group root (borrowed; the peers hold their reference)
     NavigationPlanner planner_;
     std::function<void()> observer_;
     std::optional<Inflight> inflight_;
     std::optional<Launch> launch_;
     std::optional<std::uint64_t> chooser_;
     std::uint64_t token_{}, listRevision_{};
-    bool loadPending_{}, loadFailed_{}, overlayVisible_{}, pumping_{};
+    bool loadPending_{}, loadFailed_{}, overlayVisible_{}, pumping_{}, dropHovering_{};
     unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, launchesOpened_{};
 };
 
@@ -597,7 +861,7 @@ struct AppShortcutArea::Driver {
     bool icon(const std::string& id, std::string_view applicationKey) {
         const auto found = a.icons_.find(id);
         return found != a.icons_.end() && found->second.revision && found->second.applicationKey == applicationKey &&
-            a.images_.acquire(iconKey(id), found->second.revision) != nullptr;
+            a.images_->acquire(iconKey(id), found->second.revision) != nullptr;
     }
     void settle() {
         for (unsigned n = 0; n < 12 && working(); ++n) {step.drain();frame();}
@@ -626,13 +890,13 @@ struct AppShortcutArea::Driver {
         step.check(a.preview_->key({app::KeyKind::down, VK_RETURN}, false, t) && !a.preview_->editingName(), "Return commits the name field");
         frame();
     }
-    void choose(const fs::path& application) {
+    void choose(const fs::path& application) { choose(utf8(application)); }
+    void choose(std::string selection) {
         const auto before = a.coverageChooserRequests_;
         click(329, 16); // + Choose app
         step.check(a.coverageChooserRequests_ == before + 1 && a.chooser_ && a.preview_->presentingPanel() && a.preview_->pointerLocked(),
                    "+ Choose app requests the one chooser and locks the canvas behind it");
-        const auto path = application.u8string();
-        a.chosen(*a.chooser_, {false, false, {std::string(path.begin(), path.end())}});
+        a.chosen(*a.chooser_, {false, false, {std::move(selection)}});
         settle();frames(.32); // inspection, then the source .26 s draft arrival
     }
     m::ShortcutFile disk() const {
@@ -656,7 +920,7 @@ struct AppShortcutArea::Driver {
             modules.push_back({n + 1, target, target, "module:" + target, true, {}, 0});
             if (n >= 4 && target != "storage" && target != "activityMonitor") right.push_back(n + 1);
         }
-        (void)a.planner_.plan(modules, right, state().file());
+        (void)a.planNavigation(modules, right);
     }
     std::uint64_t action(std::string_view target) const {
         const auto entries = a.planner_.entries();
@@ -678,6 +942,58 @@ struct AppShortcutArea::Driver {
                 entry->title == item.name && entry->iconKey == "shortcut:" + item.iconPreset && a.planner_.shortcutID(app) == std::optional<std::string_view>(item.id);
         }
         step.check(ordered && std::size_t(right.end() - at) == items.size() + 2, "Saved apps follow Power in their stored order and + Add App stays last");
+        // HUDAppShortcutPresentation.icon: the published original application
+        // image for the "original" preset only, shared with the navigation.
+        bool icons = true;
+        for (const auto& item : items) {
+            const auto app = action("app." + item.id);
+            const auto entry = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.action == app; });
+            if (entry == entries.end()) {icons = false;break;}
+            const auto image = item.iconPreset == "original" ? a.navigationImage(item.id) : std::nullopt;
+            icons = icons && (image ? entry->originalImageKey == image->key && entry->originalImageRevision == image->revision && entry->originalImages == a.images_ &&
+                                          a.images_->acquire(image->key, image->revision) != nullptr
+                                    : entry->originalImageKey.empty() && !entry->originalImageRevision && !entry->originalImages);
+        }
+        step.check(icons, "Navigation entries name exactly the published App icon images");
+    }
+    // The navigation entry of a saved app carries its own application icon.
+    bool navigationIcon(std::string_view id) {
+        plan();
+        const auto entries = a.planner_.entries();const auto app = action("app." + std::string(id));
+        const auto entry = std::find_if(entries.begin(), entries.end(), [&](const auto& e) { return e.action == app; });
+        return entry != entries.end() && !entry->originalImageKey.empty() && entry->originalImages == a.images_;
+    }
+    static std::string utf8(const fs::path& path) { const auto value = path.u8string();return std::string(value.begin(), value.end()); }
+    // A localized UIA string as the peers report it (the coverage language).
+    std::wstring wide(std::string_view english, std::string_view chinese) const {
+        const auto value = text(a.language_, english, chinese);
+        if (value.empty()) return {};
+        const int n = MultiByteToWideChar(CP_UTF8, 0, value.data(), int(value.size()), nullptr, 0);
+        std::wstring out(std::size_t(n > 0 ? n : 0), L'\0');
+        if (n > 0) MultiByteToWideChar(CP_UTF8, 0, value.data(), int(value.size()), out.data(), n);
+        return out;
+    }
+    static tools::ShortcutKeyModifiers control() { tools::ShortcutKeyModifiers k;k.modified = k.control = true;return k; }
+    // The UIA peer under the centre of a canvas action, by hit test.
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> peer(std::string_view id) {
+        const auto actions = state().actions();
+        const auto found = std::find_if(actions.begin(), actions.end(), [&](const auto& v) { return m::shortcutActionID(v) == id; });
+        const auto rect = found != actions.end() ? found->rect : m::shortcutNameRect;
+        const auto screen = a.automationHost(a.automationRoot_).toScreen(rect);
+        step.check(screen.has_value(), "A + Add App peer projects to the screen");
+        Microsoft::WRL::ComPtr<IRawElementProviderFragment> element;
+        step.check(SUCCEEDED(a.automationFromPoint(screen->x + screen->width / 2, screen->y + screen->height / 2, &element)) && element, "The UIA hit test finds a peer");
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;VARIANT automationId;VariantInit(&automationId);
+        step.check(SUCCEEDED(element.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(UIA_AutomationIdPropertyId, &automationId)) && automationId.vt == VT_BSTR &&
+                   std::wstring_view(automationId.bstrVal) == std::wstring(id.begin(), id.end()), "The hit peer carries its action's automation id");
+        VariantClear(&automationId);
+        return element;
+    }
+    std::wstring property(const Microsoft::WRL::ComPtr<IRawElementProviderFragment>& element, PROPERTYID id) {
+        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;VARIANT value;VariantInit(&value);std::wstring out;
+        if (SUCCEEDED(element.As(&simple)) && SUCCEEDED(simple->GetPropertyValue(id, &value)) && value.vt == VT_BSTR && value.bstrVal) out = value.bstrVal;
+        VariantClear(&value);
+        return out;
     }
     // Close-first handoff on this owner's own close/conceal path (the hidden
     // harness keeps the HUD lifecycle; the owner's close request is counted).
@@ -739,6 +1055,24 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     d.choose(applications / "Missing.exe");
     step.check(!state.editing() && state.error() && state.file().items.size() == 2, "A missing application reports its error and opens no draft");
 
+    // 3b. A packaged application from the chooser's applications mode
+    //     ("shell:AppsFolder\<AUMID>") opens its draft; a document does not.
+    d.choose(std::string("shell:AppsFolder\\Synthetic.Packaged_8wekyb3d8bbwe!App"));
+    step.check(state.editing() && state.candidate()->name == "Packaged Synthetic" && state.candidate()->locator["windowsTarget"]["kind"] == J("packagedApp") &&
+               state.candidate()->locator["windowsTarget"]["appUserModelID"] == J("Synthetic.Packaged_8wekyb3d8bbwe!App"), "A chosen packaged application opens its draft");
+    d.click(188, 288);d.frames(.32);
+    step.check(!state.editing(), "Cancel discards the packaged draft");
+    {
+        const auto requests = coverageChooserRequests_;
+        d.click(329, 16);
+        step.check(coverageChooserRequests_ == requests + 1 && chooser_, "+ Choose app requests the chooser again");
+        chosen(*chooser_, {false, false, {Driver::utf8(applications / "Readme.txt")}});d.frame();
+        step.check(!state.editing() && state.error() == invalidApplicationText(language_), "A chosen document asks for a Windows application");
+        const auto request = chooserRequest(core::Language::english);
+        step.check(request.singleFile && request.filterSpec == "*.exe;*.lnk" && request.filterName == "Applications" && request.title == "Choose an application",
+                   "The chooser asks for one application file through the application filter");
+    }
+
     // 4. A launch that fails after the close reports in + Add App and reopens it.
     synthetic_->failLaunch = true;
     d.click(100, Driver::row(d.index(alpha.id)));
@@ -766,6 +1100,9 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     d.settle();
     step.check(d.icon(beta.id, applicationKey(beta.locator)) && !icons_.contains(alpha.id) && !icons_.contains(seeded.items[0].id),
                "Only rows with the App icon preset and a Windows target request the application icon");
+    d.checkNavigation();
+    step.check(d.navigationIcon(beta.id) && !d.navigationIcon(alpha.id) && !d.navigationIcon(seeded.items[0].id),
+               "The right-side navigation shows the shell link's own application icon");
 
     // 6. Edit the first app: reinspection restores its name and preset; rename
     //    and Star keep its identity, creation date and position.
@@ -788,6 +1125,91 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     step.check(state.editing() && state.error() && state.file().items.size() == 3 && d.disk() == state.file(), "A duplicate application is rejected and the draft stays editable");
     d.click(188, 288);d.frames(.32);
     step.check(!state.editing() && !state.error(), "Cancel returns to the list and clears the error");
+
+    // 7b. Drag and drop (SystemHUDView.acceptsAppShortcutDrop): exactly one
+    //     application file over the canvas opens its draft.
+    const auto inside = step.project({200, 160}, 400, 334), outside = step.project({-40, -40}, 400, 334);
+    step.check(inside && outside && covers(*inside) && !covers(*outside), "Drop points project inside and outside the + Add App canvas");
+    const std::array two{Driver::utf8(applications / "Gamma.exe"), Driver::utf8(applications / "Delta.lnk")};
+    const std::array gamma{two[0]}, document{Driver::utf8(applications / "Readme.txt")};
+    step.check(!drop(two, *inside, d.t) && !drop(document, *inside, d.t) && !drop(gamma, *outside, d.t) && !state.editing() && !preview_->busy(),
+               "Two files, a document or a drop beside the canvas are refused");
+    step.check(!dropHover(two, *inside, d.t) && !dropHover(document, *inside, d.t) && !dropHover(gamma, *outside, d.t) && !state.dropTarget(),
+               "Two files, a document or a drag beside the canvas show no drop target");
+    step.check(dropHover(gamma, *inside, d.t) && state.dropTarget() && pointerLocked(), "One application over the canvas shows its drop target and locks input");
+    d.frame();
+    step.check(!dropHover(gamma, std::nullopt, d.t) && !state.dropTarget() && !pointerLocked(), "Leaving the canvas ends the drop target");
+    step.check(dropHover(gamma, *inside, d.t) && state.dropTarget(), "The application is dragged back over the canvas");
+    d.frame();
+    step.check(drop(gamma, *inside, d.t) && !state.dropTarget(), "A dropped application is accepted and ends the drop target");
+    d.settle();d.frames(.32);
+    step.check(state.editing() && state.candidate()->name == "Gamma Synthetic" && !state.editingID() && !state.error(), "A dropped application opens its new draft");
+    d.click(188, 288);d.frames(.32);
+    step.check(!state.editing() && state.file().items.size() == 3, "Cancel discards the dropped draft");
+
+    // 7c. Command-V (HUDAppShortcutInteraction.keyDown -> importPasteboard)
+    //     reads the synthetic clipboard's files; then the name field's Edit
+    //     menu (Cut/Copy/Paste) and its UIA edit peer.
+    const app::KeyEvent paste{app::KeyKind::down, 'V'};
+    const auto reads = syntheticClipboard_->fileReads;
+    syntheticClipboard_->files.clear();
+    step.check(!key(paste, Driver::control(), d.t) && syntheticClipboard_->fileReads == reads + 1 && !state.error(), "Command-V without application files is left unhandled");
+    syntheticClipboard_->files.assign(two.begin(), two.end());
+    step.check(key(paste, Driver::control(), d.t) && state.error() == text(language_, "Choose one application to customize.", "请选择一个应用进行设置。") && !state.editing(),
+               "Pasting two files asks for one application");
+    syntheticClipboard_->files.assign(document.begin(), document.end());
+    step.check(key(paste, Driver::control(), d.t) && state.error() == invalidApplicationText(language_) && !state.editing(), "Pasting a document asks for a Windows application");
+    syntheticClipboard_->files = {two[1]};
+    step.check(key(paste, Driver::control(), d.t), "A pasted application is accepted");
+    d.settle();d.frames(.32);
+    step.check(state.editing() && state.candidate()->name == "Delta Synthetic" && !state.error() && preview_->editingName() && preview_->fieldText() == "Delta Synthetic",
+               "A pasted application opens its draft with the selected name field");
+    const auto writes = syntheticClipboard_->writes;
+    step.check(preview_->key({app::KeyKind::down, 'C'}, Driver::control(), d.t) && syntheticClipboard_->writes == writes + 1 && syntheticClipboard_->value &&
+               syntheticClipboard_->value->text == u"Delta Synthetic", "Ctrl+C copies the selected name");
+    syntheticClipboard_->value = g::NotesClipboardText{u"Delta\nPasted", std::nullopt};
+    step.check(preview_->key({app::KeyKind::down, 'V'}, Driver::control(), d.t) && preview_->fieldText() == "Delta Pasted", "Ctrl+V pastes text with its line break as a space");
+    step.check(preview_->key({app::KeyKind::down, 'A'}, Driver::control(), d.t) && preview_->key({app::KeyKind::down, 'X'}, Driver::control(), d.t) &&
+               preview_->fieldText() == "" && syntheticClipboard_->value && syntheticClipboard_->value->text == u"Delta Pasted", "Ctrl+X cuts the selected name");
+    (void)automationRefresh(automationRoot_);
+    step.check(automationCount() == state.actions().size(), "UIA lists the draft's actions and its name field instead of Rename");
+    {
+        const auto field = d.peer(nameFieldID);
+        Microsoft::WRL::ComPtr<IValueProvider> value;
+        step.check(SUCCEEDED(field.As(&value)) && d.property(field, UIA_NamePropertyId) == d.wide("Shortcut name", "快捷方式名称") &&
+                   d.property(field, UIA_HelpTextPropertyId) == d.wide("Return applies the name. Save shortcut stores your changes.", "回车应用名称，点击保存快捷方式以保存修改。"),
+                   "The name field is a named edit peer");
+        step.check(SUCCEEDED(value->SetValue(L"Delta Speech")) && preview_->fieldText() == "Delta Speech", "UIA SetValue replaces the name through its editor");
+    }
+    step.check(preview_->key({app::KeyKind::down, VK_RETURN}, false, d.t) && !preview_->editingName() && state.draftName() == "Delta Speech", "Return applies the edited name");
+    (void)automationRefresh(automationRoot_);
+    {
+        const auto cancel = d.peer("apps:cancel");
+        Microsoft::WRL::ComPtr<IInvokeProvider> invoke;
+        step.check(d.property(cancel, UIA_HelpTextPropertyId) == d.wide("Edit app shortcut", "编辑应用快捷方式") && SUCCEEDED(cancel.As(&invoke)) && SUCCEEDED(invoke->Invoke()),
+                   "The Cancel peer invokes Cancel");
+    }
+    d.frames(.32);
+    step.check(!state.editing() && state.file().items.size() == 3 && !preview_->busy(), "The pasted draft is discarded");
+
+    // 7d. UIA over the list: one peer per action, invoking the click's action.
+    (void)automationRefresh(automationRoot_);
+    step.check(automationCount() == state.actions().size() && automationCount() == 1 + 3 * state.file().items.size(),
+               "UIA lists + Choose app and each row's Open, Edit and Remove");
+    {
+        const auto open = d.peer(m::shortcutActionID({m::ShortcutActionKind::launch, beta.id, {}}));
+        step.check(d.property(open, UIA_NamePropertyId) == d.wide("Open ", "打开 ") + L"Beta" && d.property(open, UIA_HelpTextPropertyId) == d.wide("Application shortcuts", "应用快捷方式"),
+                   "A row peer is named after its app");
+        const auto choose = d.peer("apps:choose");
+        Microsoft::WRL::ComPtr<IInvokeProvider> invoke;
+        const auto requests = coverageChooserRequests_;
+        step.check(SUCCEEDED(choose.As(&invoke)) && SUCCEEDED(invoke->Invoke()) && coverageChooserRequests_ == requests + 1 && chooser_, "The + Choose app peer requests the chooser");
+    }
+    chosen(*chooser_, {true, false, {}});
+    d.frames(.1);
+    step.check(!chooser_ && !preview_->presentingPanel() && !state.error() && !state.editing(), "A cancelled chooser leaves the list unchanged");
+    automationDisconnect();
+    step.check(automationCount() == 0, "Closing the UIA tree disconnects every peer");
 
     // 8. A successful close-first launch from the list records the Event Log
     //    entry. Only in the first cycle: the shared Event Log then shows the

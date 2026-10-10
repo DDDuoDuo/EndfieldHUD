@@ -2,6 +2,7 @@
 #include "app/overlay_host.hpp"
 #include "native/app_shortcut_scene.hpp"
 #include "native/app_shortcut_service.hpp"
+#include "native/notes_clipboard.hpp"
 #include "native/projected_editor.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -15,12 +16,17 @@ struct ShortcutRequest {
     std::optional<modules::ShortcutCandidate>candidate;
     std::optional<std::string>editingID;std::string name,icon;
 };
+struct ShortcutKeyModifiers {bool modified{},shift{},control{},system{};};
 struct AppShortcutPreviewOptions {
     modules::ShortcutFile initial;
     std::optional<std::string>initialError;
     modules::ShortcutAppearance appearance;
     native::LayerRasterOptions raster;
     UINT textMessage{WM_APP+219};
+    // Edit-menu Cut/Copy/Paste of the name field (AppDelegate Edit menu over
+    // HUDShortcutNameField): read once per explicit Ctrl+V, written once per
+    // Ctrl+C/Ctrl+X. Null declines those keys (no clipboard access at all).
+    std::shared_ptr<native::NotesClipboard> clipboard;
 };
 // Retained source App Launcher with one borrowed-TSF plain-history name field.
 // All OS/repository work is explicit takeRequest/complete*. One request is in
@@ -51,11 +57,24 @@ public:
     bool requiresFrames(double)const;bool covers(core::Point logicalClientPoint)const;
     bool pointer(const app::PointerEvent&,double);bool wheel(const app::WheelEvent&,double);
     bool scroll(core::Point logicalClientPoint,double logicalDelta,double);
+    // key(event) reads the keyboard state; `modified` overrides only whether
+    // any modifier is down; ShortcutKeyModifiers states every modifier
+    // explicitly (synthetic input in tests and hidden coverage).
     bool key(const app::KeyEvent&,double);bool key(const app::KeyEvent&,bool modified,double);
+    bool key(const app::KeyEvent&,const ShortcutKeyModifiers&,double);
     bool filterKey(const app::NativeMessage&);bool message(const app::NativeMessage&,double);
     void focus(bool,double);void cancelInteraction(double);
     bool pointerLocked()const noexcept;bool presentingPanel()const noexcept;
     bool editingName()const noexcept;bool finishEditing(bool commit,double);
+    // Accessibility projection (HUDAppShortcutInteraction.layoutAccessibility):
+    // whether the canvas accepts input, a canvas rect -> logical client rect
+    // through the current module plane (none without input or when it does
+    // not project), and the open name field's text, replaced through the
+    // editor's host-edit path with the typing normalization (UIA SetValue).
+    bool acceptsInput()const noexcept;
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    std::optional<std::string>fieldText()const;
+    bool setFieldText(std::string_view,double);
     bool perform(const modules::ShortcutAction&,double);
     // Chosen/dropped application. While an imported (non-Windows) record is
     // being edited the inspection relinks that record: its id, order, name

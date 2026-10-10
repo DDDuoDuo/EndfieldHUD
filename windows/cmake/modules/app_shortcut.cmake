@@ -28,12 +28,31 @@ if(WIN32 AND TARGET hud_app_shortcut_service)
   endif()
 endif()
 
-if(WIN32 AND TARGET hud_app_shortcut_preview AND TARGET hud_app_shortcut_tasks AND TARGET hud_app_shortcut_icons)
+# UI Automation peers of the + Add App canvas (HUDAppShortcutInteraction
+# .layoutAccessibility): buttons with Invoke and the name field's edit peer.
+# Tested over injected controls and host callbacks; no window is shown.
+if(WIN32)
+  add_library(hud_app_shortcut_automation STATIC native/app_shortcut_automation.cpp)
+  target_include_directories(hud_app_shortcut_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_app_shortcut_automation PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_app_shortcut_automation PRIVATE uiautomationcore oleaut32 ole32)
+  if(MSVC)
+    target_compile_options(hud_app_shortcut_automation PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(app_shortcut_automation_tests tests/app_shortcut_automation_tests.cpp)
+    target_compile_definitions(app_shortcut_automation_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(app_shortcut_automation_tests PRIVATE hud_app_shortcut_automation uiautomationcore oleaut32 ole32)
+    add_test(NAME app_shortcut_automation_contracts COMMAND app_shortcut_automation_tests)
+  endif()
+endif()
+
+if(WIN32 AND TARGET hud_app_shortcut_preview AND TARGET hud_app_shortcut_tasks AND TARGET hud_app_shortcut_icons AND TARGET hud_app_shortcut_automation)
   add_library(hud_app_shortcut_area STATIC app/areas/app_shortcut_module.cpp)
   target_include_directories(hud_app_shortcut_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_app_shortcut_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_app_shortcut_area PUBLIC hud_module_registry hud_utility hud_app_shortcut_preview hud_app_shortcut_tasks hud_app_shortcut_icons hud_data hud_localization
-    PRIVATE user32)
+  target_link_libraries(hud_app_shortcut_area PUBLIC hud_module_registry hud_utility hud_app_shortcut_preview hud_app_shortcut_tasks hud_app_shortcut_icons hud_app_shortcut_automation hud_data hud_localization
+    PRIVATE user32 ole32 oleaut32 uiautomationcore)
   if(MSVC)
     target_compile_options(hud_app_shortcut_area PRIVATE /W4 /permissive- /EHsc)
   endif()

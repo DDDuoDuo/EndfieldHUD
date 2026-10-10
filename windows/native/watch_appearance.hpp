@@ -1,7 +1,9 @@
 #pragma once
 #include "core/source_desktop_content.hpp"
 #include "native/watch_content.hpp"
+#include <memory>
 namespace endfield::native {
+class LayerImageSource;
 // Exact original icon trees are independent of language/theme/selection. The
 // supplied JSON is the compact, hash-verified source asset, not a frame oracle.
 class WatchAppearanceTemplates final {
@@ -20,9 +22,14 @@ core::source::Json compileDesktopCaption(const core::source::Json&sourceTemplate
  const core::source::DesktopCaptionPlan&,core::source::DesktopTextSize evaluatedSize,std::string_view surfaceID);
 struct WatchAppearanceEntry {
  std::uint64_t action{};std::string target,title,iconKey;bool module{true};
- // Caller-supplied original application image, prepared once at binding time.
- // Empty uses the source grid fallback. Borrowed raster image source owns pixels.
+ // Caller-supplied original application image (Mac HUDAppShortcutPresentation
+ // .icon for the "original" preset), prepared once at binding time: the exact
+ // immutable key/revision published in `originalImages`. The entry shares that
+ // creating-thread provider, so it outlives every rasterization naming it even
+ // when its owner goes first. An empty key uses the source grid fallback, as
+ // does a snapshot no longer published when its icon surface is next painted.
  std::string originalImageKey;std::uint64_t originalImageRevision{};
+ std::shared_ptr<LayerImageSource>originalImages;
  bool operator==(const WatchAppearanceEntry&)const=default;
 };
 struct WatchAppearance {
@@ -30,7 +37,7 @@ struct WatchAppearance {
  std::array<double,3>accentSRGB{250./255,212./255,31./255};std::uint64_t selectedAction{};
  bool operator==(const WatchAppearance&)const=default;
 };
-struct WatchAppearanceStats{std::uint64_t updates{},unchanged{},captionsCompiled{},iconsCompiled{},surfaceUpdates{};};
+struct WatchAppearanceStats{std::uint64_t updates{},unchanged{},captionsCompiled{},iconsCompiled{},surfaceUpdates{},originalImages{},originalFallbacks{};};
 #ifdef _WIN32
 // Borrowed catalog/raster/scene outlive this adapter. Construct against a fresh
 // native-label LayerScene; this is its sole local navigation-content writer.
