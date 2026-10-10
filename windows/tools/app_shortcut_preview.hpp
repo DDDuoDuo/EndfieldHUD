@@ -42,6 +42,9 @@ public:
     void setLanguage(core::Language,double);void setReduceMotion(bool,double);
     void setOriginalImages(modules::ShortcutOriginalImages);
     void showError(std::optional<std::string>,double);
+    // The repository's committed file after the owner's initial load (or a
+    // later committed reload). Never tied to a request; scroll is clamped.
+    void replaceItems(modules::ShortcutFile,double);
     void setOverlayVisible(bool,double);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
@@ -54,6 +57,9 @@ public:
     bool pointerLocked()const noexcept;bool presentingPanel()const noexcept;
     bool editingName()const noexcept;bool finishEditing(bool commit,double);
     bool perform(const modules::ShortcutAction&,double);
+    // Chosen/dropped application. While an imported (non-Windows) record is
+    // being edited the inspection relinks that record: its id, order, name
+    // and icon are kept and only the Windows target is replaced on save.
     bool inspectSelection(native::AppShortcutSelection,double);
     void setExternalDrag(bool,double);
     std::optional<ShortcutRequest>takeRequest();

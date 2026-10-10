@@ -65,7 +65,7 @@ struct AppShortcutTasks::Impl:std::enable_shared_from_this<Impl> {
         if(!queue.submit(route,[state,task,result]{state->perform(*task,*result);},[weak,result](std::exception_ptr error){
             const auto self=weak.lock();if(!self)return;
             const bool discard=self->cancelled;self->running=0;self->cancelled=false;
-            if(error){try{std::rethrow_exception(error);}catch(const std::exception&e){result->error=e.what();}catch(...){result->error="Application action failed.";}}
+            if(error){try{std::rethrow_exception(error);}catch(const ShortcutError&e){result->error=e.what();result->code=e.code();}catch(const std::exception&e){result->error=e.what();}catch(...){result->error="Application action failed.";}}
             if(!discard)self->completed(std::move(*result));
         }))return;
         running=task->token;runningKind=task->kind;pending.reset();

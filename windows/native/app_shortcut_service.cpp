@@ -155,7 +155,30 @@ AppShortcutResolved inspectWindows(const AppShortcutSelection&s){selection(s);if
     if(path.empty()&&id){ComPtr<IShellItem2>item;if(SUCCEEDED(SHCreateItemFromIDList(id,IID_PPV_ARGS(&item)))){try{const auto app=modelID(item.Get());if(aumid(app))r.resolvedApplicationKey="package:"+app;}catch(const std::exception&){}}}
     r.name=fileName(selectedFile.path);return r;
 }
+// Mac AppShortcutLauncher (createsNewApplicationInstance=false): a visible
+// top-level window of this exact executable is restored and activated instead
+// of starting another instance. Only plain .exe selections qualify; a .lnk may
+// carry arguments and keeps its normal Shell launch. One bounded enumeration,
+// only on this explicit launch; no process observer remains.
+struct RunningWindow {std::wstring image;std::vector<wchar_t>buffer=std::vector<wchar_t>(32768);HWND window{};DWORD process{};};
+BOOL CALLBACK matchRunningWindow(HWND window,LPARAM parameter){
+    auto&match=*reinterpret_cast<RunningWindow*>(parameter);
+    if(!IsWindowVisible(window)||GetWindow(window,GW_OWNER)||(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOOLWINDOW))return TRUE;
+    DWORD process{};if(!GetWindowThreadProcessId(window,&process)||!process||process==GetCurrentProcessId())return TRUE;
+    const HANDLE handle=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,process);if(!handle)return TRUE;
+    DWORD size=static_cast<DWORD>(match.buffer.size());const bool named=QueryFullProcessImageNameW(handle,0,match.buffer.data(),&size)!=FALSE;CloseHandle(handle);
+    if(named&&size==match.image.size()&&CompareStringOrdinal(match.buffer.data(),static_cast<int>(size),match.image.data(),static_cast<int>(match.image.size()),TRUE)==CSTR_EQUAL){match.window=window;match.process=process;return FALSE;}
+    return TRUE;
+}
+std::optional<AppShortcutLaunchReceipt>activateRunning(const AppShortcutResolved&r){
+    if(r.launchKind!=AppShortcutLaunchKind::executable||suffix(r.selection.value)!=".exe"||!r.arguments.empty())return {};
+    RunningWindow match{regular(wide(r.executablePath))};EnumWindows(matchRunningWindow,reinterpret_cast<LPARAM>(&match));
+    if(!match.window)return {};
+    if(IsIconic(match.window))ShowWindow(match.window,SW_RESTORE);
+    (void)SetForegroundWindow(match.window);return AppShortcutLaunchReceipt{match.process};
+}
 AppShortcutLaunchReceipt launchWindows(const AppShortcutResolved&r,std::uintptr_t owner){resolved(r);
+    if(const auto running=activateRunning(r))return *running;
     if(r.launchKind==AppShortcutLaunchKind::packagedApp){ComPtr<IApplicationActivationManager>manager;hr(CoCreateInstance(CLSID_ApplicationActivationManager,nullptr,CLSCTX_LOCAL_SERVER,IID_PPV_ARGS(&manager)));DWORD pid{};hr(manager->ActivateApplication(wide(r.appUserModelID).c_str(),wide(r.arguments).c_str(),AO_NOERRORUI,&pid));return {pid};}
     const bool link=r.launchKind==AppShortcutLaunchKind::shellLink;const auto path=wide(link?r.selection.value:r.executablePath),arguments=wide(link?std::string_view{}:std::string_view(r.arguments)),directory=wide(link?std::string_view{}:std::string_view(r.workingDirectory));
     SHELLEXECUTEINFOW execute{};execute.cbSize=sizeof(execute);execute.fMask=SEE_MASK_NOCLOSEPROCESS|SEE_MASK_NOASYNC|SEE_MASK_FLAG_NO_UI|SEE_MASK_UNICODE;execute.hwnd=reinterpret_cast<HWND>(owner);execute.lpVerb=L"open";execute.lpFile=path.c_str();execute.lpParameters=arguments.empty()?nullptr:arguments.c_str();execute.lpDirectory=directory.empty()?nullptr:directory.c_str();execute.nShow=SW_SHOWNORMAL;

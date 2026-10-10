@@ -19,6 +19,7 @@ struct ShortcutTaskResult {
     std::optional<ShortcutCandidate> candidate;
     std::optional<native::AppShortcutLaunchReceipt> launched;
     std::optional<std::string> error;
+    std::optional<ShortcutErrorCode> code; // set when the failure is a ShortcutError (localized by the owner)
 };
 // One borrowed FIFO owns repository and explicit OS transactions. submit keeps
 // at most one immutable request if that FIFO is full; retry only on a completion
