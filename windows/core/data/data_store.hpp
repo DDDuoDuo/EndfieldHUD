@@ -43,11 +43,17 @@ public:
     const Settings& value() const noexcept { return value_; }
     bool update(const Settings& value); // false for an unchanged record; no write
     const std::filesystem::path& path() const noexcept { return path_; }
+    // AppDelegate's separate "hasLaunched" defaults key. It is kept in the
+    // envelope beside (never inside) the preference record, so Restore
+    // Defaults cannot repeat first-run onboarding and Mac import can map it.
+    bool hasLaunched() const noexcept { return launched_; }
+    bool markLaunched(); // false when already marked; no write
 private:
     std::filesystem::path path_;
     Settings value_;
     Json envelope_{Json::Object{}};
     std::optional<std::string> persisted_;
+    bool launched_{};
 };
 
 struct Profile {

@@ -89,6 +89,7 @@ struct KeyEvent {
     std::uint8_t scanCode{};
     bool system{}, extended{}, alt{}, previouslyDown{};
 };
+enum class SessionEnd { query, ending, cancelled };
 struct NativeMessage {
     void* window{};
     std::uint32_t message{};
@@ -108,7 +109,8 @@ struct OverlayCallbacks {
     // panels reach this callback. Route by NativeMessage.window before TSF.
     std::function<bool(const NativeMessage&)> beforeKeyTranslation;
     // Module-owned WM_APP...0xBFFF, registered Shell notifications, WM_HOTKEY,
-    // WM_POWERBROADCAST and WM_CLIPBOARDUPDATE; frame tickets stay reserved.
+    // WM_POWERBROADCAST, WM_CLIPBOARDUPDATE, WM_TIMECHANGE and (when the owner
+    // registered for it) WM_WTSSESSION_CHANGE; frame tickets stay reserved.
     // Returning no value leaves default handling in place. These routes add no
     // service registrations and work while the overlay is hidden.
     std::function<std::optional<std::intptr_t>(const NativeMessage&)> appMessage;
@@ -117,6 +119,11 @@ struct OverlayCallbacks {
     // App activation differs from keyboard focus moving into an owned file
     // dialog or editor. The owner applies its configurable close policy.
     std::function<void(bool)> applicationActive;
+    // WM_QUERYENDSESSION (query) and WM_ENDSESSION (ending/cancelled) for
+    // logoff, restart and Restart Manager. reason carries the ENDSESSION_*
+    // lParam bits. The owner drains durable writes synchronously inside the
+    // callback; the host always allows the session to end.
+    std::function<void(SessionEnd, std::uint32_t reason)> sessionEnding;
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};

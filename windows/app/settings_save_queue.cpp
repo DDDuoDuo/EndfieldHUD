@@ -26,27 +26,31 @@ struct SettingsSaveQueue::Impl:std::enable_shared_from_this<Impl> {
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Settings save queue owner-thread operation");}
     void notify(){if(alive&&callbacks.changed)callbacks.changed();}
     void pump(){
-        if(!alive||!started||state.busy||state.failed||(state.loaded&&!latest))return;
+        if(!alive||!started||state.busy||state.failed||(state.loaded&&!latest&&!state.launchMarkPending))return;
         const bool loading=!state.loaded;const auto revision=state.revision;
-        const auto value=latest;const auto storage=worker;
-        auto loaded=std::make_shared<std::shared_ptr<const ehud::data::Settings>>();
+        const auto value=loading?nullptr:latest;const auto storage=worker;const bool mark=!loading&&state.launchMarkPending;
+        auto loaded=std::make_shared<std::shared_ptr<const ehud::data::Settings>>();auto launched=std::make_shared<bool>();
         const std::weak_ptr<Impl>weak=shared_from_this();
-        if(!executor.submit(route,[storage,value,loaded,loading]{
+        if(!executor.submit(route,[storage,value,loaded,launched,loading,mark]{
             storage->initialize();
-            if(loading)*loaded=std::make_shared<const ehud::data::Settings>(storage->store->value());
-            else storage->store->update(*value);
-        },[weak,loaded,value,revision,loading](std::exception_ptr error){
+            if(loading){*loaded=std::make_shared<const ehud::data::Settings>(storage->store->value());*launched=storage->store->hasLaunched();return;}
+            if(mark)storage->store->markLaunched();
+            if(value)storage->store->update(*value);
+        },[weak,loaded,launched,value,revision,loading,mark](std::exception_ptr error){
             auto i=weak.lock();if(!i||!i->alive)return;i->state.busy=false;
             if(error){
                 // A newer explicit preference gets one attempt of its own;
                 // a stale failure must not block it or replace its status.
-                if(loading||revision==i->state.revision){i->state.failed=true;i->state.error=failureMessage(error);}
+                if(loading||mark||revision==i->state.revision){i->state.failed=true;i->state.error=failureMessage(error);}
             }else if(loading){
                 i->baseline=*loaded;i->state.loaded=true;i->state.error.reset();
+                i->state.launched=*launched;if(i->state.launched)i->state.launchMarkPending=false;
                 if(i->callbacks.loaded)i->callbacks.loaded(*i->baseline);
             }else{
-                i->baseline=value;i->state.savedRevision=revision;
-                if(revision==i->state.revision){i->latest.reset();i->state.dirty=false;i->state.error.reset();}
+                if(mark){i->state.launched=true;i->state.launchMarkPending=false;}
+                if(value){i->baseline=value;i->state.savedRevision=revision;
+                    if(revision==i->state.revision){i->latest.reset();i->state.dirty=false;i->state.error.reset();}}
+                else i->state.error.reset();
             }
             if(!i->alive)return;
             // Admit a newer coalesced value before an observer can throw.
@@ -72,6 +76,10 @@ void SettingsSaveQueue::save(const ehud::data::Settings&value){
     auto copy=std::make_shared<const ehud::data::Settings>(value);
     i->latest=std::move(copy);++i->state.revision;i->state.dirty=true;i->state.failed=false;i->state.error.reset();i->pump();
 }
+void SettingsSaveQueue::markLaunched(){
+    auto i=impl_;i->onOwner();if(i->state.launched||i->state.launchMarkPending)return;
+    i->state.launchMarkPending=true;i->state.failed=false;i->state.error.reset();i->pump();
+}
 void SettingsSaveQueue::queueCapacityAvailable(){auto i=impl_;i->onOwner();i->pump();}
 void SettingsSaveQueue::retry(){auto i=impl_;i->onOwner();i->started=true;i->state.failed=false;i->state.error.reset();i->pump();}
 const SettingsSaveStatus&SettingsSaveQueue::status()const{impl_->onOwner();return impl_->state;}
@@ -79,7 +87,7 @@ bool SettingsSaveQueue::flush(){
     auto i=impl_;i->onOwner();i->started=true;i->state.failed=false;i->state.error.reset();i->pump();
     while(i->alive){
         if(i->state.failed)return false;
-        if(i->state.loaded&&!i->state.busy&&!i->state.dirty)return true;
+        if(i->state.loaded&&!i->state.busy&&!i->state.dirty&&!i->state.launchMarkPending)return true;
         i->executor.waitIdle();i->executor.drain();if(!i->alive)return false;i->pump();
     }return false;
 }

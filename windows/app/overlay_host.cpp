@@ -291,7 +291,9 @@ struct OverlayHost::Impl {
         // A callback may destroy/recreate this HWND. Its captured state must
         // outlive that operation, without copying/allocating functions per event.
         const auto handlers = callbacks;
-        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE||message==WM_TIMECHANGE;
+        // WM_WTSSESSION_CHANGE (0x02B1) arrives only after the owner registered
+        // for session notifications (lock/disconnect suspend the HUD).
+        const bool ownerNotice=(message>=WM_APP&&message<=0xffff&&message!=frameMessage)||message==WM_HOTKEY||message==WM_POWERBROADCAST||message==WM_CLIPBOARDUPDATE||message==WM_TIMECHANGE||message==0x02B1;
         if(ownerNotice&&ready&&handlers&&handlers->appMessage){
             const auto result=handlers->appMessage({target,message,w,l});
             if(result)return static_cast<LRESULT>(*result);
@@ -390,6 +392,13 @@ struct OverlayHost::Impl {
         case WM_CLOSE:
             if (ready && handlers && handlers->closeRequested) handlers->closeRequested();
             else ShowWindow(target, SW_HIDE);
+            return 0;
+        case WM_QUERYENDSESSION:
+            if (ready && handlers && handlers->sessionEnding) handlers->sessionEnding(SessionEnd::query, static_cast<std::uint32_t>(l));
+            return TRUE;
+        case WM_ENDSESSION:
+            if (ready && handlers && handlers->sessionEnding)
+                handlers->sessionEnding(w ? SessionEnd::ending : SessionEnd::cancelled, static_cast<std::uint32_t>(l));
             return 0;
         case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
         case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:

@@ -170,8 +170,14 @@ SettingsStore::SettingsStore(const std::filesystem::path& root) {
     if(persisted_) {
         try {envelope_=parseRecord(*persisted_);version(envelope_);require(envelope_["settings"].isObject(),"Missing saved settings");
             for(const auto& [key,value]:envelope_["settings"].object()) value_.fields[key]=value;validateSettings(value_);
+            if(envelope_.contains("hasLaunched")){require(envelope_["hasLaunched"].isBool(),"Invalid first-launch marker");launched_=envelope_["hasLaunched"].boolean();}
         } catch(const StoreError&) {throw;} catch(const std::exception&) {throw StoreError(StoreErrorCode::invalid,"Saved settings are invalid; the original was preserved");}
     }
+}
+bool SettingsStore::markLaunched() {
+    if(launched_) return false;
+    auto envelope=envelope_;envelope["version"]=1;envelope["settings"]=value_.fields;envelope["hasLaunched"]=true;const auto bytes=encodeRecord(envelope);
+    detail::replaceFile(path_,persisted_,bytes,jsonLimit);envelope_=std::move(envelope);persisted_=bytes;launched_=true;return true;
 }
 bool SettingsStore::update(const Settings& value) {
     validateSettings(value);if(value==value_ && persisted_) return false;

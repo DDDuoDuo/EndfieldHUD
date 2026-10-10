@@ -13,6 +13,9 @@ struct SettingsSaveStatus {
     bool loaded{},busy{},dirty{},failed{};
     std::uint64_t revision{},savedRevision{};
     std::optional<std::string> error;
+    // AppDelegate "hasLaunched": read with the initial record; markLaunched()
+    // persists it beside the preferences on the same executor/route.
+    bool launched{},launchMarkPending{};
 };
 // One UI-owned binding to the app's shared bounded executor. Construction
 // performs no filesystem work and starts no worker. start() loads on that
@@ -36,6 +39,9 @@ public:
     SettingsSaveQueue&operator=(const SettingsSaveQueue&)=delete;
     void start();
     void save(const ehud::data::Settings&);
+    // First-run onboarding consumed. Coalesces with any pending preference
+    // save; flush() also waits for it. Valid before or after the initial load.
+    void markLaunched();
     void queueCapacityAvailable();
     void retry();
     const SettingsSaveStatus&status()const;

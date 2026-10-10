@@ -148,6 +148,10 @@ void run(const fs::path&executable){
            "Minigame needs the shared module owner and an isolated Settings store");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--orbipom-assets",assets,L"--orbipom-assets",assets},
            "Duplicate Minigame artwork");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--session-end-coverage"},
+           "Session-end coverage extends hidden module coverage");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--session-end-coverage",L"--session-end-coverage"},
+           "Duplicate session-end coverage");
     reject(executable,temp,++index,{L"--benchmark",existingReport.wstring()},"Benchmark output already exists");
     check(!fs::exists(fresh)&&!fs::exists(report),"Rejected Archive/Calendar envelopes create neither a store nor a report");
     check(read(sentinel)=="owned sentinel"&&read(existingReport)=="owned report",
