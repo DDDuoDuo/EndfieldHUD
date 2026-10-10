@@ -43,6 +43,13 @@ if(WIN32)
   target_link_libraries(hud_power_owner PUBLIC hud_charge_panel hud_power_service)
   target_compile_definitions(hud_power_owner PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE)
   list(APPEND EHUD_POWER_TARGETS hud_charge_scene hud_charge_badge hud_charge_panel hud_power_owner)
+  # UI Automation peer of the Power navigation entry (the source shell's one
+  # native navigation button, framed on the charge badge).
+  add_library(hud_power_automation native/power_automation.cpp)
+  target_include_directories(hud_power_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_power_automation PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_power_automation PUBLIC hud_scene PRIVATE uiautomationcore oleaut32 ole32)
+  list(APPEND EHUD_POWER_TARGETS hud_power_automation)
 
   # Power module area (app/module_owner.hpp, "Adding a module area"): the HUD
   # charge badge, the floating alert and the battery rules as ONE ModuleOwner,
@@ -51,7 +58,8 @@ if(WIN32)
   add_library(hud_power_area STATIC app/areas/power_module.cpp)
   target_include_directories(hud_power_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_power_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-  target_link_libraries(hud_power_area PUBLIC hud_module_registry hud_power_owner hud_charge_badge hud_utility hud_data hud_services PRIVATE user32)
+  target_link_libraries(hud_power_area PUBLIC hud_module_registry hud_power_owner hud_charge_badge hud_power_automation hud_utility hud_data hud_services
+    PRIVATE user32 oleaut32)
   list(APPEND EHUD_POWER_TARGETS hud_power_area)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "powerCharge|hud_power_area|app/areas/power_module.hpp|endfield::power::powerModule")
@@ -97,10 +105,16 @@ if(BUILD_TESTING)
     # suspension reasons, Projection, the page sink and its coverage step).
     add_executable(power_area_tests tests/power_area_tests.cpp)
     target_compile_definitions(power_area_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(power_area_tests PRIVATE hud_power_area ole32)
+    target_link_libraries(power_area_tests PRIVATE hud_power_area uiautomationcore oleaut32 ole32)
     add_test(NAME power_area_contracts COMMAND power_area_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl)
     set_tests_properties(power_area_contracts PROPERTIES TIMEOUT 300)
-    list(APPEND EHUD_POWER_TARGETS charge_indicator_scene_tests charge_badge_preview_tests charge_indicator_panel_tests power_owner_tests power_area_tests)
+    # The Power navigation entry's UIA peer under a fake owner group.
+    add_executable(power_automation_tests tests/power_automation_tests.cpp)
+    target_compile_definitions(power_automation_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(power_automation_tests PRIVATE hud_power_automation uiautomationcore oleaut32 ole32)
+    add_test(NAME power_automation_contracts COMMAND power_automation_tests)
+    list(APPEND EHUD_POWER_TARGETS charge_indicator_scene_tests charge_badge_preview_tests charge_indicator_panel_tests power_owner_tests power_area_tests
+      power_automation_tests)
     # User-run read-only capacity probe; the registered test checks it is inert.
     add_executable(battery_capacity_probe tools/battery_capacity_probe.cpp)
     target_compile_definitions(battery_capacity_probe PRIVATE UNICODE _UNICODE NOMINMAX)

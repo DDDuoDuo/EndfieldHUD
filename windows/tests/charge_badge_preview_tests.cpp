@@ -115,6 +115,29 @@ void run(const std::filesystem::path& shader) {
     check(badge.pointer({a::PointerKind::leave, a::PointerButton::none, 0, 0}, now) && !badge.hovered(), "Leave clears hover");
     for (double start = now, time = now; time < start + 0.4; time += 1.0 / 60) frame(time);
     check(badge.state().stage() == m::ChargeStage::circle, "Unhover returns to the circle");
+    // The Power navigation entry's accessibility frame: the circle's hit rect
+    // projected through the charge plane (logical client points).
+    const auto bounds = badge.clientHitBounds();
+    check(bounds && bounds->width > 20 && bounds->width < 60 && std::abs(bounds->width - bounds->height) < 4 &&
+          std::abs(bounds->x + bounds->width / 2 - middle.x) < 2.5 && std::abs(bounds->y + bounds->height / 2 - middle.y) < 2.5,
+          "The circle's projected hit bounds centre on the badge");
+    // Before the owner reports the navigation target, leaving un-hovers at once.
+    const auto offBadge = project(500, 200);
+    check(badge.pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y}, now) && badge.hovered() &&
+          !badge.pointer({a::PointerKind::move, a::PointerButton::none, offBadge.x, offBadge.y}, now) && !badge.hovered(), "Without a navigation target, leaving un-hovers");
+    // SystemHUDView.updateHover + refreshChargeHover: the Power entry alone
+    // never acquires the hover, but holds one carried straight onto it.
+    check(!badge.setNavigationHovered(true, now) && !badge.hovered(), "The Power navigation entry alone does not hover the badge");
+    check(!badge.setNavigationHovered(false, now) && badge.pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y}, now) && badge.hovered(),
+          "The badge itself acquires the hover");
+    check(!badge.pointer({a::PointerKind::move, a::PointerButton::none, offBadge.x, offBadge.y}, now) && badge.hovered(), "A move off waits for the navigation target");
+    check(!badge.setNavigationHovered(true, now) && badge.hovered(), "Landing on the Power entry holds the hover");
+    check(badge.setNavigationHovered(false, now) && !badge.hovered(), "Leaving the Power entry releases it");
+    check(badge.pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y}, now) &&
+          !badge.pointer({a::PointerKind::move, a::PointerButton::none, offBadge.x, offBadge.y}, now) && badge.hovered() &&
+          badge.setNavigationHovered(false, now) && !badge.hovered(), "No entry under the pointer resolves the pending move to un-hover");
+    for (double start = now, time = now; time < start + 0.4; time += 1.0 / 60) frame(time);
+    check(badge.state().stage() == m::ChargeStage::circle && !badge.requiresFrames(now), "The released badge settles to the circle");
     check(renderer.stats().textureUploads == uploads, "Morphs and hover reuse every texture");
     check(badge.accessibilityLabel() == "EndfieldHUD, Battery: 75%, Charging", "Power entry accessibility help");
     // Content event: unplugged reading updates the label once.

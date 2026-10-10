@@ -45,6 +45,23 @@ public:
     // left click selects Power. Leave/capture loss clears hover.
     bool pointer(const app::PointerEvent&, double time);
     bool hovered() const noexcept;
+    // The source navigation entry under the pointer is Power (the host's
+    // hovered-module query after it routed the pointer). SystemHUDView.
+    // updateHover sets chargeBadge.setHovered(hoveredTarget == .module(.power))
+    // (the target is the badge itself or that entry), and setHovered's
+    // onHitRegionChanged runs refreshChargeHover, which re-reads the badge
+    // geometry under the pointer. Net source behaviour, ported exactly: the
+    // Power entry keeps an acquired hover (a move from the badge straight onto
+    // the entry) but never acquires one. Once reported, a move that leaves the
+    // hovered badge waits for this target instead of un-hovering at once (the
+    // host's session resolves the entry only after the badge saw the move).
+    // Call it before update(); true when the hover changed.
+    bool setNavigationHovered(bool power, double time);
+    // Logical client bounds of the displayed capsule hit rect (Mac
+    // displayedChargeHitRect projected through the charge plane: the Power
+    // navigation entry's accessibility frame); none while hidden, waiting for
+    // the reveal or retracting, or before the first placed frame.
+    std::optional<core::Rect> clientHitBounds() const;
     // Accessibility help of the Power navigation entry.
     std::string accessibilityLabel() const;
     // Selected metric needs the shared Activity sampler while visible.

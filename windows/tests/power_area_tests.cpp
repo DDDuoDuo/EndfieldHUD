@@ -16,6 +16,8 @@
 #include "native/layer_scene.hpp"
 #include "native/renderer.hpp"
 #include <objbase.h>
+#include <uiautomation.h>
+#include <wrl/client.h>
 #include <atomic>
 #include <cmath>
 #include <filesystem>
@@ -74,6 +76,8 @@ public:
     ehud::data::Settings configuration = ehud::data::Settings::defaults();
     a::ModuleAppearance look;
     c::Module selected{c::Module::about};
+    std::optional<c::Module> hovered; // source navigation entry under the pointer
+    std::optional<c::SystemOverlayPhase> phase; // lifecycle phase override (else open/closed by visibility)
     bool visible{}, settingsPending{};
     a::ClientMetrics metrics_{width, height, 96, 1, width, height};
     unsigned frames{}, closes{}, settingsUpdates{}, recorded{};
@@ -85,10 +89,11 @@ public:
     const ehud::data::Settings& settings() const noexcept override { return configuration; }
     const a::ModuleAppearance& appearance() const noexcept override { return look; }
     c::Module selectedModule() const noexcept override { return selected; }
-    c::SystemOverlayPhase overlayPhase() const noexcept override { return visible ? c::SystemOverlayPhase::open : c::SystemOverlayPhase::closed; }
+    c::SystemOverlayPhase overlayPhase() const noexcept override { return phase.value_or(visible ? c::SystemOverlayPhase::open : c::SystemOverlayPhase::closed); }
     bool overlayVisible() const noexcept override { return visible; }
     bool focused() const noexcept override { return true; }
     const a::ClientMetrics& metrics() const noexcept override { return metrics_; }
+    std::optional<c::Module> hoveredModule() const noexcept override { return hovered; }
     gpu::Renderer& renderer() noexcept override { return renderer_; }
     gpu::LayerRasterizer& rasterizer() noexcept override { return raster_; }
     a::UtilityExecutor* utility() noexcept override { return &executor_; }
@@ -194,11 +199,12 @@ void run(const fs::path& shader) {
         owner->setOverlayVisible(true, 1);
         frame(1);
         const auto reveal = owner->nextWakeTime(1);
-        check(owner->floatingEntries().empty() && reveal && std::abs(*reveal - 1.58) < 1e-9 && !owner->requiresFrames(1.2),
+        check(owner->planeEntries().empty() && owner->floatingEntries().empty() && reveal && std::abs(*reveal - 1.58) < 1e-9 && !owner->requiresFrames(1.2),
               "The badge reveal is one wake 0.58 s after the HUD opens");
         check(!owner->deadline(1.3) && owner->deadline(1.58), "Only the due reveal asks the host for a frame");
         frames(1.58, 3.2);
-        check(owner->floatingEntries().size() == 1 && owner->covers(middle) && owner->covers(edge), "The compact capsule holds after the entrance");
+        check(owner->planeEntries().size() == 1 && owner->floatingEntries().empty() && owner->covers(middle) && owner->covers(edge),
+              "The compact capsule holds after the entrance, composed in the core-plane slot");
         frames(3.2, 6.8);
         check(owner->covers(middle) && !owner->covers(edge) && !owner->requiresFrames(6.8), "The hold collapses to the circle");
         check(owner->pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y, 0}, 6.9), "Hover acquires the circle");
@@ -218,7 +224,7 @@ void run(const fs::path& shader) {
         check(owner->message({window.h, notice, 0, 0}, 7.65) && host.closes == 1, "One close per request");
         owner->overlayClosing(7.7);
         frames(7.7, 8.35);
-        check(owner->floatingEntries().empty() && !owner->covers(middle), "The badge retracts with the HUD close");
+        check(owner->planeEntries().empty() && !owner->covers(middle), "The badge retracts with the HUD close");
         host.visible = false;
         check(owner->hostEvent({Kind::overlayConcealed, 0}, 8.4) && service->editingPosition() && editing == std::vector<bool>{false, true},
               "Concealment begins the queued edit and notifies the observer");
@@ -289,8 +295,132 @@ void run(const fs::path& shader) {
         host.visible = true;
         owner->setOverlayVisible(true, 20);
         frames(20, 26);
+        double h = 26;
+        const auto settle = [&](double seconds) { frames(h, h + seconds); h += seconds; };
+
+        // SystemHUDView.updateHover over the host's hovered navigation module:
+        // setHovered(target == .module(.power)) followed by the re-entrant
+        // refreshChargeHover, which re-reads the badge under the pointer.
+        const auto offBadge = project(500, 200);
+        host.hovered = c::Module::power;
+        settle(.5);
+        check(owner->covers(middle) && !owner->covers(edge), "The Power navigation entry alone does not expand the circle");
+        host.hovered.reset();
+        settle(.1);
+        check(owner->pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y, 0}, h), "Hover acquires the circle again");
+        settle(.4);
+        check(owner->covers(edge), "Hover expands the capsule again");
+        check(!owner->pointer({a::PointerKind::move, a::PointerButton::none, offBadge.x, offBadge.y, 0}, h) && owner->covers(edge),
+              "A move off the hovered badge waits for the host's navigation target");
+        host.hovered = c::Module::power;
+        settle(.6);
+        check(owner->covers(edge), "Landing on the Power navigation entry holds the expanded capsule");
+        host.hovered = c::Module::notes;
+        settle(.6);
+        check(owner->covers(middle) && !owner->covers(edge), "Another navigation entry releases the hover to the circle");
+        check(owner->pointer({a::PointerKind::move, a::PointerButton::none, middle.x, middle.y, 0}, h), "Hover acquires the circle once more");
+        settle(.4);
+        host.hovered.reset();
+        check(!owner->pointer({a::PointerKind::move, a::PointerButton::none, offBadge.x, offBadge.y, 0}, h) && owner->covers(edge), "The move off waits again");
+        settle(.6);
+        check(!owner->covers(edge), "No navigation target under the pointer releases the hover on the next frame");
+
+        // The Power navigation entry for UI Automation: one Button fragment
+        // framed on the badge (SystemHUDView's source-shell navigation button).
+        {
+            using Microsoft::WRL::ComPtr;
+            const auto bstr = [](BSTR b) { std::wstring value = b ? std::wstring(b) : std::wstring(); SysFreeString(b); return value; };
+            const auto wideUtf8 = [](const std::string& text) {
+                std::wstring w(text.size(), L'\0');
+                const int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), w.data(), static_cast<int>(w.size()));
+                w.resize(n > 0 ? static_cast<std::size_t>(n) : 0);
+                return w;
+            };
+            check(owner->automationCount() == 0 && owner->automationRefresh(nullptr) && owner->automationCount() == 1 && !owner->automationRefresh(nullptr),
+                  "UI Automation lists the Power navigation entry once");
+            ComPtr<IRawElementProviderFragment> entry, hit, parent;
+            ComPtr<IRawElementProviderSimple> simple;
+            ComPtr<IUnknown> pattern;
+            ComPtr<IInvokeProvider> invoke;
+            ComPtr<IValueProvider> value;
+            check(owner->automationChild(0, &entry) == S_OK && SUCCEEDED(entry.As(&simple)) && owner->automationChild(1, &hit) == E_INVALIDARG,
+                  "The entry is the owner's only fragment");
+            check(SUCCEEDED(entry->Navigate(NavigateDirection_Parent, &parent)) && !parent, "Without a group the entry has no parent");
+            check(SUCCEEDED(simple->GetPatternProvider(UIA_InvokePatternId, &pattern)) && pattern && SUCCEEDED(pattern.As(&invoke)), "Invoke pattern");
+            pattern.Reset();
+            check(SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId, &pattern)) && pattern && SUCCEEDED(pattern.As(&value)), "Value pattern");
+            const auto property = [&](PROPERTYID id) {
+                VARIANT v;
+                VariantInit(&v);
+                std::wstring out;
+                if (SUCCEEDED(simple->GetPropertyValue(id, &v)) && v.vt == VT_BSTR && v.bstrVal) out = v.bstrVal;
+                VariantClear(&v);
+                return out;
+            };
+            const auto integer = [&](PROPERTYID id) {
+                VARIANT v;
+                VariantInit(&v);
+                long out = -1;
+                if (SUCCEEDED(simple->GetPropertyValue(id, &v))) out = v.vt == VT_BOOL ? (v.boolVal == VARIANT_TRUE ? 1 : 0) : v.vt == VT_I4 ? v.lVal : -1;
+                VariantClear(&v);
+                return out;
+            };
+            BSTR raw{};
+            BOOL readOnly{};
+            check(property(UIA_NamePropertyId) == L"Power / Device Battery" && property(UIA_HelpTextPropertyId) == wideUtf8(service->powerAccessibilityLabel()) &&
+                  property(UIA_HelpTextPropertyId) == L"EndfieldHUD, Battery: 63%, On battery" && integer(UIA_ControlTypePropertyId) == UIA_ButtonControlTypeId &&
+                  integer(UIA_IsEnabledPropertyId) == 1 && integer(UIA_IsKeyboardFocusablePropertyId) == 0 && integer(UIA_IsOffscreenPropertyId) == 0,
+                  "Navigation title, live charge help, an enabled button");
+            check(SUCCEEDED(value->get_Value(&raw)) && bstr(raw) == L"Selected" && SUCCEEDED(value->get_IsReadOnly(&readOnly)) && readOnly &&
+                  value->SetValue(L"Power") == static_cast<HRESULT>(UIA_E_INVALIDOPERATION), "The badge click's selection is the read-only value");
+            UiaRect r{};
+            check(SUCCEEDED(entry->get_BoundingRectangle(&r)) && r.width > 0 && r.height > 0 && r.width < 60 && owner->covers({r.left + r.width / 2, r.top + r.height / 2}),
+                  "The frame is the badge circle's projected hit rect (fixture window at the screen origin)");
+            ComPtr<IUnknown> x, y;
+            check(owner->automationFromPoint(r.left + r.width / 2, r.top + r.height / 2, &hit) == S_OK && hit && SUCCEEDED(hit.As(&x)) && SUCCEEDED(entry.As(&y)) &&
+                  x.Get() == y.Get(), "The hit test at the badge reaches the entry");
+            hit.Reset();
+            check(owner->automationFromPoint(offBadge.x, offBadge.y, &hit) == S_OK && !hit, "The hit test elsewhere finds nothing");
+            host.selected = c::Module::about;
+            check(!owner->automationRefresh(nullptr) && SUCCEEDED(value->get_Value(&raw)) && bstr(raw) == L"Not selected", "The value follows the selection");
+            // activateNavigationButton: the press runs on the private notice.
+            check(invoke->Invoke() == S_OK && host.selected == c::Module::about, "A press waits for the notice");
+            check(owner->message({window.h, notice, 0, 0}, h) && host.selected == c::Module::power, "The notice selects Power");
+            host.look.language = c::Language::simplifiedChinese;
+            owner->setAppearance(host.look, h);
+            check(property(UIA_NamePropertyId) == L"电源 / 设备电量" && SUCCEEDED(value->get_Value(&raw)) && bstr(raw) == L"已选择" &&
+                  property(UIA_HelpTextPropertyId) == wideUtf8(service->powerAccessibilityLabel()), "The entry follows the language");
+            host.look.language = c::Language::english;
+            owner->setAppearance(host.look, h);
+            // While the HUD closes, module input is refused (no press is queued).
+            host.selected = c::Module::about;
+            host.phase = c::SystemOverlayPhase::closing;
+            owner->overlayClosing(h);
+            check(integer(UIA_IsEnabledPropertyId) == 0 && invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTENABLED) &&
+                  owner->message({window.h, notice, 0, 0}, h) && host.selected == c::Module::about, "A closing HUD disables the entry");
+            host.selected = c::Module::power;
+            settle(.7);
+            check(owner->automationCount() == 1 && integer(UIA_IsOffscreenPropertyId) == 1, "The retracted badge leaves the entry without a frame");
+            host.visible = false;
+            host.phase.reset();
+            (void)owner->hostEvent({Kind::overlayConcealed, 0}, h);
+            VARIANT gone;
+            VariantInit(&gone);
+            check(owner->automationRefresh(nullptr) && owner->automationCount() == 0 &&
+                  simple->GetPropertyValue(UIA_NamePropertyId, &gone) == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE) &&
+                  invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE), "The concealed HUD withdraws the entry");
+            VariantClear(&gone);
+            host.visible = true;
+            owner->setOverlayVisible(true, h);
+            settle(.1);
+            check(owner->automationRefresh(nullptr) && owner->automationCount() == 1, "Reopening lists a new entry");
+            owner->automationDisconnect();
+            check(owner->automationCount() == 0 && owner->automationRefresh(nullptr) && owner->automationCount() == 1, "Disconnect, then a refresh relists");
+            owner->automationDisconnect();
+        }
+        settle(6);
         unsigned stepChecks{};
-        double last = 26;
+        double last = h;
         for (unsigned cycle = 0; cycle < 2; ++cycle) {
             a::ModuleCoverage step;
             step.cycle = cycle;

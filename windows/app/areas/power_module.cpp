@@ -4,6 +4,7 @@
 #include "core/data/data_store.hpp"
 #include "modules/power_policy.hpp"
 #include "native/layer_scene.hpp"
+#include "native/power_automation.hpp"
 #include "native/system_services.hpp"
 #include "tools/charge_badge_preview.hpp"
 #include "tools/power_owner.hpp"
@@ -18,6 +19,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <uiautomation.h>
+#include <wrl/client.h>
 
 namespace endfield::power {
 namespace {
@@ -116,6 +119,7 @@ public:
     }
     ~PowerArea() override {
         host_.withdraw(PowerAreaService::key);
+        automation_.reset(); // disconnects the Power entry and releases its UIA group
         // Stops the provider route and closes the alert window before the
         // shared executor, the SystemServices and the HUD HWND go away.
         power_.reset();
@@ -170,6 +174,11 @@ public:
     void update(const app::ModuleFrame& frame) override {
         clock(frame.time);
         lastCenter_ = frame.center;
+        // SystemHUDView.updateHover: hoveredTarget == .module(.power) also
+        // for the source navigation's Power entry. The host routed the
+        // pointer (and its session hover) before this frame; the query reads
+        // the session's hovered button without allocating.
+        (void)badge_->setNavigationHovered(host_.hoveredModule() == core::Module::power, time_);
         (void)badge_->update(frame.center, frame.opacity, time_);
     }
     bool requiresFrames(double time) const override { return badge_->requiresFrames(time); }
@@ -189,9 +198,9 @@ public:
         return due && *due <= time_ + 1e-6; // the badge advances on the next HUD frame
     }
     void upload(gpu::Renderer& renderer) override { ++uploads_; badge_->upload(renderer); }
-    // The charge plane: above the center modules and the shell (see
-    // host_requests for the slot below the floating Notes workspace).
-    std::span<const gpu::LayerCompositionEntry> floatingEntries() override { return badge_->entries(); }
+    // The charge plane (SystemHUDView chargePlane inside the canvas): above
+    // the center modules and the shell, below the floating Notes workspace.
+    std::span<const gpu::LayerCompositionEntry> planeEntries() override { return badge_->entries(); }
     void release(gpu::Renderer& renderer) override { badge_->release(renderer); }
     bool covers(core::Point p) const override { return hudVisible_ && badge_->covers(p); }
     bool pointer(const app::PointerEvent& e, double time) override {
@@ -201,6 +210,7 @@ public:
     }
     void cancelInteraction(double time) override {
         clock(time);
+        pendingSelect_ = false;
         (void)badge_->pointer({app::PointerKind::leave, app::PointerButton::none, 0, 0, 0}, time_);
     }
     bool message(const app::NativeMessage& notice, double time) override {
@@ -223,6 +233,7 @@ public:
             break;
         case Kind::overlayConcealed:
             hudVisible_ = false;
+            pendingSelect_ = false;
             badge_->setStable(false, time_);
             // OverlayController.tearDownSystemPresentation: onSystemClosed
             // (presentLatestSnapshot) unless quitting, then afterSystemClose.
@@ -276,6 +287,35 @@ public:
         return changed;
     }
     void coverage(app::ModuleCoverage&) override;
+
+    // --- UI Automation: the Power navigation entry ------------------------------
+    // The source shell keeps one native navigation button, Power, framed on
+    // the charge badge (SystemHUDView.synchronizeNavigationButtons/
+    // updateButtonStates); this owner's UIA group lists it while the HUD shows.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!automation_ || automationRoot_ != root) {
+            // A new group (another root provider) gets a fresh peer.
+            automation_.reset();
+            gpu::PowerAutomationHost h;
+            h.root = root;
+            h.element = [this] { return navigationElement(); };
+            h.toScreen = [this](core::Rect client) { return toScreen(client); };
+            h.invoke = [this] { return invokePower(); };
+            automation_ = std::make_unique<gpu::NativePowerAutomation>(std::move(h));
+            automationRoot_ = root;
+        }
+        return automation_->refresh();
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
 
     // --- PowerAreaService -------------------------------------------------------
     void preview(double time) override {
@@ -348,13 +388,16 @@ private:
     std::optional<m::ChargeTelemetry> telemetry_;
     std::optional<core::Matrix4> lastCenter_;
     std::function<void(bool)> editingObserver_;
+    // Created on the first UI Automation refresh (a client asked the HUD).
+    std::unique_ptr<gpu::NativePowerAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{};
     std::uint64_t seed_{};
     std::uint32_t noticeMessage_{};
     double time_{};
     m::PowerSuspension suspension_{m::PowerSuspension::system};
     bool hudVisible_{}, terminating_{}, suspended_{};
     bool pendingEdit_{}, closeRequested_{}, openDisplayPending_{}, noticePosted_{}, editing_{};
-    bool alertAnimating_{}, alertCadence_{}, readingApplied_{};
+    bool alertAnimating_{}, alertCadence_{}, readingApplied_{}, pendingSelect_{};
     unsigned uploads_{}, recordedEvents_{};
 
     static bool validMetrics(const app::ClientMetrics& metrics) noexcept {
@@ -404,6 +447,9 @@ private:
         noticePosted_ = PostMessageW(window_, noticeMessage_, 0, 0) != FALSE;
     }
     void runNotice() {
+        // A UI Automation press on the Power entry (activateNavigationTarget),
+        // run outside the provider call.
+        if (std::exchange(pendingSelect_, false) && inputAllowed()) host_.selectModule(core::Module::power);
         if (pendingEdit_ && !terminating_ && !suspended_) {
             // onEditBatteryPosition: afterSystemClose = editPosition; close.
             if (!host_.overlayVisible()) beginEdit();
@@ -437,6 +483,8 @@ private:
         const auto& s = applied_->settings;
         const bool dark = s.theme == m::ChargeTheme::dark || (s.theme == m::ChargeTheme::system && applied_->dark);
         badge_->setContent(power_->reading(), {dark, s.accent(), applied_->language}, s.metric, telemetry_);
+        // The entry's help is the badge's label: announce reading/language changes.
+        if (automation_) automation_->notify();
     }
     void readingChanged(const m::BatteryReading& reading) {
         readingApplied_ = true;
@@ -467,6 +515,38 @@ private:
         if (suspended_ || terminating_) return;
         openDisplayPending_ = true;
         reschedule();
+    }
+    // SystemHUDView.allowsModuleInput for the Power entry: the HUD shows and
+    // is neither opening nor closing, and no quit or sleep holds it.
+    bool inputAllowed() const {
+        const auto phase = host_.overlayPhase();
+        return hudVisible_ && host_.overlayVisible() && !terminating_ && !suspended_ &&
+               phase != core::SystemOverlayPhase::opening && phase != core::SystemOverlayPhase::closing;
+    }
+    std::optional<gpu::PowerAutomationElement> navigationElement() const {
+        if (!hudVisible_) return std::nullopt;
+        const auto language = applied_ ? applied_->language : core::Language::english;
+        gpu::PowerAutomationElement e;
+        e.name = core::localized("Power / Device Battery", "电源 / 设备电量", language); // HUDModule.power.navigationTitle
+        e.help = badge_->accessibilityLabel();
+        e.value = host_.selectedModule() == core::Module::power ? core::localized("Selected", "已选择", language)
+                                                                : core::localized("Not selected", "未选择", language);
+        e.rect = badge_->clientHitBounds();
+        e.enabled = inputAllowed();
+        return e;
+    }
+    // Logical client rect -> physical screen pixels of the HUD window.
+    std::optional<core::Rect> toScreen(core::Rect r) const {
+        POINT origin{};
+        if (!window_ || !validMetrics(metrics_) || !ClientToScreen(window_, &origin)) return std::nullopt;
+        const double scale = metrics_.scale;
+        return core::Rect{origin.x + r.x * scale, origin.y + r.y * scale, r.width * scale, r.height * scale};
+    }
+    bool invokePower() {
+        if (!inputAllowed()) return false;
+        pendingSelect_ = true;
+        reschedule();
+        return true;
     }
     std::optional<core::Point> badgeClientPoint(core::Point design) const {
         if (!lastCenter_ || !validMetrics(metrics_)) return std::nullopt;
@@ -524,7 +604,9 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     step.drain();
     // --- Badge on the core plane (entrance, compact hold, circle) --------------
     check(badge_->state().phase() == m::ChargeBadgeState::Phase::presented && badge_->state().stage() == m::ChargeStage::circle &&
-          !floatingEntries().empty() && uploads_ > 0 && lastCenter_.has_value(), "Power area: the badge entered and settled to its circle on the HUD frames");
+          !planeEntries().empty() && uploads_ > 0 && lastCenter_.has_value(), "Power area: the badge entered and settled to its circle on the HUD frames");
+    check(floatingEntries().empty() && planeEntries().data() == badge_->entries().data(),
+          "Power area: the badge composes in the core-plane slot, below the floating Notes workspace");
     check(reading().present && reading().percentage == 63u && reading().capacity == m::BatteryReading::Capacity{32'760, 52'000, "mWh"},
           "Power area: the baseline reading carries the battery-class pair");
     check(powerAccessibilityLabel().find("63%") != std::string::npos, "Power area: the Power entry help carries the live reading");
@@ -546,6 +628,74 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
           host_.selectedModule() == previous, "Power area: a cancelled press selects nothing and leaving clears the hover");
     hudFrames(.25, 8);
     check(badge_->state().stage() == m::ChargeStage::circle, "Power area: the unhovered badge returns to its circle");
+
+    // --- Hover target off the badge: the host's hovered navigation module ------
+    // A move that leaves the hovered badge waits for the source navigation
+    // target the host resolves after routing it (updateHover); only the Power
+    // entry would hold the hover, and refreshChargeHover never acquires one.
+    check(pointer({app::PointerKind::move, app::PointerButton::none, circle->x, circle->y, 0}, t) && badge_->hovered(), "Power area: hover acquires the badge again");
+    const auto away = badgeClientPoint({badgeDesignCenter.x, badgeDesignCenter.y - 160});
+    check(away && !covers(*away) && !pointer({app::PointerKind::move, app::PointerButton::none, away->x, away->y, 0}, t) && badge_->hovered(),
+          "Power area: a move off the hovered badge waits for the host's navigation target");
+    const bool held = host_.hoveredModule() == core::Module::power;
+    present(t + .02);
+    check(badge_->hovered() == held, "Power area: the host's hovered navigation module resolves the hover on the next frame");
+    cancelInteraction(t);
+    hudFrames(.25, 8);
+    check(!badge_->hovered() && badge_->state().stage() == m::ChargeStage::circle, "Power area: the resolved hover returns the badge to its circle");
+
+    // --- The Power navigation entry for UI Automation ---------------------------
+    // Coverage walks the owner's fragments without the host's root provider
+    // (the host's own probe lists this owner's group afterwards); no press:
+    // selecting Power here would switch another area's module mid-cycle.
+    {
+        using Microsoft::WRL::ComPtr;
+        const auto language = applied_ ? applied_->language : core::Language::english;
+        check(automationRefresh(nullptr) && automationCount() == 1 && !automationRefresh(nullptr),
+              "Power area: UI Automation lists the Power navigation entry once while the HUD shows");
+        ComPtr<IRawElementProviderFragment> entry, hit;
+        ComPtr<IRawElementProviderSimple> simple;
+        check(automationChild(0, &entry) == S_OK && entry && SUCCEEDED(entry.As(&simple)) && automationChild(1, &hit) == E_INVALIDARG && !hit,
+              "Power area: the entry is the owner's only fragment");
+        const auto property = [&](PROPERTYID id) {
+            VARIANT v;
+            VariantInit(&v);
+            std::string value;
+            if (SUCCEEDED(simple->GetPropertyValue(id, &v)) && v.vt == VT_BSTR && v.bstrVal) {
+                const int n = WideCharToMultiByte(CP_UTF8, 0, v.bstrVal, -1, nullptr, 0, nullptr, nullptr);
+                if (n > 1) { value.resize(static_cast<std::size_t>(n - 1)); WideCharToMultiByte(CP_UTF8, 0, v.bstrVal, -1, value.data(), n, nullptr, nullptr); }
+            }
+            VariantClear(&v);
+            return value;
+        };
+        const auto selected = host_.selectedModule() == core::Module::power;
+        check(property(UIA_NamePropertyId) == core::localized("Power / Device Battery", "电源 / 设备电量", language) &&
+              property(UIA_HelpTextPropertyId) == powerAccessibilityLabel() &&
+              property(UIA_ValueValuePropertyId) == (selected ? core::localized("Selected", "已选择", language) : core::localized("Not selected", "未选择", language)),
+              "Power area: the entry carries the navigation title, the live charge help and the selection value");
+        VARIANT enabled;
+        VariantInit(&enabled);
+        check(SUCCEEDED(simple->GetPropertyValue(UIA_IsEnabledPropertyId, &enabled)) && enabled.vt == VT_BOOL && (enabled.boolVal == VARIANT_TRUE) == inputAllowed(),
+              "Power area: the entry is enabled exactly while module input is allowed");
+        VariantClear(&enabled);
+        UiaRect bounds{};
+        const auto client = badge_->clientHitBounds();
+        const auto screen = client ? toScreen(*client) : std::nullopt;
+        check(SUCCEEDED(entry->get_BoundingRectangle(&bounds)) && screen && bounds.width > 0 && bounds.height > 0 &&
+              std::abs(bounds.left - screen->x) < 1e-6 && std::abs(bounds.width - screen->width) < 1e-6 && covers({client->x + client->width / 2, client->y + client->height / 2}),
+              "Power area: the entry's frame is the displayed badge hit rect projected to the screen");
+        ComPtr<IUnknown> a, b;
+        check(automationFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, &hit) == S_OK && hit && SUCCEEDED(hit.As(&a)) &&
+              SUCCEEDED(entry.As(&b)) && a.Get() == b.Get(), "Power area: the hit test at the badge reaches the entry");
+        hit.Reset();
+        check(automationFromPoint(bounds.left - 4, bounds.top - 4, &hit) == S_OK && !hit, "Power area: the hit test outside the badge finds nothing");
+        automationDisconnect();
+        VARIANT gone;
+        VariantInit(&gone);
+        check(automationCount() == 0 && simple->GetPropertyValue(UIA_NamePropertyId, &gone) == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
+              "Power area: disconnecting withdraws the entry");
+        VariantClear(&gone);
+    }
 
     // --- Provider while the HUD is open: live data, no alert --------------------
     const auto events = recordedEvents_;

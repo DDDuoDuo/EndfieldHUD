@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace endfield::tools {
 namespace {
@@ -27,6 +28,9 @@ struct ChargeBadgePreview::Impl {
     std::function<void()> selectPower;
     gpu::ChargeIndicatorSceneContent content;
     bool hasContent{}, visible{}, pressed{}, reduced{};
+    // Host navigation target (setNavigationHovered) and a move that left the
+    // hovered badge before that target was known.
+    bool navigationReported{}, navigationPower{}, hoverUnresolved{};
     app::ClientMetrics metrics;
     core::Projection projection;
     std::optional<core::Point> pointerDesign;
@@ -103,16 +107,23 @@ void ChargeBadgePreview::setStable(bool visible, double now) {
     i.state.setStable(visible, i.time);
     // Hidden at once (HUD concealed): nothing stays composed or hit-testable
     // until the next deployment's frame.
-    if (!visible) { i.visible = false; i.pressed = false; i.pointerDesign.reset(); }
+    if (!visible) { i.visible = false; i.pressed = false; i.hoverUnresolved = false; i.pointerDesign.reset(); }
 }
 void ChargeBadgePreview::animateExit(double now, std::uint64_t seed) {
     auto& i = *impl_;
     i.clock(now);
     i.pressed = false;
+    i.hoverUnresolved = false;
     i.pointerDesign.reset();
     i.state.animateExit(i.time, seed);
 }
-void ChargeBadgePreview::cancel(double now) { impl_->clock(now); impl_->pressed = false; impl_->state.cancel(impl_->time); }
+void ChargeBadgePreview::cancel(double now) {
+    auto& i = *impl_;
+    i.clock(now);
+    i.pressed = false;
+    i.hoverUnresolved = false;
+    i.state.cancel(i.time);
+}
 
 m::ChargeBadgeState::Events ChargeBadgePreview::update(const Matrix& center, float opacity, double now) {
     auto& i = *impl_;
@@ -160,6 +171,7 @@ bool ChargeBadgePreview::pointer(const app::PointerEvent& e, double now) {
     if (e.kind == app::PointerKind::leave || e.kind == app::PointerKind::captureLost) {
         const bool used = i.pressed || i.state.hovered();
         i.pressed = false;
+        i.hoverUnresolved = false;
         i.pointerDesign.reset();
         i.state.setHovered(false, !i.reduced, i.time);
         return used;
@@ -167,7 +179,12 @@ bool ChargeBadgePreview::pointer(const app::PointerEvent& e, double now) {
     i.pointerDesign = i.designPoint({e.x, e.y});
     const bool inside = i.pointerDesign && i.state.contains(*i.pointerDesign, i.time);
     if (e.kind == app::PointerKind::move) {
-        i.state.setHovered(inside, !i.reduced, i.time);
+        // updateHover: the badge is the target under its own capsule. Off
+        // the badge the target is the source navigation entry under the
+        // pointer, which only the host knows after this move: an unhovered
+        // badge stays unhovered either way; a hovered one waits for it.
+        i.hoverUnresolved = !inside && i.navigationReported && i.state.hovered();
+        if (!i.hoverUnresolved) i.state.setHovered(inside, !i.reduced, i.time);
         return inside;
     }
     if (e.button != app::PointerButton::left) return false;
@@ -187,6 +204,44 @@ bool ChargeBadgePreview::pointer(const app::PointerEvent& e, double now) {
     return false;
 }
 bool ChargeBadgePreview::hovered() const noexcept { return impl_->state.hovered(); }
+bool ChargeBadgePreview::setNavigationHovered(bool power, double now) {
+    auto& i = *impl_;
+    i.clock(now);
+    const bool targetChanged = !i.navigationReported || power != i.navigationPower;
+    i.navigationReported = true;
+    i.navigationPower = power;
+    if (!std::exchange(i.hoverUnresolved, false) && !targetChanged) return false;
+    // setHovered(hoveredTarget == .module(.power)); when that changes the
+    // hover, the re-entrant refreshChargeHover sets it to the capsule test
+    // read with the new hover (compact rect plus its allowance).
+    const bool before = i.state.hovered();
+    const bool inside = i.pointerDesign && i.state.contains(*i.pointerDesign, i.time);
+    const bool target = inside || power;
+    if (target == before) return false;
+    const bool after = i.pointerDesign && i.state.contains(*i.pointerDesign, i.time, target);
+    if (after != before) i.state.setHovered(after, !i.reduced, i.time);
+    return i.state.hovered() != before;
+}
+std::optional<core::Rect> ChargeBadgePreview::clientHitBounds() const {
+    const auto& i = *impl_;
+    if (!i.visible || !i.metrics.pixelWidth || !i.metrics.pixelHeight || !(i.metrics.scale > 0)) return std::nullopt;
+    const auto rect = i.state.hitRect(i.time);
+    if (!(rect.width > 0 && rect.height > 0)) return std::nullopt;
+    const auto frame = m::ChargeBadgeState::frame();
+    double left = INFINITY, top = INFINITY, right = -INFINITY, bottom = -INFINITY;
+    for (const auto corner : {core::Point{rect.x, rect.y}, core::Point{rect.x + rect.width, rect.y},
+                              core::Point{rect.x, rect.y + rect.height}, core::Point{rect.x + rect.width, rect.y + rect.height}}) {
+        const auto q = i.projection.project({(corner.x - frame.x) / m::ChargeBadgeState::rendererScale,
+                                             (corner.y - frame.y) / m::ChargeBadgeState::rendererScale});
+        if (!q || !std::isfinite(q->x) || !std::isfinite(q->y)) return std::nullopt;
+        left = std::min(left, q->x / i.metrics.scale);
+        top = std::min(top, q->y / i.metrics.scale);
+        right = std::max(right, q->x / i.metrics.scale);
+        bottom = std::max(bottom, q->y / i.metrics.scale);
+    }
+    if (!(right > left && bottom > top)) return std::nullopt;
+    return core::Rect{left, top, right - left, bottom - top};
+}
 std::string ChargeBadgePreview::accessibilityLabel() const {
     const auto& i = *impl_;
     if (!i.hasContent) return core::localized("Power / Device Battery", "电量 / 设备电池", core::Language::english);

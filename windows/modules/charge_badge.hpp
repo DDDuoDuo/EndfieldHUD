@@ -69,6 +69,9 @@ public:
     // waiting for the delayed reveal, or retracting.
     core::Rect hitRect(double time) const noexcept;
     bool contains(core::Point designPoint, double time) const noexcept;
+    // contains() as if the badge's hover were `hovered` (HUDChargeBadge.contains
+    // read right after setHovered, e.g. by the re-entrant refreshChargeHover).
+    bool contains(core::Point designPoint, double time, bool hovered) const noexcept;
     Phase phase() const noexcept { return phase_; }
     bool hovered() const noexcept { return hovered_; }
     ChargeStage stage() const noexcept { return renderer_.stage(); }

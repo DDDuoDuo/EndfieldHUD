@@ -166,13 +166,14 @@ core::Rect ChargeBadgeState::hitRect(double time) const noexcept {
     const auto f = frame();
     return {f.x + body.x * rendererScale, f.y + body.y * rendererScale, body.width * rendererScale, body.height * rendererScale};
 }
-bool ChargeBadgeState::contains(core::Point p, double time) const noexcept {
+bool ChargeBadgeState::contains(core::Point p, double time) const noexcept { return contains(p, time, hovered_); }
+bool ChargeBadgeState::contains(core::Point p, double time, bool hovered) const noexcept {
     if (phase_ == Phase::hidden || phase_ == Phase::waiting || phase_ == Phase::exiting) return false;
     if (!std::isfinite(p.x) || !std::isfinite(p.y)) return false;
     // Once acquired, the complete capsule remains a hover target during its
     // expansion; the 2.5-point allowance prevents edge jitter reversals.
-    auto rect = hovered_ ? compactHitRect() : hitRect(time);
-    if (hovered_) rect = {rect.x - 2.5, rect.y - 2.5, rect.width + 5, rect.height + 5};
+    auto rect = hovered ? compactHitRect() : hitRect(time);
+    if (hovered) rect = {rect.x - 2.5, rect.y - 2.5, rect.width + 5, rect.height + 5};
     if (!(rect.width > 0 && rect.height > 0)) return false;
     const double radius = std::min(rect.height, rect.width) / 2;
     const double qx = std::abs(p.x - (rect.x + rect.width / 2)) - (rect.width / 2 - radius);
