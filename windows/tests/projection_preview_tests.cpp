@@ -3,7 +3,9 @@
 #include "core/data/data_store.hpp"
 #include <windows.h>
 #include <objbase.h>
+#include <array>
 #include <iostream>
+#include <string_view>
 namespace {
 namespace c=endfield::core;namespace a=endfield::app;namespace m=endfield::modules;namespace n=endfield::native;namespace t=endfield::tools;namespace d=ehud::data;using J=d::Json;
 unsigned checks{};void check(bool b,const char*s){++checks;if(!b)throw std::runtime_error(s);}
@@ -23,5 +25,8 @@ void run(n::Renderer&renderer,const std::filesystem::path&resources){n::LayerRas
     owner.setPreferences(c::Language::korean,{.2,.7,1,1},{},false,now);frame();check(model.drawing().strokes().size()==1&&model.media().size()==1,"Language/accent event preserves session data");click(610,80);check(owner.menuOpen(),"Source clear confirmation opens");click(700,180);check(model.drawing().strokes().empty()&&model.media().empty()&&events.back().kind==t::ProjectionPreviewEvent::Kind::cleared,"Confirmed clear removes owned drawing/media only");check(*lease==7&&ref->encoded()==raw,"Clear never mutates external reference or lease");frame();escape();action=owner.takeAction();check(action&&action->kind==t::ProjectionPreviewAction::Kind::returnToHUD,"Canvas Escape delegates HUD handoff");composition.detach(renderer);owner.release(renderer);released=true;check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Projection owner releases every local resource after detach");
 }
 }
-int wmain(int argc,wchar_t**argv){auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==3,"Pass HLSL and original resources root");Window window;n::Renderer renderer;renderer.initialize(window.h,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,std::filesystem::absolute(argv[2]));renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Projection owner checks\n";return 0;}catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// Source OverlayController.recordProjectionEvent names, one per event kind.
+void actionNames(){using K=t::ProjectionPreviewEvent::Kind;const std::array<std::pair<K,std::string_view>,7> expected{{{K::strokeCompleted,"drawingEdited"},{K::erased,"erased"},{K::brushChanged,"brushChanged"},{K::backgroundChanged,"backgroundChanged"},{K::cleared,"cleared"},{K::mediaAdded,"mediaAdded"},{K::mediaRemoved,"mediaRemoved"}}};
+    for(const auto&[kind,name]:expected)check(t::projectionEventAction({kind,{}})==name,"Projection events record the source projectionAction names");}
+int wmain(int argc,wchar_t**argv){auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==3,"Pass HLSL and original resources root");actionNames();Window window;n::Renderer renderer;renderer.initialize(window.h,1280,800,{n::Driver::warpForTests,argv[1],n::RenderTarget::offscreenForTests});run(renderer,std::filesystem::absolute(argv[2]));renderer.reset();CoUninitialize();std::cout<<"PASS "<<checks<<" Projection owner checks\n";return 0;}catch(const std::exception&e){if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

@@ -6,6 +6,7 @@
 #include "core/module_presentation.hpp"
 #include "tools/notes_media_menu.hpp"
 #include "core/data/file_shelf_store.hpp"
+#include <functional>
 
 namespace endfield::tools {
 struct NotesKeyModifiers {bool control{},shift{},alt{},system{};};
@@ -55,6 +56,10 @@ public:
     // saved before replacing artwork; stored formatting is never flattened.
     bool applyPreferences(NotesPreviewPreferences,double time);
     const std::optional<std::string>&mediaError()const noexcept;
+    // Source NotesCanvas.onAction names (createdText ... mediaPlayback), raised
+    // after each accepted mutation; the root records Event Log noteAction with
+    // the name only. Empty by default. UI thread; must not reenter this owner.
+    void setActionSink(std::function<void(std::string_view action)>);
     bool showMediaError(std::string,double time); // existing source status row; no dialog/throw-close
     void select(core::Module,double time);
     core::Module selected()const noexcept;

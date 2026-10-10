@@ -2,6 +2,7 @@
 #include "app/overlay_host.hpp"
 #include "native/archive_scene.hpp"
 #include "native/projected_editor.hpp"
+#include "native/notes_long_editor.hpp"
 #include "modules/notes_controls.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -28,6 +29,11 @@ struct ArchivePreviewOptions {
     // Source NSColor device-RGB hue/saturation inverse for the initial marker.
     std::function<core::Point(const core::notes::RGBA&)>colorWheelPoint;
     std::uint32_t editorCapacity{65536};
+    // Bodies longer than chunkedBodyUnits use the paragraph-chunked editor, up
+    // to the source ArchiveStore 2 MiB body (maximumBodyUnits UTF-16 units);
+    // typing cost then follows the edited paragraphs, not the body length.
+    std::uint32_t chunkedBodyUnits{4096},maximumBodyUnits{2*1024*1024};
+    native::NativeNotesLongEditorOptions longEditor;
     UINT textMessage{WM_APP+220},mediaMessage{WM_APP+221};
 };
 // Archive owner borrowing the shared state/FIFO executor, HWND/rasterizer and
@@ -35,8 +41,9 @@ struct ArchivePreviewOptions {
 // picker, media decoder, filesystem or database is created. Callbacks may not
 // synchronously destroy/reenter this owner. Remove entries before release;
 // destroy fields before the shared TSF manager and drain accepted state saves.
-// Full stored bodies are retained. The current painted leaf explicitly rejects
-// >editorCapacity UTF-16 units; it never truncates data to that integration limit.
+// Full stored bodies are retained. Title/date/category leaves reject
+// >editorCapacity UTF-16 units; a long body opens in the chunked editor, whose
+// only limit is one paragraph per painted leaf. Nothing is ever truncated.
 // Source rich title/date single-line inset + natural one-point spacing remains
 // an explicit shared-editor layout gap. Body uses the actual natural +1 seam.
 class ArchivePreview final {

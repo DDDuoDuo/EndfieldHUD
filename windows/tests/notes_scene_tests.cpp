@@ -151,6 +151,38 @@ void externalEditorContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster)
     rejects([&]{tinyCard.syncContent();},"Unusual tiny editor/control overlap explicitly rejects unsupported order/rounded clip geometry");check(tinyCard.scene().contentRevision()==0&&!tinyCard.externalEditorSlot(),"Rejected external editor geometry preserves uninitialized scene and slot");
     rejects([&]{gpu::NativeNotesCardScene invalid(presentation,raster,options,gpu::NativeNotesExternalEditorAppearance{{.12,.12,.12,.5},appearance.palette.accent});},"Source editor backing cannot silently become translucent");
 }
+void editorIndicatorContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
+    // Source HUDProjectedTextEditor scroll indicator: one numeric quad between
+    // the external editor foreground and its final border; no raster, no text.
+    ehud::data::Note note{.id=id1,.kind=ehud::data::NoteKind::text,.text="Scrolling source",.x=20,.y=40,.width=210,.height=140,.createdAt=123};
+    mod::NotesState state({note},{[](const auto&){},[](auto){}});state.setWorkspaceBounds({0,0,512,256});state.beginEditing(id1);
+    mod::NotesCardPresentation presentation(id1);const auto appearance=input(note.text,192);presentation.updateContent(state,appearance);
+    gpu::LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;
+    gpu::NativeNotesCardScene card(presentation,raster,options,gpu::NativeNotesExternalEditorAppearance{{.12,.12,.12,1},appearance.palette.accent});card.syncContent();
+    check(card.externalEditorAfterDraws().size()==1&&!card.setEditorScrollIndicator(std::nullopt),"Before its quad is resident only the border follows the editor");
+    rejects([&]{card.setEditorScrollIndicator(core::Rect{1,1,0,10});},"An empty thumb is rejected");rejects([&]{card.setEditorScrollIndicator(core::Rect{1,std::nan(""),3,10});},"A non-finite thumb is rejected");
+    const auto meshes=renderer.stats().meshes;check(card.uploadEditorIndicator(renderer)&&!card.uploadEditorIndicator(renderer)&&renderer.stats().meshes==meshes+1,"One reusable quad is uploaded once");
+    const auto after=card.externalEditorAfterDraws();check(after.size()==2&&after[0].sourceID.ends_with("/thumb")&&after[0].textureID.empty()&&after[1].sourceID.ends_with("/external-editor-border"),"The thumb paints before the final border");
+    check(std::abs(after[0].linearTint[0]-.2140f)<.001f&&after[0].linearTint[0]==after[0].linearTint[1]&&after[0].linearTint[1]==after[0].linearTint[2]&&after[0].linearTint[3]==.65f,"Source NSColor.gray at .65 alpha in linear light");
+    card.updatePose({},1,0);check(after[0].opacity==0&&after[0].masks.size()==2&&after[0].masks[1].bounds.width>0,"Without overflow the thumb is hidden with well-formed masks");
+    gpu::LayerComposition composition;const std::array entries{gpu::LayerCompositionEntry{&card.scene(),card.externalEditorAfterDraws()}};composition.setEntries(renderer,entries);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
+    auto image=renderer.readback();auto at=[&](unsigned x,unsigned y){return std::size_t(y)*image.rowBytes+x*4;};check(image.pixels[at(218,100)]<40,"A hidden thumb leaves the opaque editor backing");
+    // Viewport {9,29,192,82}: x = 9+192-4, 3 pt wide; the card sits at (20,40).
+    const auto slot=card.externalEditorSlot()->localRect;const core::Rect thumb{slot.x+slot.width-4,slot.y+20,3,30};
+    check(card.setEditorScrollIndicator(thumb)&&!card.setEditorScrollIndicator(thumb),"A changed thumb is a pose change; the same thumb is not");
+    card.updatePose({},1,1);composition.present(renderer);renderer.draw(false);image=renderer.readback();
+    check(after[0].opacity==1&&after[0].masks[0].bounds==slot&&after[0].masks[1].bounds==thumb&&after[0].masks[1].cornerRadius==1.5,"The thumb is clipped by the rounded viewport and its own capsule");
+    const auto p=at(218,100);check(image.pixels[p]>80&&image.pixels[p]<120&&std::abs(int(image.pixels[p])-int(image.pixels[p+1]))<=2&&std::abs(int(image.pixels[p+1])-int(image.pixels[p+2]))<=2,"Neutral translucent gray thumb paints over the backing");
+    check(image.pixels[at(214,100)]<40&&image.pixels[at(218,85)]<40&&image.pixels[at(218,125)]<40,"Nothing paints outside the thumb");
+    const auto rasterBefore=raster.stats().rasterizations;const auto uploads=renderer.stats().meshUploads;allocations=0;counting=true;
+    try{for(unsigned frame=0;frame<120;++frame){auto moved=thumb;moved.y=slot.y+frame%50;card.setEditorScrollIndicator(moved);card.updatePose({},1,2+frame/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==rasterBefore&&renderer.stats().meshUploads==uploads,"Scrolling moves the thumb without allocation, raster or upload");
+    check(!card.releaseEditorIndicator(renderer),"A published quad cannot retire");
+    state.detachEditor();presentation.updateContent(state,appearance);card.syncContent();card.updatePose({},1,4);check(card.externalEditorAfterDraws().empty(),"Leaving editing unpublishes the thumb");
+    rejects([&]{card.setEditorScrollIndicator(thumb);},"A settled card has no thumb");
+    const std::array settled{&card.scene()};composition.setScenes(renderer,settled);composition.present(renderer);
+    check(card.releaseEditorIndicator(renderer)&&card.releaseEditorIndicator(renderer)&&renderer.stats().meshes==meshes+6,"After unpublication the quad retires once");composition.detach(renderer);
+}
 void mediaContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     ehud::data::Note note{.id=id1,.kind=ehud::data::NoteKind::image,.x=20,.y=40,.width=210,.height=140,.createdAt=123};
     mod::NotesState state({note},{[](const auto&){},[](auto){}});state.setWorkspaceBounds({0,0,512,256});
@@ -180,6 +212,6 @@ void mediaContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
 int wmain(int argc,wchar_t**argv){try{
     check(argc==2,"Pass original native HUD shader path");const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);check(SUCCEEDED(hr),"Owned fixture COM initializes");
     {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,512,256,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});gpu::LayerRasterizer raster;
-        contracts(renderer,raster);externalEditorContracts(renderer,raster);mediaContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
+        contracts(renderer,raster);externalEditorContracts(renderer,raster);editorIndicatorContracts(renderer,raster);mediaContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes scene contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes scene contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

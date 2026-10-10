@@ -1,6 +1,7 @@
 #include "native/notes_workspace.hpp"
 #ifdef _WIN32
 #include <objbase.h>
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdlib>
@@ -143,6 +144,12 @@ void scrolling(HWND hwnd,gpu::Renderer&renderer){
     check(workspace.measurementStats().measurements==initialMeasures.measurements&&state.revision()==beforeWheel&&saves==savedBefore&&removals==0,"Changed settled wheel retains measured index and never persists");publish();
     const auto savedOffset=workspace.card(one)->scrollOffset();workspace.beginEditing(one);publish();
     check(std::abs(workspace.editor()->scrollOffset()-savedOffset)<1e-9,"Entering editor restores prior session offset after selecting document end");
+    const auto meshesBeforeIndicator=renderer.stats().meshes;workspace.uploadMedia(renderer);publish();
+    auto indicator=[&]()->const gpu::DrawObject*{for(const auto&e:workspace.entries())if(e.after.size()==2)return &e.after[0];return nullptr;};
+    const std::string indicatorMesh=indicator()?indicator()->meshID:std::string{};
+    {const auto* thumb=indicator();check(thumb&&thumb->sourceID.ends_with("/thumb")&&thumb->opacity>0&&renderer.stats().meshes==meshesBeforeIndicator+1,"The overflowing editor shows the source scroll indicator before its border");
+     const auto v=thumb->masks[0].bounds;const auto h=v.height,overflow=workspace.editor()->maximumScrollOffset();const auto length=std::max(16.,h*h/(h+overflow));const auto t=thumb->masks[1].bounds;
+     check(overflow>0&&std::abs(t.x-(v.x+v.width-4))<1e-9&&t.width==3&&std::abs(t.height-length)<1e-9&&std::abs(t.y-(v.y+(h-length)*workspace.editor()->scrollOffset()/overflow))<1e-9,"Thumb length and position follow the source formula");}
     check(workspace.editorDocument()->selection().range.end==workspace.editorDocument()->text().size(),"Source initial editor selection remains document end");
     const auto layout=workspace.editor()->layout().painted()->layoutIdentity();const auto editorMeasures=workspace.measurementStats().measurements;
     const auto editorRevision=state.revision();const auto editorSaves=saves;const auto editorText=state.note(one)->text;
@@ -150,8 +157,12 @@ void scrolling(HWND hwnd,gpu::Renderer&renderer){
     const auto end2=projection.unproject({point->x,point->y+6.125});check(end2&&std::abs(workspace.editor()->scrollOffset()-(savedOffset+end2->y-start->y))<1e-8,"Editor viewport receives the same card-local delta");
     check(workspace.editor()&&workspace.editor()->layout().painted()->layoutIdentity()==layout&&workspace.measurementStats().measurements==editorMeasures,"Editor wheel reuses the painted layout and settled measurement");
     check(state.revision()==editorRevision&&saves==editorSaves&&state.note(one)->text==editorText,"Editor wheel does not save a draft or mutate NotesState");publish();
+    {const auto* thumb=indicator();const auto v=thumb->masks[0].bounds;const auto h=v.height,overflow=workspace.editor()->maximumScrollOffset();const auto length=std::max(16.,h*h/(h+overflow));
+     check(std::abs(thumb->masks[1].bounds.y-(v.y+(h-length)*workspace.editor()->scrollOffset()/overflow))<1e-9,"An editor wheel moves the thumb with the scroll offset");}
     workspace.editor()->setScrollOffset(workspace.editor()->maximumScrollOffset());workspace.syncEditor();
     check(workspace.finishEditing().finished,"Explicit finish captures editor session offset");publish();
+    // Unpublished and absent: a resident, unreferenced quad would be removable here.
+    check(!indicator()&&!indicatorMesh.empty()&&!renderer.removeMesh(indicatorMesh),"Finishing unpublishes and retires the indicator quad");
     const auto settledMaximum=workspace.card(one)->measuredText()->height-workspace.card(one)->contentViewport().height;
     check(std::abs(workspace.card(one)->scrollOffset()-settledMaximum)<1e-8,"Finishing clamps editor offset to the taller settled h-37 viewport");
     workspace.beginEditing(one);publish();check(std::abs(workspace.editor()->scrollOffset()-settledMaximum)<1e-8,"Reopening preserves settled scroll position rather than revealing end");

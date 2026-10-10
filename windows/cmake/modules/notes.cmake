@@ -59,6 +59,18 @@ if(WIN32)
   endif()
 endif()
 
+# Hidden coverage of the Notes long-document path inside the application
+# (app/areas/notes_coverage.hpp). Test-only area: watch_session_preview only.
+if(WIN32 AND BUILD_TESTING)
+  add_library(hud_notes_coverage_area STATIC app/areas/notes_coverage.cpp)
+  target_include_directories(hud_notes_coverage_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_notes_coverage_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_notes_coverage_area PUBLIC hud_module_registry hud_native)
+  list(APPEND EHUD_NOTES_TARGETS hud_notes_coverage_area)
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "notesLongDocument|hud_notes_coverage_area|app/areas/notes_coverage.hpp|endfield::notes::notesLongDocumentCoverage|coverage")
+endif()
+
 foreach(target IN LISTS EHUD_NOTES_TARGETS)
   if(MSVC)
     target_compile_options(${target} PRIVATE /W4 /permissive- /EHsc)

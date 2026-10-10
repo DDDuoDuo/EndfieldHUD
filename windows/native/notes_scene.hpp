@@ -59,7 +59,16 @@ public:
     // Header/format feedback and grip are disjoint from the supported viewport.
     // All content uses ONE transactional LayerScene load, never two partial
     // scene replacements. Draw identity/count changes need setEntries().
+    // With the editor indicator resident: [scroll indicator, border]; before
+    // uploadEditorIndicator, only the border.
     std::span<const DrawObject> externalEditorAfterDraws()const noexcept;
+    // Source HUDProjectedTextEditor scrollIndicator: card-local thumb of the
+    // open external editor, or nullopt without overflow. Numeric only (no
+    // raster); painted after the editor glyphs and before its border. The one
+    // reusable quad is uploaded explicitly and retired after unpublication.
+    bool setEditorScrollIndicator(std::optional<core::Rect> thumb);
+    bool uploadEditorIndicator(Renderer&); // true when the after-draw list grew
+    bool releaseEditorIndicator(Renderer&);
     const std::optional<NativeNotesExternalEditorSlot>& externalEditorSlot()const noexcept;
     // The media owner retains the resident texture; this card owns only one
     // reusable quad mesh. Append mediaDraws() after scene() in the SAME publisher.

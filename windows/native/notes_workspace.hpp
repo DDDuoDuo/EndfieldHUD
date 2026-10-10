@@ -47,6 +47,11 @@ struct NativeNotesWorkspaceOptions {
     // Pure managed-name mapping only; file access belongs to the decoder's
     // independently owned worker resolver. No filesystem work on this thread.
     std::function<std::optional<std::string>(std::string_view)> legacyImagePath;
+    // Source NotesCanvas.onAction names (createdText, createdTODO, createdMedia,
+    // createdDrawing, editedText, formattedText, editedTODO, drawingEdited,
+    // deletedNote, mediaPlayback), raised after each accepted mutation. The
+    // owner records them as Event Log noteAction; content is never passed.
+    std::function<void(std::string_view action)> noteAction;
     NativeNotesVideoPlayback* videoPlayback{}; // exclusive owner, same renderer/device
     // Optional APP-owned broker/client. Supply both and leave exclusive owners
     // null. Root alone accepts/samples/providers deadlines; workspace only reads

@@ -176,6 +176,16 @@ void parity(HWND hwnd,const std::filesystem::path& shader){
         check(pair.singleScene.releaseResources(target.renderer)&&pair.chunkedScene.releaseResources(target.renderer),"Detached editor scenes release their resources");
     }
 }
+// The Archive body style (natural metrics, one point after every line) keeps
+// parity too; that editor uses chunks for long bodies.
+void archiveParity(HWND hwnd){
+    gpu::LayerRasterizer raster;auto style=notesStyle(raster,352,264);style.lineHeight=0;style.baseline=0;style.naturalParagraphSpacingOne=true;style.fontFamily=".AppleSystemUIFont";style.fontFace=".AppleSystemUIFont";
+    Pair pair(hwnd,raster,mixed(60,11),style);check(pair.chunked->stats().chunks>4,"Archive-style document spans many chunks");
+    compare(pair,"Archive body natural paragraph spacing keeps parity",true,5e-3);
+    const auto mid=static_cast<std::uint32_t>(pair.singleDocument.text().size()/2);pair.both([&](auto& e){return e.setSelectionFromHost({{mid,mid},text::ActiveEnd::end,false});});
+    for(const auto c:std::u16string_view(u"正文\n段落"))pair.both([&](auto& e){return e.character(c,false);});compare(pair,"Archive body typing keeps parity",false,5e-3);
+    check(pair.single->stop()==S_OK&&pair.chunked->stop()==S_OK,"Stop Archive-style editors");
+}
 // TSF reads the chunked geometry; a fake write lock edits through the same
 // guarded document; paragraph capacity is enforced without truncation.
 void textServices(HWND hwnd){
@@ -221,6 +231,8 @@ void longDocuments(HWND hwnd,const std::filesystem::path& shader){
         for(unsigned n=0;n<40;++n){const auto before=editor.stats();const auto layouts=raster.stats().textLayoutsCreated;const auto start=Clock::now();
             check(editor.character(n%5==4?u' ':n%2?u'x':0x7EC8,false).changed,"Synthetic typing changes the document");editor.syncContent();editor.setPose(pose(target,true));target.present(scene);
             samples.push_back(std::chrono::duration<double,std::milli>(Clock::now()-start).count());const auto after=editor.stats();
+            if(!(after.chunkLayouts-before.chunkLayouts<=2&&raster.stats().textLayoutsCreated-layouts<=2))std::cerr<<"keystroke "<<n<<": chunk layouts "<<after.chunkLayouts-before.chunkLayouts<<" offscreen "<<after.offscreenLayouts-before.offscreenLayouts
+                <<" slot paints "<<after.slotPaints-before.slotPaints<<" evictions "<<after.evictions-before.evictions<<" merges "<<after.merges-before.merges<<" splits "<<after.splits-before.splits<<" DWrite layouts "<<raster.stats().textLayoutsCreated-layouts<<" visible "<<after.visibleChunks<<" laid out "<<after.laidOutChunks<<'\n';
             check(after.chunkLayouts-before.chunkLayouts<=2&&raster.stats().textLayoutsCreated-layouts<=2,"A keystroke lays out at most its own chunk (and a newly revealed one)");}
         const auto m=median(samples);chunkedMedians.push_back(m);
         std::cout<<"Chunked Notes editor: "<<document.text().size()<<" UTF-16 units, "<<editor.stats().chunks<<" chunks, open "<<std::chrono::duration<double,std::milli>(opened-openStart).count()<<" ms, keystroke median "<<m<<" ms p95 "<<p95(samples)<<" ms\n";
@@ -254,22 +266,30 @@ void workspace(HWND hwnd){
     std::vector<data::Note> records{{.id=longID,.kind=data::NoteKind::text,.text=longText,.x=40,.y=40,.width=260,.height=200,.createdAt=1},
         {.id=shortID,.kind=data::NoteKind::text,.text=shortText,.x=340,.y=40,.width=240,.height=145,.createdAt=2},
         {.id=hugeID,.kind=data::NoteKind::text,.text=std::string(70000,'h'),.x=40,.y=300,.width=240,.height=145,.createdAt=3}};
-    std::size_t saves{};mod::NotesState state(records,{[&](const data::Note&){++saves;},[](std::string_view){throw std::runtime_error("Fixture never deletes");}});state.setWorkspaceBounds({0,0,1200,800});
+    std::size_t saves{},removals{};mod::NotesState state(records,{[&](const data::Note&){++saves;},[&](std::string_view){++removals;}});state.setWorkspaceBounds({0,0,1200,800});
     gpu::NativeNotesWorkspaceStyle style;style.palette=mod::NotesPalette::source(true,{.98,.83,.12,1});style.editor={{.12,.12,.12,1},style.palette.accent};
-    gpu::NativeNotesWorkspaceOptions options;options.raster=rasterOptions();gpu::NativeNotesWorkspace notesWorkspace(hwnd,state,raster,style,options);
+    std::vector<std::string> actions;gpu::NativeNotesWorkspaceOptions options;options.raster=rasterOptions();options.noteAction=[&](std::string_view a){actions.emplace_back(a);};gpu::NativeNotesWorkspace notesWorkspace(hwnd,state,raster,style,options);
     gpu::NativeNotesWorkspacePose p;p.screenToClip=gpu::layerViewportProjection(1200,800);p.pixelWidth=1200;p.pixelHeight=800;p.time=1;notesWorkspace.updatePose(p);
     check(notesWorkspace.beginEditing(longID)&&notesWorkspace.editor()&&notesWorkspace.editor()->chunked(),"A long text note opens in the chunked editor");
     rejects([&]{(void)notesWorkspace.editor()->layout();},"A chunked field has no single whole-document layout");
     check(notesWorkspace.editor()->character(u'Z',false).changed,"Typing in the chunked Notes field");notesWorkspace.syncEditor();
     const auto finished=notesWorkspace.finishEditing();check(finished.finished&&finished.saved&&saves==1&&state.note(longID)->text==longText+"Z","The chunked field commits the complete edited text");
-    check(notesWorkspace.beginEditing(shortID)&&!notesWorkspace.editor()->chunked()&&notesWorkspace.editor()->projected()!=nullptr,"Short notes keep the single-layout editor");check(notesWorkspace.finishEditing().finished,"Finish short field");
+    check(actions==std::vector<std::string>{"editedText"},"A saved text change raises the source editedText action");
+    check(notesWorkspace.beginEditing(shortID)&&!notesWorkspace.editor()->chunked()&&notesWorkspace.editor()->projected()!=nullptr,"Short notes keep the single-layout editor");check(notesWorkspace.finishEditing().finished&&actions.size()==1,"Finishing without a change raises no action");
+    // Source NotesCanvas.onAction names at each accepted mutation.
+    check(notesWorkspace.createText("0000000A-0000-4000-8000-000000000011",10)&&actions.back()=="createdText","Creating a text note raises createdText");
+    check(notesWorkspace.editor()->character(u'x',false).changed&&(notesWorkspace.syncEditor(),notesWorkspace.finishEditing().saved)&&actions.back()=="editedText","Typing into the new note raises editedText");
+    check(notesWorkspace.createChecklist("0000000A-0000-4000-8000-000000000012","0000000A-0000-4000-8000-000000000013",11)&&actions.back()=="createdTODO","Creating a checklist raises createdTODO");
+    check(notesWorkspace.editor()->character(u'y',false).changed&&(notesWorkspace.syncEditor(),notesWorkspace.finishEditing().saved)&&actions.back()=="editedTODO","Editing a checklist row raises editedTODO");
+    check(notesWorkspace.createDrawing("0000000A-0000-4000-8000-000000000014",12)&&actions.back()=="createdDrawing","Creating a drawing raises createdDrawing");
+    check(notesWorkspace.requestDeletion(shortID)&&notesWorkspace.confirmDeletion(shortID)&&actions.back()=="deletedNote"&&!state.note(shortID)&&removals==1,"A confirmed deletion raises deletedNote");
     bool capacity{};try{notesWorkspace.beginEditing(hugeID);}catch(const gpu::NativeNotesEditorCapacityError&){capacity=true;}check(capacity&&!notesWorkspace.editor(),"One oversized paragraph reports the editor capacity condition and leaves the record untouched");
     check(state.note(hugeID)->text.size()==70000,"Oversized record text is unchanged");
 }
 } // namespace
 int wmain(int argc,wchar_t** argv){
     try{check(argc==2,"Usage: notes_long_editor_tests <hud.hlsl>");Apartment apartment;Window window;const std::filesystem::path shader(argv[1]);
-        parity(window.value,shader);textServices(window.value);workspace(window.value);longDocuments(window.value,shader);
+        parity(window.value,shader);archiveParity(window.value);textServices(window.value);workspace(window.value);longDocuments(window.value,shader);
         std::cout<<"Passed "<<checks<<" chunked Notes editor contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"Chunked Notes editor contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}
 }

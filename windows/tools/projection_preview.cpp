@@ -8,6 +8,18 @@
 #include <deque>
 #include <stdexcept>
 namespace endfield::tools {
+std::string_view projectionEventAction(const ProjectionPreviewEvent&event)noexcept{
+    switch(event.kind){
+    case ProjectionPreviewEvent::Kind::strokeCompleted:return "drawingEdited";
+    case ProjectionPreviewEvent::Kind::erased:return "erased";
+    case ProjectionPreviewEvent::Kind::brushChanged:return "brushChanged";
+    case ProjectionPreviewEvent::Kind::backgroundChanged:return "backgroundChanged";
+    case ProjectionPreviewEvent::Kind::cleared:return "cleared";
+    case ProjectionPreviewEvent::Kind::mediaAdded:return "mediaAdded";
+    case ProjectionPreviewEvent::Kind::mediaRemoved:break;
+    }
+    return "mediaRemoved";
+}
 namespace {
 namespace n=native;namespace m=modules;using P=core::Point;using R=core::Rect;using M=core::Matrix4;using J=ehud::data::Json;
 void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}

@@ -73,6 +73,7 @@ struct NotesPreview::Impl {
     // Explicit relink: the unavailable media note whose footer chose a source,
     // and the note an in-flight import replaces (one file, same media family).
     std::optional<std::string>relinkNote,relinkTarget;
+    std::function<void(std::string_view)>actionSink;
     app::ClientMetrics metrics;Matrix workspaceWorld,confirmWorld;core::Projection controlsProjection,confirmationProjection,workspaceProjection;
     std::vector<Track>tracks;std::vector<gpu::LayerCompositionEntry>composed;
     std::array<double,4>toolbarStarted{-1,-1,-1,-1};
@@ -119,7 +120,8 @@ struct NotesPreview::Impl {
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){store->remove(id);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
         if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;
-        wo.legacyImagePath=[root](std::string_view name){return managedImagePath(root,name);};wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;wo.mediaBroker=sharedMedia.broker;wo.mediaClient=sharedMedia.client;
+        wo.legacyImagePath=[root](std::string_view name){return managedImagePath(root,name);};
+        wo.noteAction=[this](std::string_view action){if(actionSink)actionSink(action);};wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;wo.mediaBroker=sharedMedia.broker;wo.mediaClient=sharedMedia.client;
         workspace=std::make_unique<gpu::NativeNotesWorkspace>(hwnd,*state,raster,style(),wo);
         mediaMenu=std::make_unique<NotesMediaMenu>(raster,[this](NotesMediaAction action){mediaAction=std::move(action);need(PostMessageW(hwnd,NotesPreview::mediaActionMessage,mediaGeneration,0)!=FALSE,"Queue Notes media choice");});
         mediaMenu->setStrings(preferences.controls,preferences.dark);
@@ -299,6 +301,7 @@ bool NotesPreview::applyPreferences(NotesPreviewPreferences p,double t){auto&i=*
 }
 bool NotesPreview::refreshSharedMedia(double t){auto&i=*impl_;const Impl::TimeScope event(i,t);need(i.sharedMedia.broker!=nullptr,"Notes shared refresh requires the app media broker");return i.mediaCompletion(event.time);}
 const std::optional<std::string>&NotesPreview::mediaError()const noexcept{return impl_->mediaError;}
+void NotesPreview::setActionSink(std::function<void(std::string_view)>sink){impl_->actionSink=std::move(sink);}
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
 void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
@@ -360,7 +363,15 @@ bool NotesPreview::message(const app::NativeMessage&m,std::optional<double>time)
     // clears the field's active drag and any pending UTF-16 high surrogate.
     // Retry only an explicit field/window focus request held by a TSF lock.
     if(i.pendingCancel&&i.finish())i.pendingCancel=false;if(i.pendingResize){const auto value=*i.pendingResize;resize(value);}if(i.pendingModule){const auto value=*i.pendingModule;select(value,i.currentTime);}if(i.pendingFocus)i.focusEditor();if(i.pendingPreferences){auto pending=std::move(*i.pendingPreferences);i.pendingPreferences.reset();applyPreferences(std::move(pending),i.currentTime);}return true;}
-bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModifiers>modifiers){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaMenu&&i.mediaMenu->key(e,event.time))return true;if(i.formatMenu&&i.formatMenu->key(e,event.time))return true;auto*editor=i.workspace->editor();if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
+bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModifiers>modifiers){auto&i=*impl_;const Impl::TimeScope event(i,t);if(i.mediaMenu&&i.mediaMenu->key(e,event.time))return true;if(i.formatMenu&&i.formatMenu->key(e,event.time))return true;auto*editor=i.workspace->editor();
+    // Source HUDNotesInteraction.keyDown: unmodified Delete/Backspace on the
+    // selected visible note asks for the deletion confirmation. Only while the
+    // Notes module itself holds input, so another module's field keeps its keys.
+    if(!editor&&i.moduleInput&&i.moduleVisible&&i.modules.requested()==core::Module::notes&&e.kind==app::KeyKind::down&&(e.value==VK_BACK||e.value==VK_DELETE)){
+        const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
+        if(keys.control||keys.shift||keys.alt||keys.system)return false;const auto selected=i.state->selection();if(!selected||!i.state->visible(*selected))return false;
+        if(i.workspace->requestDeletion(*selected))i.confirmationStarted=event.time;return true;}
+    if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
     // Original TODO fields finish on unconsumed Return; imported/pasted line
     // breaks still remain valid data. TSF receives keys before this owner.
     if((e.kind==app::KeyKind::down&&e.value==VK_RETURN&&(i.workspace->editingItemID()||(keys.control&&!keys.shift&&!keys.alt&&!keys.system)))||(i.workspace->editingItemID()&&(e.kind==app::KeyKind::character||e.kind==app::KeyKind::unicodeCharacter)&&(e.value=='\r'||e.value=='\n'))){

@@ -91,7 +91,9 @@ struct NativeNotesCardScene::Impl {
     std::optional<NativeNotesExternalEditorSlot>editorSlot;
     std::vector<Feedback> feedback;std::vector<DrawObject> localDraws;std::vector<LayerPlacement> placements;
     std::vector<std::vector<PlaneMask>> masks;
-    std::array<DrawObject,1>afterDraws;std::size_t borderSurface{};
+    // [scroll indicator, editor border]; the indicator joins once its quad is resident.
+    std::array<DrawObject,2>afterDraws;std::size_t borderSurface{};
+    std::optional<core::Rect>indicator;std::string indicatorMesh;Renderer*indicatorOwner{};bool indicatorUploaded{};
     std::optional<NativeNotesMediaSlot>mediaSlot;
     std::optional<modules::NotesMediaLayout>mediaLayout;
     modules::NotesMediaProgressPose mediaProgress;
@@ -195,7 +197,11 @@ struct NativeNotesCardScene::Impl {
         for(auto&f:next){const auto found=scene.surfaceIndex(f.id);need(found.has_value(),"Retained Notes feedback surface is missing");f.surface=*found;}
         const auto nextGrip=scene.surfaceIndex(grip->id);need(nextGrip.has_value(),"Retained Notes grip surface is missing");
         feedback=std::move(next);localDraws=std::move(saved);placements=std::move(p);masks=std::move(clipMasks);
-        afterDraws[0]=std::move(nextAfter);borderSurface=nextBorder;editorSlot=nextSlot;
+        afterDraws[1]=std::move(nextAfter);borderSurface=nextBorder;editorSlot=nextSlot;
+        if(nextSlot){auto&thumb=afterDraws[0];if(indicatorMesh.empty())indicatorMesh=layers[0].id+"/editor-scroll-indicator-quad";thumb.sourceID=indicatorMesh+"/thumb";thumb.meshID=indicatorMesh;thumb.textureID.clear();thumb.opacity=0;thumb.masks.resize(2);
+            // Source HUDProjectedTextEditor scrollIndicator: NSColor.gray (white .5) at .65 alpha.
+            const double gray=.5;const auto linear=static_cast<float>(std::pow((gray+.055)/1.055,2.4));thumb.linearTint={linear,linear,linear,.65f};}
+        else indicator.reset();
         gripSurface=*nextGrip;mediaLayout=std::move(nextMedia);mediaSlot.reset();
         if(mediaLayout){mediaSlot=NativeNotesMediaSlot{mediaLayout->geometry().content,mediaLayout->geometry().hasSeek};
             if(mediaMesh.empty())mediaMesh=localDraws.front().sourceID+"/media-quad";
@@ -235,7 +241,13 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
     }};
     pose(i.localDraws,i.placements,i.masks);
     for(const auto&f:i.feedback)i.placements[f.surface].opacity=static_cast<float>(Impl::value(f,time))*opacityValue;
-    if(i.editorSlot){const auto&frame=i.placements[i.borderSurface];auto&after=i.afterDraws[0];after.world=frame.world;after.opacity=frame.opacity;after.masks.assign(frame.masks.begin(),frame.masks.end());
+    if(i.editorSlot){const auto&frame=i.placements[i.borderSurface];auto&after=i.afterDraws[1];after.world=frame.world;after.opacity=frame.opacity;after.masks.assign(frame.masks.begin(),frame.masks.end());
+        // The thumb sits inside the editor's rounded viewport (radius 3), under the border.
+        auto&thumb=i.afterDraws[0];const auto&slot=*i.editorSlot;const auto t=i.indicator.value_or(core::Rect{});
+        thumb.world=world*Matrix::translation(t.x,t.y)*Matrix::scale(std::max(t.width,1e-6),std::max(t.height,1e-6),1);thumb.opacity=i.indicator?opacityValue:0;
+        thumb.masks[0]={inverse,slot.localRect,slot.cornerRadius};
+        // A hidden thumb keeps a valid mask (the viewport) so the published draw stays well-formed.
+        if(i.indicator)thumb.masks[1]={inverse,t,1.5};else thumb.masks[1]=thumb.masks[0];
         // One resident resource, published once as the caller's after-editor
         // draw. Do not paint this border below glyph/selection as well.
         i.placements[i.borderSurface].opacity=0;
@@ -260,7 +272,13 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
 bool NativeNotesCardScene::requiresFrames(double time)const {need(std::isfinite(time),"Notes feedback time must be finite");for(const auto&f:impl_->feedback)if(f.active&&time<f.start+f.duration)return true;return false;}
 LayerScene&NativeNotesCardScene::scene()noexcept{return impl_->scene;}
 const LayerScene&NativeNotesCardScene::scene()const noexcept{return impl_->scene;}
-std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{return{impl_->afterDraws.data(),impl_->editorSlot?1u:0u};}
+std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{const auto&i=*impl_;if(!i.editorSlot)return {};return i.indicatorUploaded?std::span<const DrawObject>{i.afterDraws.data(),2}:std::span<const DrawObject>{i.afterDraws.data()+1,1};}
+bool NativeNotesCardScene::setEditorScrollIndicator(std::optional<core::Rect>thumb){auto&i=*impl_;if(thumb&&(!i.editorSlot||!std::isfinite(thumb->x)||!std::isfinite(thumb->y)||!std::isfinite(thumb->width)||!std::isfinite(thumb->height)||thumb->width<=0||thumb->height<=0))throw std::invalid_argument("Invalid Notes editor scroll indicator");
+    if(i.indicator==thumb)return false;i.indicator=thumb;i.posed=false;return true;}
+bool NativeNotesCardScene::uploadEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.editorSlot||i.indicatorUploaded)return false;need(!i.indicatorOwner||i.indicatorOwner==&r,"Editor indicator quad belongs to a different renderer");
+    const std::array<Vertex,4>vertices{{{{0,0,0},{0,0}},{{1,0,0},{1,0}},{{1,1,0},{1,1}},{{0,1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};
+    r.setMesh(i.indicatorMesh,1,{vertices,indices});i.indicatorOwner=&r;i.indicatorUploaded=true;return true;}
+bool NativeNotesCardScene::releaseEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.indicatorUploaded)return true;need(i.indicatorOwner==&r,"Cannot retire another renderer's editor indicator quad");if(!r.removeMesh(i.indicatorMesh))return false;i.indicatorUploaded=false;i.indicatorOwner=nullptr;return true;}
 const std::optional<NativeNotesExternalEditorSlot>&NativeNotesCardScene::externalEditorSlot()const noexcept{return impl_->editorSlot;}
 void NativeNotesCardScene::setMediaTexture(std::string texture,unsigned width,unsigned height){
     auto&i=*impl_;need(i.mediaSlot.has_value(),"Initialize media card before binding pixels");

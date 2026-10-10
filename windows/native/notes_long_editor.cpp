@@ -282,11 +282,17 @@ struct NativeNotesLongEditor::Impl {
     void rebuild(){
         const auto spacing=spacingRanges();std::vector<text::Range> local;
         for(auto& c:chunks)if(!c.dirty&&(c.styleGeneration!=styleGeneration||!sameRuns(c)||(sliceSpacing(spacing,c.start,c.end(),local),local!=c.spacing)))c.dirty=true;
-        double top{};
+        double top{};std::size_t laidOut{};for(const auto& c:chunks)if(c.layout&&!c.dirty)++laidOut;
         for(std::size_t i=0;i<chunks.size();++i){auto& c=chunks[i];c.top=top;
             if(c.dirty){c.described=false;describe(c);c.dirty=false;
-                const bool visible=c.top<scroll+style.height&&c.top+std::max(1.,c.inner)>scroll;
-                if(visible&&c.slot>=0)paintSlot(static_cast<std::size_t>(c.slot),c,false);else{c.slot=-1;layoutOffscreen(c);}}
+                // A chunk that owns a glyph slot was on screen at the last paint
+                // (a replacement inherits it before its new height is known).
+                const bool visible=c.slot>=0||(c.top<scroll+style.height&&c.top+std::max(1.,c.inner)>scroll);
+                if(visible&&c.slot>=0)paintSlot(static_cast<std::size_t>(c.slot),c,false);
+                else{c.slot=-1;layoutOffscreen(c);
+                    // Opening a very long note measures every chunk once; keep
+                    // only the retention budget of off-screen layouts meanwhile.
+                    if(!visible&&laidOut>=limits.retainedLayouts)evict(c);else ++laidOut;}}
             top+=chunkHeight(i);}
         restack();
     }

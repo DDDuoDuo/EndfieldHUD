@@ -796,6 +796,21 @@ void editingRecovery(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesCont
         f.release();check(raster.stats().entries==0,"Recoverable failure retires all owned artwork cleanly");
     }
 }
+// Source HUDNotesInteraction.keyDown: Delete/Backspace on the selected note
+// asks for confirmation, only while Notes holds input; owner actions reach the
+// sink with source names.
+void deletionKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
+    std::vector<std::string> actions;f.preview->setActionSink([&](std::string_view a){actions.emplace_back(a);});
+    check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45})&&f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::character,'!')&&f.key(app::KeyKind::down,VK_ESCAPE),"Edit and finish the sample note");f.tick(.2);
+    check(actions==std::vector<std::string>{"editedText"},"Finishing a changed note raises editedText through the owner sink");
+    check(f.pointer(app::PointerKind::down,{original.x+30,original.y+12})&&(f.pointer(app::PointerKind::up,{original.x+30,original.y+12}),true),"Select the note by its header");f.tick(.05);
+    check(!f.key(app::KeyKind::down,VK_BACK,tools::NotesKeyModifiers{true,false,false,false}),"A modified Backspace is not a note deletion");
+    check(f.key(app::KeyKind::down,VK_DELETE)&&f.preview->requiresFrames(f.time),"Delete on the selected note opens the deletion confirmation");f.tick(.3);
+    check(savedNotes(f.root.path).size()==1,"The confirmation, not the key, deletes");
+    f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.key(app::KeyKind::down,VK_DELETE),"Another module keeps Delete for its own fields");
+    f.release();
+}
 void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
     gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
     check(f.pointer(app::PointerKind::doubleClick,{original.x+30,original.y+45}),"Preference event begins a real isolated Notes draft");
@@ -868,6 +883,7 @@ int wmain(int argc, wchar_t** argv) {
         run(window.hwnd, renderer, assets);
         editingRecovery(window.hwnd,renderer,assets);
         preferencesPreview(window.hwnd,renderer,assets);
+        deletionKeys(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

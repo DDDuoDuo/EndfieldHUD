@@ -17,6 +17,10 @@ struct ProjectionPreviewEvent {
     enum class Kind {strokeCompleted,erased,brushChanged,backgroundChanged,cleared,mediaAdded,mediaRemoved};Kind kind{};
     std::optional<modules::NotesMediaKind>mediaKind;
 };
+// Source OverlayController.recordProjectionEvent: the Event Log
+// projectionAction name for one workspace event (strokeCompleted is
+// "drawingEdited"); the root records the name only.
+std::string_view projectionEventAction(const ProjectionPreviewEvent&)noexcept;
 struct ProjectionPreviewOptions {
     native::LayerRasterOptions raster;
     core::Language language{core::Language::english};modules::NotesColor accent{.98,.83,.12,1};
