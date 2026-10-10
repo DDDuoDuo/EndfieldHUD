@@ -97,7 +97,14 @@ void ChargeBadgePreview::setReduceMotion(bool value, double now) {
     i.state.setReduceMotion(value);
 }
 void ChargeBadgePreview::animateEntrance(double now, std::uint64_t seed) { impl_->clock(now); impl_->state.animateEntrance(impl_->time, seed); }
-void ChargeBadgePreview::setStable(bool visible, double now) { impl_->clock(now); impl_->state.setStable(visible, impl_->time); }
+void ChargeBadgePreview::setStable(bool visible, double now) {
+    auto& i = *impl_;
+    i.clock(now);
+    i.state.setStable(visible, i.time);
+    // Hidden at once (HUD concealed): nothing stays composed or hit-testable
+    // until the next deployment's frame.
+    if (!visible) { i.visible = false; i.pressed = false; i.pointerDesign.reset(); }
+}
 void ChargeBadgePreview::animateExit(double now, std::uint64_t seed) {
     auto& i = *impl_;
     i.clock(now);

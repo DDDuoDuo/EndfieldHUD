@@ -134,6 +134,9 @@ void run(const std::filesystem::path& shader) {
     badge.animateEntrance(now, 9);
     frame(now + 0.01);
     check(badge.state().stage() == m::ChargeStage::compact && !badge.requiresFrames(now), "Reduce Motion presents compact without animation");
+    check(!badge.entries().empty() && badge.covers(middle), "The stable badge is composed and hit-testable");
+    badge.setStable(false, now + 0.02);
+    check(badge.entries().empty() && !badge.covers(middle) && !badge.nextWakeTime(), "A concealed HUD hides the badge at once, before any frame");
     composition.detach(renderer);
     badge.release(renderer);
     done = true;

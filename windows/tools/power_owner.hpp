@@ -49,7 +49,11 @@ public:
     void setSettings(const ehud::data::Json& settings, bool systemDark, core::Language, bool reduceMotion, double time);
     void preview(double time);               // tray "Preview charging effect"
     bool editPosition(double time);          // after the HUD finished closing
-    void systemOverlayOpening(double time);  // before the HUD opens (hides the alert)
+    // Before the HUD opens: cancels position editing, drops a manual preview
+    // and hides the alert without animation until systemOverlayClosed().
+    void systemOverlayOpening(double time);
+    // After the HUD is concealed: presents the latest snapshot (always mode
+    // returns; transient readings taken while it was open stay the baseline).
     void systemOverlayClosed(double time);
     void setProjectionActive(bool, double time);
     void suspend(modules::PowerSuspension, double time);

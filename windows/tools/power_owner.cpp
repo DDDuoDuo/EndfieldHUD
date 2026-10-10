@@ -88,6 +88,10 @@ bool PowerOwner::editPosition(double time) {
 void PowerOwner::systemOverlayOpening(double time) {
     auto& i = *impl_;
     i.clock(time);
+    // The source never opens the HUD over the position editor
+    // (toggleSystemOverlay guards isEditingPosition); a Windows summon that
+    // does is a cancellation (cancelPositionEditing, no save, no reopen).
+    i.panel.state().discardPosition(i.time);
     // toggleSystemOverlay: drop a manual preview, hide without animation,
     // then the shared panel belongs to the HUD until it closes.
     i.coordinator.systemOverlayToggled();
@@ -96,8 +100,15 @@ void PowerOwner::systemOverlayOpening(double time) {
     i.panel.advance(i.time);
 }
 void PowerOwner::systemOverlayClosed(double time) {
-    impl_->clock(time);
-    impl_->panel.state().setSystemOverlayActive(false);
+    auto& i = *impl_;
+    i.clock(time);
+    i.panel.state().setSystemOverlayActive(false);
+    // AppDelegate overlay.onSystemClosed: presentLatestSnapshot (guarded by
+    // suspension/termination inside the coordinator). Readings taken while
+    // the HUD was open are already the presented baseline, so only always
+    // mode re-presents its persistent alert here.
+    i.coordinator.presentLatestSnapshot(i.time);
+    i.panel.advance(i.time);
 }
 void PowerOwner::setProjectionActive(bool active, double time) {
     impl_->clock(time);

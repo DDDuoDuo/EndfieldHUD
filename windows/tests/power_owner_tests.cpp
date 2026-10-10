@@ -118,9 +118,39 @@ void run(const std::filesystem::path& shader) {
         check(std::abs(rect.y - (830 - 42)) < 1e-9, "Saved custom position is used");
         drain();
         run(31, 36);
-        owner.terminate(40);
+        // Always mode yields to the HUD and returns when it closes
+        // (AppDelegate overlay.onSystemClosed -> presentLatestSnapshot).
+        owner.setSettings(Json::Object{{"displayMode", "always"}}, true, c::Language::english, false, 36.5);
+        owner.advance(36.5);
+        check(owner.panel().state().windowVisible() && owner.panel().state().persistent(), "Always mode presents persistently");
+        owner.systemOverlayOpening(37);
+        check(!owner.panel().state().windowVisible() && !owner.requiresFrames(37), "The HUD hides the persistent alert at once");
+        owner.receive(snapshot(26, false, false), 37.5);
+        owner.advance(37.5);
+        check(!owner.panel().state().windowVisible(), "Readings while the HUD is open stay silent");
+        owner.systemOverlayClosed(38);
+        check(owner.panel().state().windowVisible() && owner.panel().state().persistent() &&
+              owner.panel().accessibilityLabel() == "EndfieldHUD, Battery: 26%, On battery", "Closing the HUD restores the persistent alert with live data");
+        drain();
+        run(38, 39.6);
+        owner.setSettings(Json::Object{}, true, c::Language::english, false, 40);
+        run(40, 41);
+        check(!owner.panel().state().windowVisible(), "Leaving always mode re-baselines without an alert");
+        // Transient mode: closing the HUD does not replay an alert.
+        owner.systemOverlayOpening(41.5);
+        owner.systemOverlayClosed(42);
+        run(42, 42.5);
+        check(!owner.panel().state().windowVisible(), "A transient alert is not replayed by closing the HUD");
+        // A summon over the position editor cancels it: no save, no reopen.
+        check(owner.editPosition(43) && owner.panel().state().editingPosition(), "Editor reopens");
+        owner.systemOverlayOpening(43.5);
+        check(!owner.panel().state().editingPosition() && !owner.panel().state().windowVisible() && saved.size() == 1 && editsFinished == 1,
+              "Opening the HUD discards the edit without saving");
+        check(!owner.editPosition(44), "No editor while the HUD is open");
+        owner.systemOverlayClosed(45);
+        owner.terminate(50);
         check(!owner.panel().window(), "Termination releases the panel");
-        owner.receive(snapshot(30, true, true), 41);
+        owner.receive(snapshot(30, true, true), 51);
         check(!owner.panel().state().visible(), "No alert after termination");
     }
     executor.shutdown();
