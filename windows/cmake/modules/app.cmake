@@ -25,7 +25,8 @@ if(BUILD_TESTING)
   target_link_libraries(application_root_tests PRIVATE hud_application_core)
   if(WIN32)
     target_compile_definitions(application_root_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(application_root_tests PRIVATE advapi32)
+    # Isolated --data-root single-instance names (app/single_instance.hpp).
+    target_link_libraries(application_root_tests PRIVATE advapi32 hud_single_instance)
   endif()
   add_test(NAME application_root_contracts COMMAND application_root_tests)
   add_executable(application_event_recorder_tests tests/application_event_recorder_tests.cpp)
@@ -66,7 +67,7 @@ if(WIN32)
   # The single application owner. The six module owners that CMakeLists.txt
   # compiles directly into watch_session_preview are provided to the
   # production executable by hud_application_module_sources below.
-  add_library(hud_application app/application.cpp app/application_events.cpp app/application_lifetime.cpp app/application_modules.cpp)
+  add_library(hud_application app/application.cpp app/application_events.cpp app/application_lifetime.cpp app/application_modules.cpp app/hud_automation.cpp)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
@@ -75,7 +76,7 @@ if(WIN32)
     hud_map_preview hud_map_store hud_map_assets hud_orbipom_presentation hud_orbipom_runtime
     hud_calendar_preview hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
-    hud_shelf_icons hud_shelf_transfer hud_localization windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32)
+    hud_shelf_icons hud_shelf_transfer hud_localization windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32)
   add_library(hud_application_verification app/application_verification.cpp)
   target_compile_definitions(hud_application_verification PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application_verification PUBLIC hud_application)
@@ -151,7 +152,7 @@ if(WIN32)
   add_library(hud_single_instance app/single_instance.cpp app/application_login_item.cpp)
   target_include_directories(hud_single_instance PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_single_instance PRIVATE ${EHUD_APP_DEFINITIONS})
-  target_link_libraries(hud_single_instance PUBLIC hud_application_core hud_localization user32 advapi32)
+  target_link_libraries(hud_single_instance PUBLIC hud_application_core hud_localization user32 advapi32 bcrypt)
   # The module owners CMakeLists.txt compiles directly into the preview.
   add_library(hud_application_module_sources tools/clipboard_preview.cpp tools/volume_preview.cpp tools/event_log_preview.cpp
     tools/work_mode_preview.cpp tools/battery_preview.cpp tools/settings_preview.cpp)
@@ -170,6 +171,8 @@ if(WIN32)
   endif()
   set(EHUD_APP_VERSION_COMMAS "${CMAKE_MATCH_1},${CMAKE_MATCH_2},${CMAKE_MATCH_3},${EHUD_APP_BUILD}")
   set(EHUD_APP_VERSION_DOTS "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${EHUD_APP_BUILD}")
+  # Settings > About (HUDAboutInformation): "<version> (<build>)".
+  target_compile_definitions(hud_application PRIVATE "EHUD_APP_VERSION_NAME=\"${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}\"" "EHUD_APP_BUILD_NUMBER=\"${EHUD_APP_BUILD}\"")
   set(EHUD_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/app/EndfieldHUD.ico")
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/app/EndfieldHUD.rc.in" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.rc" @ONLY)
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/app/EndfieldHUD.manifest.in" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.manifest" @ONLY)
@@ -180,6 +183,9 @@ if(WIN32)
   if(MSVC)
     target_compile_options(EndfieldHUD PRIVATE /W4 /permissive- /EHsc)
     target_compile_options(hud_single_instance PRIVATE /W4 /permissive- /EHsc)
+    # Separate developer symbols (stage_release.cmake archives the PDB) with
+    # unchanged code generation: /DEBUG would otherwise turn REF/ICF off.
+    target_link_options(EndfieldHUD PRIVATE $<$<CONFIG:Release>:/DEBUG:FULL /OPT:REF /OPT:ICF>)
   endif()
   add_dependencies(EndfieldHUD hud_private_fonts)
   # The shared audio worker, five-language Volume captions (audio area).

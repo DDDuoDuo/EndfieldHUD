@@ -1,5 +1,10 @@
 #include "app/application_modules.hpp"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 #include "app/archive_service.hpp"
+#include "modules/reader_localization.hpp"
 #include "core/source_color.hpp"
 #include "native/clipboard_assets.hpp"
 #include "native/reader_owner.hpp"
@@ -21,6 +26,8 @@
 #include "tools/storage_preview.hpp"
 #include "tools/volume_preview.hpp"
 #include "tools/work_mode_preview.hpp"
+#include "native/volume_accessibility.hpp"
+#include "native/volume_automation.hpp"
 
 namespace endfield::app {
 namespace source = core::source;
@@ -61,13 +68,10 @@ tools::NotesPreviewPreferences notesPreferences(core::Language language, bool da
     s.todoTitle=t("TODO","待办");s.itemPlaceholder=t("New item…","新事项…");s.addItem=t("+ Add item","+ 添加事项");s.checkItem=t("Check","勾选");s.uncheckItem=t("Uncheck","取消勾选");s.editItem=t("Edit item","编辑事项");s.moveUp=t("Move up","上移");s.moveDown=t("Move down","下移");s.removeItem=t("Delete item","删除事项");s.addItemAction=t("Add item","添加事项");s.imageTitle=t("IMAGE/VIDEO","图片/视频");s.drawingTitle=t("DRAWING","画画");s.drawingColor=t("Drawing color","画笔颜色");out.controls=tools::archivePreviewStrings(language).menus;return out;
 }
 modules::ReaderStrings readerStrings(core::Language language) {
-    const auto t=[language](std::string_view en,std::string_view zh){return core::localized(en,zh,language);};
-    modules::ReaderStrings out;
-    out.open=t("Open","打开");out.library=t("Library","书库");out.reading=t("Reading","阅读设置");out.bookmarks=t("Bookmarks","书签");
-    out.title=t("E-Reader","阅读器");out.empty=t("Open a book to begin reading.","打开书籍开始阅读。");out.loading=t("Loading book…","正在载入书籍…");
-    out.chooseFile=t("Choose file","选择文件");out.chooseShelf=t("Choose from Shelf","从暂存架选择");out.shelfTitle=out.chooseShelf;
-    out.font=t("Font","字体");out.fontSize=t("Font size","字号");out.lineSpacing=t("Line spacing","行间距");out.margin=t("Margins","页边距");
-    out.horizontal=t("Left to right","从左到右");out.vertical=t("Top to bottom","从上到下");return out;
+    // Five-language Reader captions (modules/reader_localization.hpp): the
+    // Windows "Choose in File Explorer" row and ReaderStrings.language, which
+    // renders typed ReaderState errors (Mac ReaderError.errorDescription).
+    return modules::readerStrings(language);
 }
 modules::StorageAppearance storageAppearance(core::Language language, bool dark, std::array<double, 4> accent) {
     const auto available=source::sourceWhiteBlend({accent[0],accent[1],accent[2]},.42);
@@ -172,8 +176,37 @@ public:
 class VolumeModule final : public ModuleOwner {
     tools::VolumePreview& v_;
     std::optional<core::Language> language_;
+    VolumeModuleHooks hooks_;
+    // Created on the first UI Automation refresh (a client asked the HUD).
+    std::unique_ptr<gpu::NativeVolumeAutomation> automation_;
+    core::Language automationLanguage_{core::Language::english};
 public:
-    explicit VolumeModule(tools::VolumePreview& v) : v_(v) {}
+    VolumeModule(tools::VolumePreview& v, VolumeModuleHooks hooks) : v_(v), hooks_(std::move(hooks)) {}
+    ~VolumeModule() override { automation_.reset(); }
+    // HUDVolumeInteraction.layoutAccessibility: projected buttons and sliders.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!hooks_.toScreen || !hooks_.clock) return false;
+        if (!automation_) {
+            gpu::VolumeAutomationHost h;
+            h.root = root;
+            h.elements = [this] { return v_.acceptsInput() ? gpu::volumeAccessibility(v_.state(), gpu::volumeAccessibilityStrings(automationLanguage_)) : gpu::VolumeAccessibility{}; };
+            h.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> { const auto client = v_.clientRect(canvas); return client ? hooks_.toScreen(*client) : std::nullopt; };
+            h.invoke = [this](std::string_view id) { return v_.perform(id, hooks_.clock()); };
+            h.setValue = [this](std::string_view id, double value) { return v_.setAccessibleValue(id, value, hooks_.clock()); };
+            automation_ = std::make_unique<gpu::NativeVolumeAutomation>(std::move(h));
+        }
+        return automation_->refresh();
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
     std::string_view name() const noexcept override { return "volume"; }
     ModuleRouting routing() const noexcept override { ModuleRouting r; r.pointer = 10; r.wheel = 6; r.key = 6; return r; }
     bool presents(core::Module m) const noexcept override { return m == core::Module::volume; }
@@ -182,6 +215,7 @@ public:
         v_.setStyle({a.dark, a.accent}); v_.setReduceMotion(a.reduceMotion);
         // Language events now reach Volume too (the former preview never set it).
         if (language_ != a.language) { v_.setStrings(volumeStrings(a.language)); language_ = a.language; }
+        automationLanguage_ = a.language;
     }
     void overlayClosing(double t) override { v_.cancelInteraction(t); }
     void update(const ModuleFrame& f) override { v_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
@@ -574,7 +608,7 @@ public:
 std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview& o) { return std::make_unique<NotesModule>(o); }
 std::unique_ptr<ModuleOwner> shelfModule(tools::ShelfPreview& o) { return std::make_unique<ShelfModule>(o); }
 std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview& o, const gpu::NativeClipboardAssets& a) { return std::make_unique<ClipboardModule>(o, a); }
-std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview& o) { return std::make_unique<VolumeModule>(o); }
+std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview& o, VolumeModuleHooks hooks) { return std::make_unique<VolumeModule>(o, std::move(hooks)); }
 std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview& o) { return std::make_unique<EventLogModule>(o); }
 std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview& o) { return std::make_unique<WorkModeModule>(o); }
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview& o) { return std::make_unique<BatteryModule>(o); }

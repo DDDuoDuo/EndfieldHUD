@@ -7,6 +7,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <bcrypt.h>
 
 namespace endfield::app {
 namespace {
@@ -19,6 +20,29 @@ constexpr DWORD payloadLimit = static_cast<DWORD>(core::forwardedArgumentsMagic.
 SingleInstanceNames productionSingleInstanceNames() {
     // Stable for every EndfieldHUD.exe build; Local\ scopes it to this session.
     return {L"Local\\EndfieldHUD.Instance.{6E8C4B52-1F0A-4C55-9E39-ED7F1A3C5B21}", L"EndfieldHUD.Activation.{6E8C4B52-1F0A-4C55-9E39-ED7F1A3C5B21}"};
+}
+
+SingleInstanceNames isolatedSingleInstanceNames(const std::filesystem::path& dataRoot) {
+    std::wstring text = dataRoot.lexically_normal().native();
+    if (text.empty() || text.size() > 32767) fail("Isolated data root path is invalid");
+    if (!LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, text.c_str(), static_cast<int>(text.size()), text.data(), static_cast<int>(text.size()), nullptr, nullptr, 0))
+        fail("Isolated data root path could not be normalized");
+    UCHAR digest[32]{};
+    BCRYPT_ALG_HANDLE algorithm{};
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) fail("SHA-256 is unavailable");
+    BCRYPT_HASH_HANDLE hash{};
+    bool ok = BCRYPT_SUCCESS(BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0));
+    ok = ok && BCRYPT_SUCCESS(BCryptHashData(hash, reinterpret_cast<PUCHAR>(text.data()), static_cast<ULONG>(text.size() * sizeof(wchar_t)), 0));
+    ok = ok && BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, sizeof(digest), 0));
+    if (hash) BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (!ok) fail("Isolated data root digest failed");
+    std::wstring suffix(L".");
+    constexpr wchar_t hex[] = L"0123456789abcdef";
+    for (unsigned n = 0; n < 8; ++n) { suffix.push_back(hex[digest[n] >> 4]); suffix.push_back(hex[digest[n] & 15]); }
+    auto names = productionSingleInstanceNames();
+    names.mutex += suffix; names.windowClass += suffix;
+    return names;
 }
 
 struct SingleInstanceGuard::Impl {

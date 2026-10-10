@@ -29,6 +29,12 @@ public:
  void cancelInteraction(double);bool pointerLocked()const noexcept;
  modules::SettingsController&controller()noexcept;const modules::SettingsPresentation*view(core::Module)const noexcept;
  void setCustomColor(std::array<double,3>,double);void setCustomLogo(std::string,double);void showImportError(std::string,double);
+ // Display > Battery alert (Mac HUDSettingsCanvas.showBatterySettings), for
+ // the Power page's "Battery alert ›" before Display is selected.
+ void showBatterySettings(double);
+ // Rebuilds every page's rows (host hooks changed, e.g. a module area that
+ // contributes a System row was constructed after Settings).
+ void refreshViews(double);
  // Legacy combined order remains the default. The shared shell uses
  // entries(false) below pinned Notes, then modalEntries() above every module.
  bool modalActive()const noexcept;

@@ -124,12 +124,20 @@ struct OverlayCallbacks {
     // lParam bits. The owner drains durable writes synchronously inside the
     // callback; the host always allows the session to end.
     std::function<void(SessionEnd, std::uint32_t reason)> sessionEnding;
+    // WM_GETOBJECT (UI Automation/MSAA object request). A value is the
+    // LRESULT to return (e.g. UiaReturnRawElementProvider); none falls back
+    // to default handling. May arrive before the first frame or while hidden.
+    std::function<std::optional<std::intptr_t>(const NativeMessage&)> getObject;
 };
 struct OverlayOptions {
     std::wstring title{L"EndfieldHUD"};
     int x{}, y{}; // screen pixels, supplied by caller
     std::uint32_t pixelWidth{1280}, pixelHeight{800};
     void* ownerWindow{}; // optional HWND; borrowed
+    // The window covers one monitor (the HUD and Projection): a per-monitor
+    // DPI change fits it to its monitor's pixel bounds instead of Windows'
+    // suggested rectangle, which need not equal them for a covering popup.
+    bool coverMonitor{};
 };
 struct OverlayHostStats {
     std::uint64_t frameRequests{}, framePosts{}, frames{}, timerArms{}, timerWakes{},

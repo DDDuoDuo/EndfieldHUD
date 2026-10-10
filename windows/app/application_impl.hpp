@@ -16,6 +16,14 @@
 #include "app/quit_confirmation.hpp"
 #include "app/application_login_item.hpp"
 #include "app/utility_executor.hpp"
+#include "app/hud_automation.hpp"
+// Host-side contracts of module areas (headers only; no area library link).
+#include "app/areas/app_shortcut_navigation.hpp"
+#include "app/areas/mac_import_handoff.hpp"
+#include "app/areas/power_module.hpp"
+#include "native/id_card_presenter.hpp"
+#include "native/event_log_time.hpp"
+#include "modules/reader_localization.hpp"
 #include "core/system_overlay_state.hpp"
 #include "core/application_event_recorder.hpp"
 #include "modules/hud_clock.hpp"
@@ -182,6 +190,8 @@ struct Application::Impl {
         bool overlayVisible() const noexcept override;
         bool focused() const noexcept override;
         const ClientMetrics& metrics() const noexcept override;
+        std::optional<core::Module> hoveredModule() const noexcept override;
+        bool isolatedDataRoot() const noexcept override;
         native::Renderer& renderer() noexcept override;
         native::LayerRasterizer& rasterizer() noexcept override;
         UtilityExecutor* utility() noexcept override;
@@ -233,6 +243,9 @@ struct Application::Impl {
     void perform(const core::SystemOverlayEffects&, double time);
     void openPresentation(core::Module initial, double time);
     void targetDisplay();
+    gpu::DisplayPreference displayPreference() const;
+    void placeOnDisplay(const gpu::DisplayDescriptor&);
+    void repositionHUD(double time);
     std::wstring trayTooltip;
     void selectModule(core::Module, double time);
     void open(double time);
@@ -268,6 +281,8 @@ struct Application::Impl {
     void unregisterModule(std::unique_ptr<ModuleOwner>&) noexcept;
     // --- module areas and host broadcasts ---------------------------------------
     void constructAreas();
+    void connectAreas();
+    void reopenAfterLaunch(double time);
     ApplicationAreaMode areaMode() const noexcept;
     bool broadcast(HostEvent::Kind, double time, std::uint32_t flags = 0);
     void concealed(double time);              // the HUD finished closing (or was forced) and is hidden
@@ -276,6 +291,28 @@ struct Application::Impl {
     void finishAreaPicker(ApplicationFileResult);
     void constructAudio();
     bool routePointer(ModuleOwner&, const PointerPolicy&, const PointerEvent&, double time, core::Point);
+    // Host routes into module areas (app/areas/*.hpp contracts).
+    power::PowerAreaService* powerArea() const noexcept;
+    AppShortcutNavigation* appNavigation() const noexcept;
+    void bindNavigation(double time);
+    void syncActivityTelemetry(double time);
+    void setProjectionActive(bool active, double time);
+    // The HUD window's one OLE file-drop route (SystemHUDView.performDragOperation).
+    void hudDropRoute(double time);
+    std::optional<std::string> dropTarget(core::Point client) const;
+    void receiveDrop(double time);
+    // UI Automation root (app/hud_automation.hpp).
+    void automationChanged();
+    HudAutomationSource automationSource();
+    std::optional<std::intptr_t> automationObject(const NativeMessage&);
+    // DataRootRestart (app/areas/mac_import_handoff.hpp) and GPU device loss.
+    bool requestRestart(std::function<void()> work, std::function<void()> declined);
+    void declineRestart();
+    void runRestartDeclined();
+    bool recoverDevice(const std::exception&, double time);
+    // Settings links and update checks close the HUD first (overlay.afterSystemClose).
+    void openAfterClose(std::string url, double time);
+    void openPendingLink();
 
     // --- projection --------------------------------------------------------------
     std::optional<gpu::DisplayDescriptor> projectionDisplay(std::uintptr_t preferred);
@@ -320,6 +357,8 @@ struct Application::Impl {
     void ensureGame(double time);
     void requestMapGeography();
     void constructTray();
+    bool loadTrayIcon();
+    void applyTrayIcon();
 
     // ============================================================================
     ApplicationOptions args;
@@ -454,6 +493,9 @@ struct Application::Impl {
     std::unique_ptr<tools::ArchivePreview> archive;
     std::unique_ptr<tools::ArchiveMediaBinding> archiveMedia;
     gpu::ApplicationIcon applicationIcon;
+    struct TrayIconArt {std::string id,file,sha256;bool templateArt{};};
+    std::vector<TrayIconArt> trayIcons;
+    std::string trayIconKey;
     std::unique_ptr<gpu::TrayController> tray;
     bool quitRequested{};
     core::Point mediaInsertionPoint;
@@ -473,6 +515,54 @@ struct Application::Impl {
     std::vector<ExternalModule> externalModules;
     std::vector<std::string> absentModules;
     std::unique_ptr<AreaHost> areaHost;
+    // Temporary File Shelf rows for areas ("fileShelf.mediaChoices" /
+    // "fileShelf.openReference", media_assembly_module.hpp).
+    std::function<std::vector<modules::NotesShelfChoice>()> areaShelfChoices;
+    std::function<std::optional<std::pair<std::string,std::shared_ptr<void>>>(std::string_view)> areaShelfOpen;
+    // Power page sink ("power.batteryPage"): the area's merged reading.
+    power::PowerPageSink batteryPageSink;
+    // Source navigation with saved app shortcuts (app_shortcut_navigation.hpp).
+    WatchSessionNavigation baseNavigation;
+    bool navigationDirty{};
+    // Bottom-left ID card (native/id_card_presenter.hpp): caption leaves and
+    // the desktop baseline are copied before the setup JSON is released.
+    std::optional<gpu::IdCardCaptionLeaves> idCardLeaves;
+    std::optional<source::SourceDesktopFrameSettings> idCardBaseline;
+    std::unique_ptr<gpu::IdCardPresenter> idCard;
+    // DataRootRestart: the accepted-quit teardown, then a fresh run (main.cpp).
+    class Restart final : public DataRootRestart {
+    public:
+        explicit Restart(Impl& impl) noexcept : impl_(impl) {}
+        bool restartWith(std::function<void()> work, std::function<void()> declined) override { return impl_.requestRestart(std::move(work), std::move(declined)); }
+    private:
+        Impl& impl_;
+    };
+    Restart restart{*this};
+    std::function<void()> restartWork, restartDeclined;
+    bool restartPending{}, restartAccepted{}, restartDeclinePosted{};
+    // GPU device loss ends this run like an accepted restart (main.cpp builds
+    // a fresh owner with a new device); the HUD reopens on its last module.
+    bool deviceLost{};
+    std::optional<core::Module> deviceLostModule;
+    // Explicit long area jobs (Media Assembly exports) on their own executor.
+    std::unique_ptr<UtilityExecutor> longWork;
+    // OLE file drops on the HUD (one ShelfDropTarget registration).
+    struct HudDropInbox {HWND hwnd{};double scale{1};Impl* owner{};core::Point point;std::vector<std::string>paths;std::string target;bool posted{};};
+    std::shared_ptr<HudDropInbox> hudDrop{std::make_shared<HudDropInbox>()};
+    bool hudDropActive{};
+    // UI Automation root provider (lazily created on WM_GETOBJECT).
+    std::unique_ptr<HudAutomation> automation;
+    bool automationDirty{};
+    // Settings link/update page opened after the HUD closes.
+    std::optional<std::string> pendingLink;
+    std::uint64_t linkRequests{}; // hidden coverage: links requested (never opened)
+    // Activity telemetry for the Power charge metric (OverlayController.reconcileChargeMetricTelemetry).
+    std::unique_ptr<modules::ActivityTelemetryLink> activityTelemetry;
+    // System animation preference (SPI_GETCLIENTAREAANIMATION), folded into
+    // the effective reduce-motion value without changing the saved preference.
+    bool systemAnimationsOff{};
+    unsigned hostChecks{}; // hidden coverage: host integration checks
+    std::string hudDisplayID; // persistent ID of the display the HUD covers
     // Publication.
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
     std::vector<gpu::LayerCompositionEntry> ordered;
@@ -527,7 +617,7 @@ struct Application::Impl {
     double diagnosticStart{};
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
-    static constexpr UINT eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
+    static constexpr UINT hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
         mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210;

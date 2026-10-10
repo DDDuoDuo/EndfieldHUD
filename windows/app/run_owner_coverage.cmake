@@ -42,6 +42,11 @@ string(JSON lifecycle GET "${report}" productionLifecycleChecks)
 if(NOT modules EQUAL 54 OR NOT lifecycle EQUAL CHECKS)
   message(FATAL_ERROR "Owner coverage incomplete: ${modules} module results, ${lifecycle} lifecycle checks")
 endif()
+# Host integration (UI Automation root over Volume, restart service, drop route).
+string(JSON host_checks GET "${report}" hostIntegrationChecks)
+if(host_checks LESS 7)
+  message(FATAL_ERROR "Host integration coverage incomplete: ${host_checks} checks")
+endif()
 # Module areas: the modules they present ran the same three combined cycles,
 # and every registered area is reported (constructed and covered when the
 # staged package was supplied).
@@ -80,5 +85,6 @@ foreach(name IN LISTS expected_areas)
   endif()
 endforeach()
 list(LENGTH expected_areas expected_count)
-message(STATUS "Owner module coverage: ${modules} module results, ${lifecycle} production lifecycle checks, ${expected_count} registered areas (${area_results} area module results)")
+string(JSON id_card GET "${report}" idCardConnected)
+message(STATUS "Owner module coverage: ${modules} module results, ${lifecycle} production lifecycle checks, ${host_checks} host integration checks (ID card connected: ${id_card}), ${expected_count} registered areas (${area_results} area module results)")
 file(REMOVE_RECURSE "${WORK}")

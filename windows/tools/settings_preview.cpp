@@ -59,6 +59,8 @@ const modules::SettingsPresentation*SettingsPreview::view(core::Module m)const n
 void SettingsPreview::setCustomColor(std::array<double,3>color,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomColor(color,i.time);}
 void SettingsPreview::setCustomLogo(std::string revision,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.setCustomLogo(std::move(revision),i.time);}
 void SettingsPreview::showImportError(std::string error,double t){auto&i=*impl_;i.clock(t);i.slots[1]->state.showImportError(std::move(error),i.time);}
+void SettingsPreview::showBatterySettings(double t){auto&i=*impl_;i.clock(t);for(auto&s:i.slots)if(s->state.module()==core::Module::display){s->state.showBatterySettings(i.time);s->state.invalidate();(void)s->state.refresh(i.time);}}
+void SettingsPreview::refreshViews(double t){auto&i=*impl_;i.clock(t);for(auto&s:i.slots){s->state.invalidate();(void)s->state.refresh(i.time);}}
 void SettingsPreview::upload(gpu::Renderer&r){auto&i=*impl_;for(std::size_t n=0;n<i.orderCount;++n){auto&s=*i.slots[i.order[n]];s.registration.uploadGeometry(r);s.scene->uploadAnimations(r);}if(i.safetyScene&&i.safety.modal())i.safetyScene->upload(r);}
 bool SettingsPreview::modalActive()const noexcept{return impl_->safety.modal();}
 std::span<const gpu::LayerCompositionEntry>SettingsPreview::modalEntries(){auto&i=*impl_;if(!i.safetyScene||!i.safety.modal())return {};i.modal[0]=i.safetyScene->entry();return i.modal;}

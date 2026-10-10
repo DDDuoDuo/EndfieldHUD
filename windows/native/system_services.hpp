@@ -239,6 +239,10 @@ public:
     // Native update events get one coalesced retry when another process holds
     // the clipboard. If still busy, this explicit UI action may retry later.
     HRESULT refresh_clipboard();
+    // ClipboardWatcher.setSuspended: while suspended (sleep, display off,
+    // session lock) clipboard notifications are ignored and a running capture
+    // is cancelled; resuming runs exactly one sequence-checked refresh.
+    void set_clipboard_suspended(bool suspended);
     HRESULT copy_clipboard_item(std::uint64_t id);
     bool erase_clipboard_item(std::uint64_t id);
     bool pin_clipboard_item(std::uint64_t id, bool pinned);

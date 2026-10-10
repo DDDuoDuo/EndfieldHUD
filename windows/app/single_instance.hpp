@@ -9,6 +9,7 @@
 // primary that is still creating its activation window.
 #ifdef _WIN32
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <span>
@@ -22,6 +23,12 @@ struct SingleInstanceNames {
     std::wstring windowClass; // message-only activation window class
 };
 SingleInstanceNames productionSingleInstanceNames();
+// A run over an explicit isolated data root (EndfieldHUD.exe --data-root, the
+// section 9 performance gate): the production names with the suffix '.' + the
+// first 16 hex digits of SHA-256 over the lower-cased, lexically normalized
+// path (UTF-16LE). Such a run never forwards to, or blocks, the user's copy,
+// while relaunches with the same --data-root reach it.
+SingleInstanceNames isolatedSingleInstanceNames(const std::filesystem::path& dataRoot);
 
 class SingleInstanceGuard final {
 public:

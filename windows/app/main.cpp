@@ -25,7 +25,10 @@
 #include "core/localization.hpp"
 #include "core/resource_locator.hpp"
 #include <array>
+#include <chrono>
 #include <cstdio>
+#include <functional>
+#include <optional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -138,6 +141,18 @@ int verifyPackage() {
     return failures || !package.shell ? 2 : 0;
 }
 
+// Opens the data root, reporting failures as at startup; nullopt: reported.
+std::optional<ehud::data::ApplicationRoot> openRoot(const fs::path& base) {
+    try { return ehud::data::openApplicationRoot(base); }
+    catch (const ehud::data::StoreError& e) {
+        if (e.code() == ehud::data::StoreErrorCode::newerVersion)
+            report("This EndfieldHUD data was created by a newer version. It was left unchanged; install the newer EndfieldHUD to use it.",
+                   "此 EndfieldHUD 数据由更新版本创建，已保持原样。请安装更新版本的 EndfieldHUD 后使用。");
+        else report("EndfieldHUD could not open its data folder. Nothing was changed.", "EndfieldHUD 无法打开数据文件夹，未作任何更改。");
+        return std::nullopt;
+    }
+}
+
 int run(const std::vector<std::string>& values) {
     std::vector<std::string_view> views(values.begin(), values.end());
     if (views.size() == 1 && views[0] == "--verify-package") return verifyPackage();
@@ -145,7 +160,14 @@ int run(const std::vector<std::string>& values) {
     try { arguments = core::parseApplicationArguments(views); }
     catch (const std::exception&) { report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。"); return 1; }
 
-    app::SingleInstanceGuard instance(app::productionSingleInstanceNames());
+    // --data-root (section 9 gate): an explicit absolute isolated root with
+    // its own single instance; never the user's root, running copy or restart.
+    fs::path isolated;
+    if (!arguments.dataRoot.empty()) {
+        isolated = fs::path(std::u8string(reinterpret_cast<const char8_t*>(arguments.dataRoot.data()), arguments.dataRoot.size())).lexically_normal();
+        if (!isolated.is_absolute()) { report("EndfieldHUD received invalid launch arguments.", "EndfieldHUD 收到了无效的启动参数。"); return 1; }
+    }
+    app::SingleInstanceGuard instance(isolated.empty() ? app::productionSingleInstanceNames() : app::isolatedSingleInstanceNames(isolated));
     if (!instance.primary()) {
         // AppDelegate: a second copy activates the existing one and exits.
         (void)instance.forward(views);
@@ -154,17 +176,7 @@ int run(const std::vector<std::string>& values) {
     instance.listen();
     // Restart after Restart Manager shutdowns (installer/updater) and, when
     // the user allows it, after an update reboot, like a login item.
-    RegisterApplicationRestart(L"--login", RESTART_NO_CRASH | RESTART_NO_HANG);
-
-    ehud::data::ApplicationRoot root;
-    try { root = ehud::data::openApplicationRoot(ehud::data::localApplicationDataBase()); }
-    catch (const ehud::data::StoreError& e) {
-        if (e.code() == ehud::data::StoreErrorCode::newerVersion)
-            report("This EndfieldHUD data was created by a newer version. It was left unchanged; install the newer EndfieldHUD to use it.",
-                   "此 EndfieldHUD 数据由更新版本创建，已保持原样。请安装更新版本的 EndfieldHUD 后使用。");
-        else report("EndfieldHUD could not open its data folder. Nothing was changed.", "EndfieldHUD 无法打开数据文件夹，未作任何更改。");
-        return 1;
-    }
+    if (isolated.empty()) RegisterApplicationRestart(L"--login", RESTART_NO_CRASH | RESTART_NO_HANG);
 
     auto locator = core::ResourceLocator::open(executableDirectory() / "resources");
     const auto package = app::resolvePackagedResources(locator);
@@ -174,15 +186,61 @@ int run(const std::vector<std::string>& values) {
         return 1;
     }
     reportDisabled(package);
-    auto options = productionOptions(package, root.data, arguments);
-    // Factory-added module areas resolve their own verified resources (the
-    // locator outlives the Application and is used on its UI thread only).
-    options.resources = [&locator](std::string_view id) -> fs::path { return locator.available(id) ? locator.resolve(id).path : fs::path{}; };
-    // Areas join the module owner only with Notes (module selection, TSF).
-    if (package.modules) app::appendRegisteredAreas(options.modules, false);
-    app::Application application(std::move(options));
-    instance.setHandler([&application](std::vector<std::string> forwarded) { application.activate(forwarded); });
-    return application.run();
+    // Each run opens the root again: an accepted restart (the Mac import
+    // commit between two runs) or a GPU device loss ends a run with every
+    // store closed, then a fresh owner runs under the same instance guard.
+    auto startup = arguments.startup;
+    std::optional<core::Module> reopen;
+    // Bounded device recovery: a GPU that keeps failing ends the run with the
+    // usual error instead of restarting forever.
+    std::vector<std::chrono::steady_clock::time_point> recoveries;
+    for (;;) {
+        const auto root = openRoot(isolated.empty() ? ehud::data::localApplicationDataBase() : isolated);
+        if (!root) return 1;
+        core::ApplicationArguments runArguments = arguments;
+        runArguments.startup = startup;
+        auto options = productionOptions(package, root->data, runArguments);
+        options.isolatedDataRoot = !isolated.empty();
+        options.reopenModule = reopen;
+        // Factory-added module areas resolve their own verified resources (the
+        // locator outlives the Application and is used on its UI thread only).
+        options.resources = [&locator](std::string_view id) -> fs::path { return locator.available(id) ? locator.resolve(id).path : fs::path{}; };
+        // Areas join the module owner only with Notes (module selection, TSF).
+        if (package.modules) app::appendRegisteredAreas(options.modules, false);
+        int code{};
+        std::function<void()> work;
+        std::optional<std::optional<core::Module>> recovered;
+        {
+            app::Application application(std::move(options));
+            instance.setHandler([&application](std::vector<std::string> forwarded) { application.activate(forwarded); });
+            code = application.run();
+            instance.setHandler({});
+            work = application.takeRestartWork();
+            recovered = application.takeDeviceRecovery();
+        }
+        if (work) {
+            // Every owner and store of the finished run is closed: the area's
+            // work (e.g. the Mac import commit) runs exactly once, then the HUD
+            // opens again on System over the same root.
+            work(); work = {};
+            startup = {}; startup.settings = true; reopen.reset();
+            continue;
+        }
+        if (recovered) {
+            // A lost GPU device: a fresh owner creates a new device and
+            // reopens the HUD on its last module (no onboarding).
+            const auto now = std::chrono::steady_clock::now();
+            std::erase_if(recoveries, [&](const auto& at) { return now - at > std::chrono::minutes(1); });
+            recoveries.push_back(now);
+            if (recoveries.size() > 3) {
+                report("EndfieldHUD could not start its display. Your data was not changed.", "EndfieldHUD 无法启动显示界面，数据未被更改。");
+                return 1;
+            }
+            startup = {}; startup.login = true; reopen = *recovered;
+            continue;
+        }
+        return code;
+    }
 }
 }
 

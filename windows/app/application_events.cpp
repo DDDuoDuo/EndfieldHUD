@@ -23,13 +23,16 @@ OverlayCallbacks Application::Impl::callbacks(){
     value.deadline=[this](double t){onDeadline(t);};
     value.frame=[this](double t){onFrame(t);};
     value.sessionEnding=[this](SessionEnd phase,std::uint32_t reason){sessionEnding(phase,reason);};
+    value.getObject=[this](const NativeMessage&m){return automationObject(m);};
     return value;
 }
 
 void Application::Impl::onResize(const ClientMetrics&value){
     if(projection&&projection->presented()&&projectionPainting){projectionResizePending=value;return;}
     metrics=value;registry.forEach([&](ModuleOwner&o){o.resize(value);},"resize");
-    if(!ready)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);if(environment.onScreen)renderer.resize(value.pixelWidth,value.pixelHeight);if(projection&&projection->presented())projection->resize(value,projectionWorkTopPixels/value.scale);refresh(time);
+    if(!ready||stopping)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);
+    if(environment.onScreen)try{renderer.resize(value.pixelWidth,value.pixelHeight);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
+    if(projection&&projection->presented())projection->resize(value,projectionWorkTopPixels/value.scale);automationChanged();refresh(time);
 }
 
 bool Application::Impl::routePointer(ModuleOwner&owner,const PointerPolicy&policy,const PointerEvent&e,double time,core::Point p){
@@ -38,6 +41,7 @@ bool Application::Impl::routePointer(ModuleOwner&owner,const PointerPolicy&polic
     if(!registry.guard(owner,[&]{handled=owner.pointer(e,time);},"pointer"))return false;
     if(policy.alwaysUpdateEnvironment||handled){if(policy.updatesPointerLock)environment.pointerLocked=pointerLocked();environment.pointer=p;session->setEnvironment(environment,time);}
     if(handled){
+        automationChanged();
         if(e.kind==PointerKind::move)session->pointerMove(p,time);
         if(!policy.leftButtonCaptureOnly||e.button==PointerButton::left){if(e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)host.capturePointer(true);if(e.kind==PointerKind::up)host.capturePointer(false);}
         refresh(time);
@@ -75,8 +79,9 @@ bool Application::Impl::onWheel(const WheelEvent&e){
     if(!ready)return false;const auto time=now();
     if(projection&&projection->presented()){if(projectionHandoff.acceptsInput()){projection->wheel(e,time);refresh(time);}return true;}
     using C=ModuleRegistry::Chain;
-    if(registry.first(C::wheelCapture,[&](ModuleOwner&o,const ModuleRouting&){return o.capturesWheel()&&session->inputEnabled()&&o.wheel(e,time);},"wheel")){refresh(time);return true;}
+    if(registry.first(C::wheelCapture,[&](ModuleOwner&o,const ModuleRouting&){return o.capturesWheel()&&session->inputEnabled()&&o.wheel(e,time);},"wheel")){automationChanged();refresh(time);return true;}
     if(auto*owner=registry.first(C::wheel,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.wheel(e,time);},"wheel")){
+        automationChanged();
         if(owner->routing().wheelRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,time);}
         refresh(time);return true;
     }
@@ -97,8 +102,8 @@ bool Application::Impl::onKey(const KeyEvent&e){
     if(ready&&projection&&projection->presented()){if(projectionHandoff.acceptsInput()){projection->key(e,now());refresh(now());}return true;}
     if(ready){
         using C=ModuleRegistry::Chain;
-        if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){refresh(now());return true;}
-        if(registry.first(C::key,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.key(e,now());},"key")){refresh(now());return true;}
+        if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){automationChanged();refresh(now());return true;}
+        if(registry.first(C::key,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.key(e,now());},"key")){automationChanged();refresh(now());return true;}
     }
     if(ready&&e.kind==KeyKind::down&&e.value==VK_ESCAPE){if(!production())std::cout<<"Preview unhandled Escape"<<std::endl;perform(lifecycle.close(),now());return true;}
     return false;
@@ -126,6 +131,9 @@ void Application::Impl::onApplicationActive(bool active){
 void Application::Impl::onDisplayChanged(){
     if(ready&&production())recordDisplays(); // AppDelegate: screen parameter change refreshes displays
     if(ready)broadcast(HostEvent::Kind::displaysChanged,now());
+    // OverlayController.reposition while the HUD is presented (hot-plug,
+    // resolution or arrangement): keep or move the covered display, or close.
+    if(ready&&!stopping&&!projectionHandoff.active())repositionHUD(now());
     if(!ready||!projectionHandoff.active()||projectionHandoff.phase()!=ProjectionHandoff::Phase::projection)return;
     // Compositor calls may dispatch this notification. Retain only the
     // latest topology signal, then resize/release after the current paint.
@@ -141,11 +149,12 @@ void Application::Impl::onDeadline(double time){
     if(!ready||stopping)return;bool artwork=projection&&projection->dismissalComplete(time);
     if(calendarNextWake&&*calendarNextWake<=time){isolate(calendarModuleOwner,"midnight",[&]{calendar->systemChanged(time);updateCalendarWake();});artwork=true;}
     registry.forEach([&](ModuleOwner&o){artwork=o.deadline(time)||artwork;if(o.routing().deadlineRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,time);}},"deadline");
+    if(artwork)automationChanged();
     if(mediaBroker){const auto wake=mediaBroker->nextWakeTime();const bool due=wake&&*wake<=time;if(session->phase()==core::VisibilityPhase::concealed){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(time);if(archiveMedia)archiveMedia->refresh(time);if(projection&&projection->presented()){projection->mediaChanged(time);artwork=artwork||due;}}else artwork=artwork||due;}
     if(headerClock.wake(time)||workMode)artwork=updateClock()||artwork;
     if(workMode&&production())updateTrayMenu();
     if(eventRecorder&&workMode)eventRecorder->receiveWork(workMode->controller().snapshot(time));
-    if(eventSaves)eventSaves->capture(time);if(activityProbe)activityProbe->update(time);
+    if(eventSaves)eventSaves->capture(time);syncActivityTelemetry(time);if(activityProbe)activityProbe->update(time);
     perform(lifecycle.advance(time),time);
     scheduleDeadline();if(artwork)refresh(time);
 }
@@ -161,7 +170,10 @@ void Application::Impl::onFrame(double time){
         if(phase==3&&diagnosticEditing){auto stage=probe.measure(LiveProbe::editTransition);if(notes->diagnosticEditing(false,time))diagnosticEditing=false;}
         if(elapsed>=16){probe.flush(time);probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);diagnosticFinished=true;perform(lifecycle.close(),time);}
     }
-    const bool active=present(time,true);if(stopping)return;
+    bool active{};
+    // A lost GPU device ends this run; main.cpp starts a fresh owner.
+    try{active=present(time,true);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
+    if(stopping)return;
     if(projection&&projection->presented()){
         if(projection->dismissalComplete(time))if(auto command=projectionHandoff.projectionClosed(projectionHandoff.generation()))projectionCommand(*command,time);
         if(!projectionActions.empty()||projectionTrayAction||projectionDisplayPending||projectionResizePending)refresh(now());
@@ -185,8 +197,10 @@ void Application::Impl::onFrame(double time){
         if(pendingShelfReveal&&visibleMode()&&!quitRequested){
             auto access=std::move(*pendingShelfReveal);pendingShelfReveal.reset();
             if(FAILED(gpu::revealShelfReference(std::move(access)))&&shelf)
-                isolate(shelfModuleOwner,"reveal",[&]{shelf->showError(core::localized("Unable to show the file in File Explorer","无法在文件资源管理器中显示文件",watchAppearance.language),time);});
+                isolate(shelfModuleOwner,"reveal",[&]{shelf->showError(tools::shelfText(tools::ShelfText::revealFailed,watchAppearance.language),time);});
         }
+        // Settings links and the GitHub releases page (overlay.afterSystemClose).
+        if(pendingLink)openPendingLink();
         if(!production()&&!tray&&!quitRequested)finishQuit(time);else if(!stopping)scheduleDeadline();
     }
 }
@@ -199,7 +213,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         return 0;
     }
     if(ready&&m.wParam==serviceGeneration){
-        if(m.message==utilityMessage){if(utility)utility->drain();if(activityProbe)activityProbe->submitPending();if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
+        if(m.message==utilityMessage){if(utility)utility->drain();if(longWork)longWork->drain();if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
         if(m.message==audioMessage&&audio){
             // The shared AudioRuntime posted one coalesced notice: adopt the
             // publication, feed the Event Log device list and the areas.
@@ -211,6 +225,14 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(flags)broadcast(HostEvent::Kind::audioChanged,time,flags);
             if(changes.volume)refresh(time);return 0;
         }
+        if(m.message==hudDropMessage){receiveDrop(now());return 0;}
+        if(m.message==restartMessage){
+            // DataRootRestart: the red power button's confirmed quit (close, the
+            // flush chain, every save queue), then a fresh run (main.cpp).
+            if(restartPending&&!stopping&&!quitRequested)perform(lifecycle.requestQuit(),now());
+            return 0;
+        }
+        if(m.message==restartDeclinedMessage){runRestartDeclined();refresh(now());return 0;}
         if(m.message==projectionDropMessage){
             auto paths=std::exchange(projectionDrop->paths,{});const auto time=now();
             if(!paths.empty()&&projection&&projection->presented()&&projectionHandoff.acceptsInput())if(const auto token=projection->preview()->prepareImportRequest()){
@@ -258,12 +280,12 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             readerActionQueued=false;auto action=std::exchange(pendingReaderAction,{});const auto time=now();
             if(action&&reader&&reader->importRequestCurrent(action->generation))try {
                 if(action->kind==tools::ReaderImportAction::Kind::chooseLocal){
-                    if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),time);
+                    if(pickerOwner!=PickerOwner::none||!mediaPicker)reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),time);
                     else {const auto strings=readerStrings(watchAppearance.language);mediaPicker->setLabels({strings.open,strings.open,strings.open,gpu::ShelfPickerMode::singleReaderFile});
                         if(mediaPicker->request()){pickerOwner=PickerOwner::reader;pendingReaderPicker=*action;host.capturePointer(false);}
-                        else reader->receiveImportError(action->generation,core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),time);}
+                        else reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsPickerBusy,watchAppearance.language),time);}
                 }else if(shelf){auto lease=std::make_shared<ehud::data::ShelfFileAccess>(shelf->access(action->shelfID));need(lease->open()&&!lease->metadata().isDirectory,"Shelf book reference is unavailable");importReaderReference(action->generation,lease->metadata().windowsPath,lease,time);}
-            }catch(const std::exception&){reader->receiveImportError(action->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),time);}
+            }catch(const std::exception&){reader->receiveImportError(action->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),time);}
             refresh(time);return 0;
         }
         if(m.message==calendarChangedMessage){calendarRefreshQueued=false;updateCalendarWake();refresh(now());return 0;}
@@ -288,7 +310,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
                 }else if(owner==PickerOwner::reader&&readerAction&&reader&&reader->importRequestCurrent(readerAction->generation)){
                     if(result->canceled())reader->receiveImportError(readerAction->generation,{},time);
                     else if(SUCCEEDED(result->result)&&result->paths.size()==1)importReaderReference(readerAction->generation,result->paths.front(),{},time);
-                    else reader->receiveImportError(readerAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),time);
+                    else reader->receiveImportError(readerAction->generation,modules::readerTranslation(modules::readerWindowsOpenFailed,watchAppearance.language),time);
                 }else if(!result->canceled()&&owner==PickerOwner::notes&&notes&&!closing&&notes->selected()==core::Module::notes){
                     if(SUCCEEDED(result->result))notes->importMedia(result->paths,mediaInsertionPoint,time);else notes->showMediaError(core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),time);
                 }else if(!result->canceled()&&owner==PickerOwner::archive&&action&&archive&&archiveMedia&&archive->mediaRequestCurrent(action->documentID,action->generation)){
@@ -335,6 +357,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
     }
     if(ready){
         if(auto*owner=registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,now());},"message")){
+            automationChanged();
             const auto routing=owner->routing();
             if(routing.messageRetriesPendingModule&&pendingModule)selectModule(*pendingModule,now());
             if(routing.messageRetriesPendingClose&&pendingClose)close(now());
@@ -345,12 +368,14 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         if(auto action=shelf->takeAction())try{using K=tools::ShelfPreviewAction::Kind;
             switch(action->kind){
             case K::choose:host.capturePointer(false);shelf->requestFiles();break;
-            case K::paste:{Microsoft::WRL::ComPtr<IDataObject>source;need(SUCCEEDED(OleGetClipboard(&source)),"Clipboard is unavailable");const auto paths=gpu::readShelfTransferPaths(*source.Get());source.Reset();shelf->importFiles(paths,now());break;}
+            // HUDFileShelfInteraction.importPasteboard (virtual-file-only
+            // clipboards explain themselves; others are ignored silently).
+            case K::paste:shelf->paste(now());break;
             case K::reveal:pendingShelfReveal=shelf->access(action->itemID);perform(lifecycle.close(),now());break;
             case K::preview:host.capturePointer(false);shelf->requestPreview(action->itemID);break;
             case K::drag:{auto transfer=shelf->prepareDrag(action->itemID);shelf->setNativeDragActive(true);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,now());DWORD effect{};const auto result=transfer->run(&effect);shelf->setNativeDragActive(false);if(result==DRAGDROP_S_DROP&&(effect&DROPEFFECT_COPY))perform(lifecycle.close(),now());break;}
             }
-        }catch(const std::exception&e){shelf->setNativeDragActive(false);shelf->showError(e.what(),now());}
+        }catch(const std::exception&e){shelf->setNativeDragActive(false);shelf->showError(e,now());}
         refresh(now());return 0;
     }
     return {};
@@ -364,6 +389,10 @@ void Application::Impl::suspend(Suspension reason,double time){
     if(reason==Suspension::system&&!(suspensions&static_cast<unsigned>(reason))&&audio)(void)audio->powerSuspend();
     const bool first=suspensions==0;suspensions|=static_cast<unsigned>(reason);
     lifecycle.setSuspended(true);if(!first)return;
+    // AppDelegate.suspend: activity.shutdown(), appActivity.deactivate().
+    if(activityProbe){activityPlan.stop();if(activityCatalog)activityCatalog->invalidate();}
+    // AppDelegate.suspend: clipboard capture pauses (ClipboardWatcher.setSuspended).
+    if(systemServices)systemServices->set_clipboard_suspended(true);
     (void)lifecycle.forceClose();forceConceal(time);
     if(workMode)workMode->setSuspended(true,time);
     broadcast(HostEvent::Kind::suspended,time,static_cast<std::uint32_t>(reason));
@@ -374,6 +403,10 @@ void Application::Impl::resume(Suspension reason,double time){
     suspensions&=~static_cast<unsigned>(reason);
     if(reason==Suspension::system&&audio)(void)audio->powerResume(); // re-reads the device list once
     if(suspensions)return;
+    // The latest clipboard change made while suspended is captured once.
+    if(systemServices)systemServices->set_clipboard_suspended(false);
+    // A fresh Activity baseline after sleep/lock (no rate across the gap).
+    if(activityProbe){activityPlan.start(time);activityProbe->update(time);scheduleDeadline();}
     lifecycle.setSuspended(false);
     if(workMode)workMode->setSuspended(false,time);
     if(systemServices)systemServices->refresh_battery();recordBattery();updateTrayMenu();

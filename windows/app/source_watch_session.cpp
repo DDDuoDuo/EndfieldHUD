@@ -247,6 +247,13 @@ bool SourceWatchSession::inputEnabled()const noexcept{return impl_->input;}
 bool SourceWatchSession::pendingOpening()const noexcept{return impl_->heldTime.has_value();}
 double SourceWatchSession::scrollPosition()const noexcept{return impl_->scrollPosition;}
 std::optional<std::string_view> SourceWatchSession::hovered()const noexcept{return impl_->hovered;}
+std::optional<std::string_view> SourceWatchSession::buttonAt(Point point)const{
+    const auto&p=*impl_;
+    if(!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible||!p.hasFrame||!finite(point)||!p.viewport().contains(point))return {};
+    const auto hit=p.rendered.sourceFrame->buttonAt(point,p.rendered.camera.projection*p.rendered.camera.view,p.viewport());
+    if(!hit||(p.filter&&!p.filter(*hit,point)))return {};
+    const auto*n=p.scene.node(*hit);return n?std::optional<std::string_view>(n->id):std::nullopt;
+}
 std::optional<std::string_view> SourceWatchSession::pressed()const noexcept{return impl_->pressed;}
 const std::map<std::string,std::uint64_t,std::less<>>& SourceWatchSession::actions()const noexcept{return impl_->actions;}
 const WatchSessionFrame* SourceWatchSession::currentFrame()const noexcept{return impl_->hasFrame?&impl_->rendered:nullptr;}

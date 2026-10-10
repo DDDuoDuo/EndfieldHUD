@@ -14,7 +14,9 @@
 #endif
 
 namespace endfield::native {
-enum class ShelfPickerMode {mixedReferences,singleReaderFile};
+// singleFile: exactly one existing file through the caller's filter (Mac
+// NSOpenPanel with allowedContentTypes and no multiple selection).
+enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile};
 struct ShelfPickerLabels {
     std::string title{"Add to Temporary File Shelf"};
     std::string addReferences{"Add references"};
@@ -22,6 +24,9 @@ struct ShelfPickerLabels {
     // accepts its current mixed file/folder selection without following links.
     std::string addSelection{"Add selected references"};
     ShelfPickerMode mode{ShelfPickerMode::mixedReferences};
+    // singleFile only: the listed filter ("Images", "*.png;*.jpg"); an empty
+    // spec lists every file.
+    std::string filterName,filterSpec;
 };
 // Pure validation: all selections are bounded ordinary absolute Windows paths.
 // No filesystem, Shell namespace lookup or implicit deduplication takes place.

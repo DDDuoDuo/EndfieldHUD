@@ -93,6 +93,10 @@ public:
     bool pendingOpening()const noexcept;
     double scrollPosition()const noexcept;
     std::optional<std::string_view> hovered()const noexcept;
+    // Read-only hit test of the current source frame (same clipped source
+    // hit test and hit filter as the pointer, without hover, press or stats);
+    // used for OLE drop routing, where the pointer events do not arrive.
+    std::optional<std::string_view> buttonAt(core::Point)const;
     std::optional<std::string_view> pressed()const noexcept;
     const std::map<std::string,std::uint64_t,std::less<>>& actions()const noexcept;
     const WatchSessionFrame* currentFrame()const noexcept;

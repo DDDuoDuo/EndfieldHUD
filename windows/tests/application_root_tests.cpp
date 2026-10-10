@@ -4,6 +4,9 @@
 #include "core/application_arguments.hpp"
 #include "core/data/application_root.hpp"
 #include "core/data/file_io.hpp"
+#ifdef _WIN32
+#include "app/single_instance.hpp"
+#endif
 #include <array>
 #include <chrono>
 #include <vector>
@@ -173,6 +176,20 @@ void arguments() {
     check(core::forwardedActivation(core::parseApplicationArguments(settings)) == core::ForwardedActivation::settings, "Relaunch --settings opens System");
     const std::array<std::string_view, 1> toast{"--notification-activation"};
     check(core::forwardedActivation(core::parseApplicationArguments(toast)) == core::ForwardedActivation::none, "Notification server launch waits for COM");
+    // Section 9 gate controls: --data-root consumes its folder (not ignored)
+    // and --toggle forwards the summon toggle before --settings or a reopen.
+    const std::array<std::string_view, 4> gate{"--data-root", "C:\\Temp\\EndfieldHUD-perf-1\\EndfieldHUD", "--login", "--toggle"};
+    const auto gated = core::parseApplicationArguments(gate);
+    check(gated.dataRoot == "C:\\Temp\\EndfieldHUD-perf-1\\EndfieldHUD" && gated.toggle && gated.startup.login && gated.ignored == 0, "--data-root keeps its value out of the ignored count");
+    check(core::forwardedActivation(gated) == core::ForwardedActivation::toggle, "Relaunch --toggle toggles the HUD");
+    const std::array<std::string_view, 2> toggleSettings{"--settings", "--toggle"};
+    check(core::forwardedActivation(core::parseApplicationArguments(toggleSettings)) == core::ForwardedActivation::toggle, "--toggle is checked before --settings");
+    for (const auto& incomplete : {std::vector<std::string_view>{"--data-root"}, std::vector<std::string_view>{"--data-root", ""},
+                                   std::vector<std::string_view>{"--data-root", "a", "--data-root", "b"}}) {
+        bool refused{};
+        try { (void)core::parseApplicationArguments(incomplete); } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "--data-root needs exactly one non-empty folder");
+    }
     const std::array<std::string_view, 3> forward{"--settings", "云终末地 한국어", ""};
     const auto payload = core::encodeForwardedArguments(forward);
     const auto decoded = core::decodeForwardedArguments(payload);
@@ -200,11 +217,30 @@ void arguments() {
 }
 } // namespace
 
+#ifdef _WIN32
+// EndfieldHUD.exe --data-root: its own instance names, case-insensitive per
+// path, never the production names (a gate run cannot reach the user's copy).
+void isolatedInstanceNames() {
+    const auto production = endfield::app::productionSingleInstanceNames();
+    const auto a = endfield::app::isolatedSingleInstanceNames(fs::path(L"C:\\Temp\\EndfieldHUD-perf-1\\EndfieldHUD"));
+    const auto same = endfield::app::isolatedSingleInstanceNames(fs::path(L"c:\\temp\\endfieldhud-perf-1\\.\\ENDFIELDHUD"));
+    const auto other = endfield::app::isolatedSingleInstanceNames(fs::path(L"C:\\Temp\\EndfieldHUD-perf-2\\EndfieldHUD"));
+    check(a.mutex.starts_with(production.mutex) && a.windowClass.starts_with(production.windowClass) &&
+          a.mutex.size() == production.mutex.size() + 17 && a.windowClass.size() == production.windowClass.size() + 17 && a.mutex != production.mutex,
+          "Isolated names extend the production names with '.' and 16 hex digits");
+    check(a.mutex == same.mutex && a.windowClass == same.windowClass, "The same root (case and '.' segments aside) reaches the same isolated instance");
+    check(a.mutex != other.mutex && a.windowClass != other.windowClass, "Another isolated root is another instance");
+}
+#endif
+
 int main() {
     try {
         root();
         launchMarker();
         arguments();
+#ifdef _WIN32
+        isolatedInstanceNames();
+#endif
         std::cout << "Application root/arguments: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) {

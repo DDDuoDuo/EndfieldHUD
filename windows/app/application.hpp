@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -96,6 +97,12 @@ struct ApplicationOptions {
     bool persistLaunchMarker{true};
     bool isolateModuleFailures{};
     std::wstring windowTitle;
+    // EndfieldHUD.exe --data-root (section 9 gate): no startup entry, no
+    // shared notification identity (the calendarReminders area stays absent).
+    bool isolatedDataRoot{};
+    // Production: after the launch effects, open the HUD on this module (a
+    // fresh run after GPU device loss restores the module that was open).
+    std::optional<core::Module> reopenModule;
     // Additional module owners (Now Playing, Media Assembly, Profile, Account,
     // App shortcuts, ...), constructed in order after the built-in modules.
     // Hosts append app/application_areas.hpp's registered areas here.
@@ -120,6 +127,13 @@ public:
     int runHiddenVerification();
     // Second-launch activation forwarded by the single-instance guard.
     void activate(std::span<const std::string> arguments);
+    // After run() returned: the work of an accepted DataRootRestart
+    // (app/areas/mac_import_handoff.hpp), returned once; empty otherwise.
+    // The host runs it with this Application destroyed, then a fresh run.
+    std::function<void()> takeRestartWork();
+    // After run() returned: set when a lost GPU device ended the run; the
+    // module to reopen (the HUD's module when it was open, else none).
+    std::optional<std::optional<core::Module>> takeDeviceRecovery();
     void* window() const noexcept;
     struct Impl;
 private:

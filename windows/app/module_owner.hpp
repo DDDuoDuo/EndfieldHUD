@@ -30,6 +30,16 @@
 //   flush(time)                         bounded durable drain at quit/session end
 //   hostEvent(event, time)              application broadcasts (HostEvent below)
 //   coverage(step)                      hidden coverage steps (ModuleCoverage below)
+//   planeEntries()                      core-plane layers (after the center module,
+//                                       below every floatingEntries(), e.g. the
+//                                       Power charge badge under pinned Notes)
+//   drop(paths, point, time)            a file drop on the HUD while this owner
+//                                       presents the selected module (the host's
+//                                       one OLE drop target; copy effect only)
+//   automationRefresh / automationCount / automationChild /
+//   automationFromPoint / automationDisconnect
+//                                       UI Automation fragments under the HUD
+//                                       window's root provider (below)
 //
 // Threading: every method runs on the Application's UI thread. Owners use the
 // shared UtilityExecutor for file work and the shared frame clock for motion;
@@ -144,6 +154,9 @@
 #include <vector>
 
 namespace endfield::native { class Renderer; }
+// UI Automation provider interfaces (uiautomationcore.h), used by pointer only.
+struct IRawElementProviderFragment;
+struct IRawElementProviderFragmentRoot;
 
 namespace endfield::app {
 struct ModuleAppearance {
@@ -249,6 +262,10 @@ public:
 
     virtual void upload(native::Renderer&) {}
     virtual std::span<const native::LayerCompositionEntry> entries(core::Module) { return {}; }
+    // Core-plane slot: composed after the center module entries and before
+    // every owner's floatingEntries() (Mac SystemHUDView canvas order: the
+    // charge plane sits inside the canvas, below notesWorkspace).
+    virtual std::span<const native::LayerCompositionEntry> planeEntries() { return {}; }
     virtual std::span<const native::LayerCompositionEntry> floatingEntries() { return {}; }
     virtual std::span<const native::LayerCompositionEntry> modalEntries() { return {}; }
     virtual void collected(native::Renderer&) {}
@@ -274,6 +291,31 @@ public:
 
     virtual bool hostEvent(const HostEvent&, double) { return false; } // true: artwork changed
     virtual void coverage(ModuleCoverage&) {}                          // hidden coverage only
+
+    // File drop on the HUD (Mac SystemHUDView.performDragOperation). The host
+    // owns the window's one OLE drop target; while this owner presents the
+    // selected module and the HUD accepts input, a copy drop inside the client
+    // area is offered here after the COM callback returned (UTF-8 absolute
+    // paths, logical client point). True when the owner took the drop.
+    virtual bool drop(std::span<const std::string>, core::Point, double) { return false; }
+
+    // UI Automation (UIA). The HUD window answers WM_GETOBJECT with one root
+    // provider (IRawElementProviderFragmentRoot, hosted by the HWND). Every
+    // enabled owner with fragments appears under it as one group, in
+    // registration order; `root` is that owner's group, stable for the
+    // owner's registration: use it as the fragments' parent and fragment root.
+    // automationRefresh runs on content events (after an owner call reported
+    // changed artwork, module selection, opening and closing), never per
+    // frame; true when the owner's child set or order changed (the host then
+    // raises StructureChanged). automationChild/automationFromPoint return
+    // AddRef'd fragments (HRESULTs as long; screen pixels for the hit test,
+    // null out for none). automationDisconnect disconnects every fragment
+    // (HUD hidden, owner removed); the next refresh may connect new ones.
+    virtual bool automationRefresh(IRawElementProviderFragmentRoot*) { return false; }
+    virtual std::size_t automationCount() const { return 0; }
+    virtual long automationChild(std::size_t, IRawElementProviderFragment** out) const { if (out) *out = nullptr; return 0x80070057L; } // E_INVALIDARG
+    virtual long automationFromPoint(double, double, IRawElementProviderFragment** out) const { if (out) *out = nullptr; return 0; }
+    virtual void automationDisconnect() noexcept {}
 };
 
 // Failure report delivered once per disabled owner. `what` is the exception's

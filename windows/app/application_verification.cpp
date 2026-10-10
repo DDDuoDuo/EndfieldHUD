@@ -9,6 +9,8 @@
 #include <map>
 #include <set>
 #include <tlhelp32.h>
+#include <uiautomation.h>
+#include <wrl/client.h>
 
 namespace endfield::app {
 namespace {
@@ -273,6 +275,58 @@ int Application::Impl::runHiddenVerification(){
                     for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
                 }time=std::max(time,areaLatest);time+=2;
             }
+            // Host integration over the same owner: the restart service is
+            // production-only, the System row of the macImport area, the UI
+            // Automation root over the Volume fragments and the OLE drop
+            // route's Shelf navigation hit test.
+            {
+                const auto hostCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                hostCheck(!restart.restartWith([]{},[]{})&&!restartPending,"A data-root restart cannot be requested outside production");
+                if(settingsUI&&areaHost&&areaHost->find<MacImportEntry>(macImportEntryService)){
+                    settingsUI->refreshViews(time);
+                    const auto*system=settingsUI->view(core::Module::system);
+                    if(system&&system->view().page==modules::SettingsPage::main)
+                        hostCheck(std::any_of(system->view().rows.begin(),system->view().rows.end(),[](const auto&r){return r.id=="macImport";}),"System lists Import macOS data from the macImport area");
+                }
+                if(volumeModuleOwner&&registry.enabled(*volumeModuleOwner)){
+                    selectModule(core::Module::volume,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    hostCheck(probe.groups()>=1&&volumeModuleOwner->automationCount()>0,"The HUD's UI Automation root lists the projected Volume controls");
+                    Microsoft::WRL::ComPtr<IRawElementProviderFragment> rootFragment,group,child,parent,hit;
+                    hostCheck(SUCCEEDED(probe.root()->QueryInterface(IID_PPV_ARGS(&rootFragment)))&&rootFragment,"The UIA root is a fragment");
+                    const auto caption=moduleCaption("volume",watchAppearance.language,"volume");
+                    for(HRESULT hr=rootFragment->Navigate(NavigateDirection_FirstChild,&group);SUCCEEDED(hr)&&group;){
+                        Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple;VARIANT name;VariantInit(&name);
+                        if(SUCCEEDED(group.As(&simple))&&SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId,&name))&&name.vt==VT_BSTR&&name.bstrVal&&narrow(name.bstrVal)==caption){VariantClear(&name);break;}
+                        VariantClear(&name);Microsoft::WRL::ComPtr<IRawElementProviderFragment> next;hr=group->Navigate(NavigateDirection_NextSibling,&next);group=next;
+                    }
+                    hostCheck(group!=nullptr,"The Volume group is named after its module");
+                    hostCheck(group&&SUCCEEDED(group->Navigate(NavigateDirection_FirstChild,&child))&&child&&SUCCEEDED(child->Navigate(NavigateDirection_Parent,&parent))&&parent,
+                        "Volume fragments are children of their group and navigate back to it");
+                    if(child&&parent){Microsoft::WRL::ComPtr<IUnknown> a,b;(void)parent.As(&a);(void)group.As(&b);hostCheck(a.Get()==b.Get(),"A fragment's parent is its owner's group");}
+                    UiaRect rect{};if(child)(void)child->get_BoundingRectangle(&rect);
+                    hostCheck(rect.width>0&&rect.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(rect.left+rect.width/2,rect.top+rect.height/2,&hit))&&hit,"The root's hit test reaches a projected Volume control");
+                    probe.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&probe.groups()==0,"Concealing disconnects every fragment");
+                    probe.shutdown();
+                }
+                // The Shelf navigation entry takes an OLE file drop from any other module.
+                selectModule(core::Module::notes,time);session->setScrollPosition(1,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                if(const auto*sample=session->currentFrame()){
+                    const auto vp=sample->camera.projection*sample->camera.view;const core::Rect viewport{0,0,metrics.width,metrics.height};
+                    std::optional<core::Point> shelfPoint,otherPoint;
+                    const auto entries=contentCatalog->entries();
+                    for(const auto&hit:sample->sourceFrame->hits){
+                        const auto action=session->actions().find(hit.buttonID);if(action==session->actions().end())continue;
+                        const auto target=std::find_if(entries.begin(),entries.end(),[&](const auto&e){return e.action==action->second;});
+                        if(target==entries.end())continue;
+                        const auto p=source::projectNativePoint({hit.rect.origin[0]+hit.rect.size[0]*.5,hit.rect.origin[1]+hit.rect.size[1]*.5,0},hit.world,vp,viewport);
+                        if(!p||session->buttonAt(*p)!=std::optional<std::string_view>(hit.buttonID))continue;
+                        if(target->target=="fileShelf"&&!shelfPoint)shelfPoint=p;else if(target->target=="map"&&!otherPoint)otherPoint=p;
+                    }
+                    if(shelfPoint)hostCheck(dropTarget(*shelfPoint)==std::optional<std::string>("shelfNavigation"),"Dropping files on the File Shelf entry routes to the Shelf");
+                    if(otherPoint)hostCheck(!dropTarget(*otherPoint),"Other navigation entries refuse file drops");
+                }
+            }
             close(time);present(time+.7,true);concealed(time+.7);
             // Host broadcasts the module areas rely on, through the same routes
             // the visible owner uses, on the synthetic clock: suspend/resume,
@@ -342,7 +396,9 @@ int Application::Impl::runHiddenVerification(){
         need(!IsWindowVisible(static_cast<HWND>(host.hwnd())),"Hidden benchmark window became visible");need(host.stats().frames==0&&!host.stats().timerArmed,"Hidden benchmark scheduled native frame work");
         Json::Array unsupported,substitutions;for(const auto&v:layers.report().unsupported)unsupported.push_back(Json::Object{{"node",v.node},{"feature",v.feature}});for(const auto&v:layers.report().fontSubstitutions)substitutions.push_back(Json::Object{{"node",v.node},{"requested",v.requestedFamily},{"selected",v.selectedFamily}});
         Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog->variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent?nativeContent->stats().updates:nativeAppearance->stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent?nativeContent->stats().surfaceUpdates:nativeAppearance->stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
-            {"systemBackdropIncluded",false},{"productionLifecycleChecks",int(lifecycleChecks)},{"archiveIncluded",bool(archive)},{"storageIncluded",bool(storage)},{"activityIncluded",bool(activity)},{"readerIncluded",bool(reader)},{"calendarIncluded",bool(calendar)},{"calendarUsesSyntheticNotifications",bool(calendarFixture)},{"mapIncluded",bool(map)},{"minigameIncluded",bool(game)},{"storageUsesSyntheticProviders",bool(storageFixture)},{"storageCapacityReads",storageFixture?int(storageFixture->capacityReads.load()):0},{"storageDetailScans",storageFixture?int(storageFixture->detailScans.load()):0},{"storageSettingsRequests",storageFixture?int(storageFixture->settingsRequests):0},{"appSharedMediaProvider",bool(mediaBroker)},{"limitations",Json::Array{args.moduleCoverage?"Module owners use synthetic data and hidden generated input; real clipboard/audio providers and desktop backdrop are excluded":"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
+            {"systemBackdropIncluded",false},{"productionLifecycleChecks",int(lifecycleChecks)},{"hostIntegrationChecks",int(hostChecks)},
+            {"idCardConnected",bool(idCard)},{"idCardApplies",idCard?std::int64_t(idCard->stats().applies):std::int64_t{0}},{"idCardSettingsChanges",idCard?std::int64_t(idCard->stats().settingsChanges):std::int64_t{0}},
+            {"settingsLinkRequests",std::int64_t(linkRequests)},{"archiveIncluded",bool(archive)},{"storageIncluded",bool(storage)},{"activityIncluded",bool(activity)},{"readerIncluded",bool(reader)},{"calendarIncluded",bool(calendar)},{"calendarUsesSyntheticNotifications",bool(calendarFixture)},{"mapIncluded",bool(map)},{"minigameIncluded",bool(game)},{"storageUsesSyntheticProviders",bool(storageFixture)},{"storageCapacityReads",storageFixture?int(storageFixture->capacityReads.load()):0},{"storageDetailScans",storageFixture?int(storageFixture->detailScans.load()):0},{"storageSettingsRequests",storageFixture?int(storageFixture->settingsRequests):0},{"appSharedMediaProvider",bool(mediaBroker)},{"limitations",Json::Array{args.moduleCoverage?"Module owners use synthetic data and hidden generated input; real clipboard/audio providers and desktop backdrop are excluded":"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
         Json::Array areas;
         for(const auto&area:externalModules){const auto&counts=areaCounts[area.name];Json::Array presents;
             for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));

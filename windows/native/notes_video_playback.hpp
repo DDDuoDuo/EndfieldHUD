@@ -14,6 +14,12 @@ struct NotesVideoRequest {
     std::string key,path;std::uint64_t revision{};int maximumDimension{512};
     std::optional<double>duration;std::shared_ptr<void>accessLease;
     bool workerPoster{}; // source time-zero still supplied by the existing media worker
+    // Optional in-place edit of each played frame on the UI thread, after the
+    // decoder wrote the renderer's media target and before it is committed
+    // (Mac AVVideoComposition: Media Assembly colour edits on playback). The
+    // argument is that target's surface (RendererMediaTexture::targetSurface).
+    // An exception fails the record (E_FAIL). Compared by pointer.
+    std::shared_ptr<const std::function<void(void*)>> frameFilter;
     bool operator==(const NotesVideoRequest&)const=default;
 };
 struct NotesVideoRoute {HWND owner{};UINT message{};UINT_PTR generation{};};

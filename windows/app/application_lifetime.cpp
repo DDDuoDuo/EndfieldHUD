@@ -2,12 +2,17 @@
 #include "app/application_impl.hpp"
 #include <iostream>
 #include <wtsapi32.h>
+#include <uiautomation.h>
 
 namespace endfield::app {
 void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;stopping=true;tray.reset();
     if(displayNotification){UnregisterPowerSettingNotification(static_cast<HPOWERNOTIFY>(displayNotification));displayNotification=nullptr;}
     if(sessionNotification&&host.hwnd()){WTSUnRegisterSessionNotification(static_cast<HWND>(host.hwnd()));sessionNotification=false;}
     if(mediaPicker)mediaPicker->cancel();mediaPicker.reset();
+    // The HUD drop route and the UI Automation tree stop before any owner
+    // goes: clients holding fragments get UIA_E_ELEMENTNOTAVAILABLE.
+    hudDrop->owner=nullptr;hudDrop->paths.clear();hudDropActive=false;
+    if(automation){automation->shutdown();automation.reset();UiaDisconnectAllProviders();}
     projectionHandoff.cancel();projectionDrop->enabled=false;if(shelf)shelf->setExternalDropCallbacks({},now());projection.reset();
     try{composition.detach(renderer);}catch(...){renderer.reset();}
     // GPU release in reverse registration order: Archive/Calendar/Work Mode
@@ -19,12 +24,18 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     if(quitConfirmation){registry.remove(*quitConfirmation);quitConfirmation.reset();}
     // Added module owners may borrow Notes' TSF manager: destroy them first,
     // after withdrawing every area service and any pending area dialog.
+    // The ID card presenter borrows the label scene and SourceScene and is
+    // connected to the profile area's feed: disconnect before the area goes.
+    if(idCard){idCard->disconnect();idCard.reset();}
     areaPicker={};if(areaHost)areaHost->clearServices();
     for(auto it=externalModules.rbegin();it!=externalModules.rend();++it){registry.remove(*it->owner);it->owner.reset();}externalModules.clear();
+    // Area exports finished or were cancelled with their owners; the second
+    // executor joins before the shared one (its completions post the same notice).
+    if(longWork){longWork->waitIdle();longWork->drain();longWork.reset();}
     drop(archiveModuleOwner);archiveMedia.reset();archive.reset();
     drop(calendarModuleOwner);calendar.reset();calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
     drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery.reset();drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
-    activityPlan.stop();activityProbe.reset();
+    activityTelemetry.reset();activityPlan.stop();activityProbe.reset();
     drop(shelfModuleOwner);shelf.reset();drop(clipboardModuleOwner);clipboard.reset();drop(volumeModuleOwner);volume.reset();drop(eventLogModuleOwner);eventLog.reset();drop(storageModuleOwner);storage.reset();drop(activityModuleOwner);activity.reset();
     drop(readerModuleOwner);reader.reset();readerOwner.reset();drop(gameModuleOwner);game.reset();gameSession.reset();drop(mapModuleOwner);map.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // Retire state routes before the shared file executor; accepted immutable
@@ -47,8 +58,8 @@ int Application::Impl::runVisible(){
     if(production()){
         // First run waits for the preference record and its launch marker.
         launchPending=true;
-        if(settingsLoaded){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves&&settingsSaves->status().launched,!args.persistLaunchMarker),openingTime);}
-        else if(!settingsSaves){launchPending=false;perform(lifecycle.launch(args.startup,false,true),openingTime);}
+        if(settingsLoaded){launchPending=false;perform(lifecycle.launch(args.startup,settingsSaves&&settingsSaves->status().launched,!args.persistLaunchMarker),openingTime);reopenAfterLaunch(openingTime);}
+        else if(!settingsSaves){launchPending=false;perform(lifecycle.launch(args.startup,false,true),openingTime);reopenAfterLaunch(openingTime);}
     }else perform(lifecycle.toggle(),openingTime); // An explicit development launch opens at once.
     scheduleDeadline();
     host.run();
@@ -56,6 +67,13 @@ int Application::Impl::runVisible(){
     return 0;
 }
 
+// A fresh run after GPU device loss reopens the module the HUD showed.
+void Application::Impl::reopenAfterLaunch(double time){
+    const auto module=std::exchange(args.reopenModule,std::nullopt);
+    if(!module||!visibleMode())return;
+    perform(lifecycle.openSettingsModule(*module),time);
+    if(session->phase()!=core::VisibilityPhase::concealed&&!closing&&!stopping){host.show();refresh(time);}
+}
 void Application::Impl::shutdownVisible(){
     if(!args.liveDiagnostics.empty()){
         if(probe.enabled){probe.flush(now());probe.enabled=false;gpu::setTextInputDiagnosticsEnabled(false);}
@@ -81,5 +99,13 @@ int Application::run(){
     return impl_->runVisible();
 }
 void Application::activate(std::span<const std::string>arguments){impl_->forwardedActivation(arguments);}
+std::function<void()> Application::takeRestartWork(){
+    if(!impl_->restartAccepted)return {};
+    impl_->restartAccepted=false;return std::exchange(impl_->restartWork,{});
+}
+std::optional<std::optional<core::Module>> Application::takeDeviceRecovery(){
+    if(!impl_->deviceLost)return std::nullopt;
+    impl_->deviceLost=false;return std::optional<std::optional<core::Module>>(std::in_place,std::exchange(impl_->deviceLostModule,std::nullopt));
+}
 void* Application::window()const noexcept{return impl_->host.hwnd();}
 } // namespace endfield::app

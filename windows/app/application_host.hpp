@@ -9,6 +9,7 @@
 #include "modules/event_log.hpp"
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <typeinfo>
@@ -30,10 +31,15 @@ enum class ApplicationAreaMode {
 };
 
 // The shared native file dialog (one IFileOpenDialog owned by the host).
-// Multiple files and folders may be selected; the area validates and filters
-// the returned paths itself. Captions are caller-localized.
+// By default multiple files and folders may be selected; the area validates
+// and filters the returned paths itself. Captions are caller-localized.
+// singleFile asks for exactly one existing file (Mac NSOpenPanel without
+// multiple selection), listed through the filter "filterName (filterSpec)",
+// e.g. "Images" / "*.png;*.jpg" (empty spec: every file).
 struct ApplicationFileRequest {
     std::string title, acceptLabel, selectionLabel;
+    bool singleFile{};
+    std::string filterName, filterSpec;
 };
 struct ApplicationFileResult {
     bool cancelled{};               // the user, a module switch or the HUD closing cancelled it
@@ -53,6 +59,13 @@ public:
     virtual bool overlayVisible() const noexcept = 0;                    // HUD presented or animating (not concealed)
     virtual bool focused() const noexcept = 0;
     virtual const ClientMetrics& metrics() const noexcept = 0;
+    // The HUD module whose source navigation entry is under the pointer
+    // (HUDSourceWatchView hoverTarget == .module(m)); none for other buttons.
+    virtual std::optional<core::Module> hoveredModule() const noexcept { return std::nullopt; }
+    // True for a run over an explicit isolated data root (EndfieldHUD.exe
+    // --data-root, the section 9 performance gate): no startup entry, no
+    // shared notification identity, no restart registration.
+    virtual bool isolatedDataRoot() const noexcept { return false; }
 
     // --- Shared services (null when this mode or configuration runs none) ---
     virtual native::Renderer& renderer() noexcept = 0;            // also passed to upload/collected/release

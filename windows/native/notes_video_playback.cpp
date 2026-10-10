@@ -83,6 +83,10 @@ struct NativeNotesVideoPlayback::Impl {
             else fail(r,result);
             return false;
         }
+        if(!poster&&r.request.frameFilter&&*r.request.frameFilter){
+            try{(*r.request.frameFilter)(target->targetSurface());}
+            catch(...){fail(r,E_FAIL);return false;}
+        }
         renderer.commitMediaTexture(*target);++transfers;++r.frameRevision;return true;
     }
     template<class F>bool guarded(Record&r,F&&operation){

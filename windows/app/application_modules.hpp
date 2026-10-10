@@ -11,6 +11,7 @@
 #include "modules/storage_presentation.hpp"
 #include <functional>
 #include <memory>
+#include <optional>
 
 namespace endfield::tools {
 class NotesPreview; class ShelfPreview; class ClipboardPreview; class VolumePreview; class EventLogPreview;
@@ -35,6 +36,11 @@ struct CalendarModuleHooks {
     std::function<void()> afterUpdate, afterClosing;     // civil-midnight wake reconciliation
     std::function<bool()> flush;                         // shared-FIFO drain at quit
 };
+// Volume UI Automation (native/volume_automation.hpp) under the HUD root.
+struct VolumeModuleHooks {
+    std::function<double()> clock;                                           // shared clock for Invoke/RangeValue
+    std::function<std::optional<core::Rect>(core::Rect client)> toScreen;    // logical client rect -> screen pixels
+};
 struct StorageModuleHooks {
     std::function<double()> clock;    // injected synthetic clock in hidden coverage
     std::function<bool()> presented;  // HUD not closing and not concealed
@@ -43,7 +49,7 @@ struct StorageModuleHooks {
 std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview&);
 std::unique_ptr<ModuleOwner> shelfModule(tools::ShelfPreview&);
 std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview&, const native::NativeClipboardAssets&);
-std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview&);
+std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview&, VolumeModuleHooks = {});
 std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview&);
 std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview&);
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview&);

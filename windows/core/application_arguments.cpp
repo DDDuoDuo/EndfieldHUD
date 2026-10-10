@@ -33,8 +33,16 @@ void bounded(std::span<const std::string_view> arguments) {
 ApplicationArguments parseApplicationArguments(std::span<const std::string_view> arguments) {
     bounded(arguments);
     ApplicationArguments result;
-    for (const auto value : arguments) {
-        if (value == "--login") result.startup.login = true;
+    for (std::size_t index = 0; index < arguments.size(); ++index) {
+        const auto value = arguments[index];
+        if (value == "--data-root") {
+            // Consumes the next argument; it is never counted as ignored.
+            if (index + 1 >= arguments.size() || arguments[index + 1].empty() || !result.dataRoot.empty())
+                throw std::invalid_argument("--data-root needs one non-empty folder");
+            result.dataRoot = std::string(arguments[++index]);
+        }
+        else if (value == "--toggle") result.toggle = true;
+        else if (value == "--login") result.startup.login = true;
         else if (value == "--no-onboarding") result.startup.noOnboarding = true;
         else if (value == "--settings") result.startup.settings = true;
         else if (value == "--power") result.startup.power = true;
@@ -46,6 +54,7 @@ ApplicationArguments parseApplicationArguments(std::span<const std::string_view>
 }
 
 ForwardedActivation forwardedActivation(const ApplicationArguments& value) noexcept {
+    if (value.toggle) return ForwardedActivation::toggle;
     if (value.startup.settings) return ForwardedActivation::settings;
     if (value.notificationActivation) return ForwardedActivation::none;
     return ForwardedActivation::reopen;

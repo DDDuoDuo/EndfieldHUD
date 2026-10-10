@@ -153,6 +153,7 @@ struct OverlayHost::Impl {
     bool ready{}, visible{}, minimized{}, focused{}, stopped{}, armed{},
         mouseTracking{}, cursorSuspended{}, cursorOwned{}, appActive{true};
     unsigned menuDepth{}, sizeMoveDepth{};
+    bool coverMonitor{};
     UINT wheelLines{3},wheelChars{3};
     void refreshWheelSettings(){SystemParametersInfoW(SPI_GETWHEELSCROLLLINES,0,&wheelLines,0);SystemParametersInfoW(SPI_GETWHEELSCROLLCHARS,0,&wheelChars,0);}
     void releaseCapture(){if(window&&GetCapture()==window)ReleaseCapture();}
@@ -336,7 +337,16 @@ struct OverlayHost::Impl {
             break;
         case WM_DPICHANGED: {
             if (LOWORD(w) != 0) client.dpi = LOWORD(w);
-            const auto* rect = reinterpret_cast<const RECT*>(l);
+            const auto* suggested = reinterpret_cast<const RECT*>(l);
+            RECT fitted{};
+            if (suggested && coverMonitor) {
+                // A monitor-covering popup keeps its monitor's exact pixel
+                // bounds; the suggested rectangle only scales the old size.
+                MONITORINFO info{}; info.cbSize = sizeof(info);
+                const auto monitor = MonitorFromRect(suggested, MONITOR_DEFAULTTONEAREST);
+                if (monitor && GetMonitorInfoW(monitor, &info)) fitted = info.rcMonitor; else fitted = *suggested;
+            } else if (suggested) fitted = *suggested;
+            const auto* rect = suggested ? &fitted : nullptr;
             if (rect && !SetWindowPos(target, nullptr, rect->left, rect->top,
                 rect->right - rect->left, rect->bottom - rect->top, SWP_NOZORDER | SWP_NOACTIVATE))
                 fail("Apply WM_DPICHANGED rectangle");
@@ -454,6 +464,13 @@ struct OverlayHost::Impl {
             if (ready && handlers && handlers->key && handlers->key(event)) return 0;
             break;
         }
+        case WM_GETOBJECT:
+            if (handlers && handlers->getObject) {
+                const auto result = handlers->getObject({target, message, w, l});
+                if (window != target) return 0;
+                if (result) return static_cast<LRESULT>(*result);
+            }
+            break;
         default: break; // Includes every WM_IME_* message and native nonclient behavior.
         }
         return window == target ? DefWindowProcW(target, message, w, l) : 0;
@@ -494,7 +511,7 @@ void OverlayHost::create(const OverlayOptions& options, OverlayCallbacks callbac
     p.callbacks = std::make_shared<OverlayCallbacks>(std::move(callbacks));
     p.demand = {}; p.plan.cancel(); p.client = {}; p.counts = {};
     p.stopped = p.ready = p.visible = p.minimized = p.focused = p.mouseTracking = false;
-    p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0;
+    p.menuDepth = p.sizeMoveDepth = 0; p.appActive = true; p.exitCode = 0; p.coverMonitor = options.coverMonitor;
     const auto window = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW, windowClass,
         options.title.c_str(), WS_POPUP, options.x, options.y,
         static_cast<int>(options.pixelWidth), static_cast<int>(options.pixelHeight),

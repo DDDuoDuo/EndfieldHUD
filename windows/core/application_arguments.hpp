@@ -15,6 +15,13 @@ namespace endfield::core {
 struct ApplicationArguments {
     SystemOverlayStartup startup;
     bool notificationActivation{}; // --notification-activation (COM LocalServer32 launch)
+    // Windows-only test controls of the section 9 performance gate
+    // (packaging/perf_runner.hpp): --data-root <folder> runs over that explicit
+    // isolated root (absolute; its own single instance, no startup entry or
+    // restart registration) and --toggle forwards the summon hotkey's
+    // open/close toggle to the running copy.
+    std::string dataRoot;
+    bool toggle{};
     std::size_t ignored{};
     bool operator==(const ApplicationArguments&) const = default;
 };
@@ -28,7 +35,8 @@ ApplicationArguments parseApplicationArguments(std::span<const std::string_view>
 // applicationShouldHandleReopen (open the HUD when closed, Map/last module).
 // --settings opens System (showPreferences). A notification server launch
 // needs no HUD action: its COM activation is delivered separately.
-enum class ForwardedActivation { reopen, settings, none };
+// --toggle is the summon hotkey (toggleSystemOverlay).
+enum class ForwardedActivation { reopen, settings, toggle, none };
 ForwardedActivation forwardedActivation(const ApplicationArguments&) noexcept;
 
 // Bounded single-instance forwarding payload: UTF-8 arguments joined by NUL,

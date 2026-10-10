@@ -3,6 +3,9 @@
 #include "core/motion.hpp"
 #include "core/scene.hpp"
 #include <array>
+#include <functional>
+#include <optional>
+#include <string>
 #include <span>
 #include <vector>
 namespace endfield::modules {
@@ -10,7 +13,10 @@ struct SettingsDisplay {std::string id,name,dimensions;bool operator==(const Set
 struct SettingsIcon {std::string id,title;bool operator==(const SettingsIcon&)const=default;};
 struct SettingsCredit {std::string name,role,url;};
 struct SettingsAbout {std::string name="EndfieldHUD",version="Development",author="DDDuoDuo",license="MIT",repository;std::vector<SettingsCredit>credits;};
-struct SettingsViewHooks {std::function<std::vector<SettingsDisplay>()>displays;std::function<void()>chooseColor,chooseLogo,logoSelection;};
+// macImportTitle/macImport: the Windows-only System row "Import macOS data…"
+// (shown while the title hook returns a title in the current language).
+struct SettingsViewHooks {std::function<std::vector<SettingsDisplay>()>displays;std::function<void()>chooseColor,chooseLogo,logoSelection;
+    std::function<std::optional<std::string>(core::Language)>macImportTitle;std::function<void()>macImport;};
 enum class SettingsPage {main,battery,icons,screens,languages,logos,metrics};
 enum class SettingsRowKind {toggle,choice,slider,palette,icons,info,link,heading,selection};
 struct SettingsRow {
@@ -34,6 +40,8 @@ public:
     bool scroll(core::Point,double delta,double time);bool setSlider(std::string_view,double,double time);void nudgeSlider(double direction,double time);
     bool perform(std::string_view,double);bool escape(double);bool capture(SettingsShortcut,bool repeated,bool escape,double);
     void setCustomColor(std::array<double,3>,double);void setCustomLogo(std::string,double);void showImportError(std::string,double);void showBatterySettings(double);
+    // Rows that depend on host hooks (e.g. a module area constructed later) rebuild on the next refresh.
+    void invalidate()noexcept{dirty_=true;}
     const SettingsPageView&view()const noexcept{return view_;}
     const std::optional<SettingsPageView>&outgoing()const noexcept{return outgoing_;}
     SettingsPagePose pagePose(double)const;SettingsRowPose rowPose(std::string_view,double)const;

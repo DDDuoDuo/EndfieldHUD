@@ -322,7 +322,11 @@ struct ClipboardCapture::Impl : std::enable_shared_from_this<Impl> {
         // Header rejection falls through to the next format under a NEW lease,
         // never using bytes from a changed clipboard or decoding on the UI thread.
     }}
-    void complete(std::uint64_t seq,ClipboardImageResult result){if(!alive||seq!=expected||sequence()!=expected){status(ClipboardCaptureState::stale);return;}if(!result.thumbnail){readNext();return;}ClipboardPayload payload;payload.kind=ClipboardKind::image;payload.image_format=imageFormats[next-1];payload.decodedImage=std::move(result.thumbnail);accept(std::move(payload));}
+    void complete(std::uint64_t seq,ClipboardImageResult result){if(!alive||seq!=expected||sequence()!=expected){status(ClipboardCaptureState::stale);return;}
+        // Mac imageDimensionsTooLarge: report it instead of falling back to
+        // another format (HRESULT_FROM_WIN32(ERROR_ARITHMETIC_OVERFLOW)).
+        if(!result.thumbnail&&result.error==ClipboardImageError::dimensions){status(ClipboardCaptureState::invalid,static_cast<std::int32_t>(0x80070216));return;}
+        if(!result.thumbnail){readNext();return;}ClipboardPayload payload;payload.kind=ClipboardKind::image;payload.image_format=imageFormats[next-1];payload.decodedImage=std::move(result.thumbnail);accept(std::move(payload));}
 };
 ClipboardCapture::ClipboardCapture(ClipboardHistory&history,app::UtilityExecutor&executor,Reader reader,Sequence sequence,Changed changed,NativeClipboardImageProbe::Decoder decoder){if(!reader||!sequence||!changed)throw std::invalid_argument("Clipboard capture requires explicit owner access and notification");impl_=std::make_shared<Impl>(history,std::move(reader),std::move(sequence),std::move(changed));const std::weak_ptr<Impl>weak=impl_;impl_->probe=std::make_unique<NativeClipboardImageProbe>(executor,[weak](auto sequence,auto result){if(auto self=weak.lock())self->complete(sequence,std::move(result));},std::move(decoder));}
 ClipboardCapture::~ClipboardCapture(){impl_->alive=false;impl_->changed={};impl_->probe.reset();}
@@ -461,6 +465,7 @@ public:
     ClipboardHistory clipboard;
     std::unique_ptr<ClipboardCapture> clipboard_capture;
     bool clipboard_retry_available{};
+    bool clipboard_suspended{}; // ClipboardWatcher.setSuspended (sleep/lock)
     HRESULT clipboard_error{E_PENDING};
     AudioSnapshot audio;
     bool clipboard_registered{}, co_initialized{}, com_attempted{}, audio_active{}, device_registered{}, volume_registered{};
@@ -649,7 +654,10 @@ public:
             const auto handle = static_cast<HDROP>(GetClipboardData(CF_HDROP));
             if (!handle) return last_error();
             const UINT count = DragQueryFileW(handle, 0xffffffffu, nullptr, 0);
-            if (!count || count > ClipboardHistory::maximum_files) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            // Mac tooManyFiles for more files than the history keeps (or an
+            // aggregate path list beyond its bound); an empty drop is invalid.
+            if (!count) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            if (count > ClipboardHistory::maximum_files) return HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES);
             payload.kind = ClipboardKind::files; std::size_t source_bytes{};
             for (UINT index = 0; index < count; ++index) {
                 const UINT length = DragQueryFileW(handle, index, nullptr, 0);
@@ -658,7 +666,7 @@ public:
                 if (DragQueryFileW(handle, index, file.data(), length + 1) != length) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
                 file.resize(length); auto path = utf16(file);
                 const auto bytes = ClipboardHistory::utf8_bytes(path);
-                if (bytes > ClipboardHistory::maximum_text_bytes || source_bytes > ClipboardHistory::maximum_text_bytes - bytes) return HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW);
+                if (bytes > ClipboardHistory::maximum_text_bytes || source_bytes > ClipboardHistory::maximum_text_bytes - bytes) return HRESULT_FROM_WIN32(ERROR_TOO_MANY_NAMES);
                 source_bytes += bytes; payload.files.push_back(std::move(path));
             }
             found = true; return S_OK;
@@ -677,11 +685,16 @@ public:
         }
         if (IsClipboardFormatAvailable(CF_UNICODETEXT)) {
             LockedGlobal text(GetClipboardData(CF_UNICODETEXT));
-            if (!text.data || text.size < 2 || text.size > ClipboardHistory::maximum_text_bytes * 2 + 2 || text.size % 2) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            if (!text.data || text.size < 2 || text.size % 2) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            // Mac textTooLarge: a block beyond 64 MiB, or text whose UTF-8
+            // form exceeds the history bound; malformed data stays invalid.
+            if (text.size > std::size_t{64} * 1024 * 1024) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
             const auto units = std::span(static_cast<const char16_t*>(text.data), text.size / 2);
             const auto end = std::find(units.begin(), units.end(), u'\0');
             if (end == units.end()) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+            if (static_cast<std::size_t>(end - units.begin()) > ClipboardHistory::maximum_text_bytes) return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
             payload.text.assign(units.begin(), end);
+            if (ClipboardHistory::utf8_bytes(payload.text) > ClipboardHistory::maximum_text_bytes) { payload.text.clear(); return HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE); }
             payload.kind = ClipboardHistory::url_text(payload.text) ? ClipboardKind::url : ClipboardKind::text;
             found = true;
         }
@@ -827,7 +840,8 @@ bool SystemServices::handle_message(UINT message, WPARAM wparam, LPARAM) {
         if (impl_->route && wparam == impl_->route->token) {
             const auto events = impl_->route->events.drain();
             if (events & battery_event) refresh_battery();
-            if (events & clipboard_event) refresh_clipboard();
+            if (impl_->clipboard_suspended) {} // changes while suspended are caught up once on resume
+            else if (events & clipboard_event) refresh_clipboard();
             else if (events & clipboard_retry_event) {
                 // One message-loop retry per native change, never a polling loop.
                 try { if(!impl_->clipboard_capture||!impl_->clipboard_capture->retryBusy())impl_->refresh_clipboard(false); } catch (...) { /* Explicit UI refresh can retry. */ }
@@ -845,6 +859,14 @@ bool SystemServices::handle_message(UINT message, WPARAM wparam, LPARAM) {
     return false;
 }
 void SystemServices::refresh_battery() { impl_->refresh_battery(); }
+void SystemServices::set_clipboard_suspended(bool suspended) {
+    if (!impl_->owner_thread() || impl_->clipboard_suspended == suspended) return;
+    impl_->clipboard_suspended = suspended;
+    if (suspended) { if (impl_->clipboard_capture) impl_->clipboard_capture->cancel(); return; }
+    // One sequence-checked refresh: only the latest change made while
+    // suspended is captured, once.
+    (void)refresh_clipboard();
+}
 HRESULT SystemServices::refresh_clipboard() {
     try { return impl_->refresh_clipboard(); } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; } catch (...) { return E_FAIL; }
 }

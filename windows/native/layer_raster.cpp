@@ -1,5 +1,6 @@
 #include "native/layer_raster.hpp"
 #include "native/notes_rich_style.hpp"
+#include "core/notes_font_names.hpp"
 #include <functional>
 #include "native/rich_text_paint.hpp"
 #include "native/layer_image_source.hpp"
@@ -260,6 +261,21 @@ struct LayerRasterizer::Impl {
         auto*collection=bundled(requested)?bundledFonts.Get():fonts.Get();
         UINT32 index{};BOOL exists=FALSE;auto selected=wide(requested);
         if(!selected.empty())checked(collection->FindFamilyName(selected.c_str(),&index,&exists),"Resolve source font family");
+        if(!exists&&preserve){
+            // Imported Mac runs store PostScript names (HelveticaNeue-Bold,
+            // TimesNewRomanPSMT, STSongti-SC-Regular, ...): resolve the Windows
+            // counterpart here, once for settled cards and both editors. The
+            // weight still follows the PostScript name (weight() below).
+            if(const auto mapped=core::notes::notesWindowsFontFamily(postscript.empty()?family:postscript)){
+                const std::string name(*mapped);auto*candidate=bundled(name)?bundledFonts.Get():fonts.Get();auto w=wide(name);
+                BOOL found=FALSE;UINT32 at{};checked(candidate->FindFamilyName(w.c_str(),&at,&found),"Resolve mapped Mac font family");
+                if(found){
+                    LayerFontSubstitution mappedFont{string(node["id"],"unnamed"),family,postscript,name};
+                    if(std::none_of(result.fontSubstitutions.begin(),result.fontSubstitutions.end(),[&](const auto&f){return f.node==mappedFont.node&&f.requestedFamily==family&&f.requestedFace==postscript&&f.selectedFamily==name;}))result.fontSubstitutions.push_back(std::move(mappedFont));
+                    return {std::move(w),candidate};
+                }
+            }
+        }
         if(!exists){
             // NSFontMonoSpaceTrait is 1<<10 in the current macOS SDK. Known
             // private/public fixed-pitch families keep their typography class;
