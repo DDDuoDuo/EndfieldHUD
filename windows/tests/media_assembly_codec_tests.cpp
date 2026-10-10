@@ -95,7 +95,7 @@ void stills(const fs::path&root,const fs::path&assets){
     check(n::NativeMediaAssemblyEngine::decodeStill(g,1024).width==32,"GIF first frame on its logical screen");
     const auto tiff=root/L"pages.tiff";writeImage(tiff,GUID_ContainerFormatTiff,16,16,gradient(16,16,false),2);check(failure([&]{engine.open(utf8(tiff));})==m::MediaAssemblyError::unsupported,"Multi-frame non-GIF images are unsupported");
     const auto text=root/L"notes.txt";{std::ofstream f(text);f<<"Owned synthetic non-media bytes.";}check(failure([&]{engine.open(utf8(text));})==m::MediaAssemblyError::unsupported,"Non-media is unsupported");
-    check(failure([&]{engine.open(utf8(root/L"missing.png"));})==m::MediaAssemblyError::unavailable&&failure([&]{engine.open(utf8(root));})==m::MediaAssemblyError::unavailable,"Missing/directory sources are unavailable");
+    check(failure([&]{engine.open(utf8(root/L"missing.png"));})==m::MediaAssemblyError::sourceUnavailable&&failure([&]{engine.open(utf8(root));})==m::MediaAssemblyError::unavailable,"A missing source asks to be chosen again; a directory is unavailable");
     // File identity and atomic operations.
     const auto ops=n::mediaAssemblyFileOperations();const auto id=n::mediaAssemblyFileIdentity(png);check(id&&id->bytes==fs::file_size(png)&&!n::mediaAssemblyFileIdentity(root/L"missing"),"Identity of a regular file");
     const auto copy=root/L"copy.png";fs::copy_file(png,copy);check(!ops.move(utf8(copy),utf8(png),false)&&fs::exists(copy),"Exclusive move refuses an existing target");
@@ -124,6 +124,10 @@ void stills(const fs::path&root,const fs::path&assets){
     {n::NativeMediaAssemblyEngine racing({assets,[&]{std::ofstream f(png,std::ios::app|std::ios::binary);f<<'x';}});auto fresh=std::make_shared<m::MediaAssemblyDocumentInfo>(racing.open(utf8(png)));m::MediaAssemblyExportTicket u;
         check(failure([&]{racing.exportMedia({fresh,{},utf8(root/L"race.png"),false,"t9",false},u);})==m::MediaAssemblyError::changedOnDisk&&!fs::exists(root/L"race.png")&&temporaries(root)==0,"Source changed before commit is reported and leaves nothing");}
     {auto fresh=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(png)));std::ofstream(png,std::ios::app|std::ios::binary)<<'y';check(failure([&]{engine.preview(*fresh,{},0);})==m::MediaAssemblyError::changedOnDisk,"Preview re-checks the source identity");}
+    {const auto gone=root/L"gone.png";fs::copy_file(png,gone);auto fresh=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(gone)));fs::remove(gone);
+        check(failure([&]{engine.preview(*fresh,{},0);})==m::MediaAssemblyError::sourceUnavailable,"A removed original asks to be chosen again before a preview");
+        m::MediaAssemblyExportTicket u;check(failure([&]{engine.exportMedia({fresh,{},utf8(root/L"gone-export.png"),false,"t10",false},u);})==m::MediaAssemblyError::sourceUnavailable&&!fs::exists(root/L"gone-export.png")&&temporaries(root)==0,"...and before an export");
+        fs::create_directory(gone);check(failure([&]{engine.preview(*fresh,{},0);})==m::MediaAssemblyError::sourceUnavailable,"A directory in its place is not the original");fs::remove(gone);}
     std::cout<<"HEIC encoding available: "<<(engine.heicEncoder()?"yes":"no")<<'\n';
     {
         // Source CGImageDestinationCopyTypeIdentifiers filtering: HEIC is only

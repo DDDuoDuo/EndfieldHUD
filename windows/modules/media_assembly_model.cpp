@@ -52,6 +52,7 @@ std::string mediaAssemblyErrorMessage(MediaAssemblyError e,core::Language l){
     case MediaAssemblyError::exportFailed:return core::localized("Export failed. The original file was preserved.","导出失败，原文件已保留。",l);
     case MediaAssemblyError::cancelled:return core::localized("Export cancelled.","导出已取消。",l);
     case MediaAssemblyError::exists:return core::localized("The destination already exists. Confirm overwrite or choose another name.","目标文件已存在，请确认覆盖或选择其他名称。",l);
+    case MediaAssemblyError::sourceUnavailable:return core::localized("The original media file is unavailable. Choose it again to restore access.","原始媒体文件不可用，请重新选择以恢复访问。",l);
     }
     throw std::invalid_argument("Unknown Media Assembly error");
 }

@@ -23,7 +23,10 @@ enum class MediaAssemblyStickerKind {sticker1,sticker2,sticker3,sticker4,sticker
 struct MediaAssemblyCatalogItem {std::string_view id,english,chinese;};
 // Source MediaAssemblyError cases. Messages are the original localized strings;
 // unsupportedExport names this platform (no QuickTime MOV writer on Windows).
-enum class MediaAssemblyError {unsupported,invalidAdjustment,unavailable,changedOnDisk,unsupportedExport,exportFailed,cancelled,exists};
+// sourceUnavailable is the source NotesMediaFactory.resolve failure
+// (NotesMediaError.unavailable): the referenced original is missing or no
+// longer a regular file when a preview/export re-opens it.
+enum class MediaAssemblyError {unsupported,invalidAdjustment,unavailable,changedOnDisk,unsupportedExport,exportFailed,cancelled,exists,sourceUnavailable};
 std::string mediaAssemblyErrorMessage(MediaAssemblyError,core::Language);
 // Source NotesMediaReference kinds accepted by Media Assembly.
 enum class MediaAssemblyKind {image,gif,video};

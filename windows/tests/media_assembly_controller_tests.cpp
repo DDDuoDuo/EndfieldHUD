@@ -15,8 +15,10 @@ template<class F>m::MediaAssemblyError failure(F&&f){try{f();}catch(const m::Med
 
 void errors(){
     for(auto l:{c::Language::english,c::Language::simplifiedChinese,c::Language::traditionalChinese,c::Language::japanese,c::Language::korean})
-        for(int e=0;e<=int(m::MediaAssemblyError::exists);++e)check(!m::mediaAssemblyErrorMessage(m::MediaAssemblyError(e),l).empty(),"Every source error is localized");
+        for(int e=0;e<=int(m::MediaAssemblyError::sourceUnavailable);++e)check(!m::mediaAssemblyErrorMessage(m::MediaAssemblyError(e),l).empty(),"Every source error is localized");
     check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::english)=="The original changed. Open it again before exporting.","Original wording");
+    check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::sourceUnavailable,c::Language::english)=="The original media file is unavailable. Choose it again to restore access."&&
+          m::mediaAssemblyErrorMessage(m::MediaAssemblyError::sourceUnavailable,c::Language::simplifiedChinese)=="原始媒体文件不可用，请重新选择以恢复访问。","A missing original uses the source NotesMediaError.unavailable wording");
     check(m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::japanese)!=m::mediaAssemblyErrorMessage(m::MediaAssemblyError::changedOnDisk,c::Language::english),"Catalog languages resolve");
     const auto windows=m::mediaAssemblyErrorMessage(m::MediaAssemblyError::unsupportedExport,c::Language::english);
     check(windows.find("Mac")==std::string::npos&&windows.find("MOV")==std::string::npos&&windows.find("MP4")!=std::string::npos,"Export capability message names this platform and its real formats");
@@ -76,7 +78,7 @@ void commit(){
     r.temporaryID="u6";plan=m::mediaAssemblyPrepareExport(r,ops,t,same);disk.files[plan.temporary]=disk.make();m::MediaAssemblyExportTicket racing;
     check(failure([&]{(void)m::mediaAssemblyCommitExport(plan,r,ops,racing,[&]{racing.cancel();});})==m::MediaAssemblyError::cancelled&&!disk.files.contains("C:/m/d.png"),"Cancel before the commit lock wins");
     auto bad=r;bad.adjustments.exposure=9;check(failure([&]{(void)m::mediaAssemblyPrepareExport(bad,ops,t,same);})==m::MediaAssemblyError::invalidAdjustment,"Invalid edits");
-    disk.files.erase("C:/m/a.png");check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,ops,t,same);})==m::MediaAssemblyError::unavailable,"Missing source is unavailable");
+    disk.files.erase("C:/m/a.png");check(failure([&]{(void)m::mediaAssemblyPrepareExport(r,ops,t,same);})==m::MediaAssemblyError::sourceUnavailable,"Missing source asks to be chosen again (NotesMediaFactory.resolve)");
 }
 
 struct Executor {

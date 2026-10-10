@@ -214,7 +214,9 @@ MediaAssemblyCodecCapabilities NativeMediaAssemblyEngine::capabilities()const{
 modules::MediaAssemblyDocumentInfo NativeMediaAssemblyEngine::open(const std::string&utf8){
     Apartment com;const auto path=mediaAssemblyPath(utf8);
     m::MediaAssemblyDocumentInfo d;d.path=utf8;d.name=mediaAssemblyUTF8(path.filename());
-    const auto identity=mediaAssemblyFileIdentity(path);if(!identity)fail(m::MediaAssemblyError::unavailable);d.identity=*identity;
+    // Source NotesMediaFactory.makeReference: a missing file is unavailable
+    // ("choose it again"); directories and IO errors stay `unavailable`.
+    const auto identity=mediaAssemblyFileIdentity(path);if(!identity)fail(m::MediaAssemblyError::sourceUnavailable);d.identity=*identity;
     {std::lock_guard g(impl_->lock);++impl_->statistics.opens;}
     try{
         const auto s=openStill(path);d.container=containerName(s.container);d.kind=s.gif?m::MediaAssemblyKind::gif:m::MediaAssemblyKind::image;d.frameCount=s.frames;
@@ -263,7 +265,11 @@ MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeVideoFrame(const m::MediaAs
 // re-check, cached bounded decode and the filter cube.
 std::pair<std::shared_ptr<const MediaAssemblyBitmap>,std::shared_ptr<const MediaAssemblyCube>>NativeMediaAssemblyEngine::previewInputs(const m::MediaAssemblyDocumentInfo&d,const m::MediaAssemblyAdjustments&a,double time){
     if(!a.valid())fail(m::MediaAssemblyError::invalidAdjustment);Apartment com;
-    const auto identity=mediaAssemblyFileIdentity(mediaAssemblyPath(d.path));if(!identity||*identity!=d.identity)fail(m::MediaAssemblyError::changedOnDisk);
+    // Source NotesMediaFactory.resolve (missing or not a regular file:
+    // NotesMediaError.unavailable), then the identity re-check.
+    std::optional<m::MediaAssemblyFileIdentity>identity;
+    try{identity=mediaAssemblyFileIdentity(mediaAssemblyPath(d.path));}catch(const m::MediaAssemblyFailure&f){if(f.error()==m::MediaAssemblyError::unavailable)fail(m::MediaAssemblyError::sourceUnavailable);throw;}
+    if(!identity)fail(m::MediaAssemblyError::sourceUnavailable);if(*identity!=d.identity)fail(m::MediaAssemblyError::changedOnDisk);
     const double sourceTime=d.video?time:0;std::shared_ptr<const MediaAssemblyBitmap>image;std::uint64_t generation{};
     {std::lock_guard g(impl_->lock);generation=impl_->generation;if(impl_->cached&&impl_->cached->id==d.id&&impl_->cached->time==sourceTime){image=impl_->cached->image;++impl_->statistics.previewCacheHits;}}
     if(!image){

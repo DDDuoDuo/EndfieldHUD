@@ -80,3 +80,31 @@ if(WIN32)
     add_test(NAME media_assembly_preview_contracts COMMAND media_assembly_preview_tests ${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4)
   endif()
 endif()
+
+# --- Module area (app/module_owner.hpp, "Adding a module area") --------------
+# The ModuleOwner adapter and factory over MediaAssemblyPreview, linked into
+# EndfieldHUD.exe and the hidden coverage harness by app.cmake's generated
+# area table. Runtime input: the pinned resources/media-assembly package
+# folder. Hidden coverage without a staged package uses the same folder from
+# the source tree, plus the pinned owned silent movie (read-only copy).
+if(WIN32)
+  add_library(hud_media_assembly_area STATIC app/areas/media_assembly_module.cpp)
+  target_include_directories(hud_media_assembly_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_media_assembly_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_media_assembly_area PUBLIC hud_module_registry hud_media_assembly_preview hud_utility hud_data
+    PRIVATE windowscodecs ole32 user32)
+  if(MSVC)
+    target_compile_options(hud_media_assembly_area PRIVATE /W4 /permissive- /EHsc)
+  endif()
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "mediaAssembly|hud_media_assembly_area|app/areas/media_assembly_module.hpp|endfield::areas::mediaAssemblyModule")
+  if(COMMAND ehud_app_resource)
+    ehud_app_resource(mediaAssembly.assets directory "${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly" "media-assembly")
+  else()
+    set_property(GLOBAL APPEND PROPERTY EHUD_APP_RESOURCE_SPECS
+      "mediaAssembly.assets|directory|${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly|media-assembly")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREA_FIXTURES
+    "mediaAssembly.sourceAssets|${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly"
+    "mediaAssembly.movie|${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-owned-silent.mp4")
+endif()

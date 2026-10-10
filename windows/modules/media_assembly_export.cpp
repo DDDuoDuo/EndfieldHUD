@@ -67,7 +67,10 @@ MediaAssemblyExportPlan mediaAssemblyPrepareExport(const MediaAssemblyExportRequ
     if(ticket.cancelled())fail(MediaAssemblyError::cancelled);
     if(!r.document||!r.adjustments.valid()||r.destination.empty())fail(MediaAssemblyError::invalidAdjustment);
     const auto&d=*r.document;
-    const auto source=ops.identity(d.path);if(!source)fail(MediaAssemblyError::unavailable);
+    // Source NotesMediaFactory.resolve before the identity check.
+    std::optional<MediaAssemblyFileIdentity>source;
+    try{source=ops.identity(d.path);}catch(const MediaAssemblyFailure&f){if(f.error()==MediaAssemblyError::unavailable)fail(MediaAssemblyError::sourceUnavailable);throw;}
+    if(!source)fail(MediaAssemblyError::sourceUnavailable);
     if(*source!=d.identity)fail(MediaAssemblyError::changedOnDisk);
     MediaAssemblyExportPlan plan;plan.target=r.destination;plan.existing=ops.identity(plan.target);
     if(!r.overwrite&&plan.existing)fail(MediaAssemblyError::exists);
