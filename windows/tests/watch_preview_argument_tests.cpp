@@ -90,6 +90,16 @@ void run(const fs::path&executable){
     reject(executable,temp,++index,{L"--visible",L"--projection",L"--projection"},"Duplicate Projection mode");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--reader"},"Reader needs the shared module owner");
     reject(executable,temp,++index,{L"--visible",L"--reader",L"--reader"},"Duplicate Reader mode");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar"},"Calendar needs the shared module owner");
+    reject(executable,temp,++index,{L"--visible",L"--calendar",L"--calendar"},"Duplicate Calendar mode");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--notes-assets",assets,
+           L"--notes-data",fresh.wstring()},"Notes preview requires assets, independent SHA and a new data root together");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"Hidden module integration requires explicit --module-coverage");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--calendar",L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",existing.wstring()},"Notes preview data root must be new");
+    reject(executable,temp,++index,{L"--visible",L"--calendar",L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring()},"Module coverage requires hidden mode and fresh isolated Notes data");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--native-activity"},
            "Native Activity requires explicit visible mode");
     reject(executable,temp,++index,{L"--visible",L"--native-activity"},
@@ -126,8 +136,20 @@ void run(const fs::path&executable){
     reject(executable,temp,++index,{L"--visible",L"--module-coverage",L"--notes-assets",assets,
            L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring(),L"--archive-assets",archiveAssets},
            "Module coverage requires hidden mode and fresh isolated Notes data");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets},
+           "Map needs geography and player assets together");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-player-assets",assets},
+           "Map needs geography and player assets together");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets,L"--map-player-assets",assets},
+           "Map needs the shared module owner and a new temporary data root");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--map-geography",assets,L"--map-geography",assets},
+           "Duplicate Map geography");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--orbipom-assets",assets},
+           "Minigame needs the shared module owner and an isolated Settings store");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--orbipom-assets",assets,L"--orbipom-assets",assets},
+           "Duplicate Minigame artwork");
     reject(executable,temp,++index,{L"--benchmark",existingReport.wstring()},"Benchmark output already exists");
-    check(!fs::exists(fresh)&&!fs::exists(report),"Rejected Archive envelopes create neither a store nor a report");
+    check(!fs::exists(fresh)&&!fs::exists(report),"Rejected Archive/Calendar envelopes create neither a store nor a report");
     check(read(sentinel)=="owned sentinel"&&read(existingReport)=="owned report",
           "Existing data and report contents remain byte-for-byte intact");
     check(std::distance(fs::directory_iterator(existing),fs::directory_iterator{})==1,

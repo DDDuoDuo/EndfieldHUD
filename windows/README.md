@@ -724,8 +724,8 @@ checks include actual button/navigation routing, retained-texture zoom/pan,
 bounded real PDF/EPUB rendering and page-boundary behavior. Small synthetic
 document timings do not establish full-document or whole-app performance.
 The user accepted the corrected zoom, module navigation and faster sidebar in
-live preview 26. Vertical scrolling still jumps between pages and is undergoing
-a separate continuity correction. Projection media/drop/return still needs live
+live preview 26. Its remaining vertical page jumps are addressed in snapshot 98
+below; visible acceptance of that correction is pending. Projection media/drop/return still needs live
 acceptance. Neither is a stable release claim.
 
 Snapshot 97 passes all 180 Windows suites and combined hardware module coverage.
@@ -735,3 +735,94 @@ The unchanged Mac Map renderer and game engine provide independent comparison
 fixtures. These foundations do not yet connect Map, Minigame or shortcut editing
 to the visible Windows preview. Shortcut tests use synthetic paths and never
 inspect or launch installed applications.
+
+Snapshot 98 preserves vertical scroll position when the current-page anchor
+changes. Page transitions reuse already-visible textures; when a neighboring page
+is still rendering, scrolling holds at its ready boundary and continues when the
+same bounded worker queue supplies it. Rapid wheel input waits for the physical
+page seam before retiring the outgoing page. Zoom, existing easing, the three-page
+cache and the shared frame clock remain unchanged.
+
+All 180 native suites passed across 98 and its targeted fixture correction;
+the nine Reader suites include 4,133 preview checks plus rendered pixel checks
+for forward/backward, zoomed and delayed-page crossings. A reverse-scroll test
+fixture needed to publish its input-time frame before checking the settled edge;
+no runtime assertion was weakened. Combined hardware module coverage now opens
+owned TXT and PDF fixtures and verifies cache retention after both have warmed.
+
+That expanded check exposed a separate PDF shutdown fault in Windows' internal
+PDF/DXGI teardown. The application retires every provider, worker and renderer,
+then releases cached WinRT factories and invokes COM's documented unused-library
+cleanup with its default unload delay before its outer apartment closes. It does
+not force immediate DLL unloading or add periodic cleanup. The combined hardware
+check now exits normally. Live preview 27 uses fresh temporary data; the user's
+wheel/trackpad test still reports a jump across pages, so this continuity change
+is not accepted yet. Live 27 exited normally. Further real-provider regressions now reproduce the
+remaining scrolling problem; visible acceptance is still pending.
+
+
+Native Reader diagnostics 102–104 reproduce two independent issues. Long mixed
+Chinese paragraphs recomputed the previous page as a different suffix when
+moving forward; the immutable outgoing bitmap could be replaced and a single
+step performed up to 30 layouts. Reusing the resident exact predecessor reduces
+the synthetic 24-page walk to one new layout per step, retaining the existing
+three-page bound. All 156 native predecessor checks pass with that correction.
+
+A separate actual-provider test holds the shared worker briefly while ordinary
+wheel input continues. The bounded 668-point backlog then resumes too quickly:
+83.7 points in one 16 ms submitted frame, versus at most 33 in the input phase.
+That continuity test intentionally still fails at checkpoint 104; its correction
+and live wheel/trackpad acceptance are pending. These diagnostics do not read
+user document contents and do not establish whole-app performance.
+
+Checkpoint 106 passes all 182 Windows suites and combined owned TXT/PDF hardware
+coverage. It preserves the resident predecessor page and scales catch-up duration
+only for delayed wheel input; ordinary scrolling retains its original 0.10-second
+curve. Reversing the wheel samples the current displayed position and discards
+obsolete queued motion. Typography changes also cancel stale recovery. Native
+regressions cover dense Chinese text, a deliberately occupied shared worker,
+forward/backward page crossings and immediate direction reversal. These changes
+add no worker, timer or page cache. Live preview 28 exited normally. The user confirmed the jumps were gone but
+rejected the prolonged automatic movement after wheel input. Its numeric-only
+trace confirms motion continuing up to 1.4 seconds after the last input. That
+catch-up policy remains unaccepted and is being replaced with direct continuous
+document scrolling; no stable Reader claim is made.
+
+Checkpoint 109 replaces that catch-up policy with ordinary continuous document
+scrolling. Missing-page completion cannot start or prolong movement; new wheel
+input uses the existing 0.10-second settling curve. Cached page rebasing preserves
+the displayed positions in both directions. All 12 Reader/argument Windows
+suites pass, including dense Chinese trajectories and same-time pixel checks,
+and combined owned TXT/PDF hardware coverage exits normally. The user confirmed
+live preview 29 works well with wheel/trackpad input; it exited normally. No new
+worker, timer or larger page cache was added. Other module integration remains
+unfinished.
+
+Checkpoint 115g fixes the minigame crash reported during live preview 30. Skill
+targeting and sprite swaps can change a texture inside an otherwise unchanged
+draw buffer. The host now compares those resource identities with the retained
+publication before presenting. Isolated Windows tests reproduce the old failure
+and verify the correction for skill rings, current/next sprites and same-count
+body replacements. Warm-frame checks retain zero allocation/upload behavior;
+shared module coverage and hardware composition pass. The user confirmed skill
+interaction is smooth in live preview 31, which exited normally. This remains an
+integration preview; the full migration is unfinished.
+
+Checkpoints 116–121 (2026-10-08/09) add the Calendar retained editor, scene and
+notification registration, the Map store/player assets/retained scene, the
+OrbiPom minigame runtime on vendored QuickJS-ng, and App Shortcut, Now Playing
+and Media Assembly foundations. Calendar, Map and the minigame are wired into the
+isolated preview; App Shortcut, Now Playing and Media Assembly are not yet.
+
+Checkpoint 119 failed three suites. Checkpoint 120 fixes their causes: the
+Calendar field localized glyphs from draw records that the projected editor had
+not yet refreshed, and an unselected Now Playing owner published feedback before
+its scene was synchronized. Its remaining module-coverage failure came from a
+stale object: MSBuild's FileTracker ignores files under `%LOCALAPPDATA%`, so a
+header-only layout change never rebuilt its includers. `cmake/msbuild_include_fingerprints.cmake`
+now gives each source a content fingerprint of its reachable project headers,
+so such edits recompile exactly their includers. Checkpoint 121 on the laptop
+passes all 222 registered suites, combined module coverage and hardware
+composition. Two test tolerances added during this work (one Calendar alpha
+level, and the minigame long-run trajectory recorded without assertion) are
+still under review; they are not parity claims.
