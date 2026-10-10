@@ -826,3 +826,45 @@ passes all 222 registered suites, combined module coverage and hardware
 composition. Two test tolerances added during this work (one Calendar alpha
 level, and the minigame long-run trajectory recorded without assertion) are
 still under review; they are not parity claims.
+
+## Checkpoint 122 (2026-10-10)
+
+A fresh laptop integration build passes all **300** registered Windows suites,
+combined module coverage and hardware composition. New in this checkpoint:
+
+- **Production application owner.** `EndfieldHUD.exe` (GUI subsystem, Mac-rendered
+  icon, VERSIONINFO from `source-authority.json`) now owns the shell through a
+  `ModuleOwner`/`ModuleRegistry` interface instead of the preview's hand-chained
+  owners. It adds the ported `SystemOverlayState` (63,876 checks against the Mac
+  state machine), single instance and relaunch forwarding, a versioned
+  current-user data root under `%LOCALAPPDATA%\EndfieldHUD`, session-end saves,
+  the quit confirmation card (1,252 source checks), per-module resource packages
+  whose damage disables only the dependent modules, and launch at login. The
+  development preview is now a thin harness over the same owner.
+- **Media Assembly** processor matching the original Core Image pipeline (crop,
+  mirror, rotation, exposure, colour, temperature/tint, tone curves, levels,
+  gamma, the 14 LUTs and sticker scaling), WIC/Media Foundation import and export
+  with atomic commit and cancel, and its retained owner.
+- **Account Linking** signing, API, DPAPI credential store, role cache, sanity
+  polling/recovery projection and presentation, verified only with synthetic
+  fixtures; no login has been attempted.
+- **Personal Profile**, the bottom-left ID card binding and Work Mode lifetime
+  hours; **Now Playing** lyrics (embedded, LRCLIB, NetEase public catalog), warm
+  start and app-volume submenu; **Volume** WASAPI endpoints and per-app sessions;
+  **Power** provider, charge indicator/badge and device battery popup; and the
+  offline **Mac data import** (every store in the migration guide, including a
+  binary/XML plist codec, backup and rollback).
+- The Calendar scene comparison is strict again (at most two levels in every
+  channel); the earlier alpha allowance traced to a WARP triangle seam in the
+  test's own reference composite. The minigame's long-run trajectory difference
+  is inherent: Apple's libm and the Windows UCRT differ by one ULP on 48 of 4,918
+  recorded `sin`/`cos`/`atan2` inputs. Fed Apple's results, the Windows runtime
+  reproduces all 11 JavaScriptCore snapshots at 1e-8.
+
+Not yet connected to the production owner: Media Assembly, Now Playing, Profile,
+Account Linking, the charge indicator and Mac import UI. The production Notes and
+File Shelf owners still need persistent-root entry points before `EndfieldHUD.exe`
+can open existing user data. Explicit platform gaps recorded so far include MOV
+export (MP4 only), Highlights/Shadows (no change applied yet), HEIC export
+(encoder unavailable on the test laptop), default audio device switching and a
+player's internal volume (Windows adjusts its mixer session instead).
