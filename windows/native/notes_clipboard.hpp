@@ -61,6 +61,8 @@ public:
     // CF_HDROP file paths (Unicode, existing paths only) for media paste.
     virtual std::vector<std::string> readFiles()=0;
     virtual bool writeText(const NotesClipboardText&)=0;
+    // Image data for the source PNG/TIFF pasteboard import (see below).
+    virtual std::optional<std::vector<std::uint8_t>> readImage(std::size_t){return std::nullopt;}
 };
 // Data-object codec shared by the system clipboard and synthetic tests. The
 // returned object owns copies of its formats and never touches the clipboard.
@@ -69,6 +71,10 @@ Microsoft::WRL::ComPtr<IDataObject> makeNotesClipboardData(const NotesClipboardT
 // when their text is exactly the CF_UNICODETEXT text. Nullopt without text or
 // above maximumUnits.
 std::optional<NotesClipboardText> readNotesClipboardData(IDataObject&,std::uint32_t maximumUnits);
+// Pasted image data as one container the WIC decoder reads: the registered
+// "PNG" format first, then CF_DIBV5 or CF_DIB given a bitmap file header, then
+// CF_TIFF. Nullopt without image data or above maximumBytes.
+std::optional<std::vector<std::uint8_t>> readNotesClipboardImage(IDataObject&,std::size_t maximumBytes);
 // OleGetClipboard / OleSetClipboard + OleFlushClipboard on the caller's
 // OLE-initialized UI thread. Failures (another application holding the
 // clipboard) return nullopt/empty/false; nothing is retried or polled.

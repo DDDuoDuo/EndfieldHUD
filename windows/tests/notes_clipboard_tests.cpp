@@ -1,5 +1,11 @@
 #include "native/notes_clipboard.hpp"
 #include "native/notes_workspace.hpp"
+#include "native/notes_managed_image.hpp"
+#include "native/notes_image_decoder.hpp"
+#include <wincodec.h>
+#include <shlwapi.h>
+#include <filesystem>
+#include <fstream>
 #ifdef _WIN32
 #include <objbase.h>
 #include <atomic>
@@ -102,6 +108,61 @@ void dataObjects(){
     Foreign empty;check(!gpu::readNotesClipboardData(empty,100),"No Unicode text pastes nothing");
     rejects([]{(void)gpu::makeNotesClipboardData({std::u16string(1,u'\xdc00'),std::nullopt});},"Invalid UTF-16 is never written");
 }
+// A bottom-up 32-bit DIB (CF_DIB layout) whose left half is red, right half blue.
+std::string dib(int width,int height){
+    BITMAPINFOHEADER h{};h.biSize=sizeof(h);h.biWidth=width;h.biHeight=height;h.biPlanes=1;h.biBitCount=32;h.biCompression=BI_RGB;
+    std::string out(sizeof(h)+std::size_t(width)*height*4,'\0');std::memcpy(out.data(),&h,sizeof(h));
+    for(int y=0;y<height;++y)for(int x=0;x<width;++x){auto* p=out.data()+sizeof(h)+(std::size_t(y)*width+x)*4;const bool left=x<width/2;p[0]=char(left?0:255);p[1]=0;p[2]=char(left?255:0);p[3]=char(255);}
+    return out;
+}
+struct Decoded {unsigned width{},height{};std::vector<std::uint8_t> rgba;};
+Decoded decode(std::span<const std::uint8_t> bytes){
+    ComPtr<IWICImagingFactory> factory;check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory))),"WIC for the test decode");
+    ComPtr<IStream> stream;stream.Attach(SHCreateMemStream(bytes.data(),static_cast<UINT>(bytes.size())));ComPtr<IWICBitmapDecoder> decoder;check(SUCCEEDED(factory->CreateDecoderFromStream(stream.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&decoder)),"The managed copy decodes");
+    GUID format{};decoder->GetContainerFormat(&format);check(IsEqualGUID(format,GUID_ContainerFormatPng),"The managed copy is PNG");
+    ComPtr<IWICBitmapFrameDecode> frame;decoder->GetFrame(0,&frame);Decoded d;frame->GetSize(&d.width,&d.height);ComPtr<IWICFormatConverter> c;factory->CreateFormatConverter(&c);c->Initialize(frame.Get(),GUID_WICPixelFormat32bppRGBA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom);
+    d.rgba.resize(std::size_t(d.width)*d.height*4);check(SUCCEEDED(c->CopyPixels(nullptr,d.width*4,static_cast<UINT>(d.rgba.size()),d.rgba.data())),"Read the managed pixels");return d;
+}
+// A 40x20 TIFF tagged with EXIF orientation 6 whose top-left pixel is red.
+std::vector<std::uint8_t> orientedTiff(){
+    ComPtr<IWICImagingFactory> factory;check(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory))),"WIC for the test encode");
+    std::vector<std::uint8_t> pixels(40*20*4,255);for(std::size_t n=0;n<pixels.size();n+=4){pixels[n]=0;pixels[n+1]=0;pixels[n+2]=255;}pixels[0]=255;pixels[1]=0;pixels[2]=0;
+    ComPtr<IWICBitmap> bitmap;check(SUCCEEDED(factory->CreateBitmapFromMemory(40,20,GUID_WICPixelFormat32bppRGBA,160,static_cast<UINT>(pixels.size()),pixels.data(),&bitmap)),"Stage the TIFF pixels");
+    ComPtr<IStream> out;CreateStreamOnHGlobal(nullptr,TRUE,&out);ComPtr<IWICBitmapEncoder> encoder;check(SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatTiff,nullptr,&encoder))&&SUCCEEDED(encoder->Initialize(out.Get(),WICBitmapEncoderNoCache)),"TIFF encoder");
+    ComPtr<IWICBitmapFrameEncode> frame;encoder->CreateNewFrame(&frame,nullptr);frame->Initialize(nullptr);frame->SetSize(40,20);WICPixelFormatGUID format=GUID_WICPixelFormat32bppBGRA;frame->SetPixelFormat(&format);
+    ComPtr<IWICMetadataQueryWriter> writer;check(SUCCEEDED(frame->GetMetadataQueryWriter(&writer)),"TIFF metadata writer");PROPVARIANT v{};v.vt=VT_UI2;v.uiVal=6;check(SUCCEEDED(writer->SetMetadataByName(L"/ifd/{ushort=274}",&v)),"Tag the TIFF orientation");
+    ComPtr<IWICFormatConverter> c;factory->CreateFormatConverter(&c);c->Initialize(bitmap.Get(),format,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom);check(SUCCEEDED(frame->WriteSource(c.Get(),nullptr))&&SUCCEEDED(frame->Commit())&&SUCCEEDED(encoder->Commit()),"Finish the TIFF");
+    HGLOBAL g{};GetHGlobalFromStream(out.Get(),&g);STATSTG st{};out->Stat(&st,STATFLAG_NONAME);const auto* p=static_cast<const std::uint8_t*>(GlobalLock(g));std::vector<std::uint8_t> bytes(p,p+st.cbSize.QuadPart);GlobalUnlock(g);return bytes;
+}
+void images(){
+    Foreign bitmap;bitmap.formats.push_back({CF_DIB,dib(1800,900)});const auto bmp=gpu::readNotesClipboardImage(bitmap,gpu::notesManagedImageMaximumBytes);
+    check(bmp&&bmp->size()==14+40+1800*900*4+7&&(*bmp)[0]=='B'&&(*bmp)[1]=='M',"A pasted DIB (with the fixture's 7 padding bytes) becomes a bitmap file");BITMAPFILEHEADER file{};std::memcpy(&file,bmp->data(),sizeof(file));check(file.bfOffBits==54&&file.bfSize==bmp->size(),"Its pixels follow the header");
+    const auto managed=gpu::notesManagedImageFromData(*bmp);check(managed.pixelWidth==1600&&managed.pixelHeight==800,"The managed copy is at most 1600 pixels on its longest side");
+    const auto png=decode(managed.png);const auto at=[&](unsigned x,unsigned y){return png.rgba.data()+(std::size_t(y)*png.width+x)*4;};
+    check(png.width==1600&&png.height==800&&at(100,400)[0]>250&&at(100,400)[2]<5&&at(1500,400)[2]>250&&at(1500,400)[0]<5&&at(100,10)[3]==255,"The managed copy keeps the picture, upright and opaque");
+    const auto little=gpu::notesManagedImageFromData(*gpu::readNotesClipboardImage(*[]{static Foreign f;f.formats={{CF_DIB,dib(64,32)}};return &f;}(),1<<20));check(little.pixelWidth==64&&little.pixelHeight==32,"A small image is never enlarged");
+    const auto tiff=orientedTiff();const auto turned=gpu::notesManagedImageFromData(tiff);const auto t=decode(turned.png);
+    check(turned.pixelWidth==20&&turned.pixelHeight==40&&t.width==20&&t.height==40&&t.rgba[(19)*4]>250&&t.rgba[(19)*4+2]<5&&t.rgba[2]>250,"EXIF orientation 6 turns the picture as the source thumbnail does");
+    Foreign pngData;pngData.formats.push_back({static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"PNG")),std::string(managed.png.begin(),managed.png.end())});pngData.formats.push_back({CF_DIB,dib(4,4)});
+    const auto direct=gpu::readNotesClipboardImage(pngData,gpu::notesManagedImageMaximumBytes);check(direct&&direct->size()==managed.png.size()+7&&std::equal(managed.png.begin(),managed.png.end(),direct->begin()),"Registered PNG data (with the fixture's padding) is preferred over a DIB");
+    const auto again=gpu::notesManagedImageFromData(*direct);check(again.pixelWidth==1600&&again.pixelHeight==800,"Padded PNG data still decodes");
+    check(!gpu::readNotesClipboardImage(pngData,16),"Image data above the limit is not read");Foreign none;none.text(u"text");check(!gpu::readNotesClipboardImage(none,1<<20),"Text alone is no image");
+    bool failed{};try{const std::vector<std::uint8_t> junk(64,7);(void)gpu::notesManagedImageFromData(junk);}catch(const gpu::NotesMediaFailure& f){failed=f.error==mod::NotesMediaError::decodingFailed;}check(failed,"Unreadable data is a decoding failure");
+    // The managed copy under an owned temporary app root.
+    const auto root=std::filesystem::temp_directory_path()/("EndfieldHUD-Notes-Images-"+data::makeUUID());check(!std::filesystem::exists(root),"New temporary root");
+    struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code e;std::filesystem::remove_all(p,e);}}cleanup{root};std::filesystem::create_directory(root);
+    const auto name=gpu::writeNotesManagedImage(root,managed.png);const auto path=root/"Notes"/"Images"/name;
+    check(name.size()==40&&name.ends_with(".png")&&data::validUUID(std::string_view(name).substr(0,36))&&std::filesystem::file_size(path)==managed.png.size(),"A managed copy is a new <UUID>.png under Notes/Images");
+    std::size_t files{};for(const auto& e:std::filesystem::directory_iterator(root/"Notes"/"Images")){(void)e;++files;}check(files==1,"No temporary file remains");
+    check(!gpu::removeNotesManagedImage(root,"../escape.png")&&!gpu::removeNotesManagedImage(root,"not-a-uuid-name-but-forty-characters.png")&&std::filesystem::exists(path),"Only a valid managed name is ever removed");
+    check(gpu::removeNotesManagedImage(root,name)&&!std::filesystem::exists(path)&&gpu::removeNotesManagedImage(root,name),"Removing a managed copy deletes exactly it; a missing one is fine");
+    // Source geometry: width min(210,160/ratio), height width*ratio+24, on top, selected.
+    std::vector<data::Note> saved;mod::NotesState state({},{[&](const data::Note& n){saved.push_back(n);},[](std::string_view){}});state.setWorkspaceBounds({0,0,1200,800});
+    const auto id=data::makeUUID();check(state.createManagedImage(id,5,name,1600,800,{110,75})&&saved.size()==1,"A managed image note commits once");const auto& n=*state.note(id);
+    check(n.kind==data::NoteKind::image&&n.imageName==name&&!n.media&&n.x==110&&n.y==75&&n.width==210&&n.height==129&&n.zIndex==0&&state.selection()==std::optional<std::string>(id),"Source managed-image geometry, order and selection");
+    check(state.createManagedImage(data::makeUUID(),6,name,100,400,{110,75})&&state.notes().back().width==110&&state.notes().back().height==184&&state.notes().back().zIndex==1,"A tall image keeps the source 110-point minimum width and stacks on top");
+    bool rejected{};try{state.createManagedImage(data::makeUUID(),7,"photo.png",10,10,{0,0});}catch(const std::invalid_argument&){rejected=true;}check(rejected,"Only managed names are accepted");
+}
 // System-clipboard stand-in: every write and read crosses the real data-object codec.
 struct Clipboard final:gpu::NotesClipboard {
     ComPtr<IDataObject> data;unsigned reads{},writes{};
@@ -164,7 +225,7 @@ void workspace(HWND hwnd){
 }
 } // namespace
 int main(){
-    try{Apartment apartment;Window window;codecs();richPaste();dataObjects();workspace(window.value);
+    try{Apartment apartment;Window window;codecs();richPaste();dataObjects();images();workspace(window.value);
         std::cout<<"PASS "<<checks<<" Notes clipboard contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

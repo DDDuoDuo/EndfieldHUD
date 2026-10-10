@@ -177,6 +177,9 @@ public:
     bool createChecklist(std::string noteID,std::string firstItemID,double createdAt);
     bool createMedia(std::string noteID,double createdAt,std::string reference,core::Point,
         std::shared_ptr<void> accessLease={}); // retained through inspection handoff/playback/card retirement
+    // A pasted image already copied to Notes/Images (NotesState::createManagedImage);
+    // its card decodes the copy through options.legacyImagePath.
+    bool createManagedImage(std::string noteID,double createdAt,std::string imageName,unsigned pixelWidth,unsigned pixelHeight,core::Point);
     // Explicit relink of an unavailable media note to a newly chosen, inspected
     // Windows file (NotesState::replaceMedia); the old decode retires normally.
     bool relinkMedia(std::string_view noteID,std::string reference,std::shared_ptr<void> accessLease={});

@@ -75,6 +75,11 @@ public:
     // Original source aspect-derived size/position, one persistence boundary,
     // then select without an editor. No file bytes or file access occurs here.
     bool createMedia(std::string id,double createdAt,std::string reference,Point);
+    // Source NotesStore.importImage(data:): a managed "<UUID>.png" copy already
+    // written under Notes/Images, sized from its pixels (width min(210,
+    // 160/max(.1,ratio)), height width*ratio+24), on top, constrained; one
+    // persistence boundary, then selected. False keeps no note (see error()).
+    bool createManagedImage(std::string id,double createdAt,std::string imageName,unsigned pixelWidth,unsigned pixelHeight,Point);
     // Explicit relink of an existing media note (an imported Mac bookmark or a
     // moved file the user chose again): only its validated Windows reference
     // changes; identity, geometry, z-order, pin, selection and createdAt stay.

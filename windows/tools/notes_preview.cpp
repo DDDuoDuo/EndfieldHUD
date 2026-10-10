@@ -1,5 +1,6 @@
 #include "tools/notes_preview.hpp"
 #include "tools/notes_format_menu.hpp"
+#include "native/notes_managed_image.hpp"
 #include "native/module_scene.hpp"
 #include "native/layer_group.hpp"
 #include "native/module_registration.hpp"
@@ -75,7 +76,7 @@ struct NotesPreview::Impl {
     std::optional<std::string>relinkNote,relinkTarget;
     std::function<void(std::string_view)>actionSink;
     // Read once per paste key and written once per cut/copy key; no listener.
-    std::shared_ptr<gpu::NotesClipboard>clipboard{gpu::systemNotesClipboard()};gpu::NotesClickCount editorClicks;
+    std::shared_ptr<gpu::NotesClipboard>clipboard{gpu::systemNotesClipboard()};gpu::NotesClickCount editorClicks;std::filesystem::path dataRoot;
     app::ClientMetrics metrics;Matrix workspaceWorld,confirmWorld;core::Projection controlsProjection,confirmationProjection,workspaceProjection;
     std::vector<Track>tracks;std::vector<gpu::LayerCompositionEntry>composed;
     std::array<double,4>toolbarStarted{-1,-1,-1,-1};
@@ -119,7 +120,11 @@ struct NotesPreview::Impl {
         data::detail::validateRoot(root);need(std::filesystem::create_directory(root),"Create isolated Notes fixture directory");
         store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;if(initialNotes.empty())store->upsert(sample);else for(const auto&note:initialNotes)store->upsert(note);
         }
-        state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){store->remove(id);}});
+        dataRoot=root;
+        // Source NotesStore.delete: a managed image no remaining note uses is removed with its last note.
+        state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){
+            std::optional<std::string> image;for(const auto&n:store->notes())if(n.id==id){image=n.imageName;break;}store->remove(id);
+            if(image&&std::none_of(store->notes().begin(),store->notes().end(),[&](const data::Note&n){return n.imageName==image;}))gpu::removeNotesManagedImage(dataRoot,*image);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
         if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;
         wo.legacyImagePath=[root](std::string_view name){return managedImagePath(root,name);};
@@ -154,6 +159,22 @@ struct NotesPreview::Impl {
     if(!mediaActive||!state->notesSelected()||paths.empty())return false;need(std::isfinite(point.x)&&std::isfinite(point.y),"Media import requires a finite insertion point");
     if(!relink&&paths.size()>10000-state->notes().size()){setMediaError(windowsText(recordLimit,language()));return false;}for(const auto&path:paths)if(!data::validWindowsFilePath(path)){setMediaError(mediaErrorText(mod::NotesMediaError::unavailable));return false;}if(!finish())return false;startImageWorker();
     std::vector<Impl::Import>pending;std::vector<gpu::NotesImageRequest>requests;pending.reserve(paths.size());requests.reserve(paths.size());need(importSerial!=std::numeric_limits<std::uint64_t>::max(),"Media import generation exhausted");const auto serial=importSerial+1;for(std::size_t n=0;n<paths.size();++n){const auto key="notes.import."+std::to_string(mediaGeneration)+"."+std::to_string(serial)+"."+std::to_string(n);pending.push_back({key,paths[n],{},E_PENDING,lease});requests.push_back({key,paths[n],serial,64,false,lease,true});}if(sharedMedia.broker)sharedMedia.broker->setInspections(sharedMedia.client,serial,requests);else imageDecoder->setInspections(requests);pendingImports=std::move(pending);importSerial=serial;importPoint=point;relinkTarget=relink;setMediaError({});return true;
+    }
+    // Source NotesCanvas.importImage(data:) / NotesStore.importImage(data:):
+    // synchronous like the source (one explicit paste), bounded by its 128 MB
+    // input and 1600 px thumbnail; the copy is written before the note commits
+    // and removed if that commit fails.
+    bool pasteImage(std::span<const std::uint8_t> bytes,core::Point point){
+        if(!mediaActive||!state->notesSelected())return false;if(!finish())return false;
+        if(state->notes().size()>=10000){setMediaError(windowsText(recordLimit,language()));return true;}
+        gpu::NotesManagedImage image;
+        try{image=gpu::notesManagedImageFromData(bytes);}catch(const gpu::NotesMediaFailure& failure){
+            setMediaError(failure.error==mod::NotesMediaError::imageTooLarge?core::localized("Choose an image smaller than 128 MB.","请选择小于 128 MB 的图片。",language()):core::localized("This file could not be opened as an image.","无法将此文件作为图片打开。",language()));return true;}
+        std::string name;try{name=gpu::writeNotesManagedImage(dataRoot,image.png);}catch(const std::exception& e){setMediaError(core::localized("Notes could not be saved or opened: ","无法保存或打开便笺：",language())+e.what());return true;}
+        const auto id=data::makeUUID();bool created{};
+        try{created=workspace->createManagedImage(id,data::foundationNow(),name,image.pixelWidth,image.pixelHeight,point);}catch(...){gpu::removeNotesManagedImage(dataRoot,name);throw;}
+        if(!created){gpu::removeNotesManagedImage(dataRoot,name);setMediaError(state->error());return true;}
+        setMediaError(std::nullopt);if(const auto token=workspace->cardToken(id))track(*token,TrackKind::create,currentTime);return true;
     }
     void clearInspections(){if(sharedMedia.broker)sharedMedia.broker->cancelInspections(sharedMedia.client,std::max<std::uint64_t>(1,importSerial));else if(imageDecoder)imageDecoder->setInspections({});}
     void cancelImport(){clearInspections();pendingImports.clear();relinkTarget.reset();}
@@ -381,7 +402,11 @@ bool NotesPreview::key(const app::KeyEvent&e,double t,std::optional<NotesKeyModi
     // field open imports pasted media files at canvas point (110,75).
     if(!editor&&i.moduleInput&&i.moduleVisible&&i.modules.requested()==core::Module::notes&&e.kind==app::KeyKind::down&&e.value=='V'&&i.clipboard&&i.state->notesSelected()){
         const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
-        if(!keys.control||keys.shift||keys.alt||keys.system)return false;const auto paths=i.clipboard->readFiles();return !paths.empty()&&i.beginImport(paths,{110,75});}
+        if(!keys.control||keys.shift||keys.alt||keys.system)return false;
+        // Source importPasteboard: image/movie file URLs, else PNG/TIFF data.
+        auto paths=i.clipboard->readFiles();std::erase_if(paths,[](const std::string&p){return !mod::notesMediaFileName(p);});
+        if(!paths.empty())return i.beginImport(paths,{110,75});
+        const auto image=i.clipboard->readImage(gpu::notesManagedImageMaximumBytes);return image&&i.pasteImage(*image,{110,75});}
     if(!editor||!i.moduleInput)return false;gpu::ProjectedEditorResult result;const auto keys=modifiers?*modifiers:NotesKeyModifiers{GetKeyState(VK_CONTROL)<0,GetKeyState(VK_SHIFT)<0,e.alt||GetKeyState(VK_MENU)<0,GetKeyState(VK_LWIN)<0||GetKeyState(VK_RWIN)<0};
     // Source Edit menu Cut/Copy/Paste (AppDelegate) on the open field.
     if(e.kind==app::KeyKind::down&&keys.control&&!keys.shift&&!keys.alt&&!keys.system&&(e.value=='X'||e.value=='C'||e.value=='V')){

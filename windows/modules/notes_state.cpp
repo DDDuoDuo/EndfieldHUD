@@ -158,6 +158,19 @@ bool NotesState::createMedia(std::string id,double createdAt,std::string referen
     try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes media import failed";++revision_;return false;}
     error_.reset();replace(item);(void)select(item.id);++revision_;return true;
 }
+bool NotesState::createManagedImage(std::string id,double createdAt,std::string imageName,unsigned pixelWidth,unsigned pixelHeight,Point point){
+    writable();if(!notesSelected_)return false;
+    if(!ehud::data::validUUID(id)||note(id)||!std::isfinite(createdAt)||!finite(point))throw std::invalid_argument("Invalid new managed image identity/time/position");
+    if(imageName.size()!=40||!imageName.ends_with(".png")||!ehud::data::validUUID(std::string_view(imageName).substr(0,36)))throw std::invalid_argument("Managed image names are \"<UUID>.png\"");
+    if(pixelWidth<1||pixelHeight<1||pixelWidth>65536||pixelHeight>65536)throw std::invalid_argument("Invalid managed image dimensions");
+    if(editing_)throw std::logic_error("Finish Notes editor before importing an image");
+    if(notes_.size()>=10000)throw std::length_error("Notes record bound exceeded");
+    const auto ratio=double(pixelHeight)/double(std::max(1u,pixelWidth));const auto width=std::min(210.,160/std::max(.1,ratio));
+    Note item{.id=std::move(id),.kind=ehud::data::NoteKind::image,.x=point.x,.y=point.y,.width=width,.height=width*ratio+24,.createdAt=createdAt};item.imageName=std::move(imageName);
+    std::int64_t maximum=-1;for(const auto&n:notes_)maximum=std::max(maximum,n.zIndex);item.zIndex=maximum<std::numeric_limits<std::int64_t>::max()?maximum+1:maximum;item=constrained(std::move(item),workspace_);
+    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes image import failed";++revision_;return false;}
+    error_.reset();replace(item);(void)select(item.id);++revision_;return true;
+}
 bool NotesState::replaceMedia(std::string_view id,std::string reference){
     writable();auto*current=find(id);if(!current||current->kind!=ehud::data::NoteKind::image||!current->media||current->drawing)throw std::invalid_argument("Relink requires an existing referenced media note");
     if(editing_)throw std::logic_error("Finish Notes editor before relinking media");

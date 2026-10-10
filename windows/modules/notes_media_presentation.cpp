@@ -67,3 +67,14 @@ NotesMediaProgressPose NotesMediaProgress::sample(double now)const{
 }
 bool NotesMediaProgress::needsFrame(double now)const{need(std::isfinite(now),"Nonfinite media progress clock");return active_&&now<start_+1;}
 } // namespace endfield::modules
+namespace endfield::modules {
+std::span<const std::string_view> notesMediaFileExtensions()noexcept{
+    static constexpr std::string_view values[]{"png","jpg","jpeg","gif","heic","heif","tif","tiff","bmp","webp","jp2","mov","mp4","m4v","avi","mpeg","mpg"};return values;
+}
+bool notesMediaFileName(std::string_view path)noexcept{
+    const auto dot=path.find_last_of('.');const auto slash=path.find_last_of("\\/");if(dot==std::string_view::npos||(slash!=std::string_view::npos&&dot<slash)||dot+1>=path.size())return false;
+    const auto extension=path.substr(dot+1);
+    for(const auto value:notesMediaFileExtensions())if(value.size()==extension.size()&&std::equal(value.begin(),value.end(),extension.begin(),[](char a,char b){return a==(b>='A'&&b<='Z'?char(b-'A'+'a'):b);}))return true;
+    return false;
+}
+} // namespace endfield::modules

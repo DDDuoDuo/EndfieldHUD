@@ -20,6 +20,8 @@
 #include <stdexcept>
 #include <string_view>
 #include <wrl/client.h>
+#include <cstring>
+#include <optional>
 
 namespace { std::atomic<bool> counting{}; std::atomic<std::size_t> allocations{}; }
 void* operator new(std::size_t n) {
@@ -815,7 +817,8 @@ void deletionKeys(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControl
 // Stands in for the system clipboard: every copy and paste crosses the real
 // data-object codec, and the system clipboard is never opened.
 struct SyntheticClipboard final:gpu::NotesClipboard{
-    Microsoft::WRL::ComPtr<IDataObject> data;std::vector<std::string> files;unsigned textReads{},fileReads{},writes{};
+    Microsoft::WRL::ComPtr<IDataObject> data;std::vector<std::string> files;std::optional<std::vector<std::uint8_t>> image;unsigned textReads{},fileReads{},writes{};
+    std::optional<std::vector<std::uint8_t>> readImage(std::size_t maximum)override{return image&&image->size()<=maximum?image:std::nullopt;}
     std::optional<gpu::NotesClipboardText> readText(std::uint32_t maximum)override{++textReads;return data?gpu::readNotesClipboardData(*data.Get(),maximum):std::nullopt;}
     std::vector<std::string> readFiles()override{++fileReads;return files;}
     bool writeText(const gpu::NotesClipboardText&v)override{++writes;data=gpu::makeNotesClipboardData(v);return true;}
@@ -858,6 +861,30 @@ void wordSelection(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesContro
     const tools::NotesKeyModifiers control{true,false,false,false};const auto before=wide(savedNotes(f.root.path).front().text);
     check(f.pointer(app::PointerKind::doubleClick,at)&&(f.pointer(app::PointerKind::up,at),true)&&f.key(app::KeyKind::down,VK_END)&&f.key(app::KeyKind::down,VK_BACK,control)&&f.key(app::KeyKind::character,0x7f)&&f.key(app::KeyKind::down,VK_ESCAPE),"Ctrl+Backspace at the end deletes the last word; its DEL character inserts nothing");f.tick(.2);
     check(wide(savedNotes(f.root.path).front().text)==before.substr(0,gpu::notesPreviousWordStart(before,static_cast<std::uint32_t>(before.size()))),"Exactly the last word was deleted");
+    f.release();
+}
+// Source Command-V of image data with Notes selected and no field: a managed
+// "<UUID>.png" copy under Notes/Images and an image note, removed with it.
+std::vector<std::uint8_t> bitmapFile(int width,int height){
+    BITMAPFILEHEADER file{};BITMAPINFOHEADER info{};info.biSize=sizeof(info);info.biWidth=width;info.biHeight=height;info.biPlanes=1;info.biBitCount=32;info.biCompression=BI_RGB;
+    file.bfType=0x4d42;file.bfOffBits=sizeof(file)+sizeof(info);file.bfSize=static_cast<DWORD>(file.bfOffBits+std::size_t(width)*height*4);
+    std::vector<std::uint8_t> out(file.bfSize,0x80);std::memcpy(out.data(),&file,sizeof(file));std::memcpy(out.data()+sizeof(file),&info,sizeof(info));return out;
+}
+void imagePaste(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    gpu::LayerRasterizer raster;Fixture f(hwnd,renderer,raster,assets);const auto original=savedNotes(f.root.path).front();
+    auto clipboard=std::make_shared<SyntheticClipboard>();f.preview->setClipboard(clipboard);const tools::NotesKeyModifiers control{true,false,false,false};
+    clipboard->files={"C:\\owned-synthetic\\notes.txt"};clipboard->image=bitmapFile(300,150);
+    check(f.key(app::KeyKind::down,'V',control),"Ctrl+V skips non-media files and pastes the image data");f.tick(.3);
+    auto notes=savedNotes(f.root.path);check(notes.size()==2,"One image note was added");const auto image=*std::find_if(notes.begin(),notes.end(),[&](const data::Note&n){return n.id!=original.id;});
+    check(image.kind==data::NoteKind::image&&image.imageName&&!image.media&&image.x==110&&image.y==75&&image.width==210&&image.height==129,"The note is a source managed image at the paste point");
+    const auto path=f.root.path/"Notes"/"Images"/std::filesystem::u8path(*image.imageName);check(std::filesystem::exists(path)&&std::filesystem::file_size(path)>8,"Its managed PNG copy is under Notes/Images");
+    clipboard->files.clear();clipboard->image=std::vector<std::uint8_t>(64,7);
+    check(f.key(app::KeyKind::down,'V',control)&&f.preview->mediaError()&&(*f.preview->mediaError()=="无法将此文件作为图片打开。"||*f.preview->mediaError()=="This file could not be opened as an image.")&&savedNotes(f.root.path).size()==2,"Unreadable image data shows the source invalid-image text and adds nothing");
+    std::size_t files{};for(const auto&e:std::filesystem::directory_iterator(path.parent_path())){(void)e;++files;}check(files==1,"A failed paste leaves no file");
+    check(f.key(app::KeyKind::down,VK_DELETE),"Delete asks to remove the selected image note");f.tick(.3);
+    check(f.pointer(app::PointerKind::down,confirmationPoint(image,true))&&(f.pointer(app::PointerKind::up,confirmationPoint(image,true)),true),"Confirm the deletion");f.tick(.5);
+    check(savedNotes(f.root.path).size()==1&&!std::filesystem::exists(path),"Deleting its last note removes the managed copy");
+    clipboard->image.reset();check(!f.key(app::KeyKind::down,'V',control),"Nothing to paste leaves the key unconsumed");
     f.release();
 }
 void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
@@ -935,6 +962,7 @@ int wmain(int argc, wchar_t** argv) {
         deletionKeys(window.hwnd,renderer,assets);
         clipboardKeys(window.hwnd,renderer,assets);
         wordSelection(window.hwnd,renderer,assets);
+        imagePaste(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

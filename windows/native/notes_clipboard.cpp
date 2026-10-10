@@ -129,6 +129,7 @@ std::optional<std::string> globalBytes(IDataObject& source,CLIPFORMAT format,std
 }
 class SystemClipboard final:public NotesClipboard {
 public:
+    std::optional<std::vector<std::uint8_t>> readImage(std::size_t maximum)override{ComPtr<IDataObject> source;if(FAILED(OleGetClipboard(&source))||!source)return std::nullopt;try{return readNotesClipboardImage(*source.Get(),maximum);}catch(const std::bad_alloc&){return std::nullopt;}}
     std::optional<NotesClipboardText> readText(std::uint32_t maximum)override{ComPtr<IDataObject> source;if(FAILED(OleGetClipboard(&source))||!source)return std::nullopt;try{return readNotesClipboardData(*source.Get(),maximum);}catch(const std::bad_alloc&){return std::nullopt;}}
     std::vector<std::string> readFiles()override{ComPtr<IDataObject> source;if(FAILED(OleGetClipboard(&source))||!source)return {};try{return readShelfTransferPaths(*source.Get());}catch(const std::exception&){return {};}}
     bool writeText(const NotesClipboardText& value)override{
@@ -160,6 +161,24 @@ std::optional<NotesClipboardText> readNotesClipboardData(IDataObject& source,std
             if(notesClipboardPlatformText(decoded->text)==platform)value=std::move(*decoded);
     if(!value.rich)value.text=notesClipboardDocumentText(platform);
     if(value.text.size()>maximum)return std::nullopt;return value;
+}
+std::optional<std::vector<std::uint8_t>> readNotesClipboardImage(IDataObject& source,std::size_t maximum){
+    auto bytes=[](const std::string& v){return std::vector<std::uint8_t>(v.begin(),v.end());};
+    static const auto png=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"PNG"));
+    if(const auto data=globalBytes(source,png,maximum);data&&!data->empty())return bytes(*data);
+    for(const CLIPFORMAT format:{CLIPFORMAT(CF_DIBV5),CLIPFORMAT(CF_DIB)}){
+        const auto dib=globalBytes(source,format,maximum>14?maximum-14:0);if(!dib||dib->size()<sizeof(BITMAPINFOHEADER))continue;
+        BITMAPINFOHEADER header{};std::memcpy(&header,dib->data(),sizeof(header));if(header.biSize<sizeof(BITMAPINFOHEADER)||header.biSize>dib->size())continue;
+        // The pixel offset follows the header, BI_BITFIELDS masks of a plain
+        // info header and the color table, exactly as in a bitmap file.
+        const std::uint64_t masks=header.biSize==sizeof(BITMAPINFOHEADER)?(header.biCompression==BI_BITFIELDS?12:header.biCompression==6?16:0):0;
+        const std::uint64_t colors=header.biClrUsed?header.biClrUsed:(header.biBitCount<=8?(1ull<<header.biBitCount):0);
+        const std::uint64_t offset=sizeof(BITMAPFILEHEADER)+header.biSize+masks+colors*4;if(offset>sizeof(BITMAPFILEHEADER)+dib->size())continue;
+        BITMAPFILEHEADER file{};file.bfType=0x4d42;file.bfSize=static_cast<DWORD>(sizeof(BITMAPFILEHEADER)+dib->size());file.bfOffBits=static_cast<DWORD>(offset);
+        std::vector<std::uint8_t> out(sizeof(file)+dib->size());std::memcpy(out.data(),&file,sizeof(file));std::memcpy(out.data()+sizeof(file),dib->data(),dib->size());return out;
+    }
+    if(const auto data=globalBytes(source,CF_TIFF,maximum);data&&!data->empty())return bytes(*data);
+    return std::nullopt;
 }
 std::shared_ptr<NotesClipboard> systemNotesClipboard(){return std::make_shared<SystemClipboard>();}
 #endif

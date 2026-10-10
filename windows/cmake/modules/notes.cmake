@@ -15,6 +15,8 @@ if(WIN32)
   # Word/paragraph navigation and multi-click selection (OS icu.dll word rules
   # loaded on demand, character-class fallback): native/notes_text_navigation.
   target_sources(hud_native PRIVATE native/notes_text_navigation.cpp)
+  # Pasted images as source managed "<UUID>.png" copies under Notes/Images.
+  target_sources(hud_native PRIVATE native/notes_managed_image.cpp)
   target_link_libraries(hud_native PRIVATE hud_shelf_transfer shell32)
 
   if(BUILD_TESTING)
@@ -36,7 +38,7 @@ if(WIN32)
     # promotion through a real workspace; synthetic data objects only.
     add_executable(notes_clipboard_tests tests/notes_clipboard_tests.cpp)
     target_compile_definitions(notes_clipboard_tests PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(notes_clipboard_tests PRIVATE hud_native)
+    target_link_libraries(notes_clipboard_tests PRIVATE hud_native shlwapi windowscodecs ole32)
     add_test(NAME notes_clipboard_contracts COMMAND notes_clipboard_tests)
     list(APPEND EHUD_NOTES_TARGETS notes_clipboard_tests)
     add_executable(notes_text_navigation_tests tests/notes_text_navigation_tests.cpp)

@@ -1,4 +1,5 @@
 #include "native/notes_image_decoder.hpp"
+#include "native/notes_managed_image.hpp"
 #ifdef _WIN32
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -80,5 +81,36 @@ public:
 };
 }
 std::unique_ptr<NativeNotesImageDecoder::Sequence>makeNotesWICSequence(const NotesImageRequest&r,NotesImageAccess access){return std::make_unique<WicSequence>(r,std::move(access));}
+// Source NotesStore.importImage(data:): ImageIO thumbnail (always, with the
+// EXIF transform, at most 1600 px) re-encoded as PNG.
+NotesManagedImage transcodeManagedImage(std::span<const std::uint8_t> bytes){
+    need(!bytes.empty(),"Pasted image data is empty");limit(bytes.size()<=notesManagedImageMaximumBytes,modules::NotesMediaError::imageTooLarge,"Pasted image exceeds 128 MB");
+    ComPtr<IWICImagingFactory>factory;check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory)),"Cannot initialize WIC");
+    ComPtr<IStream>input;input.Attach(SHCreateMemStream(bytes.data(),static_cast<UINT>(bytes.size())));need(input!=nullptr,"Cannot read pasted image data");
+    ComPtr<IWICBitmapDecoder>decoder;check(factory->CreateDecoderFromStream(input.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&decoder),"No installed WIC codec reads the pasted image");
+    UINT count{};check(decoder->GetFrameCount(&count),"Cannot read pasted image frames");need(count>0,"Pasted image has no frames");
+    ComPtr<IWICBitmapFrameDecode>frame;check(decoder->GetFrame(0,&frame),"Cannot decode the pasted image");UINT width{},height{};check(frame->GetSize(&width,&height),"Cannot read pasted image size");
+    limit(width&&height&&width<=65536&&height<=65536&&std::uint64_t(width)*height<=NativeNotesImageDecoder::maximumInputPixels,modules::NotesMediaError::imageTooLarge,"Pasted image exceeds the 64 MP decode limit");
+    ComPtr<IWICMetadataQueryReader>meta;frame->GetMetadataQueryReader(&meta);const auto orientation=metadata(meta.Get(),L"/app1/ifd/{ushort=274}").value_or(metadata(meta.Get(),L"/ifd/{ushort=274}").value_or(1));
+    const double scale=std::min(1.,double(notesManagedImageMaximumPixelSize)/std::max(width,height));
+    const unsigned w=std::max(1u,static_cast<unsigned>(std::round(width*scale))),h=std::max(1u,static_cast<unsigned>(std::round(height*scale)));
+    NotesImageFrame image{w,h,0,pixels(factory.Get(),frame.Get(),w,h)};orient(image,orientation);
+    ComPtr<IWICBitmap>bitmap;check(factory->CreateBitmapFromMemory(image.width,image.height,GUID_WICPixelFormat32bppRGBA,image.width*4,static_cast<UINT>(image.straightRGBA.size()),image.straightRGBA.data(),&bitmap),"Cannot stage the managed image");
+    ComPtr<IStream>output;check(CreateStreamOnHGlobal(nullptr,TRUE,&output),"Cannot allocate the managed image");
+    ComPtr<IWICBitmapEncoder>encoder;check(factory->CreateEncoder(GUID_ContainerFormatPng,nullptr,&encoder),"No PNG encoder is installed");check(encoder->Initialize(output.Get(),WICBitmapEncoderNoCache),"Cannot start the PNG encoder");
+    ComPtr<IWICBitmapFrameEncode>target;check(encoder->CreateNewFrame(&target,nullptr),"Cannot create the PNG frame");check(target->Initialize(nullptr),"Cannot initialize the PNG frame");check(target->SetSize(image.width,image.height),"Cannot size the PNG frame");
+    WICPixelFormatGUID format=GUID_WICPixelFormat32bppBGRA;check(target->SetPixelFormat(&format),"Cannot choose the PNG pixel format");
+    ComPtr<IWICFormatConverter>converted;check(factory->CreateFormatConverter(&converted),"Cannot create the PNG pixel converter");check(converted->Initialize(bitmap.Get(),format,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom),"Cannot convert the managed image");
+    check(target->WriteSource(converted.Get(),nullptr),"Cannot write the PNG frame");check(target->Commit(),"Cannot finish the PNG frame");check(encoder->Commit(),"Cannot finish the PNG image");
+    HGLOBAL global{};check(GetHGlobalFromStream(output.Get(),&global),"Cannot read the managed image");STATSTG stat{};check(output->Stat(&stat,STATFLAG_NONAME),"Cannot size the managed image");
+    NotesManagedImage result;result.pixelWidth=image.width;result.pixelHeight=image.height;const auto* data=static_cast<const std::uint8_t*>(GlobalLock(global));need(data!=nullptr,"Cannot read the managed image");
+    result.png.assign(data,data+stat.cbSize.QuadPart);GlobalUnlock(global);return result;
+}
 } // namespace endfield::native::detail
+namespace endfield::native {
+NotesManagedImage notesManagedImageFromData(std::span<const std::uint8_t> bytes){
+    try{return detail::transcodeManagedImage(bytes);}catch(const NotesMediaFailure&){throw;}catch(const std::bad_alloc&){throw NotesMediaFailure(modules::NotesMediaError::imageTooLarge,"The pasted image does not fit in memory");}
+    catch(const std::exception&){throw NotesMediaFailure(modules::NotesMediaError::decodingFailed,"The pasted data could not be opened as an image");}
+}
+} // namespace endfield::native
 #endif

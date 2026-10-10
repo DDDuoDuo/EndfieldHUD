@@ -1,5 +1,7 @@
 #pragma once
 #include "modules/notes_presentation.hpp"
+#include <span>
+#include <string_view>
 
 namespace endfield::modules {
 enum class NotesMediaKind {image,gif,video};
@@ -15,6 +17,10 @@ enum class NotesMediaError {invalidReference,unavailable,unsupportedFormat,image
 // core::localized, whose catalog carries the other source languages.
 struct NotesSourceText {std::string_view english,simplifiedChinese;};
 NotesSourceText notesMediaErrorText(NotesMediaError)noexcept;
+// Source NotesMediaFactory.supportedFileExtensions: the convenience filter for
+// pasted/picked media files (the decoder still decides what the OS can read).
+std::span<const std::string_view> notesMediaFileExtensions()noexcept;
+bool notesMediaFileName(std::string_view path)noexcept; // case-insensitive extension match
 struct NotesMediaStatus {
     NotesMediaState state{NotesMediaState::hidden};
     std::optional<std::string> localizedError;

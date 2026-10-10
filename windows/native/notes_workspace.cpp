@@ -492,6 +492,12 @@ bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::stri
     need(!i.newMediaLease,"Nested media creation is not permitted");i.newMediaLease.emplace(std::move(id),std::move(access));
     struct Clear {decltype(i.newMediaLease)&value;~Clear(){value.reset();}}clear{i.newMediaLease};i.sync();i.action("createdMedia");return true;
 }
+bool NativeNotesWorkspace::createManagedImage(std::string id,double createdAt,std::string imageName,unsigned pixelWidth,unsigned pixelHeight,core::Point point){auto&i=*impl_;i.check();if(!i.state.notesSelected())return false;
+    need(i.slots.size()+i.deletingCards.size()+i.retiredCards.size()<i.options.maximumRetainedCards,"Notes retained-card capacity reached");
+    // Source managed-image cards are at most 210x184 before the workspace cap.
+    Note prototype{.id=id,.kind=ehud::data::NoteKind::image,.width=210,.height=184,.createdAt=createdAt};i.geometry(constrainedRect(prototype,i.state.workspaceBounds()));
+    i.finishRequired();if(!i.state.createManagedImage(std::move(id),createdAt,std::move(imageName),pixelWidth,pixelHeight,point))return false;i.sync();return true;
+}
 bool NativeNotesWorkspace::relinkMedia(std::string_view id,std::string reference,std::shared_ptr<void>access){auto&i=*impl_;i.check();
     const auto*n=i.state.note(id);need(n&&n->media&&n->kind==ehud::data::NoteKind::image,"Relink requires a referenced media note");
     i.finishRequired();const std::string noteID(id);if(!i.state.replaceMedia(noteID,std::move(reference)))return false;
