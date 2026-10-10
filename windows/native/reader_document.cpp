@@ -1,5 +1,6 @@
 #include "native/reader_document.hpp"
 #include "native/reader_formats.hpp"
+#include "modules/reader_pdf_title.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -128,7 +129,10 @@ void NativeReaderDocument::setFontResources(LayerFontResources fonts){need(bool(
 void NativeReaderDocument::open(const ReaderBook&book,const ReaderCancel&cancelled){auto&i=*impl_;i.onWorker();checkReaderCancelled(cancelled);i.clear();need(book.platform==ReaderReferencePlatform::windows,ReaderErrorCode::unavailable);ReaderLibrary validation;validation.books={book};validation.selected=book.id;validateReaderLibrary(validation);try{auto file=std::make_shared<FileBytes>(book);const auto path=std::filesystem::path(wide(book.windowsPath));auto ext=path.extension().wstring();std::transform(ext.begin(),ext.end(),ext.begin(),[](wchar_t c){return c>=L'A'&&c<=L'Z'?static_cast<wchar_t>(c+32):c;});std::u16string title(reinterpret_cast<const char16_t*>(path.stem().c_str()));
         if(ext==L".txt"){auto text=decodeReaderTXT(readAll(file,32*1024*1024,cancelled));i.plain=std::make_shared<const std::vector<ReaderBlock>>(std::vector<ReaderBlock>{{ReaderBlock::Kind::text,std::move(text),{}}});i.metadata.sections=1;}
         else if(ext==L".epub"){i.epub=std::make_unique<ReaderEPUB>(file,parseReaderXML,cancelled);i.metadata.sections=i.epub->spine().size();if(!i.epub->title().empty())title=i.epub->title();}
-        else if(ext==L".pdf"){need(file->size()<=1024ull*1024*1024,ReaderErrorCode::tooLarge);auto stream=Make<ByteStream>(file);need(bool(stream));winrt::Windows::Storage::Streams::IRandomAccessStream input{nullptr};hr(CreateRandomAccessStreamOverStream(stream.Get(),BSOS_DEFAULT,winrt::guid_of<winrt::Windows::Storage::Streams::IRandomAccessStream>(),winrt::put_abi(input)));try{i.pdf=winrt::Windows::Data::Pdf::PdfDocument::LoadFromStreamAsync(input).get();}catch(const winrt::hresult_error&e){if(e.code()==HRESULT_FROM_WIN32(ERROR_WRONG_PASSWORD))throw ReaderError(ReaderErrorCode::encrypted);throw;}checkReaderCancelled(cancelled);need(i.pdf&&i.pdf.PageCount()>0&&i.pdf.PageCount()<100000,ReaderErrorCode::tooLarge);i.metadata.sections=i.pdf.PageCount();i.pdfInput=std::move(input);}
+        else if(ext==L".pdf"){need(file->size()<=1024ull*1024*1024,ReaderErrorCode::tooLarge);auto stream=Make<ByteStream>(file);need(bool(stream));winrt::Windows::Storage::Streams::IRandomAccessStream input{nullptr};hr(CreateRandomAccessStreamOverStream(stream.Get(),BSOS_DEFAULT,winrt::guid_of<winrt::Windows::Storage::Streams::IRandomAccessStream>(),winrt::put_abi(input)));try{i.pdf=winrt::Windows::Data::Pdf::PdfDocument::LoadFromStreamAsync(input).get();}catch(const winrt::hresult_error&e){if(e.code()==HRESULT_FROM_WIN32(ERROR_WRONG_PASSWORD))throw ReaderError(ReaderErrorCode::encrypted);throw;}checkReaderCancelled(cancelled);need(i.pdf&&i.pdf.PageCount()>0&&i.pdf.PageCount()<100000,ReaderErrorCode::tooLarge);i.metadata.sections=i.pdf.PageCount();i.pdfInput=std::move(input);
+            // Source: PDFDocument title attribute when non-empty, else the file
+            // name (also when its 200-grapheme prefix exceeds the library bound).
+            if(auto metadata=readerPDFTitle(*file,cancelled)){const auto prefix=readerGraphemePrefix(*metadata,200);if(!prefix.empty()&&prefix.size()<=4096){title=std::move(*metadata);i.metadata.pdfMetadataTitleAvailable=true;}}}
         else throw ReaderError(ReaderErrorCode::unsupported);i.metadata.title=readerGraphemePrefix(title,200);need(!i.metadata.title.empty()&&i.metadata.title.size()<=4096);i.file=std::move(file);
     }catch(...){i.clear();throw;}}
 NativeReaderInfo NativeReaderDocument::info()const{need(impl_->worker==GetCurrentThreadId()&&impl_->count()>0);return impl_->metadata;}

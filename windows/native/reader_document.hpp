@@ -6,9 +6,11 @@ namespace endfield::native {
 struct NativeReaderInfo {
     std::string title;std::size_t sections{};
     std::string requestedFont,selectedFont;
-    // Windows.Data.Pdf exposes pages/password state, but no document title.
-    // Filename title is explicit until a verified stream-based metadata reader
-    // is available; this does not affect an already saved library title.
+    // Windows.Data.Pdf exposes pages/password state, but no document title:
+    // modules/reader_pdf_title reads the trailer /Info /Title itself, as the
+    // Mac ReaderDocument takes PDFKit's title attribute. True when this PDF's
+    // title came from that metadata, false for the file-name fallback. Only
+    // new imports read it; an already saved library title never changes.
     bool pdfMetadataTitleAvailable{};
 };
 struct NativeReaderStats {std::uint64_t textLayouts{},pagesRendered{},cacheHits{},pdfRenders{},imageDecodes{},imageDecodeCacheHits{},detailMetadataCacheHits{};std::size_t cachedPages{},cachedImageBytes{};};

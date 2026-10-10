@@ -7,6 +7,19 @@
 # process identity or scheduled notification.
 set(EHUD_LOCAL_TARGETS "")
 
+# --- Reader PDF title (Mac PDFDocument title attribute) ------------------------
+# Windows.Data.Pdf exposes no document information; this bounded reader of the
+# trailer /Info /Title joins the portable Reader library the native document
+# provider already links (zlib for cross-reference and object streams).
+target_sources(hud_reader PRIVATE modules/reader_pdf_title.cpp)
+if(BUILD_TESTING)
+  # tools/reader_pdf_title_reference.sh -> reader-pdf-title-source.json
+  add_executable(reader_pdf_title_tests tests/reader_pdf_title_tests.cpp)
+  target_link_libraries(reader_pdf_title_tests PRIVATE hud_reader)
+  add_test(NAME reader_pdf_title_contracts COMMAND reader_pdf_title_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/reader-pdf-title-source.json)
+  list(APPEND EHUD_LOCAL_TARGETS reader_pdf_title_tests)
+endif()
+
 # --- Reader display-time localization -----------------------------------------
 # Mac Reader captions/ReaderError pairs through the shared five-language
 # catalog plus the Windows-only chooser/picker/import rows. Portable; the
