@@ -197,6 +197,32 @@ std::string text(HWND window,int id) {
     std::string out(std::size_t(n),'\0');WideCharToMultiByte(CP_UTF8,0,value.data(),int(value.size()),out.data(),n,nullptr,nullptr);return out;
 }
 
+// Every visible control of a login page shows its whole text (measured with
+// the control's own font, as the control draws it) and no two controls
+// overlap inside the client area.
+void pageFits(HWND page,const std::string& what) {
+    RECT client{};GetClientRect(page,&client);std::vector<RECT> placed;
+    for(HWND control=GetWindow(page,GW_CHILD);control;control=GetWindow(control,GW_HWNDNEXT)) {
+        if(!(GetWindowLongW(control,GWL_STYLE)&WS_VISIBLE)) continue;
+        RECT box{};GetWindowRect(control,&box);MapWindowPoints(nullptr,page,reinterpret_cast<POINT*>(&box),2);
+        check(box.left>=client.left&&box.top>=client.top&&box.right<=client.right&&box.bottom<=client.bottom,what+": controls stay inside the window");
+        for(const auto& other:placed) {RECT both{};check(!IntersectRect(&both,&box,&other),what+": controls do not overlap");}
+        placed.push_back(box);
+        const int length=GetWindowTextLengthW(control);if(!length) continue;
+        std::wstring value(std::size_t(length)+1,L'\0');GetWindowTextW(control,value.data(),length+1);value.resize(std::size_t(length));
+        wchar_t type[16]{};GetClassNameW(control,type,16);
+        const bool button=_wcsicmp(type,L"Button")==0,singleLine=button||_wcsicmp(type,L"Edit")==0;
+        RECT area{};GetClientRect(control,&area);const int padding=button?12:0;
+        const HDC dc=GetDC(control);const auto previous=SelectObject(dc,reinterpret_cast<HGDIOBJ>(SendMessageW(control,WM_GETFONT,0,0)));
+        RECT need{0,0,area.right-padding,0};
+        DrawTextW(dc,value.c_str(),length,&need,DT_CALCRECT|DT_NOPREFIX|(singleLine?DT_SINGLELINE:DT_WORDBREAK|DT_EXPANDTABS));
+        SelectObject(dc,previous);ReleaseDC(control,dc);
+        check(need.right<=area.right-padding&&need.bottom<=area.bottom,what+": text fits its control ("+std::to_string(need.right)+"x"+std::to_string(need.bottom)+
+              " in "+std::to_string(area.right-padding)+"x"+std::to_string(area.bottom)+")");
+    }
+    check(placed.size()>=4,what+": the page has its controls");
+}
+
 void run() {
     World w;world=&w;OwnerWindow owner;TempDirectory temp;double clock=1000;std::vector<std::string> tags;int schedules{};
     std::filesystem::create_directories(temp.path/L"EndfieldHUD-Login-stale");std::ofstream(temp.path/L"EndfieldHUD-Login-stale"/L"x")<<"stale";
@@ -363,6 +389,17 @@ void run() {
         w.runtime=L"154.0.4258.62";
         check(n::WebViewLoginPresenter::runtimeVersion()==std::optional<std::wstring>(L"154.0.4258.62"),"The runtime version comes from the loader query");
 
+        // G. Both pages show every text whole in all five languages.
+        for(const auto l:{L::english,L::simplifiedChinese,L::traditionalChinese,L::japanese,L::korean}) {
+            const std::string name(endfield::core::languageSetting(l));
+            presenter.setLanguage(l);
+            presenter.present(h::Region::mainland,done);pageFits(loginWindow(),"consent page ("+name+")");presenter.cancel();
+            w.runtime.clear();presenter.present(h::Region::global,done);click(loginWindow(),106);
+            pageFits(loginWindow(),"runtime page ("+name+")");presenter.cancel();w.runtime=L"154.0.4258.62";
+        }
+        presenter.setLanguage(L::english);
+        check(completions==21&&w.environments==environments+1,"Layout checks open no browser");
+
         // E. Destruction while a browser is open: no callback, browser closed.
         presenter.present(h::Region::mainland,done);click(loginWindow(),101);w.pump();w.pump();
         auto last=lastEnvironment->controllers[0];const std::filesystem::path lastProfile=w.userData;
@@ -370,7 +407,7 @@ void run() {
         check(presenter.isPresenting()&&std::filesystem::exists(lastProfile),"Presenting before teardown");
         check(!last->closed,"Browser open before teardown");
     }
-    check(completions==11&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
+    check(completions==21&&lastEnvironment->controllers[0]->closed&&!loginWindow(),"Destroying the presenter closes the browser without a completion");
     check(!std::filesystem::exists(w.userData),"Destroying the presenter removes its private profile");
     check(!IsWindowVisible(owner.hwnd),"Nothing was ever shown");
     lastEnvironment.Reset();world=nullptr;
