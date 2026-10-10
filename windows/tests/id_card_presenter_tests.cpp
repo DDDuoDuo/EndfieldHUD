@@ -47,7 +47,8 @@ void run(const std::filesystem::path&fixture,const std::filesystem::path&resourc
     check(rejects([&]{gpu::IdCardPresenter bad(labels,leaves,options,target,twoPlates);}),"One hover plate");
     gpu::IdCardPresenter presenter(labels,leaves,options,target,baseline);
     check(presenter.highlightNode()==highlight&&!presenter.pending()&&!presenter.apply(),"Unconnected presenter finds the plate and does nothing");
-    gpu::IdCardFeed feed;unsigned frames{};presenter.connect(feed,[&]{++frames;});
+    unsigned frames{};gpu::IdCardFeed feed;presenter.connect(feed,[&]{++frames;});
+    check(feed.connected(),"The feed knows its presenter");
     // 1. Before the profile loads: packet defaults stay, nothing is written.
     check(presenter.pending(),"A new connection applies once");
     check(!presenter.apply()&&calls.empty()&&painted(1)==u"UID: 1000000000"&&presenter.settings()==baseline,"No card: packet captions, textures and settings");
@@ -94,7 +95,20 @@ void run(const std::filesystem::path&fixture,const std::filesystem::path&resourc
     // 7. Withdrawal (area shutdown or unreadable record) returns the baseline.
     feed.withdraw();const auto withdrawn=presenter.apply();
     check(withdrawn&&*withdrawn==baseline&&calls.size()==8&&calls[6]=="restore desktop.profile.background"&&calls[7]=="restore desktop.profile.hover","Without a card the packet textures and settings return");
-    presenter.disconnect();feed.publish(&binding,{});check(!presenter.pending()&&!presenter.apply(),"A disconnected presenter ignores the feed");
+    presenter.disconnect();feed.publish(&binding,{});check(!feed.connected()&&!presenter.pending()&&!presenter.apply(),"A disconnected presenter ignores the feed");
+    // 8. The producing area is destroyed while connected: the packet card returns.
+    {
+        unsigned changes{};
+        {gpu::IdCardFeed scoped;presenter.connect(scoped,[&]{++changes;});scoped.publish(&binding,{avatar.view(),background.view(),hover.view()});
+         check(presenter.apply().has_value()&&calls.size()==11,"A reconnected feed binds its textures again");}
+        check(changes==2&&presenter.pending(),"Feed destruction schedules the presenter");
+        const auto restoredSettings=presenter.apply();
+        check(restoredSettings&&*restoredSettings==baseline&&calls.size()==14&&calls[11]=="restore desktop.profile.avatar","The packet textures and settings return without the feed");
+        check(!presenter.pending()&&!presenter.apply(),"Nothing remains to apply");
+    }
+    // A second presenter takes the feed over; the first is disconnected.
+    gpu::IdCardPresenter other(labels,leaves,options,target,baseline);gpu::IdCardFeed shared;presenter.connect(shared,{});other.connect(shared,{});
+    shared.publish(&binding,{});check(!presenter.pending()&&other.pending(),"One presenter per feed");other.disconnect();
 }
 }
 int wmain(int argc,wchar_t**argv){

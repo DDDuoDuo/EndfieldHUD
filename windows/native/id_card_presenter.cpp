@@ -12,9 +12,11 @@ void IdCardFeed::publish(const modules::IdCardBinding*card,const std::array<std:
     for(const auto&t:textures)if(t)need(t->width>0&&t->height>0&&t->revision>0&&t->rgba.size()==std::size_t(t->width)*t->height*4,"ID card textures are tight straight RGBA8 with a revision");
     card_=card;
     if(card)textures_=textures;else textures_.fill(std::nullopt);
-    ++revision_;if(listener_)listener_();
+    ++revision_;changed();
 }
-void IdCardFeed::withdraw(){card_=nullptr;textures_.fill(std::nullopt);++revision_;if(listener_)listener_();}
+void IdCardFeed::withdraw(){card_=nullptr;textures_.fill(std::nullopt);++revision_;changed();}
+void IdCardFeed::changed(){if(presenter_){presenter_->dirty_=true;if(presenter_->changed_)presenter_->changed_();}}
+IdCardFeed::~IdCardFeed(){if(presenter_){presenter_->feed_=nullptr;presenter_->dirty_=true;if(presenter_->changed_)presenter_->changed_();}}
 
 IdCardTextureTarget idCardTextureTarget(SourceScene&materials){
     return {[&materials](std::string_view id,unsigned w,unsigned h,std::span<const std::uint8_t>rgba,std::uint64_t revision){return materials.replaceTexture(id,w,h,rgba,revision);},
@@ -30,16 +32,18 @@ IdCardPresenter::IdCardPresenter(LayerScene&labels,IdCardCaptionLeaves leaves,La
 }
 IdCardPresenter::~IdCardPresenter(){disconnect();}
 void IdCardPresenter::connect(IdCardFeed&feed,std::function<void()>changed){
-    disconnect();feed_=&feed;dirty_=true;
-    feed.setListener([this,changed=std::move(changed)]{dirty_=true;if(changed)changed();});
+    disconnect();
+    if(feed.presenter_)feed.presenter_->disconnect();
+    feed_=&feed;feed.presenter_=this;changed_=std::move(changed);dirty_=true;
 }
-void IdCardPresenter::disconnect()noexcept{if(feed_){feed_->setListener({});feed_=nullptr;}}
-bool IdCardPresenter::pending()const noexcept{return feed_&&(dirty_||feed_->revision()!=seen_);}
+void IdCardPresenter::disconnect()noexcept{if(feed_){feed_->presenter_=nullptr;feed_=nullptr;}changed_=nullptr;dirty_=false;}
+bool IdCardPresenter::pending()const noexcept{return dirty_||(feed_&&feed_->revision()!=seen_);}
 std::optional<core::source::SourceDesktopFrameSettings>IdCardPresenter::apply(){
     ++stats_.applies;
     if(!pending()){++stats_.unchanged;return std::nullopt;}
-    dirty_=false;seen_=feed_->revision();
-    const auto*card=feed_->card();
+    dirty_=false;seen_=feed_?feed_->revision():0;
+    // No feed (never connected, disconnected or destroyed): the packet card.
+    const auto*card=feed_?feed_->card():nullptr;
     // Captions follow the binding revision; a missing card keeps the packet captions.
     if(card&&card->revision()&&card->revision()!=cardRevision_){cardRevision_=card->revision();if(captions_.update(*card))++stats_.captionRepaints;}
     for(std::size_t k=0;k<3;++k){

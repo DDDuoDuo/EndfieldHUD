@@ -132,7 +132,10 @@ public:
         o.requestImage = [this](m::ProfileImageKind kind, tools::ProfileOwnerOptions::ImageCompletion done) { return chooseImage(kind, std::move(done)); };
         o.chooseColor = [this](std::array<double, 3> initial, const std::function<void(std::array<double, 3>)>& live) { return chooseColor(initial, live); };
         o.cancelPicker = [this] { cancelPickers(); };
-        o.cropChanged = [this](std::string_view target) { host_.recordEvent(modules::EventKind::profileCropChanged, {{"target", std::string(target)}}); };
+        o.cropChanged = [this](std::string_view target) {
+            ++cropEvents_; lastCrop_ = target;
+            host_.recordEvent(modules::EventKind::profileCropChanged, {{"target", std::string(target)}});
+        };
 #ifdef EHUD_PROFILE_ACCOUNT_LINK
         o.loaded = [this](const m::PersonalProfile& p) { if (account_) account_->profileLoaded(p.avatarFilename); };
         o.avatarChanged = [this](const std::optional<std::string>& name) { if (account_) account_->profileAvatarChanged(name); };
@@ -163,7 +166,6 @@ public:
         if (account_) account_->attachProfile(nullptr);
 #endif
         host_.withdraw(gpu::IdCardFeed::serviceKey);
-        feed_.setListener({});
         work_->unlistenCheckpoints(listener_);
         if (fileChoiceOpen_) { fileChoiceOpen_ = false; host_.cancelFileChoice(); }
         owner_.reset();
@@ -251,7 +253,8 @@ private:
     // Hidden coverage choosers.
     tools::ProfileOwnerOptions::ImageCompletion coverageChooser_;
     std::optional<std::array<double, 3>> coverageColor_;
-    unsigned coverageImageAsks_{}, coverageColorAsks_{};
+    unsigned coverageImageAsks_{}, coverageColorAsks_{}, cropEvents_{};
+    std::string lastCrop_;
     // Declaration order: the owner borrows the image source and is destroyed first.
     gpu::LayerImageSource images_;
     std::unique_ptr<tools::ProfileOwner> owner_;
@@ -378,6 +381,15 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
         step.check(coverageColorAsks_ == 1 && owner_->state()->profile().themeColorHex == std::optional<std::string>("0080FF") &&
                    owner_->card()->captions()[4].color[2] == 1, "The chosen colour commits and recolours the card");
         step.check(owner_->perform("profile:popoverClose", t), "The colour popover closes");
+        // Crop sliders: a committed thumbnail zoom records profileCropChanged
+        // {thumbnail} (SystemEventRecorder) and regenerates the card background.
+        const auto backgroundBefore = owner_->card()->backgroundRevision();
+        step.check(owner_->perform("profile:backgroundMenu", t) && owner_->setSlider(m::ProfileField::thumbnailZoom, 2, t), "The thumbnail zoom slider commits");
+        step.check(cropEvents_ == 1 && lastCrop_ == "thumbnail" && owner_->card()->backgroundRevision() > backgroundBefore, "The crop is recorded once and moves the card background");
+        drainUntil(step, [&] { const auto* b = feed_.texture(gpu::IdCardTextureSlot::background); return b && b->revision == owner_->card()->backgroundRevision(); });
+        step.check(feed_.texture(gpu::IdCardTextureSlot::background) && feed_.texture(gpu::IdCardTextureSlot::background)->revision == owner_->card()->backgroundRevision(),
+                   "The regenerated card background is published");
+        step.check(owner_->perform("profile:popoverClose", t), "The card theme popover closes");
         // 3. Official sync: the card shows the synced UID, never a # tag.
         sink_->setProfileSyncLocked(true);
         modules::hypergryph::GameProfileUpdate update;
@@ -419,6 +431,13 @@ void ProfileArea::coverageCard(app::ModuleCoverage& step) {
     drainUntil(step, [&] { return owner_->loaded() && owner_->card(); });
     step.check(owner_->card() && feed_.card() == owner_->card(), "The loaded card is published");
     if (step.cycle != 0) return;
+    // Quit/session-end flush: the live Work Mode total lands once above the
+    // stored lifetime and profile.json is drained; a flush never blocks quitting.
+    const double now = step.time;
+    step.check(flush(now), "The profile flush never blocks quitting");
+    const auto lifetime = 3600 + work_->trackedWorkSeconds(now);
+    step.check(std::abs(ehud::data::ProfileStore(coverageRoot_).value().accumulatedWorkSeconds - lifetime) < 1e-6 && owner_->serviceStatus() && !owner_->serviceStatus()->dirty,
+               "The flushed lifetime is the stored hours plus the live Work Mode total");
     const auto fixture = fixture_ ? fixture_("profile.idCardCaptions") : fs::path{};
     step.check(!fixture.empty(), "The exported caption fixture is declared");
     const auto bytes = ehud::data::detail::readFile(fixture, 8 * 1024 * 1024);
@@ -444,8 +463,8 @@ void ProfileArea::coverageCard(app::ModuleCoverage& step) {
     gpu::IdCardPresenter presenter(labels, leaves, options, target, baseline);
     // A private mirror of the published content: the host's presenter keeps
     // the real feed's listener.
-    gpu::IdCardFeed mirror;
     unsigned requests{};
+    gpu::IdCardFeed mirror;
     presenter.connect(mirror, [&] { ++requests; });
     mirror.publish(card, cardTextures());
     step.check(requests == 1 && presenter.highlightNode() == std::optional<std::string>("profile-hover-plate") && presenter.pending(),

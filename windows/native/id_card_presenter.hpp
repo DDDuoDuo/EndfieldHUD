@@ -34,13 +34,16 @@ struct IdCardTextureView {
     std::span<const std::uint8_t> rgba;
     std::uint64_t revision{};
 };
+class IdCardPresenter;
 // The published card content. Views stay valid until the producer's next
 // publish()/withdraw() (owner thread only). A null card keeps the packet
-// defaults (profile not loaded or unreadable).
+// defaults (profile not loaded or unreadable). One presenter at a time is
+// connected (IdCardPresenter::connect); either side may be destroyed first.
 class IdCardFeed final {
 public:
     static constexpr std::string_view serviceKey{"profile.idCard"};
     IdCardFeed()=default;
+    ~IdCardFeed();
     IdCardFeed(const IdCardFeed&)=delete;
     IdCardFeed&operator=(const IdCardFeed&)=delete;
     // Producer. Absent textures keep (avatar: restore) the packet originals.
@@ -50,13 +53,12 @@ public:
     std::uint64_t revision()const noexcept{return revision_;}
     const modules::IdCardBinding*card()const noexcept{return card_;}
     const IdCardTextureView*texture(IdCardTextureSlot slot)const noexcept{const auto&t=textures_[static_cast<std::size_t>(slot)];return t?&*t:nullptr;}
-    // One listener (the host presenter): called synchronously after every
-    // publish/withdraw, possibly inside a frame; it must only mark work and
-    // request a frame. Empty removes it.
-    void setListener(std::function<void()>listener){listener_=std::move(listener);}
+    bool connected()const noexcept{return presenter_!=nullptr;}
 private:
+    friend class IdCardPresenter;
     const modules::IdCardBinding*card_{};std::array<std::optional<IdCardTextureView>,3>textures_{};
-    std::uint64_t revision_{};std::function<void()>listener_;
+    std::uint64_t revision_{};IdCardPresenter*presenter_{};
+    void changed();
 };
 // Where the presenter binds the card textures; SourceScene in the host.
 struct IdCardTextureTarget {
@@ -78,8 +80,11 @@ public:
     ~IdCardPresenter();
     IdCardPresenter(const IdCardPresenter&)=delete;
     IdCardPresenter&operator=(const IdCardPresenter&)=delete;
-    // Becomes the feed's listener; `changed` (e.g. request one frame) runs
-    // when the feed publishes. The feed must outlive the connection.
+    // Connects the published feed (replacing any presenter it had);
+    // `changed` (e.g. request one frame) runs synchronously after each
+    // publish, possibly inside a frame, and must only schedule work. A feed
+    // destroyed while connected leaves the packet card on the next apply();
+    // disconnect() (also a takeover by another presenter) leaves it idle.
     void connect(IdCardFeed&,std::function<void()>changed);
     void disconnect()noexcept;
     bool pending()const noexcept;
@@ -96,7 +101,8 @@ private:
     NativeIdCardCaptions captions_;IdCardTextureTarget target_;
     core::source::SourceDesktopFrameSettings baseline_,applied_;
     std::optional<std::string>highlight_;
-    IdCardFeed*feed_{};std::uint64_t seen_{};bool dirty_{true},replaced_[3]{};std::uint64_t textureRevision_[3]{};
+    friend class IdCardFeed;
+    IdCardFeed*feed_{};std::function<void()>changed_;std::uint64_t seen_{};bool dirty_{},replaced_[3]{};std::uint64_t textureRevision_[3]{};
     std::uint64_t cardRevision_{};
     IdCardPresenterStats stats_;
 };
