@@ -31,6 +31,25 @@ struct CalendarNotificationOptions {
     std::string calendarIdentity{"gregorian"};
 };
 using CalendarNotificationFactory=std::function<std::unique_ptr<CalendarNotificationProvider>(const CalendarNotificationOptions&)>;
+// Platform capability differences from the Mac UNUserNotificationCenter path
+// (reported, not hidden; the fallback follows each):
+//  * A ScheduledToastNotification fires at an absolute instant, whereas the Mac
+//    UNCalendarNotificationTrigger matches floating civil components. If the
+//    time zone changes while EndfieldHUD is not running, a toast fires at the
+//    old zone's 09:00. Fallback: reconcile at launch, on WM_TIMECHANGE /
+//    WM_SETTINGCHANGE and on resume; each signature contains the 09:00
+//    instant in the current zone, so a zone change re-registers every toast. Catch-ups are relative on
+//    both platforms (max(1 s, delivery-now)).
+//  * Windows has no requestAuthorization prompt. authorization(request) only
+//    reads ToastNotifier::Setting(): Enabled -> authorized; disabled for the
+//    app, the user or by policy -> denied (CalendarStrings::denied names
+//    Windows Settings); no installed identity or a manifest block ->
+//    unavailable. Nothing is ever changed on the user's behalf.
+//  * Focus assist / Do Not Disturb suppresses the banner; the toast still
+//    reaches the notification center, as Mac Focus does. No fallback needed.
+//  * A Mac click only activates the app. On Windows the installer-registered
+//    COM activator (app_notification_identity) routes the click to the
+//    running HUD instead of starting a second process.
 // Windows factory performs no registration, setting mutation or UI activation.
 // Empty identity returns unavailable. A nonempty identity must already belong
 // to this installed app. The real factory is never invoked by isolated tests.

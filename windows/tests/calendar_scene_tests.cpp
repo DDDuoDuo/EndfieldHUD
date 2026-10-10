@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
+#include <string>
 #include <new>
 #include <set>
 #ifdef _WIN32
@@ -25,22 +26,43 @@ void plans(){for(bool dark:{false,true})for(int month:{2,10,12}){auto i=input();
  auto bad=m::prepareCalendarCanvas(input());bad.root["mask"]=J::Object{{"bounds",J::Array{0,0,400,440}}};bool rejected{};try{(void)gpu::prepareCalendarScene(bad);}catch(...){rejected=true;}check(rejected,"Calendar rejects unsupported local source masks before any scene mutation");}
 #ifdef _WIN32
 struct Window{HWND hwnd{};Window(){hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,L"STATIC",L"Owned hidden Calendar scene fixture",WS_POPUP,0,0,400,440,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(hwnd&&!IsWindowVisible(hwnd),"Calendar scene fixture remains hidden and owns its HWND");}~Window(){if(hwnd)DestroyWindow(hwnd);}};
-std::uint64_t difference(const gpu::Readback&a,const gpu::Readback&b){
- check(a.width==b.width&&a.height==b.height&&a.rowBytes==b.rowBytes&&a.pixels.size()==b.pixels.size(),"Calendar comparison uses the same retained target size");
- // Native116a/117 WARP: the corrected integer-grid split matches RGB within2
- // everywhere, with exactly one alpha difference of3 at350,385 in each theme.
- // Separate 8-bit leaf/group/output stages introduce extra quantization. This
- // is a narrow observed allowance, not a wider analytic/global pixel tolerance:
- // keep the original RGB bound everywhere and allow at most one alpha
- // sample of3. The observed coordinate is diagnostic, not an exemption.
- std::uint64_t bad{},roundingSamples{};
- for(std::size_t n=0;n<a.pixels.size();++n){const auto delta=std::abs(int(a.pixels[n])-int(b.pixels[n]));if(delta<=2)continue;if(n%4==3&&delta==3){++roundingSamples;continue;}++bad;}
- check(roundingSamples<=1,"Calendar split rounding allowance remains at most one alpha sample per theme");return bad;
+// Oracle: the exact Direct2D bitmap of the whole original source tree, i.e.
+// the raster LayerScene uploads for this root (raster-group settings), in the
+// renderer's premultiplied encoded BGRA readback layout.
+//
+// Root cause of the former one-alpha-sample allowance (116a/117): it was not
+// the retained split. At local 350,385 (the cut-corner join of the reminders
+// rim) the split reproduces this bitmap (64 vs 64); the renderer's own
+// composite of the full-tree surface does not (61). On WARP that surface is one
+// 402x442 textured quad and that pixel centre lies 0.025 px from its
+// (-1,-1)->(401,441) triangle seam, where a neighbouring texel is blended in at
+// any screen offset. The source rim raster at its own and at the reference
+// device origin, with layer or brush opacity, all give the same coverage.
+// referenceComposite() pins this diagnosis; the split itself keeps the original
+// 8-bit staging bound of 2 everywhere against the bitmap.
+gpu::Readback sourceBitmap(gpu::LayerRasterizer&raster,const m::CalendarArtwork&art,gpu::LayerRasterOptions options,bool dark){
+ options.includeRootOpacity=false;options.includeRootMask=true;const std::string id=std::string("calendar-source-bitmap/")+(dark?"dark":"light");const auto image=raster.rasterize(id,1,art.root,options);
+ check(options.pixelsPerPoint==1&&image->bounds.x==-options.paddingPoints&&image->bounds.y==-options.paddingPoints&&image->bounds.x==std::floor(image->bounds.x)&&image->complete(),"Calendar source bitmap is complete on the shared integer device grid");
+ const auto ox=unsigned(-image->bounds.x),oy=unsigned(-image->bounds.y);gpu::Readback out;out.width=unsigned(art.bounds.width);out.height=unsigned(art.bounds.height);out.rowBytes=out.width*4;out.pixels.assign(std::size_t(out.rowBytes)*out.height,0);
+ check(image->width>=out.width+ox&&image->height>=out.height+oy,"Calendar source bitmap covers the compared target");
+ for(unsigned y=0;y<out.height;++y)for(unsigned x=0;x<out.width;++x){const auto*p=&image->straightRGBA[(std::size_t(y+oy)*image->width+x+ox)*4];auto*q=&out.pixels[std::size_t(y)*out.rowBytes+x*4];for(unsigned c=0;c<3;++c)q[c]=std::uint8_t((unsigned(p[2-c])*p[3]+127)/255);q[3]=p[3];}
+ raster.remove(id);return out;
 }
-void diagnostic(const gpu::Readback&a,const gpu::Readback&b,bool dark){const auto prefix=std::string("calendar-split-")+(dark?"dark":"light");for(const auto*which:{&a,&b}){const auto name=prefix+(which==&a?"-expected.bgra":"-actual.bgra");std::ofstream file(name,std::ios::binary);file.write(reinterpret_cast<const char*>(which->pixels.data()),static_cast<std::streamsize>(which->pixels.size()));}std::array<unsigned,4>maximum{};unsigned count{},minX=a.width,minY=a.height,maxX{},maxY{};for(unsigned y=0;y<a.height;++y)for(unsigned x=0;x<a.width;++x){bool bad{};for(unsigned c=0;c<4;++c){const auto offset=std::size_t(y)*a.rowBytes+x*4+c;const auto delta=unsigned(std::abs(int(a.pixels[offset])-int(b.pixels[offset])));maximum[c]=std::max(maximum[c],delta);bad|=delta>2;}if(bad){++count;minX=std::min(minX,x);minY=std::min(minY,y);maxX=std::max(maxX,x);maxY=std::max(maxY,y);}}std::cerr<<"Calendar differing pixels="<<count<<" bounds="<<minX<<','<<minY<<'-'<<maxX<<','<<maxY<<" maxBGRA="<<maximum[0]<<','<<maximum[1]<<','<<maximum[2]<<','<<maximum[3]<<" diagnostic="<<prefix<<"-{expected,actual}.bgra 400x440\n";}
+unsigned channelDelta(const gpu::Readback&a,const gpu::Readback&b,unsigned x,unsigned y){unsigned worst{};for(unsigned c=0;c<4;++c)worst=std::max(worst,unsigned(std::abs(int(a.pixels[std::size_t(y)*a.rowBytes+x*4+c])-int(b.pixels[std::size_t(y)*b.rowBytes+x*4+c]))));return worst;}
+void referenceComposite(const gpu::Readback&source,const gpu::Readback&composite,double padding,bool dark){
+ check(composite.width==source.width&&composite.height==source.height,"Reference composite uses the compared target size");unsigned seam{},worst{};const double width=source.width+2*padding,height=source.height+2*padding;
+ for(unsigned y=0;y<source.height;++y)for(unsigned x=0;x<source.width;++x){const auto d=channelDelta(source,composite,x,y);if(d<=1)continue;worst=std::max(worst,d);check(std::abs((y+.5+padding)-(x+.5+padding)*height/width)<.05,"Renderer composite of the full source bitmap departs from it only on its quad triangle seam");++seam;}
+ std::cout<<"Calendar "<<(dark?"dark":"light")<<" renderer composite of the full source bitmap: "<<seam<<" seam pixel(s) beyond 1 (maximum "<<worst<<"); the split is compared with the bitmap itself\n";
+}
+std::uint64_t difference(const gpu::Readback&source,const gpu::Readback&actual){
+ check(actual.width==source.width&&actual.height==source.height&&actual.pixels.size()>=std::size_t(actual.rowBytes)*actual.height,"Calendar comparison uses the same retained target size");
+ // Original bound: separate 8-bit leaf, group and output stages may differ by 2.
+ std::uint64_t bad{};for(unsigned y=0;y<source.height;++y)for(unsigned x=0;x<source.width;++x)bad+=channelDelta(source,actual,x,y)>2;return bad;
+}
+void diagnostic(const gpu::Readback&a,const gpu::Readback&b,bool dark){const auto prefix=std::string("calendar-split-")+(dark?"dark":"light");for(const auto*which:{&a,&b}){const auto name=prefix+(which==&a?"-expected.bgra":"-actual.bgra");std::ofstream file(name,std::ios::binary);file.write(reinterpret_cast<const char*>(which->pixels.data()),static_cast<std::streamsize>(which->pixels.size()));}std::array<unsigned,4>maximum{};unsigned count{},minX=a.width,minY=a.height,maxX{},maxY{};for(unsigned y=0;y<a.height;++y)for(unsigned x=0;x<a.width;++x){bool bad{};for(unsigned c=0;c<4;++c){const auto delta=unsigned(std::abs(int(a.pixels[std::size_t(y)*a.rowBytes+x*4+c])-int(b.pixels[std::size_t(y)*b.rowBytes+x*4+c])));maximum[c]=std::max(maximum[c],delta);bad|=delta>2;}if(bad){++count;minX=std::min(minX,x);minY=std::min(minY,y);maxX=std::max(maxX,x);maxY=std::max(maxY,y);}}std::cerr<<"Calendar differing pixels="<<count<<" bounds="<<minX<<','<<minY<<'-'<<maxX<<','<<maxY<<" maxBGRA="<<maximum[0]<<','<<maximum[1]<<','<<maximum[2]<<','<<maximum[3]<<" diagnostic="<<prefix<<"-{expected,actual}.bgra 400x440\n";}
 void nativeScene(const std::filesystem::path&shader){Window w;gpu::Renderer renderer;renderer.initialize(w.hwnd,400,440,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(400,440));gpu::LayerRasterizer raster;gpu::LayerRasterOptions options;options.pixelsPerPoint=1;gpu::NativeCalendarScene scene(raster,options);gpu::LayerComposition composition;gpu::LayerScene reference(raster);double time{};std::uint64_t revision{};std::vector<gpu::LayerCompositionEntry>published;published.reserve(2);
  const auto frame=[&](double t,const core::Matrix4&world=core::Matrix4{},float opacity=1){time=t;scene.updatePose({world,opacity,t,{},{}});scene.uploadResources(renderer);scene.uploadAnimations(renderer);const auto entries=scene.entries();bool changed=entries.size()!=published.size();if(!changed)for(std::size_t n=0;n<entries.size();++n)changed|=entries[n].scene!=published[n].scene||entries[n].after.data()!=published[n].after.data()||entries[n].after.size()!=published[n].after.size();if(changed){composition.setEntries(renderer,entries);published.assign(entries.begin(),entries.end());}composition.present(renderer);renderer.draw(false);scene.collectRetired(renderer);};
- for(bool dark:{false,true}){auto i=input();i.appearance.dark=dark;auto art=m::prepareCalendarCanvas(i);reference.load(art.root,options);composition.setScenes(renderer,std::array<gpu::LayerScene*,1>{&reference});composition.present(renderer);renderer.draw(false);const auto expected=renderer.readback();composition.detach(renderer);published.clear();scene.syncContent(std::move(art),++revision,time+=.2);frame(time);const auto actual=renderer.readback();const auto error=difference(expected,actual);if(error){std::cerr<<"Calendar canvas split-byte differences>2="<<error<<" dark="<<dark<<'\n';diagnostic(expected,actual,dark);}check(error==0,"Retained Calendar alias/group output equals the same full original source tree bitmap");composition.detach(renderer);published.clear();reference.releaseResources(renderer);}
+ for(bool dark:{false,true}){auto i=input();i.appearance.dark=dark;auto art=m::prepareCalendarCanvas(i);const auto source=sourceBitmap(raster,art,options,dark);reference.load(art.root,options);composition.setScenes(renderer,std::array<gpu::LayerScene*,1>{&reference});composition.present(renderer);renderer.draw(false);referenceComposite(source,renderer.readback(),options.paddingPoints,dark);composition.detach(renderer);published.clear();scene.syncContent(std::move(art),++revision,time+=.2);frame(time);const auto actual=renderer.readback();const auto error=difference(source,actual);if(error){std::cerr<<"Calendar canvas split-byte differences beyond 2 from the source bitmap="<<error<<" dark="<<dark<<'\n';diagnostic(source,actual,dark);}check(error==0,"Retained Calendar alias/group output equals the full original source tree bitmap within 8-bit staging");composition.detach(renderer);published.clear();reference.releaseResources(renderer);}
  scene.setFeedback(core::Point{40,120},false,time+=.1);frame(time);frame(time+.15);const auto beforeRaster=raster.stats();const auto beforeGPU=renderer.stats();allocations=0;counting=true;try{for(unsigned n=0;n<120;++n)frame(time+1./60,core::Matrix4::translation(0,0)*core::Matrix4::rotation(0,.000001*n,0),.8f);}catch(...){counting=false;throw;}counting=false;check(allocations==0,"Calendar steady root tilt/fade allocates no owner storage");check(raster.stats().rasterizations==beforeRaster.rasterizations&&raster.stats().textLayoutsCreated==beforeRaster.textLayoutsCreated&&renderer.stats().textureUploads==beforeGPU.textureUploads&&renderer.stats().meshUploads==beforeGPU.meshUploads&&renderer.stats().nativeGroupRenders==beforeGPU.nativeGroupRenders,"Root tilt/fade reuses all Calendar glyphs, rasters, resources and cached group output");
  // Remove and settle local hover first: a newly built month legitimately
  // animates inherited hover ink independently of the root face crossfade.

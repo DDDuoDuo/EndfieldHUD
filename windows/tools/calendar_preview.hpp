@@ -6,6 +6,7 @@
 #include "native/calendar_civil.hpp"
 #include "native/calendar_editor_field.hpp"
 #include "native/calendar_scene.hpp"
+#include "modules/calendar_localization.hpp"
 #ifdef _WIN32
 namespace endfield::tools {
 struct CalendarKeyModifiers {bool control{},shift{},alt{},system{};};
@@ -58,6 +59,12 @@ public:
     bool editing()const noexcept;
     std::optional<modules::CalendarEditorField> focusedField()const noexcept;
     const modules::CalendarView&view()const noexcept;
+    // Source AX elements for the shared UI Automation provider (Mac
+    // HUDCalendarInteraction.layoutAccessibility): empty unless the module is
+    // active; canvas buttons, then the open event menu's buttons and three
+    // fields. Rects are canvas points; project them like pointer hit tests.
+    // Content-event query (after input, state or language change), not per frame.
+    std::vector<modules::CalendarAccessible>accessibility()const;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);

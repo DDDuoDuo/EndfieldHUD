@@ -1,0 +1,200 @@
+{
+ "authority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+ "contract": "HUDOrbiPomInteraction.layoutAccessibility: hidden unless active and while the rules menu is open; label = canvas action title with the listed overrides (start: idle ? Start : Play again; skill: title + ' ' + energyCost, Swap: title + ' ' + swapCharge + '/6'). Rules menu: label + paragraphs joined by newline, plus its Close item. Rows resolve per language like LocalizationCatalog.",
+ "overrides": {
+  "cancelRestart": {
+   "english": "Cancel",
+   "japanese": "キャンセル",
+   "korean": "취소",
+   "simplifiedChinese": "取消",
+   "traditionalChinese": "取消"
+  },
+  "cancelSkill": {
+   "english": "Cancel",
+   "japanese": "キャンセル",
+   "korean": "취소",
+   "simplifiedChinese": "取消",
+   "traditionalChinese": "取消"
+  },
+  "confirmRestart": {
+   "english": "Confirm",
+   "japanese": "確定",
+   "korean": "확인",
+   "simplifiedChinese": "确认",
+   "traditionalChinese": "確認"
+  },
+  "pause": {
+   "english": "Pause / resume",
+   "japanese": "一時停止 / 再開",
+   "korean": "일시 정지 / 재개",
+   "simplifiedChinese": "暂停 / 继续",
+   "traditionalChinese": "暫停 / 繼續"
+  },
+  "restart": {
+   "english": "Restart",
+   "japanese": "最初から",
+   "korean": "다시 시작",
+   "simplifiedChinese": "重新开始",
+   "traditionalChinese": "重新開始"
+  },
+  "rules": {
+   "english": "Rules",
+   "japanese": "遊び方",
+   "korean": "게임 규칙",
+   "simplifiedChinese": "游戏规则",
+   "traditionalChinese": "遊戲規則"
+  }
+ },
+ "rules": {
+  "close": {
+   "english": "Close",
+   "japanese": "閉じる",
+   "korean": "닫기",
+   "simplifiedChinese": "关闭",
+   "traditionalChinese": "關閉"
+  },
+  "closeRect": [
+   291,
+   8,
+   23,
+   23
+  ],
+  "label": {
+   "english": "Rules",
+   "japanese": "遊び方",
+   "korean": "게임 규칙",
+   "simplifiedChinese": "游戏规则",
+   "traditionalChinese": "遊戲規則"
+  },
+  "paragraphs": [
+   {
+    "english": "Move to aim; click or press Space to drop.",
+    "japanese": "マウスで狙い、クリックまたはスペースで落とします。",
+    "korean": "마우스로 조준하고 클릭하거나 스페이스를 눌러 떨어뜨리세요.",
+    "simplifiedChinese": "移动鼠标瞄准，点击或按空格投放。",
+    "traditionalChinese": "移動滑鼠瞄準，點擊或按空白鍵投放。"
+   },
+   {
+    "english": "Merge matching levels. Two level-11 OrbiPoms disappear when merged.",
+    "japanese": "同じレベル同士が触れると合体します。レベル11同士は合体すると消えます。",
+    "korean": "같은 레벨끼리 닿으면 합체합니다. 11레벨 두 개는 합체 후 사라집니다.",
+    "simplifiedChinese": "相同等级相碰即可合成；两个11级山团团合成后消失。",
+    "traditionalChinese": "相同等級相碰即可合成；兩個11級山團團合成後消失。"
+   },
+   {
+    "english": "Points by source level: 1 / 3 / 6 / 10 / 15 / 21 / 28 / 36 / 45 / 55 / 66.",
+    "japanese": "合体前のレベル別得点：1 / 3 / 6 / 10 / 15 / 21 / 28 / 36 / 45 / 55 / 66。",
+    "korean": "합체 전 레벨별 점수: 1 / 3 / 6 / 10 / 15 / 21 / 28 / 36 / 45 / 55 / 66.",
+    "simplifiedChinese": "各等级合成得分：1／3／6／10／15／21／28／36／45／55／66。",
+    "traditionalChinese": "各等級合成得分：1／3／6／10／15／21／28／36／45／55／66。"
+   },
+   {
+    "english": "12 merges grant 1 SP, up to 3. Spend 6 SP to charge Swap.",
+    "japanese": "12回の合体でSPを1獲得（最大3）。SPを累計6消費すると交換が使えます。",
+    "korean": "12번 합체하면 스킬 게이지가 1 증가합니다(최대 3). 총 6을 소모하면 교환을 사용할 수 있습니다.",
+    "simplifiedChinese": "每合成12次获得1点技力，最多3点；累计消耗6点技力可使用交换。",
+    "traditionalChinese": "每合成12次獲得1點技力，最多3點；累計消耗6點技力可使用交換。"
+   },
+   {
+    "english": "Partial SP charge can decay while idle.",
+    "japanese": "何もしない時間が続くと、未完成のSPチャージが減ることがあります。",
+    "korean": "아무 조작 없이 시간이 지나면 아직 채워지지 않은 스킬 게이지 진행도가 감소할 수 있습니다.",
+    "simplifiedChinese": "闲置时，未充满的技力进度可能衰减。",
+    "traditionalChinese": "閒置時，未充滿的技力進度可能衰減。"
+   },
+   {
+    "english": "Eliminate (1 SP): select one target. Wind (2 SP) lifts the stack; Shake (3 SP) shakes it.",
+    "japanese": "消去（SP1）：対象を1つ選択。風（SP2）は積み重なった玉を浮かせ、振動（SP3）は揺らします。",
+    "korean": "제거(게이지 1): 대상 하나를 선택합니다. 바람(2)은 쌓인 조각을 띄우고, 흔들기(3)는 흔듭니다.",
+    "simplifiedChinese": "消除（1技力）：选择一个目标。风场（2技力）托起堆叠；震动（3技力）摇动堆叠。",
+    "traditionalChinese": "消除（1技力）：選擇一個目標。風場（2技力）托起堆疊；震動（3技力）搖動堆疊。"
+   },
+   {
+    "english": "Select a skill, then click the board to confirm. Swap needs two different targets.",
+    "japanese": "スキルを選び、盤面をクリックして確定します。交換は異なる対象を2つ選びます。",
+    "korean": "스킬을 선택한 뒤 게임판을 클릭해 확정하세요. 교환은 서로 다른 대상 두 개를 선택합니다.",
+    "simplifiedChinese": "选择技能后点击游戏区确认；交换需要选择两个不同目标。",
+    "traditionalChinese": "選擇技能後點擊遊戲區確認；交換需要選擇兩個不同目標。"
+   },
+   {
+    "english": "A settled overflow above the red line starts a 5-second countdown.",
+    "japanese": "静止した玉が赤線を越えると、5秒のカウントダウンが始まります。",
+    "korean": "멈춘 조각이 빨간 선을 넘으면 5초 카운트다운이 시작됩니다.",
+    "simplifiedChinese": "静止的山团团超过红线时，会开始5秒倒计时。",
+    "traditionalChinese": "靜止的山團團超過紅線時，會開始5秒倒數。"
+   },
+   {
+    "english": "P pauses. Escape cancels a selected skill.",
+    "japanese": "Pで一時停止、Escで選択したスキルをキャンセルします。",
+    "korean": "P로 일시 정지하고 Esc로 선택한 스킬을 취소합니다.",
+    "simplifiedChinese": "按P暂停，按Esc取消已选择的技能。",
+    "traditionalChinese": "按P暫停，按Esc取消已選擇的技能。"
+   }
+  ]
+ },
+ "skills": {
+  "clear": {
+   "suffix": 1,
+   "title": {
+    "english": "Eliminate",
+    "japanese": "消去",
+    "korean": "제거",
+    "simplifiedChinese": "消除",
+    "traditionalChinese": "消除"
+   }
+  },
+  "shake": {
+   "suffix": 3,
+   "title": {
+    "english": "Shake",
+    "japanese": "振動",
+    "korean": "흔들기",
+    "simplifiedChinese": "震动",
+    "traditionalChinese": "震動"
+   }
+  },
+  "swap": {
+   "suffix": "swapCharge/6",
+   "title": {
+    "english": "Swap",
+    "japanese": "交換",
+    "korean": "교환",
+    "simplifiedChinese": "交换",
+    "traditionalChinese": "交換"
+   }
+  },
+  "wind": {
+   "suffix": 2,
+   "title": {
+    "english": "Wind",
+    "japanese": "風",
+    "korean": "바람",
+    "simplifiedChinese": "风场",
+    "traditionalChinese": "風場"
+   }
+  }
+ },
+ "sourcePins": {
+  "Sources/HUDOrbiPomInteraction.swift": "9417bd404b2f554d573cc3807b3534a2a56f00161a087b25b01eaa07dd1f0870",
+  "Sources/LocalizationCatalog.swift": "4898828e511be6bcbb6c10d17b11d521a59724d22ca6dd10866071644f00eb40",
+  "Sources/NotesFormattingControls.swift": "e24b74f7b3dbf3ff9df84c804b2a69a1edd97c87ce30af5b17e4e385e917eae1",
+  "Sources/OrbiPomCanvas.swift": "7062b89f6ae5d805e023e04412d5bede0fe0e5e4ad14260a6ed5e1f0ff057255",
+  "Sources/OrbiPomRuntime.swift": "2e3539cfb59b0061e93c539b0b257e3b9f61c213cbd670637eb8a6b5159ac491"
+ },
+ "start": {
+  "idle": {
+   "english": "Start",
+   "japanese": "開始",
+   "korean": "시작",
+   "simplifiedChinese": "开始",
+   "traditionalChinese": "開始"
+  },
+  "other": {
+   "english": "Play again",
+   "japanese": "もう一度",
+   "korean": "다시 플레이",
+   "simplifiedChinese": "再来一局",
+   "traditionalChinese": "再來一局"
+  }
+ }
+}

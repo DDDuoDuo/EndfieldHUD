@@ -1,6 +1,8 @@
 #include "modules/orbipom_runtime.hpp"
 #include "core/data/json.hpp"
+#include "core/shell_packet.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -17,7 +19,8 @@ struct OrbiPomRuntimeTestAccess {
 }
 namespace m=endfield::modules;using J=ehud::data::Json;using Access=m::OrbiPomRuntimeTestAccess;
 namespace {
-unsigned checks{},comparedNumbers{},observedTrajectoryNumbers{};double maximumResidual{},maximumFrameSeconds{},trajectoryX{},trajectoryY{},trajectoryAngle{};std::vector<double>frameSeconds;
+unsigned checks{},comparedNumbers{},observedTrajectoryNumbers{},substitutedTrajectoryNumbers{};double maximumResidual{},maximumFrameSeconds{},trajectoryX{},trajectoryY{},trajectoryAngle{};std::vector<double>frameSeconds;
+std::string primitiveSummary,auditSummary;
 void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
 void healthy(const m::OrbiPomRuntime&r){if(r.error())throw std::runtime_error(*r.error());check(true,"Original runtime has no exception");}
 void js(m::OrbiPomRuntime&r,std::string_view code,const char*why){const auto result=Access::evaluate(r,code);healthy(r);check(result=="true",why);}
@@ -33,11 +36,13 @@ J snapshot(const m::OrbiPomSnapshot&s){
 void compare(const J&actual,const J&expected,std::string path,bool observeTrajectory=false){
     if(expected.isNumber()){
         check(actual.isNumber(),"Source numeric field type preserved");const auto a=actual.number(),e=expected.number();const auto error=std::abs(a-e);
-        // A captured Windows Math replay in the unchanged JSC solver explains
-        // all 601 native frames exactly. Platform libm's 1-ULP primitive
-        // differences grow through contacts; do not invent a wider tolerance
-        // for a long trajectory. Independent one-step states remain gated.
-        if(observeTrajectory&&path.find("/bodies/")!=std::string::npos&&(path.ends_with("/x")||path.ends_with("/y")||path.ends_with("/angle"))){auto&peak=path.ends_with("/x")?trajectoryX:path.ends_with("/y")?trajectoryY:trajectoryAngle;peak=std::max(peak,error);++observedTrajectoryNumbers;check(std::isfinite(a),"Long-run body coordinates stay finite; platform residual is reported separately");return;}
+        // Only reached for production-libm snapshots taken AFTER this run has
+        // executed a Math primitive whose MSVC UCRT result differs (by the
+        // gated 1 ULP) from Apple libm's result for the same input; see
+        // nativeLibmAudit(). Before that point, and in the Apple-primitive
+        // substitution run, body coordinates use the strict tolerance below.
+        if(observeTrajectory&&path.find("/bodies/")!=std::string::npos&&(path.ends_with("/x")||path.ends_with("/y")||path.ends_with("/angle"))){auto&peak=path.ends_with("/x")?trajectoryX:path.ends_with("/y")?trajectoryY:trajectoryAngle;peak=std::max(peak,error);++observedTrajectoryNumbers;check(std::isfinite(a),"Long-run body coordinates stay finite after a gated 1-ULP platform primitive difference");return;}
+        if(path.find("/bodies/")!=std::string::npos&&(path.ends_with("/x")||path.ends_with("/y")||path.ends_with("/angle"))&&path.starts_with("apple-libm/"))++substitutedTrajectoryNumbers;
         maximumResidual=std::max(maximumResidual,error);++comparedNumbers;
         const bool discrete=path.ends_with("/id")||path.ends_with("/level")||path.ends_with("/score")||path.ends_with("/highScore")||path.ends_with("/energy")||path.ends_with("/swapCharge")||path.ends_with("/mergeCount")||path.ends_with("/skillUseCount")||path.ends_with("/currentLevel")||path.ends_with("/nextLevel")||path.find("selectedBodyIDs")!=std::string::npos||path.ends_with("/hoverBodyID");
         if(discrete?a!=e:error>1e-8*std::max(1.,std::abs(e)))throw std::runtime_error("JavaScriptCore comparison failed at "+path+": actual="+std::to_string(a)+" expected="+std::to_string(e));check(true,"Exact discrete fields; continuous fields relative/absolute tolerance1e-8");
@@ -55,10 +60,112 @@ void diagnosticTrace(const std::filesystem::path&resources,const char*output){
     capture();for(int second=0;second<10;++second){runtime.move({double(30+(second*47)%160),40});runtime.drop();for(int frame=0;frame<60;++frame){runtime.advance(1./60);capture();}}
     check(bool(file),"Diagnostic transcript completed without truncation");std::cout<<"OrbiPom diagnostic: 601 snapshots with bounded primitive-call traces; normal parity assertions are unchanged\n";
 }
-void reference(const std::filesystem::path&resources,const char*fixture){
-    std::ifstream file(fixture);check(bool(file),"Immutable original JavaScriptCore transcript opens");const std::string bytes(std::istreambuf_iterator<char>(file),{});const auto root=J::parse(bytes,128*1024);
-    m::OrbiPomRuntime runtime({resources});check(!runtime.stats().initialized&&runtime.stats().calls==0&&Access::live()==0,"Constructing runtime performs no IO/evaluation/VM allocation");runtime.start(12345);healthy(runtime);compare(snapshot(runtime.snapshot()),root["frames"].array()[0]["snapshot"],"start");
-    for(int second=0;second<10;++second){runtime.move({double(30+(second*47)%160),40});runtime.drop();steps(runtime,60);compare(snapshot(runtime.snapshot()),root["frames"].array()[std::size_t(second+1)]["snapshot"],std::to_string(second+1),true);}
+std::string bytesOf(const std::filesystem::path&path,const char*why){std::ifstream file(path,std::ios::binary);check(bool(file),why);return std::string(std::istreambuf_iterator<char>(file),{});}
+void transcriptSecond(m::OrbiPomRuntime&r,int second,bool timed){r.move({double(30+(second*47)%160),40});r.drop();if(timed){steps(r,60);return;}for(int i=0;i<60;++i)r.advance(1./60);healthy(r);}
+// ECMA-262 21.3.2 leaves every one of these Math results
+// "implementation-approximated". orbipom-libm-source.json records, as IEEE-754
+// bits, every distinct call the unchanged Mac runtime (JavaScriptCore -> Apple
+// libm) makes while reproducing orbipom-source.json (tools/orbipom_libm_reference.py).
+// This table is test-only evidence: production keeps the platform libm.
+constexpr std::string_view appleTableInstaller=R"JS(var __apple=(function(){
+ const names=['acos','acosh','asin','asinh','atan','atanh','atan2','cbrt','cos','cosh','exp','expm1','hypot','log','log1p','log10','log2','pow','sin','sinh','tan','tanh'];
+ const view=new DataView(new ArrayBuffer(8)),natives=new Map(names.map(n=>[n,Math[n]])),tables=new Map(),rows=new Map();
+ const bitsKey=v=>{view.setFloat64(0,v);return view.getUint32(0)+':'+view.getUint32(4);};
+ const key=args=>args.map(a=>bitsKey(Number(a))).join(',');
+ const fromHex=h=>{view.setUint32(0,parseInt(h.slice(0,8),16));view.setUint32(4,parseInt(h.slice(8,16),16));return view.getFloat64(0);};
+ const ordered=v=>{view.setFloat64(0,v);const i=view.getBigInt64(0);return i<0n?-(1n<<63n)-i:i;};
+ const stats={calls:0,served:0,missing:0,agree:0,oneUlp:0,wider:0,unchecked:0,first:null};
+ function compare(name,args,actual,expected){if(Object.is(actual,expected)){++stats.agree;return;}let d=ordered(actual)-ordered(expected);if(d<0n)d=-d;if(d===1n)++stats.oneUlp;else ++stats.wider;
+  if(stats.first===null)stats.first={name:name,args:args.map(Number),actual:actual,expected:expected,ulps:Number(d),call:stats.calls};}
+ return {
+  add:function(name,list){let table=tables.get(name),all=rows.get(name);if(!table){table=new Map();all=[];tables.set(name,table);rows.set(name,all);}
+   for(const row of list){const args=row.slice(0,-1).map(fromHex),expected=fromHex(row[row.length-1]);table.set(key(args),expected);all.push([args,expected]);}return true;},
+  install:function(substitute){for(const name of names){const original=natives.get(name),table=tables.get(name);
+   Math[name]=function(...args){++stats.calls;const expected=table===undefined?undefined:table.get(key(args));
+    if(substitute){if(expected!==undefined){++stats.served;return expected;}++stats.missing;if(stats.first===null)stats.first={name:name,args:args.map(Number),call:stats.calls};return original.apply(Math,args);}
+    const actual=original.apply(Math,args);if(expected===undefined)++stats.unchecked;else compare(name,args,actual,expected);return actual;};}return true;},
+  verify:function(name,begin,end){const all=rows.get(name),original=natives.get(name);for(let i=begin;i<end&&i<all.length;++i){++stats.calls;compare(name,all[i][0],original.apply(Math,all[i][0]),all[i][1]);}return true;},
+  stats:function(){return stats;}
+ };
+})();true)JS";
+J libmTable(const std::filesystem::path&fixture,const std::string&transcriptBytes){
+    const auto root=J::parse(bytesOf(fixture,"Original JavaScriptCore Math primitive fixture opens"),1024*1024);
+    check(root["transcriptSHA256"].string()==endfield::core::packet::sha256({reinterpret_cast<const std::uint8_t*>(transcriptBytes.data()),transcriptBytes.size()}),"Math primitive fixture was recorded from this exact JavaScriptCore transcript");
+    check(root["sourcePins"]["Resources/OrbiPom/matter-0.20.0.js"].string()=="928d059868201b2c4c270818fda44e5d26c099e4df407043f018f9bbe2c598cf"&&root["sourcePins"]["Resources/OrbiPom/orbipom.js"].string()=="1c68da4d2165f3d6d45e8842ab4d7d6e766bb3d738e3ff19f32ca2dce64e4054","Math primitive fixture belongs to the runtime's pinned original scripts");
+    check(root["moduleLoadCalls"].integer()==0,"Unchanged scripts make no approximated Math call before a table can be installed");
+    check(root["seed"].integer()==12345&&!root["functions"].object().empty(),"Math primitive fixture covers the seeded transcript");
+    return root;
+}
+void loadAppleTable(m::OrbiPomRuntime&r,const J&libm){
+    js(r,appleTableInstaller,"Apple primitive table installs as isolated test script");
+    for(const auto&[name,rows]:libm["functions"].object()){const auto&all=rows.array();check(!all.empty(),"Recorded primitive has rows");
+        for(std::size_t begin=0;begin<all.size();begin+=256){J::Array chunk(all.begin()+std::ptrdiff_t(begin),all.begin()+std::ptrdiff_t(std::min(all.size(),begin+256)));js(r,"__apple.add("+J(name).encode()+","+J(std::move(chunk)).encode()+")","Apple primitive rows load exactly through IEEE-754 bit patterns");}}
+}
+J appleStats(m::OrbiPomRuntime&r){const auto text=Access::evaluate(r,"__apple.stats()");healthy(r);return J::parse(text,128*1024);}
+std::string describe(const J&first){return first.isNull()?std::string("none"):first.encode();}
+// Why the long-run body trajectory cannot be gated bit-for-bit against the Mac
+// (the inherent tolerance, proved by the three runs below):
+//  * Matter/orbipom.js call only Math.sin/cos/atan2 among the ECMA-262
+//    "implementation-approximated" functions (fixture: 17928/17928/3588 calls,
+//    no ** operator, none while loading). JavaScriptCore forwards them to
+//    Apple libm; QuickJS-NG to the MSVC UCRT. All other arithmetic is IEEE.
+//  * Apple's results are correctly rounded on 4856 of the 4918 distinct inputs
+//    (plus the exact sin(0)/cos(0)) and the other faithful neighbour on 60
+//    (fixture appleVersusCorrectlyRounded, 80-digit reference), so even a
+//    correctly rounded libm would differ from the Mac on those 60.
+//    The UCRT measured on the Windows test laptop (2026-10-10) equals Apple on
+//    4870 inputs and differs by exactly one ULP on 48. Two faithfully rounded libms
+//    may differ by one ULP and never more: that is gated below on every input.
+//  * appleSubstitution(): the unchanged QuickJS runtime, solver and bridge fed
+//    Apple's primitive results reproduce all 11 JavaScriptCore snapshots,
+//    body x/y/angle included, within the strict 1e-8 tolerance.
+//  * reference(): the production run is strict until its first differing
+//    primitive (sin(5.6286868376817125), call 44: Apple ...13ec, UCRT ...13ed).
+//    Matter's contact solver then amplifies that ULP (about 1 pt of x after
+//    ten seconds), but every discrete field (body IDs, levels, merges, score,
+//    energy, skills) still matches JavaScriptCore exactly, and the production
+//    trajectory is deterministic (equal to the audited run bit for bit).
+void primitiveAccuracy(const std::filesystem::path&resources,const J&libm){
+    m::OrbiPomRuntime runtime({resources});runtime.start(1);healthy(runtime);loadAppleTable(runtime,libm);
+    std::int64_t rows{};for(const auto&[name,list]:libm["functions"].object()){rows+=std::int64_t(list.array().size());for(std::size_t begin=0;begin<list.array().size();begin+=512)js(runtime,"__apple.verify("+J(name).encode()+","+std::to_string(begin)+","+std::to_string(begin+512)+")","Platform primitive verification chunk completes");}
+    const auto stats=appleStats(runtime);
+    check(stats["calls"].integer()==rows&&stats["agree"].integer()+stats["oneUlp"].integer()+stats["wider"].integer()==rows,"Every recorded original input is evaluated by this platform's libm");
+    if(stats["wider"].integer()!=0)throw std::runtime_error("Platform Math differs from Apple libm by more than one ULP: "+describe(stats["first"]));
+    check(true,"Every platform Math result is within one ULP of Apple libm on every recorded original input");
+    primitiveSummary="platform libm vs Apple on "+std::to_string(rows)+" recorded inputs: equal="+std::to_string(stats["agree"].integer())+" one-ULP="+std::to_string(stats["oneUlp"].integer())+" wider=0";
+}
+// Restored strict long-run parity: the unchanged QuickJS runtime, solver and
+// bridge, given Apple's primitive results, must reproduce the complete
+// ten-second JavaScriptCore transcript (body x/y/angle included) under the same
+// strict 1e-8 relative tolerance; any input missing from the table fails.
+void appleSubstitution(const std::filesystem::path&resources,const J&transcript,const J&libm){
+    m::OrbiPomRuntime runtime({resources});loadAppleTable(runtime,libm);js(runtime,"__apple.install(true)","Apple primitive substitution installs before start");
+    runtime.start(12345);healthy(runtime);compare(snapshot(runtime.snapshot()),transcript["frames"].array()[0]["snapshot"],"apple-libm/start");
+    for(int second=0;second<10;++second){transcriptSecond(runtime,second,false);compare(snapshot(runtime.snapshot()),transcript["frames"].array()[std::size_t(second+1)]["snapshot"],"apple-libm/"+std::to_string(second+1));}
+    const auto stats=appleStats(runtime);
+    if(stats["missing"].integer()!=0)throw std::runtime_error("Apple primitive table misses an input of the reproduced transcript: "+describe(stats["first"]));
+    check(stats["calls"].integer()>0&&stats["served"].integer()==stats["calls"].integer(),"Every approximated Math call of the ten-second transcript is served from Apple's recorded results");
+    check(runtime.stats().boots==1&&!runtime.error(),"Apple-primitive transcript uses one healthy VM");
+}
+struct NativeAudit{std::array<bool,11>agreed{};std::vector<m::OrbiPomSnapshot>frames;};
+// Production-libm run with checking wrappers that return the native result
+// unchanged. agreed[n] is true while every primitive executed so far, on inputs
+// the original also used, returned Apple's exact bits; a body trajectory is
+// then required to match JavaScriptCore strictly. The first differing
+// primitive must be exactly one ULP (gated) and is reported.
+NativeAudit nativeLibmAudit(const std::filesystem::path&resources,const J&libm){
+    NativeAudit audit;m::OrbiPomRuntime runtime({resources});loadAppleTable(runtime,libm);js(runtime,"__apple.install(false)","Native primitive audit installs before start");
+    const auto differences=[&]{const auto stats=appleStats(runtime);if(stats["wider"].integer()!=0)throw std::runtime_error("Platform primitive on the transcript differs from Apple libm by more than one ULP: "+describe(stats["first"]));return stats["oneUlp"].integer();};
+    runtime.start(12345);healthy(runtime);audit.frames.push_back(runtime.snapshot());audit.agreed[0]=differences()==0;
+    for(int second=0;second<10;++second){transcriptSecond(runtime,second,false);audit.frames.push_back(runtime.snapshot());audit.agreed[std::size_t(second+1)]=differences()==0;}
+    const auto stats=appleStats(runtime);std::size_t strict{};while(strict<audit.agreed.size()&&audit.agreed[strict])++strict;
+    check(std::is_sorted(audit.agreed.rbegin(),audit.agreed.rend()),"Primitive agreement is a prefix of the transcript");
+    auditSummary="native transcript primitives: checked="+std::to_string(stats["agree"].integer()+stats["oneUlp"].integer())+" one-ULP="+std::to_string(stats["oneUlp"].integer())+" unchecked(after divergence)="+std::to_string(stats["unchecked"].integer())+" strict snapshots="+std::to_string(strict)+"/11 first difference="+describe(stats["first"]);
+    return audit;
+}
+void reference(const std::filesystem::path&resources,const J&root,const NativeAudit&audit){
+    m::OrbiPomRuntime runtime({resources});check(!runtime.stats().initialized&&runtime.stats().calls==0&&Access::live()==0,"Constructing runtime performs no IO/evaluation/VM allocation");runtime.start(12345);healthy(runtime);check(runtime.snapshot()==audit.frames[0],"Audit wrappers return native primitive results unchanged");compare(snapshot(runtime.snapshot()),root["frames"].array()[0]["snapshot"],"start");
+    for(int second=0;second<10;++second){transcriptSecond(runtime,second,true);const auto index=std::size_t(second+1);check(runtime.snapshot()==audit.frames[index],"Production-libm trajectory equals the audited native trajectory bit for bit");compare(snapshot(runtime.snapshot()),root["frames"].array()[index]["snapshot"],std::to_string(second+1),!audit.agreed[index]);}
     check(runtime.stats().boots==1&&Access::live()==1&&runtime.stats().heapBytes<32*1024*1024,"Ten-second actual physics transcript uses one bounded VM");
     const auto bodies=runtime.snapshot().bodies;const auto capacity=runtime.stats().snapshotCapacityBytes;for(int i=0;i<1000;++i)runtime.move({double(20+i%170),40});check(runtime.snapshot().bodies==bodies&&runtime.stats().snapshotCapacityBytes==capacity,"Pointer-only updates leave retained body snapshots and capacity untouched");
     runtime.pause(true);healthy(runtime);const auto frozen=runtime.snapshot();const auto calls=runtime.stats().calls;for(int i=0;i<100;++i){runtime.advance(60);runtime.move({20,40});runtime.pointerUp({20,40});}check(runtime.snapshot()==frozen&&runtime.stats().calls==calls,"Paused host calls execute no engine/timer work");
@@ -122,4 +229,4 @@ void limits(const std::filesystem::path&resources){
     {m::OrbiPomRuntime game({resources/"missing-synthetic-resource-root"});game.start(1);check(game.error()&&!game.stats().initialized&&Access::live()==baseline,"Missing original resources cannot run a fallback simulation");}
 }
 }
-int main(int argc,char**argv){try{if(argc==4&&std::string_view(argv[2])=="--trace"){diagnosticTrace(argv[1],argv[3]);return 0;}check(argc==3,"Pass original Resources root and immutable JavaScriptCore fixture");check(Access::live()==0,"No VM exists before explicit runtime work");reference(argv[1],argv[2]);check(Access::live()==0,"Healthy runtime teardown releases all VM resources");sourceSteps(argv[1],std::filesystem::path(argv[2]).parent_path()/"orbipom-step-source.json");gameplay(argv[1]);cadence(argv[1]);check(Access::live()==0,"All actual skills retire cleanly");limits(argv[1]);integrity();check(Access::live()==0,"Every runtime fixture is fully retired");std::sort(frameSeconds.begin(),frameSeconds.end());std::cout<<"PASS "<<checks<<" actual OrbiPom checks; strict source numbers="<<comparedNumbers<<" maximum residual="<<maximumResidual<<"; ten-second cross-platform trajectory observation ("<<observedTrajectoryNumbers<<" coordinates, no bitwise parity): max x="<<trajectoryX<<" y="<<trajectoryY<<" angle="<<trajectoryAngle<<"; frame median="<<frameSeconds[frameSeconds.size()/2]*1000<<"ms p95="<<frameSeconds[frameSeconds.size()*95/100]*1000<<"ms maximum="<<maximumFrameSeconds*1000<<"ms\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(int argc,char**argv){try{if(argc==4&&std::string_view(argv[2])=="--trace"){diagnosticTrace(argv[1],argv[3]);return 0;}check(argc==3,"Pass original Resources root and immutable JavaScriptCore fixture");check(Access::live()==0,"No VM exists before explicit runtime work");const auto transcriptBytes=bytesOf(argv[2],"Immutable original JavaScriptCore transcript opens");const auto transcript=J::parse(transcriptBytes,128*1024);const auto libm=libmTable(std::filesystem::path(argv[2]).parent_path()/"orbipom-libm-source.json",transcriptBytes);primitiveAccuracy(argv[1],libm);appleSubstitution(argv[1],transcript,libm);const auto audit=nativeLibmAudit(argv[1],libm);check(Access::live()==0,"Primitive audit runtimes retire");reference(argv[1],transcript,audit);check(Access::live()==0,"Healthy runtime teardown releases all VM resources");sourceSteps(argv[1],std::filesystem::path(argv[2]).parent_path()/"orbipom-step-source.json");gameplay(argv[1]);cadence(argv[1]);check(Access::live()==0,"All actual skills retire cleanly");limits(argv[1]);integrity();check(Access::live()==0,"Every runtime fixture is fully retired");std::sort(frameSeconds.begin(),frameSeconds.end());std::cout<<"PASS "<<checks<<" actual OrbiPom checks; strict source numbers="<<comparedNumbers<<" maximum residual="<<maximumResidual<<"; Apple-primitive ten-second body coordinates strict="<<substitutedTrajectoryNumbers<<"; "<<primitiveSummary<<"; "<<auditSummary<<"; production-libm coordinates after the first gated 1-ULP primitive difference ("<<observedTrajectoryNumbers<<"): max x="<<trajectoryX<<" y="<<trajectoryY<<" angle="<<trajectoryAngle<<"; frame median="<<frameSeconds[frameSeconds.size()/2]*1000<<"ms p95="<<frameSeconds[frameSeconds.size()*95/100]*1000<<"ms maximum="<<maximumFrameSeconds*1000<<"ms\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

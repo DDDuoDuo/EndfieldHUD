@@ -15,6 +15,11 @@ class CalendarError final:public std::runtime_error {
 public:explicit CalendarError(CalendarErrorCode);CalendarErrorCode code()const noexcept{return code_;}
 private:CalendarErrorCode code_;
 };
+// Mac HUDCalendarError.errorDescription L10n.text pair (English, Simplified
+// Chinese). what() is the English text; owners localize the code at display
+// time through the shared five-language catalog rows of this pair.
+struct CalendarSourceText {std::string_view english,simplified;};
+CalendarSourceText calendarErrorText(CalendarErrorCode)noexcept;
 struct CalendarDay {
     int year{},month{},day{};
     bool valid()const noexcept;std::string string()const;

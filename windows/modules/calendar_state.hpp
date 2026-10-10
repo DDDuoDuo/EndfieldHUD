@@ -30,11 +30,16 @@ public:CalendarState(std::shared_ptr<CalendarRepository>,CalendarExecutor,Calend
     void startIfExisting();void setActive(bool);void refreshReminders();void refreshForSystemChange();
     bool save(std::string title,std::string details,CalendarDay,std::optional<std::string>id={},std::function<void(bool)>completion={});
     bool remove(std::string id,std::function<void(bool)>completion={});
-    void report(std::string);void queueCapacityAvailable();
+    // Free text is shown as reported; a source code keeps its type so the
+    // owner can translate it at display time (immediate language switch).
+    void report(std::string);void report(CalendarErrorCode);void queueCapacityAvailable();
     bool active()const noexcept;bool loaded()const noexcept;bool busy()const noexcept;bool scheduling()const noexcept;
     bool hasPendingWork()const noexcept;bool hasPersistenceFailure()const noexcept;
     CalendarDay today()const;CalendarTimeZone zone()const;
+    // error() is the English source text (Mac errorDescription); errorCode()
+    // is set when that text came from a source CalendarError.
     CalendarPermission permission()const noexcept;const std::optional<std::string>&error()const noexcept;
+    std::optional<CalendarErrorCode>errorCode()const noexcept;
     std::span<const CalendarEvent>events()const noexcept;std::uint64_t revision()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };

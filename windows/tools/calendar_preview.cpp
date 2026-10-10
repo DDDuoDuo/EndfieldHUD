@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include "native/module_scene.hpp"
 #include "native/module_registration.hpp"
+#include "modules/calendar_localization.hpp"
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -12,12 +13,7 @@ bool inside(R r,P p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.heigh
 bool locked(HRESULT r){return r==TS_E_NOLOCK||r==TF_E_NOLOCK;}
 constexpr std::array<R,3>fieldRects{{{14,49,312,30},{14,99,312,28},{14,149,312,86}}};
 std::string locale(core::Language l){switch(l){case core::Language::english:return "en_US";case core::Language::simplifiedChinese:return "zh_CN";case core::Language::traditionalChinese:return "zh_TW";case core::Language::japanese:return "ja_JP";case core::Language::korean:return "ko_KR";default:throw std::invalid_argument("Resolve Calendar language at the app preference boundary");}}
-mod::CalendarStrings strings(core::Language l){mod::CalendarStrings s;const auto cn=mod::CalendarStrings::simplifiedChinese();
-#define CALENDAR_STRING(n) s.n=core::localized(s.n,cn.n,l)
- CALENDAR_STRING(calendar);CALENDAR_STRING(today);CALENDAR_STRING(noEvents);CALENDAR_STRING(addEvent);CALENDAR_STRING(editEvent);CALENDAR_STRING(title);CALENDAR_STRING(date);CALENDAR_STRING(details);CALENDAR_STRING(save);CALENDAR_STRING(cancel);CALENDAR_STRING(erase);CALENDAR_STRING(deleteQuestion);CALENDAR_STRING(previousMonth);CALENDAR_STRING(nextMonth);CALENDAR_STRING(refreshReminders);CALENDAR_STRING(denied);CALENDAR_STRING(unavailable);
-#undef CALENDAR_STRING
- return s;
-}
+mod::CalendarStrings strings(core::Language l){return mod::calendarStrings(l);}
 J empty(){return J::Object{{"bounds",J::Array{0,0,400,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}
 }
 struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
@@ -25,9 +21,12 @@ struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
     mod::CalendarView view;mod::CalendarDay today;gpu::NativeCalendarScene canvas;gpu::LayerScene geometry;gpu::NativeModuleSurface surface;gpu::NativeModuleRegistration registration{"calendar.registration"};
     app::ClientMetrics metrics;const gpu::ModuleSurfacePose*pose{};core::Projection projection;gpu::Renderer*renderer{};
     bool alive{true},overlay{true},active{},input{},ownerFocused{true},pressed{},dragging{},dirty{true},seen{};double time{};unsigned eventDepth{};std::uint64_t stateRevision{},viewRevision{},fontRevision{},artRevision{},generation{},registrationRevision{};
-    std::optional<P>point;
+    std::optional<P>point;core::Language language{core::Language::english};
+    // Typed source errors are translated at display time; other text as reported.
+    std::optional<std::string>visible(std::optional<mod::CalendarErrorCode>code,const std::optional<std::string>&text)const{if(code)return mod::calendarErrorMessage(*code,language);return text;}
+    std::optional<std::string>stateError()const{return visible(state.errorCode(),state.error());}
     struct Menu {
-        gpu::NativeCalendarScene scene;std::array<std::unique_ptr<gpu::NativeCalendarEditorField>,3>fields;std::array<bool,3>stopped{};mod::CalendarMenuInput input;std::optional<std::string>eventID;std::uint64_t generation{},revision{};unsigned focused{};std::optional<unsigned>pendingFocus;bool pendingSelectAll{},pendingBlur{},pendingDismiss{},pendingSave{},animateDismiss{},closing{},captured{};double opened{},closed{};std::optional<std::string>localError;
+        gpu::NativeCalendarScene scene;std::array<std::unique_ptr<gpu::NativeCalendarEditorField>,3>fields;std::array<bool,3>stopped{};mod::CalendarMenuInput input;std::optional<std::string>eventID;std::uint64_t generation{},revision{};unsigned focused{};std::optional<unsigned>pendingFocus;bool pendingSelectAll{},pendingBlur{},pendingDismiss{},pendingSave{},animateDismiss{},closing{},captured{};double opened{},closed{};std::optional<mod::CalendarErrorCode>localError;
         Menu(gpu::LayerRasterizer&r,gpu::LayerRasterOptions o):scene(r,std::move(o)){}
     };
     std::unique_ptr<Menu>menu,closing;std::vector<std::unique_ptr<Menu>>retired;std::array<gpu::LayerCompositionEntry,12>composed;std::size_t count{};
@@ -39,9 +38,9 @@ struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
     std::size_t eventCount()const{std::size_t n{};for(const auto&e:state.events())n+=e.day==view.selected();return n;}
     void content(){
         if(!dirty&&stateRevision==state.revision()&&viewRevision==view.revision()&&fontRevision==raster.fontRevision())return;
-        if(!active&&!dirty)return;view.clampEvents(eventCount());mod::CalendarCanvasInput i;i.appearance=options.appearance;i.strings=options.strings;i.today=today;i.selected=view.selected();i.month=view.month();i.firstWeekday=civil.firstWeekday();i.weekdays=civil.weekdays();i.monthHeading=civil.monthHeading(i.month);i.events.assign(state.events().begin(),state.events().end());i.firstEvent=view.firstEvent();i.busy=state.busy();i.permission=state.permission();i.error=state.error();
+        if(!active&&!dirty)return;view.clampEvents(eventCount());mod::CalendarCanvasInput i;i.appearance=options.appearance;i.strings=options.strings;i.today=today;i.selected=view.selected();i.month=view.month();i.firstWeekday=civil.firstWeekday();i.weekdays=civil.weekdays();i.monthHeading=civil.monthHeading(i.month);i.events.assign(state.events().begin(),state.events().end());i.firstEvent=view.firstEvent();i.busy=state.busy();i.permission=state.permission();i.error=stateError();
         canvas.syncContent(mod::prepareCalendarCanvas(i),++artRevision,time,seen,options.reduceMotion);stateRevision=state.revision();viewRevision=view.revision();fontRevision=raster.fontRevision();dirty=false;
-        if(menu&&!menu->pendingDismiss&&!menu->captured){const auto error=menu->localError?menu->localError:state.error();if(menu->input.busy!=state.busy()||menu->input.error!=error){menu->input.busy=state.busy();menu->input.error=error;menu->scene.syncContent(mod::prepareCalendarMenu(menu->input),++menu->revision,time,false,options.reduceMotion);}}
+        if(menu&&!menu->pendingDismiss&&!menu->captured){const auto error=menu->localError?visible(menu->localError,{}):stateError();if(menu->input.busy!=state.busy()||menu->input.error!=error){menu->input.busy=state.busy();menu->input.error=error;menu->scene.syncContent(mod::prepareCalendarMenu(menu->input),++menu->revision,time,false,options.reduceMotion);}}
     }
     void dispose(std::unique_ptr<Menu>v){if(!v)return;bool released=!renderer;if(renderer){released=v->scene.releaseResources(*renderer);if(released)for(auto&f:v->fields)released=f->releaseResources(*renderer)&&released;}if(!released){need(retired.size()<3,"Publish and collect old Calendar menus before opening another");retired.push_back(std::move(v));}}
     bool focusField(unsigned n,bool selectAll){
@@ -51,7 +50,7 @@ struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
         auto&f=*menu->fields[n];f.normalize(options.text);f.syncContent();if(selectAll){f.editor().command(gpu::ProjectedEditorCommand::selectAll);f.syncContent();}return true;
     }
     void show(const mod::CalendarEvent*event){
-        if(!close(false))return;dispose(std::move(closing));auto next=std::make_unique<Menu>(raster,options.raster);next->generation=++generation;next->opened=time;next->input.appearance=options.appearance;next->input.strings=options.strings;next->input.editing=event!=nullptr;next->input.busy=state.busy();next->input.error=state.error();if(event)next->eventID=event->id;
+        if(!close(false))return;dispose(std::move(closing));auto next=std::make_unique<Menu>(raster,options.raster);next->generation=++generation;next->opened=time;next->input.appearance=options.appearance;next->input.strings=options.strings;next->input.editing=event!=nullptr;next->input.busy=state.busy();next->input.error=stateError();if(event)next->eventID=event->id;
         const std::array<std::string,3>values{event?event->title:std::string{},(event?event->day:view.selected()).string(),event?event->details:std::string{}};const std::array<std::string,3>placeholders{options.strings.title,options.strings.date,options.strings.details};
         for(unsigned n=0;n<3;++n){next->fields[n]=std::make_unique<gpu::NativeCalendarEditorField>(hwnd,raster,options.raster,static_cast<mod::CalendarEditorField>(n),values[n],placeholders[n],options.appearance,options.textMessage,++generation);if(manager){const auto result=next->fields[n]->editor().connect(*manager,client);if(!alive)return;need(SUCCEEDED(result),"Cannot connect Calendar field to shared TSF manager");}}
         next->scene.syncContent(mod::prepareCalendarMenu(next->input),++next->revision,time,false,options.reduceMotion);menu=std::move(next);focusField(0,false);dragging=false;
@@ -68,7 +67,7 @@ struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
     }
     void save(){
         if(!menu||menu->pendingDismiss||menu->captured||state.busy())return;const auto rawDate=mod::calendarEditorUTF8(menu->fields[1]->document().text());const auto day=mod::CalendarDay::parse(options.text.trimmed(rawDate));
-        if(!day){menu->localError=mod::CalendarError(mod::CalendarErrorCode::invalidDate).what();menu->input.error=menu->localError;menu->scene.syncContent(mod::prepareCalendarMenu(menu->input),++menu->revision,time,false,options.reduceMotion);return;}
+        if(!day){menu->localError=mod::CalendarErrorCode::invalidDate;menu->input.error=visible(menu->localError,{});menu->scene.syncContent(mod::prepareCalendarMenu(menu->input),++menu->revision,time,false,options.reduceMotion);return;}
         auto*current=menu.get();for(auto&f:menu->fields){const auto hr=f->editor().commitComposition();if(!alive||menu.get()!=current)return;if(locked(hr)){menu->pendingSave=true;return;}need(SUCCEEDED(hr),"Cannot commit Calendar marked text before save");}
         for(auto&f:menu->fields){f->normalize(options.text);f->syncContent();}menu->pendingSave=false;menu->localError.reset();const auto id=menu->eventID;const auto tag=menu->generation;std::weak_ptr<Impl>weak=shared_from_this();
         state.save(mod::calendarEditorUTF8(menu->fields[0]->document().text()),mod::calendarEditorUTF8(menu->fields[2]->document().text()),*day,id,[weak,tag](bool saved){auto i=weak.lock();if(!i||!i->alive)return;i->dirty=true;if(saved&&i->menu&&i->menu->generation==tag)i->close(true);});
@@ -83,7 +82,7 @@ struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
 CalendarPreview::CalendarPreview(HWND h,mod::CalendarState&s,gpu::CalendarCivilContext&c,gpu::LayerRasterizer&r,CalendarPreviewOptions o,ITfThreadMgr*m,TfClientId id):impl_(std::make_shared<Impl>(h,s,c,r,std::move(o),m,id)){}
 CalendarPreview::~CalendarPreview(){auto i=impl_;i->alive=false;if(i->menu)for(auto&f:i->menu->fields)f->stopInput();}
 void CalendarPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Calendar client metrics");impl_->metrics=m;}
-void CalendarPreview::setLanguage(core::Language l,double t){auto i=impl_;const Impl::Event event(*i,t);auto labels=strings(l);const bool localeChanged=i->civil.setDisplayLocale(locale(l));if(!localeChanged&&i->options.strings==labels&&i->fontRevision==i->raster.fontRevision())return;i->options.strings=std::move(labels);i->dirty=true;if(i->menu&&!i->menu->pendingDismiss&&!i->menu->captured){i->menu->input.strings=i->options.strings;i->menu->scene.syncContent(mod::prepareCalendarMenu(i->menu->input),++i->menu->revision,i->time,false,i->options.reduceMotion);const std::array<std::string,3>hints{i->options.strings.title,i->options.strings.date,i->options.strings.details};for(unsigned n=0;n<3;++n)i->menu->fields[n]->setAppearance(i->options.appearance,hints[n]);}if(i->pose)i->content();}
+void CalendarPreview::setLanguage(core::Language l,double t){auto i=impl_;const Impl::Event event(*i,t);auto labels=strings(l);const bool localeChanged=i->civil.setDisplayLocale(locale(l));i->language=l;if(!localeChanged&&i->options.strings==labels&&i->fontRevision==i->raster.fontRevision())return;i->options.strings=std::move(labels);i->dirty=true;if(i->menu&&!i->menu->pendingDismiss&&!i->menu->captured){i->menu->input.strings=i->options.strings;i->menu->input.error=i->menu->localError?i->visible(i->menu->localError,{}):i->stateError();i->menu->scene.syncContent(mod::prepareCalendarMenu(i->menu->input),++i->menu->revision,i->time,false,i->options.reduceMotion);const std::array<std::string,3>hints{i->options.strings.title,i->options.strings.date,i->options.strings.details};for(unsigned n=0;n<3;++n)i->menu->fields[n]->setAppearance(i->options.appearance,hints[n]);}if(i->pose)i->content();}
 void CalendarPreview::setAppearance(mod::CalendarAppearance a,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->options.appearance==a&&i->fontRevision==i->raster.fontRevision())return;i->options.appearance=a;i->dirty=true;if(i->menu&&!i->menu->pendingDismiss&&!i->menu->captured){i->menu->input.appearance=a;i->menu->scene.syncContent(mod::prepareCalendarMenu(i->menu->input),++i->menu->revision,i->time,false,i->options.reduceMotion);const std::array<std::string,3>hints{i->options.strings.title,i->options.strings.date,i->options.strings.details};for(unsigned n=0;n<3;++n)i->menu->fields[n]->setAppearance(a,hints[n]);}if(i->pose)i->content();}
 void CalendarPreview::setReduceMotion(bool b,double t){auto i=impl_;const Impl::Event event(*i,t);i->options.reduceMotion=b;}
 void CalendarPreview::systemChanged(double t){auto i=impl_;const Impl::Event event(*i,t);i->civil.refreshSystemContext();i->today=i->state.today();i->state.refreshForSystemChange();if(!i->alive)return;i->dirty=true;if(i->pose)i->content();}
@@ -117,6 +116,8 @@ bool CalendarPreview::message(const app::NativeMessage&m,double t){auto i=impl_;
 }
 void CalendarPreview::focus(bool focused,double t){auto i=impl_;const Impl::Event event(*i,t);i->ownerFocused=focused;if(!i->menu||!i->manager||i->menu->pendingDismiss)return;if(focused){i->focusField(i->menu->focused,false);return;}auto*old=i->menu.get();auto&field=*old->fields[old->focused];const auto committed=field.editor().commitComposition();if(!i->alive||i->menu.get()!=old)return;if(locked(committed)){old->pendingBlur=true;return;}need(SUCCEEDED(committed),"Cannot commit Calendar focus loss");const auto hr=field.editor().focus(false);if(!i->alive||i->menu.get()!=old)return;if(locked(hr)){old->pendingBlur=true;return;}need(SUCCEEDED(hr),"Cannot blur Calendar text field");old->pendingBlur=false;}
 bool CalendarPreview::dismissMenu(bool animated,double t){auto i=impl_;const Impl::Event event(*i,t);return i->close(animated);}
+std::vector<mod::CalendarAccessible>CalendarPreview::accessibility()const{const auto&i=*impl_;std::vector<mod::CalendarAccessible>out;if(!i.input||!i.pose||!i.canvas.stats().assets)return out;out=mod::calendarCanvasAccessibility(i.canvas.artwork().actions,i.options.strings);
+    if(i.menu&&!i.menu->pendingDismiss&&!i.menu->captured)for(auto&e:mod::calendarMenuAccessibility(i.menu->scene.artwork().actions,i.options.strings,i.language)){e.rect.x+=30;e.rect.y+=77;out.push_back(std::move(e));}return out;}
 bool CalendarPreview::editing()const noexcept{return bool(impl_->menu);}std::optional<mod::CalendarEditorField>CalendarPreview::focusedField()const noexcept{return impl_->menu?std::optional(static_cast<mod::CalendarEditorField>(impl_->menu->focused)):std::nullopt;}const mod::CalendarView&CalendarPreview::view()const noexcept{return impl_->view;}
 void CalendarPreview::upload(gpu::Renderer&r){auto i=impl_;need(!i->renderer||i->renderer==&r,"Calendar resources belong to another renderer");i->renderer=&r;if(i->seen){i->canvas.uploadResources(r);i->canvas.uploadAnimations(r);}if(i->closing){i->closing->scene.uploadResources(r);i->closing->scene.uploadAnimations(r);}if(i->menu){i->menu->scene.uploadResources(r);i->menu->scene.uploadAnimations(r);if(!i->menu->captured)for(auto&f:i->menu->fields)f->upload(r);}if(i->registrationRevision!=i->registration.stats().geometryRevision){i->registration.uploadGeometry(r);i->registrationRevision=i->registration.stats().geometryRevision;}}
 std::span<const gpu::LayerCompositionEntry>CalendarPreview::entries(){auto i=impl_;i->count=0;if(!i->pose)return {};const auto append=[&](std::span<const gpu::LayerCompositionEntry>v){for(const auto&e:v){need(i->count<i->composed.size(),"Calendar retained draw list exceeded its source budget");i->composed[i->count++]=e;}};append(i->canvas.entries());if(i->closing)append(i->closing->scene.entries());if(i->menu){append(i->menu->scene.entries());if(!i->menu->captured)for(auto&f:i->menu->fields)i->composed[i->count++]=f->entry();}i->composed[i->count++]={&i->geometry,i->registration.draws()};return{i->composed.data(),i->count};}

@@ -9,11 +9,16 @@ namespace endfield::tools {
 namespace {namespace n=native;namespace m=modules;using M=core::Matrix4;using P=core::Point;using J=ehud::data::Json;void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}J blank(){return J::Object{{"bounds",J::Array{0,0,440,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}}
 struct OrbiPomPreview::Impl {
     m::OrbiPomState state;n::NativeOrbiPomScene scene;n::LayerScene geometry;n::NativeModuleSurface surface;n::NativeModuleRegistration registration{"orbipom.registration"};m::OrbiPomAppearance appearance;
-    app::ClientMetrics metrics;core::Projection projection;std::optional<n::ModuleSurfacePose>pose;std::optional<P>pointer;std::optional<double>baseline;std::array<n::LayerCompositionEntry,5>composed{};bool overlayVisible{true},foreground{true},active{},input{},pressed{},alive{true};double time{};std::uint64_t revision{};
+    app::ClientMetrics metrics;core::Projection projection;std::optional<n::ModuleSurfacePose>pose;std::optional<P>pointer;std::optional<double>baseline;std::array<n::LayerCompositionEntry,5>composed{};bool overlayVisible{true},foreground{true},suspended{},lowPower{},active{},input{},pressed{},alive{true};double time{};std::uint64_t revision{};
     Impl(m::OrbiPomSession&s,n::LayerRasterizer&r,OrbiPomPreviewOptions o):state(s),scene(s,state,r,o.raster,o.appearance),geometry(r),surface(prepare(o.raster),core::Module::minigame),appearance(o.appearance){}
     n::LayerScene&prepare(const n::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
     std::uint64_t clock(double t){need(std::isfinite(t),"OrbiPom owner needs finite time");need(revision!=UINT64_MAX,"OrbiPom event revision exhausted");time=std::max(time,t);return ++revision;}bool current(std::uint64_t r)const{return alive&&revision==r;}
     std::optional<P>local(P p)const{return input?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
+    bool awake()const noexcept{return foreground&&!suspended;}
+    // Low power: the source timer ticks every 1/30 s (tolerance .001). The
+    // shared clock already paces at 1/30 s; a frame presented within half a
+    // 60 Hz period of the next tick counts as that tick, earlier ones do not.
+    double minimumTick()const noexcept{return lowPower?1./30-1./120:0;}
     void synchronize(){if(!pose)return;scene.syncContent(time);scene.setFeedback(pointer?local(*pointer):std::nullopt,pressed,time);const auto&p=*pose;scene.updatePose({p.contentWorld,p.opacity,time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});if(!state.requiresFrames())baseline.reset();else if(!baseline)baseline=time;}
     bool action(m::OrbiPomAction a){if(!input)return false;const auto generation=revision;const bool accepted=state.perform(a);if(!current(generation))return accepted;synchronize();return accepted;}
 };
@@ -23,11 +28,13 @@ void OrbiPomPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pix
 void OrbiPomPreview::setAppearance(m::OrbiPomAppearance a,double t){auto i=impl_;i->clock(t);i->scene.setAppearance(a);i->appearance=a;i->synchronize();}
 void OrbiPomPreview::setLanguage(core::Language language,double t){auto a=impl_->appearance;a.language=language;setAppearance(a,t);}
 void OrbiPomPreview::setOverlayVisible(bool visible,double t){auto i=impl_;const auto generation=i->clock(t);if(i->overlayVisible==visible)return;i->overlayVisible=visible;i->baseline.reset();if(!visible){i->active=i->input=i->pressed=false;i->state.setPresented(false);if(!i->current(generation))return;i->scene.settle();i->pointer.reset();}}
-void OrbiPomPreview::setForeground(bool value,double t){auto i=impl_;const auto generation=i->clock(t);if(i->foreground==value)return;i->foreground=value;i->baseline.reset();i->state.setForeground(value);if(i->current(generation))i->synchronize();}
+void OrbiPomPreview::setForeground(bool value,double t){auto i=impl_;const auto generation=i->clock(t);if(i->foreground==value)return;i->foreground=value;i->baseline.reset();i->state.setForeground(i->awake());if(i->current(generation))i->synchronize();}
+void OrbiPomPreview::setSystemSuspended(bool value,double t){auto i=impl_;const auto generation=i->clock(t);if(i->suspended==value)return;i->suspended=value;i->baseline.reset();i->state.setForeground(i->awake());if(i->current(generation))i->synchronize();}
+void OrbiPomPreview::setLowPowerVisualMode(bool value,double t){auto i=impl_;const auto generation=i->clock(t);if(i->lowPower==value)return;i->lowPower=value;i->baseline.reset();if(i->current(generation))i->synchronize();}
 void OrbiPomPreview::update(const M&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto i=impl_;const auto generation=i->clock(t);const auto*shown=sample.current.module==core::Module::minigame?&sample.current:sample.incoming&&sample.incoming->module==core::Module::minigame?&*sample.incoming:nullptr;const bool prepared=shown&&sample.requested==core::Module::minigame&&i->overlayVisible;const bool active=prepared&&sample.acceptsModuleInput;
-    if(!prepared){i->state.setPresented(false);if(!i->current(generation))return;i->baseline.reset();i->pressed=false;}else i->state.setPresented(true);if(!i->current(generation))return;i->state.setActive(active);if(!i->current(generation))return;i->active=active;i->input=active;i->state.setForeground(i->foreground);if(!i->current(generation))return;
+    if(!prepared){i->state.setPresented(false);if(!i->current(generation))return;i->baseline.reset();i->pressed=false;}else i->state.setPresented(true);if(!i->current(generation))return;i->state.setActive(active);if(!i->current(generation))return;i->active=active;i->input=active;i->state.setForeground(i->awake());if(!i->current(generation))return;
     if(!shown){i->pose.reset();i->registration.update({});return;}
-    if(i->state.requiresFrames()){if(i->baseline){const double elapsed=i->time-*i->baseline;if(elapsed>0)i->state.advance(elapsed);if(!i->current(generation))return;}i->baseline=i->time;}else i->baseline.reset();
+    if(i->state.requiresFrames()){if(!i->baseline)i->baseline=i->time;else if(const double elapsed=i->time-*i->baseline;elapsed>0&&elapsed>=i->minimumTick()){i->state.advance(elapsed);if(!i->current(generation))return;i->baseline=i->time;}}else i->baseline.reset();
     i->surface.update(center,settings,*shown,opacity);i->pose=i->surface.pose();const auto&p=*i->pose;const auto camera=n::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*M::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);i->synchronize();i->registration.update(p.registration);
 }
 bool OrbiPomPreview::requiresFrames(double t)const{const auto&i=*impl_;return i.overlayVisible&&i.pose&&(i.state.requiresFrames()||i.scene.requiresFrames(std::max(i.time,t)));}

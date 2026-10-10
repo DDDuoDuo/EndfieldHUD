@@ -22,7 +22,15 @@ CalendarEvent decodeEvent(const J&j){need(j.isObject()&&j["day"].isObject());Cal
 J encodeEvent(const CalendarEvent&e){auto j=e.originalFields;j["id"]=uuid(e.id);j["title"]=e.title;j["details"]=e.details;auto day=e.dayFields;day["year"]=e.day.year;day["month"]=e.day.month;day["day"]=e.day.day;j["day"]=std::move(day);numeric(j,"created",e.created,e.originalNumbers);numeric(j,"modified",e.modified,e.originalNumbers);j["catchUpPending"]=e.catchUpPending;
     if(e.catchUpDate)numeric(j,"catchUpDate",*e.catchUpDate,e.originalNumbers);else j.erase("catchUpDate");if(e.beforeScheduledFor)j["beforeScheduledFor"]=*e.beforeScheduledFor;else j.erase("beforeScheduledFor");if(e.dayScheduledFor)j["dayScheduledFor"]=*e.dayScheduledFor;else j.erase("dayScheduledFor");return j;}
 }
-CalendarError::CalendarError(CalendarErrorCode c):std::runtime_error(c==CalendarErrorCode::changedOnDisk?"Calendar changed outside this app. Restart before saving.":c==CalendarErrorCode::capacity?"The calendar can keep up to 256 events.":c==CalendarErrorCode::upcomingCapacity?"Keep up to 30 upcoming events so every reminder can be scheduled.":c==CalendarErrorCode::invalidDate?"Enter a valid date as YYYY-MM-DD.":c==CalendarErrorCode::missing?"This event is no longer available.":c==CalendarErrorCode::notifications?"Reminders could not be scheduled. Try again.":"Calendar data could not be read. Your file was preserved."),code_(c){}
+CalendarSourceText calendarErrorText(CalendarErrorCode c)noexcept{switch(c){
+case CalendarErrorCode::changedOnDisk:return{"Calendar changed outside this app. Restart before saving.","日历文件已被其他程序修改，请重启后再保存。"};
+case CalendarErrorCode::capacity:return{"The calendar can keep up to 256 events.","日历最多可保存 256 个事项。"};
+case CalendarErrorCode::upcomingCapacity:return{"Keep up to 30 upcoming events so every reminder can be scheduled.","最多保留 30 个待办日期事项，以确保每条提醒都能安排。"};
+case CalendarErrorCode::invalidDate:return{"Enter a valid date as YYYY-MM-DD.","请输入有效日期，格式为 YYYY-MM-DD。"};
+case CalendarErrorCode::missing:return{"This event is no longer available.","此事项已不存在。"};
+case CalendarErrorCode::notifications:return{"Reminders could not be scheduled. Try again.","无法安排提醒，请重试。"};
+default:return{"Calendar data could not be read. Your file was preserved.","无法读取日历数据，原文件已保留。"};}}
+CalendarError::CalendarError(CalendarErrorCode c):std::runtime_error(std::string(calendarErrorText(c).english)),code_(c){}
 bool CalendarDay::valid()const noexcept{return year>=1900&&year<=9999&&month>=1&&month<=12&&day>=1&&day<=31&&civil(*this).ok();}
 std::string CalendarDay::string()const{char v[24];std::snprintf(v,sizeof(v),"%04d-%02d-%02d",year,month,day);return v;}
 std::optional<CalendarDay>CalendarDay::parse(std::string_view s)noexcept{CalendarDay d;int*fields[]{&d.year,&d.month,&d.day};std::size_t at{};for(unsigned n=0;n<3;++n){const auto end=n==2?s.size():s.find('-',at);if(end==s.npos||end<=at)return {};auto p=s.substr(at,end-at);if(p.front()=='+')p.remove_prefix(1);if(p.empty())return {};auto r=std::from_chars(p.data(),p.data()+p.size(),*fields[n]);if(r.ec!=std::errc{}||r.ptr!=p.data()+p.size())return {};at=end+1;}return d.valid()?std::optional(d):std::nullopt;}
