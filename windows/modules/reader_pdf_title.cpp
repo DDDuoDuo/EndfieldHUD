@@ -1,4 +1,5 @@
 #include "modules/reader_pdf_title.hpp"
+#include "modules/reader_pdf_crypto.hpp"
 #include <zlib.h>
 #include <algorithm>
 #include <array>
@@ -6,6 +7,7 @@
 #include <memory>
 #include <set>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace endfield::modules {
@@ -23,6 +25,7 @@ constexpr std::size_t objectWindow = 4 * 1024 * 1024;     // largest single obje
 constexpr std::size_t tableWindow = 32 * 1024 * 1024;     // largest classic cross-reference table
 constexpr std::size_t streamBytes = 32 * 1024 * 1024;     // largest encoded or decoded stream
 constexpr std::uint64_t totalReadBytes = 128 * 1024 * 1024;
+constexpr std::uint64_t repairBytes = 64 * 1024 * 1024;       // largest damaged file rebuilt from its object headers
 constexpr unsigned maximumSections = 64, maximumDepth = 32;
 constexpr std::size_t maximumItems = 1u << 16;
 
@@ -419,15 +422,30 @@ public:
             need(header != std::string_view::npos);
             base_ = header;
         }
-        std::optional<Value> info;
-        bool encrypted{};
+        try {
+            return resolve(load());
+        } catch (const Malformed&) {
+            // A damaged cross-reference (wrong offsets, missing table): rebuild
+            // it from the object headers, as PDFKit does for a file it opens.
+            sections_.clear();
+            objectStreams_.clear();
+            security_.reset();
+            return resolve(repair());
+        }
+    }
+
+private:
+    struct Trailer { std::optional<Value> info, encrypt, identifier; };
+    Trailer load() {
+        Trailer trailer;
+        auto& [info, encrypt, identifier] = trailer;
         std::set<std::uint64_t> visited;
         std::optional<std::uint64_t> next = startxref();
         while (next) {
             need(sections_.size() < maximumSections && visited.insert(*next).second);
-            Value trailer;
-            auto section = loadSection(*next, trailer);
-            if (const auto* hidden = trailer.find("XRefStm"); hidden && !section.stream) {
+            Value dictionary;
+            auto section = loadSection(*next, dictionary);
+            if (const auto* hidden = dictionary.find("XRefStm"); hidden && !section.stream) {
                 Value ignored;
                 auto stream = loadSection(static_cast<std::uint64_t>(hidden->count()), ignored);
                 need(stream.stream);
@@ -435,33 +453,245 @@ public:
             }
             // Only the newest trailer names the information dictionary (PDFKit
             // does not fall back to an older revision's /Info).
-            if (sections_.empty()) if (const auto* value = trailer.find("Info")) info = *value;
-            if (trailer.find("Encrypt")) encrypted = true;
+            if (sections_.empty()) if (const auto* value = dictionary.find("Info")) info = *value;
+            if (!encrypt) if (const auto* value = dictionary.find("Encrypt")) encrypt = *value;
+            if (!identifier) if (const auto* value = dictionary.find("ID")) identifier = *value;
             sections_.push_back(std::move(section));
             next.reset();
-            if (const auto* previous = trailer.find("Prev")) next = static_cast<std::uint64_t>(previous->count());
+            if (const auto* previous = dictionary.find("Prev")) next = static_cast<std::uint64_t>(previous->count());
         }
-        // Encrypted strings need the security handler (PDFKit decrypts
-        // owner-password-only files); the file name is kept instead.
-        if (encrypted || !info) return std::nullopt;
-        const Value dictionary = info->is(K::reference) ? object(*info) : *info;
+        return trailer;
+    }
+    // Rebuilds the object table from "n g obj" headers (the last definition
+    // of a number wins) and takes the last "trailer" dictionary. As in PDFKit,
+    // a file without a classic trailer (cross-reference streams only) and
+    // objects inside object streams are not recovered. Bounded to repairBytes.
+    Trailer repair() {
+        need(size_ <= repairBytes);
+        constexpr std::size_t chunk = 4 * 1024 * 1024, overlap = 64;
+        std::optional<std::uint64_t> trailerAt;
+        for (std::uint64_t at = 0;; at += chunk - overlap) {
+            const auto data = read(at, chunk);
+            const std::string_view text(reinterpret_cast<const char*>(data.data()), data.size());
+            for (auto p = text.find("trailer"); p != std::string_view::npos; p = text.find("trailer", p + 7)) trailerAt = std::max(trailerAt.value_or(0), at + p);
+            for (auto p = text.find("obj"); p != std::string_view::npos; p = text.find("obj", p + 3)) {
+                if (p + 3 < text.size() ? !space(static_cast<unsigned char>(text[p + 3])) && !delimiter(text[p + 3]) : at + text.size() < size_) continue;
+                // Backwards: spaces, generation, spaces, object number, boundary.
+                std::size_t q = p;
+                const auto spaces = [&] { const auto from = q; while (q > 0 && space(static_cast<unsigned char>(text[q - 1]))) --q; return q < from; };
+                const auto number = [&] { const auto from = q; while (q > 0 && text[q - 1] >= '0' && text[q - 1] <= '9' && from - q < 18) --q; return q < from ? std::optional(text.substr(q, from - q)) : std::nullopt; };
+                if (!spaces()) continue;
+                const auto generation = number();
+                if (!generation || !spaces()) continue;
+                const auto object = number();
+                if (!object || (q > 0 && !space(static_cast<unsigned char>(text[q - 1])) && !delimiter(text[q - 1])) || (q == 0 && at > 0)) continue;
+                const auto offset = at + q;
+                if (offset < base_) continue;
+                repaired_[static_cast<std::uint64_t>(this->number(std::string(*object)))] = Entry{1, offset - base_, static_cast<std::uint64_t>(this->number(std::string(*generation)))};
+            }
+            if (at + data.size() >= size_) break;
+        }
+        need(!repaired_.empty() && trailerAt.has_value() && *trailerAt + 7 < size_);
+        const auto dictionary = parseAt(*trailerAt + 7, objectWindow, [](Parser& parser, const std::vector<std::uint8_t>&) { return parser.value(); });
+        need(dictionary.is(K::dictionary));
+        Trailer trailer;
+        if (const auto* value = dictionary.find("Info")) trailer.info = *value;
+        if (const auto* value = dictionary.find("Encrypt")) trailer.encrypt = *value;
+        if (const auto* value = dictionary.find("ID")) trailer.identifier = *value;
+        return trailer;
+    }
+    std::optional<std::u16string> resolve(const Trailer& trailer) {
+        const auto& [info, encrypt, identifier] = trailer;
+        if (!info) return std::nullopt;
+        // An encrypted file opens without a password only when its user
+        // password is empty (an owner password restricts permissions only);
+        // its strings are then decrypted as PDFKit does.
+        if (encrypt) security_ = standardSecurity(encrypt->is(K::reference) ? object(*encrypt) : *encrypt, identifier);
+        // The object whose key decrypts a string: the indirect object holding
+        // it, unless that object lives in an (already decrypted) object stream.
+        std::optional<std::pair<std::uint64_t, std::uint32_t>> owner;
+        bool compressed{};
+        const Value dictionary = info->is(K::reference) ? object(*info, 0, &compressed) : *info;
+        if (info->is(K::reference) && !compressed) owner.emplace(static_cast<std::uint64_t>(info->integer), info->generation);
         if (!dictionary.is(K::dictionary)) return std::nullopt;
         const auto* found = dictionary.find("Title");
         if (!found) return std::nullopt;
         // One indirection, as PDFKit resolves it (a reference to a reference is no title).
-        const Value title = found->is(K::reference) ? object(*found) : *found;
+        Value title = *found;
+        if (found->is(K::reference)) {
+            title = object(*found, 0, &compressed);
+            owner.reset();
+            if (!compressed) owner.emplace(static_cast<std::uint64_t>(found->integer), found->generation);
+        }
         if (!title.is(K::string) || title.text.size() > readerPDFTitleMaximumBytes) return std::nullopt;
+        if (security_ && owner) title.text = decrypt(security_->strings, title.text, *owner);
         auto text = readerPDFTextString(std::span(reinterpret_cast<const std::uint8_t*>(title.text.data()), title.text.size()));
         if (text.empty()) return std::nullopt;
         return text;
     }
 
-private:
+    // --- Standard security handler (PDF 32000-1 7.6.3, ISO 32000-2 7.6.4) ---
+    enum class Method : std::uint8_t { identity, rc4, aes128, aes256 };
+    struct Security {
+        Method strings{Method::identity}, streams{Method::identity};
+        std::vector<std::uint8_t> key;
+    };
+    static constexpr std::array<std::uint8_t, 32> padding{0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08,
+                                                           0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A};
+    static std::span<const std::uint8_t> bytesOf(const std::string& s) noexcept { return {reinterpret_cast<const std::uint8_t*>(s.data()), s.size()}; }
+    // Algorithm 2.A/2.B hash of the empty password with an 8-byte salt.
+    static std::array<std::uint8_t, 32> hardened(std::int64_t revision, std::span<const std::uint8_t> salt) {
+        const auto first = pdfcrypto::sha256(salt);
+        if (revision == 5) return first;
+        std::vector<std::uint8_t> k(first.begin(), first.end()), e, k1;
+        for (int round = 0; round < 64 || static_cast<int>(e.back()) > round - 32; ++round) {
+            k1.clear();
+            for (unsigned n = 0; n < 64; ++n) k1.insert(k1.end(), k.begin(), k.end());
+            e = pdfcrypto::aesCbcEncrypt(std::span(k).first(16), std::span<const std::uint8_t, 16>(k.data() + 16, 16), k1);
+            unsigned sum{};
+            for (unsigned n = 0; n < 16; ++n) sum += e[n];
+            if (sum % 3 == 0) { const auto h = pdfcrypto::sha256(e); k.assign(h.begin(), h.end()); }
+            else if (sum % 3 == 1) { const auto h = pdfcrypto::sha384(e); k.assign(h.begin(), h.end()); }
+            else { const auto h = pdfcrypto::sha512(e); k.assign(h.begin(), h.end()); }
+        }
+        std::array<std::uint8_t, 32> out{};
+        std::copy_n(k.begin(), 32, out.begin());
+        return out;
+    }
+    // The file key for the EMPTY user password; a file that needs a password
+    // (which Windows.Data.Pdf refuses anyway) or an unknown handler declines.
+    Security standardSecurity(const Value& dictionary, const std::optional<Value>& identifier) const {
+        need(dictionary.is(K::dictionary));
+        const auto* filter = dictionary.find("Filter");
+        need(filter && filter->is(K::name) && filter->text == "Standard");
+        const auto field = [&](std::string_view key, std::int64_t fallback) {
+            const auto* v = dictionary.find(key);
+            if (!v) return fallback;
+            need(v->is(K::integer));
+            return v->integer;
+        };
+        const auto version = field("V", 0), revision = field("R", 0);
+        const auto* owner = dictionary.find("O");
+        const auto* user = dictionary.find("U");
+        const auto* permissions = dictionary.find("P");
+        need(owner && user && permissions && owner->is(K::string) && user->is(K::string) && permissions->is(K::integer));
+        // V4/V5 crypt filters, named by /StrF and /StmF (default Identity).
+        const auto method = [&](std::string_view key) {
+            const auto* name = dictionary.find(key);
+            if (!name) return Method::identity;
+            need(name->is(K::name));
+            if (name->text == "Identity") return Method::identity;
+            const auto* filters = dictionary.find("CF");
+            need(filters && filters->is(K::dictionary));
+            const auto* crypt = filters->find(name->text);
+            need(crypt && crypt->is(K::dictionary));
+            const auto* cfm = crypt->find("CFM");
+            if (!cfm) return Method::identity;
+            need(cfm->is(K::name));
+            if (cfm->text == "V2") return Method::rc4;
+            if (cfm->text == "AESV2") return Method::aes128;
+            if (cfm->text == "AESV3") return Method::aes256;
+            need(cfm->text == "None");
+            return Method::identity;
+        };
+        Security security;
+        std::size_t length{};
+        if (version == 1 || version == 2) {
+            security.strings = security.streams = Method::rc4;
+            const auto bits = version == 1 ? 40 : field("Length", 40);
+            need(bits >= 40 && bits <= 128 && bits % 8 == 0);
+            length = static_cast<std::size_t>(bits / 8);
+        } else if (version == 4 || version == 5) {
+            security.strings = method("StrF");
+            security.streams = method("StmF");
+            length = version == 4 ? 16 : 32;
+            need(version == 5 ? security.strings != Method::rc4 && security.streams != Method::rc4 : security.strings != Method::aes256 && security.streams != Method::aes256);
+        } else malformed();
+        std::vector<std::uint8_t> id;
+        if (identifier && identifier->is(K::array) && !identifier->items.empty() && identifier->items[0].is(K::string))
+            id.assign(identifier->items[0].text.begin(), identifier->items[0].text.end());
+        const auto u = bytesOf(user->text);
+        if (revision >= 2 && revision <= 4) {
+            need(version <= 4 && owner->text.size() >= 32 && u.size() >= 32);
+            // Algorithm 2 with the padded empty password.
+            std::vector<std::uint8_t> input(padding.begin(), padding.end());
+            input.insert(input.end(), owner->text.begin(), owner->text.begin() + 32);
+            const auto p = static_cast<std::uint32_t>(permissions->integer);
+            for (unsigned b = 0; b < 4; ++b) input.push_back(static_cast<std::uint8_t>(p >> (8 * b)));
+            input.insert(input.end(), id.begin(), id.end());
+            if (revision >= 4)
+                if (const auto* metadata = dictionary.find("EncryptMetadata"); metadata && metadata->is(K::boolean) && !metadata->integer)
+                    input.insert(input.end(), 4, 0xFF);
+            auto hash = pdfcrypto::md5(input);
+            if (revision >= 3)
+                for (unsigned n = 0; n < 50; ++n) hash = pdfcrypto::md5(std::span(hash).first(length));
+            security.key.assign(hash.begin(), hash.begin() + static_cast<std::ptrdiff_t>(length));
+            // Algorithms 4/5: the empty user password must reproduce /U.
+            if (revision == 2) {
+                const auto expected = pdfcrypto::rc4(security.key, padding);
+                need(std::equal(expected.begin(), expected.end(), u.begin()));
+            } else {
+                std::vector<std::uint8_t> seed(padding.begin(), padding.end());
+                seed.insert(seed.end(), id.begin(), id.end());
+                const auto digest = pdfcrypto::md5(seed);
+                auto value = pdfcrypto::rc4(security.key, digest);
+                for (std::uint8_t round = 1; round <= 19; ++round) {
+                    auto key = security.key;
+                    for (auto& b : key) b ^= round;
+                    value = pdfcrypto::rc4(key, value);
+                }
+                need(std::equal(value.begin(), value.begin() + 16, u.begin()));
+            }
+        } else if (revision == 5 || revision == 6) {
+            need(version == 5 && u.size() >= 48);
+            const auto* ue = dictionary.find("UE");
+            need(ue && ue->is(K::string) && ue->text.size() >= 32);
+            // Algorithm 2.A: validation salt, then the key salt unwraps /UE.
+            const auto check = hardened(revision, u.subspan(32, 8));
+            need(std::equal(check.begin(), check.end(), u.begin()));
+            const auto intermediate = hardened(revision, u.subspan(40, 8));
+            constexpr std::array<std::uint8_t, 16> zero{};
+            security.key = pdfcrypto::aesCbcDecrypt(intermediate, zero, bytesOf(ue->text).first(32));
+        } else malformed();
+        return security;
+    }
+    // Algorithm 1 (RC4, AES-128) and 1.A (AES-256) for one object's data.
+    std::string decrypt(Method method, std::string_view data, std::pair<std::uint64_t, std::uint32_t> owner) const {
+        if (method == Method::identity) return std::string(data);
+        const auto& key = security_->key;
+        std::vector<std::uint8_t> objectKey;
+        if (method == Method::aes256) objectKey = key;
+        else {
+            std::vector<std::uint8_t> input(key.begin(), key.end());
+            for (unsigned b = 0; b < 3; ++b) input.push_back(static_cast<std::uint8_t>(owner.first >> (8 * b)));
+            for (unsigned b = 0; b < 2; ++b) input.push_back(static_cast<std::uint8_t>(owner.second >> (8 * b)));
+            if (method == Method::aes128) input.insert(input.end(), {'s', 'A', 'l', 'T'});
+            const auto hash = pdfcrypto::md5(input);
+            objectKey.assign(hash.begin(), hash.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(key.size() + 5, 16)));
+        }
+        const std::span bytes(reinterpret_cast<const std::uint8_t*>(data.data()), data.size());
+        if (method == Method::rc4) {
+            const auto plain = pdfcrypto::rc4(objectKey, bytes);
+            return {plain.begin(), plain.end()};
+        }
+        // AES-CBC: a 16-byte IV prefix, then PKCS#5-padded blocks.
+        need(bytes.size() >= 16 && (bytes.size() - 16) % 16 == 0);
+        if (bytes.size() == 16) return {};
+        auto plain = pdfcrypto::aesCbcDecrypt(objectKey, bytes.first<16>(), bytes.subspan(16));
+        const auto pad = plain.back();
+        need(pad >= 1 && pad <= 16);
+        plain.resize(plain.size() - pad);
+        return {plain.begin(), plain.end()};
+    }
+
     ReaderBytes& bytes_;
     const ReaderCancel& cancel_;
     const std::uint64_t size_;
     std::uint64_t base_{}, total_{};
     std::vector<Section> sections_;
+    std::optional<Security> security_;
+    // Repair: the object table rebuilt from object headers.
+    std::map<std::uint64_t, Entry> repaired_;
 
     std::vector<std::uint8_t> read(std::uint64_t offset, std::size_t count) {
         checkReaderCancelled(cancel_);
@@ -474,7 +704,7 @@ private:
         return out;
     }
     // Parses at a file offset, growing the window once when a token reaches it.
-    template <class F> auto parseAt(std::uint64_t offset, std::size_t largest, F&& parse) {
+    template <class F> auto parseAt(std::uint64_t offset, std::size_t largest, F&& parse) -> std::invoke_result_t<F&, Parser&, const std::vector<std::uint8_t>&> {
         need(offset < size_);
         for (std::size_t window = firstWindow;; window = largest) {
             const auto data = read(offset, window);
@@ -539,12 +769,19 @@ private:
         });
     }
     // The decoded data of a stream whose dictionary was parsed at `data`.
-    std::vector<std::uint8_t> streamOf(const Value& dictionary, std::uint64_t data, bool resolveLength, unsigned depth = 0) {
+    // `owner`: the stream's object, whose key decrypts its data in an encrypted
+    // file (cross-reference streams are never encrypted).
+    std::vector<std::uint8_t> streamOf(const Value& dictionary, std::uint64_t data, bool resolveLength, unsigned depth = 0,
+                                       std::optional<std::pair<std::uint64_t, std::uint32_t>> owner = {}) {
         const auto* lengthValue = dictionary.find("Length");
         need(lengthValue);
         const auto length = lengthValue->is(K::reference) && resolveLength ? object(*lengthValue, depth + 1).count() : lengthValue->count();
         need(static_cast<std::uint64_t>(length) <= streamBytes && data + static_cast<std::uint64_t>(length) <= size_);
         auto raw = read(data, static_cast<std::size_t>(length));
+        if (security_ && owner) {
+            const auto plain = decrypt(security_->streams, std::string_view(reinterpret_cast<const char*>(raw.data()), raw.size()), *owner);
+            raw.assign(plain.begin(), plain.end());
+        }
         const auto* filter = dictionary.find("Filter");
         if (filter && filter->is(K::array)) {
             need(filter->items.size() <= 1);
@@ -557,7 +794,11 @@ private:
     // Newest revision first; as in PDFKit, a free entry does not hide an
     // older in-use one (a hybrid file's table marks its stream objects free
     // and lists them in the /XRefStm stream).
-    std::optional<Entry> lookup(std::uint64_t n) const {
+    std::optional<Entry> lookup(std::uint64_t n) {
+        if (!repaired_.empty()) {
+            if (const auto found = repaired_.find(n); found != repaired_.end()) return found->second;
+            return std::nullopt;
+        }
         for (const auto& section : sections_) {
             if (const auto found = section.entry(n); found && found->type) return found;
             if (section.hidden)
@@ -566,11 +807,12 @@ private:
         return std::nullopt;
     }
     // The value of an indirect object (references inside it are not followed).
-    Value object(const Value& reference, unsigned depth = 0) {
+    Value object(const Value& reference, unsigned depth = 0, bool* compressed = nullptr) {
         need(reference.is(K::reference) && depth <= 2);
         const auto number = static_cast<std::uint64_t>(reference.integer);
         const auto entry = lookup(number);
         need(entry.has_value());
+        if (compressed) *compressed = entry->type == 2;
         if (entry->type == 1) {
             need(entry->second == reference.generation);
             return parseAt(entry->first + base_, objectWindow, [&](Parser& parser, const std::vector<std::uint8_t>&) {
@@ -614,7 +856,8 @@ private:
         const auto* count = dictionary.find("N");
         const auto* first = dictionary.find("First");
         need(dictionary.is(K::dictionary) && type && type->is(K::name) && type->text == "ObjStm" && count && first);
-        ObjectStream stream{streamOf(dictionary, data, true, depth), static_cast<std::uint64_t>(count->count()), static_cast<std::uint64_t>(first->count())};
+        ObjectStream stream{streamOf(dictionary, data, true, depth, std::pair(number, static_cast<std::uint32_t>(entry->second))),
+                            static_cast<std::uint64_t>(count->count()), static_cast<std::uint64_t>(first->count())};
         need(stream.first <= stream.data.size());
         return objectStreams_.emplace(number, std::move(stream)).first->second;
     }

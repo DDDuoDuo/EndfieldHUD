@@ -9,9 +9,10 @@ set(EHUD_LOCAL_TARGETS "")
 
 # --- Reader PDF title (Mac PDFDocument title attribute) ------------------------
 # Windows.Data.Pdf exposes no document information; this bounded reader of the
-# trailer /Info /Title joins the portable Reader library the native document
-# provider already links (zlib for cross-reference and object streams).
-target_sources(hud_reader PRIVATE modules/reader_pdf_title.cpp)
+# trailer /Info /Title (with the standard security handler for owner-password
+# files and PDFKit's cross-reference repair) joins the portable Reader library
+# the native document provider already links (zlib for streams).
+target_sources(hud_reader PRIVATE modules/reader_pdf_title.cpp modules/reader_pdf_crypto.cpp)
 if(BUILD_TESTING)
   # tools/reader_pdf_title_reference.sh -> reader-pdf-title-source.json
   add_executable(reader_pdf_title_tests tests/reader_pdf_title_tests.cpp)

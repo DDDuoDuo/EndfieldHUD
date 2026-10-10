@@ -191,6 +191,181 @@ def rc4(key, data):
     return bytes(out)
 
 
+# --- Minimal AES encryption (FIPS-197) for generating encrypted fixtures ----
+def _sbox():
+    box, p, q = [0] * 256, 1, 1
+    while True:
+        p = (p ^ (p << 1) ^ (0x1B if p & 0x80 else 0)) & 0xFF
+        q ^= (q << 1) & 0xFF
+        q ^= (q << 2) & 0xFF
+        q ^= (q << 4) & 0xFF
+        if q & 0x80:
+            q ^= 0x09
+        rot = lambda x, n: ((x << n) | (x >> (8 - n))) & 0xFF
+        box[p] = q ^ rot(q, 1) ^ rot(q, 2) ^ rot(q, 3) ^ rot(q, 4) ^ 0x63
+        if p == 1:
+            break
+    box[0] = 0x63
+    return box
+
+
+SBOX = _sbox()
+xtime = lambda x: ((x << 1) ^ (0x1B if x & 0x80 else 0)) & 0xFF
+
+
+def aes_encrypt_block(key, block):
+    nk = len(key) // 4
+    rounds = nk + 6
+    w = [list(key[4 * i:4 * i + 4]) for i in range(nk)]
+    rcon = 1
+    for i in range(nk, 4 * (rounds + 1)):
+        t = list(w[i - 1])
+        if i % nk == 0:
+            t = [SBOX[t[1]] ^ rcon, SBOX[t[2]], SBOX[t[3]], SBOX[t[0]]]
+            rcon = xtime(rcon)
+        elif nk > 6 and i % nk == 4:
+            t = [SBOX[v] for v in t]
+        w.append([w[i - nk][b] ^ t[b] for b in range(4)])
+    s = list(block)
+    add = lambda r: [s[n] ^ w[r * 4 + n // 4][n % 4] for n in range(16)]
+    s = add(0)
+    for r in range(1, rounds + 1):
+        s = [SBOX[v] for v in s]
+        s = [s[((c + row) % 4) * 4 + row] for c in range(4) for row in range(4)]
+        if r != rounds:
+            out = []
+            for c in range(4):
+                a = s[c * 4:c * 4 + 4]
+                out += [xtime(a[0]) ^ xtime(a[1]) ^ a[1] ^ a[2] ^ a[3], a[0] ^ xtime(a[1]) ^ xtime(a[2]) ^ a[2] ^ a[3],
+                        a[0] ^ a[1] ^ xtime(a[2]) ^ xtime(a[3]) ^ a[3], xtime(a[0]) ^ a[0] ^ a[1] ^ a[2] ^ xtime(a[3])]
+            s = out
+        s = add(r)
+    return bytes(s)
+
+
+def aes_cbc(key, iv, data):
+    out, chain = b"", iv
+    for at in range(0, len(data), 16):
+        chain = aes_encrypt_block(key, bytes(x ^ y for x, y in zip(data[at:at + 16], chain)))
+        out += chain
+    return out
+
+
+def pkcs7(data):
+    n = 16 - len(data) % 16
+    return data + bytes([n]) * n
+
+
+PADDING = bytes.fromhex("28BF4E5E4E758A4164004E56FFFA01082E2E00B6D0683E802F0CA9FE6453697A")
+
+
+def hash_2b(password, salt, udata, revision):
+    k = hashlib.sha256(password + salt + udata).digest()
+    if revision == 5:
+        return k
+    e, i = b"", 0
+    while i < 64 or e[-1] > i - 32:
+        e = aes_cbc(k[:16], k[16:32], (password + k + udata) * 64)
+        k = [hashlib.sha256, hashlib.sha384, hashlib.sha512][sum(e[:16]) % 3](e).digest()
+        i += 1
+    return k[:32]
+
+
+def standard_security(revision, title, user_password=b"", info_in_stream=False, string_filter="StdCF", encrypt_metadata=True):
+    """One-page PDF with the standard security handler: RC4 (R3), AESV2 (R4)
+    or AESV3 (R5/R6) and an owner password; the /Title string is encrypted."""
+    permissions = -3904 & 0xFFFFFFFF
+    identifier = bytes(range(0x30, 0x40))
+    objects, root = pages()
+    if revision in (3, 4):
+        length = 16
+        pad = lambda p: (p + PADDING)[:32]
+        okey = hashlib.md5(pad(b"owner")).digest()
+        for _ in range(50):
+            okey = hashlib.md5(okey).digest()
+        owner = pad(user_password)
+        for i in range(20):
+            owner = rc4(bytes(b ^ i for b in okey[:length]), owner)
+        seed = pad(user_password) + owner + permissions.to_bytes(4, "little") + identifier
+        if revision == 4 and not encrypt_metadata:
+            seed += b"\xff\xff\xff\xff"
+        key = hashlib.md5(seed).digest()
+        for _ in range(50):
+            key = hashlib.md5(key[:length]).digest()
+        key = key[:length]
+        user = rc4(key, hashlib.md5(PADDING + identifier).digest())
+        for i in range(1, 20):
+            user = rc4(bytes(b ^ i for b in key), user)
+        user += bytes(16)
+        aes = revision == 4
+
+        def protect(number, data, method):
+            if method == "Identity":
+                return data
+            salt = b"sAlT" if aes else b""
+            object_key = hashlib.md5(key + number.to_bytes(3, "little") + (0).to_bytes(2, "little") + salt).digest()[:min(length + 5, 16)]
+            if aes:
+                iv = bytes(range(0xA0, 0xB0))
+                return iv + aes_cbc(object_key, iv, pkcs7(data))
+            return rc4(object_key, data)
+        method = "AESV2" if aes else "V2"
+        crypt = (b" /V 4 /R 4 /CF << /StdCF << /CFM /%s /Length 16 /AuthEvent /DocOpen >> >> /StmF /StdCF /StrF /%s" % (method.encode(), string_filter.encode())
+                 if revision == 4 else b" /V 2 /R 3 /Length 128")
+        if revision == 4 and not encrypt_metadata:
+            crypt += b" /EncryptMetadata false"
+        encrypt = b"<< /Filter /Standard" + crypt + b" /O <" + owner.hex().encode() + b"> /U <" + user.hex().encode() + b"> /P %d >>" % (permissions - (1 << 32))
+    else:
+        key = bytes(range(0x40, 0x60))
+        uvs, uks, ovs, oks = b"uvsalt!!", b"uksalt!!", b"ovsalt!!", b"oksalt!!"
+        user = hash_2b(user_password, uvs, b"", revision) + uvs + uks
+        ue = aes_cbc(hash_2b(user_password, uks, b"", revision), bytes(16), key)
+        owner = hash_2b(b"owner", ovs, user, revision) + ovs + oks
+        oe = aes_cbc(hash_2b(b"owner", oks, user, revision), bytes(16), key)
+        perms = aes_encrypt_block(key, permissions.to_bytes(4, "little") + b"\xff\xff\xff\xff" + b"Tadb" + b"rand")
+
+        def protect(number, data, method):
+            if method == "Identity":
+                return data
+            iv = bytes(range(0xC0, 0xD0))
+            return iv + aes_cbc(key, iv, pkcs7(data))
+        encrypt = (b"<< /Filter /Standard /V 5 /R %d /Length 256 /CF << /StdCF << /CFM /AESV3 /Length 32 /AuthEvent /DocOpen >> >> /StmF /StdCF /StrF /%s"
+                   % (revision, string_filter.encode()) + b" /O <" + owner.hex().encode() + b"> /U <" + user.hex().encode() + b"> /OE <" + oe.hex().encode() +
+                   b"> /UE <" + ue.hex().encode() + b"> /Perms <" + perms.hex().encode() + b"> /P %d >>" % (permissions - (1 << 32)))
+    title_bytes = protect(4, title, string_filter) if not info_in_stream else title
+    info = b"<< /Title <" + title_bytes.hex().encode() + b"> /Producer (x) >>" if not info_in_stream else b"<< /Title (" + title + b") >>"
+    objects[5] = encrypt
+    ident = identifier.hex().encode()
+    trailer = b" /Encrypt 5 0 R /ID [<" + ident + b"><" + ident + b">]"
+    if not info_in_stream:
+        objects[4] = info
+        return classic(objects, root, 4, trailer)
+    # The information dictionary in an encrypted object stream (object 6),
+    # with a classic cross-reference table and hidden /XRefStm.
+    data = bytearray(b"%PDF-1.6\n%\xe2\xe3\xcf\xd3\n")
+    offsets = {}
+    for n in sorted(objects):
+        offsets[n] = len(data)
+        data += b"%d 0 obj\n" % n + objects[n] + b"\nendobj\n"
+    header = b"4 0 "
+    packed = protect(6, zlib.compress(header + info), "StdCF")
+    offsets[6] = len(data)
+    data += b"6 0 obj\n<< /Type /ObjStm /N 1 /First %d /Filter /FlateDecode /Length %d >>\nstream\n" % (len(header), len(packed)) + packed + b"\nendstream\nendobj\n"
+    hidden = len(data)
+    rows = b""
+    for n in range(8):
+        if n == 4: rows += b"\x02" + (6).to_bytes(4, "big") + (0).to_bytes(2, "big")
+        elif n == 7: rows += b"\x01" + hidden.to_bytes(4, "big") + (0).to_bytes(2, "big")
+        elif n in offsets: rows += b"\x01" + offsets[n].to_bytes(4, "big") + (0).to_bytes(2, "big")
+        else: rows += b"\x00" + (0).to_bytes(4, "big") + (65535 if n == 0 else 0).to_bytes(2, "big")
+    data += b"7 0 obj\n<< /Type /XRef /Size 8 /W [1 4 2] /Length %d >>\nstream\n" % len(rows) + rows + b"\nendstream\nendobj\n"
+    xref = len(data)
+    data += b"xref\n0 8\n0000000000 65535 f \n"
+    for n in range(1, 8):
+        data += b"0000000000 00001 f \n" if n == 4 else b"%010d 00000 n \n" % (hidden if n == 7 else offsets[n])
+    data += b"trailer\n<< /Size 8 /Root 1 0 R /Info 4 0 R /XRefStm %d" % hidden + trailer + b" >>\nstartxref\n%d\n%%%%EOF\n" % xref
+    return bytes(data)
+
+
 def encrypted_rc4():
     """Standard security handler R2 with an owner password only (opens unlocked)."""
     padding = bytes.fromhex("28BF4E5E4E758A4164004E56FFFA01082E2E00B6D0683E802F0CA9FE6453697A")
@@ -280,7 +455,36 @@ def cases():
     objects, root = pages()
     objects[4] = b"<< /Title (Broken Offset) >>"
     out["broken_startxref"] = classic(objects, root, 4).replace(b"startxref\n", b"startxref\n9")
+    # Damage PDFKit repairs from the object headers.
+    objects, root = pages()
+    objects[4] = b"<< /Title (Shifted Offsets) >>"
+    data = classic(objects, root, 4)
+    cut = data.index(b"2 0 obj")
+    out["shifted_offsets"] = data[:cut] + b"% inserted after the table was written\n" + data[cut:]
+    objects[4] = b"<< /Title (Missing Table) >>"
+    data = classic(objects, root, 4)
+    out["missing_table"] = data[:data.index(b"xref\n")] + data[data.index(b"trailer\n"):].replace(b"startxref\n", b"startxref\n0")
+    objects[4] = b"<< /Title (Duplicate Definition Old) >>"
+    data = classic(objects, root, 4)
+    tail = data.index(b"xref\n")
+    out["redefined_object"] = data[:tail] + b"4 0 obj\n<< /Title (Duplicate Definition New) >>\nendobj\n" + data[tail:].replace(b"startxref\n", b"startxref\n1")
+    objects[4] = b"<< /Title <FEFF00520065007000610069007200650064> >>"
+    stream = xref_stream(objects, root, 4, (4,))
+    out["broken_object_stream"] = stream.replace(b"startxref\n", b"startxref\n7")
+    objects[4] = b"<< /Title (Plain In Stream File) >>"
+    out["broken_xref_stream"] = xref_stream(objects, root, 4).replace(b"startxref\n", b"startxref\n7")
+    objects[4] = b"<< /Title (No Trailer) >>"
+    data = classic(objects, root, 4)
+    out["truncated_no_trailer"] = data[:data.index(b"xref\n")]
     out["encrypted_rc4"] = encrypted_rc4()
+    out["encrypted_rc4_128"] = standard_security(3, b"RC4 128 Title")
+    out["encrypted_aes128"] = standard_security(4, "AES 128 标题".encode("utf-16-be").join([b"\xfe\xff", b""]))
+    out["encrypted_aes128_metadata_clear"] = standard_security(4, b"Metadata Clear", encrypt_metadata=False)
+    out["encrypted_aes128_object_stream"] = standard_security(4, b"Stream Info", info_in_stream=True)
+    out["encrypted_identity_strings"] = standard_security(4, b"Identity Strings", string_filter="Identity")
+    out["encrypted_aes256"] = standard_security(6, b"AES 256 Title")
+    out["encrypted_aes256_r5"] = standard_security(5, b"AES 256 R5 Title")
+    out["encrypted_user_password"] = standard_security(4, b"Locked Title", user_password=b"secret")
     return out
 
 
