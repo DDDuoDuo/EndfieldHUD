@@ -64,6 +64,13 @@ public:
     // field open). Defaults to the system clipboard, touched only on those
     // keys; tests inject a synthetic one. Null disables clipboard keys.
     void setClipboard(std::shared_ptr<native::NotesClipboard>);
+    // Source SystemHUDView drop on the Notes canvas (notesDropPoint, then
+    // importPasteboard at the unprojected drop point): image/movie files import
+    // as media notes, otherwise image data becomes a managed image note.
+    // `logical` is the client point in logical units; nullopt/false declines.
+    std::optional<core::Point> dropPoint(core::Point logical)const;
+    bool dropMedia(std::span<const std::string> paths,core::Point logical,double time);
+    bool dropImage(std::span<const std::uint8_t> data,core::Point logical,double time);
     bool showMediaError(std::string,double time); // existing source status row; no dialog/throw-close
     void select(core::Module,double time);
     core::Module selected()const noexcept;

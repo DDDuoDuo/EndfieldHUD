@@ -885,6 +885,13 @@ void imagePaste(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsA
     check(f.pointer(app::PointerKind::down,confirmationPoint(image,true))&&(f.pointer(app::PointerKind::up,confirmationPoint(image,true)),true),"Confirm the deletion");f.tick(.5);
     check(savedNotes(f.root.path).size()==1&&!std::filesystem::exists(path),"Deleting its last note removes the managed copy");
     clipboard->image.reset();check(!f.key(app::KeyKind::down,'V',control),"Nothing to paste leaves the key unconsumed");
+    // Source drop on the Notes canvas at the unprojected drop point.
+    const auto at=f.preview->dropPoint({400,300});check(at&&std::abs(at->x-400)<1e-6&&std::abs(at->y-300)<1e-6,"A drop over the Notes canvas maps to its workspace point");
+    check(!f.preview->dropMedia(std::vector<std::string>{"C:\\owned-synthetic\\notes.txt"},{400,300},f.time),"Dropped files that are not media are declined");
+    check(f.preview->dropImage(bitmapFile(200,100),{400,300},f.time),"Dropped image data becomes a note");f.tick(.3);
+    notes=savedNotes(f.root.path);const auto dropped=std::find_if(notes.begin(),notes.end(),[&](const data::Note&n){return n.imageName.has_value();});
+    check(notes.size()==2&&dropped!=notes.end()&&dropped->x==400&&dropped->y==300&&dropped->width==210&&dropped->height==129,"The dropped image note sits at the drop point");
+    f.preview->select(core::Module::power,f.time);f.tick(1);check(!f.preview->dropPoint({400,300}),"Another module does not take Notes drops");
     f.release();
 }
 void preferencesPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){

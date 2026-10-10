@@ -96,6 +96,11 @@ public:
     // the system clipboard, touched only on those keys; tests inject a
     // synthetic one. Null disables the keys.
     void setClipboard(std::shared_ptr<native::NotesClipboard>);
+    // Source documentDropURLs(.archive) + importFiles: media files dropped on
+    // the open document attach like chosen ones (16 in all). The returned
+    // generation-tagged import goes to the owner's media importer; nullopt
+    // without a document or room, or while a menu or drag owns the pointer.
+    std::optional<ArchiveMediaAction> dropMediaAction(double time);
 private:struct Impl;std::shared_ptr<Impl>impl_;
 };
 }

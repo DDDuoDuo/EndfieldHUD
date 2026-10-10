@@ -329,6 +329,12 @@ bool NotesPreview::refreshSharedMedia(double t){auto&i=*impl_;const Impl::TimeSc
 const std::optional<std::string>&NotesPreview::mediaError()const noexcept{return impl_->mediaError;}
 void NotesPreview::setActionSink(std::function<void(std::string_view)>sink){impl_->actionSink=std::move(sink);}
 void NotesPreview::setClipboard(std::shared_ptr<native::NotesClipboard>clipboard){impl_->clipboard=std::move(clipboard);}
+std::optional<core::Point>NotesPreview::dropPoint(core::Point logical)const{const auto&i=*impl_;
+    if(!i.hasPose||!i.moduleInput||!i.moduleVisible||i.modules.requested()!=core::Module::notes||!i.state->notesSelected()||!std::isfinite(logical.x)||!std::isfinite(logical.y))return std::nullopt;
+    return i.workspaceProjection.unproject({logical.x*i.metrics.scale,logical.y*i.metrics.scale});}
+bool NotesPreview::dropMedia(std::span<const std::string>paths,core::Point logical,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);const auto point=dropPoint(logical);if(!point)return false;
+    std::vector<std::string> media;for(const auto&p:paths)if(mod::notesMediaFileName(p))media.push_back(p);return !media.empty()&&i.beginImport(media,*point);}
+bool NotesPreview::dropImage(std::span<const std::uint8_t>data,core::Point logical,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);const auto point=dropPoint(logical);return point&&!data.empty()&&i.pasteImage(data,*point);}
 bool NotesPreview::showMediaError(std::string value,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);return i.setMediaError(std::move(value));}
 void NotesPreview::select(core::Module m,double t){auto&i=*impl_;const Impl::TimeScope event(i,t);t=event.time;if(!i.finish()){i.pendingModule=m;return;}i.pendingModule.reset();const auto result=i.modules.select(m,t,true,i.preferences.reduceMotion);i.moduleInput=result.presentation.acceptsModuleInput;i.change(result.change,t);}
 core::Module NotesPreview::selected()const noexcept{return impl_->modules.requested();}
