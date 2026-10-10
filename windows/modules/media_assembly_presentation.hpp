@@ -4,6 +4,15 @@
 namespace endfield::modules {
 struct MediaAssemblyDocumentInfo {
     std::string id;bool video{};core::Point pixels;double duration{};
+    // Source MediaAssemblyDocument: reference kind/frame count, resolved source
+    // path (UTF-8), display name, container ("png","jpeg","tiff","heif","gif",
+    // "video", ...) and identity read at open. Pixels are orientation-applied.
+    MediaAssemblyKind kind{MediaAssemblyKind::image};unsigned frameCount{1};
+    std::string path,name,container;MediaAssemblyFileIdentity identity;
+    bool animated()const noexcept{return kind==MediaAssemblyKind::gif&&frameCount>1;}
+    // "<stem>-edited.png" for pictures; Windows writes MP4 for movies because
+    // Media Foundation has no QuickTime (.mov) sink (documented platform gap).
+    std::string suggestedFilename()const;
 };
 // A borrowed controller snapshot. The presentation never copies source media,
 // stores edits separately, starts a worker, or owns a playback clock.
@@ -23,6 +32,16 @@ struct MediaAssemblyParameters {
     std::span<const MediaAssemblyParameter>items()const noexcept{return {values.data(),count};}
 };
 enum class MediaAssemblyCommand {none,adjust,trim,seek,play,open,exportMedia,cancelExport,closeMedia,reset};
+// Source HUDMediaAssemblyInteraction.layoutAccessibility elements, in module
+// points (the host projects rect through the current plane for UI Automation).
+enum class MediaAssemblyAccessibleRole {button,slider};
+struct MediaAssemblyAccessible {
+    std::string id,name;MediaAssemblyAccessibleRole role{MediaAssemblyAccessibleRole::button};core::Rect rect;bool enabled{};
+    double value{},minimum{},maximum{},step{};
+};
+// Platform-neutral keys for the source keyDown routing. Mac Option is Alt.
+enum class MediaAssemblyKey {other,escape,deleteBackward,deleteForward,left,right,up,down,space,plus,equals,minus};
+struct MediaAssemblyModifiers {bool shift{},control{},alt{},command{};bool any()const noexcept{return shift||control||alt||command;}};
 struct MediaAssemblyRequest {
     bool consumed{};MediaAssemblyCommand command{MediaAssemblyCommand::none};
     std::optional<MediaAssemblyAdjustments>adjustments;double time{};
@@ -58,6 +77,17 @@ public:
     MediaAssemblyRequest pointerUp(const MediaAssemblyView&)noexcept;
     bool zoom(double factor,core::Point,const MediaAssemblyView&)noexcept;
     bool scroll(core::Point,double dx,double dy,bool zoom,const MediaAssemblyView&)noexcept;
+    // Source HUDMediaAssemblyInteraction.keyDown after the owner's secondary
+    // menu (which consumes Escape first). Unconsumed keys return {}.
+    MediaAssemblyRequest key(MediaAssemblyKey,MediaAssemblyModifiers,const MediaAssemblyView&);
+    // Projected AX buttons per action (Close for x), the playback-position
+    // slider (+/-5 s), sticker X/Y/Size/Rotate, inline parameters, trim
+    // Start/End and crop edges X1/Y1/X2/Y2. Hidden while a menu is open.
+    std::vector<MediaAssemblyAccessible>accessibility(const MediaAssemblyView&,core::Language,bool menuOpen)const;
+    // setAccessibilityValue: clamped like the source NSSlider, then routed.
+    MediaAssemblyRequest setAccessibleValue(std::string_view id,double value,const MediaAssemblyView&);
+    // Escape with nothing to unwind is left for the HUD close path.
+    bool escapeUnwinds(const MediaAssemblyView&)const noexcept;
 private:
     enum class DragKind {none,pan,parameter,trim,crop,move,scale,rotate};
     struct Drag {DragKind kind{};core::Point point;core::Rect crop;unsigned corner{};bool beginning{};double scalar{};std::string parameter;MediaAssemblySticker sticker;};

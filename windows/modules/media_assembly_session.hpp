@@ -20,10 +20,17 @@ public:
     bool working()const noexcept{return running_.has_value();}
     std::size_t pendingCount()const noexcept{return pending_?1:0;}
     const std::optional<Preview>&preview()const noexcept{return preview_;}
-    const std::optional<std::string>&error()const noexcept{return error_;}
+    const std::optional<MediaAssemblyError>&error()const noexcept{return error_;}
+    const std::shared_ptr<const MediaAssemblyDocumentInfo>&document()const noexcept{return document_;}
+    const MediaAssemblyAdjustments&adjustments()const noexcept{return adjustments_;}
+    double currentTime()const noexcept{return currentTime_;}
+    bool busy()const noexcept{return busy_;}bool exporting()const noexcept{return exportToken_.has_value();}
+    bool cropPreview()const noexcept{return cropPreview_;}
+    // Picker/Shelf failures (source controller.report).
+    void report(MediaAssemblyError);
     void setActive(bool);
     std::optional<std::uint64_t>beginImport();
-    bool finishImport(std::uint64_t,std::shared_ptr<const MediaAssemblyDocumentInfo>,std::optional<std::string>error={});
+    bool finishImport(std::uint64_t,std::shared_ptr<const MediaAssemblyDocumentInfo>,std::optional<MediaAssemblyError>error={});
     bool close();
     bool setCropPreview(bool);
     bool update(MediaAssemblyAdjustments,std::optional<double>scrubTime={});
@@ -33,15 +40,21 @@ public:
     bool togglePlayback();void playbackChanged(bool playing,double currentTime);void playbackEnded();
     bool wantsPlayback()const noexcept{return wantsPlayback_;}
     std::optional<MediaAssemblyPreviewRequest>takePreview();
-    bool completePreview(std::uint64_t,std::optional<Preview>,std::optional<std::string>error={});
+    // Re-requests the current preview (the host changed how previews are
+    // produced). False without an active document.
+    bool refreshPreview();
+    // The executor refused a taken request: keep it as the latest pending one
+    // unless a newer edit already replaced it.
+    void returnPreview(MediaAssemblyPreviewRequest);
+    bool completePreview(std::uint64_t,std::optional<Preview>,std::optional<MediaAssemblyError>error={});
     std::optional<std::uint64_t>beginExport(std::string_view expectedDocumentID);
     bool exportProgress(std::uint64_t,double);
-    bool finishExport(std::uint64_t,std::optional<std::string>error={});
+    bool finishExport(std::uint64_t,std::optional<MediaAssemblyError>error={});
     double progress()const noexcept{return progress_;}
 private:
     std::shared_ptr<const MediaAssemblyDocumentInfo>document_;
     MediaAssemblyAdjustments adjustments_;
-    std::optional<Preview>preview_;std::optional<std::string>error_;
+    std::optional<Preview>preview_;std::optional<MediaAssemblyError>error_;
     std::optional<MediaAssemblyPreviewRequest>pending_;
     std::optional<std::uint64_t>running_,exportToken_;
     std::uint64_t importGeneration_{},previewGeneration_{},exportGeneration_{},acceptedPreview_{},revision_{};

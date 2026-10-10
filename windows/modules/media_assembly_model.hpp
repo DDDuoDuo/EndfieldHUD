@@ -21,6 +21,18 @@ enum class MediaAssemblyStickerKind {sticker1,sticker2,sticker3,sticker4,sticker
     sticker7,sticker8,sticker9,sticker10,sticker11,sticker12,sticker13,sticker14,
     sticker15,sticker16,sticker17,sticker18,sticker19,sticker20,sticker21,sticker22,sticker27,sticker28};
 struct MediaAssemblyCatalogItem {std::string_view id,english,chinese;};
+// Source MediaAssemblyError cases. Messages are the original localized strings;
+// unsupportedExport names this platform (no QuickTime MOV writer on Windows).
+enum class MediaAssemblyError {unsupported,invalidAdjustment,unavailable,changedOnDisk,unsupportedExport,exportFailed,cancelled,exists};
+std::string mediaAssemblyErrorMessage(MediaAssemblyError,core::Language);
+// Source NotesMediaReference kinds accepted by Media Assembly.
+enum class MediaAssemblyKind {image,gif,video};
+// Windows equivalent of MediaAssemblyFileIdentity (inode/device/size/mtime):
+// volume serial, 128-bit file ID, byte size and last-write FILETIME ticks.
+struct MediaAssemblyFileIdentity {
+    std::uint64_t volume{};std::array<std::uint8_t,16>file{};std::uint64_t bytes{};std::int64_t modified{};
+    bool operator==(const MediaAssemblyFileIdentity&)const=default;
+};
 std::span<const MediaAssemblyCatalogItem>mediaAssemblyFilters()noexcept;
 std::span<const MediaAssemblyCatalogItem>mediaAssemblyStickers()noexcept;
 std::string mediaAssemblyFilterTitle(MediaAssemblyFilter,core::Language);
