@@ -529,7 +529,7 @@ private:
             // only after it is edited and relinked to a Windows application.
             const auto message = text(language_, "The application is unavailable: ", "应用不可用：") +
                 text(language_, "Edit this shortcut and choose its Windows application.", "请编辑此快捷方式并选择对应的 Windows 应用。");
-            if (generation) preview_->completeRequest(*generation, message, t);else preview_->showError(message, t);
+            if (generation) preview_->completeRequest(*generation, message, t);else showLaunchError(message, t);
             host_.requestFrame();return;
         }
         launch_ = Launch{generation, record, LaunchPhase::verify};
@@ -539,7 +539,16 @@ private:
         auto launch = std::exchange(launch_, std::nullopt);
         if (!launch) return;
         if (launch->generation) preview_->completeRequest(*launch->generation, std::move(error), t);
-        else if (error) preview_->showError(std::move(error), t);
+        else if (error) showLaunchError(std::move(*error), t);
+    }
+    // SystemHUDView.showAppShortcutError: a navigation launch reports its
+    // error in + Add App, which the open HUD selects when another module is
+    // shown (after a close the failed launch reopens + Add App instead).
+    void showLaunchError(std::string message, double t) {
+        preview_->showError(std::move(message), t);
+        if (!overlayVisible_ || host_.selectedModule() == core::Module::addApp) return;
+        if (coverageMode()) {++coverageSelectRequests_;return;} // the coverage harness owns module selection
+        host_.selectModule(core::Module::addApp);
     }
     void cancelPendingLaunch(double t) {
         if (!launch_ || launch_->phase == LaunchPhase::running) return;
@@ -833,7 +842,7 @@ private:
     std::optional<std::uint64_t> chooser_;
     std::uint64_t token_{}, listRevision_{};
     bool loadPending_{}, loadFailed_{}, overlayVisible_{}, pumping_{}, dropHovering_{};
-    unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, launchesOpened_{};
+    unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, coverageSelectRequests_{}, launchesOpened_{};
 };
 
 // One combined module cycle of hidden coverage on the + Add App canvas. Every
@@ -1020,6 +1029,14 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
         step.check(!tasks_->busy() && !launch_ && !chooser_ && !loadFailed_ && !preview_->busy(), "App shortcuts are idle between cycles");
         step.check(d.disk() == preview_->state().file(), "The data root still holds the shown list");
         d.checkNavigation();
+        // A navigation launch of the imported record shows its relink error
+        // in + Add App and selects it when another module is shown.
+        const auto& seeded = preview_->state().file().items.front();
+        const auto selects = coverageSelectRequests_, closes = coverageCloseRequests_;
+        const bool elsewhere = overlayVisible_ && host_.selectedModule() != core::Module::addApp;
+        step.check(activate(d.action("app." + seeded.id), d.t) && !launch_ && preview_->state().error() && coverageCloseRequests_ == closes &&
+                   coverageSelectRequests_ == selects + (elsewhere ? 1u : 0u), "A navigation launch of an imported app shows its error in + Add App");
+        preview_->showError(std::nullopt, d.t);
         d.frame();return;
     }
     step.check(*step.module == core::Module::addApp, "App shortcuts present only + Add App");
@@ -1050,6 +1067,12 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     // 2. The imported Mac record launches only after relinking: no close.
     d.click(100, Driver::row(0));d.settle();
     step.check(state.error() && !launch_ && !preview_->busy() && coverageCloseRequests_ == closes, "An imported Mac target reports its relink error without closing");
+    {
+        const auto selects = coverageSelectRequests_;
+        preview_->showError(std::nullopt, d.t);
+        step.check(activate(d.action("app." + seeded.items[0].id), d.t) && state.error() && !launch_ && coverageCloseRequests_ == closes && coverageSelectRequests_ == selects,
+                   "Its navigation action shows the same error in the selected + Add App");
+    }
 
     // 3. A missing target fails inspection and opens no draft.
     d.choose(applications / "Missing.exe");
