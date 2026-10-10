@@ -96,8 +96,10 @@ void contracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     const auto retainedRevision=a.scene().contentRevision(),retainedTextures=renderer.stats().textures;
     state.setWorkspaceBounds({0,0,2000,1200});state.beginGesture(id1,{0,0},mod::NotesState::Gesture::resize);state.dragTo({2000,1200});state.endGesture();
     const auto oversized=input("One\nTwo",state.card(id1)->rect.width-18);p1.updateContent(state,oversized);
-    rejects([&]{a.syncContent();},"Unsupported oversized rounded group rejects before replacing retained scene");
-    composition.present(renderer);check(a.scene().contentRevision()==retainedRevision&&renderer.stats().textures==retainedTextures,"Failed oversized update leaves published references and retained source bindings valid");
+    // The source has no card size limit: an oversized card is a new content
+    // transaction (per-layer surfaces), published like any other.
+    check(a.syncContent()&&a.scene().contentRevision()!=retainedRevision&&a.scene().report().unsupported.empty(),"An oversized card replaces its retained scene in one transaction");
+    a.updatePose({},1,11);composition.upload(renderer);composition.present(renderer);
     state.beginGesture(id1,{0,0},mod::NotesState::Gesture::resize);state.dragTo({210-state.card(id1)->rect.width,140-state.card(id1)->rect.height});state.endGesture();p1.updateContent(state,in1);a.syncContent();a.updatePose({},1,12);composition.upload(renderer);
     const std::array onlyA{&a.scene()};composition.setScenes(renderer,onlyA);check(renderer.stats().textures==6&&renderer.stats().meshes==6,"Removing a sibling retires its assets after the combined list replacement");
     composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"One owner detach releases all Notes assets before adapter destruction");
@@ -183,6 +185,26 @@ void editorIndicatorContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster
     const std::array settled{&card.scene()};composition.setScenes(renderer,settled);composition.present(renderer);
     check(card.releaseEditorIndicator(renderer)&&card.releaseEditorIndicator(renderer)&&renderer.stats().meshes==meshes+6,"After unpublication the quad retires once");composition.detach(renderer);
 }
+// The source draws notes at any size. A card beyond LayerScene's local group
+// area splits into per-layer surfaces under the same rounded clips, and a very
+// large one rasters at a bounded density.
+void largeCardContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
+    gpu::LayerRasterOptions base;base.pixelsPerPoint=2;base.paddingPoints=1;
+    check(gpu::notesRasterOptions(base,300,200).pixelsPerPoint==2,"An ordinary card keeps its raster density");
+    const auto huge=gpu::notesRasterOptions(base,3000,2000);check(huge.pixelsPerPoint<2&&huge.pixelsPerPoint>=.25&&3002*2002*huge.pixelsPerPoint*huge.pixelsPerPoint<=double(gpu::LayerRasterizer::maximumPixels),"A huge card rasters within the per-surface pixel budget");
+    ehud::data::Note note{.id=id1,.kind=ehud::data::NoteKind::text,.text="Large\nNote",.x=0,.y=0,.width=1400,.height=900,.createdAt=123};
+    mod::NotesState state({note},{[](const auto&){},[](auto){}});state.setWorkspaceBounds({0,0,2000,1400});
+    mod::NotesCardPresentation presentation(id1);const auto appearance=input("Large\nNote",1382);presentation.updateContent(state,appearance);
+    gpu::LayerRasterOptions options;options.pixelsPerPoint=1;options.paddingPoints=1;gpu::NativeNotesCardScene card(presentation,raster,options,gpu::NativeNotesExternalEditorAppearance{{.12,.12,.12,1},appearance.palette.accent});
+    check(card.syncContent()&&card.scene().report().unsupported.empty()&&card.scene().draws().size()>6&&card.scene().draws().back().sourceID.ends_with("/resizeGrip"),"A 1400x900 card splits into surfaces and keeps its grip last");
+    // Its right edge at x=100: the top-right rounded corner and beyond are visible.
+    const auto shifted=core::Matrix4::translation(-1300,0);card.updatePose(shifted,1,0);gpu::LayerComposition composition;const std::array scenes{&card.scene()};composition.setScenes(renderer,scenes);composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(512,256));renderer.draw(false);
+    const auto frame=renderer.readback();const auto at=[&](unsigned x,unsigned y){return std::size_t(y)*frame.rowBytes+x*4;};
+    check(frame.pixels[at(50,200)+3]==255&&frame.pixels[at(50,200)]<80,"The large card paints its opaque body");check(frame.pixels[at(99,0)+3]<128,"Its rounded corner stays clipped");check(frame.pixels[at(150,100)+3]==0,"Nothing paints beyond it");
+    state.beginEditing(id1);presentation.updateContent(state,appearance);check(card.syncContent()&&card.externalEditorSlot().has_value()&&card.externalEditorAfterDraws().size()==1,"The large card enters editing with its source viewport and frame");
+    card.updatePose(shifted,1,1);composition.setScenes(renderer,scenes);composition.present(renderer);
+    composition.detach(renderer);check(card.scene().releaseResources(renderer),"The large card releases its surfaces");
+}
 void mediaContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     ehud::data::Note note{.id=id1,.kind=ehud::data::NoteKind::image,.x=20,.y=40,.width=210,.height=140,.createdAt=123};
     mod::NotesState state({note},{[](const auto&){},[](auto){}});state.setWorkspaceBounds({0,0,512,256});
@@ -212,6 +234,6 @@ void mediaContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
 int wmain(int argc,wchar_t**argv){try{
     check(argc==2,"Pass original native HUD shader path");const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);check(SUCCEEDED(hr),"Owned fixture COM initializes");
     {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,512,256,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});gpu::LayerRasterizer raster;
-        contracts(renderer,raster);externalEditorContracts(renderer,raster);editorIndicatorContracts(renderer,raster);mediaContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
+        contracts(renderer,raster);externalEditorContracts(renderer,raster);editorIndicatorContracts(renderer,raster);largeCardContracts(renderer,raster);mediaContracts(renderer,raster);check(!IsWindowVisible(window.hwnd),"Synthetic Notes test never shows its owned window");check(raster.stats().entries==0,"Adapter teardown releases local cache entries");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes scene contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes scene contract failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}

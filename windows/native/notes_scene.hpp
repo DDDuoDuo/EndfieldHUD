@@ -5,6 +5,11 @@
 #include <memory>
 
 namespace endfield::native {
+// The source draws a note at any size. A large card (or its editor viewport)
+// keeps its geometry and rasters its surfaces at a lower density, so that one
+// surface stays within the shared rasterizer's pixel budget
+// (LayerRasterizer::maximumPixels) and 8192-pixel sides. Unchanged otherwise.
+LayerRasterOptions notesRasterOptions(LayerRasterOptions,double width,double height)noexcept;
 struct NativeNotesSceneStats {
     std::uint64_t contentUpdates{},placementUpdates{},feedbackChanges{};
 };

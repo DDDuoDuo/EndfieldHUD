@@ -56,6 +56,12 @@ Json descriptor(const Layer&l){
 Json clipped(const Layer&l,const Matrix&world,const Layer&card,std::optional<core::Rect>inkBounds={},std::optional<core::Rect>ancestorClip={}){
     auto node=descriptor(l);const auto b=inkBounds.value_or(l.bounds);node["bounds"]=rect(b);
     node["position"]=Json::Array{world.values[12]+b.x,world.values[13]+b.y};node["opacity"]=1;node["hidden"]=false;
+    // Ink clear of the card's rounded corners needs no baked card clip: a large
+    // card's editor frame is then one plain surface (its rounded mask would not
+    // project), and smaller cards paint identically either way.
+    if(!ancestorClip){const double x=world.values[12]+b.x,y=world.values[13]+b.y,w=card.bounds.width,h=card.bounds.height,r=card.cornerRadius;
+        const auto corner=[&](double cx,double cy){return x<cx+r&&x+b.width>cx&&y<cy+r&&y+b.height>cy;};
+        if(x>=0&&y>=0&&x+b.width<=w&&y+b.height<=h&&!corner(0,0)&&!corner(w-r,0)&&!corner(0,h-r)&&!corner(w-r,h-r))return node;}
     Layer clip;clip.id=l.id+"/card-clip";clip.kind=modules::NotesLayerKind::shape;clip.bounds=card.bounds;
     clip.frame={-world.values[12],-world.values[13],clip.bounds.width,clip.bounds.height};clip.shape.kind=modules::NotesPathKind::roundedRect;
     clip.shape.radius=card.cornerRadius;clip.shape.fill=modules::NotesColor{1,1,1,1};node["mask"]=descriptor(clip);
@@ -84,6 +90,7 @@ Json tree(std::span<const Layer>layers,std::span<const bool>excluded,std::size_t
     node["children"]=std::move(children);return node;
 }
 }
+static std::size_t sceneNodes(const Json&node,unsigned depth=0){need(depth<=64,"Notes scene tree is too deep");std::size_t n=1;if(node.isObject()&&node["children"].isArray())for(const auto&child:node["children"].array())n+=sceneNodes(child,depth+1);return n;}
 struct NativeNotesCardScene::Impl {
     struct Feedback {std::string id;std::size_t source{},surface{};double from{},target{},start{},duration{};bool active{};};
     modules::NotesCardPresentation*source;LayerScene scene;LayerRasterOptions options;
@@ -130,11 +137,11 @@ struct NativeNotesCardScene::Impl {
             for(const auto&a:source->actions())if(!a.accessibilityOnly&&a.verb!="edit"&&!a.verb.starts_with("editItem:"))need(!overlaps(a.localRect),"External Notes editor overlaps source controls; exact alternate ordering is required");
             nextSlot=NativeNotesExternalEditorSlot{r,3,1};
         }
-        // LayerScene groups a rounded local tree only within this source-area
-        // bound. Reject the unsupported split BEFORE replacing retained state.
-        need(bounds.width>0&&bounds.height>0&&bounds.width*bounds.height<=1'048'576,"Notes card exceeds the supported retained local group area");
-        const auto pixelWidth=std::ceil((bounds.width+options.paddingPoints*2)*options.pixelsPerPoint),pixelHeight=std::ceil((bounds.height+options.paddingPoints*2)*options.pixelsPerPoint);
-        need(std::isfinite(pixelWidth)&&std::isfinite(pixelHeight)&&pixelWidth<=8192&&pixelHeight<=8192&&pixelWidth*pixelHeight<=LayerRasterizer::maximumPixels,"Notes card exceeds the supported local raster bound");
+        // A card within LayerScene's local group area is one card surface plus
+        // its decorations; a larger card's tree splits into per-layer surfaces
+        // under the same projected rounded clips. Both keep every pixel budget.
+        need(bounds.width>0&&bounds.height>0&&bounds.width<=32768&&bounds.height<=32768,"Notes card exceeds the source geometry bounds");
+        const auto rasterOptions=notesRasterOptions(options,bounds.width,bounds.height);
         std::unique_ptr<bool[]> excluded(new bool[layers.size()]{});std::vector<Feedback> next;next.reserve(source->highlights().size()*2);
         for(const auto&h:source->highlights())for(const auto index:{h.tintLayer,h.rimLayer}){
             need(index<layers.size()&&!excluded[index],"Notes feedback index is invalid or repeated");
@@ -184,13 +191,17 @@ struct NativeNotesCardScene::Impl {
         const auto count=children.size();const auto borderID=layers[0].id+"/external-editor-border";
         std::size_t idCapacity=borderID.size()+64;for(const auto&layer:layers)idCapacity=std::max(idCapacity,layer.id.size()+64);
         auto reserveDraw=[&](DrawObject&draw){draw.sourceID.reserve(idCapacity);draw.meshID.reserve(idCapacity);draw.textureID.reserve(idCapacity);draw.masks.reserve(8);};
-        std::vector<DrawObject> saved(count);std::vector<LayerPlacement> p(count);std::vector<std::vector<PlaneMask>> clipMasks(count);
-        for(std::size_t i=0;i<count;++i){reserveDraw(saved[i]);clipMasks[i].reserve(8);}
+        // Every node draws at most once: stage that many records, then keep the actual draws.
+        std::size_t upper{};for(const auto&child:children)upper+=sceneNodes(child);
+        std::vector<DrawObject> saved(upper);std::vector<LayerPlacement> p(upper);std::vector<std::vector<PlaneMask>> clipMasks(upper);
+        for(std::size_t i=0;i<upper;++i){reserveDraw(saved[i]);clipMasks[i].reserve(8);}
         DrawObject nextAfter;std::size_t nextBorder{};if(nextSlot)reserveDraw(nextAfter);
         Json root=Json::Object{{"bounds",rect(layers[0].bounds)},{"masksToBounds",true},{"children",std::move(children)}};
-        scene.load(root,options);need(scene.report().unsupported.empty(),"Notes scene has unsupported local raster or clipping state");
-        const auto draws=scene.draws();need(draws.size()==count,"Source Notes surface schema changed unexpectedly");
-        for(std::size_t i=0;i<count;++i){const auto&draw=draws[i];need(draw.sourceID.size()<=idCapacity&&draw.meshID.size()<=idCapacity&&draw.textureID.size()<=idCapacity&&draw.masks.size()<=8,"Source Notes identity/mask schema changed unexpectedly");
+        scene.load(root,rasterOptions);
+        if(!scene.report().unsupported.empty()){const auto&issue=scene.report().unsupported.front();throw std::invalid_argument("Notes scene has unsupported local raster or clipping state: "+issue.node+": "+issue.feature);}
+        const auto draws=scene.draws();need(draws.size()>=count&&draws.size()<=upper,"Source Notes surface schema changed unexpectedly");
+        saved.resize(draws.size());p.resize(draws.size());clipMasks.resize(draws.size());
+        for(std::size_t i=0;i<draws.size();++i){const auto&draw=draws[i];need(draw.sourceID.size()<=idCapacity&&draw.meshID.size()<=idCapacity&&draw.textureID.size()<=idCapacity&&draw.masks.size()<=8,"Source Notes identity/mask schema changed unexpectedly");
             saved[i]=draw;p[i]={i,draw.world,draw.opacity,{}};
         }
         if(nextSlot){const auto found=scene.surfaceIndex(borderID);need(found.has_value(),"Retained Notes editor border surface is missing");nextBorder=*found;nextAfter=saved[*found];}
@@ -214,6 +225,11 @@ struct NativeNotesCardScene::Impl {
         revision=source->contentRevision();feedbackRevision=source->feedbackRevision();posed=false;++stats.contentUpdates;return true;
     }
 };
+LayerRasterOptions notesRasterOptions(LayerRasterOptions o,double width,double height)noexcept{
+    const double w=width+2*o.paddingPoints,h=height+2*o.paddingPoints;if(!(std::isfinite(w)&&std::isfinite(h)&&w>0&&h>0&&o.pixelsPerPoint>0))return o;
+    double ppp=std::min(o.pixelsPerPoint,8191./std::max(w,h));const double limit=double(LayerRasterizer::maximumPixels)*.98;if(w*h*ppp*ppp>limit)ppp=std::sqrt(limit/(w*h));
+    if(ppp<o.pixelsPerPoint)o.pixelsPerPoint=std::max(.25,std::floor(ppp*64)/64);return o;
+}
 NativeNotesCardScene::NativeNotesCardScene(modules::NotesCardPresentation&s,LayerRasterizer&r,LayerRasterOptions o,std::optional<NativeNotesExternalEditorAppearance>editor):impl_(std::make_unique<Impl>(s,r,std::move(o),editor)){}
 NativeNotesCardScene::~NativeNotesCardScene()=default;
 bool NativeNotesCardScene::syncContent(){return impl_->sync();}

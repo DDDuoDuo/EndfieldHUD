@@ -133,6 +133,20 @@ void culling(HWND hwnd,gpu::Renderer&renderer){
     check(allocations==0&&raster.stats().rasterizations==rasterBefore,"Warm frames with culled cards allocate and rasterize nothing");
     composition.detach(renderer);check(workspace.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Culling leaves no GPU resources behind");
 }
+// Resizing a card past LayerScene's local group area (the source has no card
+// size limit) keeps the gesture, the card and its editor working.
+void largeCards(HWND hwnd,gpu::Renderer&renderer){
+    std::size_t saves{};mod::NotesState state({note(one,"Large note\nsecond line")},{[&](const data::Note&){++saves;},[](std::string_view){}});state.setWorkspaceBounds({0,0,2400,1600});gpu::LayerRasterizer raster;
+    gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),options());gpu::LayerComposition composition;
+    auto publish=[&]{composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Large-card replacements retire after publication");};
+    auto p=pose();p.pixelWidth=2400;p.pixelHeight=1600;p.screenToClip=gpu::layerViewportProjection(2400,1600);workspace.updatePose(p);publish();
+    const auto rect=state.card(one)->rect;check(workspace.beginGesture(one,{rect.x+rect.width-5,rect.y+rect.height-5},mod::NotesState::Gesture::resize),"Grab the resize grip");
+    check(workspace.dragTo({rect.x+1795,rect.y+1195}),"Drag far beyond 1024x1024 points");check(workspace.endGesture()&&saves==1,"The large size saves");publish();
+    const auto large=state.card(one)->rect;check(large.width*large.height>1'048'576&&workspace.card(one)!=nullptr,"The card is larger than LayerScene's group area and retained");
+    check(workspace.beginEditing(one)&&workspace.editor(),"A large card opens its editor");workspace.updatePose(p);publish();
+    check(workspace.editor()->character(u'!',false).changed&&(workspace.syncEditor(),workspace.finishEditing().saved)&&state.note(one)->text=="Large note\nsecond line!","Editing the large card saves");publish();
+    composition.detach(renderer);check(workspace.releaseResources(renderer),"The large card releases its resources");
+}
 void boundaries(HWND hwnd){
     auto longNote=note(one,std::string(65537,'a'));mod::NotesState longState({longNote},{[](const auto&){},[](auto){}});longState.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
     {gpu::NativeNotesWorkspace workspace(hwnd,longState,raster,style(),options());const auto before=longState.revision();rejects([&]{workspace.beginEditing(one);},"Short-editor capacity rejects complete long document before editing");
@@ -277,7 +291,7 @@ void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
 }
 }
 int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native hud.hlsl path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Owned COM test apartment");
-    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);culling(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
+    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);culling(window.hwnd,renderer);largeCards(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes workspace owner contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes workspace owner failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

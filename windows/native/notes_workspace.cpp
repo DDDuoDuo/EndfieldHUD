@@ -114,9 +114,8 @@ struct NativeNotesWorkspace::Impl {
     void geometry(core::Rect r,bool edit=false)const{
         // The source header title is width-56. The native leaf adapter rejects
         // negative layer bounds rather than silently painting an approximation.
-        need(validRect(r)&&r.width>=56&&r.width*r.height<=1'048'576,"Notes card exceeds the supported native local bounds");
-        const auto w=std::ceil((r.width+options.raster.paddingPoints*2)*options.raster.pixelsPerPoint),h=std::ceil((r.height+options.raster.paddingPoints*2)*options.raster.pixelsPerPoint);
-        need(std::isfinite(w)&&std::isfinite(h)&&w<=8192&&h<=8192&&w*h<=LayerRasterizer::maximumPixels,"Notes card exceeds native local raster capacity");
+        // Any source size: large cards raster at a bounded density (notesRasterOptions).
+        need(validRect(r)&&r.width>=56&&r.width<=32768&&r.height<=32768,"Notes card exceeds the supported native local bounds");
         if(edit)need(r.width>=24&&r.height>=64,"Notes card is too small for the source external editor and final border");
     }
     Slot*find(std::string_view id)const{const auto it=slots.find(id);return it==slots.end()?nullptr:it->second.get();}
@@ -339,10 +338,11 @@ struct NativeNotesWorkspace::Impl {
             if(draft->selection.range.start==draft->selection.range.end)next->history->restoreTypingStyle(draft->typing);}
         else{const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});}
         ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
-        if(chunked){try{next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeNotesLongEditor>(hwnd,*next->rich,next->scene,raster,std::move(e),options.raster,options.ownerMessage,next->generation,ProjectedEditorTextMode::rich,options.longEditor));}
+        const auto fieldRaster=notesRasterOptions(options.raster,width,height); // a large viewport rasters at a bounded density
+        if(chunked){try{next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeNotesLongEditor>(hwnd,*next->rich,next->scene,raster,std::move(e),fieldRaster,options.ownerMessage,next->generation,ProjectedEditorTextMode::rich,options.longEditor));}
             catch(const NativeNotesLongParagraphError&){throw NativeNotesEditorCapacityError{};}}
-        else if(next->rich)next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeProjectedEditor>(hwnd,*next->rich,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation));
-        else next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeProjectedEditor>(hwnd,*next->history,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation,ProjectedEditorTextMode::plainHistory));
+        else if(next->rich)next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeProjectedEditor>(hwnd,*next->rich,next->scene,std::move(e),fieldRaster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation));
+        else next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeProjectedEditor>(hwnd,*next->history,next->scene,std::move(e),fieldRaster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation,ProjectedEditorTextMode::plainHistory));
         next->native->setScrollOffset(offset); // source select-end THEN restore session viewport
         if(options.activatedTextManager)need(SUCCEEDED(next->native->connect(*options.activatedTextManager,options.textClient)),"Cannot connect Notes field to caller TSF manager");return next;
     }

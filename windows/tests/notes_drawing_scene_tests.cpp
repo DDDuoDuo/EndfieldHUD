@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <new>
@@ -25,6 +26,14 @@ void run(const std::filesystem::path&shader){Window w;n::Renderer renderer;rende
     const auto draws=scene.entries()[2].scene->draws();check(draws.size()==1&&draws[0].masks.size()==1&&draws[0].masks[0].bounds==c::Rect{0,0,300,240}&&draws[0].masks[0].cornerRadius==3,"Brush clips to the source rounded card, not the drawing viewport");
     scene.setLive(nullptr,2);scene.setBrush({},8,{1,1,1,1});composition.present(renderer);check(scene.entries()[1].scene->draws()[0].opacity==0&&scene.entries()[2].scene->draws()[0].opacity==0,"Ending gesture retains resources but hides transient artwork");
     const auto resize=scene.stats();scene.setCompleted(document,1,{310,250});check(scene.stats().completedRasters==resize.completedRasters+1,"Same document revision at resized viewport rescales original normalized strokes");composition.setEntries(renderer,scene.entries());composition.detach(renderer);check(scene.releaseResources(renderer)&&renderer.stats().resourceBytes==0,"All three drawing surfaces retire only after composition detaches");check(!IsWindowVisible(w.h)&&renderer.stats().presents==0,"No desktop capture, visible window or application data");
+    // A drawing card beyond LayerScene's local group area (the source has no
+    // size limit) keeps one completed surface at a bounded density.
+    {n::NativeNotesDrawingScene big(raster,options);check(big.setCompleted(document,2,{1600,1000}),"A 1600x1000 drawing card is accepted");
+        check(big.entries()[0].scene->draws().size()==1&&big.entries()[0].scene->report().unsupported.empty(),"Its strokes stay one completed surface");
+        const auto viewport=m::NotesDrawing::viewport({1600,1000});big.updatePose(c::Matrix4::scale(.2,.2,1),1);n::LayerComposition large;large.setEntries(renderer,big.entries());large.present(renderer);renderer.draw(false);const auto picture=renderer.readback();
+        const auto row=static_cast<std::size_t>(std::lround((viewport.y+viewport.height*.5)*.2));bool red{};for(std::size_t x=std::size_t((viewport.x+viewport.width*.3)*.2);x<std::size_t((viewport.x+viewport.width*.7)*.2);++x){const auto p=row*picture.rowBytes+x*4;red=red||(picture.pixels[p+2]>200&&picture.pixels[p]<60);}
+        check(red,"The stroke paints across the full-size viewport");m::DrawingStroke wide{{{.1,.1},{.9,.9}},20,{0,0,1,1}};check(big.setLive(&wide,3),"A live stroke on the large card");large.setEntries(renderer,big.entries());large.present(renderer);
+        large.detach(renderer);check(big.releaseResources(renderer),"The large drawing releases its surfaces");}
 }
 }
 int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr))return 1;int result{};try{check(argc==2,"Pass native/hud.hlsl");run(argv[1]);std::cout<<"PASS "<<checks<<" retained Notes drawing checks\n";}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';result=1;}CoUninitialize();return result;}
