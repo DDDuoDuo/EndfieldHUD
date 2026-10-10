@@ -21,7 +21,8 @@ struct NowPlayingPreview::Impl:std::enable_shared_from_this<Impl>{
  struct Event{Impl&i;std::uint64_t token;Event(Impl&v,double t):i(v),token(++v.event){need(std::isfinite(t)&&t>=0,"Now Playing owner needs finite nonnegative time");i.time=std::max(i.time,t);}bool current()const{return i.alive&&i.event==token;}};
  Impl(gpu::LayerRasterizer&r,NowPlayingPreviewOptions&o):raster(r),options(o.raster),changed(std::move(o.changed)),onLock(std::move(o.onLock)),geometry(r),surface(prepare(),core::Module::nowPlaying){composed.reserve(2);}
  gpu::LayerScene&prepare(){geometry.load(blank(),options);return geometry;}
- void initialize(gpu::NativeNowPlayingService&s,app::UtilityExecutor&q,NowPlayingPreviewOptions&o){const auto weak=weak_from_this();session=std::make_unique<NowPlayingSession>(s,q,o.appearance,[weak]{if(auto i=weak.lock())i->notify();},std::move(o.decode));scene=std::make_unique<gpu::NativeNowPlayingScene>(session->presentation(),raster,options);ready=true;}
+ void initialize(gpu::NativeNowPlayingService&s,app::UtilityExecutor&q,NowPlayingPreviewOptions&o){const auto weak=weak_from_this();NowPlayingSessionOptions sessionOptions;sessionOptions.decode=std::move(o.decode);sessionOptions.web=std::move(o.web);sessionOptions.volume=std::move(o.volume);sessionOptions.playback=std::move(o.playback);
+  session=std::make_unique<NowPlayingSession>(s,q,o.appearance,[weak]{if(auto i=weak.lock())i->notify();},std::move(sessionOptions));scene=std::make_unique<gpu::NativeNowPlayingScene>(session->presentation(),raster,options);ready=true;}
  void notify(){if(!alive||!ready)return;auto callback=changed;if(callback)callback();}
  bool lock(std::uint64_t token){auto callback=onLock;if(callback)callback();return alive&&event==token;}
  std::optional<Point>local(Point p)const{return input&&std::isfinite(p.x)&&std::isfinite(p.y)?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
@@ -48,6 +49,7 @@ void NowPlayingPreview::update(const Matrix&center,const core::source::DesktopCh
  const auto camera=gpu::layerViewportProjection(i->metrics.pixelWidth,i->metrics.pixelHeight)*Matrix::scale(i->metrics.scale,i->metrics.scale);i->projection=core::Projection::viewport(camera*p.contentWorld,i->metrics.pixelWidth,i->metrics.pixelHeight);i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 bool NowPlayingPreview::utilityCompleted(double t){auto i=impl_;const Impl::Event e(*i,t);const bool changed=i->session->utilityCompleted(i->time);if(changed&&e.current()){i->sync();i->notify();}return changed;}
+bool NowPlayingPreview::audioChanged(double t){auto i=impl_;const Impl::Event e(*i,t);const bool changed=i->session->audioChanged(i->time);if(changed&&e.current()){i->sync();i->notify();}return changed;}
 bool NowPlayingPreview::deadline(double t){auto i=impl_;const Impl::Event e(*i,t);const bool changed=i->session->deadline(i->time);if(changed&&e.current()){i->sync();i->notify();}return changed;}
 std::optional<double>NowPlayingPreview::nextWakeTime()const{return impl_->session->nextWakeTime(impl_->time);}
 bool NowPlayingPreview::requiresFrames(double t)const{return impl_->pose&&impl_->overlayVisible&&impl_->scene->requiresFrames(std::max(t,impl_->time));}
@@ -68,6 +70,8 @@ bool NowPlayingPreview::setSlider(modules::NowPlayingSliderKind kind,double valu
 void NowPlayingPreview::cancelInteraction(double t){auto i=impl_;const Impl::Event e(*i,t);i->pressed=false;i->pointerPoint.reset();auto&view=i->session->presentation();view.cancelDrag();view.sync(view.input(),i->time);i->apply({},e.token);}
 bool NowPlayingPreview::pointerLocked()const noexcept{return impl_->input&&impl_->session->presentation().dragging();}
 const modules::NowPlayingPresentation&NowPlayingPreview::presentation()const noexcept{return impl_->session->presentation();}
+modules::NowPlayingAccessibility NowPlayingPreview::accessibility(double t)const{return modules::nowPlayingAccessibility(impl_->session->presentation(),std::max(t,impl_->time));}
+std::optional<core::Point>NowPlayingPreview::project(core::Point p)const{const auto&i=*impl_;if(!i.pose||!i.input)return {};const auto q=i.projection.project(p);if(!q)return {};return core::Point{q->x/i.metrics.scale,q->y/i.metrics.scale};}
 gpu::NowPlayingSceneStats NowPlayingPreview::sceneStats()const noexcept{return impl_->scene->stats();}
 gpu::NativeNowPlayingArtwork::Stats NowPlayingPreview::artworkStats()const{return impl_->session->artworkStats();}
 void NowPlayingPreview::upload(gpu::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.registration.uploadGeometry(r);i.scene->uploadResources(r);}

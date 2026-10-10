@@ -17,6 +17,10 @@ namespace {
 std::string prefix(std::string_view value,std::size_t maximum){
     if(value.size()>12*1024*1024)throw std::invalid_argument("Now Playing metadata exceeds source adapter bound");
     const auto text=archiveUTF16(value);if(text.empty())return {};
+    // Every Character spans at least one UTF-16 unit, so fewer units than the
+    // bound can never be truncated: skip segmentation (the source result is
+    // the unchanged string, exactly as the iterator would reach UBRK_DONE).
+    if(text.size()<maximum)return std::string(value);
     UErrorCode error=U_ZERO_ERROR;auto*iterator=ubrk_open(UBRK_CHARACTER,"",reinterpret_cast<const UChar*>(text.data()),static_cast<std::int32_t>(text.size()),&error);
     if(U_FAILURE(error)||!iterator){if(iterator)ubrk_close(iterator);throw std::runtime_error("Cannot segment Now Playing text");}
     struct End{UBreakIterator*value;~End(){ubrk_close(value);}}end{iterator};
