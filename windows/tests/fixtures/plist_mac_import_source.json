@@ -1,0 +1,1845 @@
+{
+ "encoded": [
+  {
+   "binary": "YnBsaXN0MDCvEBIBAgMEBQYHCAkKCwwNDg8QERIQABABEH8QgBD/EQEAEf//EgABAAASf////xMAAAABAAAAABMAIAAAAAAAARN//////////xQAAAAAAAAAAIAAAAAAAAAAFAAAAAAAAAAA//////////8T//////////8T/////////4AT/////4AAAAATgAAAAAAAAAAIHR8hIyUnKi0yN0BJUmN0fYaPAAAAAAAAAQEAAAAAAAAAEwAAAAAAAAAAAAAAAAAAAJg=",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "int": "0"
+      },
+      {
+       "int": "1"
+      },
+      {
+       "int": "127"
+      },
+      {
+       "int": "128"
+      },
+      {
+       "int": "255"
+      },
+      {
+       "int": "256"
+      },
+      {
+       "int": "65535"
+      },
+      {
+       "int": "65536"
+      },
+      {
+       "int": "2147483647"
+      },
+      {
+       "int": "4294967296"
+      },
+      {
+       "int": "9007199254740993"
+      },
+      {
+       "int": "9223372036854775807"
+      },
+      {
+       "int": "9223372036854775808"
+      },
+      {
+       "int": "18446744073709551615"
+      },
+      {
+       "int": "-1"
+      },
+      {
+       "int": "-128"
+      },
+      {
+       "int": "-2147483648"
+      },
+      {
+       "int": "-9223372036854775808"
+      }
+     ]
+    }
+   },
+   "name": "integers",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+Cgk8aW50ZWdlcj4wPC9pbnRlZ2VyPgoJPGludGVnZXI+MTwvaW50ZWdlcj4KCTxpbnRlZ2VyPjEyNzwvaW50ZWdlcj4KCTxpbnRlZ2VyPjEyODwvaW50ZWdlcj4KCTxpbnRlZ2VyPjI1NTwvaW50ZWdlcj4KCTxpbnRlZ2VyPjI1NjwvaW50ZWdlcj4KCTxpbnRlZ2VyPjY1NTM1PC9pbnRlZ2VyPgoJPGludGVnZXI+NjU1MzY8L2ludGVnZXI+Cgk8aW50ZWdlcj4yMTQ3NDgzNjQ3PC9pbnRlZ2VyPgoJPGludGVnZXI+NDI5NDk2NzI5NjwvaW50ZWdlcj4KCTxpbnRlZ2VyPjkwMDcxOTkyNTQ3NDA5OTM8L2ludGVnZXI+Cgk8aW50ZWdlcj45MjIzMzcyMDM2ODU0Nzc1ODA3PC9pbnRlZ2VyPgoJPGludGVnZXI+OTIyMzM3MjAzNjg1NDc3NTgwODwvaW50ZWdlcj4KCTxpbnRlZ2VyPjE4NDQ2NzQ0MDczNzA5NTUxNjE1PC9pbnRlZ2VyPgoJPGludGVnZXI+LTE8L2ludGVnZXI+Cgk8aW50ZWdlcj4tMTI4PC9pbnRlZ2VyPgoJPGludGVnZXI+LTIxNDc0ODM2NDg8L2ludGVnZXI+Cgk8aW50ZWdlcj4tOTIyMzM3MjAzNjg1NDc3NTgwODwvaW50ZWdlcj4KPC9hcnJheT4KPC9wbGlzdD4K",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "int": "0"
+      },
+      {
+       "int": "1"
+      },
+      {
+       "int": "127"
+      },
+      {
+       "int": "128"
+      },
+      {
+       "int": "255"
+      },
+      {
+       "int": "256"
+      },
+      {
+       "int": "65535"
+      },
+      {
+       "int": "65536"
+      },
+      {
+       "int": "2147483647"
+      },
+      {
+       "int": "4294967296"
+      },
+      {
+       "int": "9007199254740993"
+      },
+      {
+       "int": "9223372036854775807"
+      },
+      {
+       "int": "9223372036854775808"
+      },
+      {
+       "int": "18446744073709551615"
+      },
+      {
+       "int": "-1"
+      },
+      {
+       "int": "-128"
+      },
+      {
+       "int": "-2147483648"
+      },
+      {
+       "int": "-9223372036854775808"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDCuAQIDBAUGBwgJCgsMDQ4jAAAAAAAAAAAjgAAAAAAAAAAjP+Qo9cKPXCkjP7mZmZmZmZojf+HM84XryKAjAAAAAAAAAAEjwAQAAAAAAAAjf/AAAAAAAAAj//AAAAAAAAAjf/gAAAAAAAAjP9VVVVVVVVUjQP4kAAAAAAAiPwAAACI9zMzNCBcgKTI7RE1WX2hxeoOIAAAAAAAAAQEAAAAAAAAADwAAAAAAAAAAAAAAAAAAAI0=",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "real": "0000000000000000"
+      },
+      {
+       "real": "8000000000000000"
+      },
+      {
+       "real": "3fe428f5c28f5c29"
+      },
+      {
+       "real": "3fb999999999999a"
+      },
+      {
+       "real": "7fe1ccf385ebc8a0"
+      },
+      {
+       "real": "0000000000000001"
+      },
+      {
+       "real": "c004000000000000"
+      },
+      {
+       "real": "7ff0000000000000"
+      },
+      {
+       "real": "fff0000000000000"
+      },
+      {
+       "real": "7ff8000000000000"
+      },
+      {
+       "real": "3fd5555555555555"
+      },
+      {
+       "real": "40fe240000000000"
+      },
+      {
+       "real": "3fe0000000000000"
+      },
+      {
+       "real": "3fb99999a0000000"
+      }
+     ]
+    }
+   },
+   "name": "reals",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+Cgk8cmVhbD4wLjA8L3JlYWw+Cgk8cmVhbD4wLjA8L3JlYWw+Cgk8cmVhbD4wLjYzPC9yZWFsPgoJPHJlYWw+MC4xMDAwMDAwMDAwMDAwMDAwMTwvcmVhbD4KCTxyZWFsPjFlKzMwODwvcmVhbD4KCTxyZWFsPjQuOTQwNjU2NDU4NDEyNDY1NGUtMzI0PC9yZWFsPgoJPHJlYWw+LTIuNTwvcmVhbD4KCTxyZWFsPitpbmZpbml0eTwvcmVhbD4KCTxyZWFsPi1pbmZpbml0eTwvcmVhbD4KCTxyZWFsPm5hbjwvcmVhbD4KCTxyZWFsPjAuMzMzMzMzMzMzMzMzMzMzMzE8L3JlYWw+Cgk8cmVhbD4xMjM0NTY8L3JlYWw+Cgk8cmVhbD4wLjU8L3JlYWw+Cgk8cmVhbD4wLjEwMDAwMDAwMTQ5MDExNjEyPC9yZWFsPgo8L2FycmF5Pgo8L3BsaXN0Pgo=",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "real": "0000000000000000"
+      },
+      {
+       "real": "0000000000000000"
+      },
+      {
+       "real": "3fe428f5c28f5c29"
+      },
+      {
+       "real": "3fb999999999999a"
+      },
+      {
+       "real": "7fe1ccf385ebc8a0"
+      },
+      {
+       "real": "0000000000000001"
+      },
+      {
+       "real": "c004000000000000"
+      },
+      {
+       "real": "7ff0000000000000"
+      },
+      {
+       "real": "fff0000000000000"
+      },
+      {
+       "real": "7ff8000000000000"
+      },
+      {
+       "real": "3fd5555555555555"
+      },
+      {
+       "real": "40fe240000000000"
+      },
+      {
+       "real": "3fe0000000000000"
+      },
+      {
+       "real": "3fb99999a0000000"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDCmAQIDBAUGMwAAAAAAAAAAM8HNJ+RAAAAAM0Ey1ocgAAAAM7/4AAAAAAAAM0HH14QAAAAAM0ItY8N/AAAACA8YISozPAAAAAAAAAEBAAAAAAAAAAcAAAAAAAAAAAAAAAAAAABF",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "date": "0000000000000000"
+      },
+      {
+       "date": "c1cd27e440000000"
+      },
+      {
+       "date": "4132d68720000000"
+      },
+      {
+       "date": "bff8000000000000"
+      },
+      {
+       "date": "41c7d78400000000"
+      },
+      {
+       "date": "422d63c37f000000"
+      }
+     ]
+    }
+   },
+   "name": "dates",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+Cgk8ZGF0ZT4yMDAxLTAxLTAxVDAwOjAwOjAwWjwvZGF0ZT4KCTxkYXRlPjE5NzAtMDEtMDFUMDA6MDA6MDBaPC9kYXRlPgoJPGRhdGU+MjAwMS0wMS0xNVQwNjo1NjowN1o8L2RhdGU+Cgk8ZGF0ZT4yMDAwLTEyLTMxVDIzOjU5OjU4WjwvZGF0ZT4KCTxkYXRlPjIwMjYtMDUtMDlUMDY6MTM6MjBaPC9kYXRlPgoJPGRhdGU+NDAwMS0wMS0wMVQwMDowMDowMFo8L2RhdGU+CjwvYXJyYXk+CjwvcGxpc3Q+Cg==",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "date": "0000000000000000"
+      },
+      {
+       "date": "c1cd27e440000000"
+      },
+      {
+       "date": "4132d68700000000"
+      },
+      {
+       "date": "c000000000000000"
+      },
+      {
+       "date": "41c7d78400000000"
+      },
+      {
+       "date": "422d63c37f000000"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDCpAQIDBAUGBwgJUFtwbGFpbiBBU0NJSVU8Jj4iJ2wARABvAGMAdABvAHIAIFNaWOsAINg93oBsAGUDAQAgAGMAbwBtAGIAaQBuAGkAbgBnaNg93GggDdg93GkgDdg93GdddGFiCW5ldwpsaW5lDWIgKACgXxEBLHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eAAIABIAEwAfACUAPgBXAGgAdgB7AAAAAAAAAgEAAAAAAAAACgAAAAAAAAAAAAAAAAAAAas=",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "string": ""
+      },
+      {
+       "string": "plain ASCII"
+      },
+      {
+       "string": "<&>\"'"
+      },
+      {
+       "string": "Doctor 博士 🚀"
+      },
+      {
+       "string": "é combining"
+      },
+      {
+       "string": "👨‍👩‍👧"
+      },
+      {
+       "string": "tab\tnew\nline\r"
+      },
+      {
+       "string": "  "
+      },
+      {
+       "string": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+     ]
+    }
+   },
+   "name": "strings",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+Cgk8c3RyaW5nPjwvc3RyaW5nPgoJPHN0cmluZz5wbGFpbiBBU0NJSTwvc3RyaW5nPgoJPHN0cmluZz4mbHQ7JmFtcDsmZ3Q7Iic8L3N0cmluZz4KCTxzdHJpbmc+RG9jdG9yIOWNmuWjqyDwn5qAPC9zdHJpbmc+Cgk8c3RyaW5nPmXMgSBjb21iaW5pbmc8L3N0cmluZz4KCTxzdHJpbmc+8J+RqOKAjfCfkanigI3wn5GnPC9zdHJpbmc+Cgk8c3RyaW5nPnRhYgluZXcKbGluZQ08L3N0cmluZz4KCTxzdHJpbmc+4oCowqA8L3N0cmluZz4KCTxzdHJpbmc+eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4PC9zdHJpbmc+CjwvYXJyYXk+CjwvcGxpc3Q+Cg==",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "string": ""
+      },
+      {
+       "string": "plain ASCII"
+      },
+      {
+       "string": "<&>\"'"
+      },
+      {
+       "string": "Doctor 博士 🚀"
+      },
+      {
+       "string": "é combining"
+      },
+      {
+       "string": "👨‍👩‍👧"
+      },
+      {
+       "string": "tab\tnew\nline\r"
+      },
+      {
+       "string": "  "
+      },
+      {
+       "string": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDCjAQIDQE8RAQAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl9gYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp7fH1+f4CBgoOEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Dh4uPk5ebn6Onq6+zt7u/w8fLz9PX29/j5+vv8/f7/QQAACAAMAA0BEQAAAAAAAAIBAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAET",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "data": ""
+      },
+      {
+       "data": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+      },
+      {
+       "data": "AA=="
+      }
+     ]
+    }
+   },
+   "name": "data",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+Cgk8ZGF0YT4KCTwvZGF0YT4KCTxkYXRhPgoJQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOGdJU0lqSkNVbUp5Z3BLaXNzTFM0dk1ERXkKCU16UTFOamM0T1RvN1BEMCtQMEJCUWtORVJVWkhTRWxLUzB4TlRrOVFVVkpUVkZWV1YxaFpXbHRjWFY1ZllHRmlZMlJsCglabWRvYVdwcmJHMXViM0J4Y25OMGRYWjNlSGw2ZTN4OWZuK0FnWUtEaElXR2g0aUppb3VNalk2UGtKR1NrNVNWbHBlWQoJbVpxYm5KMmVuNkNob3FPa3BhYW5xS21xcTZ5dHJxK3dzYkt6dExXMnQ3aTV1cnU4dmI2L3dNSEN3OFRGeHNmSXljckwKCXpNM096OURSMHRQVTFkYlgyTm5hMjl6ZDN0L2c0ZUxqNU9YbTUranA2dXZzN2U3djhQSHk4L1QxOXZmNCtmcjcvUDMrCgkvdz09Cgk8L2RhdGE+Cgk8ZGF0YT4KCUFBPT0KCTwvZGF0YT4KPC9hcnJheT4KPC9wbGlzdD4K",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "data": ""
+      },
+      {
+       "data": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w=="
+      },
+      {
+       "data": "AA=="
+      }
+     ]
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDDWAQIDBAUGBw0ODxATVGRlZXBTb2ZmVWVtcHR5VGZsYWdadW5pY29kZUtleVRsaXN0oQihCaEK0QsMUWtRdgjQCdEREmOVLtg93REQB6AIFRoeJCk0OTs9P0JERkdISUxTVQAAAAAAAAEBAAAAAAAAABQAAAAAAAAAAAAAAAAAAABW",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "dict": {
+      "deep": {
+       "array": [
+        {
+         "array": [
+          {
+           "array": [
+            {
+             "dict": {
+              "k": {
+               "string": "v"
+              }
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      "empty": {
+       "dict": {}
+      },
+      "flag": {
+       "bool": true
+      },
+      "list": {
+       "array": []
+      },
+      "off": {
+       "bool": false
+      },
+      "unicodeKey": {
+       "dict": {
+        "键🔑": {
+         "int": "7"
+        }
+       }
+      }
+     }
+    }
+   },
+   "name": "nested",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD4KCTxrZXk+ZGVlcDwva2V5PgoJPGFycmF5PgoJCTxhcnJheT4KCQkJPGFycmF5PgoJCQkJPGRpY3Q+CgkJCQkJPGtleT5rPC9rZXk+CgkJCQkJPHN0cmluZz52PC9zdHJpbmc+CgkJCQk8L2RpY3Q+CgkJCTwvYXJyYXk+CgkJPC9hcnJheT4KCTwvYXJyYXk+Cgk8a2V5PmVtcHR5PC9rZXk+Cgk8ZGljdC8+Cgk8a2V5PmZsYWc8L2tleT4KCTx0cnVlLz4KCTxrZXk+bGlzdDwva2V5PgoJPGFycmF5Lz4KCTxrZXk+b2ZmPC9rZXk+Cgk8ZmFsc2UvPgoJPGtleT51bmljb2RlS2V5PC9rZXk+Cgk8ZGljdD4KCQk8a2V5PumUrvCflJE8L2tleT4KCQk8aW50ZWdlcj43PC9pbnRlZ2VyPgoJPC9kaWN0Pgo8L2RpY3Q+CjwvcGxpc3Q+Cg==",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "deep": {
+       "array": [
+        {
+         "array": [
+          {
+           "array": [
+            {
+             "dict": {
+              "k": {
+               "string": "v"
+              }
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      },
+      "empty": {
+       "dict": {}
+      },
+      "flag": {
+       "bool": true
+      },
+      "list": {
+       "array": []
+      },
+      "off": {
+       "bool": false
+      },
+      "unicodeKey": {
+       "dict": {
+        "键🔑": {
+         "int": "7"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDDWAQIDBAUGBwgJCgsMXnN1bW1vblNob3J0Y3V0XWxhdW5jaEF0TG9naW5eY3VzdG9tU2NyZWVuSURYaHVkU2NhbGVZYWNjZW50SGV4WGxhc3RTZWVuTxAceyJrZXlDb2RlIjo1MCwibW9kaWZpZXJzIjoxfQgS/////yM/9AAAAAAAAFZGQUQ0MUYzQcTck4BAAAAIFSQyQUpUXXx9gouSAAAAAAAAAQEAAAAAAAAADQAAAAAAAAAAAAAAAAAAAJs=",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "dict": {
+      "accentHex": {
+       "string": "FAD41F"
+      },
+      "customScreenID": {
+       "int": "4294967295"
+      },
+      "hudScale": {
+       "real": "3ff4000000000000"
+      },
+      "lastSeen": {
+       "date": "41c4dc9380400000"
+      },
+      "launchAtLogin": {
+       "bool": false
+      },
+      "summonShortcut": {
+       "data": "eyJrZXlDb2RlIjo1MCwibW9kaWZpZXJzIjoxfQ=="
+      }
+     }
+    }
+   },
+   "name": "preferences",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD4KCTxrZXk+YWNjZW50SGV4PC9rZXk+Cgk8c3RyaW5nPkZBRDQxRjwvc3RyaW5nPgoJPGtleT5jdXN0b21TY3JlZW5JRDwva2V5PgoJPGludGVnZXI+NDI5NDk2NzI5NTwvaW50ZWdlcj4KCTxrZXk+aHVkU2NhbGU8L2tleT4KCTxyZWFsPjEuMjU8L3JlYWw+Cgk8a2V5Pmxhc3RTZWVuPC9rZXk+Cgk8ZGF0ZT4yMDIzLTAzLTA4VDIwOjI2OjQwWjwvZGF0ZT4KCTxrZXk+bGF1bmNoQXRMb2dpbjwva2V5PgoJPGZhbHNlLz4KCTxrZXk+c3VtbW9uU2hvcnRjdXQ8L2tleT4KCTxkYXRhPgoJZXlKclpYbERiMlJsSWpvMU1Dd2liVzlrYVdacFpYSnpJam94ZlE9PQoJPC9kYXRhPgo8L2RpY3Q+CjwvcGxpc3Q+Cg==",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "accentHex": {
+       "string": "FAD41F"
+      },
+      "customScreenID": {
+       "int": "4294967295"
+      },
+      "hudScale": {
+       "real": "3ff4000000000000"
+      },
+      "lastSeen": {
+       "date": "41c4dc9380000000"
+      },
+      "launchAtLogin": {
+       "bool": false
+      },
+      "summonShortcut": {
+       "data": "eyJrZXlDb2RlIjo1MCwibW9kaWZpZXJzIjoxfQ=="
+      }
+     }
+    }
+   }
+  },
+  {
+   "binary": "YnBsaXN0MDCvECgBAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoEAAQARACEAMQBBAFEAYQBxAIEAkQChALEAwQDRAOEA8QEBAREBIQExAUEBUQFhAXEBgQGRAaEBsQHBAdEB4QHxAgECEQIhAjECQQJRAmECcIMzU3OTs9P0FDRUdJS01PUVNVV1lbXV9hY2VnaWttb3FzdXd5e31/gQAAAAAAAAEBAAAAAAAAACkAAAAAAAAAAAAAAAAAAACD",
+   "binaryDecoded": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "int": "0"
+      },
+      {
+       "int": "1"
+      },
+      {
+       "int": "2"
+      },
+      {
+       "int": "3"
+      },
+      {
+       "int": "4"
+      },
+      {
+       "int": "5"
+      },
+      {
+       "int": "6"
+      },
+      {
+       "int": "7"
+      },
+      {
+       "int": "8"
+      },
+      {
+       "int": "9"
+      },
+      {
+       "int": "10"
+      },
+      {
+       "int": "11"
+      },
+      {
+       "int": "12"
+      },
+      {
+       "int": "13"
+      },
+      {
+       "int": "14"
+      },
+      {
+       "int": "15"
+      },
+      {
+       "int": "16"
+      },
+      {
+       "int": "17"
+      },
+      {
+       "int": "18"
+      },
+      {
+       "int": "19"
+      },
+      {
+       "int": "20"
+      },
+      {
+       "int": "21"
+      },
+      {
+       "int": "22"
+      },
+      {
+       "int": "23"
+      },
+      {
+       "int": "24"
+      },
+      {
+       "int": "25"
+      },
+      {
+       "int": "26"
+      },
+      {
+       "int": "27"
+      },
+      {
+       "int": "28"
+      },
+      {
+       "int": "29"
+      },
+      {
+       "int": "30"
+      },
+      {
+       "int": "31"
+      },
+      {
+       "int": "32"
+      },
+      {
+       "int": "33"
+      },
+      {
+       "int": "34"
+      },
+      {
+       "int": "35"
+      },
+      {
+       "int": "36"
+      },
+      {
+       "int": "37"
+      },
+      {
+       "int": "38"
+      },
+      {
+       "int": "39"
+      }
+     ]
+    }
+   },
+   "name": "largeContainer",
+   "xml": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+Cgk8aW50ZWdlcj4wPC9pbnRlZ2VyPgoJPGludGVnZXI+MTwvaW50ZWdlcj4KCTxpbnRlZ2VyPjI8L2ludGVnZXI+Cgk8aW50ZWdlcj4zPC9pbnRlZ2VyPgoJPGludGVnZXI+NDwvaW50ZWdlcj4KCTxpbnRlZ2VyPjU8L2ludGVnZXI+Cgk8aW50ZWdlcj42PC9pbnRlZ2VyPgoJPGludGVnZXI+NzwvaW50ZWdlcj4KCTxpbnRlZ2VyPjg8L2ludGVnZXI+Cgk8aW50ZWdlcj45PC9pbnRlZ2VyPgoJPGludGVnZXI+MTA8L2ludGVnZXI+Cgk8aW50ZWdlcj4xMTwvaW50ZWdlcj4KCTxpbnRlZ2VyPjEyPC9pbnRlZ2VyPgoJPGludGVnZXI+MTM8L2ludGVnZXI+Cgk8aW50ZWdlcj4xNDwvaW50ZWdlcj4KCTxpbnRlZ2VyPjE1PC9pbnRlZ2VyPgoJPGludGVnZXI+MTY8L2ludGVnZXI+Cgk8aW50ZWdlcj4xNzwvaW50ZWdlcj4KCTxpbnRlZ2VyPjE4PC9pbnRlZ2VyPgoJPGludGVnZXI+MTk8L2ludGVnZXI+Cgk8aW50ZWdlcj4yMDwvaW50ZWdlcj4KCTxpbnRlZ2VyPjIxPC9pbnRlZ2VyPgoJPGludGVnZXI+MjI8L2ludGVnZXI+Cgk8aW50ZWdlcj4yMzwvaW50ZWdlcj4KCTxpbnRlZ2VyPjI0PC9pbnRlZ2VyPgoJPGludGVnZXI+MjU8L2ludGVnZXI+Cgk8aW50ZWdlcj4yNjwvaW50ZWdlcj4KCTxpbnRlZ2VyPjI3PC9pbnRlZ2VyPgoJPGludGVnZXI+Mjg8L2ludGVnZXI+Cgk8aW50ZWdlcj4yOTwvaW50ZWdlcj4KCTxpbnRlZ2VyPjMwPC9pbnRlZ2VyPgoJPGludGVnZXI+MzE8L2ludGVnZXI+Cgk8aW50ZWdlcj4zMjwvaW50ZWdlcj4KCTxpbnRlZ2VyPjMzPC9pbnRlZ2VyPgoJPGludGVnZXI+MzQ8L2ludGVnZXI+Cgk8aW50ZWdlcj4zNTwvaW50ZWdlcj4KCTxpbnRlZ2VyPjM2PC9pbnRlZ2VyPgoJPGludGVnZXI+Mzc8L2ludGVnZXI+Cgk8aW50ZWdlcj4zODwvaW50ZWdlcj4KCTxpbnRlZ2VyPjM5PC9pbnRlZ2VyPgo8L2FycmF5Pgo8L3BsaXN0Pgo=",
+   "xmlDecoded": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "int": "0"
+      },
+      {
+       "int": "1"
+      },
+      {
+       "int": "2"
+      },
+      {
+       "int": "3"
+      },
+      {
+       "int": "4"
+      },
+      {
+       "int": "5"
+      },
+      {
+       "int": "6"
+      },
+      {
+       "int": "7"
+      },
+      {
+       "int": "8"
+      },
+      {
+       "int": "9"
+      },
+      {
+       "int": "10"
+      },
+      {
+       "int": "11"
+      },
+      {
+       "int": "12"
+      },
+      {
+       "int": "13"
+      },
+      {
+       "int": "14"
+      },
+      {
+       "int": "15"
+      },
+      {
+       "int": "16"
+      },
+      {
+       "int": "17"
+      },
+      {
+       "int": "18"
+      },
+      {
+       "int": "19"
+      },
+      {
+       "int": "20"
+      },
+      {
+       "int": "21"
+      },
+      {
+       "int": "22"
+      },
+      {
+       "int": "23"
+      },
+      {
+       "int": "24"
+      },
+      {
+       "int": "25"
+      },
+      {
+       "int": "26"
+      },
+      {
+       "int": "27"
+      },
+      {
+       "int": "28"
+      },
+      {
+       "int": "29"
+      },
+      {
+       "int": "30"
+      },
+      {
+       "int": "31"
+      },
+      {
+       "int": "32"
+      },
+      {
+       "int": "33"
+      },
+      {
+       "int": "34"
+      },
+      {
+       "int": "35"
+      },
+      {
+       "int": "36"
+      },
+      {
+       "int": "37"
+      },
+      {
+       "int": "38"
+      },
+      {
+       "int": "39"
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "provenance": {
+  "generator": "windows/tools/mac_import_reference.py",
+  "sources": {
+   "Sources/HUDApplicationIcon.swift": "ebbc2e9751f24058e5882b6a2a603e5448bfb1b0b0f204c175ec8aee827e5312",
+   "Sources/Models.swift": "5ce49023ae20e159aa574b7948b09140edf5717276d4d8949d7ce87ddf6d8967",
+   "Sources/OrbiPomSession.swift": "8b7b752eba4d856e9458189931c35dd5a30d10427285441319c6c0e2666e02d8",
+   "Sources/SummonShortcut.swift": "0d2f4706a3c5ad20bfbbe36c52255214485d968c23890017261f94c69a038185"
+  }
+ },
+ "raw": [
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": "<a> & \"q\" ' AB🚀"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPiZsdDthJmd0OyAmYW1wOyAmcXVvdDtxJnF1b3Q7ICZhcG9zOyAmIzY1OyYjeDQyOyYjeDFGNjgwOzwvc3RyaW5nPgo8L3BsaXN0Pgo=",
+   "name": "entities"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": "<raw & text>"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPjwhW0NEQVRBWzxyYXcgJiB0ZXh0Pl1dPjwvc3RyaW5nPgo8L3BsaXN0Pgo=",
+   "name": "cdata"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "k": {
+       "int": "1"
+      }
+     }
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8IS0tIGEgLS0+PGRpY3Q+PCEtLSBiIC0tPjxrZXk+azwva2V5PjwhLS0gYyAtLT48aW50ZWdlcj4xPC9pbnRlZ2VyPjwvZGljdD4KPC9wbGlzdD4K",
+   "name": "commentsEverywhere"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4gNDIgPC9pbnRlZ2VyPgo8L3BsaXN0Pgo=",
+   "name": "integerWhitespace"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "31"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4weDFGPC9pbnRlZ2VyPgo8L3BsaXN0Pgo=",
+   "name": "integerHex"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "5"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4rNTwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerPlus"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "0"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4tMDwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerNegativeZero"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4xODQ0Njc0NDA3MzcwOTU1MTYxNjwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerOverflow"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "18446744073709551615"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4xODQ0Njc0NDA3MzcwOTU1MTYxNTwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerUnsignedMax"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "-9223372036854775808"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4tOTIyMzM3MjAzNjg1NDc3NTgwODwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerMin"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4tOTIyMzM3MjAzNjg1NDc3NTgwOTwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerBelowMin"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj48L2ludGVnZXI+CjwvcGxpc3Q+Cg==",
+   "name": "integerEmpty"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4xMmFiYzwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerJunk"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": [
+      {
+       "real": "7ff8000000000000"
+      },
+      {
+       "real": "7ff0000000000000"
+      },
+      {
+       "real": "fff0000000000000"
+      },
+      {
+       "real": "8000000000000000"
+      },
+      {
+       "real": "408f400000000000"
+      },
+      {
+       "real": "3fe0000000000000"
+      }
+     ]
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+PHJlYWw+bmFuPC9yZWFsPjxyZWFsPitpbmZpbml0eTwvcmVhbD48cmVhbD4taW5maW5pdHk8L3JlYWw+PHJlYWw+LTA8L3JlYWw+PHJlYWw+MWUzPC9yZWFsPjxyZWFsPi41PC9yZWFsPjwvYXJyYXk+CjwvcGxpc3Q+Cg==",
+   "name": "realSpecial"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4xLjV4PC9yZWFsPgo8L3BsaXN0Pgo=",
+   "name": "realJunk"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "41c5c858b8000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDI0LTAyLTI5VDEyOjM0OjU2WjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateValid"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "41c4d7bef8000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDIzLTAyLTI5VDEyOjM0OjU2WjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateInvalidDay"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDI0LTAyLTI5VDEyOjM0OjU2PC9kYXRlPgo8L3BsaXN0Pgo=",
+   "name": "dateNoZone"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "data": "AAECAw=="
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YT4KCUFBRUMKCUF3PT0KPC9kYXRhPgo8L3BsaXN0Pgo=",
+   "name": "dataWhitespace"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "data": ""
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YT5BKj09PC9kYXRhPgo8L3BsaXN0Pgo=",
+   "name": "dataInvalid"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5PmE8L2tleT48c3RyaW5nLz48a2V5PmI8L2tleT48YXJyYXkvPjxrZXk+Yzwva2V5PjxkaWN0Lz48a2V5PmQ8L2tleT48ZGF0YS8+PC9kaWN0Pgo8L3BsaXN0Pgo=",
+   "name": "emptyElements"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "k": {
+       "bool": true
+      }
+     }
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxkaWN0PjxrZXk+azwva2V5Pjx0cnVlLz48L2RpY3Q+Cg==",
+   "name": "bareRoot"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": "x"
+    }
+   },
+   "bytes": "PHBsaXN0IHZlcnNpb249IjEuMCI+PHN0cmluZz54PC9zdHJpbmc+PC9wbGlzdD4=",
+   "name": "noProlog"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "a": {
+       "int": "2"
+      }
+     }
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5PmE8L2tleT48aW50ZWdlcj4xPC9pbnRlZ2VyPjxrZXk+YTwva2V5PjxpbnRlZ2VyPjI8L2ludGVnZXI+PC9kaWN0Pgo8L3BsaXN0Pgo=",
+   "name": "duplicateKey",
+   "stricter": "Duplicate keys are rejected instead of silently keeping one value"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5PmE8L2tleT48L2RpY3Q+CjwvcGxpc3Q+Cg==",
+   "name": "keyWithoutValue"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48aW50ZWdlcj4xPC9pbnRlZ2VyPjwvZGljdD4KPC9wbGlzdD4K",
+   "name": "valueWithoutKey"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXk+PHN0cmluZz54PC9hcnJheT48L3N0cmluZz4KPC9wbGlzdD4K",
+   "name": "mismatchedClose"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZmxvYXQ+MTwvZmxvYXQ+CjwvcGxpc3Q+Cg==",
+   "name": "unknownElement"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": "x"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPng8L3N0cmluZz4KPC9wbGlzdD4KPHN0cmluZz55PC9zdHJpbmc+",
+   "name": "trailingGarbage",
+   "stricter": "Content after the root element is treated as corruption"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5PmE8L2tleT48c3RyaW5nPng8L3N0cmlu",
+   "name": "truncated"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIj8+PCFET0NUWVBFIHBsaXN0IFs8IUVOVElUWSB4ICJib29tIj5dPjxwbGlzdCB2ZXJzaW9uPSIxLjAiPjxzdHJpbmc+Jng7PC9zdHJpbmc+PC9wbGlzdD4=",
+   "name": "internalSubset"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTE2Ij8+PHBsaXN0IHZlcnNpb249IjEuMCI+PHN0cmluZz54PC9zdHJpbmc+PC9wbGlzdD4=",
+   "name": "utf16Declared"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48cGxpc3QgdmVyc2lvbj0iMS4wIj48c3RyaW5nPv88L3N0cmluZz48L3BsaXN0Pg==",
+   "name": "invalidUtf8"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "real": "3ff8000000000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4gMS41PC9yZWFsPgo8L3BsaXN0Pgo=",
+   "name": "realLeadingSpace"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4xLjUgPC9yZWFsPgo8L3BsaXN0Pgo=",
+   "name": "realTrailingSpace"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4weDFwMzwvcmVhbD4KPC9wbGlzdD4K",
+   "name": "realHexFloat"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4xLDU8L3JlYWw+CjwvcGxpc3Q+Cg==",
+   "name": "realComma"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "real": "401d000000000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4wMDcuMjU8L3JlYWw+CjwvcGxpc3Q+Cg==",
+   "name": "realLeadingZeros"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD4xZTwvcmVhbD4KPC9wbGlzdD4K",
+   "name": "realExponentOnly"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "real": "0000000000000001"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8cmVhbD40Ljk0MDY1NjQ1ODQxMjQ2NTRlLTMyNDwvcmVhbD4KPC9wbGlzdD4K",
+   "name": "realSubnormal"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "7"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4wMDc8L2ludGVnZXI+CjwvcGxpc3Q+Cg==",
+   "name": "integerLeadingZeros"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "-16"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4tMHgxMDwvaW50ZWdlcj4KPC9wbGlzdD4K",
+   "name": "integerNegativeHex"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "int": "255"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8aW50ZWdlcj4wWGZGPC9pbnRlZ2VyPgo8L3BsaXN0Pgo=",
+   "name": "integerUpperHex"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": ""
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nLz4KPC9wbGlzdD4K",
+   "name": "emptyString"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": ""
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPjwvc3RyaW5nPgo8L3BsaXN0Pgo=",
+   "name": "emptyStringPair"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YS8+CjwvcGxpc3Q+Cg==",
+   "name": "emptyData"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "data": ""
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YT48L2RhdGE+CjwvcGxpc3Q+Cg==",
+   "name": "emptyDataPair"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "array": []
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8YXJyYXkvPgo8L3BsaXN0Pgo=",
+   "name": "emptyArray"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {}
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdC8+CjwvcGxpc3Q+Cg==",
+   "name": "emptyDict"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "": {
+       "bool": true
+      }
+     }
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5Lz48dHJ1ZS8+PC9kaWN0Pgo8L3BsaXN0Pgo=",
+   "name": "emptyKey"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "": {
+       "bool": true
+      }
+     }
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5Pjwva2V5Pjx0cnVlLz48L2RpY3Q+CjwvcGxpc3Q+Cg==",
+   "name": "emptyKeyPair"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "bool": true
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8dHJ1ZT48L3RydWU+CjwvcGxpc3Q+Cg==",
+   "name": "trueNotSelfClosing"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "41c6925e80000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDI0LTEzLTAxVDAwOjAwOjAwWjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateMonth13"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "41c5b58b40000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDI0LTAxLTMyVDAwOjAwOjAwWjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateDay32"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "41c5a1c4c0000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDI0LTAxLTAxVDI0OjAwOjAwWjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateHour24"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "41c5a11c1e000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4yMDI0LTAxLTAxVDAwOjAwOjYwWjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateSecond60"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4gMjAyNC0wMS0wMVQwMDowMDowMFo8L2RhdGU+CjwvcGxpc3Q+Cg==",
+   "name": "dateWhitespace"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "date": "c22d63c37f000000"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0ZT4wMDAxLTAxLTAxVDAwOjAwOjAwWjwvZGF0ZT4KPC9wbGlzdD4K",
+   "name": "dateYear1"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "data": "ABAC"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YT5BQj1DPC9kYXRhPgo8L3BsaXN0Pgo=",
+   "name": "dataGarbageMiddle"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "data": "AAEC"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YT5BQUVDQXc8L2RhdGE+CjwvcGxpc3Q+Cg==",
+   "name": "dataUnpadded"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "data": "AAECAw=="
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGF0YT5BQSFFQ0BBdz09PC9kYXRhPgo8L3BsaXN0Pgo=",
+   "name": "dataInvalidChars"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": "a\u0000b"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPmEmIzA7Yjwvc3RyaW5nPgo8L3BsaXN0Pgo=",
+   "name": "stringNulReference"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "string": "a\u0001b"
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPmEBYjwvc3RyaW5nPgo8L3BsaXN0Pgo=",
+   "name": "stringControlChar"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8c3RyaW5nPiZuYnNwOzwvc3RyaW5nPgo8L3BsaXN0Pgo=",
+   "name": "stringUnknownEntity"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "dict": {
+      "a&b": {
+       "bool": false
+      }
+     }
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8ZGljdD48a2V5PmEmYW1wO2I8L2tleT48ZmFsc2UvPjwvZGljdD4KPC9wbGlzdD4K",
+   "name": "keyEntity"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "xml",
+    "value": {
+     "bool": true
+    }
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz48cGxpc3Q+PHRydWUvPjwvcGxpc3Q+",
+   "name": "plistVersionMissing"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPCFET0NUWVBFIHBsaXN0IFBVQkxJQyAiLS8vQXBwbGUvL0RURCBQTElTVCAxLjAvL0VOIiAiaHR0cDovL3d3dy5hcHBsZS5jb20vRFREcy9Qcm9wZXJ0eUxpc3QtMS4wLmR0ZCI+CjxwbGlzdCB2ZXJzaW9uPSIxLjAiPgo8VFJVRS8+CjwvcGxpc3Q+Cg==",
+   "name": "uppercaseTag"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDDRAQJRYQ==",
+   "name": "binaryTruncated"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "name": "binaryBadMagic"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "",
+   "name": "empty"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDChAAgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAACg==",
+   "name": "binaryCycle"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "string": "x"
+      },
+      {
+       "string": "x"
+      },
+      {
+       "string": "x"
+      }
+     ]
+    }
+   },
+   "bytes": "YnBsaXN0MDCjAQEBUXgIDAAAAAAAAAEBAAAAAAAAAAIAAAAAAAAAAAAAAAAAAAAO",
+   "name": "binarySharedLeaf"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDDRAQEQBQgLAAAAAAAAAQEAAAAAAAAAAgAAAAAAAAAAAAAAAAAAAA0=",
+   "name": "binaryNonStringKey"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "dict": {
+      "k": {
+       "int": "1"
+      }
+     }
+    }
+   },
+   "bytes": "YnBsaXN0MDDSAQECAlFrEAEIDQ8AAAAAAAABAQAAAAAAAAADAAAAAAAAAAAAAAAAAAAAEQ==",
+   "name": "binaryDuplicateKey",
+   "stricter": "Duplicate keys are rejected instead of silently keeping one value"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "unrepresentableString": 1
+    }
+   },
+   "bytes": "YnBsaXN0MDBh2AAIAAAAAAAAAQEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAs=",
+   "name": "binaryUnpairedSurrogate",
+   "stricter": "Unpaired UTF-16 surrogates have no UTF-8 form"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "string": "🚀"
+    }
+   },
+   "bytes": "YnBsaXN0MDBi2D3egAgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAADQ==",
+   "name": "binaryPairedSurrogate"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDChBQgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAACg==",
+   "name": "binaryRefOutOfRange"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDAJCAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAPn",
+   "name": "binaryOffsetIntoTrailer"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "int": "18446744073709551615"
+    }
+   },
+   "bytes": "YnBsaXN0MDAUAAAAAAAAAAD//////////wgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAGQ==",
+   "name": "binaryInt128Unsigned"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "int": "18446744073709551611"
+    }
+   },
+   "bytes": "YnBsaXN0MDAU////////////////////+wgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAGQ==",
+   "name": "binaryInt128Negative"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "int": "0"
+    }
+   },
+   "bytes": "YnBsaXN0MDAUAAAAAAAAAAEAAAAAAAAAAAgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAGQ==",
+   "name": "binaryInt128TooLarge"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "real": "3fe8000000000000"
+    }
+   },
+   "bytes": "YnBsaXN0MDAiP0AAAAgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAADQ==",
+   "name": "binaryFloat32"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "string": "abcdefghijklmno"
+    }
+   },
+   "bytes": "YnBsaXN0MDBfEA9hYmNkZWZnaGlqa2xtbm8IAAAAAAAAAQEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAABo=",
+   "name": "binaryExtendedCount"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDCABwgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAACg==",
+   "name": "binaryUid"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDAACAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAJ",
+   "name": "binaryNull"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "string": "é"
+    }
+   },
+   "bytes": "YnBsaXN0MDBR6QgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAACg==",
+   "name": "binaryAsciiHighByte"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "string": ""
+    }
+   },
+   "bytes": "YnBsaXN0MDBSgJ8IAAAAAAAAAQEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAs=",
+   "name": "binaryAscii80"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "string": "a\u0000b"
+    }
+   },
+   "bytes": "YnBsaXN0MDBTYQBiCAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAM",
+   "name": "binaryAsciiNul"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "string": "\u0000"
+    }
+   },
+   "bytes": "YnBsaXN0MDBhAAAIAAAAAAAAAQEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAs=",
+   "name": "binaryUtf16Nul"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "data": "AAECAwQFBgcICQoLDA0ODw=="
+    }
+   },
+   "bytes": "YnBsaXN0MDBPEBAAAQIDBAUGBwgJCgsMDQ4PCAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAb",
+   "name": "binaryDataExtended"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDBfIAFhCAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAM",
+   "name": "binaryCountWrongMarker"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "int": "-1"
+    }
+   },
+   "bytes": "YnBsaXN0MDAT//////////8IAAAAAAAAAQEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAABE=",
+   "name": "binaryInt8Bytes"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "int": "4294967295"
+    }
+   },
+   "bytes": "YnBsaXN0MDAS/////wgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAADQ==",
+   "name": "binaryInt4Bytes"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "dict": {
+      "k": {
+       "bool": false
+      }
+     }
+    }
+   },
+   "bytes": "YnBsaXN0MDDRAQJRawgICw0AAAAAAAABAQAAAAAAAAADAAAAAAAAAAAAAAAAAAAADg==",
+   "name": "binaryDict"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDAJCAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAI",
+   "name": "binaryDoubleZeroOffsetTable"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDAJCAAAAAAAAAEBAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAAJ",
+   "name": "binaryTopOutOfRange"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "date": "3ff8000000000000"
+    }
+   },
+   "bytes": "YnBsaXN0MDAzP/gAAAAAAAAIAAAAAAAAAQEAAAAAAAAAAQAAAAAAAAAAAAAAAAAAABE=",
+   "name": "binaryDate"
+  },
+  {
+   "apple": {
+    "accepted": false
+   },
+   "bytes": "YnBsaXN0MDAkAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAABAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAGQ==",
+   "name": "binaryReal16"
+  },
+  {
+   "apple": {
+    "accepted": true,
+    "format": "binary",
+    "value": {
+     "array": [
+      {
+       "bool": true
+      }
+     ]
+    }
+   },
+   "bytes": "YnBsaXN0MDChAAEJCAsAAAAAAAABAgAAAAAAAAACAAAAAAAAAAAAAAAAAAAADA==",
+   "name": "binaryTwoByteRefs"
+  }
+ ]
+}
