@@ -19,12 +19,19 @@ struct NativeNotesTextMeasurement {
 struct NativeNotesTextMeasureStats {
     std::size_t entries{},retainedBytes{};
     std::uint64_t measurements{},cacheHits{},analysisLayoutsCreated{},evictions{};
+    // Measurements that kept unchanged whole paragraphs of the same source's
+    // previous index (a subset of measurements), and the lines they kept.
+    std::uint64_t incrementalMeasurements{},reusedLines{};
 };
 // Lazy plain/rich text line index only; no HWND, renderer, timer, editor or data I/O.
 // Shares LayerRasterizer's existing DirectWrite factory/font resolver. Borrowed
 // rasterizer outlives this cache and calls occur on its creating thread.
 // The caller must increment textRevision whenever text or formatting changes. Equal source
 // key/revision/width/size/fallback returns the identical shared result immediately.
+// A new revision of a cached source with the same geometry/font re-measures only
+// the paragraphs that differ (text, or rich UTF-16 runs); unchanged paragraphs
+// keep their exact native line lengths/heights, so the index equals a complete
+// measurement while an edit in a long note costs only its own paragraphs.
 // A transient whole-paragraph DWrite analysis layout is released once indexed;
 // visible line leaves are subsequently reconstructed using the SAME selected
 // font/metrics, NOT this COM object. Shared-object IME/long-editor parity is a

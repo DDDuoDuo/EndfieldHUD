@@ -1,4 +1,5 @@
 #include "native/notes_text_measure.hpp"
+#include "core/notes_rich_text.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -12,6 +13,7 @@
 #include <stdexcept>
 #include <thread>
 using namespace endfield::native;
+namespace core=endfield::core;
 namespace {
 std::size_t checks{};
 void check(bool value,const char*why){++checks;if(!value)throw std::runtime_error(why);}
@@ -24,6 +26,71 @@ void complete(const NativeNotesTextMeasurement&m,std::string_view original){
         check(boundary(original,line.begin)&&boundary(original,line.end)&&boundary(original,line.visibleTextEnd),"Line endpoints are actual UTF-8 scalar boundaries");
         check(line.y==y&&line.height==m.font.lineHeight&&line.height>0,"Source plain line height and origins are consistent");cursor=line.end;y+=line.height;}
     check(cursor==original.size()&&y==m.measured.height,"Line index covers full original bytes and height");
+}
+bool sameIndex(const NativeNotesTextMeasurement&a,const NativeNotesTextMeasurement&b){
+    if(a.measured.text!=b.measured.text||a.measured.height!=b.measured.height||a.measured.lines.size()!=b.measured.lines.size()||a.font.lineHeight!=b.font.lineHeight)return false;
+    for(std::size_t i=0;i<a.measured.lines.size();++i){const auto&x=a.measured.lines[i];const auto&y=b.measured.lines[i];
+        if(x.begin!=y.begin||x.end!=y.end||x.visibleTextEnd!=y.visibleTextEnd||x.y!=y.y||x.height!=y.height||x.utf16Begin!=y.utf16Begin||x.utf16VisibleEnd!=y.utf16VisibleEnd)return false;}
+    return true;
+}
+std::string utf8(std::u16string_view value){
+    if(value.empty())return {};const auto n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,reinterpret_cast<const wchar_t*>(value.data()),int(value.size()),nullptr,0,nullptr,nullptr);
+    std::string out(std::size_t(n),'\0');WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,reinterpret_cast<const wchar_t*>(value.data()),int(value.size()),out.data(),n,nullptr,nullptr);return out;
+}
+// A new revision of a long note re-measures only the paragraphs whose bytes
+// (or rich UTF-16 runs) changed. Every incremental index must equal a complete
+// measurement of the same text by an independent measurer, line for line.
+void incremental(){
+    LayerRasterizer raster;NativeNotesTextMeasurer measure(raster);
+    std::string text;for(unsigned i=0;i<900;++i){text+=std::to_string(i)+" 终末地 Endfield 日本語 한국어 😀 e\xCC\x81 wraps across this narrow note viewport";text+=i%7==3?"\r\n":i%11==5?"\r":"\n";if(i%13==0)text+="\n";}
+    check(text.size()>65536,"Incremental fixture is a long multilingual note");
+    std::uint64_t revision=1;(void)measure.measure("inc",revision,text,190);
+    auto expect=[&](std::string next,const char*why,bool reuse){
+        const auto before=measure.stats();const auto incrementalIndex=measure.measure("inc",++revision,next,190);const auto after=measure.stats();
+        NativeNotesTextMeasurer fresh(raster);const auto full=fresh.measure("full",1,next,190);
+        check(sameIndex(*incrementalIndex,*full),why);complete(*incrementalIndex,next);check(after.measurements==before.measurements+1,"Incremental index is one counted measurement");
+        if(reuse&&!(after.incrementalMeasurements==before.incrementalMeasurements+1&&after.reusedLines>before.reusedLines+900&&after.analysisLayoutsCreated-before.analysisLayoutsCreated<=4&&fresh.stats().analysisLayoutsCreated>800))
+            std::cerr<<why<<": incremental "<<after.incrementalMeasurements-before.incrementalMeasurements<<", reused "<<after.reusedLines-before.reusedLines<<" of "<<full->measured.lines.size()<<", layouts "<<after.analysisLayoutsCreated-before.analysisLayoutsCreated<<" vs "<<fresh.stats().analysisLayoutsCreated<<'\n';
+        if(reuse)check(after.incrementalMeasurements==before.incrementalMeasurements+1&&after.reusedLines>before.reusedLines+900&&after.analysisLayoutsCreated-before.analysisLayoutsCreated<=4&&fresh.stats().analysisLayoutsCreated>800,"Edit re-measures only its own paragraphs");
+        text=std::move(next);
+    };
+    auto edited=[&](std::size_t at,std::size_t erase,std::string_view insert){auto next=text;next.replace(at,erase,insert);return next;};
+    expect(edited(text.find(" Endfield",text.size()/2),0,"X"),"Typing inside a middle paragraph equals a complete index",true);
+    expect(edited(text.find(" 日本語",text.size()/3),0,"\xF0\x9F\x98\x80"),"Supplementary scalar typing equals a complete index",true);
+    expect(edited(text.find('\n',text.size()/3),1,""),"Joining two paragraphs equals a complete index",true);
+    expect(edited(text.find(" wraps",text.size()/4),0,"\n"),"Splitting a paragraph equals a complete index",true);
+    {std::size_t cr=text.find('\r');while(cr!=std::string::npos&&cr+1<text.size()&&text[cr+1]=='\n')cr=text.find('\r',cr+1);check(cr!=std::string::npos,"Fixture has a lone CR");
+     expect(edited(cr+1,0,"\n"),"Lone CR becoming CRLF re-measures its paragraph",true);}
+    {const auto crlf=text.find("\r\n",text.size()/2);expect(edited(crlf+1,1,""),"CRLF becoming a lone CR re-measures its paragraph",true);}
+    expect(edited(0,0,"Start "),"Typing at the start equals a complete index",true);
+    expect(text+" end","Appending to the last paragraph equals a complete index",true);
+    expect(text+"\n","A new final blank line equals a complete index",true);
+    expect(text.substr(0,text.size()-1),"Removing the final newline equals a complete index",true);
+    {const auto a=text.find('\n',text.size()/5),b=text.find('\n',text.size()/5+4000);expect(edited(a,b-a,"\xE2\x80\xA8replaced"),"Replacing many paragraphs with a Unicode separator equals a complete index",true);}
+    expect(edited(text.find('\n',text.size()/2),0,"\xC2\x85"),"Inserting NEL before a newline equals a complete index",true);
+    expect("Entirely different","Unrelated text equals a complete index",false);
+    // Rich: runs shift with the edit; a style-only change re-measures only the
+    // paragraphs its runs touch. Equality with a complete measurement holds.
+    std::u16string units;for(unsigned i=0;i<500;++i){units+=std::u16string(u"段落 ")+char16_t(u'A'+i%26)+u" 富文本 Endfield rich paragraph 😀 wraps in the viewport";units+=i%9==4?u"\r\n":u"\n";}
+    core::notes::RichText rich;unsigned occurrence{};for(auto at=units.find(u"Endfield rich");at!=std::u16string::npos;at=units.find(u"Endfield rich",at+1),++occurrence){if(occurrence%4)continue;
+        core::notes::TextRun run;run.location=static_cast<std::uint32_t>(at);run.length=13;run.style.bold=occurrence%8==0;run.style.fontSize=occurrence%12==0?20:12;rich.runs.push_back(run);}
+    core::notes::RichDocument document(units,rich,1u<<22);
+    auto payload=[&]{return std::optional<std::string>(core::notes::encodeRichText(*document.richText(),document.text()).encode());};
+    std::uint64_t richRevision=1;(void)measure.measure("rich",richRevision,utf8(document.text()),190,12,{},payload());
+    auto expectRich=[&](const char*why,bool reuse){
+        const auto value=utf8(document.text());const auto before=measure.stats();const auto incrementalIndex=measure.measure("rich",++richRevision,value,190,12,{},payload());const auto after=measure.stats();
+        NativeNotesTextMeasurer fresh(raster);const auto full=fresh.measure("full",1,value,190,12,{},payload());
+        check(incrementalIndex->measured.richText.has_value()&&sameIndex(*incrementalIndex,*full),why);
+        if(reuse&&!(after.incrementalMeasurements==before.incrementalMeasurements+1&&after.reusedLines>before.reusedLines+400&&after.analysisLayoutsCreated-before.analysisLayoutsCreated<=6))
+            std::cerr<<why<<": incremental "<<after.incrementalMeasurements-before.incrementalMeasurements<<", reused "<<after.reusedLines-before.reusedLines<<" of "<<full->measured.lines.size()<<", layouts "<<after.analysisLayoutsCreated-before.analysisLayoutsCreated<<'\n';
+        if(reuse)check(after.incrementalMeasurements==before.incrementalMeasurements+1&&after.reusedLines>before.reusedLines+400&&after.analysisLayoutsCreated-before.analysisLayoutsCreated<=6,"Rich edit re-measures only the paragraphs it touched");
+    };
+    const auto middle=static_cast<std::uint32_t>(document.text().find(u"富文本",document.text().size()/2));
+    document.replace({middle,middle},u"插入");expectRich("Rich typing shifts later runs and equals a complete index",true);
+    const auto join=static_cast<std::uint32_t>(document.text().find(u'\n',document.text().size()/3));document.replace({join,join+1},u"");expectRich("Rich paragraph join equals a complete index",true);
+    const auto styled=static_cast<std::uint32_t>(document.text().find(u"Endfield",document.text().size()/4));document.setSelection({{styled,styled+8},core::text::ActiveEnd::end,false});
+    core::notes::FormatChange bigger;bigger.kind=core::notes::FormatKind::size;bigger.fontSize=24;check(document.applyFormat(bigger),"Style-only fixture changes runs");expectRich("Style-only run change re-measures its paragraph and equals a complete index",true);
+    const auto first=static_cast<std::uint32_t>(document.text().find(u'\n'));document.replace({first,first},u"\n新段落");expectRich("Rich paragraph insertion near the start equals a complete index",true);
 }
 void run(){
     LayerRasterizer raster;NativeNotesTextMeasurer measure(raster);LayerRasterOptions options;
@@ -83,6 +150,7 @@ void run(){
     check(measure.remove("small")&&!measure.remove("small"),"Explicit note removal releases its owned cached index once");
     bool foreign{};std::thread worker([&]{try{measure.stats();}catch(const std::logic_error&){foreign=true;}});worker.join();check(foreign,"Shared DWrite measurement/cache use rejected on another thread");
     check(raster.stats().rasterizations==0&&raster.stats().resourceBytes==0&&raster.stats().entries==0,"All measurements allocate no glyph bitmap, GPU texture or raster cache entry");
+    incremental();
 }
 }
 int main(){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);if(FAILED(hr)){std::cerr<<"Cannot initialize owned measurement COM apartment\n";return 1;}int result{};try{run();std::cout<<"Passed "<<checks<<" native Notes text measurement contracts\n";}catch(const std::exception&e){std::cerr<<e.what()<<'\n';result=1;}CoUninitialize();return result;}

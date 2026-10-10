@@ -40,14 +40,18 @@ void validateStyle(const NativeNotesWorkspaceStyle&s){
     need(s.editor.background[3]==1,"Source Notes editor backing must be opaque");
     for(const auto*t:{&s.strings.textTitle,&s.strings.placeholder,&s.strings.pin,&s.strings.unpin,&s.strings.remove,&s.strings.edit,&s.strings.select,&s.strings.grow,&s.strings.shrink,&s.strings.todoTitle,&s.strings.itemPlaceholder,&s.strings.addItem,&s.strings.checkItem,&s.strings.uncheckItem,&s.strings.editItem,&s.strings.moveUp,&s.strings.moveDown,&s.strings.removeItem,&s.strings.addItemAction,&s.strings.imageTitle,&s.strings.drawingTitle,&s.strings.drawingColor})need(ehud::data::Json::validUtf8(*t),"Invalid Notes localized text");
     for(const auto&t:s.strings.format)need(ehud::data::Json::validUtf8(t),"Invalid Notes format label");
+    for(const auto*t:{&s.media.loading,&s.media.play,&s.media.pause,&s.media.playAction,&s.media.pauseAction,&s.media.unavailable})need(ehud::data::Json::validUtf8(*t),"Invalid localized media text");
+    for(const auto&t:s.mediaErrors)need(!t.empty()&&ehud::data::Json::validUtf8(t),"Invalid localized media error");
 }
-bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor&&a.eraserColor==b.eraserColor;}
+bool sameStyle(const NativeNotesWorkspaceStyle&a,const NativeNotesWorkspaceStyle&b){return a.palette==b.palette&&a.strings==b.strings&&a.editor.background==b.editor.background&&a.editor.border==b.editor.border&&a.selectionColor==b.selectionColor&&a.compositionColor==b.compositionColor&&a.eraserColor==b.eraserColor&&a.media.loading==b.media.loading&&a.media.play==b.media.play&&a.media.pause==b.media.pause&&a.media.playAction==b.media.playAction&&a.media.pauseAction==b.media.pauseAction&&a.media.unavailable==b.media.unavailable&&a.mediaErrors==b.mediaErrors;}
 void validMotion(const mod::NotesMotionSample&s){need(std::isfinite(s.x)&&std::isfinite(s.y)&&std::abs(s.x)<=1'000'000&&std::abs(s.y)<=1'000'000&&std::isfinite(s.scale)&&s.scale>0&&s.scale<=1024&&std::isfinite(s.opacity)&&s.opacity>=0&&s.opacity<=1,"Invalid Notes card motion sample");}
 }
 struct NativeNotesWorkspace::Impl {
     static constexpr std::size_t tokenCapacity=1024;
     struct Media {
         std::optional<std::string>payload,legacyName;std::string key;
+        std::optional<mod::NotesMediaError>failure; // source error shown in the footer and card status
+        bool macReference{}; // imported Mac bookmark: no Windows locator until the user chooses the file again
         std::shared_ptr<void>accessLease;
         std::optional<NotesImagePlaybackRequest>request;std::optional<NotesVideoRequest>videoRequest;std::string videoTexture;unsigned videoWidth{},videoHeight{};
         std::shared_ptr<const mod::NotesMediaCardContent>content;
@@ -69,7 +73,7 @@ struct NativeNotesWorkspace::Impl {
     };
     struct Field {
         std::string id;std::optional<std::string>itemID;double initialScrollOffset{};
-        std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*history{};core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeProjectedEditor> native;
+        std::unique_ptr<text::Document>ownedDocument; text::Document&document;core::notes::RichDocument*history{};core::notes::RichDocument*rich{};LayerScene scene;std::unique_ptr<NativeNotesEditor> native;
         std::uint64_t initialDocumentRevision{};
         UINT_PTR generation{}; // scene/document outlive the adapter on destruction
         Field(std::string name,std::u16string value,std::optional<core::notes::RichText> formatting,std::uint32_t capacity,LayerRasterizer&r,std::optional<std::string>row={})
@@ -97,9 +101,8 @@ struct NativeNotesWorkspace::Impl {
     Impl(HWND h,mod::NotesState&s,LayerRasterizer&r,NativeNotesWorkspaceStyle st,NativeNotesWorkspaceOptions o):hwnd(h),state(s),raster(r),style(std::move(st)),options(std::move(o)),measurer(r){
         static std::atomic<std::uint64_t>nextMediaOwner{1};mediaOwnerID=nextMediaOwner.fetch_add(1);
         mediaRequests.reserve(8);videoRequests.reserve(8);mediaSlots.reserve(options.maximumRetainedCards);mediaAssets.reserve(options.maximumRetainedCards);
-        for(const auto*t:{&options.mediaStrings.loading,&options.mediaStrings.play,&options.mediaStrings.pause,&options.mediaStrings.playAction,&options.mediaStrings.pauseAction,&options.mediaStrings.unavailable,&options.mediaUnavailable,&options.videoUnavailable})need(ehud::data::Json::validUtf8(*t),"Invalid localized media text");
         need(IsWindow(hwnd)!=FALSE,"Notes workspace requires an owned live HWND");need(!state.editing(),"Attach Notes workspace before entering an editor");validateStyle(style);
-        need(options.maximumRetainedCards>0&&options.maximumRetainedCards<=1024&&options.maximumEditorUnits>0&&options.maximumEditorUnits<=65536,"Invalid explicit Notes workspace capacities");
+        need(options.maximumRetainedCards>0&&options.maximumRetainedCards<=1024&&options.maximumEditorUnits>0&&options.maximumEditorUnits<=65536&&options.maximumDocumentUnits>=options.maximumEditorUnits&&options.maximumDocumentUnits<=core::text::Buffer::safetyMaximumUnits,"Invalid explicit Notes workspace capacities");
         need(options.ownerMessage>=WM_APP&&options.ownerMessage<=0xBFFF,"Notes workspace requires a private owner message");
         need((options.activatedTextManager==nullptr)==(options.textClient==TF_CLIENTID_NULL),"Notes TSF manager/client must be supplied together");
         need((options.mediaBroker==nullptr)==(options.mediaClient==0)&&(!options.mediaBroker||(!options.imagePlayback&&!options.videoPlayback)),"Notes shared media requires one borrowed broker/client without exclusive provider ownership");
@@ -135,21 +138,37 @@ struct NativeNotesWorkspace::Impl {
         auto asset=std::make_shared<Media>();asset->payload=n.media;asset->legacyName=n.imageName;
         if(newMediaLease&&newMediaLease->first==n.id)asset->accessLease=newMediaLease->second;
         asset->key="notes.media."+std::to_string(mediaOwnerID)+"."+std::to_string(++mediaSerial);
-        auto content=std::make_shared<mod::NotesMediaCardContent>();content->strings=options.mediaStrings;
+        auto content=std::make_shared<mod::NotesMediaCardContent>();content->strings=style.media;
         std::optional<std::string>path;
-        if(n.media){const auto value=ehud::data::Json::parse(*n.media,2*1024*1024);const auto kind=value["kind"].string();
-            need(kind=="image"||kind=="gif"||kind=="video","Invalid persisted Notes media kind");
-            content->kind=kind=="video"?mod::NotesMediaKind::video:kind=="gif"?mod::NotesMediaKind::gif:mod::NotesMediaKind::image;
-            if(!value["duration"].isNull())content->duration=value["duration"].number();
-            if(value["referencePlatform"].isString()&&value["referencePlatform"].string()=="windows")path=value["windowsPath"].string();
+        if(n.media){
+            // A damaged or foreign payload is a visible source invalidReference
+            // card, never a workspace failure; the stored record is untouched.
+            try{const auto value=ehud::data::Json::parse(*n.media,2*1024*1024);const auto kind=value["kind"].isString()?value["kind"].string():std::string{};
+                if(kind=="image"||kind=="gif"||kind=="video"){content->kind=kind=="video"?mod::NotesMediaKind::video:kind=="gif"?mod::NotesMediaKind::gif:mod::NotesMediaKind::image;
+                    if(value["duration"].isNumber()&&std::isfinite(value["duration"].number())&&value["duration"].number()>=0)content->duration=value["duration"].number();
+                    if(value["referencePlatform"].isString()&&value["referencePlatform"].string()=="windows"){if(value["windowsPath"].isString()&&ehud::data::validWindowsFilePath(value["windowsPath"].string()))path=value["windowsPath"].string();else asset->failure=mod::NotesMediaError::invalidReference;}
+                    // Mac bookmarks/security scopes cannot authorize a Windows file:
+                    // the source "choose it again" unavailable state, never a path guess.
+                    else{asset->failure=mod::NotesMediaError::unavailable;asset->macReference=true;}}
+                else asset->failure=mod::NotesMediaError::invalidReference;}
+            catch(const std::exception&){asset->failure=mod::NotesMediaError::invalidReference;}
         }else{need(n.imageName.has_value(),"Image card has no source reference");content->legacyManagedImage=true;if(options.legacyImagePath)path=options.legacyImagePath(*n.imageName);}
-        if(path&&hasImages()&&content->kind!=mod::NotesMediaKind::video){
+        if(!asset->failure&&path&&hasImages()&&content->kind!=mod::NotesMediaKind::video){
             asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,false,asset->accessLease},content->kind};content->status.state=mod::NotesMediaState::loading;
-        }else if(path&&hasVideos()&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease,hasImages()};
+        }else if(!asset->failure&&path&&hasVideos()&&content->kind==mod::NotesMediaKind::video){asset->videoRequest=NotesVideoRequest{asset->key,*path,1,512,content->duration,asset->accessLease,hasImages()};
             if(hasImages())asset->request=NotesImagePlaybackRequest{{asset->key,*path,1,512,true,asset->accessLease,false,true},mod::NotesMediaKind::image};
-            content->status.state=mod::NotesMediaState::loading;}else{content->status.state=mod::NotesMediaState::failed;content->status.localizedError=content->kind==mod::NotesMediaKind::video?options.videoUnavailable:options.mediaUnavailable;content->legacyUnavailable=content->legacyManagedImage;}
+            content->status.state=mod::NotesMediaState::loading;}
+        else{content->status.state=mod::NotesMediaState::failed;
+            // No playback engine for a valid video (Windows N without the Media
+            // Feature Pack) is reported like the source unsupported movie.
+            if(!asset->failure)asset->failure=content->kind==mod::NotesMediaKind::video&&path?mod::NotesMediaError::unsupportedFormat:mod::NotesMediaError::unavailable;
+            content->status.localizedError=errorText(*asset->failure);content->legacyUnavailable=content->legacyManagedImage;content->relinkable=n.media.has_value()&&*asset->failure==mod::NotesMediaError::unavailable;}
         asset->content=std::move(content);mediaAssets.push_back(asset);mediaUploadPending=true;return asset;
     }
+    const std::string& errorText(mod::NotesMediaError e)const{return style.mediaErrors[static_cast<std::size_t>(e)];}
+    // A language/theme event relabels every retained media card without
+    // touching its decode state or playback.
+    void relabelMedia(){for(auto&asset:mediaAssets){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->strings=style.media;content->status.localizedError=asset->failure&&content->status.state==mod::NotesMediaState::failed?std::optional(errorText(*asset->failure)):std::nullopt;asset->content=std::move(content);}}
     bool hasImages()const{return options.mediaBroker||options.imagePlayback;}
     bool hasVideos()const{return options.mediaBroker?options.mediaBroker->hasVideoPlayback():options.videoPlayback!=nullptr;}
     const NotesImagePlaybackRecord*image(std::string_view key)const{return options.mediaBroker?options.mediaBroker->findImage(options.mediaClient,key):options.imagePlayback?options.imagePlayback->find(key):nullptr;}
@@ -172,7 +191,7 @@ struct NativeNotesWorkspace::Impl {
         bool changed{},contentChanged{};
         for(auto&asset:mediaAssets){
             if(asset->request&&!asset->videoRequest&&hasImages()){const auto*record=image(asset->key);if(!record)continue;
-                if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->legacyUnavailable=content->legacyManagedImage&&record->state==mod::NotesMediaState::failed;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
+                if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;asset->failure=FAILED(record->error)?std::optional(notesMediaError(record->error)):std::nullopt;content->status.localizedError=asset->failure?std::optional(errorText(*asset->failure)):std::nullopt;content->legacyUnavailable=content->legacyManagedImage&&record->state==mod::NotesMediaState::failed;content->relinkable=!content->legacyManagedImage&&asset->failure==mod::NotesMediaError::unavailable;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
                 if(record->frameRevision!=asset->observedFrame){asset->frame=record->frame;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
             }else if(asset->videoRequest&&hasVideos()){
                 if(asset->request&&hasImages()){const auto*poster=image(asset->key);
@@ -183,7 +202,7 @@ struct NativeNotesWorkspace::Impl {
                     }
                 }
                 const auto*record=video(asset->key);if(!record)continue;
-                if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;content->status.localizedError=FAILED(record->error)?std::optional<std::string>(options.mediaUnavailable):std::nullopt;content->duration=record->duration;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
+                if(record->contentRevision!=asset->observedContent){auto content=std::make_shared<mod::NotesMediaCardContent>(*asset->content);content->status.state=record->state;asset->failure=FAILED(record->error)?std::optional(notesMediaError(record->error)):std::nullopt;content->status.localizedError=asset->failure?std::optional(errorText(*asset->failure)):std::nullopt;content->relinkable=asset->failure==mod::NotesMediaError::unavailable;content->duration=record->duration;asset->content=std::move(content);asset->observedContent=record->contentRevision;changed=true;contentChanged=true;}
                 if(record->frameRevision!=asset->observedFrame){asset->videoTexture=record->textureID;asset->videoWidth=record->width;asset->videoHeight=record->height;asset->observedFrame=record->frameRevision;mediaUploadPending=true;changed=true;}
             }
         }
@@ -274,12 +293,18 @@ struct NativeNotesWorkspace::Impl {
         if(itemID){need(itemEdit&&n.kind==ehud::data::NoteKind::todo,"Checklist edit requires measured source viewport");const auto child=std::find_if(n.items.begin(),n.items.end(),[&](const auto&v){return v.id==*itemID;});need(child!=n.items.end(),"Missing checklist editor row");
             value=utf16(child->text,options.maximumEditorUnits);auto*slot=find(n.id);need(slot&&slot->rowMeasurements.contains(*itemID),"Checklist editor has no retained measurement");measured=slot->rowMeasurements.at(*itemID).text;
             width=itemEdit->localRect.width;height=itemEdit->localRect.height;fontSize=11;offset=itemEdit->editorScrollOffset;
-        }else{need(n.kind==ehud::data::NoteKind::text,"Checklist must choose an item editor");value=utf16(n.text,options.maximumEditorUnits);measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);rich=mod::decodeNotesRichText(n.text,n.richText);}
-        auto next=std::make_unique<Field>(n.id,std::move(value),std::move(rich),options.maximumEditorUnits,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
+        }else{need(n.kind==ehud::data::NoteKind::text,"Checklist must choose an item editor");value=utf16(n.text,options.maximumDocumentUnits);measured=measure(n.id,n,r,find(n.id)?find(n.id)->measurement:nullptr);rich=mod::decodeNotesRichText(n.text,n.richText);}
+        // Long text notes use the paragraph-chunked editor: an edit lays out only
+        // its own chunk. Checklist rows and short notes keep the single layout.
+        const bool chunked=!itemID&&value.size()>options.chunkedEditorUnits;if(!chunked&&value.size()>options.maximumEditorUnits)throw NativeNotesEditorCapacityError{};
+        const auto capacity=chunked?options.maximumDocumentUnits:options.maximumEditorUnits;
+        auto next=std::make_unique<Field>(n.id,std::move(value),std::move(rich),capacity,raster,std::move(itemID));next->generation=generation+1;next->initialScrollOffset=offset;
         const auto end=static_cast<std::uint32_t>(next->document.text().size());next->document.setSelection({{end,end},text::ActiveEnd::end,false});
         ProjectedEditorStyle e;e.width=width;e.height=height;e.fontSize=fontSize;e.lineHeight=measured->font.lineHeight;e.baseline=measured->font.ascent;e.fontFamily=measured->font.selectedFamily;e.fontFace="";e.cornerRadius=3;e.textColor=style.palette.primary;e.caretColor=style.palette.primary;e.selectionColor=style.selectionColor;e.compositionColor=style.compositionColor;
-        if(next->rich)next->native=std::make_unique<NativeProjectedEditor>(hwnd,*next->rich,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation);
-        else next->native=std::make_unique<NativeProjectedEditor>(hwnd,*next->history,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation,ProjectedEditorTextMode::plainHistory);
+        if(chunked){try{next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeNotesLongEditor>(hwnd,*next->rich,next->scene,raster,std::move(e),options.raster,options.ownerMessage,next->generation,ProjectedEditorTextMode::rich,options.longEditor));}
+            catch(const NativeNotesLongParagraphError&){throw NativeNotesEditorCapacityError{};}}
+        else if(next->rich)next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeProjectedEditor>(hwnd,*next->rich,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation));
+        else next->native=std::make_unique<NativeNotesEditor>(std::make_unique<NativeProjectedEditor>(hwnd,*next->history,next->scene,std::move(e),options.raster,PlainEditorFixtureCapacity{options.maximumEditorUnits},options.ownerMessage,next->generation,ProjectedEditorTextMode::plainHistory));
         next->native->setScrollOffset(offset); // source select-end THEN restore session viewport
         if(options.activatedTextManager)need(SUCCEEDED(next->native->connect(*options.activatedTextManager,options.textClient)),"Cannot connect Notes field to caller TSF manager");return next;
     }
@@ -314,7 +339,7 @@ bool NativeNotesWorkspace::setStyle(NativeNotesWorkspaceStyle style){auto&i=*imp
     for(auto&[id,s]:replacements)if(const auto*old=i.find(id))s->scrollOffset=old->scrollOffset;
     // The appearance is constructor-owned by each card adapter. Keep old
     // scenes alive for the caller's one composition replacement.
-    for(auto&[id,s]:i.slots)i.retiredCards.push_back(std::move(s));i.slots=std::move(replacements);for(auto&[id,s]:i.slots)i.tokenSlots[s->tokenIndex]=s.get();i.style=std::move(style);i.synchronized=0;i.sync();return true;
+    for(auto&[id,s]:i.slots)i.retiredCards.push_back(std::move(s));i.slots=std::move(replacements);for(auto&[id,s]:i.slots)i.tokenSlots[s->tokenIndex]=s.get();i.style=std::move(style);i.relabelMedia();i.synchronized=0;i.sync();return true;
 }
 bool NativeNotesWorkspace::setWorkspaceBounds(core::Rect bounds,std::optional<core::Point>point){auto&i=*impl_;i.check();if(!validRect(bounds)||(point&&(!std::isfinite(point->x)||!std::isfinite(point->y))))return false;
     i.preflight(bounds,i.state.notesSelected());endDrawing();updateDrawingHover({});i.finishRequired();const bool changed=i.state.setWorkspaceBounds(bounds,point);i.drag.reset();i.sync();return changed;
@@ -425,6 +450,13 @@ bool NativeNotesWorkspace::createMedia(std::string id,double createdAt,std::stri
     need(!i.newMediaLease,"Nested media creation is not permitted");i.newMediaLease.emplace(std::move(id),std::move(access));
     struct Clear {decltype(i.newMediaLease)&value;~Clear(){value.reset();}}clear{i.newMediaLease};i.sync();return true;
 }
+bool NativeNotesWorkspace::relinkMedia(std::string_view id,std::string reference,std::shared_ptr<void>access){auto&i=*impl_;i.check();
+    const auto*n=i.state.note(id);need(n&&n->media&&n->kind==ehud::data::NoteKind::image,"Relink requires a referenced media note");
+    i.finishRequired();const std::string noteID(id);if(!i.state.replaceMedia(noteID,std::move(reference)))return false;
+    need(!i.newMediaLease,"Nested media creation is not permitted");i.newMediaLease.emplace(noteID,std::move(access));
+    struct Clear {decltype(i.newMediaLease)&value;~Clear(){value.reset();}}clear{i.newMediaLease};i.sync();return true;
+}
+std::optional<modules::NotesMediaKind>NativeNotesWorkspace::mediaKind(std::string_view id)const{auto&i=*impl_;i.check();const auto*s=i.find(id);if(!s||!s->media||!s->media->content)return std::nullopt;return s->media->content->kind;}
 bool NativeNotesWorkspace::addChecklistItem(std::string_view id,std::string itemID){auto&i=*impl_;i.check();const std::string owned(id);i.finishRequired();if(!i.state.addChecklistItem(owned,itemID))return false;i.sync();auto*s=i.find(owned);need(s&&s->checklist,"Checklist missing after add");s->scrollOffset=s->checklist->maximumScrollOffset();beginEditingItem(owned,itemID);return true;}
 bool NativeNotesWorkspace::mutateChecklistItem(std::string_view id,std::string_view childID,mod::NotesState::ChecklistAction action){auto&i=*impl_;i.check();const std::string owned(id),child(childID);i.finishRequired();const auto changed=i.state.mutateChecklistItem(owned,child,action);i.sync();return changed;}
 std::optional<std::string_view>NativeNotesWorkspace::editingItemID()const noexcept{return impl_->field&&impl_->field->itemID?std::optional<std::string_view>(*impl_->field->itemID):std::nullopt;}
@@ -438,7 +470,7 @@ ProjectedEditorResult NativeNotesWorkspace::applyFormat(const core::notes::Forma
 ProjectedEditorResult NativeNotesWorkspace::undo(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return{};auto result=i.field->native->undo();if(result.changed)syncEditor();return result;}
 ProjectedEditorResult NativeNotesWorkspace::redo(){auto&i=*impl_;i.check();i.editorOwnership();if(!i.field)return{};auto result=i.field->native->redo();if(result.changed)syncEditor();return result;}
 std::optional<core::notes::TextStyle>NativeNotesWorkspace::selectionStyle()const{auto&i=*impl_;i.check();return i.field&&i.field->rich?std::optional<core::notes::TextStyle>(i.field->rich->selectionStyle()):std::nullopt;}
-NativeProjectedEditor*NativeNotesWorkspace::editor()noexcept{return impl_->field?impl_->field->native.get():nullptr;}
+NativeNotesEditor*NativeNotesWorkspace::editor()noexcept{return impl_->field?impl_->field->native.get():nullptr;}
 const text::Document*NativeNotesWorkspace::editorDocument()const noexcept{return impl_->field?&impl_->field->document:nullptr;}
 std::optional<std::string_view>NativeNotesWorkspace::editingNoteID()const noexcept{return impl_->field?std::optional<std::string_view>(impl_->field->id):std::nullopt;}
 UINT_PTR NativeNotesWorkspace::editorGeneration()const noexcept{return impl_->field?impl_->field->generation:0;}
@@ -471,7 +503,7 @@ bool NativeNotesWorkspace::settleDeletion(NativeNotesCardToken token){auto&i=*im
 std::optional<NativeNotesWorkspaceHit>NativeNotesWorkspace::hitTest(core::Point client)const{auto&i=*impl_;i.check();need(i.synchronized==i.state.revision(),"Synchronize Notes before pointer hit testing");if(!i.pose||i.pose->opacity==0)return{};
     for(auto it=i.active.rbegin();it!=i.active.rend();++it){auto*s=*it;if(!s->visible||s->outgoing||s->deleted||s->motion.opacity==0)continue;const auto p=s->hitProjection.unproject(client);if(!p||!inside(s->rect,*p))continue;const auto id=std::string_view(s->presentation.noteID());const core::Point local{p->x-s->rect.x,p->y-s->rect.y};
         if(inside({s->rect.width-15,s->rect.height-15,15,15},local))return NativeNotesWorkspaceHit{id,"resize",NativeNotesWorkspaceHit::Kind::resize,*p};
-        if(i.field&&i.field->id==id&&text::projectedHit(i.field->document,i.field->native->layout(),client,i.field->native->placement(),false,true))return NativeNotesWorkspaceHit{id,"edit",NativeNotesWorkspaceHit::Kind::editor,*p};
+        if(i.field&&i.field->id==id&&text::projectedHit(i.field->document,i.field->native->geometry(),client,i.field->native->placement(),false,true))return NativeNotesWorkspaceHit{id,"edit",NativeNotesWorkspaceHit::Kind::editor,*p};
         const auto actions=s->presentation.actions();for(auto a=actions.rbegin();a!=actions.rend();++a)if(!a->accessibilityOnly&&inside(a->localRect,local))return NativeNotesWorkspaceHit{id,a->verb,NativeNotesWorkspaceHit::Kind::action,*p};
         return NativeNotesWorkspaceHit{id,"select",NativeNotesWorkspaceHit::Kind::body,*p};}return{};
 }
@@ -496,7 +528,7 @@ bool NativeNotesWorkspace::scrollAt(core::Point point,double delta){
             const auto&placement=i.field->native->placement();const auto editorPoint=placement.projection.unproject(point);if(!editorPoint||!inside(placement.viewport,*editorPoint))return true;
             // A queued TSF write may precede its owner synchronization. Do not
             // use old geometry or reenter a text lock just to handle a wheel.
-            if(i.field->native->layout().textRevision()!=i.field->document.revision())return true;
+            if(i.field->native->geometry().textRevision()!=i.field->document.revision())return true;
             if(i.field->native->scrollBy(localDelta)){if(!i.field->itemID)s->scrollOffset=i.field->native->scrollOffset();++i.compositionRevision;++i.stats.editorContentUpdates;if(i.pose)i.applyPose(*i.pose);}
             return true;
         }

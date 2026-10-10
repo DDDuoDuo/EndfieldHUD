@@ -1,4 +1,7 @@
 #include "native/notes_image_decoder.hpp"
+#ifdef _WIN32
+#include <wincodec.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -85,7 +88,24 @@ void wic(){Window w;const auto root=std::filesystem::temp_directory_path()/("end
         if(index==3)check(pixel(f,0,1)[3]==0&&pixel(f,3,2)==std::array<std::uint8_t,4>{0,255,0,255},"GIF restore-background clears exactly disposed subrect and draws next frame");}
     const auto old=results.front().frame;decoder.hide();stop(decoder);check(probe->opens==probe->closes&&old->straightRGBA.size()==16,"Media file access closed while immutable borrowed pixels survive decoder");check(!IsWindowVisible(w.hwnd),"No native decode fixture displays UI");}
 }
-int main(){try{generations();manyReferences();blockedStop();wic();std::cout<<"PASS "<<checks<<" native Notes image checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// Source NotesMediaError categories survive the worker: unreachable files,
+// bytes no installed codec reads, and explicit category codes.
+void errors(){
+    using E=m::NotesMediaError;
+    for(unsigned n=0;n<=static_cast<unsigned>(E::decodingFailed);++n){const auto e=static_cast<E>(n);check(FAILED(n::notesMediaErrorResult(e))&&n::notesMediaError(n::notesMediaErrorResult(e))==e,"Category result codes round-trip");}
+    check(n::notesMediaError(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND))==E::unavailable&&n::notesMediaError(HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED))==E::unavailable&&n::notesMediaError(STG_E_FILENOTFOUND)==E::unavailable,"Unreachable files ask to be chosen again");
+    check(n::notesMediaError(WINCODEC_ERR_COMPONENTNOTFOUND)==E::unsupportedFormat&&n::notesMediaError(E_FAIL)==E::decodingFailed,"Missing codecs and other failures keep their source meanings");
+    check(std::string(m::notesMediaErrorText(E::unavailable).english)=="The original media file is unavailable. Choose it again to restore access."&&std::string(m::notesMediaErrorText(E::tooManyFrames).simplifiedChinese)=="请选择不超过 2000 帧的 GIF。","Source NotesMediaError texts are exact");
+    wchar_t folder[MAX_PATH]{};check(GetTempPathW(MAX_PATH,folder)>0,"Temporary folder");const auto root=std::filesystem::path(folder)/("endfield-media-errors-"+std::to_string(GetCurrentProcessId()));std::filesystem::create_directories(root);
+    const auto junk=root/"not-an-image.png";{std::ofstream out(junk,std::ios::binary);const char bytes[]="This is plain text, not image bytes.";out.write(bytes,sizeof(bytes));}
+    Window w;n::NativeNotesImageDecoder decoder([](const n::NotesImageRequest&r){return n::NotesImageAccess{std::filesystem::u8path(r.path),{}};},w.route(9));
+    const auto missing=(root/"missing.png").u8string(),unsupported=junk.u8string();
+    const std::array requests{n::NotesImageRequest{"missing",std::string(reinterpret_cast<const char*>(missing.data()),missing.size()),1,512},n::NotesImageRequest{"junk",std::string(reinterpret_cast<const char*>(unsupported.data()),unsupported.size()),1,512}};
+    decoder.setVisible(requests);const auto results=collect(decoder,w,9,2);
+    for(const auto&r:results){check(FAILED(r.result),"Unreadable media fails explicitly");check(n::notesMediaError(r.result)==(r.key=="missing"?E::unavailable:E::unsupportedFormat),"Worker results carry the source error category");}
+    decoder.hide();stop(decoder);std::error_code ignored;std::filesystem::remove_all(root,ignored);
+}
+int main(){try{generations();manyReferences();blockedStop();wic();errors();std::cout<<"PASS "<<checks<<" native Notes image checks\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
 int main(){std::cout<<"Windows WIC/worker fixture requires Windows; not executed on this platform\n";return 0;}
 #endif

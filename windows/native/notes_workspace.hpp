@@ -2,6 +2,7 @@
 #include "native/notes_scene.hpp"
 #include "native/notes_text_measure.hpp"
 #include "native/projected_editor.hpp"
+#include "native/notes_long_editor.hpp"
 #include "native/notes_image_playback.hpp"
 #include "native/notes_video_playback.hpp"
 #include "native/media_request_broker.hpp"
@@ -23,16 +24,26 @@ struct NativeNotesWorkspaceStyle {
     std::array<double,4> selectionColor{.2,.4,.7,.5},compositionColor{1,1,1,1};
     // Detached original AppKit DarkAqua systemRed; light owners supply59/255,48/255.
     std::array<double,4> eraserColor{1,69./255.,58./255.,1};
+    // Source media footer captions and NotesMediaError descriptions (source
+    // order, modules::notesMediaErrorText), caller-localized. A language event
+    // replaces them through setStyle; retained media keep their decode state.
+    modules::NotesMediaStrings media;
+    std::array<std::string,6> mediaErrors{"The saved media reference is invalid.","The original media file is unavailable. Choose it again to restore access.",
+        "This file is not a supported image or playable video.","Choose an image below 128 MB and 64 megapixels.","Choose a GIF with no more than 2,000 frames.","This media could not be decoded."};
 };
 struct NativeNotesWorkspaceOptions {
     LayerRasterOptions raster;
     // Explicit current adapter capacities, not limits on persisted Notes data.
+    // maximumEditorUnits bounds the single-layout field (checklist rows and short
+    // notes). Text notes longer than chunkedEditorUnits open in the paragraph-
+    // chunked long editor, bounded by maximumDocumentUnits (the text service's
+    // 4 Mi-unit ACP safety maximum, within the store's 16 MiB payload) and one
+    // painted paragraph; their typing cost follows the edited chunk.
     std::size_t maximumRetainedCards{128};std::uint32_t maximumEditorUnits{65536};
+    std::uint32_t chunkedEditorUnits{4096},maximumDocumentUnits{core::text::Buffer::safetyMaximumUnits};NativeNotesLongEditorOptions longEditor;
     UINT ownerMessage{WM_APP+181};
     ITfThreadMgr* activatedTextManager{};TfClientId textClient{TF_CLIENTID_NULL}; // borrowed; never activated here
     NativeNotesImagePlayback* imagePlayback{}; // borrowed exclusive Notes owner; outlives workspace
-    modules::NotesMediaStrings mediaStrings;
-    std::string mediaUnavailable{"Media unavailable"},videoUnavailable{"Video playback is not connected"};
     // Pure managed-name mapping only; file access belongs to the decoder's
     // independently owned worker resolver. No filesystem work on this thread.
     std::function<std::optional<std::string>(std::string_view)> legacyImagePath;
@@ -158,6 +169,10 @@ public:
     bool createChecklist(std::string noteID,std::string firstItemID,double createdAt);
     bool createMedia(std::string noteID,double createdAt,std::string reference,core::Point,
         std::shared_ptr<void> accessLease={}); // retained through inspection handoff/playback/card retirement
+    // Explicit relink of an unavailable media note to a newly chosen, inspected
+    // Windows file (NotesState::replaceMedia); the old decode retires normally.
+    bool relinkMedia(std::string_view noteID,std::string reference,std::shared_ptr<void> accessLease={});
+    std::optional<modules::NotesMediaKind> mediaKind(std::string_view noteID)const;
     bool addChecklistItem(std::string_view noteID,std::string itemID);
     bool mutateChecklistItem(std::string_view noteID,std::string_view itemID,modules::NotesState::ChecklistAction);
     bool beginEditingItem(std::string_view noteID,std::string_view itemID);
@@ -169,7 +184,7 @@ public:
     ProjectedEditorResult undo();
     ProjectedEditorResult redo();
     std::optional<core::notes::TextStyle> selectionStyle()const;
-    NativeProjectedEditor* editor()noexcept;
+    NativeNotesEditor* editor()noexcept;
     const core::text::Document* editorDocument()const noexcept;
     std::optional<std::string_view> editingNoteID()const noexcept;
     UINT_PTR editorGeneration()const noexcept;

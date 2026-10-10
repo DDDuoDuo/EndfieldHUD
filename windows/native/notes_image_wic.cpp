@@ -7,11 +7,14 @@
 #include <array>
 #include <cmath>
 #include <stdexcept>
+#include <system_error>
 #include <optional>
 namespace endfield::native::detail {
 namespace {
 using Microsoft::WRL::ComPtr;
-void check(HRESULT hr,const char*what){if(FAILED(hr))throw std::runtime_error(what);}
+// Platform failures keep their HRESULT (notesMediaError classifies it).
+void check(HRESULT hr,const char*what){if(FAILED(hr))throw std::system_error(static_cast<int>(hr),std::system_category(),what);}
+void limit(bool v,modules::NotesMediaError error,const char*what){if(!v)throw NotesMediaFailure(error,what);}
 void need(bool v,const char*what){if(!v)throw std::invalid_argument(what);}
 std::optional<unsigned>metadata(IWICMetadataQueryReader*reader,const wchar_t*name){if(!reader)return {};PROPVARIANT v{};const auto hr=reader->GetMetadataByName(name,&v);std::optional<unsigned>result;
     if(SUCCEEDED(hr)){if(v.vt==VT_UI1)result=v.bVal;else if(v.vt==VT_UI2)result=v.uiVal;else if(v.vt==VT_UI4)result=v.ulVal;else if(v.vt==VT_BOOL)result=v.boolVal!=VARIANT_FALSE?1u:0u;}PropVariantClear(&v);return result;}
@@ -44,16 +47,16 @@ public:
     WicSequence(const NotesImageRequest&r,NotesImageAccess access):access_(std::move(access)){
         check(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&factory_)),"Cannot initialize WIC image decoder");
         check(SHCreateStreamOnFileEx(access_.path.c_str(),STGM_READ|STGM_SHARE_DENY_WRITE,FILE_ATTRIBUTE_NORMAL,FALSE,nullptr,&stream_),"Original image file is unavailable");
-        STATSTG stat{};check(stream_->Stat(&stat,STATFLAG_NONAME),"Cannot read image file metadata");need(stat.type==STGTY_STREAM&&stat.cbSize.QuadPart>0&&stat.cbSize.QuadPart<=NativeNotesImageDecoder::maximumInputBytes,"Image exceeds128MiB source limit");
+        STATSTG stat{};check(stream_->Stat(&stat,STATFLAG_NONAME),"Cannot read image file metadata");need(stat.type==STGTY_STREAM&&stat.cbSize.QuadPart>0,"Image file is empty");limit(stat.cbSize.QuadPart<=NativeNotesImageDecoder::maximumInputBytes,modules::NotesMediaError::imageTooLarge,"Image exceeds128MiB source limit");
         check(factory_->CreateDecoderFromStream(stream_.Get(),nullptr,WICDecodeMetadataCacheOnDemand,&decoder_),"No installed WIC codec supports this image");GUID format{};check(decoder_->GetContainerFormat(&format),"Cannot read image format");
         const bool gif=IsEqualGUID(format,GUID_ContainerFormatGif);info_.kind=gif?modules::NotesMediaKind::gif:modules::NotesMediaKind::image;
-        UINT count{};check(decoder_->GetFrameCount(&count),"Cannot read image frames");need(count&&(!gif||count<=NativeNotesImageDecoder::maximumGIFFrames),"Image GIF frame count outside source limit");info_.frameCount=gif?count:1;
+        UINT count{};check(decoder_->GetFrameCount(&count),"Cannot read image frames");need(count>0,"Image has no frames");limit(!gif||count<=NativeNotesImageDecoder::maximumGIFFrames,modules::NotesMediaError::tooManyFrames,"Image GIF frame count outside source limit");info_.frameCount=gif?count:1;
         ComPtr<IWICBitmapFrameDecode>first;check(decoder_->GetFrame(0,&first),"Cannot decode initial image frame");check(first->GetSize(&info_.pixelWidth,&info_.pixelHeight),"Cannot read image dimensions");ComPtr<IWICMetadataQueryReader>meta;first->GetMetadataQueryReader(&meta);
         if(gif){ComPtr<IWICMetadataQueryReader>global;check(decoder_->GetMetadataQueryReader(&global),"Cannot read GIF logical screen");auto w=metadata(global.Get(),L"/logscrdesc/Width"),h=metadata(global.Get(),L"/logscrdesc/Height");need(w&&h,"GIF logical screen is missing");info_.pixelWidth=*w;info_.pixelHeight=*h;
             if(metadata(global.Get(),L"/logscrdesc/GlobalColorTableFlag").value_or(0)){auto bg=metadata(global.Get(),L"/logscrdesc/BackgroundColorIndex");ComPtr<IWICPalette>palette;if(bg&&SUCCEEDED(factory_->CreatePalette(&palette))&&SUCCEEDED(decoder_->CopyPalette(palette.Get()))){std::array<WICColor,256>colors{};UINT actual{};if(SUCCEEDED(palette->GetColors(256,colors.data(),&actual))&&*bg<actual){const auto c=colors[*bg];background_={static_cast<std::uint8_t>(c>>16),static_cast<std::uint8_t>(c>>8),static_cast<std::uint8_t>(c),static_cast<std::uint8_t>(c>>24)};
                         if(metadata(meta.Get(),L"/grctlext/TransparencyFlag").value_or(0)&&metadata(meta.Get(),L"/grctlext/TransparentColorIndex")==bg)background_={};}}}
         }else{orientation_=metadata(meta.Get(),L"/app1/ifd/{ushort=274}").value_or(metadata(meta.Get(),L"/ifd/{ushort=274}").value_or(1));}
-        need(info_.pixelWidth&&info_.pixelHeight&&info_.pixelWidth<=65536&&info_.pixelHeight<=65536&&std::uint64_t(info_.pixelWidth)*info_.pixelHeight<=NativeNotesImageDecoder::maximumInputPixels,"Image exceeds64MP source limit");
+        need(info_.pixelWidth&&info_.pixelHeight,"Image has no dimensions");limit(info_.pixelWidth<=65536&&info_.pixelHeight<=65536&&std::uint64_t(info_.pixelWidth)*info_.pixelHeight<=NativeNotesImageDecoder::maximumInputPixels,modules::NotesMediaError::imageTooLarge,"Image exceeds64MP source limit");
         const double scale=std::min(1.,double(modules::NotesMediaLayout::decodeDimension(r.maximumDimension))/std::max(info_.pixelWidth,info_.pixelHeight));width_=std::max(1u,static_cast<unsigned>(std::round(info_.pixelWidth*scale)));height_=std::max(1u,static_cast<unsigned>(std::round(info_.pixelHeight*scale)));
         if(!gif){if(orientation_>=5&&orientation_<=8)std::swap(info_.pixelWidth,info_.pixelHeight);return;}
         frames_.reserve(count);info_.frameDelays.reserve(count);

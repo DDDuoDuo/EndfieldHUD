@@ -1,5 +1,6 @@
 #include "tools/archive_options.hpp"
 #ifdef _WIN32
+#include "native/notes_image_decoder.hpp"
 #include "core/data/file_io.hpp"
 #include "core/shell_packet.hpp"
 #include "core/source_color.hpp"
@@ -22,13 +23,23 @@ ArchivePreviewStrings archivePreviewStrings(core::Language language){
     m.cancelDeletion=t("Cancel deletion","取消删除");m.confirmDeletion=t("Confirm deletion","确认删除");m.heading=t("NOTES","便笺");
     m.saveErrorPrefix=t("Could not save: ","无法保存：");m.storageUnavailable=t("Notes storage unavailable","便笺存储不可用");
     m.tools={t("Text","文字"),t("TODO","待办"),t("Image/Video","图片/视频"),t("Drawing","画画")};
-    m.chooseFile=t("Choose in Finder","从 Finder 选择");
-    if(const auto at=m.chooseFile.find("Finder");at!=std::string::npos)m.chooseFile.replace(at,6,language==core::Language::traditionalChinese?"檔案總管":"Explorer");
+    // Source "Choose in Finder" names the Mac file browser. Windows names its
+    // own, File Explorer, with the shell's localized product name per language
+    // (one explicit label shared by Notes, Archive and Projection).
+    switch(language){
+    case core::Language::simplifiedChinese:m.chooseFile="从文件资源管理器选择";break;
+    case core::Language::traditionalChinese:m.chooseFile="從檔案總管選擇";break;
+    case core::Language::japanese:m.chooseFile="エクスプローラーで選択";break;
+    case core::Language::korean:m.chooseFile="파일 탐색기에서 선택";break;
+    default:m.chooseFile="Choose in File Explorer";break;}
     m.chooseShelf=t("Choose from Shelf","从暂存架选择");m.close=t("Close","关闭");
     m.traits={t("Bold","粗体"),t("Italic","斜体"),t("Underline","下划线"),t("Strikethrough","删除线")};
-    m.currentColor=t("Current color","当前颜色");m.mediaOnly=t("Media only","仅显示媒体");m.useMedia=t("Use selected media","使用所选媒体");m.shelfHeading=t("SHELF · IMAGE/VIDEO","暂存架 · 图片/视频");return out;
+    m.currentColor=t("Current color","当前颜色");m.mediaOnly=t("Media only","仅显示媒体");m.useMedia=t("Use selected media","使用所选媒体");m.shelfHeading=t("SHELF · IMAGE/VIDEO","暂存架 · 图片/视频");m.language=language;return out;
 }
 #ifdef _WIN32
+std::string notesMediaErrorDescription(HRESULT result,core::Language language){
+    const auto text=modules::notesMediaErrorText(native::notesMediaError(result));return core::localized(text.english,text.simplifiedChinese,language);
+}
 namespace {
 using J=ehud::data::Json;
 void need(bool value,const char*why){if(!value)throw std::invalid_argument(why);}

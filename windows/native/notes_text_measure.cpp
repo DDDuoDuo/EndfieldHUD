@@ -1,6 +1,8 @@
 #include "native/notes_text_measure.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <span>
 #include <limits>
 #include <stdexcept>
 #include <thread>
@@ -25,6 +27,32 @@ void decode(std::string_view text,std::size_t begin,std::size_t end,std::u16stri
     out.clear();
     for(auto at=begin;at<end;){const auto s=scalar(text,at);if(s.end>end)invalid("Paragraph split is not a UTF-8 boundary");
         if(s.units==1)out.push_back(static_cast<char16_t>(s.value));else{const auto value=s.value-0x10000;out.push_back(static_cast<char16_t>(0xd800+(value>>10)));out.push_back(static_cast<char16_t>(0xdc00+(value&0x3ff)));}at=s.end;}
+}
+std::uint32_t utf16Length(std::string_view text){
+    std::size_t units{};for(const char c:text){const auto b=static_cast<unsigned char>(c);if((b&0xc0)!=0x80)units+=b>=0xf0?2:1;}
+    if(units>UINT32_MAX)invalid("Note text exceeds UTF-16 ACP range");return static_cast<std::uint32_t>(units);
+}
+// Largest X such that both sparse sorted run lists describe identical styles on
+// [0,X): equal runs, equal gaps. UINT32_MAX when the lists are identical.
+std::uint32_t commonRunPrefix(std::span<const core::notes::TextRun>a,std::span<const core::notes::TextRun>b){
+    for(std::size_t i=0;;++i){
+        if(i==a.size()||i==b.size())return i==a.size()&&i==b.size()?UINT32_MAX:(i==a.size()?b[i].location:a[i].location);
+        const auto&x=a[i];const auto&y=b[i];
+        if(x.location!=y.location)return std::min(x.location,y.location);
+        if(x.style!=y.style||x.extra!=y.extra)return x.location;
+        if(x.length!=y.length)return x.location+std::min(x.length,y.length);
+    }
+}
+// Largest Y such that [aUnits-Y,aUnits) of a equals [bUnits-Y,bUnits) of b.
+std::uint32_t commonRunSuffix(std::span<const core::notes::TextRun>a,std::uint32_t aUnits,std::span<const core::notes::TextRun>b,std::uint32_t bUnits){
+    for(std::size_t i=0;;++i){
+        if(i==a.size()||i==b.size()){if(i==a.size()&&i==b.size())return UINT32_MAX;const auto&r=i==a.size()?b[b.size()-1-i]:a[a.size()-1-i];return (i==a.size()?bUnits:aUnits)-(r.location+r.length);}
+        const auto&x=a[a.size()-1-i];const auto&y=b[b.size()-1-i];
+        const auto xe=aUnits-(x.location+x.length),ye=bUnits-(y.location+y.length);
+        if(xe!=ye)return std::min(xe,ye);
+        if(x.style!=y.style||x.extra!=y.extra)return xe;
+        if(x.length!=y.length)return xe+std::min(x.length,y.length);
+    }
 }
 std::size_t bytes(const NativeNotesTextMeasurement&m){
     std::size_t result=sizeof(m)+m.measured.text.capacity()+m.measured.lines.capacity()*sizeof(modules::NotesMeasuredLine)+m.font.selectedFamily.capacity();
@@ -66,6 +94,39 @@ std::shared_ptr<const NativeNotesTextMeasurement>NativeNotesTextMeasurer::measur
     auto result=std::make_shared<NativeNotesTextMeasurement>();result->fontRevision=r.raster->fontRevision();result->font=analysis->metrics();auto&measured=result->measured;
     measured.text=value;measured.width=width;measured.fontSize=size;measured.sourceRichPayload=richPayload;if(richPayload)measured.richText=modules::decodeNotesRichText(value,richPayload);
     constexpr auto maximumLines=maximumIndexBytes/sizeof(modules::NotesMeasuredLine);
+    // Incremental index. An earlier index of the SAME source, width, size,
+    // fallbacks, font revision and text kind keeps every whole paragraph outside
+    // the edited bytes (rich: and outside the changed UTF-16 style runs).
+    // Paragraphs wrap independently, so their native line lengths and heights
+    // equal a complete re-measurement; only origins and the byte/UTF-16 offsets
+    // after the edit move. Everything else is measured exactly as before.
+    std::shared_ptr<const NativeNotesTextMeasurement>previous;
+    for(const auto&e:r.entries)if(e.id==id&&e.result->fontRevision==r.raster->fontRevision()&&e.width==width&&e.fontSize==size&&e.fallback==options.fallbackFontFamily&&e.monospace==options.monospaceFallbackFontFamily&&e.result->measured.richText.has_value()==measured.richText.has_value()){previous=e.result;break;}
+    const bool rich=measured.richText.has_value();
+    std::size_t lead{},tailFirst{},tailEnd{},leadBytes{},stop=value.size();std::uint32_t leadUnits{},oldUnits{},newUnits{};
+    if(previous){
+        const std::string_view old=previous->measured.text;const auto&lines=previous->measured.lines;
+        const auto common=std::min(old.size(),value.size());
+        const auto prefix=static_cast<std::size_t>(std::mismatch(old.begin(),old.begin()+static_cast<std::ptrdiff_t>(common),value.begin()).first-old.begin());
+        std::size_t suffix{};while(suffix<common-prefix&&old[old.size()-1-suffix]==value[value.size()-1-suffix])++suffix;
+        // Identical text (a style-only rich change): every byte is common, so
+        // paragraphs on either side of the changed runs keep their lines.
+        if(old.size()==value.size()&&prefix==old.size())suffix=old.size();
+        const bool oldBlank=old.empty()||old.back()=='\n'||old.back()=='\r';const auto content=lines.size()-(oldBlank?1:0);
+        std::uint32_t runPrefix=UINT32_MAX,runSuffix=UINT32_MAX;
+        if(rich){oldUnits=utf16Length(old);newUnits=utf16Length(value);runPrefix=commonRunPrefix(previous->measured.richText->runs,measured.richText->runs);runSuffix=commonRunSuffix(previous->measured.richText->runs,oldUnits,measured.richText->runs,newUnits);}
+        const auto unitAfter=[&](std::size_t line){return line+1<lines.size()?lines[line+1].utf16Begin:oldUnits;};
+        for(std::size_t i=0;i<content;++i){const auto&l=lines[i];if(l.end>prefix)break;if(l.end==l.visibleTextEnd)continue;
+            // A lone CR ending exactly at the edit could become CRLF.
+            if(l.end==prefix&&old[l.end-1]=='\r')break;if(rich&&unitAfter(i)>runPrefix)break;lead=i+1;}
+        tailFirst=tailEnd=content;const auto suffixStart=old.size()-suffix;
+        for(std::size_t i=content;i>lead;--i){const auto&l=lines[i-1];if(i-1>0&&lines[i-2].end==lines[i-2].visibleTextEnd)continue;
+            // The whole delimiter before this paragraph (at most three bytes) is unchanged.
+            if(l.begin<suffixStart+3)break;if(rich&&l.utf16Begin<oldUnits-std::min(oldUnits,runSuffix))break;tailFirst=i-1;}
+        if(lead){leadBytes=lines[lead-1].end;leadUnits=rich?unitAfter(lead-1):0;}
+        if(tailFirst<tailEnd)stop=lines[tailFirst].begin+value.size()-old.size();
+        if(lead||tailFirst<tailEnd){++r.counts.incrementalMeasurements;r.counts.reusedLines+=lead+(tailEnd-tailFirst);}
+    }
     std::uint32_t unitPosition{};
     auto append=[&](std::size_t begin,std::size_t end,std::size_t visibleEnd,double height){
         if(measured.lines.size()>=maximumLines)invalid("Note line index exceeds its explicit memory bound; input is not truncated");
@@ -73,8 +134,19 @@ std::shared_ptr<const NativeNotesTextMeasurement>NativeNotesTextMeasurer::measur
         const auto unitBegin=unitPosition;if(measured.richText)for(auto at=begin;at<visibleEnd;){const auto s=scalar(value,at);unitPosition+=s.units;at=s.end;}const auto unitVisibleEnd=unitPosition;if(measured.richText)for(auto at=visibleEnd;at<end;){const auto s=scalar(value,at);unitPosition+=s.units;at=s.end;}
         measured.lines.push_back({begin,end,visibleEnd,measured.height,height,unitBegin,unitVisibleEnd});measured.height+=height;
     };
-    std::u16string paragraph;std::size_t start{};
-    while(start<value.size()){
+    // Reused lines keep their exact ranges and heights; origins accumulate in
+    // the same order as a complete measurement, so every y is bit-identical.
+    auto reuse=[&](const modules::NotesMeasuredLine&line,std::ptrdiff_t byteShift,std::int64_t unitShift){
+        if(measured.lines.size()>=maximumLines)invalid("Note line index exceeds its explicit memory bound; input is not truncated");
+        auto next=line;next.begin=static_cast<std::size_t>(static_cast<std::ptrdiff_t>(line.begin)+byteShift);next.end=static_cast<std::size_t>(static_cast<std::ptrdiff_t>(line.end)+byteShift);
+        next.visibleTextEnd=static_cast<std::size_t>(static_cast<std::ptrdiff_t>(line.visibleTextEnd)+byteShift);
+        if(rich){next.utf16Begin=static_cast<std::uint32_t>(line.utf16Begin+unitShift);next.utf16VisibleEnd=static_cast<std::uint32_t>(line.utf16VisibleEnd+unitShift);}
+        next.y=measured.height;measured.lines.push_back(next);measured.height+=next.height;
+    };
+    if(previous)measured.lines.reserve(std::min(maximumLines,lead+(tailEnd-tailFirst)+64));
+    if(lead){for(std::size_t i=0;i<lead;++i)reuse(previous->measured.lines[i],0,0);unitPosition=leadUnits;}
+    std::u16string paragraph;std::size_t start=leadBytes;
+    while(start<stop){
         auto paragraphEnd=start;std::size_t delimiterEnd{};
         while(paragraphEnd<value.size()){const auto s=scalar(value,paragraphEnd);if(newline(s.value)){delimiterEnd=s.end;if(s.value==0x0d&&s.end<value.size()&&scalar(value,s.end).value==0x0a)delimiterEnd=scalar(value,s.end).end;break;}paragraphEnd=s.end;}
         if(delimiterEnd==0)delimiterEnd=paragraphEnd;
@@ -104,6 +176,13 @@ std::shared_ptr<const NativeNotesTextMeasurement>NativeNotesTextMeasurer::measur
             }
         }
         start=delimiterEnd;
+    }
+    if(start!=stop)invalid("Incremental note index did not end at a reused paragraph");
+    if(tailFirst<tailEnd){
+        const auto&lines=previous->measured.lines;const auto byteShift=static_cast<std::ptrdiff_t>(value.size())-static_cast<std::ptrdiff_t>(previous->measured.text.size());
+        const auto unitShift=static_cast<std::int64_t>(newUnits)-static_cast<std::int64_t>(oldUnits);
+        if(rich&&std::int64_t(unitPosition)!=std::int64_t(lines[tailFirst].utf16Begin)+unitShift)invalid("Incremental rich note index lost its UTF-16 alignment");
+        for(std::size_t i=tailFirst;i<tailEnd;++i)reuse(lines[i],byteShift,unitShift);if(rich)unitPosition=newUnits;
     }
     if(value.empty()||value.back()=='\n'||value.back()=='\r')append(value.size(),value.size(),value.size(),result->font.lineHeight);
     if(measured.lines.empty())invalid("Note measurement did not produce a complete line index");

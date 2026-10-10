@@ -48,7 +48,12 @@ public:
     const std::optional<ArchiveEntry>&selected()const noexcept;
     const std::optional<std::string>&error()const noexcept;
     std::uint64_t revision()const noexcept;std::uint64_t collectionRevision()const noexcept;
+    // Source archiveAction names, in order: store results (created, deleted,
+    // categoryCreated/Deleted/Changed) and the interaction's own edited,
+    // mediaAdded and mediaRemoved (recordAction). The root drains them into
+    // the Event Log with the action name only, never document text.
     std::vector<ArchiveStateEvent>takeEvents();
+    void recordAction(std::string name,std::string id);
     void select(std::optional<std::string>);
     bool create(std::string id,double foundationDate,std::optional<std::string>categoryID={});
     std::optional<std::string>createCategory(std::string id,std::string name,double foundationDate);

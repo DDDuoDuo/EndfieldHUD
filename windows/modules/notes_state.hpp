@@ -75,6 +75,11 @@ public:
     // Original source aspect-derived size/position, one persistence boundary,
     // then select without an editor. No file bytes or file access occurs here.
     bool createMedia(std::string id,double createdAt,std::string reference,Point);
+    // Explicit relink of an existing media note (an imported Mac bookmark or a
+    // moved file the user chose again): only its validated Windows reference
+    // changes; identity, geometry, z-order, pin, selection and createdAt stay.
+    // Published after the store accepts it; never guesses a path.
+    bool replaceMedia(std::string_view id,std::string reference);
     enum class ChecklistAction {toggle,up,down,remove};
     bool addChecklistItem(std::string_view noteID,std::string itemID);
     bool mutateChecklistItem(std::string_view noteID,std::string_view itemID,ChecklistAction);

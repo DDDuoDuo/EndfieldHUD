@@ -158,6 +158,19 @@ bool NotesState::createMedia(std::string id,double createdAt,std::string referen
     try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes media import failed";++revision_;return false;}
     error_.reset();replace(item);(void)select(item.id);++revision_;return true;
 }
+bool NotesState::replaceMedia(std::string_view id,std::string reference){
+    writable();auto*current=find(id);if(!current||current->kind!=ehud::data::NoteKind::image||!current->media||current->drawing)throw std::invalid_argument("Relink requires an existing referenced media note");
+    if(editing_)throw std::logic_error("Finish Notes editor before relinking media");
+    const auto value=ehud::data::Json::parse(reference,2*1024*1024);
+    if(value["version"].integer()!=1||value["referencePlatform"].string()!="windows"||value.contains("bookmark")||value.contains("lastKnownPath")||value.contains("isSecurityScoped"))throw std::invalid_argument("Relinked media requires one validated Windows locator");
+    const auto width=value["pixelWidth"].integer(),height=value["pixelHeight"].integer(),frames=value["frameCount"].integer();
+    if(width<1||height<1||width>65536||height>65536||frames<1||frames>2000)throw std::invalid_argument("Invalid relinked media dimensions/count");
+    (void)ehud::data::makeWindowsMediaReference(value["windowsPath"].string(),value["displayName"].string(),static_cast<int>(width),static_cast<int>(height),value["kind"].string(),value["duration"].isNull()?std::optional<double>{}:value["duration"].number(),static_cast<int>(frames));
+    if(current->media==reference)return false;
+    auto item=*current;item.media=std::move(reference);
+    try{Persisting guard(persisting_);persistence_.upsert(item);}catch(const std::exception&e){error_=e.what();++revision_;return false;}catch(...){error_="Notes media relink failed";++revision_;return false;}
+    error_.reset();replace(item);++revision_;return true;
+}
 bool NotesState::addChecklistItem(std::string_view id,std::string childID){
     writable();const auto*found=note(id);if(!found||!visible(id)||found->kind!=ehud::data::NoteKind::todo)return false;
     if(editing_)throw std::logic_error("Finish Notes editor before changing checklist rows");

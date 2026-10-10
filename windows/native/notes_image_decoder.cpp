@@ -2,6 +2,9 @@
 #ifdef _WIN32
 #include "core/data/data_store.hpp"
 #include <process.h>
+#include <wincodec.h>
+#include <mferror.h>
+#include <system_error>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -14,6 +17,28 @@
 #include <unordered_map>
 #include <unordered_set>
 namespace endfield::native {
+namespace {
+constexpr HRESULT win32(unsigned long code){return static_cast<HRESULT>((code&0x0000FFFFul)|(static_cast<unsigned long>(FACILITY_WIN32)<<16)|0x80000000ul);}
+constexpr unsigned mediaErrorBase=0x7E40;
+}
+HRESULT notesMediaErrorResult(modules::NotesMediaError e)noexcept{return MAKE_HRESULT(SEVERITY_ERROR,FACILITY_ITF,mediaErrorBase+static_cast<unsigned>(e));}
+modules::NotesMediaError notesMediaError(HRESULT hr)noexcept{
+    using E=modules::NotesMediaError;
+    for(unsigned n=0;n<=static_cast<unsigned>(E::decodingFailed);++n)if(hr==MAKE_HRESULT(SEVERITY_ERROR,FACILITY_ITF,mediaErrorBase+n))return static_cast<E>(n);
+    // The referenced file cannot be reached (moved, deleted, offline volume,
+    // permissions or a sharing lock): the source "choose it again" state.
+    for(const auto code:{ERROR_FILE_NOT_FOUND,ERROR_PATH_NOT_FOUND,ERROR_ACCESS_DENIED,ERROR_SHARING_VIOLATION,ERROR_LOCK_VIOLATION,ERROR_INVALID_DRIVE,ERROR_NOT_READY,
+        ERROR_BAD_NETPATH,ERROR_BAD_NET_NAME,ERROR_NETNAME_DELETED,ERROR_INVALID_NAME,ERROR_DEVICE_NOT_CONNECTED,ERROR_NETWORK_UNREACHABLE,ERROR_CANT_ACCESS_FILE,ERROR_FILE_OFFLINE})
+        if(hr==win32(code))return E::unavailable;
+    if(hr==STG_E_FILENOTFOUND||hr==STG_E_PATHNOTFOUND||hr==STG_E_ACCESSDENIED||hr==STG_E_SHAREVIOLATION||hr==STG_E_LOCKVIOLATION)return E::unavailable;
+    // No installed codec recognizes the bytes (for example JPEG 2000, or HEIC,
+    // WebP and some movie codecs without their optional Windows extensions).
+    for(const auto code:{WINCODEC_ERR_COMPONENTNOTFOUND,WINCODEC_ERR_UNKNOWNIMAGEFORMAT,WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT,WINCODEC_ERR_UNSUPPORTEDOPERATION,
+        MF_E_UNSUPPORTED_BYTESTREAM_TYPE,MF_E_UNSUPPORTED_FORMAT,MF_E_INVALIDMEDIATYPE,MF_E_TOPO_CODEC_NOT_FOUND,MF_E_UNSUPPORTED_SCHEME,MF_E_INVALIDSTREAMNUMBER,MF_E_NO_MORE_TYPES})
+        if(hr==static_cast<HRESULT>(code))return E::unsupportedFormat;
+    if(hr==WINCODEC_ERR_IMAGESIZEOUTOFRANGE)return E::imageTooLarge;
+    return E::decodingFailed;
+}
 namespace detail {std::unique_ptr<NativeNotesImageDecoder::Sequence>makeNotesWICSequence(const NotesImageRequest&,NotesImageAccess);std::unique_ptr<NativeNotesImageDecoder::Sequence>makeNotesVideoPosterSequence(const NotesImageRequest&,NotesImageAccess);NotesImageInfo inspectNotesVideoFile(NotesImageAccess);}
 namespace {
 using Provider=NativeNotesImageDecoder;
@@ -90,6 +115,10 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
                 try{if(job->inspection){auto access=state->resolver(job->request);need(!access.path.empty(),"Media import resolver returned no path");std::unique_ptr<Provider::Sequence>sequence;
                     try{sequence=state->factory?state->factory(job->request,access):detail::makeNotesWICSequence(job->request,access);}
                     catch(const std::bad_alloc&){throw;}
+                    // An unreachable or oversized source is final; any other image
+                    // failure may still be a movie when the import allows one.
+                    catch(const NotesMediaFailure&f){if(!job->request.allowVideoInspection||f.error!=modules::NotesMediaError::unsupportedFormat)throw;auto info=detail::inspectNotesVideoFile(std::move(access));valid(info);result.info=std::make_shared<const NotesImageInfo>(std::move(info));result.result=S_OK;}
+                    catch(const std::system_error&e){if(!job->request.allowVideoInspection||notesMediaError(static_cast<HRESULT>(e.code().value()))==modules::NotesMediaError::unavailable)throw;auto info=detail::inspectNotesVideoFile(std::move(access));valid(info);result.info=std::make_shared<const NotesImageInfo>(std::move(info));result.result=S_OK;}
                     catch(...){if(!job->request.allowVideoInspection)throw;auto info=detail::inspectNotesVideoFile(std::move(access));valid(info);result.info=std::make_shared<const NotesImageInfo>(std::move(info));result.result=S_OK;}
                     if(sequence){valid(sequence->info());need(sequence->info().kind!=modules::NotesMediaKind::video,"Video frames do not use image decoding");result.info=std::make_shared<const NotesImageInfo>(sequence->info());result.frame=publish(sequence->decode(0),job->request,0,state->budget);decoded=true;result.result=S_OK;}
                 }else{if(job->reopen)decoders.erase(job->request.key);auto it=decoders.find(job->request.key);if(it==decoders.end()){
@@ -104,7 +133,10 @@ unsigned __stdcall worker(void*raw){std::unique_ptr<std::shared_ptr<State>>argum
                     // Still images retain only their immutable bounded pixels,
                     // never the original stream/access lease after first load.
                     if(result.info->kind==modules::NotesMediaKind::image)it->second.sequence.reset();}
-                }catch(const std::bad_alloc&){result.result=E_OUTOFMEMORY;}catch(...){result.result=E_FAIL;}
+                }catch(const std::bad_alloc&){result.result=E_OUTOFMEMORY;}
+                catch(const NotesMediaFailure&f){result.result=notesMediaErrorResult(f.error);}
+                catch(const std::system_error&e){result.result=notesMediaErrorResult(notesMediaError(static_cast<HRESULT>(e.code().value())));}
+                catch(...){result.result=notesMediaErrorResult(modules::NotesMediaError::decodingFailed);}
                 {std::lock_guard lock(state->mutex);state->stats.inFlight=false;state->active.reset();if(decoded)++state->stats.decodes;
                     if(state->stopping||job->generation!=(job->inspection?state->inspectionGeneration:state->generation)){++state->stats.discarded;}else{
                         auto&ready=job->inspection?state->inspectionReady:state->ready;auto slot=std::find_if(ready.begin(),ready.end(),[&](const auto&r){return r&&r->key==result.key;});if(slot==ready.end())slot=std::find_if(ready.begin(),ready.end(),[](const auto&r){return !r;});

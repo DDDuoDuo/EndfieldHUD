@@ -16,12 +16,13 @@ struct NotesMediaMenu::Impl {
     struct Menu {mod::NotesControlsInput input;mod::NotesControls controls;std::unique_ptr<gpu::NativeNotesControlsScene>scene;std::unique_ptr<gpu::NativeLayerGroup>group;
         core::Point insertion;core::Rect placement;core::Matrix4 world;core::Projection projection;double started{},captured{1},alpha{},remainder{};float opacity{};bool placed{},closing{},dead{},dirty{true},uploaded{},pressed{};std::size_t focused{};};
     gpu::LayerRasterizer&raster;Choose choose;std::vector<std::unique_ptr<Menu>>menus;std::vector<gpu::LayerCompositionEntry>entries;
+    mod::NotesControlsStrings strings=[]{mod::NotesControlsStrings s;s.chooseFile="从文件资源管理器选择";s.chooseShelf="从暂存架选择";s.close="关闭";s.mediaOnly="仅显示媒体";s.useMedia="使用所选媒体";s.shelfHeading="暂存架 · 图片/视频";s.language=core::Language::simplifiedChinese;return s;}();bool dark{true};
     Impl(gpu::LayerRasterizer&r,Choose c):raster(r),choose(std::move(c)){need(bool(choose),"Media menu requires explicit owner action");menus.reserve(8);entries.reserve(8);}
     Menu*current()const{for(auto it=menus.rbegin();it!=menus.rend();++it)if(!(*it)->closing&&!(*it)->dead)return it->get();return nullptr;}
     void refresh(Menu&m){m.controls.update(m.input);m.scene->syncContent();m.dirty=true;m.focused=std::min(m.focused,m.controls.actions().size()-1);}
     void close(double time,bool immediate){auto*m=current();if(!m)return;if(immediate){m->dead=true;return;}m->captured=mod::notesMenuMotion(true,time-m->started).opacity;m->closing=true;m->started=time;m->pressed=false;}
     void open(mod::NotesControlsKind kind,std::vector<mod::NotesShelfChoice>choices,core::Point point,double time){need(std::isfinite(time)&&std::isfinite(point.x)&&std::isfinite(point.y),"Invalid media menu event");need(menus.size()<8,"Retire detached media menus before opening more");
-        auto m=std::make_unique<Menu>();m->input.kind=kind;m->input.choices=std::move(choices);m->input.strings.chooseFile="从文件资源管理器选择";m->input.strings.chooseShelf="从暂存架选择";m->input.strings.close="关闭";m->input.strings.mediaOnly="仅显示媒体";m->input.strings.useMedia="使用所选媒体";m->input.strings.shelfHeading="暂存架 · 图片/视频";m->insertion=point;m->started=time;
+        auto m=std::make_unique<Menu>();m->input.kind=kind;m->input.choices=std::move(choices);m->input.strings=strings;m->input.dark=dark;m->insertion=point;m->started=time;
         m->controls.update(m->input);gpu::LayerRasterOptions options;options.pixelsPerPoint=2;options.paddingPoints=1;m->scene=std::make_unique<gpu::NativeNotesControlsScene>(m->controls,raster,options);m->scene->syncContent();m->scene->updatePose({},1,time);m->group=std::make_unique<gpu::NativeLayerGroup>(m->scene->scene(),"notes.media.menu",2);close(time,false);menus.push_back(std::move(m));
     }
     std::vector<const mod::NotesShelfChoice*>filtered(const Menu&m)const{std::vector<const mod::NotesShelfChoice*>out;out.reserve(m.input.choices.size());for(const auto&c:m.input.choices)if(!m.input.mediaOnly||c.supported)out.push_back(&c);return out;}
@@ -33,6 +34,8 @@ struct NotesMediaMenu::Impl {
 };
 NotesMediaMenu::NotesMediaMenu(gpu::LayerRasterizer&r,Choose c):impl_(std::make_unique<Impl>(r,std::move(c))){}
 NotesMediaMenu::~NotesMediaMenu()=default;
+void NotesMediaMenu::setStrings(const mod::NotesControlsStrings&s,bool dark){auto&i=*impl_;if(i.strings==s&&i.dark==dark)return;i.strings=s;i.dark=dark;
+    for(auto&m:i.menus){if(m->dead)continue;m->input.strings=s;m->input.dark=dark;i.refresh(*m);}}
 void NotesMediaMenu::openSource(core::Point p,double t){impl_->open(mod::NotesControlsKind::mediaSource,{},p,t);}
 void NotesMediaMenu::openShelf(std::vector<mod::NotesShelfChoice>c,core::Point p,double t){impl_->open(mod::NotesControlsKind::shelfMedia,std::move(c),p,t);}
 void NotesMediaMenu::close(double t,bool immediate){impl_->close(t,immediate);if(immediate)for(auto&m:impl_->menus)m->dead=true;}

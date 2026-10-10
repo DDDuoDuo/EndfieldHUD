@@ -8,6 +8,13 @@ struct NotesMediaStrings {
     std::string loading{"Loading media…"},play{"▶ Play"},pause{"Ⅱ Pause"};
     std::string playAction{"Play"},pauseAction{"Pause"},unavailable{"Image unavailable"};
 };
+// Sources/NotesMedia.swift NotesMediaError, in source order. Failed media show
+// the error's description in their footer and in the Notes status row.
+enum class NotesMediaError {invalidReference,unavailable,unsupportedFormat,imageTooLarge,tooManyFrames,decodingFailed};
+// Exact source L10n.text pair (English, Simplified Chinese); render it with
+// core::localized, whose catalog carries the other source languages.
+struct NotesSourceText {std::string_view english,simplifiedChinese;};
+NotesSourceText notesMediaErrorText(NotesMediaError)noexcept;
 struct NotesMediaStatus {
     NotesMediaState state{NotesMediaState::hidden};
     std::optional<std::string> localizedError;
@@ -18,6 +25,11 @@ struct NotesMediaCardContent {
     NotesMediaStatus status;
     NotesMediaStrings strings;
     bool legacyManagedImage{},legacyUnavailable{};
+    // The referenced file is unavailable (an imported Mac bookmark or a moved
+    // or deleted file): the footer error invites choosing it again, so the
+    // footer row becomes the explicit relink action. Never set for legacy
+    // managed copies, which are not user references.
+    bool relinkable{};
 };
 struct NotesMediaGeometry {
     core::Rect content,footer,playback,seek,rail;

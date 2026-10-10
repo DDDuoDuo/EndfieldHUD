@@ -1,4 +1,5 @@
 #pragma once
+#include "core/localization.hpp"
 #include "modules/notes_presentation.hpp"
 
 namespace endfield::modules {
@@ -12,6 +13,9 @@ struct NotesControlsStrings {
     std::string chooseFile{"Choose in Finder"},chooseShelf{"Choose from Shelf"},close{"Close"};
     std::array<std::string,4> traits{"Bold","Italic","Underline","Strikethrough"};
     std::string currentColor{"Current color"},mediaOnly{"Media only"},useMedia{"Use selected media"},shelfHeading{"SHELF · IMAGE/VIDEO"};
+    // The resolved language these captions were localized for. Owners render
+    // their own source status/error texts (core::localized) in the same one.
+    core::Language language{core::Language::english};
     bool operator==(const NotesControlsStrings&)const=default;
 };
 struct NotesShelfChoice {

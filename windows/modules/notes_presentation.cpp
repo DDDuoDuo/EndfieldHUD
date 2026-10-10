@@ -130,7 +130,10 @@ bool NotesCardPresentation::updateContent(const NotesState& state,const NotesPre
     }else if(!image&&!drawing)action("edit",strings.edit,viewport);
     if(image){const auto&m=*input.media;if(m.legacyManagedImage){if(m.legacyUnavailable){const auto label=text("media/unavailable",root,{10,40,w-20,35},m.strings.unavailable,11,p.muted,false,false);layers[label].text.wrapped=true;}}
         else {auto footer=mediaLayout->footer(m.status,p,m.strings);footer.id=prefix+footer.id;footer.parent=root;layers.push_back(std::move(footer));
-            if(const auto playback=mediaLayout->playbackAction(noteID_,m.status,m.strings))actions.push_back(*playback);
+            // A failed reference's footer row chooses the file again (labelled
+            // by its source error text); it has no playback to toggle.
+            if(m.relinkable&&m.status.state==NotesMediaState::failed&&m.status.localizedError)actions.push_back({"note:"+noteID_+":relinkMedia","relinkMedia",*m.status.localizedError,{8,h-23,std::max(1.,w-18),18}});
+            else if(const auto playback=mediaLayout->playbackAction(noteID_,m.status,m.strings))actions.push_back(*playback);
             if(mediaLayout->geometry().hasSeek){const auto rail=add("media/rail",root,mediaLayout->geometry().rail);layers[rail].background=mediaLayout->progressColors(p)[0];}
         }
     }

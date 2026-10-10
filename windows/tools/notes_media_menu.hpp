@@ -16,6 +16,9 @@ public:
     using Choose=std::function<void(NotesMediaAction)>;
     NotesMediaMenu(native::LayerRasterizer&,Choose);
     ~NotesMediaMenu();
+    // Caller-localized source captions (File Explorer/Shelf/close/filter/use)
+    // and theme; applies to open menus and every later one. Event only.
+    void setStrings(const modules::NotesControlsStrings&,bool dark);
     void openSource(core::Point,double time);
     void openShelf(std::vector<modules::NotesShelfChoice>,core::Point,double time);
     void close(double time,bool immediate=false);

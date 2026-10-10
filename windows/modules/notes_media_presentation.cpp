@@ -5,6 +5,17 @@
 
 namespace endfield::modules {
 namespace {void need(bool value,const char*message){if(!value)throw std::invalid_argument(message);}}
+NotesSourceText notesMediaErrorText(NotesMediaError error)noexcept{
+    switch(error){
+    case NotesMediaError::invalidReference:return {"The saved media reference is invalid.","保存的媒体引用无效。"};
+    case NotesMediaError::unavailable:return {"The original media file is unavailable. Choose it again to restore access.","原始媒体文件不可用，请重新选择以恢复访问。"};
+    case NotesMediaError::unsupportedFormat:return {"This file is not a supported image or playable video.","此文件不是受支持的图片或可播放的视频。"};
+    case NotesMediaError::imageTooLarge:return {"Choose an image below 128 MB and 64 megapixels.","请选择小于 128 MB 和 6400 万像素的图片。"};
+    case NotesMediaError::tooManyFrames:return {"Choose a GIF with no more than 2,000 frames.","请选择不超过 2000 帧的 GIF。"};
+    case NotesMediaError::decodingFailed:break;
+    }
+    return {"This media could not be decoded.","无法解码此媒体。"};
+}
 NotesMediaLayout::NotesMediaLayout(double w,double h,NotesMediaKind kind,std::optional<double>duration,bool legacy):kind_(kind),duration_(duration){
     need(std::isfinite(w)&&std::isfinite(h)&&w>=10&&h>=35&&w<=65536&&h<=65536,"Invalid media card extent");
     need(kind==NotesMediaKind::image||kind==NotesMediaKind::gif||kind==NotesMediaKind::video,"Invalid media kind");

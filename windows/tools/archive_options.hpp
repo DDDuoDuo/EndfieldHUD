@@ -15,6 +15,11 @@ struct ArchivePreviewStrings {
 // assets, fonts or the date formatter. Pass an already resolved language.
 ArchivePreviewStrings archivePreviewStrings(core::Language);
 #ifdef _WIN32
+// Source NotesMediaError description (Sources/NotesMedia.swift) for a failed
+// decode, import inspection or playback HRESULT, classified by
+// native::notesMediaError, in the given resolved language. Shared by Notes,
+// Archive attachments and Projection media.
+std::string notesMediaErrorDescription(HRESULT,core::Language);
 // resourceRoot is the packaged windows/resources directory, never a test oracle.
 // Borrows rasterizer on its creating thread. Format/parse share one retained
 // formatter; optionally keep the supplied formatter to handle OS time-zone

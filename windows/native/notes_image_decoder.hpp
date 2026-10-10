@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -40,6 +41,18 @@ struct NotesImageAccess {
     std::shared_ptr<void>lease;
 };
 struct NotesImageRoute {HWND owner{};UINT message{};UINT_PTR generation{};};
+// Failed decode, import inspection and playback results carry an HRESULT. The
+// source NotesMediaError cases have their own FACILITY_ITF codes; any other
+// platform result is classified the same way (file access -> unavailable, no
+// installed WIC/Media Foundation codec -> unsupportedFormat, else decoding).
+HRESULT notesMediaErrorResult(modules::NotesMediaError)noexcept;
+modules::NotesMediaError notesMediaError(HRESULT)noexcept;
+// Thrown by a decode/inspection sequence for a categorized source failure.
+class NotesMediaFailure final:public std::runtime_error {
+public:
+    NotesMediaFailure(modules::NotesMediaError e,const char* what):std::runtime_error(what),error(e){}
+    modules::NotesMediaError error;
+};
 struct NotesImageCompletion {
     std::string key;std::uint64_t revision{};std::shared_ptr<const NotesImageInfo>info;
     std::shared_ptr<const NotesImageFrame>frame;HRESULT result{E_FAIL};

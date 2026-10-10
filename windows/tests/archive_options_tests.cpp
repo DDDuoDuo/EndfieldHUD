@@ -19,10 +19,12 @@ void strings(){
   check(s.categoryNamePlaceholder==core::localized("Category name","分类名称",language),"Inline name uses source Archive interaction label");
   check(s.view.categoryRemovalDetail==core::localized("Documents will move to Uncategorized.","档案将移至未分类。",language),"Deletion detail retains original source localization");
   check(s.menus.shelfHeading==core::localized("SHELF · IMAGE/VIDEO","暂存架 · 图片/视频",language),"Shared media menu uses original Notes label");
-  check(s.menus.chooseFile.find("Finder")==std::string::npos,"Windows chooser names the native platform");
+  check(s.menus.chooseFile.find("Finder")==std::string::npos&&s.menus.chooseFile.find("Explorer ")==std::string::npos,"Windows chooser names the native platform with one explicit label");
+  check(s.menus.language==language,"Menu captions carry the language they were localized for");
   check(!s.view.title.empty()&&!s.menus.traits[3].empty()&&data::Json::validUtf8(s.view.title),"Catalog output is valid nonempty UTF-8");
  }
  check(tools::archivePreviewStrings(core::Language::simplifiedChinese).view.heading=="档案库","Original simplified Archive heading remains exact");
+ check(tools::archivePreviewStrings(core::Language::simplifiedChinese).menus.chooseFile=="从文件资源管理器选择"&&tools::archivePreviewStrings(core::Language::traditionalChinese).menus.chooseFile=="從檔案總管選擇"&&tools::archivePreviewStrings(core::Language::english).menus.chooseFile=="Choose in File Explorer","File Explorer label uses the Windows shell product name per language");
  check(tools::archivePreviewStrings(core::Language::japanese).view.heading=="アーカイブ","Original Japanese Archive heading remains exact");
 }
 #ifdef _WIN32
