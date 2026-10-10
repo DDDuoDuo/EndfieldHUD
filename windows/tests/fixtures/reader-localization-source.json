@@ -1,0 +1,180 @@
+{
+ "captions": {
+  "bookmarks": {
+   "english": "Bookmarks",
+   "japanese": "しおり",
+   "korean": "북마크",
+   "simplifiedChinese": "书签",
+   "traditionalChinese": "書籤"
+  },
+  "chooseFile": {
+   "english": "Choose in Finder",
+   "japanese": "Finderから選択",
+   "korean": "Finder에서 선택",
+   "simplifiedChinese": "从 Finder 选择",
+   "traditionalChinese": "從 Finder 選擇"
+  },
+  "chooseShelf": {
+   "english": "Choose from Shelf",
+   "japanese": "一時保管から選択",
+   "korean": "보관함에서 선택",
+   "simplifiedChinese": "从暂存架选择",
+   "traditionalChinese": "從暫存架選擇"
+  },
+  "empty": {
+   "english": "Open a book to begin reading.",
+   "japanese": "書籍を開いて読書を始めます。",
+   "korean": "책을 열어 읽기를 시작하세요.",
+   "simplifiedChinese": "打开书籍开始阅读。",
+   "traditionalChinese": "開啟書籍開始閱讀。"
+  },
+  "font": {
+   "english": "Font",
+   "japanese": "フォント",
+   "korean": "글꼴",
+   "simplifiedChinese": "字体",
+   "traditionalChinese": "字體"
+  },
+  "fontSize": {
+   "english": "Font size",
+   "japanese": "文字サイズ",
+   "korean": "글자 크기",
+   "simplifiedChinese": "字号",
+   "traditionalChinese": "字級"
+  },
+  "horizontal": {
+   "english": "Left to right",
+   "japanese": "左から右",
+   "korean": "왼쪽에서 오른쪽",
+   "simplifiedChinese": "从左到右",
+   "traditionalChinese": "從左到右"
+  },
+  "library": {
+   "english": "Library",
+   "japanese": "ライブラリ",
+   "korean": "서재",
+   "simplifiedChinese": "书库",
+   "traditionalChinese": "書庫"
+  },
+  "lineSpacing": {
+   "english": "Line spacing",
+   "japanese": "行間",
+   "korean": "줄 간격",
+   "simplifiedChinese": "行间距",
+   "traditionalChinese": "行間距"
+  },
+  "loading": {
+   "english": "Loading book…",
+   "japanese": "書籍を読み込み中…",
+   "korean": "책 불러오는 중…",
+   "simplifiedChinese": "正在载入书籍…",
+   "traditionalChinese": "正在載入書籍…"
+  },
+  "margin": {
+   "english": "Margins",
+   "japanese": "余白",
+   "korean": "여백",
+   "simplifiedChinese": "页边距",
+   "traditionalChinese": "頁邊距"
+  },
+  "open": {
+   "english": "Open",
+   "japanese": "開く",
+   "korean": "열기",
+   "simplifiedChinese": "打开",
+   "traditionalChinese": "開啟"
+  },
+  "reading": {
+   "english": "Reading",
+   "japanese": "読書設定",
+   "korean": "읽기 설정",
+   "simplifiedChinese": "阅读设置",
+   "traditionalChinese": "閱讀設定"
+  },
+  "shelfTitle": {
+   "english": "Choose from Shelf",
+   "japanese": "一時保管から選択",
+   "korean": "보관함에서 선택",
+   "simplifiedChinese": "从暂存架选择",
+   "traditionalChinese": "從暫存架選擇"
+  },
+  "title": {
+   "english": "E-Reader",
+   "japanese": "リーダー",
+   "korean": "리더",
+   "simplifiedChinese": "阅读器",
+   "traditionalChinese": "閱讀器"
+  },
+  "vertical": {
+   "english": "Top to bottom",
+   "japanese": "上から下",
+   "korean": "위에서 아래",
+   "simplifiedChinese": "从上到下",
+   "traditionalChinese": "從上到下"
+  }
+ },
+ "errors": {
+  "changedOnDisk": {
+   "english": "The reader library changed on disk. Restart the app before saving.",
+   "japanese": "ライブラリが別の場所で変更されました。アプリを再起動してから保存してください。",
+   "korean": "서재 파일이 변경되었습니다. 앱을 다시 시작한 후 저장하세요.",
+   "simplifiedChinese": "阅读器书库已在磁盘上更改，请重新启动应用后保存。",
+   "traditionalChinese": "閱讀器書庫已在磁碟上變更，請重新啟動應用程式後儲存。"
+  },
+  "encrypted": {
+   "english": "Encrypted books are not supported.",
+   "japanese": "暗号化された書籍には対応していません。",
+   "korean": "암호화된 책은 지원하지 않습니다.",
+   "simplifiedChinese": "暂不支持加密书籍。",
+   "traditionalChinese": "暫不支援加密書籍。"
+  },
+  "invalidArchive": {
+   "english": "This EPUB archive is damaged or unsafe.",
+   "japanese": "このEPUBは破損しているか、安全に読み込めません。",
+   "korean": "이 EPUB 파일이 손상되었거나 안전하지 않습니다.",
+   "simplifiedChinese": "此 EPUB 压缩包已损坏或不安全。",
+   "traditionalChinese": "此 EPUB 壓縮檔已損壞或不安全。"
+  },
+  "invalidBook": {
+   "english": "This book could not be read.",
+   "japanese": "この書籍を読み込めません。",
+   "korean": "이 책을 읽을 수 없습니다.",
+   "simplifiedChinese": "无法读取此书籍。",
+   "traditionalChinese": "無法讀取此書籍。"
+  },
+  "tooLarge": {
+   "english": "This book exceeds the reader's safety limits.",
+   "japanese": "この書籍はリーダーの上限を超えています。",
+   "korean": "이 책은 리더의 안전 제한을 초과합니다.",
+   "simplifiedChinese": "此书籍超过阅读器的安全限制。",
+   "traditionalChinese": "此書籍超過閱讀器的安全限制。"
+  },
+  "unavailable": {
+   "english": "The original book is unavailable. Choose it again.",
+   "japanese": "元の書籍が見つかりません。再度選択してください。",
+   "korean": "원본 책을 사용할 수 없습니다. 다시 선택하세요.",
+   "simplifiedChinese": "原始书籍不可用，请重新选择。",
+   "traditionalChinese": "原始書籍無法使用，請重新選擇。"
+  },
+  "unsupported": {
+   "english": "Choose a PDF, EPUB or TXT book.",
+   "japanese": "PDF・EPUB・TXTの書籍を選択してください。",
+   "korean": "PDF, EPUB 또는 TXT 책을 선택하세요.",
+   "simplifiedChinese": "请选择 PDF、EPUB 或 TXT 书籍。",
+   "traditionalChinese": "請選擇 PDF、EPUB 或 TXT 書籍。"
+  }
+ },
+ "source": {
+  "authority": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+  "files": [
+   "Sources/ReaderZIP.swift",
+   "Sources/ReaderCanvas.swift",
+   "Sources/ReaderInteraction.swift",
+   "Sources/NotesFormattingControls.swift",
+   "Sources/LocalizationCatalog.swift"
+  ]
+ },
+ "windowsReplacement": {
+  "chooseFile": "Choose in Finder names a Mac app; Windows shows the File Explorer chooser row"
+ }
+}

@@ -12,6 +12,8 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.UI.Notifications.h>
+#include "native/app_notification_identity.hpp"
+#include <shobjidl.h>
 #endif
 namespace endfield::native {namespace {namespace m=modules;
 void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}
@@ -59,8 +61,13 @@ struct Apartment{Apartment(){winrt::init_apartment(winrt::apartment_type::multi_
 winrt::hstring wide(std::string_view v){return winrt::hstring(reinterpret_cast<const wchar_t*>(m::calendarEditorUTF16(v).c_str()));}
 std::string utf8(const winrt::hstring&v){return m::calendarEditorUTF8({reinterpret_cast<const char16_t*>(v.c_str()),v.size()});}
 std::string xml(std::string_view v){std::string out;out.reserve(v.size());for(char c:v){switch(c){case '&':out+="&amp;";break;case '<':out+="&lt;";break;case '>':out+="&gt;";break;case '"':out+="&quot;";break;case '\'':out+="&apos;";break;default:out+=c;}}return out;}
+std::string processIdentity(){PWSTR id{};if(FAILED(GetCurrentProcessExplicitAppUserModelID(&id))||!id)return {};std::string value;try{value=utf8(winrt::hstring(id));}catch(...){value.clear();}CoTaskMemFree(id);return validAppNotificationID(value)?value:std::string{};}
 struct WinNotifications final:CalendarNotificationProvider {
- CalendarNotificationOptions options;explicit WinNotifications(CalendarNotificationOptions o):options(std::move(o)){}
+ CalendarNotificationOptions options;
+ // An empty option uses the process's explicit AppUserModelID, which the
+ // calendarReminders area establishes only for the installer's matching
+ // registration (native/calendar_notification_identity.hpp). Read per job.
+ explicit WinNotifications(CalendarNotificationOptions o):options(std::move(o)){if(options.establishedAppUserModelID.empty())options.establishedAppUserModelID=processIdentity();}
  n::ToastNotifier notifier(){return n::ToastNotificationManager::CreateToastNotifier(wide(options.establishedAppUserModelID));}
  m::CalendarPermission authorization(bool)override{if(options.establishedAppUserModelID.empty())return m::CalendarPermission::unavailable;Apartment a;switch(notifier().Setting()){case n::NotificationSetting::Enabled:return m::CalendarPermission::authorized;case n::NotificationSetting::DisabledForApplication:case n::NotificationSetting::DisabledForUser:case n::NotificationSetting::DisabledByGroupPolicy:return m::CalendarPermission::denied;default:return m::CalendarPermission::unavailable;}}
  std::vector<CalendarScheduledNotification>pending()override{if(options.establishedAppUserModelID.empty())return {};Apartment a;auto source=notifier().GetScheduledToastNotifications();need(source.Size()<=4096,"Notification schedule exceeds enumeration bound");std::vector<CalendarScheduledNotification>out;for(const auto&v:source){const auto id=utf8(v.Group())+"."+utf8(v.Tag());if(!calendarNotificationKey(id))continue;const auto args=utf8(v.Content().DocumentElement().GetAttribute(L"launch"));std::string signature;if(const auto event=calendarNotificationEvent(args);event&&std::string(m::calendarNotificationPrefix)+*event==utf8(v.Group()))signature=m::CalendarJson::parse(args)["signature"].string();out.push_back({id,signature,{},{},static_cast<double>(v.DeliveryTime().time_since_epoch().count()/10000000.L-11644473600.L-m::calendarFoundationToUnix)});}return out;}

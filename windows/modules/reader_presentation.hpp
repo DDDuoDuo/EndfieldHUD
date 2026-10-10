@@ -1,5 +1,6 @@
 #pragma once
 #include "modules/reader_viewport.hpp"
+#include "core/localization.hpp"
 namespace endfield::modules {
 using ReaderColor=std::array<double,4>;
 struct ReaderAppearance {bool dark{true};ReaderColor accent{250./255,212./255,31./255,1};bool operator==(const ReaderAppearance&)const=default;};
@@ -9,6 +10,9 @@ struct ReaderStrings {
         chooseFile{"Choose in Finder"},chooseShelf{"Choose from Shelf"},shelfTitle{"Choose from Shelf"},
         font{"Font"},fontSize{"Font size"},lineSpacing{"Line spacing"},margin{"Margins"},
         horizontal{"Left to right"},vertical{"Top to bottom"};
+    // Resolved UI language of these captions: typed ReaderState errors render
+    // in it at display time (modules/reader_localization.hpp).
+    core::Language language{core::Language::english};
     bool operator==(const ReaderStrings&)const=default;
     static ReaderStrings simplifiedChinese();
 };

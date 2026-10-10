@@ -56,6 +56,16 @@ public:
     const ReaderPage*current()const noexcept;std::span<const ReaderPage>pages()const noexcept;
     const std::optional<ReaderDetail>&imageDetail()const noexcept;
     const std::optional<std::string>&error()const noexcept;std::uint64_t revision()const noexcept;
+    // Typed source ReaderError of error() (display-time localization); empty
+    // for the untyped provider/repository failures shown with their own text.
+    std::optional<ReaderErrorCode>errorCode()const noexcept;
+    // Source ReaderController.onEvent (SystemHUDView records readerAction):
+    // "imported", "deleted", "bookmarked", "settings" once the structural
+    // write that contains the change is confirmed durable, and "progress" when
+    // a confirmed progress write changes the book's saved location (not only
+    // its fraction). Coalesced writes report each contained action once, in
+    // order; a failed write reports nothing until a retry succeeds. Owner thread.
+    void setEventObserver(std::function<void(std::string_view)>);
     // Caller has already validated the original file with the actual format
     // provider, and applied source title.prefix(200) using Unicode graphemes.
     // Duplicate locator refreshes reference/title, preserving ID/progress/marks.

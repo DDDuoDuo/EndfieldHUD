@@ -49,10 +49,18 @@ using CalendarNotificationFactory=std::function<std::unique_ptr<CalendarNotifica
 //    reaches the notification center, as Mac Focus does. No fallback needed.
 //  * A Mac click only activates the app. On Windows the installer-registered
 //    COM activator (app_notification_identity) routes the click to the
-//    running HUD instead of starting a second process.
+//    running HUD instead of starting a second process; the calendarReminders
+//    area consumes it without opening the HUD (the Mac LSUIElement app shows
+//    no window either). Without a running app, Windows launches EndfieldHUD
+//    with --notification-activation, a normal launch that then registers the
+//    activator and receives the click.
 // Windows factory performs no registration, setting mutation or UI activation.
-// Empty identity returns unavailable. A nonempty identity must already belong
-// to this installed app. The real factory is never invoked by isolated tests.
+// An empty establishedAppUserModelID uses the process's explicit
+// AppUserModelID, which the calendarReminders area establishes only after it
+// found the installer's matching Start-menu registration
+// (native/calendar_notification_identity.hpp); without one every request is
+// unavailable. A nonempty identity must already belong to this installed app.
+// The real factory is never invoked by isolated tests.
 CalendarNotificationFactory nativeCalendarNotificationFactory();
 // Exact source reconciliation: scoped cancellation, signature reuse and no
 // replay of an already-received reminder missing from the pending OS schedule.
