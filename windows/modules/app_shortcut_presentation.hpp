@@ -25,10 +25,18 @@ struct ShortcutSurface {
     std::string id,action;ShortcutJson content;core::Matrix4 local;
     std::optional<core::Rect>clip;ShortcutSurfaceRole role{ShortcutSurfaceRole::artwork};
 };
+// One published original application image: an exact LayerImageSource
+// key/revision (contents {memoryImage,revision}). An empty key is absent.
+struct ShortcutImageReference {
+    std::string key;std::uint64_t revision{};
+    bool operator==(const ShortcutImageReference&)const=default;
+};
 struct ShortcutOriginalImages {
-    // Explicit prepared image keys. Absence uses the source grid fallback;
-    // a nonempty key must be resolved by the native owner before publication.
-    std::map<std::string,std::string,std::less<>>items;std::string draft;
+    // Explicit prepared image references (AppShortcutStore.icon(for:)) by
+    // shortcut id, and the draft's. Absence uses the source grid fallback; a
+    // present reference must stay published in the raster options'
+    // memoryImages source while this presentation is retained.
+    std::map<std::string,ShortcutImageReference,std::less<>>items;ShortcutImageReference draft;
     bool operator==(const ShortcutOriginalImages&)const=default;
 };
 std::vector<ShortcutSurface>prepareAppShortcutArtwork(const AppShortcutState&,

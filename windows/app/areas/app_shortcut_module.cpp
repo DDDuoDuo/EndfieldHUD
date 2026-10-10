@@ -7,6 +7,8 @@
 #include "modules/app_shortcut_navigation.hpp"
 #include "modules/app_shortcut_tasks.hpp"
 #include "native/app_shortcut_assets.hpp"
+#include "native/app_shortcut_icons.hpp"
+#include "native/layer_image_source.hpp"
 #include "native/app_shortcut_text.hpp"
 #include "tools/app_shortcut_preview.hpp"
 #include <algorithm>
@@ -14,10 +16,12 @@
 #include <atomic>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 #ifndef NOMINMAX
@@ -114,7 +118,7 @@ private:
 // installed application. Paths are owned synthetic names under the area's
 // coverage root; a stem starting with "Missing" is an unavailable target.
 struct SyntheticApplications {
-    std::atomic<unsigned> inspected{}, launched{};
+    std::atomic<unsigned> inspected{}, launched{}, icons{};
     std::atomic<bool> failLaunch{};
 };
 // The worker keeps its own reference: accepted work may outlive the owner.
@@ -137,6 +141,19 @@ g::AppShortcutOS syntheticOS(std::shared_ptr<SyntheticApplications> self) {
                 }};
 }
 
+// Hidden coverage: a deterministic opaque square per synthetic target.
+g::AppShortcutIconExtractor syntheticIcons(std::shared_ptr<SyntheticApplications> self) {
+    return [self](const g::AppShortcutSelection& s, unsigned size) -> std::optional<g::AppShortcutIconPixels> {
+        ++self->icons;
+        std::uint32_t hash = 2166136261u;for (const unsigned char c : s.value) hash = (hash ^ c) * 16777619u;
+        g::AppShortcutIconPixels out;out.width = out.height = size;out.straightRGBA.resize(std::size_t(size) * size * 4);
+        for (std::size_t n = 0; n < out.straightRGBA.size(); n += 4) {
+            out.straightRGBA[n] = std::uint8_t(hash);out.straightRGBA[n + 1] = std::uint8_t(hash >> 8);out.straightRGBA[n + 2] = std::uint8_t(hash >> 16);out.straightRGBA[n + 3] = 255;
+        }
+        return out;
+    };
+}
+
 class AppShortcutArea final : public app::ModuleOwner, public app::AppShortcutNavigation {
 public:
     AppShortcutArea(const app::ApplicationModuleContext& c, fs::path assets, fs::path directory, std::shared_ptr<SyntheticApplications> synthetic)
@@ -147,12 +164,15 @@ public:
         const auto& a = host_.appearance();
         appearance_ = {a.dark, a.language, a.accent};language_ = a.language;
         tools::AppShortcutPreviewOptions options;options.appearance = appearance_;options.textMessage = textMessage_;
+        options.raster.memoryImages = &images_; // original application icons (AppShortcutStore.icon(for:))
+        extractor_ = synthetic_ ? syntheticIcons(synthetic_) : g::windowsAppShortcutIconExtractor();
+        iconRoute_ = utility_.makeRoute();
         auto* manager = static_cast<ITfThreadMgr*>(c.textManager);
         preview_ = std::make_unique<tools::AppShortcutPreview>(window_, c.rasterizer, assets_, manager,
             manager ? static_cast<TfClientId>(c.textClient) : TF_CLIENTID_NULL, std::move(options));
         if (c.metrics.pixelWidth && c.metrics.pixelHeight) preview_->resize(c.metrics);
         tasks_ = std::make_unique<m::AppShortcutTasks>(utility_, directory_, g::nativeShortcutTextRules(),
-            synthetic_ ? syntheticOS(synthetic_) : g::windowsAppShortcutOS(), [this](m::ShortcutTaskResult r) { completed(std::move(r)); });
+            synthetic_ ? syntheticOS(synthetic_) : g::windowsAppShortcutOS(), [this](m::ShortcutTaskResult r) { guarded("completion", [&] { completed(std::move(r)); }); });
         host_.publish<app::AppShortcutNavigation>(app::appShortcutNavigationService, *this);
         // AppShortcutStore(directory:) at startup: the one initial load.
         loadPending_ = true;pump();
@@ -161,6 +181,7 @@ public:
         *alive_ = false;observer_ = {};
         host_.withdraw(app::appShortcutNavigationService);
         tasks_.reset(); // suppresses completions; accepted writes/launches still finish on the executor
+        utility_.invalidate(iconRoute_); // disposable icon work: no callback into this owner
     }
     AppShortcutArea(const AppShortcutArea&) = delete;
     AppShortcutArea& operator=(const AppShortcutArea&) = delete;
@@ -185,7 +206,10 @@ public:
         pump();
     }
     void overlayClosing(double t) override { closing(t); }
-    void update(const app::ModuleFrame& f) override { preview_->update(f.center, f.chrome, f.presentation, f.opacity, f.time);pump(); }
+    void update(const app::ModuleFrame& f) override {
+        preview_->update(f.center, f.chrome, f.presentation, f.opacity, f.time);pump();
+        if (preview_->state().revision() != iconStateRevision_) refreshIcons();
+    }
     bool requiresFrames(double t) const override { return preview_->requiresFrames(t); }
     void upload(g::Renderer& r) override { preview_->upload(r); }
     Entries entries(core::Module module) override { return module == core::Module::addApp ? preview_->entries() : Entries{}; }
@@ -212,7 +236,7 @@ public:
     bool hostEvent(const app::HostEvent& e, double t) override {
         using K = app::HostEvent::Kind;
         switch (e.kind) {
-        case K::utilityCompleted: tasks_->queueCapacityAvailable();pump();return false;
+        case K::utilityCompleted: tasks_->queueCapacityAvailable();pump();scheduleIcon();return false;
         case K::overlayConcealed: concealed(t);return false;
         case K::suspended: case K::quitting: cancelPendingLaunch(t);return false; // forceCloseSystemOverlay / requestQuit
         default: return false;
@@ -245,6 +269,17 @@ private:
 
     static bool durable(m::ShortcutTaskKind k) noexcept { return k == m::ShortcutTaskKind::save || k == m::ShortcutTaskKind::remove || k == m::ShortcutTaskKind::launch; }
     bool coverageMode() const noexcept { return mode_ == ApplicationAreaMode::hiddenCoverage; }
+    // Executor completions run outside the registry's isolation: in
+    // production a failure is logged without user content and the owner
+    // keeps its last consistent state; hidden coverage surfaces it.
+    template <class F> void guarded(const char* what, F&& f) {
+        if (coverageMode()) {f();return;}
+        try {f();}
+        catch (const std::exception& e) {
+            const auto line = std::string("EndfieldHUD app shortcuts ") + what + " failed (" + typeid(e).name() + ")\n";
+            OutputDebugStringA(line.c_str());
+        }
+    }
     double now() const { return host_.now(); }
 
     bool submit(m::ShortcutTask task, Purpose purpose, std::uint64_t generation = 0) {
@@ -386,6 +421,82 @@ private:
         host_.openModule(core::Module::addApp);
     }
 
+    // --- Original application icons ---------------------------------------------
+    // The draft ("" key) and the visible saved rows that use the App icon
+    // preset; at most 16 retained references (the shared image cache keeps 24).
+    struct IconWant { std::string id, applicationKey; g::AppShortcutSelection selection; };
+    struct IconEntry { std::string applicationKey; std::uint64_t revision{}, used{}; bool attempted{}; };
+    static constexpr std::size_t maximumIcons = 16;
+    static std::string iconKey(std::string_view id) { return "appShortcut.icon." + (id.empty() ? std::string("draft") : std::string(id)); }
+    static std::string applicationKey(const J& locator) {
+        try {const auto& key = locator["windowsTarget"]["applicationKey"];return key.isString() ? key.string() : std::string{};}
+        catch (...) {return {};}
+    }
+    void refreshIcons() {
+        const auto& s = preview_->state();iconStateRevision_ = s.revision();
+        wanted_.clear();
+        const auto want = [&](std::string id, const J& locator) {
+            if (const auto selection = g::appShortcutIconSelection(locator)) wanted_.push_back({std::move(id), applicationKey(locator), *selection});
+        };
+        if (s.editing() && s.candidate()) want({}, s.candidate()->locator);
+        const auto& items = s.file().items;
+        const auto first = std::min(items.size(), static_cast<std::size_t>(s.scrollOffset() / 52)), end = std::min(items.size(), first + 7);
+        for (auto n = first; n < end; ++n) if (items[n].iconPreset == "original") want(items[n].id, items[n].locator);
+        for (const auto& w : wanted_) icons_[w.id].used = ++iconUse_;
+        // Removed shortcuts and the least recently shown beyond the bound.
+        std::erase_if(icons_, [&](const auto& entry) {
+            const bool removed = !entry.first.empty() && std::none_of(items.begin(), items.end(), [&](const auto& v) { return v.id == entry.first; });
+            if (removed && entry.second.revision) images_.retire(iconKey(entry.first));
+            return removed;
+        });
+        while (icons_.size() > maximumIcons) {
+            const auto oldest = std::min_element(icons_.begin(), icons_.end(), [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
+            if (oldest->second.revision) images_.retire(iconKey(oldest->first));
+            icons_.erase(oldest);
+        }
+        publishIcons();scheduleIcon();
+    }
+    void publishIcons() {
+        m::ShortcutOriginalImages images;
+        for (const auto& [id, entry] : icons_) {
+            if (!entry.revision) continue;
+            const m::ShortcutImageReference reference{iconKey(id), entry.revision};
+            if (id.empty()) images.draft = reference;else images.items.emplace(id, reference);
+        }
+        preview_->setOriginalImages(std::move(images));
+    }
+    void scheduleIcon() {
+        if (iconJob_) return;
+        for (const auto& w : wanted_) {
+            const auto found = icons_.find(w.id);
+            if (found != icons_.end() && found->second.attempted && found->second.applicationKey == w.applicationKey) continue;
+            auto result = std::make_shared<std::optional<g::AppShortcutIconPixels>>();
+            std::weak_ptr<bool> alive = alive_;
+            if (!utility_.submit(iconRoute_, [extractor = extractor_, selection = w.selection, result] { *result = extractor(selection, g::appShortcutIconPixels); },
+                    [this, alive, id = w.id, key = w.applicationKey, result](std::exception_ptr error) {
+                        if (const auto token = alive.lock(); token && *token) guarded("icon", [&] { iconDone(id, key, error ? std::nullopt : std::move(*result)); });
+                    })) return; // full: retried on the next utilityCompleted
+            iconJob_ = w.id;return;
+        }
+    }
+    void iconDone(const std::string& id, const std::string& key, std::optional<g::AppShortcutIconPixels> pixels) {
+        iconJob_.reset();
+        // A result for a target that is no longer wanted (removed, relinked
+        // or a different draft) is dropped; the current one is scheduled next.
+        const auto current = std::find_if(wanted_.begin(), wanted_.end(), [&](const auto& w) { return w.id == id && w.applicationKey == key; });
+        const auto found = icons_.find(id);
+        if (current == wanted_.end() || found == icons_.end()) {scheduleIcon();return;}
+        auto& entry = found->second;
+        entry.applicationKey = key;entry.attempted = true;
+        if (pixels) {
+            const auto revision = ++iconRevision_;
+            try {(void)images_.publish(iconKey(id), revision, pixels->width, pixels->height, pixels->straightRGBA);entry.revision = revision;}
+            catch (const std::bad_alloc&) {throw;}
+            catch (const std::exception&) {} // rejected image: the source grid fallback remains
+        } else if (entry.revision) {images_.retire(iconKey(id));entry.revision = 0;}
+        publishIcons();scheduleIcon();host_.requestFrame();
+    }
+
     void notify() { ++listRevision_;if (observer_) observer_(); }
     void completed(m::ShortcutTaskResult r) {
         if (!inflight_ || inflight_->token != r.token) {pump();return;}
@@ -439,6 +550,13 @@ private:
     std::shared_ptr<SyntheticApplications> synthetic_;
     g::NativeAppShortcutAssets assets_;
     std::shared_ptr<bool> alive_;
+    g::LayerImageSource images_; // outlives the preview whose raster options borrow it
+    g::AppShortcutIconExtractor extractor_;
+    app::UtilityExecutor::Route iconRoute_{};
+    std::vector<IconWant> wanted_;
+    std::map<std::string, IconEntry, std::less<>> icons_;
+    std::optional<std::string> iconJob_;
+    std::uint64_t iconRevision_{}, iconUse_{}, iconStateRevision_{~std::uint64_t{0}};
     std::uint32_t textMessage_{};
     m::ShortcutAppearance appearance_;
     core::Language language_{core::Language::english};
@@ -472,7 +590,15 @@ struct AppShortcutArea::Driver {
     const m::AppShortcutState& state() const { return a.preview_->state(); }
     void frame(double dt = 1. / 60) { t += dt;step.present(t); }
     void frames(double seconds) { const double end = t + seconds;while (t < end) frame(); }
-    bool working() const { return a.tasks_->busy() || a.loadPending_ || (a.launch_ && (a.launch_->phase == LaunchPhase::verify || a.launch_->phase == LaunchPhase::dispatch)); }
+    bool working() const {
+        return a.tasks_->busy() || a.loadPending_ || a.iconJob_ || (a.launch_ && (a.launch_->phase == LaunchPhase::verify || a.launch_->phase == LaunchPhase::dispatch));
+    }
+    // The published App icon image of a shortcut ("" is the draft).
+    bool icon(const std::string& id, std::string_view applicationKey) {
+        const auto found = a.icons_.find(id);
+        return found != a.icons_.end() && found->second.revision && found->second.applicationKey == applicationKey &&
+            a.images_.acquire(iconKey(id), found->second.revision) != nullptr;
+    }
     void settle() {
         for (unsigned n = 0; n < 12 && working(); ++n) {step.drain();frame();}
         step.check(!working(), "App shortcut work settles through the shared executor");
@@ -626,6 +752,8 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     //    name control; the new draft clears the previous error.
     d.choose(applications / "Beta.lnk");
     step.check(state.editing() && !state.error() && state.draftName() == "Beta Synthetic", "A new draft clears the previous error");
+    d.settle();
+    step.check(d.icon("", applicationKey(state.candidate()->locator)), "The draft shows the chosen application's own icon");
     step.check(preview_->key({app::KeyKind::down, VK_RETURN}, false, d.t) && !preview_->editingName(), "Return keeps the inspected name");
     d.click(230, 90); // the name control
     d.type(u"Beta");
@@ -635,6 +763,9 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
                "The shell link is saved after the executable with the App icon preset");
     d.checkNavigation();
     step.check(d.action("app." + alpha.id) == alphaAction, "Adding an app keeps the existing navigation action");
+    d.settle();
+    step.check(d.icon(beta.id, applicationKey(beta.locator)) && !icons_.contains(alpha.id) && !icons_.contains(seeded.items[0].id),
+               "Only rows with the App icon preset and a Windows target request the application icon");
 
     // 6. Edit the first app: reinspection restores its name and preset; rename
     //    and Star keep its identity, creation date and position.
@@ -692,6 +823,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     d.commit(369, Driver::row(d.index(alpha.id)), "Remove commits the first app");
     d.commit(369, Driver::row(d.index(beta.id)), "Remove commits the shell link");
     step.check(state.file() == seeded && d.disk() == seeded && !state.error() && !preview_->busy(), "The seeded imported shortcut remains alone");
+    step.check(!icons_.contains(alpha.id) && !icons_.contains(beta.id) && icons_.size() <= maximumIcons, "Removed shortcuts release their icon images");
     d.checkNavigation();
     step.check(!planner_.shortcutID(alphaAction), "A removed app's action launches nothing");
     d.frames(.2);
