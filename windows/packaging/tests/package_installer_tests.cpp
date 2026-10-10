@@ -30,6 +30,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <commctrl.h>
 #include <objbase.h>
 
 namespace p = endfield::packaging;
@@ -392,7 +393,127 @@ std::optional<bool> savedLaunchAtLogin(const Lab& lab) {
     return ehud::data::SettingsStore(root.data).value().boolean("launchAtLogin");
 }
 
+// --- Hidden task-dialog flows -------------------------------------------------
+// The real Setup/uninstall windows driven with task-dialog messages, only when
+// this test runs outside the interactive console session (CI runners, the
+// laptop's SSH session), so no window ever appears on someone's desktop.
+bool hiddenSession() {
+    DWORD session{};
+    return ProcessIdToSessionId(GetCurrentProcessId(), &session) && session != WTSGetActiveConsoleSessionId();
+}
+HWND findDialog(const fs::path& folder, DWORD timeout) {
+    struct Search { const fs::path* folder; HWND found{}; } search{&folder};
+    for (DWORD waited = 0; waited < timeout && !search.found; waited += 100) {
+        EnumWindows([](HWND window, LPARAM data) -> BOOL {
+            auto* s = reinterpret_cast<Search*>(data);
+            wchar_t name[16]{};
+            if (!GetClassNameW(window, name, 16) || std::wstring_view(name) != L"#32770") return TRUE;
+            DWORD pid{};
+            GetWindowThreadProcessId(window, &pid);
+            const auto image = imageOf(pid);
+            if (image && inside(*image, *s->folder)) { s->found = window; return FALSE; }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&search));
+        if (!search.found) Sleep(100);
+    }
+    return search.found;
+}
+// Starts `exe`, lets `drive` act on its first page, then presses Close until
+// the program exits (Close is ignored while the progress page runs).
+Run runWindow(const Lab& lab, const fs::path& exe, std::vector<std::wstring> args, const std::function<void(HWND)>& drive) {
+    std::error_code ignored;
+    fs::remove(lab.resultFile(), ignored);
+    args.push_back(L"--result");
+    args.push_back(lab.resultFile().native());
+    std::wstring command = commandArgument(exe.native());
+    for (const auto& a : args) command += L" " + commandArgument(a);
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION process{};
+    check(CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, lab.work().c_str(), &startup, &process), "Start a Setup window");
+    CloseHandle(process.hThread);
+    const auto dialog = findDialog(lab.work(), 30000);
+    if (!dialog) TerminateProcess(process.hProcess, 99);
+    check(dialog != nullptr, "The Setup window appeared (hidden session)");
+    drive(dialog);
+    for (int attempt = 0; attempt < 600 && WaitForSingleObject(process.hProcess, 0) == WAIT_TIMEOUT; ++attempt) {
+        DWORD_PTR ignoredResult{};
+        SendMessageTimeoutW(dialog, TDM_CLICK_BUTTON, IDCLOSE, 0, SMTO_ABORTIFHUNG, 1000, &ignoredResult);
+        Sleep(200);
+    }
+    Run run;
+    if (WaitForSingleObject(process.hProcess, 5000) != WAIT_OBJECT_0) TerminateProcess(process.hProcess, 99);
+    GetExitCodeProcess(process.hProcess, &run.exit);
+    CloseHandle(process.hProcess);
+    if (fs::exists(lab.resultFile())) run.result = Json::parse(readFile(lab.resultFile()));
+    return run;
+}
+void press(HWND dialog, int button) {
+    DWORD_PTR result{};
+    check(SendMessageTimeoutW(dialog, TDM_CLICK_BUTTON, static_cast<WPARAM>(button), 0, SMTO_ABORTIFHUNG, 10000, &result) != 0, "Press a task-dialog button");
+    Sleep(300);
+}
+void tick(HWND dialog, bool checked) {
+    DWORD_PTR result{};
+    check(SendMessageTimeoutW(dialog, TDM_CLICK_VERIFICATION, checked, FALSE, SMTO_ABORTIFHUNG, 10000, &result) != 0, "Set the task-dialog checkbox");
+}
+void windowFlows(Lab& lab, const Lab::Payload& v1) {
+    if (!hiddenSession()) {
+        std::cout << "Setup window flows skipped: interactive console session\n";
+        return;
+    }
+    std::error_code ignored;
+    fs::remove_all(lab.dataBase(), ignored);
+    // Install with the launch-at-login box cleared.
+    auto run = runWindow(lab, v1.setup, lab.isolation(), [&](HWND dialog) {
+        tick(dialog, false);
+        press(dialog, 100); // Install
+    });
+    check(run.exit == 0 && outcome(run) == "installed" && !run.result["launchAtLogin"].boolean(), "Setup window install: " + describe(run));
+    expectInstalled(lab, v1.manifest);
+    expectRegistration(lab, v1.manifest, false);
+    check(savedLaunchAtLogin(lab) == false, "The window's choice is the app's saved preference");
+    // Uninstall from the window: data removal needs the box and a second confirmation.
+    run = runWindow(lab, lab.installRoot() / L"uninstall.exe", lab.isolation(), [&](HWND dialog) {
+        tick(dialog, true);
+        press(dialog, 100); // Uninstall
+        press(dialog, 102); // Delete data and uninstall
+    });
+    check(run.exit == 0 && outcome(run) == "uninstalled" && run.result["dataRemoved"].boolean() && !fs::exists(lab.installRoot()) &&
+          !fs::exists(lab.dataBase()), "Setup window uninstall with confirmed data removal: " + describe(run));
+    // Keep-data path: the box is ticked but "Keep my data" wins.
+    run = lab.setup(v1.setup, {L"--launch-at-login", L"off"});
+    check(run.exit == 0, "Reinstall for the keep-data window: " + describe(run));
+    run = runWindow(lab, lab.installRoot() / L"uninstall.exe", lab.isolation(), [&](HWND dialog) {
+        tick(dialog, true);
+        press(dialog, 100);
+        press(dialog, 103); // Keep my data
+    });
+    check(run.exit == 0 && outcome(run) == "uninstalled" && !run.result["dataRemoved"].boolean() && fs::exists(lab.dataBase() / "root.json"),
+          "Keep my data keeps the data: " + describe(run));
+    // Cancel on the first page changes nothing.
+    run = lab.setup(v1.setup, {L"--launch-at-login", L"off"});
+    const auto before = lab.snapshot();
+    run = runWindow(lab, lab.installRoot() / L"uninstall.exe", lab.isolation(), [&](HWND dialog) { press(dialog, IDCANCEL); });
+    check(run.exit == 4 && lab.snapshot() == before, "Cancelling the uninstall window changes nothing: " + describe(run));
+}
+
+// The production layout is only resolved here (known folders, no creation,
+// no registry access): its keys, paths and launch command.
+void productionLayout() {
+    const auto l = p::InstallLayout::production();
+    check(!l.isolated() && l.installRoot.filename() == L"EndfieldHUD" && l.installRoot.parent_path().filename() == L"Programs" &&
+          l.installRoot.is_absolute(), "Per-user install folder %LOCALAPPDATA%\\Programs\\EndfieldHUD");
+    check(l.uninstallKey() == L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\EndfieldHUD" &&
+          l.runKey() == L"Software\\Microsoft\\Windows\\CurrentVersion\\Run" &&
+          l.approvedKey() == L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run" && l.classesKey() == L"Software\\Classes",
+          "Production registry keys (HKCU only)");
+    check(l.loginCommand() == L"\"" + l.executable().native() + L"\" --login" && l.shortcut().filename() == L"EndfieldHUD.lnk" &&
+          l.dataBase.filename() == L"EndfieldHUD" && l.dataBase != l.installRoot && l.workFolder.is_absolute(),
+          "Launch command, Start menu entry and the separate data root");
+}
+
 void contracts(const fs::path& stub, const fs::path& uninstaller, const fs::path& app, const fs::path& work) {
+    productionLayout();
     Lab lab(stub, uninstaller, app, work);
     std::string compressible;
     for (int n = 0; n < 20000; ++n) compressible += "EndfieldHUD resource line " + std::to_string(n % 97) + "\n";
@@ -619,6 +740,7 @@ void contracts(const fs::path& stub, const fs::path& uninstaller, const fs::path
         run = runProgram(signedSetup, {L"--verify-payload"}, lab.resultFile(), lab.work());
         check(run.exit == 0 && run.output.find(" signed") != std::string::npos, "A certificate table after the payload is honoured: " + run.output);
     }
+    windowFlows(lab, v1);
     std::cout << "Installer contracts: " << checks << " checks passed\n";
 }
 

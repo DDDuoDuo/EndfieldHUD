@@ -21,6 +21,32 @@ if(BUILD_TESTING)
   list(APPEND EHUD_PACKAGING_TARGETS packaging_format_tests packaging_perf_gate_tests)
 endif()
 
+# --- EHUDZ01 (Mac Watch runtime payloads): bounded decoder and verifier ------
+add_library(hud_packaging_ehudz01 packaging/ehudz01.cpp)
+target_include_directories(hud_packaging_ehudz01 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_packaging_ehudz01 PUBLIC hud_data PRIVATE hud_packet hud_reader_zlib)
+add_executable(package_watch_resources tools/package_watch_resources.cpp)
+target_link_libraries(package_watch_resources PRIVATE hud_packaging_ehudz01)
+list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_ehudz01 package_watch_resources)
+if(BUILD_TESTING)
+  # Oracle: tools/package_ehudz01_reference.py over the unchanged Mac packager.
+  add_executable(packaging_ehudz01_tests packaging/tests/ehudz01_tests.cpp)
+  target_link_libraries(packaging_ehudz01_tests PRIVATE hud_packaging_ehudz01 hud_packet)
+  add_test(NAME packaging_ehudz01_contracts COMMAND packaging_ehudz01_tests "${CMAKE_CURRENT_SOURCE_DIR}/packaging/tests/fixtures/ehudz01-source.json")
+  list(APPEND EHUD_PACKAGING_TARGETS packaging_ehudz01_tests)
+  # The real Watch runtime staged by the Mac packager, verified natively
+  # (where the repository's Resources/ and a Python interpreter are present).
+  find_package(Python3 COMPONENTS Interpreter QUIET)
+  set(ehud_watch_source "${CMAKE_CURRENT_SOURCE_DIR}/../Resources/WatchSource")
+  set(ehud_watch_packager "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/package-watch-resources.py")
+  if(Python3_Interpreter_FOUND AND EXISTS "${ehud_watch_source}/textures.json" AND EXISTS "${ehud_watch_packager}")
+    add_test(NAME packaging_watch_runtime_staged COMMAND "${CMAKE_COMMAND}" "-DPYTHON=${Python3_EXECUTABLE}" "-DSCRIPT=${ehud_watch_packager}"
+      "-DSOURCE=${ehud_watch_source}" "-DTOOL=$<TARGET_FILE:package_watch_resources>" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/packaging-watch-runtime"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/packaging/run_watch_runtime_check.cmake")
+    set_tests_properties(packaging_watch_runtime_staged PROPERTIES TIMEOUT 300)
+  endif()
+endif()
+
 if(WIN32)
   set(EHUD_PACKAGING_DEFINITIONS _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   # SHA-256 (BCrypt), LZMS (Windows Compression API), packer and reader.
