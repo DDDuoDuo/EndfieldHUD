@@ -9,9 +9,14 @@
 
 namespace endfield::tools {
 struct ShelfPreviewOptions {
+    // Development fixture: a NEW absolute directory, created by the owner.
+    // With persistentDataRoot (EndfieldHUD.exe, app/application_persistence.hpp)
+    // it is the application's existing versioned root, opened as it is and
+    // created only when absent on a fresh install.
     std::filesystem::path newDataRoot;
     bool nativeIcons{true},registerDropTarget{true};
     std::shared_ptr<const core::SubsectionMaskSampler> revealSamples;
+    bool persistentDataRoot{}; // last member: existing aggregate initialisers stay valid
 };
 struct ShelfPreviewAction {
     enum class Kind {choose,preview,reveal,drag,paste};Kind kind;
@@ -19,7 +24,8 @@ struct ShelfPreviewAction {
 };
 // Connected reference-only shelf. Borrows the shell's sampled module transition,
 // renderer, HWND and frame clock; never owns another module-selection state.
-// Test construction requires a fresh data root and may disable native services.
+// Test construction requires a fresh data root and may disable native services;
+// production opens the persistent root (ShelfPreviewOptions::persistentDataRoot).
 class ShelfPreview final {
 public:
     static constexpr UINT noticeMessage=WM_APP+185,actionMessage=WM_APP+186;

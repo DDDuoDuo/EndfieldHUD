@@ -45,7 +45,13 @@ public:
     bool boolean() const;
     double number() const;
     std::int64_t integer() const;
-    bool operator==(const Json&) const = default;
+    // Defaulted out of line (json.cpp), never on this first declaration. A
+    // comparison defaulted inside the class is checked while Json is still
+    // incomplete; libc++ 19 then memoizes __libcpp_is_trivially_relocatable<Json>
+    // as true, and vector<Json> growth memcpys std::map members whose end node
+    // lives inside the map object (heap use-after-free). MSVC is unaffected;
+    // tests/json_tests.cpp guards both the trait and the growth behaviour.
+    bool operator==(const Json&) const;
 private:
     Value value_;
     friend class JsonParser;

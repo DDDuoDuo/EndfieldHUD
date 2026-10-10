@@ -4,6 +4,7 @@
 #include "app/quit_confirmation_state.hpp"
 #include "native/renderer.hpp"
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -21,6 +22,8 @@ struct Probe final : app::ModuleOwner {
     bool consumes{}, captures{}, throwsOnUpdate{}, essentialOwner{}, covering{};
     core::Module module{core::Module::notes};
     unsigned updates{}, releases{}, appearance{};
+    std::vector<app::HostEvent> events;
+    bool artworkOnEvent{}, throwsOnEvent{};
     Probe(std::string name, std::vector<std::string>& journal) : id(std::move(name)), log(&journal) {}
     std::string_view name() const noexcept override { return id; }
     app::ModuleRouting routing() const noexcept override { return route; }
@@ -33,7 +36,47 @@ struct Probe final : app::ModuleOwner {
     bool pointer(const app::PointerEvent&, double) override { log->push_back(id); return consumes; }
     bool key(const app::KeyEvent&, double) override { log->push_back(id); return consumes; }
     void release(endfield::native::Renderer&) override { ++releases; log->push_back("release:" + id); }
+    bool hostEvent(const app::HostEvent& e, double) override {
+        if (throwsOnEvent) throw std::invalid_argument("synthetic broadcast failure");
+        events.push_back(e); log->push_back("event:" + id); return artworkOnEvent;
+    }
 };
+
+// Host broadcasts (app/module_owner.hpp HostEvent): every enabled owner in
+// registration order, the artwork result is the union, a failing owner is
+// isolated like any event, and every kind has a diagnostic name.
+void broadcasts() {
+    std::vector<std::string> journal;
+    Probe notes("notes", journal), area("area", journal), late("late", journal);
+    notes.route.pointer = 9; area.route.pointer = 1; // routing priority does not order broadcasts
+    app::ModuleRegistry registry(true);
+    registry.add(notes); registry.add(area); registry.add(late);
+    using K = app::HostEvent::Kind;
+    check(!registry.broadcast({K::utilityCompleted, 0}, 1) &&
+          journal == std::vector<std::string>{"event:notes", "event:area", "event:late"}, "Broadcasts follow registration order");
+    area.artworkOnEvent = true;
+    check(registry.broadcast({K::audioChanged, app::HostEvent::audioVolume | app::HostEvent::audioDevices}, 2), "Any owner's artwork change is reported");
+    check(late.events.size() == 2 && late.events[1].kind == K::audioChanged && late.events[1].flags == (app::HostEvent::audioVolume | app::HostEvent::audioDevices),
+          "Every owner receives the kind and its flags, even after an artwork change");
+    std::vector<app::ModuleFailure> failures;
+    registry.setFailureObserver([&](const app::ModuleFailure& f) { failures.push_back(f); });
+    area.throwsOnEvent = true;
+    journal.clear();
+    check(!registry.broadcast({K::suspended, app::HostEvent::suspendSystem}, 3) && !registry.enabled(area) &&
+          journal == std::vector<std::string>{"event:notes", "event:late"}, "A failing owner is isolated and the others still receive the broadcast");
+    check(failures.size() == 1 && failures[0].owner == "area" && failures[0].operation == "suspend", "The failure names the broadcast, not the message");
+    std::set<std::string_view> names;
+    for (unsigned n = 0; n < static_cast<unsigned>(K::count); ++n) {
+        const auto name = app::hostEventName(static_cast<K>(n));
+        check(!name.empty() && name != "host event", "Every broadcast kind has a diagnostic name");
+        names.insert(name);
+    }
+    check(names.size() == static_cast<std::size_t>(K::count), "Broadcast names are distinct");
+    app::ModuleOwner& plain = late;
+    app::ModuleCoverage step;
+    plain.app::ModuleOwner::coverage(step); // the default coverage hook is inert
+    check(!plain.app::ModuleOwner::hostEvent({K::quitting, 0}, 4), "The default broadcast handler reports no artwork change");
+}
 
 void routing() {
     std::vector<std::string> journal;
@@ -163,6 +206,7 @@ int main() {
     try {
         routing();
         isolation();
+        broadcasts();
         quitState();
         std::cout << "Module registry/quit confirmation: " << checks << " checks passed\n";
         return 0;

@@ -10,6 +10,7 @@
 // root and packaged resources. watch_session_preview constructs the SAME owner
 // in its development modes with explicit synthetic inputs, so hidden coverage
 // exercises production code.
+#include "app/application_host.hpp"
 #include "app/module_owner.hpp"
 #include "core/system_overlay_state.hpp"
 #include "modules/event_log.hpp"
@@ -27,21 +28,34 @@ namespace endfield::app {
 class UtilityExecutor;
 // Everything a module owner may borrow from the single Application owner.
 // Valid for the owner's whole registration; all access on the UI thread.
+// Area contract: app/module_owner.hpp ("Adding a module area").
 struct ApplicationModuleContext {
     native::LayerRasterizer& rasterizer;
     void* window{};              // the HUD HWND (routes WM_APP notifications)
-    UtilityExecutor* utility{};  // shared bounded file/work executor (may be null)
-    std::filesystem::path dataRoot; // explicit appRoot (Mac relative layout below it)
+    UtilityExecutor* utility{};  // shared bounded file/work executor (never null for factories)
+    std::filesystem::path dataRoot; // explicit appRoot (Mac relative layout below it); a NEW temporary root outside production
     void* textManager{};         // Notes' activated ITfThreadMgr* (borrow only)
     std::uint32_t textClient{};  // its TfClientId
     ClientMetrics metrics;       // current client metrics (resize() follows)
-    std::function<double()> clock;                                       // shared monotonic clock
+    std::function<double()> clock;                                       // shared monotonic clock (hidden coverage: the synthetic coverage clock)
     std::function<void()> invalidate;                                    // request one coalesced frame
     std::function<void(modules::EventKind, modules::EventMetadata)> recordEvent; // Event Log (no-op without it)
     // Verified root of a packaged resource the area declared with
     // ehud_app_resource() (cmake/modules/app.cmake); empty when it is missing
-    // or damaged (the owner then stays absent) and in development previews.
+    // or damaged (the owner then stays absent). Hidden coverage resolves the
+    // build's staged package when the harness is given --package; development
+    // previews resolve nothing.
     std::function<std::filesystem::path(std::string_view id)> resource;
+    // --- Area registration (app/module_owner.hpp) -------------------------------
+    std::string_view name;          // registered area name (stable, camelCase)
+    ApplicationAreaMode mode{};     // production, development preview or hidden coverage
+    ApplicationHost* host{};        // shared services and host actions (never null)
+    // Hidden coverage only: a NEW empty directory owned by this area for
+    // synthetic fixture inputs (inside the temporary data root); empty otherwise.
+    std::filesystem::path coverageRoot;
+    // Hidden coverage only: an absolute fixture declared with
+    // EHUD_APP_AREA_FIXTURES "<id>|<path>"; empty for unknown ids and outside coverage.
+    std::function<std::filesystem::path(std::string_view id)> fixture;
 };
 // A module area provides a factory; the Application registers the result
 // after its built-in owners. Returning null leaves the module absent.
@@ -84,9 +98,13 @@ struct ApplicationOptions {
     std::wstring windowTitle;
     // Additional module owners (Now Playing, Media Assembly, Profile, Account,
     // App shortcuts, ...), constructed in order after the built-in modules.
+    // Hosts append app/application_areas.hpp's registered areas here.
     std::vector<std::pair<std::string, ApplicationModuleFactory>> modules;
-    // Production: the verified resource package (ApplicationModuleContext::resource).
+    // The verified resource package (ApplicationModuleContext::resource):
+    // production, and hidden coverage given the staged package.
     std::function<std::filesystem::path(std::string_view id)> resources;
+    // Hidden coverage: declared area fixtures (ApplicationModuleContext::fixture).
+    std::function<std::filesystem::path(std::string_view id)> fixtures;
 };
 
 class Application final {

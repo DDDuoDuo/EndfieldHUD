@@ -17,8 +17,10 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     // Owners are destroyed in the established order after every GPU release.
     const auto drop=[&](std::unique_ptr<ModuleOwner>&adapter){unregisterModule(adapter);};
     if(quitConfirmation){registry.remove(*quitConfirmation);quitConfirmation.reset();}
-    // Added module owners may borrow Notes' TSF manager: destroy them first.
-    for(auto it=externalModules.rbegin();it!=externalModules.rend();++it){registry.remove(**it);it->reset();}externalModules.clear();
+    // Added module owners may borrow Notes' TSF manager: destroy them first,
+    // after withdrawing every area service and any pending area dialog.
+    areaPicker={};if(areaHost)areaHost->clearServices();
+    for(auto it=externalModules.rbegin();it!=externalModules.rend();++it){registry.remove(*it->owner);it->owner.reset();}externalModules.clear();
     drop(archiveModuleOwner);archiveMedia.reset();archive.reset();
     drop(calendarModuleOwner);calendar.reset();calendarState.reset();calendarNotifications.reset();if(utility&&calendarRoute)utility->invalidate(calendarRoute,false);calendarRepository.reset();calendarCivil.reset();calendarFixture.reset();
     drop(settingsModuleOwner);settingsUI.reset();drop(batteryModuleOwner);battery.reset();drop(workModeModuleOwner);workMode.reset();drop(notesModuleOwner);notes.reset();
@@ -27,7 +29,9 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     drop(readerModuleOwner);reader.reset();readerOwner.reset();drop(gameModuleOwner);game.reset();gameSession.reset();drop(mapModuleOwner);map.reset();mapStore.reset();if(utility&&mapLoadRoute)utility->invalidate(mapLoadRoute);
     // Retire state routes before the shared file executor; accepted immutable
     // writes finish on its existing shutdown barrier, with callbacks dead.
-    if(volumeProvider)volumeProvider->close();volumeProvider.reset();
+    // The audio worker restores owned per-app levels and joins before the HWND
+    // that receives its notice is destroyed.
+    if(audio)audio->stop();audio.reset();
     if(clipboardProvider)clipboardProvider->close();clipboardProvider.reset();
     if(systemServices)systemServices->stop();systemServices.reset();
     archiveService.reset();settingsSaves.reset();eventSaves.reset();utility.reset();activityCatalog.reset();activityDisk.reset();

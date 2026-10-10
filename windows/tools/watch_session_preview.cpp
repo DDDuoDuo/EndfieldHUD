@@ -2,9 +2,18 @@
 // an explicit synthetic export/cache or a NEW temporary data root; visible
 // launch is opt-in and the benchmark never shows its owned HWND. The command
 // line is unchanged: the integration validator runs this executable with the
-// exact --module-coverage arguments of verify-modules-121.ps1.
+// exact --module-coverage arguments of verify-modules-122.ps1. Module areas
+// registered by the CMake fragments (app/application_areas.hpp) join the
+// module owner automatically; hidden module coverage audits each of them, and
+// the optional --package <staged resources> lets them resolve the build's
+// verified package (application_owner_coverage passes it).
 #include "app/application.hpp"
+#include "app/application_areas.hpp"
+#include "core/resource_locator.hpp"
+#include <array>
 #include <memory>
+#include <optional>
+#include <vector>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -19,10 +28,12 @@
 
 namespace fs=std::filesystem;
 namespace app=endfield::app;
+namespace gpu=endfield::native;
+namespace core=endfield::core;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-struct Options {fs::path packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {fs::path package,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-assets common-resources (development preview)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
@@ -68,6 +79,7 @@ Options options(int argc,wchar_t**argv){
         else if(arg==L"--notes-data"&&i+1<argc){need(o.notesData.empty(),"Duplicate Notes fixture data");o.notesData=fs::absolute(argv[++i]);}
         else if(arg==L"--notes-assets-sha"&&i+1<argc){need(o.notesAssetsSHA.empty(),"Duplicate Notes asset pin");o.notesAssetsSHA=utf8(argv[++i]);}
         else if(arg==L"--compiled-sha"&&i+1<argc){need(o.pin.empty(),"Duplicate cache pin");o.pin=utf8(argv[++i]);}
+        else if(arg==L"--package"&&i+1<argc){need(o.package.empty(),"Duplicate staged package");o.package=fs::absolute(argv[++i]);}
         else need(false,"Unknown or incomplete preview argument");
     }
     need(!o.nativeClipboard||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.clipboardAssets.empty()&&!o.notesAssets.empty()),"Native Clipboard requires explicit visible mode and module assets; hidden tests never access the clipboard");
@@ -76,6 +88,7 @@ Options options(int argc,wchar_t**argv){
     need(o.visible||o.notesAssets.empty()||o.moduleCoverage,"Hidden module integration requires explicit --module-coverage");
     need(!o.moduleCoverage||(!o.visible&&!o.notesAssets.empty()),"Module coverage requires hidden mode and fresh isolated Notes data");
     need(!o.sessionEndCoverage||o.moduleCoverage,"Session-end coverage extends hidden module coverage");
+    need(o.package.empty()||(o.moduleCoverage&&fs::is_directory(o.package)),"The staged resource package is an existing hidden module coverage input");
     need(o.notesData.empty()||!fs::exists(o.notesData),"Notes preview data root must be new");
     need(o.visible!=!o.report.empty(),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
@@ -109,7 +122,7 @@ Options options(int argc,wchar_t**argv){
 // Hidden coverage registers one inert module through the public factory seam
 // (ApplicationOptions::modules) and checks that the owner delivered every
 // shared lifecycle event to it, including the final GPU release.
-struct ProbeCounts {unsigned resize{},appearance{},opened{},closed{},updates{},uploads{},releases{};bool developmentResources{};};
+struct ProbeCounts {unsigned resize{},appearance{},opened{},closed{},updates{},uploads{},releases{};bool contextResources{};};
 class CoverageProbe final:public app::ModuleOwner {
     std::shared_ptr<ProbeCounts>counts_;
 public:
@@ -123,6 +136,70 @@ public:
     void upload(endfield::native::Renderer&)override{++counts_->uploads;}
     void release(endfield::native::Renderer&)override{++counts_->releases;}
 };
+
+// Hidden coverage audit of every registered module area. The harness wraps the
+// area's owner transparently and requires, once the Application is gone, that
+// it received its context, every shared event and host broadcast the coverage
+// run delivers, its coverage steps and exactly one GPU release.
+struct AreaAudit {
+    std::string name;bool constructed{},destroyed{},context{};
+    unsigned resize{},appearance{},opened{},closed{},updates{},uploads{},releases{},coverage{};
+    std::array<unsigned,static_cast<std::size_t>(app::HostEvent::Kind::count)>events{};
+};
+class AuditedArea final:public app::ModuleOwner {
+    std::unique_ptr<app::ModuleOwner>inner_;std::shared_ptr<AreaAudit>audit_;
+public:
+    AuditedArea(std::unique_ptr<app::ModuleOwner>inner,std::shared_ptr<AreaAudit>audit):inner_(std::move(inner)),audit_(std::move(audit)){audit_->constructed=true;}
+    ~AuditedArea()override{inner_.reset();audit_->destroyed=true;}
+    AuditedArea(const AuditedArea&)=delete;AuditedArea&operator=(const AuditedArea&)=delete;
+    std::string_view name()const noexcept override{return inner_->name();}
+    app::ModuleRouting routing()const noexcept override{return inner_->routing();}
+    bool essential()const noexcept override{return inner_->essential();}
+    bool presents(core::Module m)const noexcept override{return inner_->presents(m);}
+    void resize(const app::ClientMetrics&m)override{++audit_->resize;inner_->resize(m);}
+    void setAppearance(const app::ModuleAppearance&a,double t)override{++audit_->appearance;inner_->setAppearance(a,t);}
+    void setOverlayVisible(bool v,double t)override{if(v)++audit_->opened;inner_->setOverlayVisible(v,t);}
+    void overlayClosing(double t)override{++audit_->closed;inner_->overlayClosing(t);}
+    void update(const app::ModuleFrame&f)override{++audit_->updates;inner_->update(f);}
+    bool requiresFrames(double t)const override{return inner_->requiresFrames(t);}
+    std::optional<double>nextWakeTime(double t)const override{return inner_->nextWakeTime(t);}
+    bool deadline(double t)override{return inner_->deadline(t);}
+    void upload(gpu::Renderer&r)override{++audit_->uploads;inner_->upload(r);}
+    std::span<const gpu::LayerCompositionEntry>entries(core::Module m)override{return inner_->entries(m);}
+    std::span<const gpu::LayerCompositionEntry>floatingEntries()override{return inner_->floatingEntries();}
+    std::span<const gpu::LayerCompositionEntry>modalEntries()override{return inner_->modalEntries();}
+    void collected(gpu::Renderer&r)override{inner_->collected(r);}
+    void release(gpu::Renderer&r)override{++audit_->releases;inner_->release(r);}
+    bool covers(core::Point p)const override{return inner_->covers(p);}
+    bool pointerLocked()const override{return inner_->pointerLocked();}
+    bool capturesPointer()const override{return inner_->capturesPointer();}
+    bool capturesWheel()const override{return inner_->capturesWheel();}
+    bool capturesKeys()const override{return inner_->capturesKeys();}
+    bool suppressesKeyFilters()const override{return inner_->suppressesKeyFilters();}
+    bool pointer(const app::PointerEvent&e,double t)override{return inner_->pointer(e,t);}
+    bool wheel(const app::WheelEvent&e,double t)override{return inner_->wheel(e,t);}
+    bool key(const app::KeyEvent&e,double t)override{return inner_->key(e,t);}
+    bool filterKey(const app::NativeMessage&m)override{return inner_->filterKey(m);}
+    bool message(const app::NativeMessage&m,double t)override{return inner_->message(m,t);}
+    void focus(bool v,double t)override{inner_->focus(v,t);}
+    void cancelInteraction(double t)override{inner_->cancelInteraction(t);}
+    bool releasesSelection(double t)override{return inner_->releasesSelection(t);}
+    bool finishEditing(double t)override{return inner_->finishEditing(t);}
+    bool flush(double t)override{return inner_->flush(t);}
+    bool hostEvent(const app::HostEvent&e,double t)override{++audit_->events[static_cast<std::size_t>(e.kind)];return inner_->hostEvent(e,t);}
+    void coverage(app::ModuleCoverage&c)override{++audit_->coverage;inner_->coverage(c);}
+};
+void requireAudit(const AreaAudit&a,bool packaged){
+    if(!a.constructed){if(packaged)throw std::runtime_error("Module area "+a.name+" returned no owner although the staged package was available");return;}
+    const auto event=[&](app::HostEvent::Kind kind){return a.events[static_cast<std::size_t>(kind)];};
+    using K=app::HostEvent::Kind;
+    const std::array<K,7> required{K::utilityCompleted,K::overlayConcealed,K::suspended,K::resumed,K::timeChanged,K::systemSettingsChanged,K::settingsChanged};
+    std::string missing;
+    if(!a.context)missing+=" context";if(!a.resize)missing+=" resize";if(!a.appearance)missing+=" appearance";if(!a.opened)missing+=" open";if(!a.closed)missing+=" close";
+    if(!a.updates)missing+=" frames";if(!a.uploads)missing+=" upload";if(a.releases!=1)missing+=" single-release";if(!a.destroyed)missing+=" destruction";if(a.coverage<3)missing+=" coverage-steps";
+    for(const auto kind:required)if(!event(kind))missing+=" "+std::string(app::hostEventName(kind));
+    if(!missing.empty())throw std::runtime_error("Module area "+a.name+" did not receive:"+missing);
+}
 app::ApplicationOptions applicationOptions(const Options&o){
     app::ApplicationOptions a;
     a.mode=o.visible?app::ApplicationMode::visiblePreview:app::ApplicationMode::hiddenBenchmark;
@@ -147,15 +224,41 @@ app::ApplicationOptions applicationOptions(const Options&o){
 int wmain(int argc,wchar_t**argv){std::cout<<std::unitbuf;std::cerr<<std::unitbuf;try{
     const auto args=options(argc,argv);
     auto settings=applicationOptions(args);
+    std::optional<endfield::core::ResourceLocator>package;
+    if(!args.package.empty()){
+        // The build's staged EndfieldHUD package: areas resolve the same
+        // SHA-256 verified resources as in production (read only).
+        package.emplace(endfield::core::ResourceLocator::open(args.package));
+        settings.resources=[&locator=*package](std::string_view id)->fs::path{return locator.available(id)?locator.resolve(id).path:fs::path{};};
+    }
     std::shared_ptr<ProbeCounts>probe;
-    if(args.moduleCoverage){probe=std::make_shared<ProbeCounts>();settings.modules.emplace_back("coverage probe",[probe](const app::ApplicationModuleContext&context){
-        // Development previews have no verified package: resources resolve empty.
-        probe->developmentResources=context.resource&&context.resource("shell.shader").empty()&&context.utility&&context.window;
+    if(args.moduleCoverage){probe=std::make_shared<ProbeCounts>();settings.modules.emplace_back("coverage probe",[probe,packaged=package.has_value()](const app::ApplicationModuleContext&context){
+        // Without --package there is no verified package: resources resolve empty.
+        probe->contextResources=context.resource&&context.resource("shell.shader").empty()!=packaged&&context.utility&&context.window&&context.host&&
+            context.mode==app::ApplicationAreaMode::hiddenCoverage&&fs::is_directory(context.coverageRoot);
         return std::make_unique<CoverageProbe>(probe);});}
+    // Registered module areas join whenever the module owner exists.
+    std::vector<std::shared_ptr<AreaAudit>>audits;
+    if(!args.notesAssets.empty()){
+        std::vector<std::pair<std::string,app::ApplicationModuleFactory>>areas;app::appendRegisteredAreas(areas,args.moduleCoverage);
+        for(auto&[name,factory]:areas){
+            if(!args.moduleCoverage){settings.modules.emplace_back(name,std::move(factory));continue;}
+            auto audit=std::make_shared<AreaAudit>();audit->name=name;audits.push_back(audit);
+            settings.modules.emplace_back(name,[audit,factory=std::move(factory)](const app::ApplicationModuleContext&context)->std::unique_ptr<app::ModuleOwner>{
+                audit->context=context.name==audit->name&&context.mode==app::ApplicationAreaMode::hiddenCoverage&&context.host&&context.utility&&context.window&&
+                    context.resource&&context.fixture&&fs::is_directory(context.coverageRoot)&&fs::is_empty(context.coverageRoot);
+                auto owner=factory(context);if(!owner)return nullptr;
+                return std::make_unique<AuditedArea>(std::move(owner),audit);});
+        }
+        settings.fixtures=[](std::string_view id){return app::registeredCoverageFixture(id);};
+    }
     int result{};
     {app::Application application(std::move(settings));result=args.visible?application.run():application.runHiddenVerification();}
-    if(probe)need(probe->resize>0&&probe->appearance>0&&probe->opened>0&&probe->closed>0&&probe->updates>0&&probe->uploads>0&&probe->releases==1&&probe->developmentResources,
+    if(probe)need(probe->resize>0&&probe->appearance>0&&probe->opened>0&&probe->closed>0&&probe->updates>0&&probe->uploads>0&&probe->releases==1&&probe->contextResources,
         "A factory-added module owner did not receive its context and every shared lifecycle event");
+    unsigned constructed{};
+    for(const auto&audit:audits){requireAudit(*audit,package.has_value());constructed+=audit->constructed;}
+    if(args.moduleCoverage)std::cout<<"Module areas: "<<constructed<<" of "<<audits.size()<<" constructed; each received its context, every shared event, its coverage steps and one release\n";
     return result;
 }catch(const winrt::hresult_error&e){std::cerr<<"Source preview failed: HRESULT "<<std::hex<<static_cast<std::uint32_t>(e.code().value)<<" "<<winrt::to_string(e.message())<<'\n';return 1;}
 catch(const std::exception&e){std::cerr<<"Source preview failed: "<<e.what()<<'\n';return 1;}}

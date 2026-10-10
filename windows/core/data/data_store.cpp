@@ -5,8 +5,11 @@
 #include <chrono>
 #include <cmath>
 #include <ctime>
+#include <limits>
 #include <random>
 #include <set>
+#include <string_view>
+#include <vector>
 
 namespace ehud::data {
 namespace {
@@ -34,6 +37,56 @@ bool imageName(std::string_view name) {
     return (name.size()==40 && name.substr(36)==".png" && validUUID(name.substr(0,36))) ||
         (name.size()==42 && name.substr(36)==".image" && validUUID(name.substr(0,36)));
 }
+// UTF-8 scalars for the Mac text normalization. Invalid bytes become U+FFFD
+// of one byte (never whitespace); validateProfile rejects them afterwards.
+struct Scalar {char32_t value;std::size_t offset,size;};
+std::vector<Scalar> scalars(std::string_view text) {
+    std::vector<Scalar> out;out.reserve(text.size());
+    for(std::size_t i=0;i<text.size();) {
+        const auto lead=static_cast<unsigned char>(text[i]);
+        const std::size_t size=lead<0x80?1:lead>=0xF0&&lead<0xF8?4:lead>=0xE0?3:lead>=0xC0?2:0;
+        char32_t value=size==1?lead:size?static_cast<char32_t>(lead&(0x7F>>size)):0xFFFD;bool valid=size!=0&&i+size<=text.size();
+        for(std::size_t k=1;valid&&k<size;++k) {const auto next=static_cast<unsigned char>(text[i+k]);valid=(next&0xC0)==0x80;value=(value<<6)|(next&0x3F);}
+        if(!valid) {out.push_back({0xFFFD,i,1});++i;continue;}
+        out.push_back({value,i,size});i+=size;
+    }
+    return out;
+}
+// Measured on macOS 15.5 (Foundation): CharacterSet.whitespaces is tab, U+0020,
+// U+00A0, U+1680, U+2000...U+200B, U+202F, U+205F and U+3000; Character.isNewline
+// is U+000A...U+000D, U+0085, U+2028 and U+2029; whitespacesAndNewlines is
+// their union.
+bool swiftWhitespace(char32_t c) noexcept {return c==0x09||c==0x20||c==0xA0||c==0x1680||(c>=0x2000&&c<=0x200B)||c==0x202F||c==0x205F||c==0x3000;}
+bool swiftNewline(char32_t c) noexcept {return (c>=0x0A&&c<=0x0D)||c==0x85||c==0x2028||c==0x2029;}
+template <class Predicate> std::string trimmed(std::string_view text,Predicate trim) {
+    const auto all=scalars(text);std::size_t first=0,last=all.size();
+    while(first<last&&trim(all[first].value)) ++first;
+    while(last>first&&trim(all[last-1].value)) --last;
+    if(first==last) return {};
+    return std::string(text.substr(all[first].offset,all[last-1].offset+all[last-1].size-all[first].offset));
+}
+std::string withoutNewlines(std::string_view text) {
+    std::string out;out.reserve(text.size());
+    for(const auto& scalar:scalars(text)) if(!swiftNewline(scalar.value)) out.append(text.substr(scalar.offset,scalar.size));
+    return out;
+}
+// UserProfile.normalizedThemeHex: trim, drop every '#', uppercase, then six
+// hex digits or nil. U+FB00 (LATIN SMALL LIGATURE FF) is the only non-ASCII
+// scalar whose Unicode uppercase consists of hex digits ("FF").
+std::optional<std::string> normalizedThemeHex(std::string_view input) {
+    const auto value=trimmed(input,[](char32_t c){return swiftWhitespace(c)||swiftNewline(c);});std::string out;
+    for(const auto& scalar:scalars(value)) {
+        const auto c=scalar.value;
+        if(c=='#') continue;
+        if(c==0xFB00) {out+="FF";continue;}
+        if(c>0x7F) return std::nullopt;
+        out.push_back(c>='a'&&c<='z'?static_cast<char>(c-'a'+'A'):static_cast<char>(c));
+        if(out.size()>6) return std::nullopt;
+    }
+    if(!hex(out)) return std::nullopt;
+    return out;
+}
+double bound(double value,double low,double high,double fallback) noexcept {return std::isfinite(value)?std::min(high,std::max(low,value)):fallback;}
 std::tm localDate(double epoch) {
     std::tm date{};
     const double unixSeconds=epoch+978307200.0;
@@ -58,24 +111,28 @@ void integer(Json& object,const char* key,std::int64_t value) {
 }
 Profile decodeProfile(const Json& object) {
     require(object.isObject(),"Missing personal profile");Profile profile;profile.originalFields=object;
+    // Swift decodeIfPresent: an absent key and an explicit null both mean "use the default".
+    auto present=[&](const char* key) {return object.contains(key)&&!object[key].isNull();};
     auto text=[&](const char* key) {require(object[key].isString(),"Missing profile text field");return object[key].string();};
     auto real=[&](const char* key) {require(object[key].isNumber(),"Missing profile numeric field");return object[key].number();};
     auto whole=[&](const char* key) {require(object[key].isNumber(),"Missing profile integer field");return object[key].integer();};
     auto opt=[&](const char* key)->std::optional<std::string> {if(object[key].isNull()) return {};return text(key);};
-    auto flag=[&](const char* key,bool fallback=false) {if(!object.contains(key)) return fallback;require(object[key].isBool(),"Invalid profile Boolean");return object[key].boolean();};
-    auto fallbackReal=[&](const char* key,double fallback) {return object.contains(key)?real(key):fallback;};
-    auto small=[&](const char* key) {const auto value=whole(key);require(value>=0 && value<=1000,"Invalid small profile integer");return static_cast<int>(value);};
+    auto flag=[&](const char* key,bool fallback=false) {if(!present(key)) return fallback;require(object[key].isBool(),"Invalid profile Boolean");return object[key].boolean();};
+    auto fallbackReal=[&](const char* key,double fallback) {return present(key)?real(key):fallback;};
+    // Any Swift Int; normalizedEditableProfile clamps it like the Mac store
+    // instead of rejecting an out-of-range level or annual birthday.
+    auto clampedInt=[&](const char* key) {return static_cast<int>(std::clamp<std::int64_t>(whole(key),std::numeric_limits<int>::min(),std::numeric_limits<int>::max()));};
     profile.name=text("name");profile.tag=text("tag");profile.uid=text("uid");profile.awakeningDate=real("awakeningDate");
     profile.gamePlayerID=opt("gamePlayerID");profile.playerIDOverride=opt("playerIDOverride");
     profile.hasManualAwakeningDate=flag("hasManualAwakeningDate");profile.showsBirthday=flag("showsBirthday");
-    profile.permissionLevel=small("permissionLevel");profile.explorationLevel=small("explorationLevel");
+    profile.permissionLevel=clampedInt("permissionLevel");profile.explorationLevel=clampedInt("explorationLevel");
     profile.operatorsCount=whole("operatorsCount");profile.weaponsCount=whole("weaponsCount");profile.archivesCount=whole("archivesCount");
     profile.avatarFilename=opt("avatarFilename");profile.backgroundFilename=opt("backgroundFilename");profile.themeColorHex=opt("themeColorHex");
     profile.accumulatedWorkSeconds=real("accumulatedWorkSeconds");
-    profile.introduction=object.contains("introduction")?text("introduction"):"";
+    profile.introduction=present("introduction")?text("introduction"):"";
     const auto birthday=localDate(profile.awakeningDate);
-    profile.birthdayMonth=object.contains("birthdayMonth")?small("birthdayMonth"):birthday.tm_mon+1;
-    profile.birthdayDay=object.contains("birthdayDay")?small("birthdayDay"):birthday.tm_mday;
+    profile.birthdayMonth=present("birthdayMonth")?clampedInt("birthdayMonth"):birthday.tm_mon+1;
+    profile.birthdayDay=present("birthdayDay")?clampedInt("birthdayDay"):birthday.tm_mday;
     profile.avatarZoom=fallbackReal("avatarZoom",1);profile.avatarOffsetX=fallbackReal("avatarOffsetX",0);profile.avatarOffsetY=fallbackReal("avatarOffsetY",0);
     profile.backgroundWidth=fallbackReal("backgroundWidth",600);profile.backgroundZoom=fallbackReal("backgroundZoom",1);
     profile.backgroundOffsetX=fallbackReal("backgroundOffsetX",0);profile.backgroundOffsetY=fallbackReal("backgroundOffsetY",0);
@@ -195,11 +252,26 @@ Profile Profile::defaults() {
 #endif
     value.birthdayMonth=local.tm_mon+1;value.birthdayDay=local.tm_mday;return value;
 }
+Profile normalizedEditableProfile(Profile value) {
+    static constexpr int days[]{31,29,31,30,31,30,31,31,30,31,30,31};
+    const auto whitespace=[](char32_t c){return swiftWhitespace(c);};
+    const auto whitespaceOrNewline=[](char32_t c){return swiftWhitespace(c)||swiftNewline(c);};
+    if(value.playerIDOverride) {auto clean=trimmed(withoutNewlines(*value.playerIDOverride),whitespace);value.playerIDOverride=clean.empty()?std::nullopt:std::optional(std::move(clean));}
+    value.name=trimmed(value.name,whitespaceOrNewline);value.tag=trimmed(value.tag,whitespaceOrNewline);
+    value.permissionLevel=std::clamp(value.permissionLevel,1,60);value.explorationLevel=std::clamp(value.explorationLevel,1,7);
+    value.birthdayMonth=std::clamp(value.birthdayMonth,1,12);value.birthdayDay=std::clamp(value.birthdayDay,1,days[value.birthdayMonth-1]);
+    if(value.themeColorHex) value.themeColorHex=normalizedThemeHex(*value.themeColorHex);
+    value.avatarZoom=bound(value.avatarZoom,1,20,1);value.avatarOffsetX=bound(value.avatarOffsetX,-1,1,0);value.avatarOffsetY=bound(value.avatarOffsetY,-1,1,0);
+    value.backgroundWidth=bound(value.backgroundWidth,400,900,600);value.backgroundZoom=bound(value.backgroundZoom,1,20,1);
+    value.backgroundOffsetX=bound(value.backgroundOffsetX,-400,400,0);value.backgroundOffsetY=bound(value.backgroundOffsetY,-250,250,0);
+    value.thumbnailZoom=bound(value.thumbnailZoom,1,20,1);value.thumbnailOffsetX=bound(value.thumbnailOffsetX,-1,1,0);value.thumbnailOffsetY=bound(value.thumbnailOffsetY,-1,1,0);
+    return value;
+}
 std::string Profile::displayedUID() const {return playerIDOverride.value_or(gamePlayerID.value_or(uid));}
 ProfileStore::ProfileStore(const std::filesystem::path& root) {
     detail::validateRoot(root);path_=root/"Profile"/"profile.json";persisted_=detail::readFile(path_,jsonLimit);
     if(persisted_) {
-        try {envelope_=parseRecord(*persisted_);version(envelope_);value_=decodeProfile(envelope_["profile"]);validateProfile(value_);}
+        try {envelope_=parseRecord(*persisted_);version(envelope_);value_=normalizedEditableProfile(decodeProfile(envelope_["profile"]));validateProfile(value_);}
         catch(const StoreError&) {throw;} catch(const std::exception&) {throw StoreError(StoreErrorCode::invalid,"Saved profile is invalid; the original was preserved");}
     } else {value_=Profile::defaults();update(value_);}
 }

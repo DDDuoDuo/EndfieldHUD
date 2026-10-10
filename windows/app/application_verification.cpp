@@ -4,7 +4,9 @@
 // explicit synthetic fixture in a new temporary data root; nothing is shown.
 #include "app/application_impl.hpp"
 #include "modules/archive_presentation.hpp"
+#include <algorithm>
 #include <iostream>
+#include <map>
 #include <set>
 #include <tlhelp32.h>
 
@@ -78,10 +80,39 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules;
+        // Module areas (app/module_owner.hpp): coverage steps and their checks.
+        struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
+        double areaLatest{};
+        const auto areaFor=[&](const ModuleOwner*owner)->ExternalModule*{for(auto&area:externalModules)if(area.owner.get()==owner)return &area;return nullptr;};
+        const auto runArea=[&](ExternalModule&area,std::optional<core::Module> module,unsigned cycle,double begin){
+            if(!registry.enabled(*area.owner))return;
+            auto&counts=areaCounts[area.name];double last=std::max(begin,areaLatest);
+            ModuleCoverage step;step.module=module;step.cycle=cycle;step.time=last;
+            step.present=[&](double at){need(at>=last,"Area coverage presents on a non-decreasing clock");last=at;present(at,true);};
+            step.drain=[&]{drainUtility(last);};
+            step.project=[&,module](core::Point local,double width,double height)->std::optional<core::Point>{
+                if(!module||!notes||!chromePlan||!chromePlan->projection().center||!(width>0)||!(height>0))return std::nullopt;
+                gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,width,height}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,*module);
+                const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,*module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
+                const auto screen=plane.project(local);if(!screen)return std::nullopt;return core::Point{screen->x/metrics.scale,screen->y/metrics.scale};};
+            step.check=[&](bool value,std::string_view why){++counts.checks;if(!value)throw std::runtime_error(std::string(why));};
+            step.message=[&](std::uint32_t id,std::uintptr_t wParam,std::intptr_t lParam){
+                const NativeMessage m{host.hwnd(),id,wParam,lParam};
+                return registry.first(ModuleRegistry::Chain::message,[&](ModuleOwner&o,const ModuleRouting&){return o.message(m,last);},"message")!=nullptr;};
+            ++counts.steps;
+            try{area.owner->coverage(step);}catch(const std::exception&e){throw std::runtime_error("Module area "+area.name+" coverage: "+e.what());}
+            areaLatest=std::max(areaLatest,last);
+        };
         if(args.moduleCoverage){
             double time=at(100);open(time);present(time+1,true);time+=2;
             std::vector modules{core::Module::notes,core::Module::fileShelf,core::Module::clipboard,core::Module::volume,core::Module::eventLog,core::Module::workMode,core::Module::power};if(archive)modules.push_back(core::Module::archive);if(storage)modules.push_back(core::Module::storage);if(activity)modules.push_back(core::Module::activityMonitor);if(reader)modules.push_back(core::Module::reader);if(calendar)modules.push_back(core::Module::calendar);if(map)modules.push_back(core::Module::map);if(!args.orbipomAssets.empty())modules.push_back(core::Module::minigame);if(settingsUI)modules.insert(modules.end(),{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about});
+            // Every HUD module an area presents joins the same combined cycles.
+            std::vector<core::Module> areaModules;
+            for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);
+                if(std::find(modules.begin(),modules.end(),module)==modules.end()&&areaFor(registry.presenter(module))){areaModules.push_back(module);areaPresentedModules.push_back(std::string(core::moduleIdentifier(module)));}}
+            modules.insert(modules.end(),areaModules.begin(),areaModules.end());
             std::optional<gpu::LayerRasterStats> retainedCycle;
             for(unsigned cycle=0;cycle<3;++cycle)for(const auto module:modules){
                 std::size_t scrollChanges{},peakEntries{},peakBytes{};
@@ -224,25 +255,37 @@ int Application::Impl::runHiddenVerification(){
                         for(unsigned step=0;step<24;++step){const double atTime=time+.7+double(step)*.04;const auto previous=clipboard->state().scrollOffset();need(clipboard->wheel({target->x/metrics.scale,target->y/metrics.scale,step<12?-1.:1.,false,0,3},atTime),"Clipboard consumes the projected wheel input");present(atTime,true);scrollChanges+=clipboard->state().scrollOffset()!=previous;const auto usage=rasterizer.stats();peakEntries=std::max(peakEntries,usage.entries);peakBytes=std::max(peakBytes,usage.resourceBytes);}
                         need(scrollChanges>=12&&clipboard->state().scrollOffset()==0,"Clipboard moves through rows and returns to the top");
                     }
+                    if(auto*area=areaFor(registry.presenter(module)))runArea(*area,module,cycle,time+.7);
                 }
-                catch(const std::exception&e){const auto usage=rasterizer.stats();throw std::runtime_error("Combined isolated module "+std::string(core::moduleIdentifier(module))+" entries="+std::to_string(usage.entries)+" bytes="+std::to_string(usage.resourceBytes)+": "+e.what());}
-                const auto usage=rasterizer.stats();moduleResults.push_back(Json::Object{{"module",std::string(core::moduleIdentifier(module))},{"cycle",int(cycle)},{"rasterEntries",std::int64_t(usage.entries)},{"rasterBytes",std::int64_t(usage.resourceBytes)},{"scrollChanges",std::int64_t(scrollChanges)},{"scrollPeakEntries",std::int64_t(peakEntries)},{"scrollPeakBytes",std::int64_t(peakBytes)}});
+                catch(const std::exception&e){const auto usage=rasterizer.stats();const auto&shown=notes->modulePresentation();
+                    throw std::runtime_error("Combined isolated module "+std::string(core::moduleIdentifier(module))+" cycle="+std::to_string(cycle)+" selected="+std::string(core::moduleIdentifier(notes->selected()))+
+                        " current="+std::string(core::moduleIdentifier(shown.current.module))+" transitioning="+std::to_string(shown.transitioning)+" pending="+(pendingModule?std::string(core::moduleIdentifier(*pendingModule)):std::string("none"))+
+                        " visible="+std::to_string(session->phase()!=core::VisibilityPhase::concealed)+" entries="+std::to_string(usage.entries)+" bytes="+std::to_string(usage.resourceBytes)+": "+e.what());}
+                const bool areaModule=std::find(areaModules.begin(),areaModules.end(),module)!=areaModules.end();
+                const auto usage=rasterizer.stats();(areaModule?areaModuleResults:moduleResults).push_back(Json::Object{{"module",std::string(core::moduleIdentifier(module))},{"cycle",int(cycle)},{"rasterEntries",std::int64_t(usage.entries)},{"rasterBytes",std::int64_t(usage.resourceBytes)},{"scrollChanges",std::int64_t(scrollChanges)},{"scrollPeakEntries",std::int64_t(peakEntries)},{"scrollPeakBytes",std::int64_t(peakBytes)}});
                 if(module==modules.back()){
                     if(retainedCycle)need(usage.entries==retainedCycle->entries&&usage.resourceBytes==retainedCycle->resourceBytes,"Repeated combined module cycles retain no extra raster resources");
                     // Reader intentionally adds a second (PDF) book on cycle1.
                     // Compare after that fixed input set has been exercised;
                     // the extra book changes library/control text legitimately.
                     if(!reader||cycle>0)retainedCycle=usage;
-                }time+=2;
+                    // Once per cycle every area also receives a module-less step.
+                    for(auto&area:externalModules)runArea(area,std::nullopt,cycle,time+1.9);
+                }time=std::max(time,areaLatest);time+=2;
             }
-            close(time);present(time+.7,true);
+            close(time);present(time+.7,true);concealed(time+.7);
+            // Host broadcasts the module areas rely on, through the same routes
+            // the visible owner uses, on the synthetic clock: suspend/resume,
+            // clock/time-zone and system settings changes, utility completion.
+            {const double hostTime=time+1;suspend(Suspension::system,hostTime);resume(Suspension::system,hostTime+.1);
+             systemChange(WM_TIMECHANGE,hostTime+.2);systemChange(WM_SETTINGCHANGE,hostTime+.3);drainUtility(hostTime+.4);time=hostTime+.5;}
             // Production lifecycle and the red power button over the same owner.
             // Real event routes (onKey/onPointer) read the host clock, so this
             // phase continues on that clock after the synthetic module timeline.
             if(quitConfirmation&&!quitButtons.empty()){
                 const auto settle=[&](double t){
                     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),t);}
-                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();quitConfirmation->hide(t);perform(lifecycle.didClose(token),t);}
+                    if(lifecycleClosing&&session->phase()==core::VisibilityPhase::concealed){const auto token=*lifecycleClosing;lifecycleClosing.reset();quitConfirmation->hide(t);concealed(t);perform(lifecycle.didClose(token),t);}
                 };
                 const auto run=[&](double from,double seconds){double t=from;for(unsigned n=0;n<=unsigned(seconds*60);++n){t=from+double(n)/60;present(t,true);settle(t);if(stopping)break;}return t;};
                 const auto key=[&](std::uint32_t value){need(onKey({KeyKind::down,value}),"The modal card consumes the key");(void)onKey({KeyKind::up,value});};
@@ -300,6 +343,13 @@ int Application::Impl::runHiddenVerification(){
         Json::Array unsupported,substitutions;for(const auto&v:layers.report().unsupported)unsupported.push_back(Json::Object{{"node",v.node},{"feature",v.feature}});for(const auto&v:layers.report().fontSubstitutions)substitutions.push_back(Json::Object{{"node",v.node},{"requested",v.requestedFamily},{"selected",v.selectedFamily}});
         Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog->variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent?nativeContent->stats().updates:nativeAppearance->stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent?nativeContent->stats().surfaceUpdates:nativeAppearance->stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
             {"systemBackdropIncluded",false},{"productionLifecycleChecks",int(lifecycleChecks)},{"archiveIncluded",bool(archive)},{"storageIncluded",bool(storage)},{"activityIncluded",bool(activity)},{"readerIncluded",bool(reader)},{"calendarIncluded",bool(calendar)},{"calendarUsesSyntheticNotifications",bool(calendarFixture)},{"mapIncluded",bool(map)},{"minigameIncluded",bool(game)},{"storageUsesSyntheticProviders",bool(storageFixture)},{"storageCapacityReads",storageFixture?int(storageFixture->capacityReads.load()):0},{"storageDetailScans",storageFixture?int(storageFixture->detailScans.load()):0},{"storageSettingsRequests",storageFixture?int(storageFixture->settingsRequests):0},{"appSharedMediaProvider",bool(mediaBroker)},{"limitations",Json::Array{args.moduleCoverage?"Module owners use synthetic data and hidden generated input; real clipboard/audio providers and desktop backdrop are excluded":"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
+        Json::Array areas;
+        for(const auto&area:externalModules){const auto&counts=areaCounts[area.name];Json::Array presents;
+            for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n)if(area.owner->presents(static_cast<core::Module>(n)))presents.push_back(std::string(core::moduleIdentifier(static_cast<core::Module>(n))));
+            areas.push_back(Json::Object{{"area",area.name},{"constructed",true},{"enabled",registry.enabled(*area.owner)},{"presents",std::move(presents)},{"coverageSteps",std::int64_t(counts.steps)},{"coverageChecks",std::int64_t(counts.checks)}});}
+        for(const auto&name:absentModules)areas.push_back(Json::Object{{"area",name},{"constructed",false}});
+        report["areaCoverage"]=std::move(areas);report["areaModuleResults"]=std::move(areaModuleResults);report["areaPresentedModules"]=std::move(areaPresentedModules);
+        if(args.moduleCoverage)for(const auto&area:externalModules)need(areaCounts[area.name].steps>=3,"Every module area received its hidden coverage steps");
         ehud::data::detail::replaceFile(args.report,std::nullopt,report.encode(),8*1024*1024);std::cout<<"Wrote hidden source-shell benchmark report\n";
     shutdownVisible();
     return 0;

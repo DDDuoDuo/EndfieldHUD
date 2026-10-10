@@ -10,10 +10,13 @@
 //      disables only the modules that read it, named in one localized notice.
 //   4. The single Application owner runs with real providers and per-module
 //      failure isolation until Quit, logoff or a Restart Manager shutdown.
+//      Module areas registered by the CMake fragments (app/application_areas.hpp,
+//      app/module_owner.hpp) join after the built-in owners.
 //
 // --verify-package checks only this executable's own resource package and
 // exits; it creates no window, mutex or data root (used by hidden tests).
 #include "app/application.hpp"
+#include "app/application_areas.hpp"
 #include "app/application_modules.hpp"
 #include "app/application_package.hpp"
 #include "app/single_instance.hpp"
@@ -175,6 +178,8 @@ int run(const std::vector<std::string>& values) {
     // Factory-added module areas resolve their own verified resources (the
     // locator outlives the Application and is used on its UI thread only).
     options.resources = [&locator](std::string_view id) -> fs::path { return locator.available(id) ? locator.resolve(id).path : fs::path{}; };
+    // Areas join the module owner only with Notes (module selection, TSF).
+    if (package.modules) app::appendRegisteredAreas(options.modules, false);
     app::Application application(std::move(options));
     instance.setHandler([&application](std::vector<std::string> forwarded) { application.activate(forwarded); });
     return application.run();

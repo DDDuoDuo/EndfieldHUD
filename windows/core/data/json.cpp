@@ -44,6 +44,7 @@ void utf8(std::string& result, std::uint32_t value) {
     }
 }
 }
+bool Json::operator==(const Json&) const = default;
 Json::Json(int value) : Json(static_cast<std::int64_t>(value)) {}
 Json::Json(std::int64_t value) : value_(JsonNumber{std::to_string(value)}) {}
 Json::Json(double value) {

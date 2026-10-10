@@ -112,6 +112,7 @@ void Application::Impl::onFocus(bool value){
 }
 
 void Application::Impl::onApplicationActive(bool active){
+    if(ready)broadcast(active?HostEvent::Kind::applicationActivated:HostEvent::Kind::applicationDeactivated,now());
     if(ready&&active&&calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(now());updateCalendarWake();});
     if(ready&&active)refreshExternalStatus(); // AppDelegate refreshes login status on activation
     if(!ready||!visibleMode()||active||projectionHandoff.active()||closing||session->phase()==core::VisibilityPhase::concealed||!configuration.boolean("closeOnFocusLost"))return;
@@ -124,6 +125,7 @@ void Application::Impl::onApplicationActive(bool active){
 
 void Application::Impl::onDisplayChanged(){
     if(ready&&production())recordDisplays(); // AppDelegate: screen parameter change refreshes displays
+    if(ready)broadcast(HostEvent::Kind::displaysChanged,now());
     if(!ready||!projectionHandoff.active()||projectionHandoff.phase()!=ProjectionHandoff::Phase::projection)return;
     // Compositor calls may dispatch this notification. Retain only the
     // latest topology signal, then resize/release after the current paint.
@@ -170,7 +172,7 @@ void Application::Impl::onFrame(double time){
     // once the session is visible; a focus loss queued during opening closes now.
     if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),time);if(stopping)return;}
     if(!active&&session->phase()==core::VisibilityPhase::concealed){
-        if(notes)notes->setMediaActive(false,time);host.hide();if(quitConfirmation)quitConfirmation->hide(time);
+        if(notes)notes->setMediaActive(false,time);host.hide();if(quitConfirmation)quitConfirmation->hide(time);concealed(time);
         core::SystemOverlayEffects closed;
         if(lifecycleClosing){const auto token=*lifecycleClosing;lifecycleClosing.reset();closed=lifecycle.didClose(token);}
         if(projectionHandoff.phase()==ProjectionHandoff::Phase::closingHUD){
@@ -197,7 +199,18 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         return 0;
     }
     if(ready&&m.wParam==serviceGeneration){
-        if(m.message==utilityMessage){if(utility)utility->drain();if(activityProbe)activityProbe->submitPending();if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();refresh(now());return 0;}
+        if(m.message==utilityMessage){if(utility)utility->drain();if(activityProbe)activityProbe->submitPending();if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
+        if(m.message==audioMessage&&audio){
+            // The shared AudioRuntime posted one coalesced notice: adopt the
+            // publication, feed the Event Log device list and the areas.
+            const auto changes=audio->drain();const auto time=now();
+            if(changes.devices&&eventRecorder)if(const auto labels=audio->deviceLabels())eventRecorder->receiveAudioDevices(*labels);
+            std::uint32_t flags{};
+            if(changes.snapshot)flags|=HostEvent::audioSnapshot;if(changes.volume)flags|=HostEvent::audioVolume;
+            if(changes.applications)flags|=HostEvent::audioApplications;if(changes.devices)flags|=HostEvent::audioDevices;
+            if(flags)broadcast(HostEvent::Kind::audioChanged,time,flags);
+            if(changes.volume)refresh(time);return 0;
+        }
         if(m.message==projectionDropMessage){
             auto paths=std::exchange(projectionDrop->paths,{});const auto time=now();
             if(!paths.empty()&&projection&&projection->presented()&&projectionHandoff.acceptsInput())if(const auto token=projection->preview()->prepareImportRequest()){
@@ -264,7 +277,11 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             host.suspendCursor(true);mediaPicker->handleMessage(m.wParam,m.lParam);host.suspendCursor(false);
             if(auto result=mediaPicker->drain(m.wParam)){
                 const auto owner=std::exchange(pickerOwner,PickerOwner::none);auto action=std::move(pendingArchivePicker);pendingArchivePicker.reset();auto readerAction=std::move(pendingReaderPicker);pendingReaderPicker.reset();auto projectionAction=std::exchange(pendingProjectionPicker,{});const auto time=now();
-                if(owner==PickerOwner::projection&&projectionAction&&projection&&projection->presented()&&projection->preview()->importRequestCurrent(projectionAction->generation)){
+                if(owner==PickerOwner::area){
+                    ApplicationFileResult area;area.cancelled=result->canceled();area.failed=!area.cancelled&&FAILED(result->result);
+                    if(!area.cancelled&&!area.failed)area.paths=result->paths;
+                    finishAreaPicker(std::move(area));
+                }else if(owner==PickerOwner::projection&&projectionAction&&projection&&projection->presented()&&projection->preview()->importRequestCurrent(projectionAction->generation)){
                     auto*view=projection->preview();if(result->canceled())view->receiveImportError(projectionAction->generation,{},time);
                     else if(SUCCEEDED(result->result)){try{std::vector<tools::ProjectionImportFile>files;files.reserve(result->paths.size());for(const auto&path:result->paths)files.push_back({path,utf8(utf8Path(path).filename()),{}});projection->media()->beginImport(projectionAction->generation,files,{},time);}catch(const std::exception&){view->receiveImportError(projectionAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),time);}}
                     else view->receiveImportError(projectionAction->generation,core::localized("Unable to open selected files","无法打开所选文件",watchAppearance.language),time);
@@ -282,22 +299,22 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         }
     }
     if(ready&&production()&&m.message==WM_POWERBROADCAST){
-        if(m.wParam==PBT_APMSUSPEND){suspend(Suspension::system);return TRUE;}
-        if(m.wParam==PBT_APMRESUMEAUTOMATIC||m.wParam==PBT_APMRESUMESUSPEND)resume(Suspension::system);
+        if(m.wParam==PBT_APMSUSPEND){suspend(Suspension::system,now());return TRUE;}
+        if(m.wParam==PBT_APMRESUMEAUTOMATIC||m.wParam==PBT_APMRESUMESUSPEND)resume(Suspension::system,now());
         if(m.wParam==PBT_POWERSETTINGCHANGE&&m.lParam){
             const auto*setting=reinterpret_cast<const POWERBROADCAST_SETTING*>(m.lParam);
             if(setting->PowerSetting==consoleDisplayState&&setting->DataLength>=sizeof(DWORD)){
                 DWORD state{};std::memcpy(&state,setting->Data,sizeof(state));
-                if(state==0)suspend(Suspension::display);else if(state==1)resume(Suspension::display); // dimmed (2) keeps the HUD
+                if(state==0)suspend(Suspension::display,now());else if(state==1)resume(Suspension::display,now()); // dimmed (2) keeps the HUD
             }
         }
     }
     if(ready&&production()&&m.message==WM_WTSSESSION_CHANGE){
-        if(m.wParam==WTS_SESSION_LOCK||m.wParam==WTS_CONSOLE_DISCONNECT||m.wParam==WTS_REMOTE_DISCONNECT)suspend(Suspension::session);
-        else if(m.wParam==WTS_SESSION_UNLOCK||m.wParam==WTS_CONSOLE_CONNECT||m.wParam==WTS_REMOTE_CONNECT)resume(Suspension::session);
+        if(m.wParam==WTS_SESSION_LOCK||m.wParam==WTS_CONSOLE_DISCONNECT||m.wParam==WTS_REMOTE_DISCONNECT)suspend(Suspension::session,now());
+        else if(m.wParam==WTS_SESSION_UNLOCK||m.wParam==WTS_CONSOLE_CONNECT||m.wParam==WTS_REMOTE_CONNECT)resume(Suspension::session,now());
         return 0;
     }
-    if(ready&&(m.message==WM_TIMECHANGE||m.message==WM_SETTINGCHANGE||(m.message==WM_POWERBROADCAST&&(m.wParam==PBT_APMRESUMEAUTOMATIC||m.wParam==PBT_APMRESUMESUSPEND)))){const auto time=now();if(m.message==WM_TIMECHANGE&&archiveDates)archiveDates->refreshSystemTimeZone();if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(time);updateCalendarWake();});if(m.message==WM_SETTINGCHANGE&&configuration.string("theme")=="system")configurationPending=true;refresh(time);return 0;}
+    if(ready&&(m.message==WM_TIMECHANGE||m.message==WM_SETTINGCHANGE||(m.message==WM_POWERBROADCAST&&(m.wParam==PBT_APMRESUMEAUTOMATIC||m.wParam==PBT_APMRESUMESUSPEND)))){systemChange(m.message,now());return 0;}
     if(ready&&archive&&m.message==WM_APP+221&&m.wParam==archive->mediaRouteGeneration()){
         if(auto action=archive->takeMediaAction())try{using K=tools::ArchiveMediaAction::Kind;const auto time=now();
             if(action->kind==K::chooseLocal){if(!requestMediaPicker())archive->receiveMedia(action->documentID,action->generation,{},core::localized("File picker is busy","文件选择器正忙",watchAppearance.language),time);else{pickerOwner=PickerOwner::archive;pendingArchivePicker=*action;host.capturePointer(false);}}
@@ -341,19 +358,25 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
 } // namespace endfield::app
 
 namespace endfield::app {
-void Application::Impl::suspend(Suspension reason){
+void Application::Impl::suspend(Suspension reason,double time){
+    // Source: system sleep stops owned per-app routes (levels restored),
+    // whatever else already suspended the HUD.
+    if(reason==Suspension::system&&!(suspensions&static_cast<unsigned>(reason))&&audio)(void)audio->powerSuspend();
     const bool first=suspensions==0;suspensions|=static_cast<unsigned>(reason);
     lifecycle.setSuspended(true);if(!first)return;
-    const auto time=now();
     (void)lifecycle.forceClose();forceConceal(time);
     if(workMode)workMode->setSuspended(true,time);
+    broadcast(HostEvent::Kind::suspended,time,static_cast<std::uint32_t>(reason));
 }
-void Application::Impl::resume(Suspension reason){
+void Application::Impl::resume(Suspension reason,double time){
     // Ignore duplicate or unmatched wake notifications.
     if(!(suspensions&static_cast<unsigned>(reason)))return;
-    suspensions&=~static_cast<unsigned>(reason);if(suspensions)return;
+    suspensions&=~static_cast<unsigned>(reason);
+    if(reason==Suspension::system&&audio)(void)audio->powerResume(); // re-reads the device list once
+    if(suspensions)return;
     lifecycle.setSuspended(false);
-    if(workMode)workMode->setSuspended(false,now());
+    if(workMode)workMode->setSuspended(false,time);
     if(systemServices)systemServices->refresh_battery();recordBattery();updateTrayMenu();
+    broadcast(HostEvent::Kind::resumed,time,static_cast<std::uint32_t>(reason));
 }
 } // namespace endfield::app

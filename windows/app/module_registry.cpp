@@ -90,6 +90,30 @@ std::optional<double> ModuleRegistry::nextWakeTime(double now) {
     forEach([&](ModuleOwner& o) { if (const auto value = o.nextWakeTime(now); value && (!next || *value < *next)) next = value; }, "deadline");
     return next;
 }
+bool ModuleRegistry::broadcast(const HostEvent& event, double time) {
+    bool changed{};
+    forEach([&](ModuleOwner& o) { changed = o.hostEvent(event, time) || changed; }, hostEventName(event.kind));
+    return changed;
+}
+std::string_view hostEventName(HostEvent::Kind kind) noexcept {
+    using K = HostEvent::Kind;
+    switch (kind) {
+    case K::utilityCompleted: return "utility completion";
+    case K::audioChanged: return "audio change";
+    case K::overlayConcealed: return "overlay concealed";
+    case K::suspended: return "suspend";
+    case K::resumed: return "resume";
+    case K::timeChanged: return "time change";
+    case K::systemSettingsChanged: return "system settings change";
+    case K::displaysChanged: return "display change";
+    case K::applicationActivated: return "application activation";
+    case K::applicationDeactivated: return "application deactivation";
+    case K::settingsChanged: return "settings change";
+    case K::quitting: return "quit";
+    case K::count: break;
+    }
+    return "host event";
+}
 void ModuleRegistry::releaseAll(native::Renderer& renderer) noexcept {
     ++iterating_;
     for (auto it = slots_.rbegin(); it != slots_.rend(); ++it) {

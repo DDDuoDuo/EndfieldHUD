@@ -72,12 +72,20 @@ struct NotesPreview::Impl {
 
     std::optional<core::Module>pendingModule;std::optional<app::ClientMetrics>pendingResize;bool pendingCancel{},pendingFocus{};
     std::optional<std::string>hoveredNote;std::optional<core::Rect>lastConfirmationRect;
-    Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media):hwnd(h),raster(r),assets(a),sharedMedia(media),geometry(r){
+    Impl(HWND h,gpu::LayerRasterizer&r,const std::filesystem::path&root,const gpu::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media,bool persistentDataRoot):hwnd(h),raster(r),assets(a),sharedMedia(media),geometry(r){
         static std::atomic<UINT_PTR>mediaOwners{1};mediaGeneration=mediaOwners.fetch_add(1);pendingImports.reserve(8);
         need((sharedMedia.broker==nullptr)==(sharedMedia.client==0),"Notes preview requires shared media broker/client together");
+        if(persistentDataRoot){
+            // Production: the existing versioned root, opened as it is. A fresh
+            // install creates it; no sample note is ever written.
+            need(root.is_absolute(),"Notes requires an absolute data root");
+            data::detail::validateRoot(root);std::error_code e;std::filesystem::create_directories(root,e);need(!e,"Create Notes data root");
+            store=std::make_unique<data::NotesStore>(root);for(const auto&note:initialNotes)store->upsert(note);
+        }else{
         need(root.is_absolute()&&!std::filesystem::exists(root),"Notes preview requires a new absolute synthetic data directory");
         data::detail::validateRoot(root);need(std::filesystem::create_directory(root),"Create isolated Notes fixture directory");
         store=std::make_unique<data::NotesStore>(root);data::Note sample;sample.text="双击编辑文字\n终末地 · EndfieldHUD\n日本語 한국어 😀\n01 · Scroll inside this note\n02 · 上下滚动查看内容\n03 · Select and edit this text\n04 · 中文输入测试\n05 · Notes keep their tilt\n06 · 滚动不改变便笺位置\n07 · More sample text\n08 · 临时测试内容\n09 · Drag the header to move\n10 · Resize with the corner\n11 · Scroll back to the top\n12 · End of the sample";sample.width=240;sample.height=145;sample.x=180;sample.y=245;if(initialNotes.empty())store->upsert(sample);else for(const auto&note:initialNotes)store->upsert(note);
+        }
         state=std::make_unique<mod::NotesState>(store->notes(),mod::NotesState::Persistence{[this](const auto&n){store->upsert(n);},[this](auto id){store->remove(id);}});
         state->setWorkspaceBounds({0,0,1280,800},{core::Point{540,280}});
         if(tsf)manager.start();gpu::NativeNotesWorkspaceOptions wo;wo.raster.pixelsPerPoint=2;wo.raster.paddingPoints=1;wo.activatedTextManager=manager.manager.Get();wo.textClient=manager.client;wo.mediaBroker=sharedMedia.broker;wo.mediaClient=sharedMedia.client;
@@ -219,7 +227,7 @@ struct NotesPreview::Impl {
         }}workspace->select({});return false;
     }
 };
-NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot,initialNotes,media)){}
+NotesPreview::NotesPreview(HWND h,native::LayerRasterizer&r,const std::filesystem::path&root,const native::NativeNotesControlsAssets&a,bool tsf,const std::filesystem::path&formatRoot,std::span<const data::Note>initialNotes,NotesPreviewMediaOptions media,bool persistentDataRoot):impl_(std::make_unique<Impl>(h,r,root,a,tsf,formatRoot,initialNotes,media,persistentDataRoot)){}
 NotesPreview::~NotesPreview()=default;
 ITfThreadMgr*NotesPreview::activatedTextManager()const noexcept{return impl_->manager.manager.Get();}
 TfClientId NotesPreview::textClient()const noexcept{return impl_->manager.client;}

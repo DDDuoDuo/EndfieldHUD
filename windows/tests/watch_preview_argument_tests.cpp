@@ -152,6 +152,15 @@ void run(const fs::path&executable){
            "Session-end coverage extends hidden module coverage");
     reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--session-end-coverage",L"--session-end-coverage"},
            "Duplicate session-end coverage");
+    // The staged package is an existing directory and a hidden module coverage input only.
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--package",existing.wstring()},
+           "The staged resource package is an existing hidden module coverage input");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--module-coverage",L"--notes-assets",assets,
+           L"--notes-assets-sha",L"synthetic-pin",L"--notes-data",fresh.wstring(),L"--package",(temp.root/L"absent package").wstring()},
+           "The staged resource package is an existing hidden module coverage input");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--package",existing.wstring(),L"--package",existing.wstring()},
+           "Duplicate staged package");
+    reject(executable,temp,++index,{L"--benchmark",report.wstring(),L"--package"},"Unknown or incomplete preview argument");
     reject(executable,temp,++index,{L"--benchmark",existingReport.wstring()},"Benchmark output already exists");
     check(!fs::exists(fresh)&&!fs::exists(report),"Rejected Archive/Calendar envelopes create neither a store nor a report");
     check(read(sentinel)=="owned sentinel"&&read(existingReport)=="owned report",

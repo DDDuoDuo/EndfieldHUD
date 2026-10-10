@@ -4,6 +4,7 @@
 // order (reverse): composition consumers, module owners, providers and the
 // HWND are torn down by cleanup() before the immutable source inputs and COM.
 #include "app/application.hpp"
+#include "app/application_host.hpp"
 #include "app/application_modules.hpp"
 #include "app/module_owner.hpp"
 #include "app/overlay_host.hpp"
@@ -53,6 +54,8 @@
 #include "native/clipboard_provider.hpp"
 #include "native/shelf_file_picker.hpp"
 #include "native/volume_provider.hpp"
+#include "native/audio_runtime.hpp"
+#include "native/volume_strings.hpp"
 #include "native/watch_presentation.hpp"
 #include "native/chrome_presentation.hpp"
 #include "native/watch_content.hpp"
@@ -71,9 +74,11 @@
 #include <chrono>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
+#include <typeinfo>
 #include <string>
 #include <vector>
 #ifndef NOMINMAX
@@ -164,6 +169,52 @@ struct LiveProbe {
 };
 
 struct Application::Impl {
+    // ApplicationHost of the factory-added module areas (application.cpp).
+    class AreaHost final : public ApplicationHost {
+    public:
+        explicit AreaHost(Impl& impl) noexcept : impl_(impl) {}
+        ApplicationAreaMode mode() const noexcept override;
+        double now() const override;
+        const ehud::data::Settings& settings() const noexcept override;
+        const ModuleAppearance& appearance() const noexcept override;
+        core::Module selectedModule() const noexcept override;
+        core::SystemOverlayPhase overlayPhase() const noexcept override;
+        bool overlayVisible() const noexcept override;
+        bool focused() const noexcept override;
+        const ClientMetrics& metrics() const noexcept override;
+        native::Renderer& renderer() noexcept override;
+        native::LayerRasterizer& rasterizer() noexcept override;
+        UtilityExecutor* utility() noexcept override;
+        native::SystemServices* systemServices() noexcept override;
+        native::AudioRuntime* audio() noexcept override;
+        native::NativeMediaRequestBroker* mediaBroker() noexcept override;
+        const modules::WorkModeController* workMode() const noexcept override;
+        core::ApplicationEventRecorder* eventRecorder() noexcept override;
+        void requestFrame() override;
+        void recordEvent(modules::EventKind, modules::EventMetadata) override;
+        void selectModule(core::Module) override;
+        void openModule(core::Module) override;
+        void closeOverlay() override;
+        bool updateSettings(const std::function<void(ehud::data::Settings&)>&) override;
+        bool chooseFiles(const ApplicationFileRequest&, std::function<void(ApplicationFileResult)>) override;
+        void cancelFileChoice() override;
+        std::uint32_t registerMessage() override;
+        // Services published while an area's factory runs belong to it and are
+        // withdrawn if that factory fails or returns null.
+        void constructing(std::string_view area) { constructing_ = area; }
+        void abandon(std::string_view area) noexcept;
+        void clearServices() noexcept { services_.clear(); }
+    protected:
+        void publishService(std::string_view key, void* value, const std::type_info& type) override;
+        void* findService(std::string_view key, const std::type_info& type) const override;
+    private:
+        Impl& impl_;
+        struct Service { void* value{}; const std::type_info* type{}; std::string publisher; };
+        std::map<std::string, Service, std::less<>> services_;
+        std::string constructing_;
+        std::uint32_t registeredMessages_{};
+    };
+
     explicit Impl(ApplicationOptions);
     ~Impl();
     Impl(const Impl&) = delete;
@@ -215,6 +266,15 @@ struct Application::Impl {
     void activate(const WatchActivation&);
     void registerModule(std::unique_ptr<ModuleOwner>&);
     void unregisterModule(std::unique_ptr<ModuleOwner>&) noexcept;
+    // --- module areas and host broadcasts ---------------------------------------
+    void constructAreas();
+    ApplicationAreaMode areaMode() const noexcept;
+    bool broadcast(HostEvent::Kind, double time, std::uint32_t flags = 0);
+    void concealed(double time);              // the HUD finished closing (or was forced) and is hidden
+    void systemChange(std::uint32_t message, double time); // WM_TIMECHANGE / WM_SETTINGCHANGE / resume
+    void drainUtility(double time);           // explicit barrier + utilityCompleted (hidden coverage)
+    void finishAreaPicker(ApplicationFileResult);
+    void constructAudio();
     bool routePointer(ModuleOwner&, const PointerPolicy&, const PointerEvent&, double time, core::Point);
 
     // --- projection --------------------------------------------------------------
@@ -337,8 +397,9 @@ struct Application::Impl {
     std::unique_ptr<gpu::ActivityProbe> activityProbe;
     std::unique_ptr<gpu::SystemServices> systemServices;
     std::unique_ptr<gpu::NativeClipboardProvider> clipboardProvider;
-    std::unique_ptr<gpu::VolumeProviderBinding> volumeProvider;
-    unsigned audioVotes{};
+    // The ONE production audio worker (Volume binding, Event Log device list,
+    // Now Playing routes); null in development and hidden coverage.
+    std::unique_ptr<gpu::AudioRuntime> audio;
     std::unique_ptr<modules::OrbiPomSession> gameSession;
     std::unique_ptr<tools::OrbiPomPreview> game;
     std::int64_t gameBest{};
@@ -397,15 +458,21 @@ struct Application::Impl {
     bool quitRequested{};
     core::Point mediaInsertionPoint;
     bool eventRefreshQueued{}, archiveRefreshQueued{}, stopping{}, cleaned{};
-    enum class PickerOwner {none,notes,archive,reader,projection};
+    enum class PickerOwner {none,notes,archive,reader,projection,area};
     PickerOwner pickerOwner{PickerOwner::none};
+    std::function<void(ApplicationFileResult)> areaPicker; // pending area dialog completion
     std::optional<tools::ArchiveMediaAction> pendingArchivePicker;
     std::optional<core::Module> pendingModule;
     // Module adapters (registration order = construction order).
     std::unique_ptr<ModuleOwner> notesModuleOwner, shelfModuleOwner, mapModuleOwner, readerModuleOwner, calendarModuleOwner,
         clipboardModuleOwner, archiveModuleOwner, storageModuleOwner, activityModuleOwner, eventLogModuleOwner,
         batteryModuleOwner, workModeModuleOwner, volumeModuleOwner, settingsModuleOwner, gameModuleOwner;
-    std::vector<std::unique_ptr<ModuleOwner>> externalModules;
+    // Factory-added module areas (registration order) and the factories that
+    // returned null; the shared host they borrow outlives them.
+    struct ExternalModule { std::string name; std::unique_ptr<ModuleOwner> owner; };
+    std::vector<ExternalModule> externalModules;
+    std::vector<std::string> absentModules;
+    std::unique_ptr<AreaHost> areaHost;
     // Publication.
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
     std::vector<gpu::LayerCompositionEntry> ordered;
@@ -419,6 +486,11 @@ struct Application::Impl {
     bool configurationPending{};
     ModuleAppearance moduleAppearance;
     double canvasOpenedAt{}, canvasClosedAt{}, canvasCapturedOpacity{1};
+    bool concealedBroadcast{true}; // overlayConcealed was delivered for the current closed state
+    // Area clock: the shared monotonic clock, or in hidden verification the
+    // latest synthetic time presented or broadcast (never the wall clock).
+    double hiddenClock{};
+    double areaClock() const { return visibleMode() ? now() : hiddenClock; }
     gpu::DesktopBackdropState backdropState{0,0,true,false,.75,.63,0};
     // System overlay lifecycle (Mac AppDelegate + OverlayController policy).
     core::SystemOverlayLifecycle lifecycle;
@@ -434,10 +506,10 @@ struct Application::Impl {
     void recordBattery();
     // AppDelegate.suspend/resume: system sleep, display sleep and session
     // switch/lock force-close the HUD; summons wait until every reason ends.
-    enum class Suspension : unsigned { system = 1, display = 2, session = 4 };
+    enum class Suspension : unsigned { system = HostEvent::suspendSystem, display = HostEvent::suspendDisplay, session = HostEvent::suspendSession };
     unsigned suspensions{};
-    void suspend(Suspension);
-    void resume(Suspension);
+    void suspend(Suspension, double time);
+    void resume(Suspension, double time);
     void* displayNotification{};
     // GUID_CONSOLE_DISPLAY_STATE {6FE69556-704A-47A0-8F24-C28D936FDA47}.
     static constexpr GUID consoleDisplayState{0x6fe69556,0x704a,0x47a0,{0x8f,0x24,0xc2,0x8d,0x93,0x6f,0xda,0x47}};
@@ -458,7 +530,9 @@ struct Application::Impl {
     static constexpr UINT eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
-        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,trayMessage=WM_APP+210;
+        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210;
+    // ApplicationHost::registerMessage range for module areas.
+    static constexpr UINT areaMessageFirst=WM_APP+0x1000,areaMessageLimit=0x3000;
     static constexpr UINT_PTR serviceGeneration=1;
     // Reserved source activation numbers for the desktop QuitBtn/close nodes.
     static constexpr std::uint64_t quitAction = ~std::uint64_t{0} - 1, closeAction = ~std::uint64_t{0} - 2;

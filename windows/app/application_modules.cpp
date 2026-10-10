@@ -3,6 +3,7 @@
 #include "core/source_color.hpp"
 #include "native/clipboard_assets.hpp"
 #include "native/reader_owner.hpp"
+#include "native/volume_strings.hpp"
 #include "tools/activity_preview.hpp"
 #include "tools/archive_media_binding.hpp"
 #include "tools/archive_options.hpp"
@@ -73,23 +74,9 @@ modules::StorageAppearance storageAppearance(core::Language language, bool dark,
     return {dark,2,language,accent,std::array<double,4>{available[0],available[1],available[2],accent[3]}};
 }
 native::VolumeStrings volumeStrings(core::Language language) {
-    // The English defaults and the Simplified Chinese source strings are the
-    // catalog keys; every other language resolves through the shared catalog.
-    const native::VolumeStrings en, zh = native::VolumeStrings::simplifiedChinese();
-    if (language == core::Language::simplifiedChinese) return zh;
-    native::VolumeStrings out;
-    const auto t = [&](std::string native::VolumeStrings::*field) { out.*field = core::localized(en.*field, zh.*field, language); };
-    for (auto field : {&native::VolumeStrings::title, &native::VolumeStrings::outputDevice, &native::VolumeStrings::inputDevice,
-         &native::VolumeStrings::subtitle, &native::VolumeStrings::chooseConnected, &native::VolumeStrings::output, &native::VolumeStrings::input,
-         &native::VolumeStrings::noDevice, &native::VolumeStrings::volume, &native::VolumeStrings::balance, &native::VolumeStrings::outputVolume,
-         &native::VolumeStrings::balanceLabel, &native::VolumeStrings::appVolumeSuffix, &native::VolumeStrings::unavailable, &native::VolumeStrings::mute,
-         &native::VolumeStrings::unmute, &native::VolumeStrings::headphonesBluetooth, &native::VolumeStrings::appVolume, &native::VolumeStrings::back,
-         &native::VolumeStrings::chooseOutput, &native::VolumeStrings::chooseInput, &native::VolumeStrings::selected, &native::VolumeStrings::previousPage,
-         &native::VolumeStrings::nextPage, &native::VolumeStrings::centered, &native::VolumeStrings::unsupportedBalance, &native::VolumeStrings::missingBalance,
-         &native::VolumeStrings::deviceControls, &native::VolumeStrings::noHeadphones, &native::VolumeStrings::headphones, &native::VolumeStrings::outputSuffix,
-         &native::VolumeStrings::noApps, &native::VolumeStrings::unsupportedApps, &native::VolumeStrings::noConnectedDevices, &native::VolumeStrings::starting,
-         &native::VolumeStrings::stopping, &native::VolumeStrings::restore, &native::VolumeStrings::unsupportedRoute}) t(field);
-    return out;
+    // The audio area's five-language catalog (native/volume_strings.hpp),
+    // including the per-app routing captions; the language is already resolved.
+    return native::volumeStrings(language);
 }
 
 namespace {
@@ -512,6 +499,14 @@ public:
     void setAppearance(const ModuleAppearance& a, double t) override {
         modules::OrbiPomAppearance appearance; appearance.dark = a.dark; appearance.reducedMotion = a.reduceMotion; appearance.language = a.language;
         appearance.accent = {a.accent[0], a.accent[1], a.accent[2], a.accent[3]}; g_.setAppearance(std::move(appearance), t);
+        // Mac reconcileClock: a 1/30 s simulation tick in low-power visual mode.
+        g_.setLowPowerVisualMode(a.lowPower, t);
+    }
+    // Mac OrbiPomCanvas willSleep/didWake (production force-conceal already pauses it).
+    bool hostEvent(const HostEvent& e, double t) override {
+        if (e.kind == HostEvent::Kind::suspended) g_.setSystemSuspended(true, t);
+        else if (e.kind == HostEvent::Kind::resumed) g_.setSystemSuspended(false, t);
+        return false;
     }
     void setOverlayVisible(bool v, double t) override { g_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { g_.cancelInteraction(t); g_.setOverlayVisible(false, t); }

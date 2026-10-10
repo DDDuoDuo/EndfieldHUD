@@ -74,8 +74,14 @@ struct ShelfPreview::Impl {
         Impl&i;Event(Impl&v,double requested):i(v){need(std::isfinite(requested),"Shelf owner requires finite time");if(!i.eventDepth)i.time=std::max(i.time,requested);++i.eventDepth;}~Event(){--i.eventDepth;}
     };
     Impl(HWND h,gpu::LayerRasterizer&r,const gpu::NativeShelfAssets&a,ShelfPreviewOptions o):hwnd(h),raster(r),assets(a),options(std::move(o)),geometry(r){
-        need(options.newDataRoot.is_absolute()&&!std::filesystem::exists(options.newDataRoot),"Shelf preview requires a NEW absolute data root");
-        data::detail::validateRoot(options.newDataRoot);need(std::filesystem::create_directory(options.newDataRoot),"Create isolated Shelf fixture data");
+        if(options.persistentDataRoot){
+            // Production: the existing versioned root, opened as it is.
+            need(options.newDataRoot.is_absolute(),"Shelf requires an absolute data root");
+            data::detail::validateRoot(options.newDataRoot);std::error_code e;std::filesystem::create_directories(options.newDataRoot,e);need(!e,"Create Shelf data root");
+        }else{
+            need(options.newDataRoot.is_absolute()&&!std::filesystem::exists(options.newDataRoot),"Shelf preview requires a NEW absolute data root");
+            data::detail::validateRoot(options.newDataRoot);need(std::filesystem::create_directory(options.newDataRoot),"Create isolated Shelf fixture data");
+        }
         store=std::make_shared<data::FileShelfStore>(options.newDataRoot,files.platform());
         mod::FileShelfState::Store persistence{[s=store]{return snapshot(*s);},[s=store]{s->refresh();},[s=store](auto paths){return s->add(paths);},[s=store](auto id){s->remove(id);},[s=store]{s->clear();}};
         mod::FileShelfState::PlatformActions actions;

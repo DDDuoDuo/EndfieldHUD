@@ -72,6 +72,18 @@ struct Profile {
     std::string displayedUID() const;
     bool operator==(const Profile&) const = default;
 };
+// Mac UserProfile.normalizedEditableValues(), applied by ProfileStore to the
+// record it loads (as the Mac store does) instead of rejecting a record the
+// Mac accepts: the player ID override loses line breaks and outer whitespace
+// (nil when empty); name and tag are trimmed; levels clamp to 1...60 / 1...7;
+// the annual birthday clamps to its month; the theme colour becomes six
+// uppercase hex digits or nil; every portrait and card geometry value clamps
+// to its range (non-finite values take the default). Grapheme-count limits
+// (name 20, tag 10, introduction 150, player ID 64) need Unicode segmentation:
+// the profile owner applies them with its ICU text rules
+// (modules::normalizedProfile); this store keeps longer text within its byte
+// bounds rather than rejecting it.
+Profile normalizedEditableProfile(Profile);
 class ProfileStore final {
 public:
     explicit ProfileStore(const std::filesystem::path& appRoot);

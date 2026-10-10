@@ -18,17 +18,22 @@ struct NotesPreviewPreferences {
     modules::NotesControlsStrings controls;
     bool dark{true},reduceMotion{};
 };
-// Build-only integration owner. Requires an explicit NEW temporary data root;
-// never opens the installed application's data or any account/service.
-// Its scenes enter the caller's one composition and existing frame clock.
-// Optional initialNotes seed ONLY that new injected fixture store; no installed
-// records are read, replaced, or truncated by this build-only entry point.
+// Notes module owner. Its scenes enter the caller's one composition and
+// existing frame clock; it never opens an account or service.
+//
+// Development fixture (persistentDataRoot=false, the default): dataRoot must
+// be a NEW absolute directory; it is created here and seeded with one sample
+// note, or with initialNotes instead when given.
+// Production (persistentDataRoot=true, app/application_persistence.hpp):
+// dataRoot is the application's existing versioned root (created when absent
+// on a fresh install) and is opened as it is: no sample note is ever written,
+// and initialNotes, when given, are upserted into it.
 class NotesPreview final {
 public:
-    NotesPreview(HWND,native::LayerRasterizer&,const std::filesystem::path& newDataRoot,
+    NotesPreview(HWND,native::LayerRasterizer&,const std::filesystem::path& dataRoot,
         const native::NativeNotesControlsAssets&,bool activateTextServices,
         const std::filesystem::path& formatAssets={},std::span<const ehud::data::Note> initialNotes={},
-        NotesPreviewMediaOptions media={});
+        NotesPreviewMediaOptions media={},bool persistentDataRoot=false);
     ~NotesPreview();
     // Shared preview-session TSF service. Other module editors borrow this
     // already activated manager and MUST be destroyed before NotesPreview.
