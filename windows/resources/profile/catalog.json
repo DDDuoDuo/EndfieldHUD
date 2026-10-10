@@ -1,0 +1,41 @@
+{
+  "defaultBackgroundTextureSHA256": "b056447d3d740241d9b677948b23ccb9c110d334a91e116e984a09090a7a4888",
+  "files": [
+    {
+      "bytes": 434112,
+      "channels": "BGRA8 straight",
+      "path": "business-card.bgra",
+      "rowOrigin": "bottom",
+      "rule": "desktop-profile-card.json business_card_topic_normal_1: raw m_Rect 530x204 at textureRect - textureRectOffset",
+      "sha256": "3991ce4ab7eed27bb724a6c930f8a24faed2bc6d2c79bd372ede4372b464e2d3",
+      "source": "Resources/WatchSource/Textures/business_card_topic_normal_1--4a226705---4827637915678035611.bgra-mips.bin",
+      "spriteRect": [
+        0,
+        0,
+        530,
+        204
+      ],
+      "textureHeight": 204,
+      "textureWidth": 532
+    },
+    {
+      "bytes": 262144,
+      "channels": "BGRA8 straight",
+      "path": "avatar-frame.bgra",
+      "rowOrigin": "bottom",
+      "rule": "HUDPortraitArtwork.sourceFrame: the untrimmed 254x254 HeadFrameImg sprite rect",
+      "sha256": "4af56ab7ed155e9475193ab04467c3f030cf6c573b117cb9f4ca03832a35e2c7",
+      "source": "Resources/WatchSource/Textures/icon_user_avatar_frame_endfield_1--63c7ff92--7647223879671712896.bgra-mips.bin",
+      "spriteRect": [
+        1,
+        1,
+        254,
+        254
+      ],
+      "textureHeight": 256,
+      "textureWidth": 256
+    }
+  ],
+  "policy": "Shared game assets used by the macOS source only; byte-identical copies.",
+  "schema": 1
+}
