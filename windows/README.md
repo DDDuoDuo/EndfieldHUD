@@ -958,7 +958,9 @@ unchanged HEAD fails them the same way:
   - The Power page sink, the bottom-left ID card presenter (profile feed),
     saved app shortcuts in the source navigation between Power and Add App
     (`AppShortcutNavigation`), and `DataRootRestart`.
-  - `ModuleOwner::planeEntries()` composes the Power badge below pinned Notes.
+  - `ModuleOwner::planeEntries()` is a core-plane slot below pinned Notes. The
+    Power badge moves there once the area returns it from `planeEntries()`
+    instead of `floatingEntries()`.
 - **Records and texts.** These now reach the Event Log:
   - Notes, Archive, Projection and Reader actions.
   - Shelf added/removed/cleared.
@@ -977,8 +979,8 @@ unchanged HEAD fails them the same way:
   visible-row icons on the shared executor and feeds the Power area's metric.
   Imported Mac font names resolve to Windows families in the rasterizer.
   Played video frames can be edited in place (`NotesVideoRequest::frameFilter`).
-  The profile image chooser uses the shared dialog's single-file mode with the
-  installed WIC filter. Work Mode no longer writes `profile.json`; the profile
+  The shared dialog gains a single-file mode with a filter, for the profile
+  image chooser. Work Mode no longer writes `profile.json`; the profile
   area is the only writer.
 - **Packaging hooks.** `EndfieldHUD.exe --data-root <absolute folder>
   [--toggle]` serves only the section 9 gate. Such a run gets its own
@@ -1033,8 +1035,9 @@ the README is the host's verification log.
   `id_card_presenter_contracts`. Extended suites: `source_scene_contracts`
   (runtime `desktop.profile.*` textures), `work_mode_contracts` (checkpoint
   listeners) and `profile_service_contracts` (observed controller lifetime).
-  The host now connects the bottom-left card and the single-file image
-  dialog. Platform gaps: `ChooseColorW` is modal with live streaming, and
+  The host now connects the bottom-left card. It also offers the shared
+  dialog's single-file mode with a filter, which the area still has to
+  request. Platform gaps: `ChooseColorW` is modal with live streaming, and
   Cancel restores the earlier colour.
 - **Account Linking** (`account`, commits 51fc678 and e94eba1). 11 suites:
   `hypergryph_account_{api,login,sanity_gauge,canvas,controller,profile_relay,native,platform,webview,owner,area}_contracts`.
@@ -1047,8 +1050,8 @@ the README is the host's verification log.
 - **Power** (`powerCharge`, `hud_power_area`, `power_area_contracts`). It
   provides the charge badge and the floating alert. The host now wires the
   tray, `--preview`, *Edit position* (summons are refused while the editor is
-  open), the Power page reading, the plane slot, Projection and the Activity
-  telemetry. Gap: the source shell's navigation entries are not yet UIA
+  open), the Power page reading, Projection and the Activity telemetry. It
+  also offers the plane slot, which the area has yet to use. Gap: the source shell's navigation entries are not yet UIA
   elements, so the badge's accessibility label has no host element.
 - **App shortcuts** (`appShortcuts`). Data lives in the data root's
   `AppShortcuts/shortcuts.json`. A launch closes the HUD first and records
