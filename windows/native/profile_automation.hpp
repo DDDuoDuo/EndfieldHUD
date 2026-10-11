@@ -16,21 +16,28 @@ struct IRawElementProviderFragment;struct IRawElementProviderFragmentRoot;
 
 namespace endfield::native {
 class ProfileAutomationElement;
+enum class ProfileAutomationRole : std::uint8_t {button,slider,edit};
 // One transparent accessibility peer of the Personal Profile page: the Mac
-// HUDProfileActionButton (label = action label, help = the page status) or
+// HUDProfileActionButton (label = action label, help = the page status),
 // HUDProfileAccessibilitySlider (label = field title, help = the value
-// description, the source range and step). Rects are in the 400 x 334 page
-// canvas; ids are the action ids and, for sliders, the field ids
-// (PersonalProfileField.rawValue, e.g. "thumbnailZoom").
+// description, the source range and step) or the projected NSTextView of the
+// field being edited (help = the page status, value = its draft text; named
+// by the field title, which UIA requires of an Edit). Rects are in the
+// 400 x 334 page canvas; ids are the action ids, for sliders the field ids
+// (PersonalProfileField.rawValue, e.g. "thumbnailZoom") and for the editor
+// "profile:editor:<field id>".
 struct ProfileAutomationControl {
-    std::string id,label,help;core::Rect rect;bool slider{};
-    double value{},minimum{},maximum{1},step{1};
+    std::string id,label,help;core::Rect rect;ProfileAutomationRole role{ProfileAutomationRole::button};
+    double value{},minimum{},maximum{1},step{1}; // slider
+    std::string text;                             // edit
     bool operator==(const ProfileAutomationControl&)const=default;
 };
+// The open projected field (ProfilePreview::editingView).
+struct ProfileAutomationEditor {modules::ProfileField field;core::Rect rect;std::string text;};
 // HUDPersonalProfileInteraction.layoutAccessibility over the page state:
-// every accessible action except the field being edited (its projected
-// editor is the peer then), followed by every accessible slider.
-std::vector<ProfileAutomationControl>profileAutomationControls(const modules::ProfileState&,std::optional<modules::ProfileField>editing);
+// every accessible action except the field being edited, the editor itself,
+// then every accessible slider.
+std::vector<ProfileAutomationControl>profileAutomationControls(const modules::ProfileState&,const std::optional<ProfileAutomationEditor>&editing);
 // The host's view of the profile owner (tools::ProfileOwner):
 //  controls()  profileAutomationControls(state, page.editingField()) while the
 //              page is active (the source interaction's active flag), else none;
@@ -39,21 +46,25 @@ std::vector<ProfileAutomationControl>profileAutomationControls(const modules::Pr
 //  invoke()    ProfileOwner::perform(id, time) (activateAction: the open
 //              field is committed first);
 //  setValue()  ProfileOwner::setSlider(field, value, time), refused while an
-//              image chooser or the colour picker is open (adjustSlider).
+//              image chooser or the colour picker is open (adjustSlider);
+//  setText()   ProfileOwner::setEditingText(text, time) on the open field.
 struct ProfileAutomationHost {
     IRawElementProviderFragmentRoot*root{}; // the HUD window's UIA root (borrowed, AddRef'd while connected)
     std::function<std::vector<ProfileAutomationControl>()>controls;
     std::function<std::optional<core::Rect>(core::Rect canvas)>toScreen;
     std::function<bool(std::string_view id)>invoke;
     std::function<bool(std::string_view id,double value)>setValue;
+    std::function<bool(std::string_view id,std::string_view utf8)>setText;
 };
-struct ProfileAutomationStats {std::uint64_t refreshes{},structureChanges{},created{},disconnected{},invokes{},values{};};
+struct ProfileAutomationStats {std::uint64_t refreshes{},structureChanges{},created{},disconnected{},invokes{},values{},texts{};};
 // UI Automation fragments for the projected Personal Profile controls: each
 // action is a Button with Invoke, each slider a Slider with RangeValue over
-// the source range (SmallChange/LargeChange = the source step). A RangeValue
-// write is clamped into the range like the source setAccessibilityValue;
-// non-finite values are refused. Projected controls are not tab stops: the
-// HUD routes its own keys (Escape, arrows) as on the Mac.
+// the source range (SmallChange/LargeChange = the source step) and the open
+// field an Edit with a writable Value holding its draft (it has the HUD's
+// keyboard focus). A RangeValue write is clamped into the range like the
+// source setAccessibilityValue; non-finite values are refused. Buttons and
+// sliders are not tab stops: the HUD routes its own keys (Escape, arrows) as
+// on the Mac.
 //
 // The HUD window's root provider owns the tree: it lists child(i) under the
 // profile owner's group, routes ElementProviderFromPoint to fromPoint and

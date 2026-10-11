@@ -133,6 +133,9 @@ public:
     // The page's canvas rect projected into logical client coordinates while
     // it accepts input (ProfilePreview::clientRect); none otherwise.
     std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    // UI Automation ValuePattern.SetValue on the open projected field
+    // (ProfilePreview::setEditingText); false without one.
+    bool setEditingText(std::string_view utf8,double time);
     // Observation.
     bool loaded()const noexcept;
     const std::optional<std::string>&loadError()const noexcept;

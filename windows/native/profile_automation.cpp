@@ -20,15 +20,23 @@ std::atomic<int>nextRuntime{1};
 VARIANT text(std::string_view s){VARIANT v;VariantInit(&v);v.vt=VT_BSTR;v.bstrVal=SysAllocString(wide(s).c_str());return v;}
 VARIANT flag(bool b){VARIANT v;VariantInit(&v);v.vt=VT_BOOL;v.boolVal=b?VARIANT_TRUE:VARIANT_FALSE;return v;}
 VARIANT number(double d){VARIANT v;VariantInit(&v);v.vt=VT_R8;v.dblVal=d;return v;}
+std::string narrow(std::wstring_view w){
+    if(w.empty()||w.size()>INT_MAX)return {};
+    const int n=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,w.data(),static_cast<int>(w.size()),nullptr,0,nullptr,nullptr);if(n<=0)return {};
+    std::string s(static_cast<std::size_t>(n),'\0');WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,w.data(),static_cast<int>(w.size()),s.data(),n,nullptr,nullptr);return s;
+}
+using Role=ProfileAutomationRole;
 }
 
-std::vector<ProfileAutomationControl>profileAutomationControls(const modules::ProfileState&state,std::optional<modules::ProfileField>editing){
-    std::vector<ProfileAutomationControl>out;out.reserve(state.actions().size()+state.sliders().size());
+std::vector<ProfileAutomationControl>profileAutomationControls(const modules::ProfileState&state,const std::optional<ProfileAutomationEditor>&editing){
+    std::vector<ProfileAutomationControl>out;out.reserve(state.actions().size()+state.sliders().size()+1);
     const auto status=state.accessibilityStatus();
-    const auto skipped=editing?"profile:"+std::string(modules::profileFieldID(*editing)):std::string{};
-    for(const auto&a:state.actions())if(!editing||a.id!=skipped)out.push_back({a.id,a.label,status,a.rect,false,0,0,1,1});
+    const auto fieldID=editing?std::string(modules::profileFieldID(editing->field)):std::string{};
+    const auto skipped="profile:"+fieldID;
+    for(const auto&a:state.actions())if(!editing||a.id!=skipped)out.push_back({a.id,a.label,status,a.rect,Role::button});
+    if(editing)out.push_back({"profile:editor:"+fieldID,modules::profileFieldTitle(editing->field,state.language()),status,editing->rect,Role::edit,0,0,1,1,editing->text});
     for(const auto&s:state.sliders())
-        out.push_back({std::string(modules::profileFieldID(s.field)),s.label,s.valueDescription,s.rect,true,s.value,s.minimum,s.maximum,s.step});
+        out.push_back({std::string(modules::profileFieldID(s.field)),s.label,s.valueDescription,s.rect,Role::slider,s.value,s.minimum,s.maximum,s.step});
     return out;
 }
 
@@ -41,7 +49,7 @@ struct NativeProfileAutomation::State {
     }
 };
 
-class ProfileAutomationElement final:public IRawElementProviderSimple,public IRawElementProviderFragment,public IInvokeProvider,public IRangeValueProvider {
+class ProfileAutomationElement final:public IRawElementProviderSimple,public IRawElementProviderFragment,public IInvokeProvider,public IRangeValueProvider,public IValueProvider {
 public:
     using State=NativeProfileAutomation::State;
     ProfileAutomationElement(std::weak_ptr<State>s,ProfileAutomationControl c):state(std::move(s)),control(std::move(c)),runtime(nextRuntime++){}
@@ -51,8 +59,9 @@ public:
         if(!out)return E_POINTER;*out=nullptr;
         if(riid==__uuidof(IUnknown)||riid==__uuidof(IRawElementProviderSimple))*out=static_cast<IRawElementProviderSimple*>(this);
         else if(riid==__uuidof(IRawElementProviderFragment))*out=static_cast<IRawElementProviderFragment*>(this);
-        else if(riid==__uuidof(IInvokeProvider)&&!control.slider)*out=static_cast<IInvokeProvider*>(this);
-        else if(riid==__uuidof(IRangeValueProvider)&&control.slider)*out=static_cast<IRangeValueProvider*>(this);
+        else if(riid==__uuidof(IInvokeProvider)&&control.role==Role::button)*out=static_cast<IInvokeProvider*>(this);
+        else if(riid==__uuidof(IRangeValueProvider)&&control.role==Role::slider)*out=static_cast<IRangeValueProvider*>(this);
+        else if(riid==__uuidof(IValueProvider)&&control.role==Role::edit)*out=static_cast<IValueProvider*>(this);
         else return E_NOINTERFACE;
         AddRef();return S_OK;
     }
@@ -62,8 +71,9 @@ public:
     IFACEMETHODIMP get_ProviderOptions(ProviderOptions*out)override{if(!out)return E_POINTER;*out=ProviderOptions(ProviderOptions_ServerSideProvider|ProviderOptions_UseComThreading);return S_OK;}
     IFACEMETHODIMP GetPatternProvider(PATTERNID id,IUnknown**out)override{
         if(!out)return E_POINTER;*out=nullptr;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;
-        if(id==UIA_InvokePatternId&&!control.slider){*out=static_cast<IInvokeProvider*>(this);AddRef();}
-        else if(id==UIA_RangeValuePatternId&&control.slider){*out=static_cast<IRangeValueProvider*>(this);AddRef();}
+        if(id==UIA_InvokePatternId&&control.role==Role::button){*out=static_cast<IInvokeProvider*>(this);AddRef();}
+        else if(id==UIA_RangeValuePatternId&&control.role==Role::slider){*out=static_cast<IRangeValueProvider*>(this);AddRef();}
+        else if(id==UIA_ValuePatternId&&control.role==Role::edit){*out=static_cast<IValueProvider*>(this);AddRef();}
         return S_OK;
     }
     IFACEMETHODIMP GetPropertyValue(PROPERTYID id,VARIANT*out)override{
@@ -72,9 +82,10 @@ public:
         case UIA_NamePropertyId:*out=text(control.label);break;
         case UIA_HelpTextPropertyId:if(!control.help.empty())*out=text(control.help);break;
         case UIA_AutomationIdPropertyId:*out=text(control.id);break;
-        case UIA_ControlTypePropertyId:out->vt=VT_I4;out->lVal=control.slider?UIA_SliderControlTypeId:UIA_ButtonControlTypeId;break;
+        case UIA_ControlTypePropertyId:out->vt=VT_I4;out->lVal=control.role==Role::slider?UIA_SliderControlTypeId:control.role==Role::edit?UIA_EditControlTypeId:UIA_ButtonControlTypeId;break;
         case UIA_IsEnabledPropertyId:*out=flag(true);break;
-        case UIA_IsKeyboardFocusablePropertyId:*out=flag(false);break;
+        // The open field holds the HUD's keyboard focus (its TSF document).
+        case UIA_IsKeyboardFocusablePropertyId:case UIA_HasKeyboardFocusPropertyId:*out=flag(control.role==Role::edit);break;
         case UIA_IsOffscreenPropertyId:{const auto s=state.lock();*out=flag(!s||!s->screen(control.rect));break;}
         case UIA_FrameworkIdPropertyId:*out=text("EndfieldHUD");break;
         default:break;
@@ -128,6 +139,19 @@ public:
         return s->host.setValue(id,std::min(control.maximum,std::max(control.minimum,value)))?S_OK:UIA_E_INVALIDOPERATION;
     }
     IFACEMETHODIMP get_Value(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=control.value;return S_OK;}
+    // IValueProvider (the open field): its draft text; writes replace it.
+    IFACEMETHODIMP SetValue(LPCWSTR value)override{
+        if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;if(!value)return E_INVALIDARG;
+        const std::wstring_view view(value);const auto utf8=narrow(view);if(!view.empty()&&utf8.empty())return E_INVALIDARG;
+        const auto s=state.lock();if(!s||!s->host.setText)return UIA_E_ELEMENTNOTAVAILABLE;
+        const ComPtr<ProfileAutomationElement>self(this);const std::string id=control.id;++s->statistics.texts;
+        return s->host.setText(id,utf8)?S_OK:UIA_E_INVALIDOPERATION;
+    }
+    IFACEMETHODIMP get_Value(BSTR*out)override{
+        if(!out)return E_POINTER;*out=nullptr;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;
+        *out=SysAllocString(wide(control.text).c_str());return *out?S_OK:E_OUTOFMEMORY;
+    }
+    // Shared by RangeValue (sliders) and Value (the open field): both writable.
     IFACEMETHODIMP get_IsReadOnly(BOOL*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=FALSE;return S_OK;}
     IFACEMETHODIMP get_Maximum(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=control.maximum;return S_OK;}
     IFACEMETHODIMP get_Minimum(double*out)override{if(!out)return E_POINTER;if(!connected)return UIA_E_ELEMENTNOTAVAILABLE;*out=control.minimum;return S_OK;}
@@ -152,7 +176,7 @@ bool NativeProfileAutomation::refresh(){
     std::vector<ComPtr<ProfileAutomationElement>>next;next.reserve(list.size());bool changed=list.size()!=s.order.size();
     for(std::size_t i=0;i<list.size();++i){
         auto&c=list[i];ComPtr<ProfileAutomationElement>e;
-        for(const auto&old:s.order)if(old->connected&&old->control.id==c.id&&old->control.slider==c.slider){
+        for(const auto&old:s.order)if(old->connected&&old->control.id==c.id&&old->control.role==c.role){
             // An id appears once per role; a duplicate never shares identity.
             bool taken=false;for(const auto&n:next)if(n.Get()==old.Get()){taken=true;break;}
             if(!taken){e=old;break;}
@@ -162,7 +186,8 @@ bool NativeProfileAutomation::refresh(){
             if(listening){
                 auto*simple=static_cast<IRawElementProviderSimple*>(e.Get());
                 const auto raise=[&](PROPERTYID id,VARIANT before,VARIANT after){UiaRaiseAutomationPropertyChangedEvent(simple,id,before,after);VariantClear(&before);VariantClear(&after);};
-                if(c.slider&&e->control.value!=c.value)raise(UIA_RangeValueValuePropertyId,number(e->control.value),number(c.value));
+                if(c.role==Role::slider&&e->control.value!=c.value)raise(UIA_RangeValueValuePropertyId,number(e->control.value),number(c.value));
+                if(c.role==Role::edit&&e->control.text!=c.text)raise(UIA_ValueValuePropertyId,text(e->control.text),text(c.text));
                 if(e->control.label!=c.label)raise(UIA_NamePropertyId,text(e->control.label),text(c.label));
                 if(e->control.help!=c.help)raise(UIA_HelpTextPropertyId,text(e->control.help),text(c.help));
             }

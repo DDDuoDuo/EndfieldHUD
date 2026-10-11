@@ -374,7 +374,9 @@ private:
             auto* page = owner_->page();
             const auto* state = owner_->state();
             if (!page || !state || !page->active()) return std::vector<gpu::ProfileAutomationControl>{};
-            return gpu::profileAutomationControls(*state, page->editingField());
+            std::optional<gpu::ProfileAutomationEditor> editor;
+            if (auto view = page->editingView()) editor = gpu::ProfileAutomationEditor{view->field, view->rect, std::move(view->text)};
+            return gpu::profileAutomationControls(*state, editor);
         };
         view.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> {
             // Canvas -> logical client -> physical client pixels -> screen pixels.
@@ -395,6 +397,12 @@ private:
             const auto field = m::profileField(id);
             if (!field || owner_->pickerOpen()) return false;
             const bool used = owner_->setSlider(*field, value, host_.now());
+            if (used) automationContentChanged();
+            return used;
+        };
+        // The open field's Value: replaces its draft like typed text.
+        view.setText = [this](std::string_view, std::string_view text) {
+            const bool used = owner_->setEditingText(text, host_.now());
             if (used) automationContentChanged();
             return used;
         };
@@ -596,6 +604,34 @@ void ProfileArea::coverageModule(app::ModuleCoverage& step) {
         step.check(feed_.texture(gpu::IdCardTextureSlot::background) && feed_.texture(gpu::IdCardTextureSlot::background)->revision == owner_->card()->backgroundRevision(),
                    "The regenerated card background is published");
         step.check(owner_->perform("profile:popoverClose", t), "The card theme popover closes");
+        // The open projected field is an Edit peer (the source NSTextView):
+        // named by its field, holding its draft, written through Value.
+        {
+            step.check(owner_->perform("profile:menu", t) && owner_->perform("profile:name", t) && owner_->page()->editingField() == m::ProfileField::name,
+                       "Edit name opens the projected name field");
+            gpu::NativeProfileAutomation automation(automationHost(nullptr));
+            (void)automation.refresh();
+            const auto editor = uiaPeer(automation, "profile:editor:name");
+            Microsoft::WRL::ComPtr<IValueProvider> value;
+            BSTR draft{};
+            step.check(editor && !uiaPeer(automation, "profile:name") && uiaControlType(editor.Get()) == UIA_EditControlTypeId &&
+                       uiaText(editor.Get(), UIA_NamePropertyId) == widen(m::profileFieldTitle(m::ProfileField::name, resolved(appearance_.language))) &&
+                       SUCCEEDED(editor.As(&value)) && SUCCEEDED(value->get_Value(&draft)) && draft && std::wstring_view(draft) == L"Endministrator",
+                       "The open field is an Edit peer holding its draft in place of its button");
+            SysFreeString(draft);
+            draft = nullptr;
+            const auto view = [&] { const auto* page = owner_->page(); return page ? page->editingView() : std::nullopt; };
+            step.check(value && SUCCEEDED(value->SetValue(L"Endmin 管理员")) && view() && view()->text == "Endmin \xe7\xae\xa1\xe7\x90\x86\xe5\x91\x98",
+                       "A Value write replaces the draft through the field's document");
+            step.check(!automation.refresh() && SUCCEEDED(value->get_Value(&draft)) && draft && std::wstring_view(draft) == L"Endmin 管理员",
+                       "The peer keeps its identity and reports the new draft");
+            SysFreeString(draft);
+            step.check(owner_->page()->finishEditing(false, t) && !owner_->page()->editing() && owner_->state()->profile().name == "Endministrator",
+                       "Discarding the field keeps the stored name");
+            step.check(automation.refresh() && !uiaPeer(automation, "profile:editor:name") && value->SetValue(L"x") == UIA_E_ELEMENTNOTAVAILABLE,
+                       "The closed field's peer is gone");
+            if (owner_->state()->popover()) step.check(owner_->perform("profile:popoverClose", t), "The identity popover closes");
+        }
         // 3. Official sync: the card shows the synced UID, never a # tag.
         sink_->setProfileSyncLocked(true);
         modules::hypergryph::GameProfileUpdate update;

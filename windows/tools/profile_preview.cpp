@@ -290,6 +290,22 @@ std::optional<R>ProfilePreview::clientRect(R r)const{
 }
 bool ProfilePreview::editing()const noexcept{return bool(impl_->field);}
 std::optional<m::ProfileField>ProfilePreview::editingField()const noexcept{return impl_->field?std::optional(impl_->field->field()):std::nullopt;}
+std::optional<ProfilePreview::EditingView>ProfilePreview::editingView()const{
+    const auto&f=impl_->field;if(!f)return std::nullopt;return EditingView{f->field(),f->rect(),f->text()};
+}
+bool ProfilePreview::setEditingText(std::string_view text,double t){
+    auto i=impl_;i->advance(t);if(!i->input||!i->field||text.size()>4*65536)return false;auto&f=*i->field;
+    if(f.document().composition())return false;
+    std::u16string value;
+    if(!text.empty()){
+        const int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);if(n<=0)return false;
+        value.resize(static_cast<std::size_t>(n));
+        MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),reinterpret_cast<wchar_t*>(value.data()),n);
+    }
+    const auto length=static_cast<std::uint32_t>(f.document().text().size());
+    if(!f.editor().replaceTextFromHost({0,length},value).handled)return false;
+    f.normalize(i->state.text());f.syncContent();return true;
+}
 bool ProfilePreview::finishEditing(bool commit,double t){auto i=impl_;i->advance(t);return i->finish(commit);}
 const m::ProfileArtwork&ProfilePreview::artwork()const noexcept{return impl_->art;}
 void ProfilePreview::upload(gpu::Renderer&r){

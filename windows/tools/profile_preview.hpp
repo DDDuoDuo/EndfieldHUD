@@ -79,6 +79,15 @@ public:
     std::optional<core::Rect>clientRect(core::Rect canvas)const;
     bool editing()const noexcept;
     std::optional<modules::ProfileField>editingField()const noexcept;
+    // The open projected field (the source NSTextView accessibility peer):
+    // its field, canvas rect and current draft text.
+    struct EditingView{modules::ProfileField field;core::Rect rect;std::string text;};
+    std::optional<EditingView>editingView()const;
+    // UI Automation ValuePattern.SetValue on that peer: replaces the whole
+    // draft through the editor's TSF document like typed text, then applies
+    // the field's normalization. False without an open field, while marked
+    // text is composing, for invalid UTF-8 or past the editor capacity.
+    bool setEditingText(std::string_view utf8,double time);
     bool finishEditing(bool commit,double time);
     const modules::ProfileArtwork&artwork()const noexcept;
     void upload(native::Renderer&);
