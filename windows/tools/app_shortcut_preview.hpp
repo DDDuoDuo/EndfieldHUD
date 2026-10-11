@@ -52,6 +52,9 @@ public:
     // later committed reload). Never tied to a request; scroll is clamped.
     void replaceItems(modules::ShortcutFile,double);
     void setOverlayVisible(bool,double);
+    // The owner opens a new HUD session (AppShortcutState::resetSession):
+    // only while the canvas is inactive; an accepted write still completes.
+    bool resetSession(double);
     void update(const core::Matrix4&,const core::source::DesktopChromeSettings&,
         const core::ModulePresentationSample&,float opacity,double time);
     bool requiresFrames(double)const;bool covers(core::Point logicalClientPoint)const;

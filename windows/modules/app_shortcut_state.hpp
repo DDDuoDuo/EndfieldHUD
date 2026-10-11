@@ -50,6 +50,10 @@ public:
     bool selectIcon(std::string_view,double time);bool setDropTarget(bool);
     // Called only after the injected durable transaction succeeds.
     void saved(ShortcutFile,double time);
+    // A new HUD session: the Mac creates SystemHUDView, and with it a fresh
+    // AppShortcutCanvas, on every open. While inactive only: no draft, no
+    // error, no drop target and the list at its top; the committed file stays.
+    void resetSession(double time);
     bool scroll(core::Point,double delta);
     std::optional<core::Rect>rawCardRect(std::string_view)const noexcept;
     std::optional<core::Rect>cardRect(std::string_view)const noexcept;

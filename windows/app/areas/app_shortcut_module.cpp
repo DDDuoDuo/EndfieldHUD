@@ -301,7 +301,12 @@ public:
     }
     void setOverlayVisible(bool visible, double t) override {
         if (!visible) {closing(t);return;}
+        const bool opening = !overlayVisible_;
         overlayVisible_ = true;preview_->setOverlayVisible(true, t);
+        // OverlayController creates SystemHUDView (and a fresh canvas) on
+        // every open: no draft, no error, the list at its top - and the last
+        // failed launch's error until a later launch is verified.
+        if (opening && preview_->resetSession(t) && launchError_) preview_->showError(*launchError_, t);
         // Mac OverlayController retries a failed store on the next opening.
         if (loadFailed_ && !loadPending_) {loadFailed_ = false;loadPending_ = true;}
         pump();
@@ -784,6 +789,7 @@ private:
             if (!launch_ || launch_->phase != LaunchPhase::verify) break;
             if (r.error) {finishLaunch(failure(true), t);break;}
             if (!overlayVisible_) {finishLaunch({}, t);break;}
+            launchError_.reset(); // requestAppShortcutLaunch: appLaunchError = nil
             launch_->phase = LaunchPhase::closing;
             requestClose(); // may synchronously deliver overlayClosing
             break;
@@ -795,8 +801,10 @@ private:
                 host_.recordEvent(modules::EventKind::appShortcutOpened, modules::EventMetadata{{"app", name}});
                 finishLaunch({}, t);
             } else {
-                // Keep the failed target editable and report it in Add App.
-                finishLaunch(failure(true), t);
+                // Keep the failed target editable and report it in Add App,
+                // also on every later opening until a launch is verified.
+                launchError_ = failure(true);
+                finishLaunch(launchError_, t);
                 if (!overlayVisible_) requestReopen(); // Mac: only while the HUD is still closed
             }
             break;
@@ -840,6 +848,7 @@ private:
     std::optional<Inflight> inflight_;
     std::optional<Launch> launch_;
     std::optional<std::uint64_t> chooser_;
+    std::optional<std::string> launchError_; // OverlayController.appLaunchError
     std::uint64_t token_{}, listRevision_{};
     bool loadPending_{}, loadFailed_{}, overlayVisible_{}, pumping_{}, dropHovering_{};
     unsigned coverageChooserRequests_{}, coverageCloseRequests_{}, coverageReopenRequests_{}, coverageSelectRequests_{}, launchesOpened_{};
@@ -1019,6 +1028,13 @@ struct AppShortcutArea::Driver {
         a.setOverlayVisible(true, t);frames(.4);
         step.check(state().active() && !a.launch_, "+ Add App is interactive again after the handoff");
     }
+    // A plain close and the next opening (no launch): a new HUD session.
+    void reopenSession() {
+        a.closing(t);t += .5;a.concealed(t);
+        step.check(!a.overlayVisible_ && !a.preview_->acceptsInput(), "The HUD closed");
+        a.setOverlayVisible(true, t);frames(.4);
+        step.check(state().active() && a.preview_->acceptsInput(), "+ Add App is interactive in the new session");
+    }
 };
 
 void AppShortcutArea::coverage(app::ModuleCoverage& step) {
@@ -1104,6 +1120,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     step.check(!launch_ && state.error() && coverageReopenRequests_ == reopened + 1 && launchesOpened_ == opened && synthetic_->launched == launched,
                "A failed launch keeps the shortcut, shows its error and reopens + Add App");
     d.reopen();
+    step.check(launchError_ && state.error() == launchError_, "The reopened + Add App shows the failed launch's error");
 
     // 5. Add a shell link: keep the inspected name, then rename it through the
     //    name control; the new draft clears the previous error.
@@ -1167,8 +1184,11 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     step.check(drop(gamma, *inside, d.t) && !state.dropTarget(), "A dropped application is accepted and ends the drop target");
     d.settle();d.frames(.32);
     step.check(state.editing() && state.candidate()->name == "Gamma Synthetic" && !state.editingID() && !state.error(), "A dropped application opens its new draft");
-    d.click(188, 288);d.frames(.32);
-    step.check(!state.editing() && state.file().items.size() == 3, "Cancel discards the dropped draft");
+    // Closing ends the session: the next opening shows the list from its top
+    // without the draft, and still the failed launch's error.
+    d.reopenSession();
+    step.check(!state.editing() && state.scrollOffset() == 0 && state.file().items.size() == 3 && launchError_ && state.error() == launchError_,
+               "The next opening starts a new + Add App session that keeps only the launch error");
 
     // 7c. Command-V (HUDAppShortcutInteraction.keyDown -> importPasteboard)
     //     reads the synthetic clipboard's files; then the name field's Edit
@@ -1176,7 +1196,7 @@ void AppShortcutArea::coverage(app::ModuleCoverage& step) {
     const app::KeyEvent paste{app::KeyKind::down, 'V'};
     const auto reads = syntheticClipboard_->fileReads;
     syntheticClipboard_->files.clear();
-    step.check(!key(paste, Driver::control(), d.t) && syntheticClipboard_->fileReads == reads + 1 && !state.error(), "Command-V without application files is left unhandled");
+    step.check(!key(paste, Driver::control(), d.t) && syntheticClipboard_->fileReads == reads + 1 && !state.editing(), "Command-V without application files is left unhandled");
     syntheticClipboard_->files.assign(two.begin(), two.end());
     step.check(key(paste, Driver::control(), d.t) && state.error() == text(language_, "Choose one application to customize.", "请选择一个应用进行设置。") && !state.editing(),
                "Pasting two files asks for one application");
