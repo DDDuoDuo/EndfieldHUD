@@ -25,6 +25,11 @@ struct NowPlayingAudioRoute {
     // disagree). nullopt means it was not captured, so the owner may ask
     // NowPlayingAppVolume::processAppUserModelID instead.
     std::optional<std::string>appUserModelID;
+    // One of the process's sessions is AudioSessionStateActive (it renders
+    // audio), as the shared audio worker last published it; nullopt when the
+    // worker does not capture it. A window-title player (no media session)
+    // takes its playing/paused state from this when present.
+    std::optional<bool>rendering;
     bool operator==(const NowPlayingAudioRoute&)const=default;
 };
 // Narrow interface implemented by the production owner over the per-app audio

@@ -646,7 +646,10 @@ struct NowPlayingProbe::Impl {
             o->length = track.duration;
         }
         o->position = o->position || track.position.has_value();
-        (track.isPlaying ? o->playing : o->paused) = true;
+        // A window-title player's playing state is what the HUD shows: the
+        // inferred title state, or its process route's audio activity.
+        const bool playing = o->window && in.track ? in.track->isPlaying : track.isPlaying;
+        (playing ? o->playing : o->paused) = true;
         if (!o->track || !o->track->sameIdentity(track)) {
             o->track = track;
             ++o->tracks;
@@ -887,10 +890,11 @@ struct NowPlayingProbe::Impl {
         else set(C::progress, V::fail, "the timeline drifted " + fixed(o->drift, 1) + " s from the playing clock over " + std::to_string(o->pairs) +
                                            " pair(s); a seek inside the player also does this");
 
-        if (o->playing && o->paused) set(C::playback, V::pass, window ? "followed playing and paused (inferred from its window title and HUD commands)" : "followed playing and paused");
+        if (o->playing && o->paused)
+            set(C::playback, V::pass, window ? "followed playing and paused (from its window title, audio activity and HUD commands)" : "followed playing and paused");
         else if (window)
-            set(C::playback, V::unverified, o->playing ? "only playing observed: stop the player so its title shows its idle caption, or run with --command playPause"
-                                                       : "only paused observed: play a track so its title shows it");
+            set(C::playback, V::unverified, o->playing ? "only playing observed: pause the player (its idle title or a silent audio session shows it), or run with --command playPause"
+                                                       : "only paused observed: play a track in the player");
         else set(C::playback, V::unverified, o->playing ? "only playing observed: pause and resume in the player" : "only paused observed: resume playback in the player");
 
         if (o->tracks >= 2) set(C::trackChange, V::pass, std::to_string(o->tracks) + " tracks followed");
@@ -1175,6 +1179,7 @@ Replay parseReplay(const Json& root) {
             else if (state == "failed") route.state = m::NowPlayingAudioRouteState::failed;
             else malformed("route state");
             route.gain = number(r["gain"], "route gain");
+            if (!r["rendering"].isNull()) route.rendering = flag(r["rendering"], false, "route rendering");
             if (!r["appUserModelID"].isNull()) route.appUserModelID = text(r["appUserModelID"], "route appUserModelID");
             out.routes.push_back(std::move(route));
         }

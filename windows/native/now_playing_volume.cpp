@@ -14,6 +14,12 @@ template<class Route>std::optional<std::string>capturedAppUserModelID(const Rout
     if constexpr(requires(const Route&value){std::string(value.appUserModelID);})return std::string(route.appUserModelID);
     else return std::nullopt;
 }
+// Likewise AudioApplicationRoute::rendering (any of the process's sessions is
+// AudioSessionStateActive): absent means "not captured".
+template<class Route>std::optional<bool>capturedRendering(const Route&route){
+    if constexpr(requires(const Route&value){bool(value.rendering);})return bool(route.rendering);
+    else return std::nullopt;
+}
 }
 std::vector<modules::NowPlayingAudioRoute>nowPlayingAudioRoutes(std::span<const AudioApplicationRoute>routes){
     std::vector<modules::NowPlayingAudioRoute>out;out.reserve(routes.size());
@@ -24,6 +30,7 @@ std::vector<modules::NowPlayingAudioRoute>nowPlayingAudioRoutes(std::span<const 
             :route.state==AudioApplicationRouteState::failed?modules::NowPlayingAudioRouteState::failed:modules::NowPlayingAudioRouteState::direct;
         if(route.gain&&std::isfinite(*route.gain))next.gain=static_cast<double>(*route.gain);
         next.appUserModelID=capturedAppUserModelID(route);
+        next.rendering=capturedRendering(route);
         out.push_back(std::move(next));
     }
     return out;

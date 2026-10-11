@@ -83,7 +83,8 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   const auto index=modules::nowPlayingAudioRouteFor(application,routes,identity);
   return index?&routes[*index]:nullptr;
  }
- void applyVolume(modules::NowPlayingViewInput&input,std::string_view application){
+ // Returns whether the resolved process route renders audio (when captured).
+ std::optional<bool>applyVolume(modules::NowPlayingViewInput&input,std::string_view application){
   std::vector<modules::NowPlayingAudioRoute>routes;if(volume&&volume->routes&&input.track)routes=volume->routes();
   if(volume&&volume->revision)volumeRevision=volume->revision();
   const auto*route=input.track?volumeTarget(routes,application):nullptr;
@@ -98,6 +99,7 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
    const bool confirmed=sameRoute&&face.value&&std::abs(*face.value-pendingVolume->second)<0.0005;
    if(!sameRoute||confirmed)pendingVolume.reset();else input.volume=pendingVolume->second;
   }
+  return route?route->rendering:std::nullopt;
  }
  void publish(){if(!active)return;const auto&s=service.snapshot();sourcesDirty=false;
   if(!s.fresh&&warm){auto input=*warm;input.failed=true;
@@ -128,7 +130,11 @@ struct NowPlayingSession::Impl:std::enable_shared_from_this<Impl>{
   // A player thumbnail always wins; an in-flight supplement is then retired.
   if(input.track&&!artwork){artwork=remoteCover(key);remotePending=cover.inFlight;}else stopCover();
   sourcesDirty=false;input.lyrics=sources->lyrics();
-  applyVolume(input,application);
+  const auto rendering=applyVolume(input,application);
+  // A window-title player's title does not report pausing: its single
+  // process route's audio activity (AudioSessionStateActive) does, and it is
+  // published event-driven by the shared audio worker.
+  if(rendering&&input.track&&s.media.session&&s.media.session->origin==modules::NowPlayingSessionOrigin::playerWindow)input.track->isPlaying=*rendering;
   images->request(artwork);imageDirty=false;imageRevision=images->revision();auto next=images->result().image;
   const auto imageWork=images->stats();const bool decoding=artwork&&(imageWork.inFlight||imageWork.pending);
   const bool keepWarm=warmCoverHeld&&!next&&(decoding||remotePending)&&warm&&warm->track&&input.track&&input.track->sameIdentity(*warm->track)&&s.media.session&&s.media.session->appUserModelID==warmApplication;

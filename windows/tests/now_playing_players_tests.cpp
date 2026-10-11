@@ -291,6 +291,9 @@ void merge() {
 struct Owner {
     Q q{[] {}};
     double now = 10;
+    // Synthetic per-app audio rows (NowPlayingAppVolume) when requested.
+    std::vector<m::NowPlayingAudioRoute> routes;
+    std::uint64_t audioRevision{1};
     std::shared_ptr<Provider> gsmtc = std::make_shared<Provider>();
     std::shared_ptr<n::NowPlayingWindowFixture> desktop = std::make_shared<n::NowPlayingWindowFixture>();
     unsigned factories{};
@@ -299,8 +302,17 @@ struct Owner {
         [] {}, [this] { return now; }};
     std::vector<m::NowPlayingPlaybackEvent> events;
     std::unique_ptr<t::NowPlayingSession> owner;
-    Owner() {
+    explicit Owner(bool audio = false) {
         t::NowPlayingSessionOptions o;
+        if (audio) {
+            auto v = std::make_shared<m::NowPlayingAppVolume>();
+            v->setActive = [](bool) {};
+            v->revision = [this] { return audioRevision; };
+            v->routes = [this] { return routes; };
+            v->setGain = [](const std::string&, double) { return false; };
+            v->stop = [](const std::string&) { return false; };
+            o.volume = std::move(v);
+        }
         o.playback = [this](const m::NowPlayingPlaybackEvent& e) { events.push_back(e); };
         o.decode = [](std::span<const std::uint8_t>) { return n::NowPlayingImageResult{}; };
         owner = std::make_unique<t::NowPlayingSession>(service, q, m::NowPlayingAppearance{}, [] {}, std::move(o));
@@ -385,6 +397,51 @@ void compositeFailures() {
     check(none.input().track && none.input().track->title == "Song" && none.service.snapshot().failure == F::none, "A player window appearing later is presented");
     none.owner->setActive(false, none.now);
 }
+// The window title does not report pausing; the player's process route
+// (published by the shared audio worker) does, when it is captured.
+void audioActivity() {
+    Owner o(true);
+    m::NowPlayingAudioRoute route;
+    route.id = "7:100";
+    route.pid = 7;
+    route.executablePath = netease;
+    route.available = true;
+    route.rendering = false;
+    o.routes = {route};
+    o.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "Song - Artist")});
+    o.owner->setActive(true, o.now);
+    o.flush();
+    check(o.service.snapshot().media.track && o.service.snapshot().media.track->isPlaying && o.input().track && !o.input().track->isPlaying &&
+              o.input().volumeAvailable, "A silent player process shows its window-title track paused");
+    o.routes[0].rendering = true;
+    ++o.audioRevision;
+    check(o.owner->audioChanged(o.now) && o.input().track->isPlaying, "Its audio becoming active shows it playing (audio publication, no poll)");
+    o.routes[0].rendering.reset();
+    ++o.audioRevision;
+    o.desktop->set({window(10, 7, netease, "OrpheusBrowserHost", "网易云音乐")});
+    o.desktop->notify();
+    o.flush();
+    check(o.input().track && !o.input().track->isPlaying && o.input().track->title == "Song", "Without captured activity the title inference stands");
+    o.owner->setActive(false, o.now);
+
+    // A media session reports its own playback: never overridden.
+    Owner listed(true);
+    m::NowPlayingAudioRoute spotify;
+    spotify.id = "9:100";
+    spotify.pid = 9;
+    spotify.executablePath = "C:\\EndfieldHUD-Synthetic\\Spotify\\Spotify.exe";
+    spotify.available = true;
+    spotify.rendering = false;
+    listed.routes = {spotify};
+    listed.owner->setActive(true, listed.now);
+    listed.flush();
+    listed.gsmtc->started({});
+    listed.flush();
+    listed.gsmtc->reading(media("Spotify.exe", true));
+    listed.flush();
+    check(listed.input().track && listed.input().track->isPlaying && listed.input().volumeAvailable, "A GSMTC session keeps its own playing state");
+    listed.owner->setActive(false, listed.now);
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -396,6 +453,7 @@ int main(int argc, char** argv) {
         merge();
         composite();
         compositeFailures();
+        audioActivity();
         std::cout << "Now Playing window-title players: " << checks << " checks passed (synthetic windows only)\n";
         return 0;
     } catch (const std::exception& e) {

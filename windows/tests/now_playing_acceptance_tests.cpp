@@ -438,7 +438,7 @@ void windowPlayers(const char* fixture) {
     expect(ne, C::metadata, V::pass, "title, artist, no album");
     expect(ne, C::timeline, V::gap, "a window title carries no duration or position");
     expect(ne, C::progress, V::gap, "no timeline: the HUD shows no progress for a window-title player");
-    expect(ne, C::playback, V::pass, "followed playing and paused (inferred from its window title and HUD commands)");
+    expect(ne, C::playback, V::pass, "followed playing and paused (from its window title, audio activity and HUD commands)");
     expect(ne, C::trackChange, V::pass, "2 tracks followed");
     expect(ne, C::controls, V::pass, "toggle previous next");
     expect(ne, C::seek, V::gap, "a window-title player cannot seek; the seek rail is disabled");
@@ -485,7 +485,21 @@ void windowPlayers(const char* fixture) {
         playingOnly["steps"] = std::move(steps);
     }
     expect(row(t::nowPlayingReplay(playingOnly, {}, decoder()), "neteaseDesktop"), C::playback, V::unverified,
-        "only playing observed: stop the player so its title shows its idle caption, or run with --command playPause");
+        "only playing observed: pause the player (its idle title or a silent audio session shows it), or run with --command playPause");
+    // A silent player process shows the window-title track paused (--volume
+    // reads the route's audio activity, as the HUD does); without --volume
+    // the title inference stands.
+    auto silent = playingOnly;
+    {
+        auto routes = silent["routes"].array();
+        routes[0]["rendering"] = false;
+        silent["routes"] = std::move(routes);
+    }
+    expect(row(t::nowPlayingReplay(silent, full(), decoder()), "neteaseDesktop"), C::playback, V::unverified, "only paused observed: play a track in the player");
+    auto noAudio = full();
+    noAudio.volume = false;
+    expect(row(t::nowPlayingReplay(silent, noAudio, decoder()), "neteaseDesktop"), C::playback, V::unverified,
+        "only playing observed: pause the player (its idle title or a silent audio session shows it), or run with --command playPause");
     // Without options nothing needs the network, an audio route or a command.
     const auto bare = t::nowPlayingReplay(source, {}, decoder());
     expect(row(bare, "neteaseDesktop"), C::artwork, V::unverified, "no player thumbnail: run with --lyrics for the NetEase catalog cover");
