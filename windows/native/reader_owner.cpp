@@ -14,6 +14,10 @@ struct ReaderOwner::Impl:std::enable_shared_from_this<Impl> {
         ReaderImportQueue::Completion completion,std::function<void()>notify)
         :executor(e),fonts(std::move(f)),imported(std::move(completion)),changed(std::move(notify)){
         if(!fonts)throw std::invalid_argument("Reader needs retained shared font resources");
+        // A fresh library keeps the automatic "System" sentinel: the bundled
+        // Noto Sans SC/KR family of the HUD language, the default font used
+        // everywhere on Windows by the user's decision (the Mac model default
+        // is Georgia). A saved explicit family is never replaced.
         repository=std::make_shared<modules::ReaderJSONRepository>(std::move(directory),modules::ReaderPreferences::defaults("System"));
         document=std::make_shared<NativeReaderDocument>(fonts);route=executor.makeRoute();
     }
