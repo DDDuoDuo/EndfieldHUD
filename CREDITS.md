@@ -22,6 +22,7 @@ Asset sources and checksums are recorded in the resource manifests:
 - [Watch sprites](Resources/Watch/SOURCES.json) and [Watch geometry notice](Resources/WatchSource/NOTICE.txt).
 - [Photo Mode assets](Resources/MediaAssembly/provenance.json).
 - [OrbiPom rules and artwork](Resources/OrbiPom/provenance.json).
+- [Center logo presets](Resources/AppIconSources/CenterLogos/SOURCE.json). The Windows build ships byte-identical copies in `windows/resources/center-logos`.
 
 User-supplied portraits, logos and reference recordings retain their owners' rights. The wiki's page-content license does not relicense the game artwork.
 
@@ -51,7 +52,13 @@ The native Windows port in `windows/` adds the third-party components below. The
 | [Noto Sans SC and Noto Sans KR](https://github.com/google/fonts/tree/a85815a42757630ce188fdad368c2dfc444d4773/ofl), version 2.004 (variable weight), google/fonts commit `a85815a42757630ce188fdad368c2dfc444d4773` | The Windows HUD's bundled text fonts, loaded privately through DirectWrite; Korean text uses Noto Sans KR. SIL Open Font License 1.1, copyright 2014-2021 Adobe, Reserved Font Name "Source". [SC license](windows/assets/fonts/NotoSansSC-OFL.txt) · [KR license](windows/assets/fonts/NotoSansKR-OFL.txt) · [manifest](windows/assets/fonts/manifest.json). |
 | [EarTrumpet](https://github.com/File-New-Project/EarTrumpet), commit `154980811087fb7c423d806e2d9816733db6a7a5` | Adapted interface declarations for the undocumented default-audio-device switch. They compile only under a research define that no build sets, so they are not part of the app. MIT, with EarTrumpet's excluded-entities clause. [Notice](windows/native/audio_default_device_notice.txt). |
 
-The Windows package currently ships the font licenses and the OrbiPom resource folder, which contains Matter.js's license. It does not yet include the QuickJS-NG license or the WebView2 SDK license and notices, although both are compiled into `EndfieldHUD.exe`. This is an open packaging item.
+The Windows package ships:
+
+- the font licenses;
+- the OrbiPom resource folder, which contains Matter.js's license;
+- since checkpoint 124, the WebView2 SDK's `LICENSE.txt` and `NOTICE.txt` at `resources/licenses/webview2`.
+
+It does not yet include the QuickJS-NG license, although QuickJS-NG is compiled into `EndfieldHUD.exe`. This is an open packaging item.
 
 ## Map data
 

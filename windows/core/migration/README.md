@@ -67,7 +67,7 @@ validated stores and carried bytes.
    | Profile | `ProfileStore`, only when `profile.json` exists | Avatar `.image` and background `.png` bytes are copied unchanged. WIC only checks them |
    | FileShelf | `FileShelfStore.decode` rules | Nothing is written. Each item goes to the relink list with its full record |
    | Reader, Calendar, WorldMap, AppShortcuts, EventLog | Their Windows repositories (map v1–3 migrate to v4) | Mac books and apps are added to the relink list |
-   | Account | `HypergryphAccountController.Cache` Codable rules | Linked regions get `requiresReconnect=true`. Credential-like keys are removed. `profileSyncLocked` is reported |
+   | Account | `HypergryphAccountController.Cache` Codable rules | Linked regions get `requiresReconnect=true`. Credential-like keys are removed. `profileSyncLocked` is reported. The file is written with inherited permissions; the account services restrict it to the current user in place, without changing its bytes, before their first write |
    | CenterLogo | PNG ≤ 4 MiB and ≤ 768 px, plus WIC | Only the selected revision is copied. A missing file is reported, and Settings stays "custom", as on the Mac |
 
    A store whose schema is newer, or whose data is malformed, is *rejected*:
@@ -198,6 +198,10 @@ flow (`app/areas/mac_import_flow.hpp`, five HUD languages) is:
    `app/main.cpp`), and the fresh run opens on System. Development previews
    and hidden coverage do not publish it, so there the review cannot be
    confirmed through the host; coverage plays the host's role itself.
+   Since checkpoint 124 the host's own restart members are also checked in
+   hidden coverage, behind a verification-only gate. A failed save destroys
+   the pending work unrun, and its decline runs once. A restart pending at
+   the confirmed quit is handed out exactly once.
 7. **Report.** The commit records `<root>.mac-import-outcome.json` next to
    the root (statuses, counts, backup folder, the importer's error text; no
    record content). The next run's area shows it once (final report, then the
@@ -239,14 +243,18 @@ path or name. The pure transformations `relinkedReaderBook`,
 (the shelf owner's `FileShelfStore::Creation`) keep each record's id, order,
 progress, bookmarks and unknown fields, and replace only the locator.
 
-**Status (checkpoint 123).** The ledger and the transforms are tested
-(`mac_import_contracts`, `mac_import_native_contracts`), but no module owner
-calls `markResolved` or `reconcile` yet. Notes (footer action), Archive (the
+**Status (checkpoint 124).** The ledger and the transforms are tested
+(`mac_import_contracts`, `mac_import_native_contracts`). The File Shelf is the
+only owner that uses the ledger. It lists unresolved `fileShelf.item` entries
+as unavailable cards. A relink (double-click, Space or Relink, then one chosen
+item) keeps the imported identifier and date through `ShelfRelinkSlot` and
+calls `markResolved`. Remove and Clear call `dismiss`, and loading calls
+`reconcile` (`shelf_services_contracts`). Notes (footer action), Archive (the
 attachment's error text) and App Shortcuts (choosing an app while editing)
-relink their own records through their own pickers, without updating
-`Migration/relink.json`, so the import card's relink list still shows those
-items. Reader books and imported Shelf items have no relink action yet. The
-contract below describes the intended owner behaviour.
+relink their own records through their own pickers, but they do not update
+`Migration/relink.json`. The import card's relink list therefore still shows
+those items. Reader books have no relink action yet. The contract below is
+the behaviour every owner should follow.
 
 An owner writes the relinked record first and then calls `markResolved`. When
 it loads, it passes its unresolved entries through `reconcile(store, check)`,
@@ -296,32 +304,51 @@ pre-open recovery, and the session's journal between the two renames.
 `mac_import_automation_contracts` (Windows) covers the card's UIA tree over
 synthetic nodes.
 
-## 4a. Verification status (checkpoint 123)
+## 4a. Verification status (checkpoint 124)
 
-Verified on the laptop by hidden tests only: `mac_import_contracts` (753
-checks), `mac_import_flow_contracts` (282), the plist, settings, reconcile,
-native, tool and exporter suites, and the `macImport` area's three cycles in
-`application_owner_coverage`. Those cycles cover an in-process golden import;
-replace plus a synthetic restart, declined and then accepted, with the next
-run's report; and an invalid folder, cancelled staging and keyboard input.
+Verified on the laptop by hidden tests only:
+
+- `mac_import_work_contracts`: 846 checks; also passes on the Mac under
+  clang.
+- `mac_import_contracts`: 753 checks.
+- `mac_import_flow_contracts`: 295 checks, including the card geometry that
+  the artwork and UI Automation share.
+- `mac_import_native_contracts`: 251 checks.
+- `mac_import_automation_contracts`: 69 checks.
+- `mac_import_reconcile_contracts`: 11 checks.
+- The plist, settings, tool and exporter suites.
+- The `macImport` area in `application_owner_coverage`: 1,021 checks over
+  three cycles. Cycle 0 runs an in-process golden import and walks the card's
+  UIA tree. Cycles 1 and 2 run the area's production restart path against a
+  stand-in `DataRootRestart`: a refused second request, a declined save, the
+  accepted quit, and a session end that never runs the work. They also cover
+  the next run's sweep of planted folders and its report, and the pre-open
+  recovery on a second synthetic root.
 
 Not verified yet:
 
-- the production `DataRootRestart` path end to end (accepted quit, commit,
-  fresh run);
+- the host's real `DataRootRestart` and the `main.cpp` restart loop end to
+  end (accepted quit, commit, fresh run);
+- `recoverMacImportWork` as called by `main.cpp` before each run opens the
+  root. The function itself is tested; the production call has not run;
+- a sweep after a real process kill on the real root;
 - the real shared folder dialog;
 - an export of real user data, larger than the golden fixture;
 - the real `%LOCALAPPDATA%\EndfieldHUD\v1` root;
+- the card with a real UIA client (Narrator, Accessibility Insights);
 - the card's text fit on a real display (longest CJK and Korean messages,
   DPI).
 
-Since checkpoint 124 a private folder left by a process that ended during
-staging or during the post-shutdown commit is swept by the next run, if it
-is marked and abandoned. An activation interrupted between its two renames is
-rolled back only when the host calls `recoverMacImportWork` before opening the
-root. The importer never deletes backups. The commit runs between two runs,
-so it shows no progress while it works; staging progress and the final report
-are shown.
+Known limits:
+
+- Folders made before checkpoint 124 (`e38d18d`) carry no marker. They are
+  never swept and must be removed by hand.
+- The HUD root's `GetFocus` returns no element. The card exposes its focused
+  button only through HasKeyboardFocus, without AutomationFocusChanged, so
+  Narrator may not announce the dialog or its focus moves by itself.
+- The importer never deletes backups.
+- The commit runs between two runs, so it shows no progress while it works.
+  Staging progress and the final report are shown.
 
 ## 5. Acceptance tool
 
@@ -332,3 +359,7 @@ without writing to DESTINATION. Add `--commit` to
 perform the import, `--replace` to repeat an import, and
 `--accept store,...` to skip rejected stores. Use a scratch DESTINATION for
 acceptance testing.
+
+`mac_import_tool --work DESTINATION` lists the private
+`<root>.import-<token>` folders next to DESTINATION and their states (see
+"Private work folders") as JSON, without removing anything.

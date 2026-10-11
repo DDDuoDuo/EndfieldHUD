@@ -1672,3 +1672,210 @@ dialog itself.
   after their own relinks.
 - App shortcuts: no packaged-app logos. Settings: the app-icon choice.
 - Packaging: QuickJS-NG's `LICENSE` is not shipped; builds are unsigned.
+
+## Checkpoint 124 (batch 4): consolidated status
+
+This entry sums up batch 4 as a whole: the area stages and the host
+integration recorded above. Code is at `dd113c9`; later commits change
+documentation only. As in batch 3, nothing ran on the laptop's interactive
+desktop, and no UI Automation client, network service, real account or real
+dialog was involved. All evidence comes from automated hidden runs over
+synthetic data in temporary folders and private registry subtrees.
+
+### Test runs
+
+| Run | Result |
+| --- | --- |
+| Host slot, full MSVC x64 Release build at `dd113c9` | 356 of 359 suites pass. The three failures are the environmental ones from checkpoint 123: `projection_composition_contracts` and `projection_workspace_contracts` (no composition swap chain over SSH), and `packet_export_contracts` (no Mac `Sources/` in the slot). |
+| `application_owner_coverage` | 54 module results, 19 lifecycle checks, 81 host integration checks, 14 areas constructed, ID card connected. The minimum of 81 host checks is now enforced (`HOST_CHECKS`, `app/run_owner_coverage.cmake`). |
+| `application_session_end_coverage` | 15 lifecycle checks, 78 host checks (minimum enforced). |
+| Area slots, before the host stage | Media Assembly 19/19, Now Playing 25/25, Power 18/18, Personal Profile 23/23, App shortcuts 18/18, System providers 28/28, Reader/Map/Calendar/Minigame 44/44, Notes 64/64, packaging 13/13. Account, Mac import and Shelf passed their slots, including `application_owner_coverage`; their check counts are in the entries above. |
+| Mac, clang | The portable no-ICU configure generates. The `settings`, `settings_presentation`, `media_request_catalog`, `shelf_file_picker` and `display_center_logo` contracts pass there. `clipboard_url_contracts` passes against ICU 78 under AddressSanitizer. `packaging_update_check_contracts` passes under ASan/UBSan, and `mac_import_work_contracts` and the portable part of `file_shelf_files_contracts` (52 checks) pass too. |
+
+Not run in this batch: `windows.yml` on GitHub (so the `windows-2025` pin and
+its OS ICU check are untested there), the section 9 gate against
+`EndfieldHUD.exe`, and any visible run.
+
+### What `EndfieldHUD.exe` contains
+
+- **Owners:** the 15 built-in owners and the quit card from checkpoint 123.
+  A new desktop-clock owner only lists the clock's UIA buttons; it draws
+  nothing and routes no input.
+- **10 production module areas:** the 8 from checkpoint 123, plus:
+
+  | Area | Factory | Registered by | Role |
+  | --- | --- | --- | --- |
+  | `projection` | `endfield::notes::projectionAutomationArea` | `cmake/modules/notes.cmake` | Lists the Projection workspace's UIA peers through the `projection.workspace` service |
+  | `windowsUpdates` | `endfield::areas::windowsUpdatesModule` | `cmake/modules/packaging.cmake` | Publishes `app::UpdateService`, which About and the tray now use |
+
+- **4 coverage-only areas**, unchanged: `areaProbe`, `systemProviders`,
+  `notesLongDocument` and `fileShelfCoverage`.
+- **UI Automation:** the HUD window's one root lists a group for each owner
+  that has fragments. These are Volume, Work Mode, Notes, Archive, Projection,
+  File Shelf, Reader, Map, Calendar, the minigame, Now Playing, Media
+  Assembly, Account Linking, Personal Profile, App shortcuts, the Mac import
+  card, the Power navigation entry and the desktop clock. Not listed: the
+  navigation entries other than Power.
+- **Host routes added:**
+  - drag feedback (`ModuleOwner::dropHover`);
+  - the shared dialog's applications mode;
+  - the broker's `frameFilter`;
+  - `recoverMacImportWork` before each `openRoot`, and
+    `DisableProcessWindowsGhosting`;
+  - the `eventLog.owner` and `calendar.reminderActivation` services;
+  - update routing;
+  - Settings: the Theme color picker, the center logo and the clickable
+    clock;
+  - GPU adapter-change detection.
+- **Package additions:** `resources/licenses/webview2/` (the WebView2 SDK's
+  `LICENSE.txt` and `NOTICE.txt`) and `common/center-logos` (byte copies of
+  the Mac `Resources/AppIconSources/CenterLogos`). No vendored library or
+  font was added in this batch. QuickJS-NG's `LICENSE` is still not staged
+  (`CREDITS.md`).
+
+### Verified, by suite
+
+Except for packaging, every area is also exercised by both owner coverage
+runs.
+
+| Area | Suites | Main evidence |
+| --- | --- | --- |
+| Host | Both coverage runs, `display_center_logo_contracts`, `shelf_file_picker_contracts`, `media_assembly_preview_contracts` | 81/78 host checks over the real HUD root. Center logo within 3 premultiplied levels of the Core Graphics oracle on the generated logo, and 8 on the presets. Applications-mode selection validation. Frames played through the broker carry the colour filter. |
+| UIA providers | `screen_reader_peers_contracts` (48), `power_automation_contracts` (32), `now_playing_automation_contracts`, `profile_automation_contracts`, `work_mode_automation_contracts`, `app_shortcut_automation_contracts`, `mac_import_automation_contracts` (69), `notes_automation_contracts`, `hypergryph_account_area_contracts` | Roles, patterns, navigation, hit tests, identity across refreshes, disconnect. Owner exceptions never cross COM. The local-module and account suites compile the unchanged `app/hud_automation.cpp` root. |
+| Media Assembly | The 14 `media_assembly_*` suites | Played-frame filter within 1 level of the CPU reference. GPU row bands equal a full render (0 levels), and the WARP export is within 1 level of the CPU. `compositeStickers` (23,611 checks). Moved originals followed by file ID. Laptop: 12 MP heavy edit 359 ms on the GPU vs 1,563 ms on the CPU. |
+| Now Playing | All `now_playing_*` suites | 6 steps / 115 coverage checks. COM boundary guard. |
+| Account Linking | `hypergryph_account_{webview,login,controller,platform,owner,area}_contracts` | Missing-runtime page and `runtimeUnavailable`. Text fit in five languages. Mac import restart contract. Cache restricted to the current user. 245 coverage checks. |
+| Power | `power_area_contracts` (153), `power_automation_contracts`, `charge_badge_preview_contracts` (40), `charge_indicator_scene_contracts` | Plane slot below pinned Notes. Mac hover rule. Exact 14-point banner set (the old scaled set fails the new assertion). |
+| Personal Profile | `profile_automation`, `work_mode_automation`, `work_mode_preview`, `profile_pickers`, `source_scene` and `id_card_presenter` contracts | 148 coverage checks. Registered runtime textures (CPU side). Lifetime counted once, with nonzero stopwatch time in cycle 0. |
+| App shortcuts | `app_shortcut_automation_contracts`, `app_shortcut_preview_contracts`, `watch_appearance_contracts` | Original navigation icons, with no allocations on unchanged frames. Drop, paste and hover. Fresh session on each opening. |
+| Mac import | `mac_import_work_contracts` (846), `mac_import_automation_contracts` (69), `mac_import_flow_contracts` (295), `mac_import_contracts` (753), `mac_import_native_contracts` (251), `mac_import_reconcile_contracts` (11), `mac_import_tool_contracts` | Sweep classification, bounded sweep, pre-open recovery, activation journal. 1,021 macImport coverage checks, including the production restart path against a stand-in host service. |
+| System providers | `clipboard_url_contracts` (1,001; 246 Mac oracle strings), `system_services_contracts`, `clipboard_provider_contracts` | Link parsing parity. Capture statuses. Suspension catch-up. A 10,000-message power storm posts one notice. Host-wired Event Log records checked through `eventLog.owner`. |
+| Reader, Map, Calendar, Minigame | `screen_reader_peers_contracts`, `reader_preview_contracts` (6,184), `map_preview_contracts` (74), `calendar_preview_contracts` (142), `orbipom_preview_contracts`, `calendar_reminder_area_contracts` (100) | Peers and presses, the Map's 12 Hz accessibility cadence, Calendar editor Value and focus, the reminder-click refresh sink. |
+| Notes, Archive, Projection | `notes_automation_contracts`, `notes_paste_import_contracts` (45 Mac oracle cases), `notes_clipboard_contracts`, `notes_format_host_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `archive_preview_contracts`, `projection_preview_contracts` | RTF/CF_HTML import and RTF export. Undo across promotion. The `queuedRowClick` reproduction fails without the fix. Large-card timings on WARP. |
+| File Shelf | `shelf_preview_thread_contracts` (98), `shelf_file_preview_contracts` (591), `file_shelf_files_contracts` (383), `shelf_services_contracts` (365) | A hung out-of-process COM server is cancelled and its thread ends. Cloud placeholder classes. UIA peers. Relink ledger. |
+| Packaging | `packaging_update_check_contracts`, `packaging_update_platform_contracts`, `packaging_os_text_data_contracts`, `endfieldhud_release_contracts` | Mac HUDGitHubRelease oracle (59 tags, 36 URLs, 31 client scenarios). WinHTTP against a loopback server. Installed-copy check in a private HKCU subtree. Laptop OS text data: ICU 72.1, Unicode 15.1, tzdata 2022g. |
+
+### Clarifications to the host entry above
+
+- "UI Automation for every module" means that every module lists its
+  controls. Focus is not routed: the root's `GetFocus` returns no element,
+  and the import card exposes its focused button only through
+  HasKeyboardFocus, without AutomationFocusChanged. Owners raise
+  StructureChanged, property and focus events only while
+  `UiaClientsAreListening()` is true. It was false in every run, so no event
+  has been observed.
+- Until the powerCharge area returns `core::Module::power` from
+  `automationModule()`, the group that holds the Power entry is named
+  "EndfieldHUD".
+- Media Assembly's played-frame filter is verified on a renderer
+  frame-server surface and through the broker route. It has not run on real
+  playback. Without GPU processor shaders or the renderer's media device,
+  played frames keep only crop, mirror and quarter turns (platform gap).
+- The production-only paths have never run: `recoverMacImportWork` in
+  `main.cpp`, `DisableProcessWindowsGhosting`, the adapter-change check, the
+  real `DataRootRestart` and the real `UpdateService` from About and the tray.
+- SystemServices' `WM_POWERBROADCAST` storm coalescing, which the Power area
+  listed as remaining, is now covered by `system_services_contracts`.
+
+### Live acceptance still needed
+
+The user runs each of these on the laptop desktop, with explicit consent
+where an account, the network or real data is involved.
+
+- **Every area:** a visible `EndfieldHUD.exe` with the real data root,
+  persistence and relaunch, five languages, real DPI and multiple monitors.
+- **UI Automation:** Narrator, Inspect or Accessibility Insights over every
+  group, including the events, the Power entry's live help, the import card
+  dialog and the Calendar and Profile edit peers.
+- **Real dialogs:**
+  - *Theme color*;
+  - the center-logo and profile image choosers;
+  - the applications mode with a packaged app;
+  - the Media Assembly file dialogs;
+  - the Shelf relink picker.
+- **Drops and clipboard:**
+  - Explorer drops and drag feedback over *+ Add App*;
+  - real Ctrl+V of an application file;
+  - pasting from Word, Edge and Chrome into Notes, and Word reading Notes'
+    RTF;
+  - browser URL formats on the clipboard;
+  - lock and sleep catch-up.
+- **Media and audio:**
+  - Media Assembly playback with audio and colour edits;
+  - moved originals on network shares and non-NTFS volumes;
+  - ICC-managed sources and AAC export compared with the Mac;
+  - the GSMTC player matrix, lyrics over the network and per-app volume.
+- **Account:** China and Global login, and the missing-runtime page on a
+  machine without the WebView2 Runtime.
+- **Power:** the alert window, the badge under pinned Notes, and the
+  supercharge banner at real DPI.
+- **Shelf:** real preview handlers, a real hung handler, and OneDrive Files
+  On-Demand placeholders.
+- **Mac import:** a real export, the real restart, a process kill followed by
+  the sweep, and an interrupted activation.
+- **Calendar:** a real toast click refreshing Calendar.
+- **Updater:** the first `windows-v` release and an in-place update. Signed
+  builds and job objects that forbid breakaway are untested.
+- **Shell:** a GPU adapter switch; the clock's hover plate and swipe on a
+  touchpad.
+- **Performance:** the section 9 gate with `--data-root`, the large-card
+  timings on a real GPU, and Reader, Map and minigame measurements.
+
+### Still open in code
+
+- **UI Automation:**
+  - a root focus route (`GetFocus`, AutomationFocusChanged);
+  - providers for the navigation entries other than Power;
+  - the Power group's name;
+  - a text pattern for the projected fields (Value only today);
+  - names for the alert's position-editor buttons.
+- **Cursor:** no I-beam over open projected editors.
+- **Reader:**
+  - render PDFs on an owned device (exit fault `0x87A` after a late PDF
+    render);
+  - no relink action for books.
+- **Map:** a geography read or decode failure switches off the whole Map
+  owner. The Mac keeps the Map with its pins and shows the load error.
+- **Relink ledger:** only the Shelf updates `Migration/relink.json`. Notes,
+  Archive and App shortcuts relink their records without it.
+- **App shortcuts and Settings:** no packaged-app logos; no app-icon choice
+  in Settings.
+- **Notes:**
+  - the large-card field border is still one slot-sized raster (entry about
+    128–222 ms on WARP);
+  - the first selection change reloads the frame scene;
+  - the Archive single-line inset comes from the shared editor;
+  - pasted images are not transcoded on the shared media worker (needs a
+    broker hook);
+  - Office HTML class style sheets are not applied.
+- **Media Assembly:** stills with transparency export only on the CPU
+  (optional GPU path).
+- **Input:** precise touchpad scroll and pinch (a WM_POINTER or
+  DirectManipulation path).
+- **Mac import:**
+  - private folders made before `e38d18d` are unmarked and never swept;
+  - no progress is visible during the post-shutdown commit.
+- **Shelf:** previews are refused while two retired preview threads stay
+  blocked outside COM. A separate preview host process would isolate them.
+- **Clipboard:** file items are compared by exact path. The Mac compares
+  standardized file URLs, with `..` resolved.
+- **Packaging:**
+  - QuickJS-NG's `LICENSE` is not staged;
+  - builds are unsigned;
+  - there is no "update available" toast.
+
+### Decisions for the user
+
+- Home/End in chunked Notes: move to the visual line or the logical line?
+- Mac-imported Reader libraries keep their stored `fontName`. The Mac default
+  Georgia cannot be told apart from an explicit choice, so these libraries
+  show Georgia instead of the Noto Sans SC/KR default.
+- Approve an interaction for relinking imported books inside the Reader.
+- The Highlights/Shadows mapping was read from the installed CoreImage
+  framework, then verified black-box. Is a purely black-box derivation
+  wanted?
+- Once a certificate exists, may signed builds install updates automatically
+  (Mac-style 30 s idle gate)?
+
+Contributor note: the Windows SDK's `rpcndr.h` defines `small` as a macro, so
+code must not use it as an identifier.
