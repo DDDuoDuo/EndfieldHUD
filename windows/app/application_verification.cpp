@@ -78,9 +78,65 @@ int Application::Impl::runStartupTrace(){
     return 0;
 }
 
+// watch_session_preview --contention-trace: the opened HUD paced at 60 Hz on
+// a high-resolution waitable timer (as the live frame clock), on the hardware
+// GPU, in alternating blocks at normal priority and with PresentationPriority
+// raised. Per frame: how late the thread woke for its tick (CPU scheduling),
+// the CPU time of present() and the wait until the GPU finished it (GPU
+// scheduling; the offscreen target has no vblank). Run it while
+// tools/application_contention_stress loads the CPU and GPU like a game.
+int Application::Impl::runContentionTrace(){
+    need(!args.warp,"The contention trace measures the hardware GPU");
+    double t=hostTime(args.benchmarkEpoch+10);
+    settings.ambientEnabled=true;session->setSettings(settings,t);session->pointerMove(core::Point{-10,20},t);
+    open(t);for(unsigned frame=0;frame<120;++frame){t=hostTime(t+1./60);present(t,true);}
+    need(session->phase()==core::VisibilityPhase::visible,"The traced HUD finished opening");
+    const auto timer=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_ALL_ACCESS);
+    need(timer!=nullptr,"High-resolution frame timer");
+    struct Series{std::vector<double>late,cpu,gpu,total;};
+    std::array<Series,2> series; // 0 normal priority, 1 raised
+    LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);
+    const auto clock=[&]{LARGE_INTEGER v{};QueryPerformanceCounter(&v);return double(v.QuadPart)/double(frequency.QuadPart);};
+    Json raisedReport;
+    // Alternating blocks cancel slow drift of the external load.
+    for(unsigned block=0;block<8;++block){
+        const bool raised=block%2==1;auto&out=series[raised];
+        if(raised){presentationPriority.raise(&renderer);const auto&r=presentationPriority.report();
+            raisedReport=Json::Object{{"processRaised",r.processRaised},{"previousPriorityClass",std::int64_t(r.previousClass)},{"mmcssGamesTask",r.threadRegistered},
+                {"gpuSchedulingClassHigh",r.gpuSchedulingRaised},{"gpuSchedulingStatus",std::int64_t(r.gpuSchedulingStatus)},{"gpuThreadPriority7",r.gpuThreadRaised},{"gpuThreadPriorityResult",std::int64_t(r.gpuThreadResult)}};}
+        else presentationPriority.restore();
+        double next=clock();
+        for(unsigned frame=0;frame<150;++frame){
+            next+=1./60;const double wait=next-clock();
+            if(wait>0){LARGE_INTEGER due{};due.QuadPart=-static_cast<LONGLONG>(wait*1e7);SetWaitableTimerEx(timer,&due,0,nullptr,nullptr,nullptr,0);WaitForSingleObject(timer,INFINITE);}
+            const double woke=clock();
+            t=hostTime(t+1./60);present(t,true);const double prepared=clock();
+            const double gpu=renderer.waitForGpuIdle();const double done=clock();
+            if(frame<10)continue; // the first frames after a priority change settle
+            out.late.push_back(std::max(0.,(woke-next)*1000));out.cpu.push_back((prepared-woke)*1000);out.gpu.push_back(gpu);out.total.push_back((done-next)*1000);
+            if(done>next+1./60)next=done; // no catch-up burst, as the live clock
+        }
+    }
+    presentationPriority.restore();CloseHandle(timer);
+    const auto stats=[](std::vector<double> v){std::sort(v.begin(),v.end());double sum{};for(const auto x:v)sum+=x;
+        const auto at=[&](double q){return v.empty()?0.:v[std::min(v.size()-1,static_cast<std::size_t>(q*double(v.size()-1)+.5))];};
+        return Json::Object{{"samples",std::int64_t(v.size())},{"mean",v.empty()?0.:sum/double(v.size())},{"p50",at(.5)},{"p95",at(.95)},{"p99",at(.99)},{"max",v.empty()?0.:v.back()}};};
+    const auto phase=[&](const Series&x){return Json::Object{{"wakeLatenessMilliseconds",stats(x.late)},{"cpuFrameMilliseconds",stats(x.cpu)},{"gpuCompletionMilliseconds",stats(x.gpu)},{"tickToGpuDoneMilliseconds",stats(x.total)}};};
+    std::size_t over{};for(const auto&x:series)for(const auto v:x.total)over+=v>1000./60;
+    const auto info=renderer.deviceInfo();
+    Json report=Json::Object{{"scope","Hidden HUD frames paced at 60 Hz; wake lateness, CPU present() and GPU completion per frame; alternating 150-frame blocks"},
+        {"device",info.name},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},
+        {"normalPriority",phase(series[0])},{"raisedPriority",phase(series[1])},{"raisedReport",raisedReport},{"framesOverOneTick",std::int64_t(over)}};
+    const std::size_t bound=4*1024*1024;ehud::data::detail::replaceFile(args.contentionTrace,std::nullopt,report.encode(),bound);
+    std::cout<<"Wrote hidden contention trace\n";
+    shutdownVisible();
+    return 0;
+}
+
 int Application::Impl::runHiddenVerification(){
     if(args.mode!=ApplicationMode::hiddenBenchmark)throw std::logic_error("Hidden verification requires the hidden benchmark mode");
     if(!args.startupTrace.empty())return runStartupTrace();
+    if(!args.contentionTrace.empty())return runContentionTrace();
     const auto start=args.benchmarkEpoch;const auto deviceInfo=renderer.deviceInfo();unsigned lifecycleChecks{};
         auto snapshot=[&]{return Snapshot{renderer.stats(),renderer.sourceGraphics().stats(),rasterizer.stats(),session->frameStats(),session->stats()};};Json::Array rows,images;
         if(!args.snapshots.empty()){need(fs::create_directory(args.snapshots),"Cannot create new snapshot directory");ehud::data::detail::validateRoot(args.snapshots);}
@@ -126,7 +182,7 @@ int Application::Impl::runHiddenVerification(){
             }
             const auto finish=at(23+static_cast<double>(points.size()));session->pointerMove({},finish);close(finish);present(finish+.7,true);
         }
-        Json::Array moduleResults,areaModuleResults,areaPresentedModules;
+        Json::Array moduleResults,areaModuleResults,areaPresentedModules;Json displayAdaptation;
         // Module areas (app/module_owner.hpp): coverage steps and their checks.
         struct AreaCounts{unsigned steps{},checks{};};std::map<std::string,AreaCounts,std::less<>> areaCounts;
         double areaLatest{};
@@ -141,7 +197,7 @@ int Application::Impl::runHiddenVerification(){
             step.project=[&,module](core::Point local,double width,double height)->std::optional<core::Point>{
                 if(!module||!notes||!chromePlan||!chromePlan->projection().center||!(width>0)||!(height>0))return std::nullopt;
                 gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,width,height}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,*module);
-                const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,*module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                const auto ps=chromeSettings(*module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                 const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                 const auto screen=plane.project(local);if(!screen)return std::nullopt;return core::Point{screen->x/metrics.scale,screen->y/metrics.scale};};
             step.check=[&](bool value,std::string_view why){++counts.checks;if(!value)throw std::runtime_error(std::string(why));};
@@ -267,7 +323,7 @@ int Application::Impl::runHiddenVerification(){
                         const auto drainMap=[&]{for(unsigned n=0;n<24;++n){utility->waitIdle();utility->drain();map->utilityCompleted(mapTime);if(const auto due=map->nextWakeTime()){mapTime=std::max(mapTime,*due)+.000001;map->deadline(mapTime);}present(mapTime,true);if(!utility->stats().running&&!utility->stats().pending&&!utility->stats().completed&&!map->nextWakeTime())break;}};
                         mapTime=time+.7;drainMap();need(map->state().active()&&map->rasterStats().published>0,"Original bundled Map geography renders only after isolated selection");
                         gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,440,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                         const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                         const auto point=[&](core::Point p){const auto screen=plane.project(p);need(bool(screen),"Map input projects through the source440-point plane");return core::Point{screen->x/metrics.scale,screen->y/metrics.scale};};
                         const auto center=point({220,220});const auto initialCount=map->state().pins().size();
@@ -284,7 +340,7 @@ int Application::Impl::runHiddenVerification(){
                         const auto drainReader=[&]{for(unsigned n=0;n<8;++n){utility->waitIdle();utility->drain();readerOwner->queueCapacityAvailable();}present(readerTime,true);};
                         readerTime=time+.7;drainReader();need(readerOwner->state().active()&&readerOwner->state().loaded(),"Reader loads only its isolated library on selection");
                         gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                         const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                         const auto click=[&](core::Point local,double t){const auto p=plane.project(local);need(p.has_value(),"Reader action projects through source module plane");readerTime=t;need(reader->pointer({app::PointerKind::down,app::PointerButton::left,p->x/metrics.scale,p->y/metrics.scale},t),"Reader consumes its original projected control");reader->pointer({app::PointerKind::up,app::PointerButton::left,p->x/metrics.scale,p->y/metrics.scale},t+.001);present(t+.001,true);};
                         if(cycle<2){
@@ -321,7 +377,7 @@ int Application::Impl::runHiddenVerification(){
                         need(storage->state().active()&&storage->state().snapshot().capacity&&storage->state().snapshot().capacity->volumeName=="Synthetic startup volume"&&!storage->state().snapshot().isLoading,"Storage activation publishes only the injected capacity snapshot");
                         need(storageFixture->detailScans.load()==(cycle?1u:0u),"Storage activation and frames never launch a folder scan");
                         gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                        const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                         const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                         const auto click=[&](core::Point local,double t){const auto projected=plane.project(local);need(projected.has_value(),"Storage action projects through its actual shared source plane");const auto x=projected->x/metrics.scale,y=projected->y/metrics.scale;need(storage->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Storage consumes its original projected control");storage->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
                         const auto settingsBefore=storageFixture->settingsRequests;click({95,266.5},time+.72);need(storageFixture->settingsRequests==settingsBefore+1,"Original Storage Settings action reaches only the injected hidden callback");
@@ -339,7 +395,7 @@ int Application::Impl::runHiddenVerification(){
                         need(calendarState->loaded()&&calendarState->active()&&!calendarState->error(),"Calendar activates its isolated lazy repository");
                         if(!cycle){
                             gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                            const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                            const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                             const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                             const auto click=[&](core::Point local,double t){const auto q=plane.project(local);need(bool(q),"Calendar uses the same drawn source module plane");const auto x=q->x/metrics.scale,y=q->y/metrics.scale;need(calendar->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Calendar consumes its source action");calendar->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
                             click({373,289},time+.72);present(time+.94,true);need(calendar->editing(),"Calendar opens its three real projected fields");
@@ -360,7 +416,7 @@ int Application::Impl::runHiddenVerification(){
                         need(archiveService->state().active()&&!archiveService->state().error(),"Archive source activation loads its isolated database");
                         if(!cycle){
                             gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,440}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                            const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,module,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                            const auto ps=chromeSettings(module);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                             const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                             const auto click=[&](core::Point local,double t){const auto projected=plane.project(local);need(projected.has_value(),"Archive source input projects through the shared module plane");const auto x=projected->x/metrics.scale,y=projected->y/metrics.scale;need(archive->pointer({app::PointerKind::down,app::PointerButton::left,x,y},t),"Archive consumes its source action");archive->pointer({app::PointerKind::up,app::PointerButton::left,x,y},t);present(t,true);};
                             click({29,316},time+.72); // Original '+' → category menu.
@@ -375,7 +431,7 @@ int Application::Impl::runHiddenVerification(){
                     if(module==core::Module::clipboard&&clipboard){
                         need(chromePlan&&chromePlan->projection().center,"Clipboard coverage needs the actual source plane");
                         gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,module);
-                        const source::DesktopChromeSettings probeSettings{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,module,true};
+                        const auto probeSettings=chromeSettings(module);
                         probePlane.update(*chromePlan->projection().center,probeSettings,notes->modulePresentation().current,1);
                         const auto probeCamera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
                         const auto target=core::Projection::viewport(probeCamera*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight).project({200,160});need(target.has_value(),"Clipboard scroll target projects");
@@ -673,13 +729,127 @@ int Application::Impl::runHiddenVerification(){
                         auto restore=settingsUI->controller().committed();restore.set("clockStyle",original);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
                     }
                 }
+                // The clock section scrolls with a Windows mouse wheel too (the Mac
+                // reads the horizontal swipe), and a style change pushes the inner
+                // clipped page (HUDClockPageViewport.transition: 0.26 s,
+                // easeInEaseOut, by the page width, from the right when forward).
+                if(chrome&&settingsUI&&!settings.reduceMotion){
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    const auto world=chrome->statusWorld();
+                    const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                    std::optional<core::Point> body;
+                    if(world)if(const auto p=core::Projection::viewport(camera**world,metrics.pixelWidth,metrics.pixelHeight).project({170,50}))body=core::Point{p->x/metrics.scale,p->y/metrics.scale};
+                    hostCheck(body&&clockPoint(*body),"The clock body is hit-tested for the wheel");
+                    if(body){
+                        constexpr std::array<std::string_view,5> styles{"digital","split","dial","rail","stacked"};
+                        const auto original=configuration.string("clockStyle");
+                        const auto at=std::find(styles.begin(),styles.end(),original);const auto index=at==styles.end()?0u:unsigned(at-styles.begin());
+                        const auto next=std::string(styles[(index+1)%5]);
+                        // Three wheel notches down within the gesture window: 36 points.
+                        for(unsigned n=0;n<3;++n)(void)clockWheel({body->x,body->y,-1,false,0,3},time+double(n)*.05);
+                        hostCheck(settingsUI->controller().committed().string("clockStyle")==next,"A mouse wheel turned down over the clock advances its style once");
+                        const double start=time+.2;present(start,true);
+                        auto*const pages=chrome->transitionScene();
+                        hostCheck(chrome->styleTransitionActive()&&pages&&std::find_if(ordered.begin(),ordered.end(),[&](const auto&e){return e.scene==pages;})!=ordered.end(),
+                            "The style change starts the clock page push and composes its two pages");
+                        present(start+source::DesktopChromeTiming::styleDuration/2,true);
+                        const auto offsets=chrome->transitionOffsets();
+                        hostCheck(offsets&&std::abs((*offsets)[0]+170)<.5&&std::abs((*offsets)[1]-170)<.5,"Half way (easeInEaseOut) the outgoing page left by 170 points and the incoming one is 170 points from the right");
+                        present(start+.3,true);
+                        hostCheck(!chrome->styleTransitionActive()&&!chrome->transitionScene()&&std::none_of(ordered.begin(),ordered.end(),[&](const auto&e){return e.scene==pages;}),"After 0.26 s the push ends and the status panel shows its page again");
+                        // A wheel turned up goes back; one gesture changes the style once.
+                        time=start+1;for(unsigned n=0;n<3;++n)(void)clockWheel({body->x,body->y,1,false,0,3},time+double(n)*.05);
+                        hostCheck(settingsUI->controller().committed().string("clockStyle")==original,"A mouse wheel turned up over the clock goes back one style");
+                        present(time+.2,true);
+                        hostCheck(chrome->styleTransitionActive()&&chrome->transitionOffsets()&&(*chrome->transitionOffsets())[1]<0,"Going back pushes the page in from the left");
+                        // Closing cancels a running push (clockPage.cancelTransition).
+                        close(time+.21);hostCheck(!chrome->styleTransitionActive(),"Closing the HUD ends the clock page push");
+                        for(unsigned frame=0;frame<90&&session->phase()!=core::VisibilityPhase::concealed;++frame)present(time+.22+double(frame)/60,true);
+                        hostCheck(session->phase()==core::VisibilityPhase::concealed,"The HUD closes after the push was cancelled");concealed(time+2);
+                        time+=3;open(time);for(unsigned frame=0;frame<90;++frame)present(time+double(frame)/60,true);time+=2;
+                        hostCheck(session->phase()==core::VisibilityPhase::visible&&session->inputEnabled(),"The HUD reopens after the clock checks");
+                    }
+                }
+                // The industry logo (HUDSourceWatchView.flickerIndustryLogo): a click
+                // flickers it (.22 over [.05,.09), .38 over [.20,.25), .46 s), its
+                // press never closes the HUD, and its UI Automation button presses alike.
+                if(!centerLogoMainID.empty()&&session->phase()==core::VisibilityPhase::visible){
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    const auto frame=session->logoFrame();
+                    const auto center=frame?std::optional(core::Point{frame->x+frame->width/2,frame->y+frame->height/2}):std::nullopt;
+                    hostCheck(center&&session->logoContains(*center)&&session->sourceControlAt(*center,centerLogoMainID),"The industry logo's projected quad is a source control of the current frame");
+                    if(center){
+                        hostCheck(!backgroundPressCloses(*center),"A press on the industry logo never closes the HUD");
+                        const double start=time+.01;
+                        hostCheck(logoPointer({PointerKind::down,PointerButton::left,center->x,center->y},time)&&logoPointer({PointerKind::up,PointerButton::left,center->x,center->y},start)&&session->logoFlickering(),
+                            "Clicking the industry logo starts its flicker");
+                        present(start+.07,true);const auto first=session->logoOpacity();
+                        present(start+.15,true);const auto between=session->logoOpacity();
+                        present(start+.22,true);const auto second=session->logoOpacity();
+                        hostCheck(session->demand(start+.22).finiteAnimation,"The flicker requests frames while it runs");
+                        present(start+.5,true);
+                        hostCheck(first==.22f&&between==1.f&&second==.38f&&session->logoOpacity()==1.f&&!session->logoFlickering(),"The logo dips to .22 and .38 and settles after .46 s");
+                        time=start+1;present(time,true);
+                        if(navigationAutomation){HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                            ComPtr<IRawElementProviderFragment>logo;
+                            for(std::size_t n=0;n<navigationAutomation->automationCount()&&!logo;++n){ComPtr<IRawElementProviderFragment>f;
+                                if(SUCCEEDED(navigationAutomation->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)=="navigation:industryLogo")logo=f;}
+                            hostCheck(logo&&textProperty(logo.Get(),UIA_NamePropertyId)=="ENDFIELD INDUSTRIES","The navigation lists the ENDFIELD INDUSTRIES logo button");
+                            ComPtr<IInvokeProvider>invoke;
+                            hostCheck(logo&&SUCCEEDED(logo.As(&invoke))&&invoke->Invoke()==S_OK&&session->logoFlickering(),"Invoking the logo button flickers the logo");
+                            present(time+.6,true);time+=1;probe.disconnectOwners();probe.shutdown();}
+                    }
+                }
+                // Display adaptation (core/source_desktop_chrome.hpp desktopContentScale):
+                // on the reference Mac display the centre plane is the exact Mac
+                // layout (factor 1); on larger displays the centre content keeps the
+                // reference proportion to the source's main ring, in the ring's plane.
+                if(chromeBindings&&camera&&animation){
+                    source::SourceLayout sourceLayout(*scene);
+                    const auto findRing=[&](std::string_view name)->std::optional<std::size_t>{for(const auto&n:scene->nodes())if(n.name==name&&std::string_view(n.path).find("/MiddleDecoNode/")!=std::string_view::npos)return sourceLayout.nodeIndex(n.id);return std::nullopt;};
+                    const auto mainRing=findRing("MainRing"),blueRing=findRing("Mid_Blue");
+                    hostCheck(mainRing&&blueRing,"The source centre rings (MainRing, Mid_Blue) exist");
+                    if(mainRing&&blueRing){
+                        struct Measure{double content{},mainRing{},blueRing{};};
+                        const auto apply=[](const core::Matrix4&m,core::Point p){const auto&v=m.values;const double w=v[3]*p.x+v[7]*p.y+v[15];return core::Point{(v[0]*p.x+v[4]*p.y+v[12])/w,(v[1]*p.x+v[5]*p.y+v[13])/w};};
+                        const auto measureDisplay=[&](core::Rect viewport,double factor){
+                            source::DesktopChromeProjectionPlan plan(*scene,*camera,*animation,*chromeBindings);
+                            const auto frame=camera->frame({viewport.width,viewport.height},camera->rootRotation());
+                            const auto pose=animation->pose(animation->entrance().lastKeyTime,{},{},frame.layout.canvasSize);
+                            const auto nodes=sourceLayout.resolve({},pose.transforms);
+                            (void)plan.update(nodes,frame,viewport,factor);need(plan.projection().center.has_value(),"The centre plane projects at the probe display");
+                            source::DesktopChromeSettings probeSettings{viewport,1,{},core::Module::clipboard,true};probeSettings.contentScale=factor;
+                            const auto layout=source::DesktopChromeLayout::make(probeSettings,*plan.projection().center,core::Matrix4{});
+                            const auto hostWorld=*plan.projection().center*core::Matrix4::translation(500,layout.reportCenterY)*core::Matrix4::scale(layout.reportScale,layout.reportScale)*core::Matrix4::translation(-220,-220);
+                            const auto a=apply(hostWorld,{0,220}),b=apply(hostWorld,{440,220});
+                            const auto width=[&](std::size_t index){const auto&n=nodes[index];need(n.rect.has_value(),"A centre ring has a rect");const auto&r=*n.rect;const auto world=frame.worldRoot*n.worldMatrix,vp=frame.projection*frame.view;
+                                const auto c=source::projectNativePoint({r.origin[0],r.origin[1]+r.size[1]*.5,0},world,vp,viewport),d=source::projectNativePoint({r.origin[0]+r.size[0],r.origin[1]+r.size[1]*.5,0},world,vp,viewport);
+                                need(c&&d,"A centre ring projects at the probe display");return std::hypot(d->x-c->x,d->y-c->y);};
+                            return Measure{std::hypot(b.x-a.x,b.y-a.y),width(*mainRing),width(*blueRing)};};
+                        const auto reference=source::desktopReferenceViewport;const auto referenceFactor=source::desktopContentScale(*camera,reference);
+                        hostCheck(referenceFactor==1,"The reference Mac display keeps the exact Mac design scale");
+                        hostCheck(contentScale==source::desktopContentScale(*camera,{0,0,metrics.width,metrics.height}),"The host planes use the display adaptation of the HUD window");
+                        const auto referenceMeasure=measureDisplay(reference,1);const double referenceRatio=referenceMeasure.content/referenceMeasure.mainRing;
+                        Json::Array displays;
+                        for(const core::Rect v:{core::Rect{0,0,2560./1.5,1600./1.5},core::Rect{0,0,1920,1080},core::Rect{0,0,1536,864},core::Rect{0,0,1920,1200},core::Rect{0,0,2560,1440},core::Rect{0,0,3440,1440},core::Rect{0,0,1280,800}}){
+                            const auto factor=source::desktopContentScale(*camera,v);const auto adapted=measureDisplay(v,factor),mac=measureDisplay(v,1);
+                            const bool larger=source::desktopBaseDesignScale(v)*factor>source::desktopBaseDesignScale(v)+1e-9;
+                            hostCheck(factor>=1&&(!larger||std::abs(adapted.content/adapted.mainRing/referenceRatio-1)<.01),
+                                "On a "+std::to_string(int(std::lround(v.width)))+" x "+std::to_string(int(std::lround(v.height)))+" point display the centre content keeps the reference Mac proportion to the main ring");
+                            displays.push_back(Json::Object{{"width",v.width},{"height",v.height},{"contentScale",factor},{"contentToMainRing",adapted.content/adapted.mainRing},{"contentToBlueRing",adapted.content/adapted.blueRing},
+                                {"macFormulaContentToMainRing",mac.content/mac.mainRing},{"contentPoints",adapted.content}});
+                        }
+                        displayAdaptation=Json::Object{{"referenceDisplay",Json::Array{reference.width,reference.height}},{"referenceContentToMainRing",referenceRatio},{"referenceContentToBlueRing",referenceMeasure.content/referenceMeasure.blueRing},
+                            {"hostContentScale",contentScale},{"displays",std::move(displays)}};
+                    }
+                }
                 // Drag feedback over an area (ModuleOwner::dropHover): the HUD's
                 // drop route reaches the owner presenting the selected module,
                 // which refuses a document; a leave ends its highlight.
                 if(auto*apps=areaOwner("appShortcuts");apps&&registry.enabled(*apps)&&apps->presents(core::Module::addApp)&&chromePlan&&chromePlan->projection().center){
                     selectModule(core::Module::addApp,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
                     gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,core::Module::addApp);
-                    const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,core::Module::addApp,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                    const auto ps=chromeSettings(core::Module::addApp);probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
                     const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
                     if(const auto center=plane.project({200,167})){const core::Point p{center->x/metrics.scale,center->y/metrics.scale};
                         const std::vector<std::string>document{"C:\\Synthetic\\Notes.txt"};
@@ -839,7 +1009,7 @@ int Application::Impl::runHiddenVerification(){
         need(!IsWindowVisible(static_cast<HWND>(host.hwnd())),"Hidden benchmark window became visible");need(host.stats().frames==0&&!host.stats().timerArmed,"Hidden benchmark scheduled native frame work");
         Json::Array unsupported,substitutions;for(const auto&v:layers.report().unsupported)unsupported.push_back(Json::Object{{"node",v.node},{"feature",v.feature}});for(const auto&v:layers.report().fontSubstitutions)substitutions.push_back(Json::Object{{"node",v.node},{"requested",v.requestedFamily},{"selected",v.selectedFamily}});
         Json report=Json::Object{{"scope","Synthetic source-shell CPU preparation and GPU submission, not GPU duration/FPS or whole-app usage"},{"visible",false},{"desktopCaptured",false},{"userDataRead",false},{"driver",args.warp?"WARP":"hardware"},{"runtimeInput",args.runtimeInput},{"benchmarkEpoch",args.benchmarkEpoch},{"pixelWidth",std::int64_t(metrics.pixelWidth)},{"pixelHeight",std::int64_t(metrics.pixelHeight)},{"logicalWidth",metrics.width},{"logicalHeight",metrics.height},{"scale",metrics.scale},{"coverageOpeningSamples",int(coverageOpening)},{"coverageHoveredPressedHitPoints",int(coverageButtons)},{"coverageResults",coverageResults},{"moduleResults",moduleResults},{"preparationMilliseconds",preparedMS},{"device",Json::Object{{"name",deviceInfo.name},{"vendorID",std::int64_t(deviceInfo.vendorID)},{"deviceID",std::int64_t(deviceInfo.deviceID)},{"dedicatedVideoCapacityBytes",std::int64_t(deviceInfo.dedicatedVideoBytes)},{"sharedSystemCapacityBytes",std::int64_t(deviceInfo.sharedSystemBytes)}}},{"processMemoryScope","This test process including typed source models, D3D driver and benchmark report data; temporary source/setup JSON and any development Package released before sampling"},{"startupStages",startup.rows()},{"samples",rows},{"ownedTargetSnapshots",images},{"snapshotDirectory",args.snapshots.empty()?std::string{}:utf8(args.snapshots)},{"scrollBefore",scrollBefore},{"scrollAfter",scrollAfter},{"scrollDirection",1},{"nativeCanvasFade","Original .20/.24 opening and .35/.06 closing with(.20,.72,.22,1); source clip completion owns concealment"},{"chromeIncluded",bool(chrome)},{"customCursorLoaded",cursor.handle()!=nullptr},{"unsupportedNativeLayers",unsupported},{"fontSubstitutions",substitutions},{"nativeContentVariants",std::int64_t(contentCatalog->variantCount())},{"nativeContentUpdates",std::int64_t(nativeContent?nativeContent->stats().updates:nativeAppearance->stats().updates)},{"nativeContentSurfaceUpdates",std::int64_t(nativeContent?nativeContent->stats().surfaceUpdates:nativeAppearance->stats().surfaceUpdates)},{"nativeTimerArmed",host.stats().timerArmed},{"nativeFrameCallbacks",std::int64_t(host.stats().frames)},
-            {"systemBackdropIncluded",false},{"productionLifecycleChecks",int(lifecycleChecks)},{"hostIntegrationChecks",int(hostChecks)},
+            {"systemBackdropIncluded",false},{"productionLifecycleChecks",int(lifecycleChecks)},{"hostIntegrationChecks",int(hostChecks)},{"displayAdaptation",displayAdaptation},
             {"idCardConnected",bool(idCard)},{"idCardApplies",idCard?std::int64_t(idCard->stats().applies):std::int64_t{0}},{"idCardSettingsChanges",idCard?std::int64_t(idCard->stats().settingsChanges):std::int64_t{0}},
             {"settingsLinkRequests",std::int64_t(linkRequests)},{"archiveIncluded",bool(archive)},{"storageIncluded",bool(storage)},{"activityIncluded",bool(activity)},{"readerIncluded",bool(reader)},{"calendarIncluded",bool(calendar)},{"calendarUsesSyntheticNotifications",bool(calendarFixture)},{"mapIncluded",bool(map)},{"minigameIncluded",bool(game)},{"storageUsesSyntheticProviders",bool(storageFixture)},{"storageCapacityReads",storageFixture?int(storageFixture->capacityReads.load()):0},{"storageDetailScans",storageFixture?int(storageFixture->detailScans.load()):0},{"storageSettingsRequests",storageFixture?int(storageFixture->settingsRequests):0},{"appSharedMediaProvider",bool(mediaBroker)},{"limitations",Json::Array{args.moduleCoverage?"Module owners use synthetic data and hidden generated input; real clipboard/audio providers and desktop backdrop are excluded":"No module bodies, providers, persistence, user input or screen capture; hidden offscreen benchmark excludes the system backdrop","Visible preview uses the native system backdrop with original source fade/default opacity; exact blur/radial appearance is unverified","Fixed synthetic clock strings; original canvas fade does not extend source clip completion","Native caption/icon variants are limited to exact exported action-slot pairs; missing variants reject instead of fabricating artwork","CPU timings include submission/driver stalls; no GPU completion timestamp or frame-rate claim","Forced stable-idle draws are benchmark samples; the actual host schedules no ambient-off idle frames"}}};
         Json::Array areas;

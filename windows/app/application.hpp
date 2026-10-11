@@ -121,6 +121,12 @@ struct ApplicationOptions {
     std::filesystem::path startupTrace;
     // Hidden trace comparison only: skip the launch prewarm before the first opening.
     bool startupTraceWithoutPrewarm{};
+    // Hidden scheduling trace (watch_session_preview --contention-trace): the
+    // opened HUD paced at 60 Hz on the hardware GPU, alternately at normal
+    // priority and with PresentationPriority raised, reporting the wake
+    // lateness, CPU frame time and GPU completion per frame (numbers only).
+    // Run it while a load (tools/application_contention_stress) is active.
+    std::filesystem::path contentionTrace;
 };
 
 class Application final {

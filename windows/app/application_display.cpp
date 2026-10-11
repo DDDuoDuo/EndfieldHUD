@@ -29,6 +29,27 @@ void Application::Impl::findCenterLogoNodes() {
         if (node.name == "EndfieldText" && centerLogoMainID.empty()) centerLogoMainID = node.id;
         else if (node.name == "EndfieldTextGlow" && centerLogoGlowID.empty()) centerLogoGlowID = node.id;
     }
+    // refreshIndustryLogo / flickerIndustryLogo run on the session's frame clock.
+    if (session) session->setLogoNodes(centerLogoMainID, centerLogoGlowID);
+}
+// HUDSourceWatchView.mouseDown/mouseUp over the industry logo: a press inside
+// it belongs to the logo (never closes the HUD, never reaches a card); the
+// release inside it flickers the logo (flickerIndustryLogo).
+bool Application::Impl::logoPointer(const PointerEvent& e, double time) {
+    if (centerLogoMainID.empty()) return false;
+    const core::Point p{e.x, e.y};
+    if (e.kind == PointerKind::captureLost) { logoPressed = false; return false; }
+    if ((e.kind == PointerKind::down || e.kind == PointerKind::doubleClick) && e.button == PointerButton::left) {
+        logoPressed = session->inputEnabled() && session->phase() == core::VisibilityPhase::visible && session->logoContains(p);
+        if (logoPressed) host.capturePointer(true);
+        return logoPressed;
+    }
+    if (e.kind == PointerKind::up && e.button == PointerButton::left && logoPressed) {
+        logoPressed = false; host.capturePointer(false);
+        if (session->logoContains(p) && session->flickerLogo(time)) refresh(time);
+        return true;
+    }
+    return false;
 }
 // setDesktopCenterLogo(choice, revision): on a choice/revision change the
 // artwork is decoded and composed on the shared executor, then bound.
@@ -276,9 +297,11 @@ void Application::Impl::constructClockAutomation() {
 }
 bool Application::Impl::clockWheel(const WheelEvent& e, double time) {
     if (!clockAcceptsInput() || !clockPoint({e.x, e.y})) return false;
-    if (!e.horizontal) return true;
-    // Notches carry the source's non-precise 12-point line delta.
-    const double delta = e.steps * 12;
+    // Notches carry the source's non-precise 12-point line delta. The Mac
+    // reads the horizontal swipe; a Windows mouse has only the vertical wheel,
+    // so a wheel turned down over the clock advances like a leftward swipe
+    // (and up goes back), through the same once-per-gesture threshold.
+    const double delta = e.horizontal ? e.steps * 12 : -e.steps * 12;
     if (!std::isfinite(delta)) return true;
     if (time - clockSwipeTime > .25) { clockSwipe = 0; clockSwipeConsumed = false; }
     clockSwipeTime = time;
@@ -292,5 +315,56 @@ bool Application::Impl::clockWheel(const WheelEvent& e, double time) {
     selectClockStyle((current + clockStyles.size() + direction) % clockStyles.size(), time);
     refresh(time);
     return true;
+}
+// SystemHUDView.update(configuration:): clockPage.transition(forward:,
+// animated: usesSourceShell && interactionEnabled && !reduceMotion), right
+// after the new style's artwork was applied (updateClock).
+void Application::Impl::clockStyleChanged(source::DesktopClockStyle previous, double time) {
+    if (!chrome) return;
+    const auto forward = source::DesktopChromeTiming::styleMovesForward(static_cast<unsigned>(previous), static_cast<unsigned>(chromeContent.style));
+    // interactionEnabled: the open, interactive HUD (not while opening or closing).
+    const bool interactive = ready && !stopping && !closing && session->inputEnabled() && session->phase() == core::VisibilityPhase::visible;
+    if (!interactive || settings.reduceMotion || !chrome->beginStyleTransition(forward, hostTime(time))) { chrome->cancelStyleTransition(); return; }
+    if (ready && !stopping) host.invalidate();
+}
+
+// --- Display adaptation ---------------------------------------------------------
+void Application::Impl::updateContentScale() {
+    contentScale = camera && metrics.width > 0 && metrics.height > 0 ? source::desktopContentScale(*camera, {0, 0, metrics.width, metrics.height}) : 1;
+}
+source::DesktopChromeSettings Application::Impl::chromeSettings(core::Module module) const {
+    source::DesktopChromeSettings value{{0, 0, metrics.width, metrics.height}, settings.hudScale, settings.hudOffset, module, true};
+    value.contentScale = contentScale;
+    return value;
+}
+
+// --- Summon shortcut --------------------------------------------------------------
+bool Application::Impl::summonHotkeyEnabled() const {
+    const auto& disabled = configuration.fields["windowsSummonHotkeyDisabled"];
+    return !(disabled.isBool() && disabled.boolean());
+}
+// RegisterHotKey and the low-level hook both follow the preference; while a
+// shortcut is being recorded (capturing) neither may take the chord.
+void Application::Impl::applySummonShortcut(bool capturing) {
+    if (!tray) return;
+    const auto key = modules::settingsShortcut(configuration);
+    const bool enabled = summonHotkeyEnabled() && !capturing && !quitRequested;
+    const std::optional<gpu::TrayHotkey> desired = enabled ? std::optional(gpu::TrayHotkey{key.modifiers, key.key}) : std::nullopt;
+    bool changed = false, registered = tray->hotkey() == desired;
+    if (!registered) { registered = tray->setHotkey(desired); changed = true; }
+    bool hooked = false;
+    if (summonHook) {
+        const auto chord = SummonHotkeyHook::chord(key.key, key.modifiers);
+        if (!enabled) { if (summonHook->running()) { summonHook->stop(); changed = true; } }
+        else if (summonHook->running() && lastHookChord == chord) hooked = true;
+        else { hooked = summonHook->start(chord, ++summonHookGeneration); changed = true; }
+        lastHookChord = enabled && hooked ? std::optional(chord) : std::nullopt;
+    }
+    // "Shortcut unavailable" only when neither path can deliver it.
+    if (!capturing) {
+        auto status = enabled && !registered && !hooked ? core::localized("Shortcut unavailable", "快捷键不可用", watchAppearance.language) : std::string{};
+        if (status != shortcutStatus) { shortcutStatus = std::move(status); if (settingsUI) settingsUI->controller().setExternalStatus(loginStatus, shortcutStatus); }
+    }
+    if (changed) updateTrayMenu();
 }
 } // namespace endfield::app

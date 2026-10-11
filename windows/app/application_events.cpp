@@ -55,7 +55,7 @@ ModuleCursor Application::Impl::cursorAt(core::Point p){
 
 void Application::Impl::onResize(const ClientMetrics&value){
     if(projectionShown()&&projectionPainting){projectionResizePending=value;return;}
-    metrics=value;registry.forEach([&](ModuleOwner&o){o.resize(value);},"resize");
+    metrics=value;updateContentScale();registry.forEach([&](ModuleOwner&o){o.resize(value);},"resize");
     if(!ready||stopping)return;const auto time=now();environment.viewport={value.width,value.height};environment.onScreen=value.pixelWidth>0&&value.pixelHeight>0;session->setEnvironment(environment,time);
     if(environment.onScreen)try{renderer.resize(value.pixelWidth,value.pixelHeight);}catch(const std::exception&e){if(recoverDevice(e,time))return;throw;}
     if(projectionShown())(void)projectionCall("resize",[&]{projection->resize(value,projectionWorkTopPixels/value.scale);});automationChanged();refresh(time);
@@ -99,6 +99,8 @@ bool Application::Impl::onPointer(const PointerEvent&e){
     // The clock sits below popovers and workspace notes, beside navigation:
     // a style indicator selects that style, the rest opens Work Mode.
     if(clockPress(e,hostTime(time)))return true;
+    // The industry logo owns its press and release (flickerIndustryLogo).
+    if(logoPointer(e,hostTime(time)))return true;
     const auto at=hostTime(time);
     if(e.kind==PointerKind::move){environment.pointer=p;session->pointerMove(p,at);}
     else if((e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)&&e.button==PointerButton::left){environment.pointer=p;
@@ -324,7 +326,7 @@ bool Application::Impl::backgroundPressCloses(core::Point client){
     std::optional<core::Point> design=coreDesignPoint(client);
     if(!design){
         // SystemHUDView: `coreDesignPoint(p) ?? p` (the flat design point).
-        const auto layout=source::DesktopChromeLayout::make({{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,notes->selected(),true},core::Matrix4{},core::Matrix4{});
+        const auto layout=source::DesktopChromeLayout::make(chromeSettings(notes->selected()),core::Matrix4{},core::Matrix4{});
         if(!(layout.designScale>0))return false;
         design=core::Point{(client.x-layout.designOrigin.x)/layout.designScale,(client.y-layout.designOrigin.y)/layout.designScale};
     }
@@ -335,8 +337,19 @@ bool Application::Impl::backgroundPressCloses(core::Point client){
 std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage&m){
     auto stage=probe.measure(LiveProbe::message);
     if(!stopping&&systemServices)systemServices->handle_message(m.message,m.wParam,m.lParam);
+    // The summon hook (app/summon_hotkey.hpp) recognised the chord: the same
+    // toggle as WM_HOTKEY. A Windows-key chord is reported by both paths;
+    // RegisterHotKey's copy right after the hook's is the same press.
+    if(ready&&m.message==summonHookMessage){
+        if(m.wParam==summonHookGeneration&&summonHook&&summonHook->running()&&summonHotkeyEnabled()&&!quitRequested&&!stopping){
+            const auto time=now();lastHookSummon=time;trayAction(gpu::TrayAction::openOverlay,true,time);}
+        return 0;
+    }
     if(ready&&tray&&tray->message(m.message,m.wParam,m.lParam)){
-        if(const auto action=tray->takeAction())trayAction(*action,m.message==WM_HOTKEY,now());
+        if(const auto action=tray->takeAction()){
+            const bool hotkey=m.message==WM_HOTKEY;const auto time=now();
+            if(!(hotkey&&lastHookSummon&&time-*lastHookSummon<.3))trayAction(*action,hotkey,time);
+        }
         return 0;
     }
     if(ready&&m.wParam==serviceGeneration){

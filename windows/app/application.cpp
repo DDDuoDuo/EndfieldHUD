@@ -336,7 +336,7 @@ void Application::Impl::construct(){
     else{const auto file=args.settingsAssets/"watch-appearance"/"manifest.json";const auto bytes=ehud::data::detail::readFile(file,1024*1024);need(bytes&&packet::sha256(std::span(reinterpret_cast<const std::uint8_t*>(bytes->data()),bytes->size()))=="1c623124d48d094e8897b89598bc6791a8d369bc51ef8bc87c928ef5915444de","Original desktop appearance pin differs");appearanceTemplates=std::make_unique<gpu::WatchAppearanceTemplates>(Json::parse(*bytes));auto ro=rasterOptions;ro.assetRoot=file.parent_path();nativeAppearance=std::make_unique<gpu::NativeWatchAppearance>(*appearanceTemplates,*scene,labelPlan->bindings(),layers,rasterizer,ro);}startup.mark("native-bindings-content-catalog");
     labels=std::make_unique<gpu::WatchLabelPresentation>(*labelPlan,layers);for(const auto&id:labelPlan->buttonIDs())available.push_back({id,false,false});
     chromeContent.reading=source::DesktopClockReading{"12:34:56","WED Oct 7"};chromeContent.uppercaseShortcut="CTRL + `";chromeContent.localizedClose="Click outside to close";
-    if(includesChrome){chromePlan=std::make_unique<source::DesktopChromeProjectionPlan>(*scene,*camera,*animation,source::DesktopChromeBindings::fromJson(chromeJSON["bindings"]));chrome=std::make_unique<gpu::NativeChromePresentation>(*chromePlan,layers,chromeJSON,rasterOptions);
+    if(includesChrome){chromeBindings=source::DesktopChromeBindings::fromJson(chromeJSON["bindings"]);chromePlan=std::make_unique<source::DesktopChromeProjectionPlan>(*scene,*camera,*animation,*chromeBindings);chrome=std::make_unique<gpu::NativeChromePresentation>(*chromePlan,layers,chromeJSON,rasterOptions,rasterizer);
         chrome->setContent(chromeContent);}startup.mark("chrome-artwork");
     // A packet without the exported profile captions keeps the packet card.
     try{idCardLeaves=gpu::idCardCaptionLeaves(top["nativeLayers"]);}catch(const std::exception&){}
@@ -358,7 +358,7 @@ void Application::Impl::construct(){
         windowOptions.pixelHeight=static_cast<std::uint32_t>(bounds.bottom-bounds.top);
     }
     if(!visibleMode()){windowOptions.pixelWidth=args.benchmarkWidth;windowOptions.pixelHeight=args.benchmarkHeight;}
-    host.create(windowOptions,callbacks());metrics=host.metrics();startup.mark("hidden-window");
+    host.create(windowOptions,callbacks());metrics=host.metrics();updateContentScale();startup.mark("hidden-window");
     renderer.initialize(host.hwnd(),metrics.pixelWidth,metrics.pixelHeight,{args.warp?gpu::Driver::warpForTests:gpu::Driver::hardware,args.shader,visibleMode()?gpu::RenderTarget::composition:gpu::RenderTarget::offscreenForTests,!args.dataRoot.empty()});startup.mark("renderer-device-target");
     if(visibleMode()){
         backdropQueue=std::make_unique<BackdropQueue>();
@@ -580,6 +580,7 @@ bool Application::Impl::broadcast(HostEvent::Kind kind,double time,std::uint32_t
     return changed;
 }
 void Application::Impl::concealed(double time){
+    presentationPriority.restore(); // a closed HUD never competes with the foreground app
     if(concealedBroadcast)return;concealedBroadcast=true;
     // The hidden HUD has no projected controls for UI Automation.
     if(automation)automation->disconnectOwners();
@@ -1076,8 +1077,18 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.callbacks.configurationChanged=[this](const auto&value){configuration=value;if(!args.orbipomAssets.empty())configuration.set("orbipom.bestScore.v1",gameBest);configurationPending=true;};
     options.callbacks.persist=[this](const auto&value){auto committed=value;if(!args.orbipomAssets.empty())committed.set("orbipom.bestScore.v1",gameBest);settingsSaves->save(committed);};
     options.callbacks.changed=[this]{if(ready&&!stopping)host.invalidate();};
-    options.callbacks.registerShortcut=[this](auto value)->std::optional<std::string>{if(tray&&tray->setHotkey(gpu::TrayHotkey{value.modifiers,value.key})){updateTrayMenu();return {};}return core::localized("Shortcut unavailable","快捷键不可用",settingsLanguage(configuration));};
-    options.callbacks.shortcutCapture=[this](bool capture){if(!tray)return;const auto key=modules::settingsShortcut(configuration);if(capture)tray->setHotkey({});else tray->setHotkey(gpu::TrayHotkey{key.modifiers,key.key});};
+    // Opening by hotkey switched off: a recorded shortcut is kept for later
+    // and registers nothing now. Otherwise RegisterHotKey must accept it,
+    // unless the low-level hook path can deliver it on its own.
+    options.callbacks.registerShortcut=[this](auto value)->std::optional<std::string>{
+        if(!tray)return core::localized("Shortcut unavailable","快捷键不可用",settingsLanguage(configuration));
+        if(!summonHotkeyEnabled()){updateTrayMenu();return {};}
+        const bool registered=tray->setHotkey(gpu::TrayHotkey{value.modifiers,value.key});
+        bool hooked=false;if(summonHook){const auto chord=SummonHotkeyHook::chord(value.key,value.modifiers);hooked=summonHook->start(chord,++summonHookGeneration);lastHookChord=hooked?std::optional(chord):std::nullopt;}
+        if(registered||hooked){updateTrayMenu();return {};}
+        return core::localized("Shortcut unavailable","快捷键不可用",settingsLanguage(configuration));};
+    // Recording a shortcut must see the current chord too: both paths pause.
+    options.callbacks.shortcutCapture=[this](bool capture){if(!tray)return;applySummonShortcut(capture);};
     options.callbacks.launchAtLogin=[this](bool enabled)->std::optional<std::string>{
         if(!loginItem)return "Startup registration is unavailable in this isolated preview";
         // Transactional: an error is returned before the preference commits.
@@ -1102,6 +1113,8 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.viewHooks.macImport=[this]{if(auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr)(void)isolateService(macImportEntryService,"mac import",[&]{(void)e->present(areaClock());});};
     // Display > Theme color / Center logo (HUDSettingsInteraction.chooseColor,
     // chooseLogo; a logo selection invalidates a pending import).
+    // Windows-only Hotkeys toggle: switch opening by the summon shortcut off.
+    options.viewHooks.summonHotkeyToggle=true;
     options.viewHooks.chooseColor=[this]{requestThemeColor();};
     options.viewHooks.chooseLogo=[this]{chooseCenterLogo();};
     options.viewHooks.logoSelection=[this]{++logoImportGeneration;};
@@ -1165,8 +1178,11 @@ void Application::Impl::constructTray(){
     // remain available, so a production tray failure is not fatal.
     const bool installed=tray->start(static_cast<HICON>(applicationIcon.handle()),production()?L"EndfieldHUD":L"EndfieldHUD migration preview");
     if(!production())need(installed,"Windows could not add the preview tray icon");
-    const auto key=modules::settingsShortcut(configuration);
-    const bool shortcut=tray->setHotkey(production()?gpu::TrayHotkey{key.modifiers,key.key}:gpu::TrayHotkey{MOD_CONTROL,VK_OEM_3});
+    // The low-level hook path (production only: a development preview never
+    // installs a global keyboard hook).
+    if(production())summonHook=std::make_unique<SummonHotkeyHook>(host.hwnd(),summonHookMessage);
+    bool shortcut=true;
+    if(production())applySummonShortcut(false);else shortcut=tray->setHotkey(gpu::TrayHotkey{MOD_CONTROL,VK_OEM_3});
     updateTrayMenu();
     if(!shortcut&&!production())std::cout<<"Ctrl + ` is already registered; reopen this isolated preview from its tray icon.\n";
 }
@@ -1275,9 +1291,9 @@ void Application::Impl::perform(const core::SystemOverlayEffects&effects,double 
         case K::select:selectModule(e.module,time);break;
         case K::preview:if(auto*p=powerArea())(void)isolateService(power::PowerAreaService::key,"preview",[&]{p->preview(hostTime(time));});break; // launch --preview (AppDelegate.preview)
         case K::markLaunched:if(settingsSaves)settingsSaves->markLaunched();break;
-        case K::quitAccepted:quitRequested=true;if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
+        case K::quitAccepted:quitRequested=true;if(summonHook)summonHook->stop();if(tray)tray->setHotkey({});broadcast(HostEvent::Kind::quitting,time);break;
         case K::terminate:finishQuit(time);break;
-        case K::restartShortcut:if(tray){const auto key=modules::settingsShortcut(configuration);tray->setHotkey(gpu::TrayHotkey{key.modifiers,key.key});updateTrayMenu();}break;
+        case K::restartShortcut:if(tray)applySummonShortcut(false);break;
         }
     }
 }
@@ -1344,6 +1360,8 @@ void Application::Impl::selectModule(core::Module module,double time){
 void Application::Impl::open(double time){
     time=hostTime(time);closing=false;canvasOpenedAt=time;session->open(time,0x5eed);
     concealedBroadcast=false;
+    // A game keeps the CPU and GPU busy: the shown HUD schedules ahead of it.
+    if(visibleMode())presentationPriority.raise(&renderer);
     registry.forEach([&](ModuleOwner&o){o.setOverlayVisible(true,hostTime(time));},"open");
     automationChanged();
     if(audio)audio->volume().setVisible(true);
@@ -1356,6 +1374,8 @@ void Application::Impl::close(double time){
     if(registry.first(ModuleRegistry::Chain::finishEditing,[&](ModuleOwner&o,const ModuleRouting&){return !o.finishEditing(hostTime(time));},"close")){pendingClose=true;return;}
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)isolate(archiveModuleOwner,"close",[&]{archiveMedia->cancelImport();});if(readerOwner)isolate(readerModuleOwner,"close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
+    // SystemHUDView deactivation: clockStyleArtwork.resetGesture(), clockPage.cancelTransition().
+    clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
     registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"close");if(audio)audio->volume().setVisible(false);automationChanged();
     time=hostTime(time);
     host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
@@ -1367,6 +1387,7 @@ void Application::Impl::forceConceal(double time){
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingShelfOpen.reset();pendingLink.reset();
     if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)isolate(archiveModuleOwner,"force close",[&]{archiveMedia->cancelImport();});if(readerOwner)isolate(readerModuleOwner,"force close",[&]{readerOwner->cancelImport();});pendingReaderPicker.reset();pendingReaderAction.reset();
     finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
+    clockSwipe=0;clockSwipeConsumed=false;clockSwipeTime=-1;if(chrome)chrome->cancelStyleTransition();
     if(session->phase()!=core::VisibilityPhase::concealed||closing){
         registry.forEach([&](ModuleOwner&o){o.overlayClosing(hostTime(time));},"force close");if(audio)audio->volume().setVisible(false);
         time=hostTime(time);host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
@@ -1471,6 +1492,7 @@ void Application::Impl::sessionEnding(SessionEnd phase,std::uint32_t reason){
     }catch(...){if(blocked)ShutdownBlockReasonDestroy(window);throw;}
     if(blocked)ShutdownBlockReasonDestroy(window);
     if(phase==SessionEnd::ending){
+        if(summonHook)summonHook->stop();
         if(tray){tray->setHotkey({});tray->stop();}
         // Restart Manager (ENDSESSION_CLOSEAPP) and logoff both expect exit.
         (void)reason;stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
@@ -1518,12 +1540,12 @@ void Application::Impl::applyConfiguration(double time){
     backdropState.dark=watchAppearance.dark;backdropState.blurAmount=configuration.number("blurAmount");backdropState.backgroundDarkness=configuration.number("backgroundDarkness");
     bindNavigation(time);
     headerClock.setFormat(configuration.string("clockFormat")=="twelveHour"?modules::HUDClockFormat::twelveHour:modules::HUDClockFormat::twentyFourHour,time);
+    const auto previousClockStyle=chromeContent.style;
     const auto clock=configuration.string("clockStyle");chromeContent.style=clock=="split"?source::DesktopClockStyle::split:clock=="dial"?source::DesktopClockStyle::dial:clock=="rail"?source::DesktopClockStyle::rail:clock=="stacked"?source::DesktopClockStyle::stacked:source::DesktopClockStyle::digital;
     chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=modules::settingsShortcutTitle(modules::settingsShortcut(configuration));
-    if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();}
+    if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();if(chromeContent.style!=previousClockStyle)clockStyleChanged(previousClockStyle,time);}
     updateCenterLogo(); // setDesktopCenterLogo(configuration.centerLogo, revision)
-    if(tray&&settingsUI&&!settingsUI->controller().capturingShortcut()&&!quitRequested){const auto key=modules::settingsShortcut(configuration);const gpu::TrayHotkey desired{key.modifiers,key.key};
-        if(tray->hotkey()!=desired){shortcutStatus=tray->setHotkey(desired)?std::string{}:core::localized("Shortcut unavailable","快捷键不可用",watchAppearance.language);settingsUI->controller().setExternalStatus(loginStatus,shortcutStatus);}}
+    if(tray&&settingsUI&&!settingsUI->controller().capturingShortcut()&&!quitRequested)applySummonShortcut(false);
     moduleAppearance={watchAppearance.language,watchAppearance.dark,accent,{a[0],a[1],a[2]},settings.reduceMotion,settings.ambientEnabled,settings.lowPower};
     registry.forEach([&](ModuleOwner&o){o.setAppearance(moduleAppearance,hostTime(time));},"appearance");
     // Applied inside the frame being prepared (or before the first one): no extra refresh.
@@ -1538,7 +1560,7 @@ core::FrameDemand Application::Impl::demand(double time){
     time=hostTime(time);
     if(projectionShown()){core::FrameDemand value;if(projectionCall("demand",[&]{value=projection->demand(hostTime(time));}))return value;}
     auto result=session->demand(time);
-    if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(mediaBroker&&mediaBroker->requiresFrames())||registry.requiresFrames(time);
+    if(result.phase==core::VisibilityPhase::visible)result.finiteAnimation=result.finiteAnimation||(mediaBroker&&mediaBroker->requiresFrames())||registry.requiresFrames(time)||(chrome&&chrome->styleTransitionActive());
     return result;
 }
 void Application::Impl::scheduleDeadline(){if(!visibleMode()||!ready||stopping)return;std::optional<double>next;
@@ -1571,6 +1593,8 @@ std::vector<modules::NotesShelfChoice> Application::Impl::shelfChoices(){std::ve
 }
 void Application::Impl::publishNative(){
     ordered.clear();ordered.push_back({&layers,{}});appendedOwners.clear();
+    // The clock style push's two pages sit right above the status panel.
+    if(chrome)if(auto*pages=chrome->transitionScene())ordered.push_back({pages,{}});
     registry.forEach([&](ModuleOwner&o){const auto begin=probe.enabled?Clock::now():Clock::time_point{};o.upload(renderer);if(probe.enabled)probe.owner(o.name(),true,begin);},"upload");
     // The old wrapper is below the incoming wrapper, independently of owner
     // registration order. Floating Notes stay above center modules; modal
@@ -1614,8 +1638,9 @@ const WatchSessionFrame* Application::Impl::poseShell(double time){
     if(nativeAppearance){watchAppearance.selectedAction=notes?contentCatalog->actionForTarget(core::moduleIdentifier(notes->selected())).value_or(0):0;nativeAppearance->update(session->actions(),watchAppearance,labels->placements());}
     // Chrome samples once per visible second; opacity follows the same
     // ready/close timestamps as the source outer controller.
-    const source::DesktopChromeSettings chromeSettings{viewport,settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
-    if(chrome)chrome->update(*sample->sourceFrame,sample->camera,chromeSettings,static_cast<float>(canvasOpacity(time)));
+    const auto frameChrome=chromeSettings(notes?notes->selected():core::Module::power);
+    // HUDClockPageViewport: the style push advances on this frame clock.
+    if(chrome){chrome->advanceStyleTransition(time);chrome->update(*sample->sourceFrame,sample->camera,frameChrome,static_cast<float>(canvasOpacity(time)));}
     }
     return sample;
 }
@@ -1642,8 +1667,8 @@ void Application::Impl::prewarm(){
                 // The owners' first-update work (ModuleOwner::prewarm), on the first
                 // opening's module presentation while they are still closed.
                 if(notes&&chromePlan&&chromePlan->projection().center){
-                    const source::DesktopChromeSettings chromeSettings{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,notes->selected(),true};
-                    registry.forEach([&](ModuleOwner&o){const ModuleFrame frame{*chromePlan->projection().center,chromeSettings,notes->modulePresentation(),0.f,hostTime(time),false};o.prewarm(frame);},"prewarm");
+                    const auto prewarmChrome=chromeSettings(notes->selected());
+                    registry.forEach([&](ModuleOwner&o){const ModuleFrame frame{*chromePlan->projection().center,prewarmChrome,notes->modulePresentation(),0.f,hostTime(time),false};o.prewarm(frame);},"prewarm");
                 }
                 publishNative();composition.present(renderer);
                 renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));
@@ -1659,6 +1684,10 @@ void Application::Impl::prewarm(){
 }
 bool Application::Impl::present(double time,bool submit){
     const auto traceFrameStart=readerTrace?Clock::now():Clock::time_point{};
+    // Frame start: wait (bounded) until the swap chain accepts a frame, so
+    // input and time are sampled after it and Present never blocks behind a
+    // GPU that a game saturates. Offscreen targets return at once.
+    if(submit&&visibleMode()&&!projectionShown())(void)renderer.waitForPresentation(50);
     time=hostTime(time);
     if(projectionShown()){
         projectionPainting=true;try{mediaBroker->sample(time);(void)projectionCall("frame",[&]{projection->mediaChanged(hostTime(time));projection->render(hostTime(time),submit);});projectionPainting=false;}catch(...){projectionPainting=false;throw;}return true;
@@ -1677,7 +1706,7 @@ bool Application::Impl::present(double time,bool submit){
     // card's desktop settings (nothing happens and nothing allocates otherwise).
     if(idCard)if(auto next=idCard->apply())session->setDesktopSettings(std::move(*next));
     if(!poseShell(time))return false;
-    const source::DesktopChromeSettings noteChromeSettings{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,notes?notes->selected():core::Module::power,true};
+    const auto noteChromeSettings=chromeSettings(notes?notes->selected():core::Module::power);
     if(notes&&chromePlan&&chromePlan->projection().center){
         auto stage=probe.measure(LiveProbe::notesPose);
         // Notes first: it owns the module presentation sample every other
@@ -1966,6 +1995,7 @@ bool Application::Impl::restartDisplay(const std::string&reason,double time){
     if(archive)isolate(archiveModuleOwner,"device loss",[&]{(void)archive->finishEditing(hostTime(time));});
     if(calendar)isolate(calendarModuleOwner,"device loss",[&]{(void)calendar->dismissMenu(false,hostTime(time));});
     (void)flushDocuments(time,false);
+    if(summonHook)summonHook->stop();
     if(tray)tray->setHotkey({});
     stopping=true;host.setDeadline({});host.setFrameDemand({});host.requestStop();
     return true;

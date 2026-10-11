@@ -11,7 +11,24 @@ struct DesktopChromeSettings {
     double hudScale{1};Vec2 hudOffset{};
     Module module{Module::power};
     bool sourceShell{true};
+    // Windows display adaptation (desktopContentScale), multiplying the design
+    // scale of the design canvas and of the centre plane. 1 is the exact Mac.
+    double contentScale{1};
 };
+// SystemHUDView.designScale before the HUD scale: min(width / 1100,
+// height / 740, 1.15) points per design point, at least .1.
+double desktopBaseDesignScale(Rect viewport);
+// Windows display adaptation. SystemHUDView caps its design scale at 1.15
+// points, while the source watch grows with the screen (UICanvasScaleHelper:
+// the source canvas spans the width below 16:9 and the height above). On the
+// reference Mac display (1470 x 956 points, MacBook Air, where the cap
+// applies) the capped centre content covers the centre ring; on a larger
+// Windows display the same cap leaves it visibly smaller than the ring. This
+// factor keeps the reference proportion of design points to source canvas
+// units at any display, and never goes below the Mac's own scale (>= 1), so
+// every display where the Mac content already covers the ring is unchanged.
+double desktopContentScale(const SourceCamera&,Rect viewport);
+inline constexpr Rect desktopReferenceViewport{0,0,1470,956};
 struct DesktopChromeLayout {
     double designScale{},reportScale{};Point designOrigin,canvasPosition;double reportCenterY{};
     Rect header{270,2,600,74},footer{0,0,1000,640},footerText{275,622,450,18};
@@ -32,12 +49,14 @@ struct DesktopChromeProjection {
 class DesktopChromeProjectionPlan final {
 public:
     DesktopChromeProjectionPlan(const SceneDefinition&,const SourceCamera&,const WatchAnimation&,DesktopChromeBindings);
-    bool update(std::span<const ResolvedNode>,const CameraFrame&,Rect viewport);
+    // contentScale (DesktopChromeSettings::contentScale) multiplies the
+    // calibrated design scale of the centre plane; 1 is the exact Mac.
+    bool update(std::span<const ResolvedNode>,const CameraFrame&,Rect viewport,double contentScale=1);
     const DesktopChromeProjection& projection()const noexcept{return result_;}
 private:
     const SceneDefinition* scene_;const SourceCamera* camera_;const WatchAnimation* animation_;
     std::size_t center_{},status_{};DesktopChromeProjection result_;
-    std::optional<Rect> calibrationViewport_,centerViewport_,statusViewport_;
+    std::optional<Rect> calibrationViewport_,centerViewport_,statusViewport_;double calibrationScale_{1},centerScale_{1};
     std::optional<Matrix4> centerWorld_,statusWorld_;std::optional<SourceRect> statusRect_;
 };
 enum class ChromeTextAlignment { left,center,right };

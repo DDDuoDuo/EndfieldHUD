@@ -140,6 +140,9 @@ struct RendererStats {
     std::uint64_t mediaTargetAllocations{},mediaFrameCommits{};
     std::uint64_t compositionSurfaceBorrows{},compositionSuspends{},compositionRestores{};
     bool compositionSuspended{};
+    // DXGI 1.3 frame latency object in use, and the frame-start waits on it.
+    bool frameLatencyWaitable{};
+    std::uint64_t presentationWaits{},presentationWaitTimeouts{};
     bool sourcePassEnabled{true};
     // initialize() created its programs from the build-time bytecode of an
     // identical hud.hlsl (native/renderer.shaders.cmake), not D3DCompile.
@@ -296,6 +299,17 @@ public:
     // offscreenForTests explicitly disables all composition/presentation APIs;
     // it uses the same shader pipeline in noninteractive Windows CI sessions.
     void draw(bool present = true);
+    // Frame start of a presented frame (before input/time are sampled): waits
+    // up to the timeout for the swap chain to accept a frame, so the following
+    // Present does not block. True at once offscreen, without the waitable
+    // object, or when this frame already holds the admission; false on
+    // timeout (the frame may still render; Present then bounds latency).
+    bool waitForPresentation(std::uint32_t timeoutMilliseconds);
+    // IDXGIDevice::SetGPUThreadPriority (-7...7) on this device; the HRESULT.
+    long setGpuThreadPriority(int priority) noexcept;
+    // Explicit diagnostic only (contention trace), never per frame: waits
+    // until the GPU finished every command submitted so far; milliseconds.
+    double waitForGpuIdle();
     Readback readback();
     // An in-use resource cannot be removed until its draw list reference is
     // removed. Replacing an existing ID updates all current references.

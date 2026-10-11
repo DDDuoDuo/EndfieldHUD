@@ -18,6 +18,8 @@
 #include "app/utility_executor.hpp"
 #include "app/hud_automation.hpp"
 #include "app/hud_button_automation.hpp"
+#include "app/presentation_priority.hpp"
+#include "app/summon_hotkey.hpp"
 // Host-side contracts of module areas (headers only; no area library link).
 #include "app/areas/app_shortcut_navigation.hpp"
 #include "app/areas/mac_import_handoff.hpp"
@@ -281,6 +283,7 @@ struct Application::Impl {
     void shutdownVisible();
     int runHiddenVerification();
     int runStartupTrace();      // hidden --startup-trace: cold and warm openings on the synthetic clock
+    int runContentionTrace();   // hidden --contention-trace: frame pacing at normal and raised priority
     void writeStartupTrace();   // production ENDFIELDHUD_STARTUP_TRACE: once, numbers only
     void cleanup();
 
@@ -397,6 +400,26 @@ struct Application::Impl {
     bool clockWheel(const WheelEvent&, double time);
     void selectClockStyle(unsigned index, double time);
     void constructClockAutomation();
+    // HUDClockPageViewport.transition after a style change (applyConfiguration).
+    void clockStyleChanged(source::DesktopClockStyle previous, double time);
+    // HUDSourceWatchView industry logo: press/release over the logo flickers it.
+    bool logoPointer(const PointerEvent&, double time);
+    bool logoPressed{};
+    // --- Display adaptation (core/source_desktop_chrome.hpp desktopContentScale) ---
+    double contentScale{1};
+    void updateContentScale();
+    // The chrome settings every host plane uses (viewport, HUD scale/offset,
+    // module, Windows content scale).
+    source::DesktopChromeSettings chromeSettings(core::Module) const;
+    // --- Summon shortcut (Settings > Hotkeys; app/summon_hotkey.hpp) --------------
+    // RegisterHotKey plus the low-level hook path, both off when the Windows
+    // preference windowsSummonHotkeyDisabled is set (the tray still opens).
+    bool summonHotkeyEnabled() const;
+    void applySummonShortcut(bool capturing);
+    std::unique_ptr<SummonHotkeyHook> summonHook;
+    std::optional<SummonChord> lastHookChord;
+    std::uintptr_t summonHookGeneration{};
+    std::optional<double> lastHookSummon;
     // --- Source navigation UI Automation (app/application_navigation.cpp) ----------
     void constructNavigationAutomation();
     void navigationPeers(std::vector<HudButtonPeer>&);
@@ -497,6 +520,7 @@ struct Application::Impl {
     std::unique_ptr<gpu::WatchLabelPresentation> labels;
     std::vector<gpu::WatchButtonAvailability> available;
     std::unique_ptr<source::DesktopChromeProjectionPlan> chromePlan;
+    std::optional<source::DesktopChromeBindings> chromeBindings; // the exact centre/status source nodes
     std::unique_ptr<gpu::NativeChromePresentation> chrome;
     gpu::DesktopChromeContent chromeContent;
     modules::HUDClock headerClock;
@@ -523,6 +547,8 @@ struct Application::Impl {
     std::unique_ptr<tools::StoragePreview> storage;
     std::unique_ptr<tools::ActivityPreview> activity;
     gpu::LayerComposition composition;
+    // Process/thread/GPU priority while the HUD is shown (restored concealed).
+    PresentationPriority presentationPriority;
     ClientMetrics metrics;
     bool ready{}, closing{}, pendingClose{}, focused{};
     struct StorageFixture {std::atomic<double>time{};std::atomic<unsigned>capacityReads{},detailScans{};unsigned settingsRequests{};};
@@ -720,7 +746,7 @@ struct Application::Impl {
     // HUDSourceWatchView's accessibility buttons: one per bound desktop button,
     // the red power button, the profile card and the two scroll buttons.
     struct NavigationSlot {
-        enum class Kind : std::uint8_t { entry, quit, profile, scroll };
+        enum class Kind : std::uint8_t { entry, quit, profile, scroll, logo };
         Kind kind{};
         std::vector<std::string> ids; // source button(s) whose hits frame and press it
         int direction{};              // scroll: -1 up, 1 down
@@ -798,7 +824,7 @@ struct Application::Impl {
     static constexpr UINT idCardMessage=WM_APP+234,prewarmMessage=WM_APP+240,themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
-        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210;
+        mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210,summonHookMessage=WM_APP+0x2C0;
     // ApplicationHost::registerMessage range for module areas.
     static constexpr UINT areaMessageFirst=WM_APP+0x1000,areaMessageLimit=0x3000;
     static constexpr UINT_PTR serviceGeneration=1;

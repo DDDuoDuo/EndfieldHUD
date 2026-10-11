@@ -117,6 +117,21 @@ public:
     // indicators while rows are hidden; the given industry logo node. Any
     // other press is the native host's (SystemHUDView.mouseDown).
     bool sourceControlAt(core::Point,std::string_view logoNodeID={})const;
+    // HUDSourceWatchView industry logo (EndfieldText / EndfieldTextGlow under
+    // MiddleDecoNode): refreshIndustryLogo styles both nodes on every frame,
+    // the glow at .78 of the logo's opacity. A click flickers the logo for
+    // .46 s on the source frame clock (opacity .22 over [.05,.09), .38 over
+    // [.20,.25), otherwise 1). Reduce Motion accepts the click and keeps it
+    // steady. Concealment, closing and reopening end a flicker.
+    void setLogoNodes(std::string mainNodeID,std::string glowNodeID);
+    // flickerIndustryLogo: while input is enabled and the HUD is visible.
+    bool flickerLogo(double time);
+    bool logoFlickering()const noexcept;
+    float logoOpacity()const noexcept; // the industry logo's applied opacity (glow: x .78)
+    // industryLogoContains / industryLogoPolygon: the logo node's projected
+    // quad in the current frame (logical client coordinates, unclipped).
+    bool logoContains(core::Point)const;
+    std::optional<core::Rect> logoFrame()const;
     std::optional<std::string_view> pressed()const noexcept;
     const std::map<std::string,std::uint64_t,std::less<>>& actions()const noexcept;
     const WatchSessionFrame* currentFrame()const noexcept;

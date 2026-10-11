@@ -61,6 +61,25 @@ struct SourceWatchSession::Impl {
     struct HitQuery {std::optional<Point> point;std::uint64_t revision{};bool interactive{};};
     std::optional<HitQuery> lastHit;
     HitFilter filter;WatchSessionStats stats;SourceWatchFrame scrollProbe;
+    std::string logoMain,logoGlow;std::optional<double> logoStart;float logoOpacity{1};
+    // refreshIndustryLogo: the glow keeps .78 of the logo's opacity.
+    bool applyLogoStyles(float opacity){
+        bool changed=false;
+        for(const auto*id:{&logoMain,&logoGlow}){if(id->empty())continue;const float value=opacity*(id==&logoGlow?.78f:1.f);
+            auto&style=appliedSettings.graphicStyles[*id];if(style.opacity!=value||style.tint){style.opacity=value;style.tint.reset();changed=true;}}
+        logoOpacity=opacity;return changed;
+    }
+    // HUDSourceWatchView.refreshIndustryLogo(at:): .46 s, two dips.
+    void refreshLogo(double time){
+        float opacity=1;
+        if(logoStart){const double elapsed=std::max(0.,time-*logoStart);
+            if(elapsed<.46)opacity=elapsed>=.05&&elapsed<.09?.22f:elapsed>=.20&&elapsed<.25?.38f:1.f;else logoStart.reset();}
+        if(applyLogoStyles(opacity))builder.setDesktopSettings(appliedSettings);
+    }
+    bool logoQuad(Polygon&quad)const{
+        if(hidden||!hasFrame||logoMain.empty())return false;const auto*node=resolved(logoMain);if(!node||!node->activeInHierarchy||!node->rect)return false;
+        return projectQuad(quad,*node->rect,rendered.camera.worldRoot*node->worldMatrix,rendered.camera.projection*rendered.camera.view,viewport())&&quad.n==4;
+    }
 
     Impl(const SceneDefinition&s,const MountedLayoutDocument&d,const Library&library,const SourceCamera&c,const SourceWatchFrameResources&r,
         std::span<const AnimatorBinding> bindings,const Json&transitions,std::optional<DesktopHoverProfile> profile,SourceDesktopFrameSettings desktop)
@@ -163,7 +182,7 @@ void SourceWatchSession::setSettings(WatchSessionSettings value,double time){nee
     if(value.reduceMotion){p.scrollMotion.reset(p.scrollMotion.target(),*at);p.scrollPosition=p.scrollMotion.position();p.gyro.retarget({},*at,p.cameraModel.gyro().duration,true);}p.invalidatePose();}
 void SourceWatchSession::setEnvironment(WatchSessionEnvironment value,double time){need(valid(value),"Invalid Watch presentation environment");auto&p=*impl_;if(!p.advance(time)||p.environment==value)return;if(p.environment.viewport!=value.viewport){p.cancelDrag(*p.clock);p.invalidatePose();}p.environment=value;}
 void SourceWatchSession::setInputEnabled(bool value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||p.input==value)return;p.input=value;if(!value){p.cancelDrag(*at);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}p.lastHit.reset();}
-void SourceWatchSession::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;p.baseSettings=value;p.appliedSettings=std::move(value);for(const auto&id:p.hoverFeedback.sideEdgeIDs())p.appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;
+void SourceWatchSession::setDesktopSettings(SourceDesktopFrameSettings value){auto&p=*impl_;p.baseSettings=value;p.appliedSettings=std::move(value);for(const auto&id:p.hoverFeedback.sideEdgeIDs())p.appliedSettings.graphicStyles[id].opacity=DesktopHoverFeedback::sideEdgeOpacity;(void)p.applyLogoStyles(p.logoOpacity);
     for(const auto&id:p.navigationInput.managedButtons){if(p.actions.contains(id))p.appliedSettings.hiddenNodes.erase(id);else p.appliedSettings.hiddenNodes.insert(id);}p.builder.setDesktopSettings(p.appliedSettings);p.lastHit.reset();}
 void SourceWatchSession::setNavigation(WatchSessionNavigation value,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at||(p.hasNavigation&&p.navigationInput==value))return;
     for(const auto&[id,action]:value.fixedActions){(void)action;need(p.scene.node(id),"Navigation action node is absent");}for(const auto&id:value.managedButtons)need(p.scene.node(id),"Managed source button is absent");
@@ -173,13 +192,13 @@ void SourceWatchSession::setNavigation(WatchSessionNavigation value,double time)
 }
 void SourceWatchSession::setHitFilter(HitFilter filter,double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.filter=std::move(filter);p.hovered.reset();p.pressed.reset();p.updateStates(*at);}
 std::uint64_t SourceWatchSession::open(double time,std::uint64_t seed,bool held){auto&p=*impl_;const auto at=p.advance(time);if(!at)return p.lifecycleToken;
-    p.cancelDrag(*at);++p.lifecycleToken;p.completion.reset();p.hidden=false;p.heldTime=held?at:std::nullopt;p.ambient=DesktopAmbientMotion(p.animation,seed);p.selectable.reset(*at);p.hovered.reset();p.pressed.reset();p.invalidatePose();
+    p.cancelDrag(*at);++p.lifecycleToken;p.completion.reset();p.hidden=false;p.heldTime=held?at:std::nullopt;p.logoStart.reset();p.ambient=DesktopAmbientMotion(p.animation,seed);p.selectable.reset(*at);p.hovered.reset();p.pressed.reset();p.invalidatePose();
     if(!held){p.buttons.reset(*at,p.settings.reduceMotion);p.playback.open(*at,p.settings.reduceMotion);p.updateStates(*at);if(p.settings.reduceMotion)p.completion=p.lifecycleToken;}else p.playback.open(*at,false);return p.lifecycleToken;
 }
 bool SourceWatchSession::releaseOpening(std::uint64_t token,double time){auto&p=*impl_;if(token!=p.lifecycleToken||!p.heldTime||p.hidden||p.playback.phase()!=VisibilityPhase::opening||!std::isfinite(time))return false;const auto at=*p.advance(time);p.heldTime.reset();p.buttons.reset(at,p.settings.reduceMotion);p.playback.open(at,p.settings.reduceMotion);p.updateStates(at);if(p.settings.reduceMotion)p.completion=p.lifecycleToken;return true;}
 void SourceWatchSession::showStable(double time,std::uint64_t seed){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();if(p.playback.phase()==VisibilityPhase::concealed){p.ambient=DesktopAmbientMotion(p.animation,seed);p.selectable.reset(*at);}p.hidden=false;p.heldTime.reset();p.playback.showStable(*at);p.invalidatePose();}
-void SourceWatchSession::close(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.scrollPosition=p.scrollMotion.position();setInputEnabled(false,*at);p.playback.close(*at,p.settings.reduceMotion);p.invalidatePose();if(p.playback.phase()==VisibilityPhase::concealed){p.hidden=true;p.hasFrame=false;p.completion=p.lifecycleToken;}}
-void SourceWatchSession::conceal(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.playback.conceal();p.navigationDrag.reset();p.input=false;p.hovered.reset();p.pressed.reset();p.hidden=true;p.gyro.stop(*at);p.hasFrame=false;p.finalPose.reset();p.invalidatePose();}
+void SourceWatchSession::close(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.logoStart.reset();p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.scrollPosition=p.scrollMotion.position();setInputEnabled(false,*at);p.playback.close(*at,p.settings.reduceMotion);p.invalidatePose();if(p.playback.phase()==VisibilityPhase::concealed){p.hidden=true;p.hasFrame=false;p.completion=p.lifecycleToken;}}
+void SourceWatchSession::conceal(double time){auto&p=*impl_;const auto at=p.advance(time);if(!at)return;++p.lifecycleToken;p.logoStart.reset();p.completion.reset();p.heldTime.reset();p.scrollMotion.reset(p.scrollPosition,*at);p.playback.conceal();p.navigationDrag.reset();p.input=false;p.hovered.reset();p.pressed.reset();p.hidden=true;p.gyro.stop(*at);p.hasFrame=false;p.finalPose.reset();p.invalidatePose();}
 void SourceWatchSession::pointerMove(std::optional<Point> point,double time){
     need(!point||finite(*point),"Invalid Watch pointer");auto&p=*impl_;const auto at=p.advance(time);if(!at)return;p.environment.pointer=point;
     if(point&&p.navigationDrag){auto&drag=*p.navigationDrag;
@@ -244,7 +263,7 @@ const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;
     if(!reduce&&(p.environment.onScreen||p.environment.canAdvanceTransition)&&!p.environment.pointerLocked&&p.environment.pointer){const auto point=*p.environment.pointer;
         p.gyro.retarget(p.cameraModel.gyro().desktopTarget({point.x,point.y},p.environment.viewport,p.settings.parallax,p.settings.perspective),time,p.cameraModel.gyro().duration);}
     p.gyro.finishIfNeeded(time);const auto camera=p.cameraModel.desktopFrame(p.environment.viewport,p.gyro.rotation(time),p.settings.hudOffset,p.settings.hudScale);
-    p.refreshBindings(time);const auto&tints=p.selectable.colors(time,reduce);p.refreshStyles(tints);
+    p.refreshBindings(time);const auto&tints=p.selectable.colors(time,reduce);p.refreshStyles(tints);p.refreshLogo(time);
     const bool settled=p.playback.phase()==VisibilityPhase::visible&&!p.buttons.requiresFrames(time)&&!p.selectable.requiresFrames(time);
     const auto visibility=p.playback.sample(time,reduce,p.usesAmbient());if(visibility&&visibility->completedGeneration)p.completion=p.lifecycleToken;
     if(!visibility||visibility->phase==VisibilityPhase::concealed){p.hidden=true;p.hasFrame=false;p.input=false;return nullptr;}
@@ -262,7 +281,7 @@ const WatchSessionFrame* SourceWatchSession::sample(double value){auto&p=*impl_;
     p.lastHit=Impl::HitQuery{p.environment.pointer,p.builder.presentationRevision(),interactive};++p.stats.samples;return &p.rendered;
     }catch(...){conceal(*at);throw;}
 }
-FrameDemand SourceWatchSession::demand(double time){auto&p=*impl_;if(!std::isfinite(time)||p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed)return {};const auto sampleTime=std::max(time,p.clock.value_or(time));const bool finite=p.playback.phase()!=VisibilityPhase::visible||p.gyro.isAnimating()||p.buttons.requiresFrames(sampleTime)||p.selectable.requiresFrames(sampleTime)||(p.scrollMotion.requiresFrames()&&!(p.navigationDrag&&p.navigationDrag->active));
+FrameDemand SourceWatchSession::demand(double time){auto&p=*impl_;if(!std::isfinite(time)||p.hidden||!p.environment.presented||p.playback.phase()==VisibilityPhase::concealed)return {};const auto sampleTime=std::max(time,p.clock.value_or(time));const bool finite=p.playback.phase()!=VisibilityPhase::visible||p.gyro.isAnimating()||p.buttons.requiresFrames(sampleTime)||p.selectable.requiresFrames(sampleTime)||(p.scrollMotion.requiresFrames()&&!(p.navigationDrag&&p.navigationDrag->active))||p.logoStart.has_value();
     return {p.playback.phase(),!p.hidden&&p.environment.presented,p.environment.onScreen,p.environment.canAdvanceTransition,p.heldTime.has_value(),finite,p.settings.ambientEnabled,p.settings.reduceMotion,p.settings.lowPower};}
 VisibilityPhase SourceWatchSession::phase()const noexcept{return impl_->playback.phase();}
 std::uint64_t SourceWatchSession::generation()const noexcept{return impl_->lifecycleToken;}
@@ -322,6 +341,30 @@ bool SourceWatchSession::sourceControlAt(Point point,std::string_view logo)const
         if(info->hiddenLength>0)for(const auto id:p.scrollIndicators)if(inside(id))return true;
     }
     return !logo.empty()&&inside(logo);
+}
+void SourceWatchSession::setLogoNodes(std::string mainNodeID,std::string glowNodeID){
+    auto&p=*impl_;need((mainNodeID.empty()||p.scene.node(mainNodeID))&&(glowNodeID.empty()||p.scene.node(glowNodeID)),"Industry logo node is absent");
+    p.logoMain=std::move(mainNodeID);p.logoGlow=std::move(glowNodeID);p.logoStart.reset();
+    if(p.applyLogoStyles(1)){p.builder.setDesktopSettings(p.appliedSettings);p.invalidatePose();}
+}
+bool SourceWatchSession::flickerLogo(double time){
+    auto&p=*impl_;const auto at=p.advance(time);
+    if(!at||p.logoMain.empty()||!p.input||p.hidden||p.playback.phase()!=VisibilityPhase::visible)return false;
+    // Reduce Motion keeps the logo steady, while still accepting the click.
+    if(p.settings.reduceMotion)return true;
+    p.logoStart=*at;return true;
+}
+bool SourceWatchSession::logoFlickering()const noexcept{return impl_->logoStart.has_value();}
+float SourceWatchSession::logoOpacity()const noexcept{return impl_->logoOpacity;}
+bool SourceWatchSession::logoContains(Point point)const{
+    const auto&p=*impl_;if(!finite(point))return false;Polygon quad;if(!p.logoQuad(quad))return false;
+    return polygonContains(std::span<const Point>(quad.p.data(),quad.n),point);
+}
+std::optional<core::Rect> SourceWatchSession::logoFrame()const{
+    const auto&p=*impl_;Polygon quad;if(!p.logoQuad(quad))return {};
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(std::size_t n=0;n<quad.n;++n){x0=std::min(x0,quad.p[n].x);y0=std::min(y0,quad.p[n].y);x1=std::max(x1,quad.p[n].x);y1=std::max(y1,quad.p[n].y);}
+    if(!(x1-x0>0)||!(y1-y0>0))return {};return Rect{x0,y0,x1-x0,y1-y0};
 }
 std::optional<std::string_view> SourceWatchSession::pressed()const noexcept{return impl_->pressed;}
 const std::map<std::string,std::uint64_t,std::less<>>& SourceWatchSession::actions()const noexcept{return impl_->actions;}

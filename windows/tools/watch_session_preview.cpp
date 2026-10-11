@@ -34,7 +34,7 @@ namespace core=endfield::core;
 namespace {
 void need(bool value,const char*message){if(!value)throw std::runtime_error(message);}
 std::string utf8(const fs::path&value){const auto bytes=value.u8string();return {reinterpret_cast<const char*>(bytes.data()),bytes.size()};}
-struct Options {bool startupTraceCold{};fs::path package,startupTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
+struct Options {bool startupTraceCold{};fs::path package,startupTrace,contentionTrace,packet,cache,shader,chrome,cursor,report,snapshots,watchBlur,notesAssets,notesData,notesFormatAssets,shelfAssets,shelfData,shelfMask,clipboardAssets,liveDiagnostics,residentIcons,settingsAssets,archiveAssets,storageAssets,activityAssets,mapGeography,mapPlayerAssets,orbipomAssets;std::string pin,notesAssetsSHA;bool visible{},warp{},runtimeInput{},coverage{},moduleCoverage{},sessionEndCoverage{},nativeClipboard{},nativeActivity{},readerScrollTrace{},readerModule{},calendarModule{},projectionModule{},volumeFixture{},eventLogFixture{},workModeFixture{},batteryFixture{};std::uint32_t benchmarkWidth{1280},benchmarkHeight{800};double benchmarkEpoch{};};
 Options options(int argc,wchar_t**argv){
     need(argc>=5,"Usage: watch_session_preview packet-root compiled-scene hud.hlsl --benchmark new-report.json | --visible --watch-blur original-watch-blur.json [--chrome chrome.json] [--cursor-png original.png] [--compiled-sha sha256] [--snapshots new-directory] [--warp] [--runtime-input] [--benchmark-size width height] [--benchmark-epoch seconds] [--coverage] [--storage-assets common-resources (development preview)]");
     Options o;o.packet=fs::absolute(argv[1]);o.cache=fs::absolute(argv[2]);o.shader=fs::absolute(argv[3]);
@@ -84,6 +84,7 @@ Options options(int argc,wchar_t**argv){
         // Hidden only: time the cold and warm openings of the same owner instead of the module coverage.
         else if(arg==L"--startup-trace"&&i+1<argc){need(o.startupTrace.empty(),"Duplicate startup trace output");o.startupTrace=fs::absolute(argv[++i]);}
         else if(arg==L"--startup-trace-cold"){need(!o.startupTraceCold,"Duplicate cold startup trace");o.startupTraceCold=true;}
+        else if(arg==L"--contention-trace"&&i+1<argc){need(o.contentionTrace.empty(),"Duplicate contention trace output");o.contentionTrace=fs::absolute(argv[++i]);}
         else need(false,"Unknown or incomplete preview argument");
     }
     need(!o.nativeClipboard||(o.visible&&!o.moduleCoverage&&!o.coverage&&!o.clipboardAssets.empty()&&!o.notesAssets.empty()),"Native Clipboard requires explicit visible mode and module assets; hidden tests never access the clipboard");
@@ -96,7 +97,8 @@ Options options(int argc,wchar_t**argv){
     need(o.notesData.empty()||!fs::exists(o.notesData),"Notes preview data root must be new");
     need(o.startupTrace.empty()||(o.moduleCoverage&&o.report.empty()&&!o.sessionEndCoverage&&!fs::exists(o.startupTrace)),"A startup trace replaces the module coverage report with a new output");
     need(!o.startupTraceCold||!o.startupTrace.empty(),"A cold startup trace (without the launch prewarm) needs --startup-trace");
-    need(o.visible!=(!o.report.empty()||!o.startupTrace.empty()),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
+    need(o.contentionTrace.empty()||(o.report.empty()&&o.startupTrace.empty()&&!o.moduleCoverage&&!o.coverage&&!o.warp&&!fs::exists(o.contentionTrace)),"A contention trace is its own hidden hardware run with a new output");
+    need(o.visible!=(!o.report.empty()||!o.startupTrace.empty()||!o.contentionTrace.empty()),"Choose exactly one explicit visible or benchmark mode");need(!o.visible||!o.warp,"WARP is a hidden test mode only");
     need(!o.visible||!o.watchBlur.empty(),"Visible preview requires the explicit source-pinned --watch-blur animation");
     need(!o.visible||(!o.coverage&&o.benchmarkEpoch==0&&o.benchmarkWidth==1280&&o.benchmarkHeight==800),"Coverage/epoch/size overrides are hidden-test only");
     need(o.liveDiagnostics.empty()||(o.visible&&!o.notesAssets.empty()&&!fs::exists(o.liveDiagnostics)),"Live diagnostics require visible isolated Notes and a new output");
@@ -237,7 +239,7 @@ app::ApplicationOptions applicationOptions(const Options&o){
     a.nativeClipboard=o.nativeClipboard;a.nativeActivity=o.nativeActivity;
     a.volumeFixture=o.volumeFixture;a.eventLogFixture=o.eventLogFixture;a.workModeFixture=o.workModeFixture;a.batteryFixture=o.batteryFixture;
     a.moduleCoverage=o.moduleCoverage;a.coverage=o.coverage;a.readerScrollTrace=o.readerScrollTrace;a.sessionEndCoverage=o.sessionEndCoverage;
-    a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;
+    a.report=o.report;a.snapshots=o.snapshots;a.liveDiagnostics=o.liveDiagnostics;a.startupTrace=o.startupTrace;a.startupTraceWithoutPrewarm=o.startupTraceCold;a.contentionTrace=o.contentionTrace;
     a.benchmarkWidth=o.benchmarkWidth;a.benchmarkHeight=o.benchmarkHeight;a.benchmarkEpoch=o.benchmarkEpoch;
     // Development previews keep failures fatal so hidden coverage cannot pass
     // with a silently disabled module.

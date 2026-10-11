@@ -15,8 +15,12 @@ struct SettingsCredit {std::string name,role,url;};
 struct SettingsAbout {std::string name="EndfieldHUD",version="Development",author="DDDuoDuo",license="MIT",repository;std::vector<SettingsCredit>credits;};
 // macImportTitle/macImport: the Windows-only System row "Import macOS data…"
 // (shown while the title hook returns a title in the current language).
+// summonHotkeyToggle: the Windows-only Hotkeys toggle "Summon HUD with
+// hotkey" (preference windowsSummonHotkeyDisabled; absent = on).
 struct SettingsViewHooks {std::function<std::vector<SettingsDisplay>()>displays;std::function<void()>chooseColor,chooseLogo,logoSelection;
-    std::function<std::optional<std::string>(core::Language)>macImportTitle;std::function<void()>macImport;};
+    std::function<std::optional<std::string>(core::Language)>macImportTitle;std::function<void()>macImport;bool summonHotkeyToggle{};};
+// The toggle's title in the five app languages (System resolves to English).
+std::string settingsSummonToggleTitle(core::Language);
 enum class SettingsPage {main,battery,icons,screens,languages,logos,metrics};
 enum class SettingsRowKind {toggle,choice,slider,palette,icons,info,link,heading,selection};
 struct SettingsRow {

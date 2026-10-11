@@ -12,8 +12,10 @@
 // a hidden button is offscreen and refuses the press. A press runs the
 // click's own route (performClick: the clipped source hit and _clickCd
 // cooldown, then the activation) or scrollDesktopNavigation(direction).
-// The "ENDFIELD INDUSTRIES" logo button is not listed: its signature flicker
-// (flickerIndustryLogo) is not part of the Windows shell yet.
+// Last, the "ENDFIELD INDUSTRIES" logo button (logoAccessibility): framed by
+// the industry logo's projected quad (industryLogoPolygon, unclipped), hidden
+// without that quad, enabled while input is; a press runs the signature
+// flicker (flickerIndustryLogo; Reduce Motion accepts it and stays steady).
 #include "app/application_impl.hpp"
 #include <algorithm>
 
@@ -31,6 +33,7 @@ void Application::Impl::constructNavigationAutomation() {
     buttons.enabled = [this](const HudButtonPeer& peer) {
         if (!session->inputEnabled() || peer.slot >= navigationSlots.size()) return false;
         const auto& slot = navigationSlots[peer.slot];
+        if (slot.kind == NavigationSlot::Kind::logo) return session->phase() == core::VisibilityPhase::visible;
         return slot.kind != NavigationSlot::Kind::scroll || session->canScroll(slot.direction);
     };
     buttons.invoke = [this](const HudButtonPeer& peer) { return navigationPress(peer); };
@@ -101,12 +104,21 @@ void Application::Impl::navigationPeers(std::vector<HudButtonPeer>& out) {
         navigationSlots.push_back({NavigationSlot::Kind::scroll, {}, direction});
         out.push_back(std::move(peer));
     }
+    if (!centerLogoMainID.empty() && session->logoFrame()) {
+        HudButtonPeer peer;
+        peer.id = "navigation:industryLogo";
+        peer.name = "ENDFIELD INDUSTRIES"; // setAccessibilityLabel, not localized on the Mac
+        peer.slot = static_cast<std::uint32_t>(navigationSlots.size());
+        navigationSlots.push_back({NavigationSlot::Kind::logo, {}, 0});
+        out.push_back(std::move(peer));
+    }
 }
 
 // Read when a client asks (no allocation): the current frame's geometry.
 std::optional<core::Rect> Application::Impl::navigationFrame(const HudButtonPeer& peer) const {
     if (!session || peer.slot >= navigationSlots.size()) return std::nullopt;
     const auto& slot = navigationSlots[peer.slot];
+    if (slot.kind == NavigationSlot::Kind::logo) return session->logoFrame();
     if (slot.kind != NavigationSlot::Kind::scroll) return session->buttonFrame(slot.ids);
     const auto area = session->scrollFrame();
     if (!area) return std::nullopt;
@@ -122,6 +134,11 @@ bool Application::Impl::navigationPress(const HudButtonPeer& peer) {
     const auto slot = navigationSlots[peer.slot]; // the press may re-list the buttons
     if (slot.kind == NavigationSlot::Kind::scroll) {
         if (!session->scrollDirection(slot.direction, false, time)) return false;
+        host.invalidate();
+        return true;
+    }
+    if (slot.kind == NavigationSlot::Kind::logo) {
+        if (!session->flickerLogo(time)) return false;
         host.invalidate();
         return true;
     }

@@ -16,7 +16,7 @@
 #include <d3d10.h>
 #include <d3dcompiler.h>
 #include <dcomp.h>
-#include <dxgi1_2.h>
+#include <dxgi1_3.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <atomic>
@@ -388,6 +388,11 @@ struct Renderer::Impl {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     ComPtr<IDXGISwapChain1> swapchain;
+    // DXGI 1.3 frame latency object: signalled when the swap chain accepts a
+    // new frame. A frame waits on it before sampling input (frame start), so
+    // Present never blocks the UI thread behind a GPU another app saturates.
+    HANDLE frameLatency{};UINT swapchainFlags{};bool frameAcquired{};
+    ComPtr<ID3D11Query> gpuIdleQuery;
     ComPtr<IDCompositionDevice> composition;
     ComPtr<IDCompositionTarget> target;
     ComPtr<IDCompositionVisual> visual;
@@ -472,6 +477,7 @@ struct Renderer::Impl {
         if (visual) visual->SetContent(nullptr);
         if (composition) composition->Commit();
         if (context) { context->ClearState(); context->Flush(); }
+        if (frameLatency) CloseHandle(frameLatency);
     }
     void thread() const { require(GetCurrentThreadId() == ownerThread, "Renderer calls must stay on its creating UI thread"); }
     void budget(std::size_t oldBytes, std::size_t newBytes) const {
@@ -561,7 +567,19 @@ struct Renderer::Impl {
         description.Scaling = DXGI_SCALING_STRETCH;
         description.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
         description.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-        checked(factory->CreateSwapChainForComposition(device.Get(), &description, nullptr, &swapchain), "Create premultiplied composition swap chain");
+        // Waitable frame latency (DXGI 1.3, flip model); a driver that refuses
+        // the flag keeps the device-level latency bound above.
+        description.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+        if (FAILED(factory->CreateSwapChainForComposition(device.Get(), &description, nullptr, &swapchain))) {
+            description.Flags = 0;
+            checked(factory->CreateSwapChainForComposition(device.Get(), &description, nullptr, &swapchain), "Create premultiplied composition swap chain");
+        }
+        swapchainFlags = description.Flags;
+        if (swapchainFlags) {
+            ComPtr<IDXGISwapChain2> waitable;
+            if (SUCCEEDED(swapchain.As(&waitable)) && SUCCEEDED(waitable->SetMaximumFrameLatency(1))) frameLatency = waitable->GetFrameLatencyWaitableObject();
+        }
+        counters.frameLatencyWaitable = frameLatency != nullptr;
         checked(DCompositionCreateDevice(dxgi.Get(), IID_PPV_ARGS(&composition)), "Create DirectComposition device");
         checked(composition->CreateTargetForHwnd(window, TRUE, &target), "Create owned HUD composition target");
         checked(composition->CreateVisual(&visual), "Create HUD composition visual");
@@ -653,7 +671,7 @@ void Renderer::resize(std::uint32_t width, std::uint32_t height) {
         r.readbackReady = false;
         r.context->ClearState();
         r.outputView.Reset(); r.backBuffer.Reset(); r.linearView.Reset(); r.linearResource.Reset(); r.linearTarget.Reset();
-        if (!r.offscreen) checked(r.swapchain->ResizeBuffers(2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0), "Resize composition buffers");
+        if (!r.offscreen) checked(r.swapchain->ResizeBuffers(2, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, r.swapchainFlags), "Resize composition buffers");
         r.width = width; r.height = height; r.bindTargets();
         if(r.compositionSurface){r.compositionSurface->impl_->width=width;r.compositionSurface->impl_->height=height;}
     } catch (...) { reset(); throw; }
@@ -1004,7 +1022,7 @@ void Renderer::draw(bool present) {
     if (originalBackground) {
         r.source->renderTo(r.backBuffer.Get(), r.width, r.height);
         if (r.draws.empty()) {
-            if (present) { checked(r.swapchain->Present(1, 0), "Present original HUD materials"); ++r.counters.presents; }
+            if (present) { checked(r.swapchain->Present(1, 0), "Present original HUD materials"); ++r.counters.presents; r.frameAcquired = false; }
             else r.readbackReady = true;
             return;
         }
@@ -1044,8 +1062,35 @@ void Renderer::draw(bool present) {
     r.context->OMSetRenderTargets(0, nullptr, nullptr);
     if (present) {
         checked(r.swapchain->Present(1, 0), "Present HUD composition");
-        ++r.counters.presents;
+        ++r.counters.presents; r.frameAcquired = false;
     } else r.readbackReady = true;
+}
+bool Renderer::waitForPresentation(std::uint32_t timeoutMilliseconds) {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    if (r.offscreen || !r.frameLatency || r.frameAcquired) return true;
+    // The object counts accepted frames: one successful wait admits exactly
+    // one Present, so a frame that waited and then presented nothing keeps it.
+    const auto status = WaitForSingleObjectEx(r.frameLatency, timeoutMilliseconds, FALSE);
+    ++r.counters.presentationWaits;
+    if (status == WAIT_OBJECT_0) { r.frameAcquired = true; return true; }
+    ++r.counters.presentationWaitTimeouts;
+    return false;
+}
+long Renderer::setGpuThreadPriority(int priority) noexcept {
+    if (!impl_ || !impl_->device) return E_POINTER;
+    if (priority < -7 || priority > 7) return E_INVALIDARG;
+    ComPtr<IDXGIDevice> device; if (FAILED(impl_->device.As(&device))) return E_NOINTERFACE;
+    return device->SetGPUThreadPriority(priority);
+}
+double Renderer::waitForGpuIdle() {
+    require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
+    if (!r.gpuIdleQuery) { D3D11_QUERY_DESC description{D3D11_QUERY_EVENT, 0}; checked(r.device->CreateQuery(&description, &r.gpuIdleQuery), "Create GPU completion query"); }
+    LARGE_INTEGER frequency{}, start{}, now{}; QueryPerformanceFrequency(&frequency); QueryPerformanceCounter(&start);
+    r.context->End(r.gpuIdleQuery.Get());
+    BOOL done = FALSE;
+    while (r.context->GetData(r.gpuIdleQuery.Get(), &done, sizeof(done), 0) == S_FALSE) SwitchToThread();
+    QueryPerformanceCounter(&now);
+    return static_cast<double>(now.QuadPart - start.QuadPart) * 1000 / static_cast<double>(frequency.QuadPart);
 }
 Readback Renderer::readback() {
     require(impl_ != nullptr, "Renderer is not initialized"); auto &r = *impl_; r.thread();
