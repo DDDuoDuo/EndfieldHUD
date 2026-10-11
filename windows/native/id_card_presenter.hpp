@@ -94,10 +94,20 @@ public:
     // desktop settings for SourceWatchSession::setDesktopSettings when they
     // changed. Nothing happens while the feed is unchanged.
     std::optional<core::source::SourceDesktopFrameSettings>apply();
+    // Other desktop content events change the packet baseline the card is
+    // applied over, e.g. the custom center logo (HUDSourceWatchView.
+    // setDesktopCenterLogo: desktopImages[EndfieldText] bound to the runtime
+    // "desktop.center-logo" texture, that node in desktopNormalMaterialNodes,
+    // EndfieldTextGlow hidden). The Mac keeps both in one frameBuilder; here
+    // the next apply() returns the new baseline plus the card. An equal
+    // baseline is a no-op; the caller presents a frame (apply runs there).
+    void setBaseline(core::source::SourceDesktopFrameSettings);
+    const core::source::SourceDesktopFrameSettings&baseline()const noexcept{return baseline_;}
     const std::optional<std::string>&highlightNode()const noexcept{return highlight_;}
     const core::source::SourceDesktopFrameSettings&settings()const noexcept{return applied_;}
     const IdCardPresenterStats&stats()const noexcept{return stats_;}
 private:
+    static std::optional<std::string>highlightOf(const core::source::SourceDesktopFrameSettings&);
     NativeIdCardCaptions captions_;IdCardTextureTarget target_;
     core::source::SourceDesktopFrameSettings baseline_,applied_;
     std::optional<std::string>highlight_;

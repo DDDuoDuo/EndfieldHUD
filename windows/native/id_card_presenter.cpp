@@ -25,10 +25,20 @@ IdCardTextureTarget idCardTextureTarget(SourceScene&materials){
 IdCardPresenter::IdCardPresenter(LayerScene&labels,IdCardCaptionLeaves leaves,LayerRasterOptions options,IdCardTextureTarget target,core::source::SourceDesktopFrameSettings baseline)
     :captions_(labels,std::move(leaves),std::move(options)),target_(std::move(target)),baseline_(std::move(baseline)),applied_(baseline_){
     need(static_cast<bool>(target_.replace)&&static_cast<bool>(target_.restore),"ID card textures need a replace/restore target");
-    // HUDSourceDesktopNavigationLayout.profileHighlightNodeID: the hover plate
-    // the source binds to desktop.profile.hover (desktopImages[highlightID]).
-    for(const auto&[node,image]:baseline_.images)
-        if(image.texture==idCardTextureIDs[static_cast<std::size_t>(IdCardTextureSlot::hover)]){need(!highlight_,"One profile hover plate");highlight_=node;}
+    highlight_=highlightOf(baseline_);
+}
+// HUDSourceDesktopNavigationLayout.profileHighlightNodeID: the hover plate
+// the source binds to desktop.profile.hover (desktopImages[highlightID]).
+std::optional<std::string>IdCardPresenter::highlightOf(const core::source::SourceDesktopFrameSettings&baseline){
+    std::optional<std::string>out;
+    for(const auto&[node,image]:baseline.images)
+        if(image.texture==idCardTextureIDs[static_cast<std::size_t>(IdCardTextureSlot::hover)]){need(!out,"One profile hover plate");out=node;}
+    return out;
+}
+void IdCardPresenter::setBaseline(core::source::SourceDesktopFrameSettings baseline){
+    if(baseline==baseline_)return;
+    auto highlight=highlightOf(baseline); // validated before anything changes
+    baseline_=std::move(baseline);highlight_=std::move(highlight);dirty_=true;
 }
 IdCardPresenter::~IdCardPresenter(){disconnect();}
 void IdCardPresenter::connect(IdCardFeed&feed,std::function<void()>changed){

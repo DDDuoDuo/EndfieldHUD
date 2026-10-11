@@ -76,6 +76,21 @@ void run(const std::filesystem::path&fixture,const std::filesystem::path&resourc
     check(!presenter.apply()&&presenter.stats().unchanged>=1,"Unchanged feed is a no-op");
     feed.publish(&binding,{avatar.view(),background.view(),hover.view()});
     check(!presenter.apply()&&calls.size()==3&&raster.stats().rasterizations==rasters,"A republish of the same revisions repaints and uploads nothing");
+    // 3b. Another desktop content event (the custom center logo) changes the
+    // baseline under the card: the next apply keeps both.
+    auto logoBaseline=baseline;logoBaseline.images["logo-main"]={"desktop.center-logo",{300,100},core::source::Vec2{96,32}};
+    logoBaseline.normalMaterialNodes.insert("logo-main");logoBaseline.hiddenNodes.insert("logo-glow");
+    presenter.setBaseline(logoBaseline);
+    check(presenter.pending()&&presenter.baseline()==logoBaseline&&presenter.highlightNode()==highlight,"A new baseline is pending and keeps the hover plate");
+    const auto withLogo=presenter.apply();
+    check(withLogo&&withLogo->images.at("logo-main").texture=="desktop.center-logo"&&withLogo->normalMaterialNodes.contains("logo-main")&&withLogo->hiddenNodes.contains("logo-glow")&&
+          withLogo->images.at(source.playerHead).size==std::array<float,2>{368,368}&&withLogo->properties.at(source.levelSlider).at("m_FillAmount")==42./60&&calls.size()==3,
+          "The logo joins the card's settings without rebinding card textures");
+    presenter.setBaseline(logoBaseline);check(!presenter.pending()&&!presenter.apply(),"An equal baseline is a no-op");
+    auto twoHover=logoBaseline;twoHover.images["second-plate"]={"desktop.profile.hover",{530,204},{}};
+    check(rejects([&]{presenter.setBaseline(twoHover);})&&presenter.baseline()==logoBaseline&&!presenter.pending(),"A baseline with two hover plates is refused unchanged");
+    presenter.setBaseline(baseline);const auto withoutLogo=presenter.apply();
+    check(withoutLogo&&!withoutLogo->images.contains("logo-main")&&*withoutLogo==*settings,"Restoring the baseline drops the logo and keeps the card");
     // 4. A new accent regenerates the background and hover only.
     profile.themeColorHex="FF0000";check(binding.update(input),"Accent change");
     background.revision=binding.backgroundRevision();hover.revision=binding.hoverRevision();
