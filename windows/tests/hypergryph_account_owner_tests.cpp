@@ -22,6 +22,7 @@
 #include <objbase.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -42,6 +43,13 @@ namespace {
 namespace gpu=endfield::native;namespace core=endfield::core;namespace tools=endfield::tools;namespace app=endfield::app;namespace h=endfield::modules::hypergryph;
 using Json=ehud::data::Json;
 unsigned checks{};void check(bool v,const char* s) {++checks;if(!v) throw std::runtime_error(s);}
+// Startup cost of the production owner (reported, not asserted): the first
+// construction in the process (WinHTTP session, DPAPI vault, imported cache
+// read, pinned wallet resources), the first HUD open and its first frame's
+// CPU work (artwork, upload and composition; WARP drawing excluded).
+using Clock=std::chrono::steady_clock;
+double since(Clock::time_point start) {return std::chrono::duration<double,std::milli>(Clock::now()-start).count();}
+double constructionMS{},openingMS{},firstFrameMS{};
 struct Window {
     ATOM atom{};HWND hwnd{};
     Window() {WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldAccountOwnerFixture";atom=RegisterClassW(&c);check(atom!=0,"Register hidden fixture");
@@ -89,7 +97,8 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         o.clock=[&]{return clock;};o.wallClock=[&]{return now;};o.invalidate=[&]{++invalidations;};
         o.recordEvent=[&](std::string_view action){events.emplace_back(action);};o.profile=&sink;o.officialLogin=false;
         o.workMode=[]{return h::WorkModeGaugeInput{true,1500,61.5};};o.workModeRunning=[]{return true;};
-        tools::AccountLinkingOwner owner(executor,raster,o);auto& controller=owner.controller();
+        const auto constructing=Clock::now();
+        tools::AccountLinkingOwner owner(executor,raster,o);constructionMS=since(constructing);auto& controller=owner.controller();
         check(!owner.officialLoginAvailable(),"Hidden verification never creates a browser");
         // Imported cache: cached roles/sanity stay, a fresh Windows sign-in is required.
         check(controller.record().linked&&controller.record().requiresReconnect&&controller.gameSyncActive(),"Imported Mac cache keeps the linked Endfield role and requires re-login");
@@ -97,7 +106,8 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
         check(store.profileSyncLocked()&&synced.gamePlayerID==std::optional<std::string>("4000500060")&&!synced.playerIDOverride&&synced.name=="Endmin"&&synced.tag=="1234"&&
               synced.permissionLevel==40&&synced.explorationLevel==3&&!synced.hasManualAwakeningDate,
               "Cached Endfield snapshot syncs the personal profile and locks it while reconnecting (no network)");
-        owner.resize({0,0,96,1,0,0});owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);
+        const auto opening=Clock::now();
+        owner.resize({0,0,96,1,0,0});owner.resize({1280,800,96,1,1280,800});owner.setOverlayVisible(true,clock);openingMS=since(opening);
         const auto expected=controller.record().snapshots.at(role.id()).sanityPresentation(now);
         check(expected&&expected->current==44&&owner.gauge().model().value()=="44 / 360"&&owner.gauge().model().canOpen(),"Header wallet projects cached sanity locally (never below the reported 42)");
         check(owner.module().canvas().presentation().statusMessage=="Sign in again to continue syncing."&&owner.module().canvas().presentation().isLinked,"Account face asks for a fresh sign-in");
@@ -118,7 +128,7 @@ void run(const std::filesystem::path& shader,const std::filesystem::path& resour
             all.assign(owner.moduleEntries().begin(),owner.moduleEntries().end());for(const auto& e:owner.headerEntries()) all.push_back(e);
             composition.setEntries(renderer,all);composition.present(renderer);
         };
-        frame({});renderer.draw(false);
+        const auto first=Clock::now();frame({});firstFrameMS=since(first);renderer.draw(false);
         const auto shot=renderer.readback();check(painted(shot)>1000,"Module face and header wallet paint");
         const auto alphaAt=[&](double x,double y){return shot.pixels[std::size_t(y)*shot.rowBytes+std::size_t(x)*4+3];};
         check(alphaAt(562+100,2+21)>0,"Wallet paints at the header position");
@@ -302,7 +312,7 @@ int wmain(int argc,wchar_t** argv) {
         check(SUCCEEDED(hr)&&argc==5,"Pass shader, windows/resources/account, hypergryph-account-source.json and hypergryph-account-coverage.json");
         const auto resources=std::filesystem::absolute(argv[2]).lexically_normal();
         run(argv[1],resources);reconnectAfterImport(resources,argv[3],argv[4]);
-        CoUninitialize();std::cout<<"PASS "<<checks<<" Account owner checks\n";return 0;
+        CoUninitialize();std::cout<<"PASS "<<checks<<" Account owner checks (startup: construction "<<constructionMS<<" ms, first open "<<openingMS<<" ms, first frame "<<firstFrameMS<<" ms)\n";return 0;
     }
     catch(const std::exception& e) {counting=false;if(SUCCEEDED(hr)) CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }
