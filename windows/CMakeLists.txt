@@ -10,7 +10,11 @@ if(MSVC)
   add_compile_options(/utf-8)
   # Release objects carry debug information (no code generation change) so
   # EndfieldHUD.exe links its separate developer PDB (stage_release.cmake).
-  add_compile_options($<$<CONFIG:Release>:/Z7>)
+  # Scratch verification builds may turn it off to save several GB per tree.
+  option(EHUD_DEVELOPER_SYMBOLS "Embed debug information in Release objects for the developer PDB" ON)
+  if(EHUD_DEVELOPER_SYMBOLS)
+    add_compile_options($<$<CONFIG:Release>:/Z7>)
+  endif()
 endif()
 # MSBuild FileTracker ignores project headers read under the per-user/common
 # application-data and TEMP folders, so the module gives every source a

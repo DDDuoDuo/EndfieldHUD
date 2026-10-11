@@ -92,7 +92,7 @@ if(WIN32)
   # compiles directly into watch_session_preview are provided to the
   # production executable by hud_application_module_sources below.
   add_library(hud_application app/application.cpp app/application_events.cpp app/application_lifetime.cpp app/application_modules.cpp app/application_display.cpp
-    app/application_navigation.cpp app/hud_automation.cpp app/hud_button_automation.cpp)
+    app/application_navigation.cpp app/application_memory.cpp app/process_diagnostics.cpp app/hud_automation.cpp app/hud_button_automation.cpp)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
@@ -101,7 +101,7 @@ if(WIN32)
     hud_map_preview hud_map_store hud_map_assets hud_orbipom_presentation hud_orbipom_runtime
     hud_calendar_preview hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
-    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32)
+    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32 dxgi)
   add_library(hud_application_verification app/application_verification.cpp)
   target_compile_definitions(hud_application_verification PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application_verification PUBLIC hud_application)
@@ -213,7 +213,9 @@ if(WIN32)
     target_compile_options(hud_single_instance PRIVATE /W4 /permissive- /EHsc)
     # Separate developer symbols (stage_release.cmake archives the PDB) with
     # unchanged code generation: /DEBUG would otherwise turn REF/ICF off.
-    target_link_options(EndfieldHUD PRIVATE $<$<CONFIG:Release>:/DEBUG:FULL /OPT:REF /OPT:ICF>)
+    if(EHUD_DEVELOPER_SYMBOLS)
+      target_link_options(EndfieldHUD PRIVATE $<$<CONFIG:Release>:/DEBUG:FULL /OPT:REF /OPT:ICF>)
+    endif()
   endif()
   add_dependencies(EndfieldHUD hud_private_fonts)
   # The shared audio worker, five-language Volume captions (audio area).
@@ -287,6 +289,11 @@ if(WIN32)
     target_compile_definitions(application_registry_tests PRIVATE ${EHUD_APP_DEFINITIONS})
     target_link_libraries(application_registry_tests PRIVATE hud_module_registry)
     add_test(NAME application_registry_contracts COMMAND application_registry_tests)
+    # The shared executor's idle worker exit and worker naming (memory trace).
+    add_executable(application_utility_idle_tests tests/application_utility_idle_tests.cpp)
+    target_compile_definitions(application_utility_idle_tests PRIVATE ${EHUD_APP_DEFINITIONS})
+    target_link_libraries(application_utility_idle_tests PRIVATE hud_utility)
+    add_test(NAME application_utility_idle_contracts COMMAND application_utility_idle_tests)
     add_executable(single_instance_tests tests/single_instance_tests.cpp)
     target_compile_definitions(single_instance_tests PRIVATE ${EHUD_APP_DEFINITIONS})
     target_link_libraries(single_instance_tests PRIVATE hud_single_instance ole32)
@@ -331,6 +338,13 @@ if(WIN32)
         "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=113 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
+      # The same owner's memory and thread census (launch, every module,
+      # closing, ten more cycles) with the lifecycle growth bounds.
+      add_test(NAME application_memory_trace COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
+        "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/memory-trace-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_memory_trace.cmake")
+      set_tests_properties(application_memory_trace PROPERTIES TIMEOUT 600)
       add_test(NAME endfieldhud_install_contracts COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
         "-DPREFIX=${CMAKE_CURRENT_BINARY_DIR}/endfieldhud-install-check" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_install_check.cmake")
     endif()
