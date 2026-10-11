@@ -26,7 +26,29 @@ void memory(){
     check(store.capacity()==2&&store.events().size()==2&&store.events().front().id==id(4),"Memory-only model retains bounded newest-first events");
     check(!store.takeSave(4.4,true)&&!store.saveDeadline(),"Explicit memory-only flush has no write request");
     store.clear(5);const auto before=store.revision();store.clear(6);check(store.revision()==before+1&&store.events().empty(),"Empty clear changes source revision without recording itself");
-    const auto stable=store.revision();rejects([&]{store.record(event(7),5.9);},"Backwards owner time rejects before model mutation");rejects([&]{store.clear(std::numeric_limits<double>::quiet_NaN());},"Nonfinite owner time rejects");check(store.revision()==stable,"Invalid owner clock preserves session model");
+    // Owner time only orders the debounced save: a backwards or nonfinite one
+    // is clamped to the last owner time, never fatal (SystemEventLog has no
+    // owner clock at all; its events keep their own Date).
+    const auto stable=store.revision();store.record(event(7),5.9);check(store.revision()==stable+1&&store.events().front().id==id(7),"Backwards owner time is clamped, not rejected");
+    store.clear(std::numeric_limits<double>::quiet_NaN());check(store.revision()==stable+2&&store.events().empty(),"Nonfinite owner time is clamped, not rejected");
+}
+void ownerClock(){
+    // The RC crash (exit 1, "Event persistence requires finite monotonic owner
+    // time"): the host's deadline callback sampled its wake time, an area
+    // recorded inside that callback (owner clock a moment later), then the host
+    // captured with the wake time. The request neither throws nor saves early.
+    Temporary fixture;data::EventLogStore store(fixture.root);
+    store.record(event(1),10);auto first=store.takeSave(10.35);check(first&&first->execute().success,"Ordinary debounced save");
+    store.record(event(2),20.000001);check(!store.takeSave(20),"A wake time sampled before the record neither throws nor saves early");
+    check(store.saveDeadline()&&std::abs(*store.saveDeadline()-20.350001)<1e-9,"The pending save still follows the latest record");
+    auto second=store.takeSave(20.4);check(second&&second->execute().success&&Json::parse(read(fixture.path()))["events"].array().size()==2,"The next wake saves the in-callback event");
+    store.record(event(3),std::numeric_limits<double>::quiet_NaN());auto forced=store.takeSave(std::numeric_limits<double>::infinity(),true);
+    check(forced&&forced->execute().success,"Nonfinite owner times still allow the explicit flush");
+    // A second run on the same root: a fresh, lower owner clock and an event
+    // Date older than every restored row.
+    data::EventLogStore reopened(fixture.root);check(reopened.events().size()==3,"The next run restores the saved events");
+    reopened.record({id(4),model::EventKind::clipboardCopied,700000000.,{{"kind","text"}}},1);auto third=reopened.takeSave(1.35);
+    check(third&&third->execute().success&&Json::parse(read(fixture.path()))["events"].array().size()==4,"A restart with a lower owner clock and an older Date persists every event");
 }
 void save(){
     Temporary fixture;data::EventLogStore store(fixture.root,3);check(store.path()==fixture.path(),"Original relative EventLog/events.json path is preserved");
@@ -79,4 +101,4 @@ void revisionsAndFailure(){
     check(owned&&owned->execute().success&&Json::parse(read(late.path()))["events"].array().size()==1,"Detached save snapshot safely outlives the UI/store without retaining either");
 }
 }
-int main(){try{memory();save();loading();blocked();revisionsAndFailure();std::cout<<"Event Log persistence: "<<checks<<" checks passed (temporary roots only)\n";return 0;}catch(const std::exception&error){std::cerr<<"Event Log persistence failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}
+int main(){try{memory();save();ownerClock();loading();blocked();revisionsAndFailure();std::cout<<"Event Log persistence: "<<checks<<" checks passed (temporary roots only)\n";return 0;}catch(const std::exception&error){std::cerr<<"Event Log persistence failed after "<<checks<<" checks: "<<error.what()<<'\n';return 1;}}

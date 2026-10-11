@@ -70,12 +70,20 @@ std::optional<std::string_view>EventLogStore::statusMessage()const noexcept{
     case Failure::save:return "The log could not be saved. New events are kept in this session.";
     }return {};
 }
-void EventLogStore::validateTime(double value)const{need(std::isfinite(value)&&value<=std::numeric_limits<double>::max()-saveDelay&&(!lastTime_||value>=*lastTime_),"Event persistence requires finite monotonic owner time");}
+// The owner clock only orders the debounced save. Hosts sample it at the start
+// of a callback (a timer wake) and may record before they capture with that
+// sample, so an earlier or nonfinite time is clamped, never fatal: the save
+// still waits .35 s after the latest change, as SystemEventLog does.
+double EventLogStore::ownerTime(double value)const noexcept{
+    constexpr double latest=std::numeric_limits<double>::max()-saveDelay;
+    if(!std::isfinite(value))return lastTime_.value_or(0);
+    value=std::min(value,latest);return lastTime_?std::max(value,*lastTime_):value;
+}
 void EventLogStore::changed(double time){++revision_;lastTime_=time;if(writer_)deadline_=time+saveDelay;}
-void EventLogStore::record(model::SystemEvent event,double time){validateTime(time);model_.record(std::move(event.id),event.kind,event.createdAt,event.metadata);changed(time);}
-void EventLogStore::clear(double time){validateTime(time);model_.clear();changed(time);}
+void EventLogStore::record(model::SystemEvent event,double time){time=ownerTime(time);model_.record(std::move(event.id),event.kind,event.createdAt,event.metadata);changed(time);}
+void EventLogStore::clear(double time){time=ownerTime(time);model_.clear();changed(time);}
 std::optional<EventLogWrite>EventLogStore::takeSave(double time,bool force){
-    validateTime(time);if(!writer_){lastTime_=time;return {};}
+    time=ownerTime(time);if(!writer_){lastTime_=time;return {};}
     if(!force&&(!deadline_||time<*deadline_)){lastTime_=time;return {};}
     auto bytes=encode(model_.events());EventLogWrite request(writer_,revision_,std::move(bytes));deadline_.reset();lastTime_=time;return request;
 }

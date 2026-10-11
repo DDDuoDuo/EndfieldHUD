@@ -37,6 +37,11 @@ public:
     const std::optional<std::filesystem::path>&path()const noexcept{return path_;}
     // Caller supplies UUID, Foundation-epoch Date and monotonic owner time.
     // No OS listener, timer, default directory or synchronous save is hidden.
+    // Owner time only orders the one debounced save (SystemEventLog: every
+    // change re-arms it .35 s later); events keep their own wall-clock Date.
+    // A time behind the last one seen (e.g. a host callback's wake time used
+    // after a record inside that same callback) or a nonfinite one never fails
+    // persistence: it is clamped to the last owner time.
     void record(endfield::modules::SystemEvent,double ownerTime);
     void clear(double ownerTime);
     std::optional<double>saveDeadline()const noexcept{return deadline_;}
@@ -54,6 +59,6 @@ private:
     std::optional<Failure>failure_;
     std::optional<double>deadline_,lastTime_;
     std::uint64_t revision_{};
-    void validateTime(double)const;void changed(double);
+    double ownerTime(double)const noexcept;void changed(double);
 };
 }
