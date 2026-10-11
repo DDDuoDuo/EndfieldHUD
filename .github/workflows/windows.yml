@@ -1,7 +1,8 @@
 name: Windows port checks
 # Builds and runs the portable (Linux) and Windows suites of windows/, then
-# stages an unsigned developer package (portable zip, setup, size report) as
-# a workflow artifact. Nothing here creates a tag, release or Mac update.
+# stages an unsigned developer package (portable zip, setup, size report,
+# SHA256SUMS and a release-notes draft) as a workflow artifact. Nothing here
+# creates a tag, release or Mac update.
 on:
   push:
     branches: [codex/windows-migration]
@@ -43,8 +44,17 @@ jobs:
         run: ctest --test-dir build/portable --output-on-failure --timeout 900
 
   windows:
-    name: Windows suites and developer package (windows-latest)
-    runs-on: windows-latest
+    name: Windows suites and developer package (windows-2025)
+    # Pinned image, not windows-latest: EndfieldHUD links the OS ICU, so the
+    # Event Log name and Archive date suites compare the image's icu.dll
+    # (Unicode grapheme rules, time-zone data) with their macOS oracles.
+    # windows-2022 (build 20348) predates Unicode 15.1 Indic conjunct breaks
+    # and still applies Samoa daylight saving; windows-2025 (build 26100) has
+    # the Windows 11 24H2/25H2 system binaries of the test laptop (build 26200:
+    # ICU 72.1 with Unicode 15.1, time-zone data 2022g). The image is checked by
+    # package_os_capabilities against windows/packaging/os-requirements.json
+    # before the suites run; the assertions themselves are unchanged.
+    runs-on: windows-2025
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -76,6 +86,12 @@ jobs:
       - name: Build
         id: build
         run: cmake --build build/windows --config Release --parallel -- /nodeReuse:false
+      - name: Check the OS ICU and time-zone data
+        # Names an outdated runner image before the oracle suites fail on it.
+        shell: pwsh
+        run: |
+          & build/windows/Release/package_os_capabilities.exe --requirements windows/packaging/os-requirements.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test
         # Serial: hidden-window, WARP and installer suites share the session.
         run: ctest --test-dir build/windows -C Release --output-on-failure --timeout 900

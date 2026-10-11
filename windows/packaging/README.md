@@ -2,8 +2,9 @@
 
 This folder holds the Windows release path: the per-user installer, the
 portable zip, release staging, the CI workflow support, the section 9
-performance-gate tooling and the EHUDZ01 verifier. None of it is linked into
-`EndfieldHUD.exe`. The installer is its own small program.
+performance-gate tooling, the EHUDZ01 verifier and the Windows updater. Only
+the updater is linked into `EndfieldHUD.exe`, as the `windowsUpdates` area
+(see *Updates*). The installer is its own small program.
 
 Decision: EndfieldHUD is installed **per user and unpackaged**. There is no
 MSIX package, no administrator prompt and no self-signed-certificate
@@ -22,7 +23,8 @@ release.
 | `EndfieldHUD-<release>-build<N>-windows-x64-portable.zip` | The install tree under `EndfieldHUD/` (no uninstaller, no registration) |
 | `…-symbols.zip` | `EndfieldHUD.pdb`, when the build emits one (never in the consumer package) |
 | `…-size-report.json` / `.md` | Installed size per part, artifact sizes and SHA-256 values, exclusions, runtime dependencies |
-| `…-SHA256SUMS.txt` | Checksums of the artifacts |
+| `…-SHA256SUMS.txt` | Checksums of the artifacts (the list the Windows updater checks a download against) |
+| `…-release-notes.md` | Draft notes for a `windows-v<release>` GitHub release, with the names, sizes and SHA-256 values filled in (see *Releases*) |
 
 The release staging script is `stage_release.cmake`. It runs these steps:
 
@@ -33,6 +35,7 @@ The release staging script is `stage_release.cmake`. It runs these steps:
 5. Packs the setup with `tools/package_payload.cpp`.
 6. Re-verifies the setup with its own reader (`--verify-payload`).
 7. Writes the size report and checksums.
+8. Renders the release-notes draft.
 
 If the Mac-exported runtime inputs are missing, the package does not verify and
 staging is refused. With `-DEHUD_RELEASE_ALLOW_INCOMPLETE=ON` (CI) every
@@ -214,23 +217,124 @@ build with `-DEHUD_SIGN_CERTIFICATE_SHA1=<thumbprint>
 The payload reader accepts the appended certificate table. This is tested with
 a synthetic table.
 
-## Updates
+## Updates (`update_check.hpp`, `updater.hpp`, `update_platform.hpp`, `app/areas/update_module.*`)
 
-There is no Windows updater yet; see `remaining` in the area report. A
-side-by-side update would reuse the installer transaction: extract beside the
-folder, close the app through the session-end protocol, swap, then roll back or
-restart.
+EndfieldHUD.exe checks for Windows releases itself. The `windowsUpdates` area
+owns the updater and publishes `app::UpdateService`
+(`app/areas/update_service.hpp`) for the About page and the tray. No timer or
+polling loop is added.
 
-Windows releases must use their own tag namespace (`windows-v<release>`, which
-fails the Mac `HUDReleaseVersion` parser) and their own feed. The CI workflow
-fails if `updates/appcast.xml` differs from `main`.
+**Releases are Windows only.** A Windows release is tagged
+`windows-v<SemVer>`, for example `windows-v1.2.1` or `windows-v1.3.0-beta.1`.
+The checker reads the same GitHub release list as the Mac app
+(`/repos/DDDuoDuo/EndfieldHUD/releases?per_page=100`). It accepts only
+`windows-v` tags. It never reads `updates/appcast.xml` or a Mac asset. The
+unchanged Mac `HUDReleaseVersion` rejects every `windows-v` tag, so a Windows
+release is never offered to a Mac (oracle scenario *windows tags only*).
+
+**Parity with the Mac checker.** `update_check.cpp` ports
+`HUDReleaseVersion`, `HUDGitHubRelease.validatedURL` and
+`HUDGitHubReleaseClient`. Its decisions are checked against
+`tests/fixtures/update-release-source.json`, which
+`tools/package_update_reference.sh` generates from the unchanged
+`Sources/HUDGitHubRelease.swift`. The port covers:
+
+- SemVer precedence, and drafts, unpublished releases and foreign pages ignored.
+- Stable builds see stable releases only; prerelease builds see the newest.
+- ETag with `If-None-Match` and 304 reuse.
+- `Retry-After` (capped at one day), `X-RateLimit-Reset`, the 1 MiB response
+  cap, title cleanup and Foundation's JSON decoding rules.
+- Equal versions are ordered by the installer build, so a Windows-only rebuild
+  (1.2.0 build 19 over build 18) is offered.
+
+**Installable releases.** A release is installable when it carries exactly
+`EndfieldHUD-<X.Y.Z>-build<N>-windows-x64-setup.exe` and
+`EndfieldHUD-<X.Y.Z>-build<N>-windows-x64-SHA256SUMS.txt`, uploaded to that
+release, with `<X.Y.Z>` equal to the tag version. These are the
+`stage_release.cmake` names. Any other release is only discovered: its page can
+be opened.
+
+**When it checks.**
+
+- *Check for updates* in About or the tray sends one request.
+- *Check for updates daily* (on by default) allows at most one check per day,
+  when the HUD opens.
+- The preference and the last check time are saved in
+  `<data root>\Updates\state.json` (format `EndfieldHUD.Windows.Updates`,
+  schema 1). Mac updater preferences are not imported.
+
+**Consent.** Each step needs a click on the About update row.
+
+1. *Update available* reads "Click to download and verify …". The click
+   downloads the checksum list and then the setup.
+2. *Ready to update* reads "Click to install …". The click installs.
+
+**Download checks.**
+
+- HTTPS only, through WinHTTP. Redirects are followed by the updater, never by
+  WinHTTP, and only to `github.com` or `*.githubusercontent.com`, at most five.
+- The exact published size.
+- The setup's SHA-256 must equal its line in SHA256SUMS.
+- The setup's own payload must verify (`package_io`) and name exactly that
+  version, complete and x64.
+- When this EndfieldHUD.exe is Authenticode-signed, the setup must be signed by
+  the same publisher. No build is signed yet.
+
+**Install hand-off.**
+
+1. The HUD closes first, as on the Mac.
+2. The download is held without write or delete sharing and hashed again.
+3. The hand-off is saved in `state.json`.
+4. Setup runs as `--quiet --open --result <Updates>\handoff-result.json`.
+   Setup then closes EndfieldHUD through the session-end path (data saved),
+   swaps the install folder, rolls back on any failure and restarts the app.
+5. The next run reports *Updated to …* or Setup's refusal. If Setup exits while
+   this run is still alive (for example it refused before closing the app), a
+   thread-pool wait posts the area's notice and the result is shown at once.
+
+**Only an installed copy updates itself** (developer-build protection). The
+running EndfieldHUD.exe must be in the folder that the HKCU uninstall entry
+names as `InstallLocation`, and that folder's `EndfieldHUD.install.json` must
+name this exact version. Portable, moved and development copies discover
+releases and open the release page. An isolated data root (`--data-root`)
+never checks on its own and never installs. The `Updates` folder holds at most
+one download. Stale downloads and result files are removed when the area
+starts.
+
+## Releases (`release-notes-template.md`)
+
+`stage_release.cmake` also writes
+`<stem>-release-notes.md`, a draft rendered from `release-notes-template.md`.
+It contains the Windows tag, the artifact names, sizes and SHA-256 values,
+and the signing state. An incomplete package's draft is marked *Do not
+publish*. The template's comment holds the publishing checklist:
+
+- Use the `windows-v` tag only, with `gh release create … --latest=false`.
+- Upload only the setup, the portable zip and SHA256SUMS.
+- Never touch the Mac release or `updates/appcast.xml`.
+
+Nothing in the build or CI publishes a release.
 
 ## CI (`.github/workflows/windows.yml`)
 
 The workflow runs two jobs:
 
 - **`portable`** (ubuntu-24.04): the source-authority check, the Mac-feed guard, then building and running the portable suites.
-- **`windows`** (windows-latest, MSVC x64): builds everything and runs every registered suite. It then stages the unsigned, incomplete developer package and uploads it as a 7-day workflow artifact.
+- **`windows`** (windows-2025, MSVC x64): builds everything and runs every registered suite. It then stages the unsigned, incomplete developer package and uploads it, with its release-notes draft, as a 7-day workflow artifact.
+
+The Windows job is pinned to the `windows-2025` image rather than
+`windows-latest`. EndfieldHUD links the operating system's ICU, so
+`event_log_names_contracts` (grapheme breaks) and `archive_date_contracts`
+(time-zone rules) compare the image's `icu.dll` with their macOS oracles. The
+windows-2022 image (build 20348) predates Unicode 15.1 Indic conjunct breaks
+and still applies Samoa daylight saving, so both suites failed there. Build
+26100 has the system binaries of the test laptop (build 26200: ICU 72.1 with
+Unicode 15.1, time-zone data 2022g).
+
+Before the suites run, `package_os_capabilities` checks the image against
+`os-requirements.json`. The same check is registered as the CTest
+`packaging_os_text_data_contracts`. A future image with older data fails with
+a message naming the cause. The assertions themselves are unchanged.
 
 Both jobs have read-only permissions. The Mac-exported runtime inputs are not
 in the repository, so CI does not register the input-dependent suites (owner
@@ -315,3 +419,7 @@ test.
 | `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_refuses_unsupported` | The gate against the stand-in app: a quiet process passes, one handle/GDI leak per cycle and a 10 ms wake-up are caught and attributed, and an executable without `--data-root` support is never started |
 | `packaging_identity_consistency` | Setup's notification identity equals the Calendar area's |
 | `packaging_watch_runtime_staged` (CI, where `Resources/` and Python exist) | The Mac packager's real staged tree verifies natively |
+| `packaging_update_check_contracts` (portable) | The release checker against the Mac oracle (59 tags, every ordered pair, 36 page URLs, Foundation's control characters for every scalar, 31 client scenarios). Also the Windows namespace and installer-asset rules, SHA256SUMS parsing, redirect rules, and the updater controller over synthetic routes and temporary folders. The controller cases cover check, consented download and install, the HUD closing first, the saved hand-off, its outcomes on the next run or at Setup exit, failures, discover-only copies, the daily check and its preference, Retry-After, deadlines, stop, and bounded files |
+| `packaging_update_platform_contracts` | WinHTTP against a loopback fixture server: headers, no redirects followed, size bounds, file mode, cancellation, host-clock deadlines, and refusal of plain HTTP and credentials in production. Also the installed-copy check in a private HKCU subtree, verification of synthetic setups (checksum, version, incomplete, tampered payload), the held file, and the launcher with a stand-in Setup. The updater runs end to end over those services |
+| `packaging_os_text_data_contracts` | The OS ICU and time-zone data meet `os-requirements.json` (CI runs the same check before its suites) |
+| `application_owner_coverage` (area `windowsUpdates`) | The area in the production owner with synthetic routes. Covers Mac, draft and prerelease releases ignored, the redirects, the real payload reader on a synthetic setup, the install hand-off after the HUD closes, a refused Setup, ETag, the daily check, Retry-After, a tampered checksum, a hostile redirect and a Mac-only feed |

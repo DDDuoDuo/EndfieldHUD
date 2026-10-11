@@ -1,9 +1,10 @@
 # Packaging area: unpackaged per-user installer, portable zip, release
-# staging, CI support and the section 9 performance-gate tooling
-# (windows/packaging/README.md). Nothing here is linked into EndfieldHUD.exe;
-# the installer is its own small program. Tests use temporary folders and a
+# staging, CI support, the section 9 performance-gate tooling and the Windows
+# updater (windows/packaging/README.md). Only the updater (the windowsUpdates
+# area) is linked into EndfieldHUD.exe; the installer is its own small
+# program. Tests use temporary folders, a loopback HTTP fixture server and a
 # private HKCU\Software\EndfieldHUD-Test-<id> subtree only: never the real
-# Start menu, Run key, Classes key, notification platform or user data.
+# Start menu, Run key, Classes key, notification platform, network or user data.
 set(EHUD_PACKAGING_TARGETS "")
 
 # --- Portable format, arguments, five-language Setup text, gate evaluation ----
@@ -19,6 +20,21 @@ if(BUILD_TESTING)
   target_link_libraries(packaging_perf_gate_tests PRIVATE hud_packaging_format)
   add_test(NAME packaging_perf_gate_contracts COMMAND packaging_perf_gate_tests)
   list(APPEND EHUD_PACKAGING_TARGETS packaging_format_tests packaging_perf_gate_tests)
+endif()
+
+# --- Windows updater: release checker and controller (packaging/updater.hpp) --
+# Portable decisions over the windows-v* GitHub releases (never the Mac feed),
+# checked against the unchanged Mac HUDGitHubRelease.swift through its oracle
+# (tools/package_update_reference.sh).
+add_library(hud_packaging_updates packaging/update_check.cpp packaging/updater.cpp packaging/update_fixture.cpp)
+target_include_directories(hud_packaging_updates PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_packaging_updates PUBLIC hud_packaging_format hud_data hud_localization)
+list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_updates)
+if(BUILD_TESTING)
+  add_executable(packaging_update_check_tests packaging/tests/update_check_tests.cpp)
+  target_link_libraries(packaging_update_check_tests PRIVATE hud_packaging_updates)
+  add_test(NAME packaging_update_check_contracts COMMAND packaging_update_check_tests "${CMAKE_CURRENT_SOURCE_DIR}/packaging/tests/fixtures/update-release-source.json")
+  list(APPEND EHUD_PACKAGING_TARGETS packaging_update_check_tests)
 endif()
 
 # --- EHUDZ01 (Mac Watch runtime payloads): bounded decoder and verifier ------
@@ -71,6 +87,7 @@ if(WIN32)
   string(REGEX MATCH "^v?([0-9]+)\\.([0-9]+)\\.([0-9]+)$" ehud_packaging_version "${EHUD_APP_RELEASE}")
   set(EHUD_APP_VERSION_COMMAS "${CMAKE_MATCH_1},${CMAKE_MATCH_2},${CMAKE_MATCH_3},${EHUD_APP_BUILD}")
   set(EHUD_APP_VERSION_DOTS "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${EHUD_APP_BUILD}")
+  set(ehud_update_release "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
   foreach(role IN ITEMS setup uninstall)
     if(role STREQUAL "setup")
       set(EHUD_SETUP_NAME "EndfieldHUD-Setup")
@@ -102,6 +119,20 @@ if(WIN32)
   target_compile_definitions(package_payload PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
   target_link_libraries(package_payload PRIVATE hud_packaging_io)
   list(APPEND EHUD_PACKAGING_TARGETS package_payload)
+
+  # Windows updater services (WinHTTP, installed-copy check, verification,
+  # Setup hand-off) and the windowsUpdates area in EndfieldHUD.exe.
+  add_library(hud_packaging_update_platform packaging/update_platform.cpp)
+  target_compile_definitions(hud_packaging_update_platform PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
+  target_link_libraries(hud_packaging_update_platform PUBLIC hud_packaging_updates hud_packaging_io PRIVATE winhttp wintrust crypt32 advapi32 user32)
+  add_library(hud_windows_updates_area STATIC app/areas/update_module.cpp)
+  target_include_directories(hud_windows_updates_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_windows_updates_area PRIVATE ${EHUD_PACKAGING_DEFINITIONS}
+    "EHUD_UPDATE_RELEASE=\"${ehud_update_release}\"" "EHUD_UPDATE_BUILD=${EHUD_APP_BUILD}")
+  target_link_libraries(hud_windows_updates_area PUBLIC hud_module_registry hud_packaging_update_platform PRIVATE hud_utility user32)
+  list(APPEND EHUD_PACKAGING_TARGETS hud_packaging_update_platform hud_windows_updates_area)
+  set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
+    "windowsUpdates|hud_windows_updates_area|app/areas/update_module.hpp|endfield::areas::windowsUpdatesModule")
 
   # Section 9 performance gates against EndfieldHUD.exe (temporary data root),
   # measured from outside: windows/tools/package_perf_gate.cpp.
@@ -158,6 +189,27 @@ if(WIN32)
       --report "${CMAKE_CURRENT_BINARY_DIR}/packaging/perf-gate-refused.json")
     set_tests_properties(packaging_perf_gate_refuses_unsupported PROPERTIES PASS_REGULAR_EXPRESSION "no --data-root/--toggle support")
     list(APPEND EHUD_PACKAGING_TARGETS packaging_perf_probe_tests)
+    # WinHTTP against a loopback fixture server, the installed-copy check in a
+    # private HKCU subtree, verification of synthetic setups and the Setup
+    # launcher with a stand-in Setup (never the real installer or network).
+    add_executable(packaging_update_setup_fixture WIN32 packaging/tests/update_setup_fixture.cpp)
+    target_compile_definitions(packaging_update_setup_fixture PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
+    target_link_libraries(packaging_update_setup_fixture PRIVATE shell32)
+    add_executable(packaging_update_platform_tests packaging/tests/update_platform_tests.cpp)
+    target_compile_definitions(packaging_update_platform_tests PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
+    target_link_libraries(packaging_update_platform_tests PRIVATE hud_packaging_update_platform ws2_32 advapi32 user32 ole32 shell32)
+    add_dependencies(packaging_update_platform_tests packaging_update_setup_fixture)
+    add_test(NAME packaging_update_platform_contracts COMMAND packaging_update_platform_tests "$<TARGET_FILE:packaging_update_setup_fixture>")
+    set_tests_properties(packaging_update_platform_contracts PROPERTIES TIMEOUT 300)
+    list(APPEND EHUD_PACKAGING_TARGETS packaging_update_setup_fixture packaging_update_platform_tests)
+    # The OS ICU and time-zone data the date and text suites compare against
+    # (CI runs the same tool before ctest): a clear failure on an older OS.
+    add_executable(package_os_capabilities tools/package_os_capabilities.cpp)
+    target_compile_definitions(package_os_capabilities PRIVATE ${EHUD_PACKAGING_DEFINITIONS})
+    target_link_libraries(package_os_capabilities PRIVATE icu)
+    add_test(NAME packaging_os_text_data_contracts COMMAND package_os_capabilities
+      --requirements "${CMAKE_CURRENT_SOURCE_DIR}/packaging/os-requirements.json")
+    list(APPEND EHUD_PACKAGING_TARGETS package_os_capabilities)
     if(TARGET EndfieldHUD)
       # The real install tree staged, packed, installed and removed in
       # temporary folders (complete when the Mac-exported inputs are configured).

@@ -7,6 +7,7 @@
 #   EndfieldHUD-<release>-build<N>-windows-x64-symbols.zip    EndfieldHUD.pdb, when built
 #   EndfieldHUD-<release>-build<N>-windows-x64-size-report.json/.md
 #   EndfieldHUD-<release>-build<N>-windows-x64-SHA256SUMS.txt
+#   EndfieldHUD-<release>-build<N>-windows-x64-release-notes.md   draft notes for a Windows release
 #
 # A package whose resources do not verify (Mac-exported runtime inputs not
 # configured) is refused unless ALLOW_INCOMPLETE, and then every artifact is
@@ -19,7 +20,8 @@
 #   -DUNINSTALLER=<uninstall.exe> [-DSYMBOLS=<EndfieldHUD.pdb>] [-DALLOW_INCOMPLETE=ON]
 #   [-DREQUIRE_COMPLETE=ON] [-DSIGN_SHA1=<thumbprint> -DSIGN_TIMESTAMP=<url>] -P stage_release.cmake
 # When included from another script it leaves EHUD_STAGED_SETUP,
-# EHUD_STAGED_PORTABLE, EHUD_STAGED_REPORT and EHUD_STAGED_COMPLETE set.
+# EHUD_STAGED_PORTABLE, EHUD_STAGED_REPORT, EHUD_STAGED_SUMS, EHUD_STAGED_NOTES
+# and EHUD_STAGED_COMPLETE set.
 cmake_minimum_required(VERSION 3.25)
 foreach(required BUILD CONFIG SOURCE OUT PACKER STUB UNINSTALLER)
   if(NOT ${required})
@@ -150,6 +152,41 @@ foreach(artifact IN ITEMS "${EHUD_STAGED_SETUP}" "${EHUD_STAGED_PORTABLE}" "${eh
     string(APPEND ehud_sums "${ehud_hash}  ${ehud_name}\n")
   endif()
 endforeach()
-file(WRITE "${OUT}/${ehud_stem}${ehud_suffix}-SHA256SUMS.txt" "${ehud_sums}")
+set(EHUD_STAGED_SUMS "${OUT}/${ehud_stem}${ehud_suffix}-SHA256SUMS.txt")
+file(WRITE "${EHUD_STAGED_SUMS}" "${ehud_sums}")
+
+# 8. Release-notes draft for a Windows release (packaging/release-notes-template.md):
+#    the artifact names, sizes and SHA-256 values filled in; never published here.
+function(ehud_mebibytes file out)
+  file(SIZE "${file}" bytes)
+  math(EXPR hundredths "(${bytes} * 100 + 524288) / 1048576")
+  math(EXPR whole "${hundredths} / 100")
+  math(EXPR fraction "${hundredths} % 100")
+  if(fraction LESS 10)
+    set(fraction "0${fraction}")
+  endif()
+  set(${out} "${whole}.${fraction} MiB" PARENT_SCOPE)
+endfunction()
+set(EHUD_NOTES_VERSION "${ehud_release_plain}")
+set(EHUD_NOTES_BUILD "${ehud_build}")
+set(EHUD_NOTES_COMMIT "${ehud_commit}")
+get_filename_component(EHUD_NOTES_SETUP "${EHUD_STAGED_SETUP}" NAME)
+get_filename_component(EHUD_NOTES_PORTABLE "${EHUD_STAGED_PORTABLE}" NAME)
+get_filename_component(EHUD_NOTES_SUMS "${EHUD_STAGED_SUMS}" NAME)
+ehud_mebibytes("${EHUD_STAGED_SETUP}" EHUD_NOTES_SETUP_SIZE)
+ehud_mebibytes("${EHUD_STAGED_PORTABLE}" EHUD_NOTES_PORTABLE_SIZE)
+file(SHA256 "${EHUD_STAGED_SETUP}" EHUD_NOTES_SETUP_SHA256)
+file(SHA256 "${EHUD_STAGED_PORTABLE}" EHUD_NOTES_PORTABLE_SHA256)
+if(ehud_signed)
+  set(EHUD_NOTES_SIGNING "The setup, `uninstall.exe` and `EndfieldHUD.exe` are signed by DDDuoDuo.")
+else()
+  set(EHUD_NOTES_SIGNING "These builds are not code-signed yet, so Windows SmartScreen may show a warning the first time a downloaded copy runs.")
+endif()
+set(EHUD_NOTES_DEVELOPER "")
+if(NOT EHUD_STAGED_COMPLETE)
+  set(EHUD_NOTES_DEVELOPER "> **Incomplete developer package. Do not publish:** the Mac-exported runtime inputs were missing and this setup refuses to install.\n\n")
+endif()
+set(EHUD_STAGED_NOTES "${OUT}/${ehud_stem}${ehud_suffix}-release-notes.md")
+configure_file("${SOURCE}/packaging/release-notes-template.md" "${EHUD_STAGED_NOTES}" @ONLY NEWLINE_STYLE LF)
 file(REMOVE_RECURSE "${ehud_stage}")
 message(STATUS "EndfieldHUD release artifacts staged in ${OUT} (${ehud_stem}${ehud_suffix}; signed: ${ehud_signed})")
