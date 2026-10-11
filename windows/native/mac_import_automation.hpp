@@ -37,14 +37,21 @@ struct MacImportAutomationNode {
 //              the two buttons); empty while the card is hidden or fading;
 //  toScreen()  a logical client rect -> physical screen pixels (DPI scale,
 //              ClientToScreen); none hides it;
-//  invoke()    the button's action, exactly as clicking it.
+//  invoke()    the button's action, exactly as clicking it;
+//  focus()     UIA SetFocus on a button: move the card's keyboard focus to
+//              it, exactly as Tab/Left/Right do (false: refused, e.g. the
+//              button is disabled or the card is closing).
 struct MacImportAutomationHost {
     IRawElementProviderFragmentRoot* root{}; // the owner's group under the HUD window's root (borrowed, AddRef'd while connected)
     std::function<std::vector<MacImportAutomationNode>()> nodes;
     std::function<std::optional<core::Rect>(core::Rect client)> toScreen;
     std::function<bool(std::string_view id)> invoke;
+    std::function<bool(std::string_view id)> focus;
 };
-struct MacImportAutomationStats { std::uint64_t refreshes{}, structureChanges{}, created{}, disconnected{}, invokes{}; };
+// focusMoves: the card's keyboard focus moved to another part (the card
+// opening with Cancel focused, Tab, Left/Right, a pressed button, SetFocus),
+// counted whether or not a client listened for the focus event.
+struct MacImportAutomationStats { std::uint64_t refreshes{}, structureChanges{}, created{}, disconnected{}, invokes{}, focusMoves{}, focusRequests{}; };
 // UI Automation fragments for the Windows-only "Import macOS data…" card. The
 // card is a modal dialog above the HUD: a Pane with IsDialog named by its
 // title (help: the message) holding Text parts, a read-only ProgressBar
@@ -52,7 +59,13 @@ struct MacImportAutomationStats { std::uint64_t refreshes{}, structureChanges{},
 // the data-set / report / relink rows ("label: value"; rows scrolled out of
 // the card are offscreen), and the two Buttons (Invoke = the click; disabled
 // buttons refuse it). HasKeyboardFocus follows the card's own focus (Tab,
-// arrows); the HUD keeps routing the card's keys itself.
+// arrows); the HUD keeps routing the card's keys itself. When that focus
+// moves to another part (including the card appearing), refresh() raises
+// UIA_AutomationFocusChangedEventId on the newly focused button for
+// listening clients (app/module_owner.hpp: owners raise their own focus
+// events; the host answers GetFocus through HasKeyboardFocus). SetFocus on
+// a button moves the card's focus through the host (disabled buttons refuse
+// it; other parts are not keyboard focusable).
 //
 // The owner's group lists child(i) (the dialog) among its children, routes
 // ElementProviderFromPoint to fromPoint (the deepest part under the point)
@@ -67,8 +80,11 @@ public:
     NativeMacImportAutomation(const NativeMacImportAutomation&) = delete;
     NativeMacImportAutomation& operator=(const NativeMacImportAutomation&) = delete;
     // Re-reads the card; raises name/help/enabled/focus/value property events
-    // for listening clients. True when the set, order or nesting changed.
+    // and the focus-changed event for listening clients. True when the set,
+    // order or nesting changed.
     bool refresh();
+    // The part holding the card's keyboard focus (AddRef'd; null: none).
+    HRESULT focused(IRawElementProviderFragment** out) const;
     std::size_t size() const noexcept;      // top-level parts (the dialog)
     std::size_t parts() const noexcept;     // every connected part
     HRESULT child(std::size_t index, IRawElementProviderFragment** out) const;

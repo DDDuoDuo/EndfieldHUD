@@ -216,8 +216,19 @@ flow (`app/areas/mac_import_flow.hpp`, five HUD languages) is:
    runs, the detail text, a List whose ListItems are every row of the list
    ("label: value"; rows scrolled out of the card are offscreen), and the two
    Buttons. Invoke is the click's action and disabled buttons refuse it.
-   HasKeyboardFocus follows the card's own focus. Parts keep their COM
-   identity per id across steps and refresh on content events only.
+   HasKeyboardFocus follows the card's own focus (a disabled button never
+   reports it), so the host's GetFocus finds the focused button. Whenever
+   that focus moves to another part - the card appearing with Cancel
+   focused, Tab, Left/Right, a press, SetFocus - the area raises
+   `UIA_AutomationFocusChangedEventId` on the newly focused button for
+   listening clients, once (the host never raises it for an owner). UIA
+   SetFocus on a button moves the card's focus exactly like Tab; the dialog
+   keeps its button's focus and text, list, rows and the progress bar are
+   not keyboard focusable. The dialog is listed on the card's first frame
+   (its parts need the card's pose) and its bounds are re-read once the
+   reveal settles, so it appears without waiting for another content event.
+   Parts keep their COM identity per id across steps and refresh on content
+   events only.
 
 Hidden coverage imports the golden export into the area's own synthetic
 destination, in-process (cycle 0) and through the production restart path
@@ -243,27 +254,75 @@ path or name. The pure transformations `relinkedReaderBook`,
 (the shelf owner's `FileShelfStore::Creation`) keep each record's id, order,
 progress, bookmarks and unknown fields, and replace only the locator.
 
-**Status (checkpoint 124).** The ledger and the transforms are tested
-(`mac_import_contracts`, `mac_import_native_contracts`). The File Shelf is the
-only owner that uses the ledger. It lists unresolved `fileShelf.item` entries
-as unavailable cards. A relink (double-click, Space or Relink, then one chosen
-item) keeps the imported identifier and date through `ShelfRelinkSlot` and
-calls `markResolved`. Remove and Clear call `dismiss`, and loading calls
-`reconcile` (`shelf_services_contracts`). Notes (footer action), Archive (the
-attachment's error text) and App Shortcuts (choosing an app while editing)
-relink their own records through their own pickers, but they do not update
-`Migration/relink.json`. The import card's relink list therefore still shows
-those items. Reader books have no relink action yet. The contract below is
-the behaviour every owner should follow.
+A resolved entry records an explicit Windows target
+(`validMacRelinkTarget`): an absolute Windows file path for every store,
+and for `appShortcuts.app` also a packaged application chosen in the
+applications dialog, `shell:AppsFolder\<PackageFamilyName>!<ApplicationId>`
+(ASCII package identity characters, at most 130 characters).
 
-An owner writes the relinked record first and then calls `markResolved`. When
-it loads, it passes its unresolved entries through `reconcile(store, check)`,
-where `check` looks the record up in the owner's own store. An entry whose
-record already carries a Windows locator (the app stopped between the two
-writes) is resolved with that record's path. An entry whose record the user
-deleted is dismissed. Everything else stays unresolved. A repeated import
-keeps earlier entries, and the decisions made on them, for stores it does not
-replace.
+### Owner API (by store and record id)
+
+Owners never need a ledger id. After their own record write committed
+(record first, ledger second) they call, on the shared UtilityExecutor or
+their own worker:
+
+| Call | When | Rows it changes |
+|---|---|---|
+| `resolveMacRelink(appRoot, key, target)` | the user picked `target` in the owner's own picker and the relinked record was saved | the key's unresolved rows become resolved with `target` |
+| `dismissMacRelink(appRoot, key)` | the user removed the record or attachment | the key's unresolved rows become dismissed |
+| `reconcileMacRelinks(appRoot, store, check)` | on load | every unresolved row of `store` through the owner's own lookup (`MacRelinkLedger::reconcile`) |
+
+`MacRelinkKey` is `{store, recordID, macReference, index}`:
+
+| Owner | Key |
+|---|---|
+| Notes | `{relinkNotesMedia, note.id}` |
+| Archive | `{relinkArchiveMedia, entry.id, &theAttachmentsMacObject}`; `{relinkArchiveMedia, entry.id}` for a deleted entry |
+| Reader | `{relinkReaderBook, book.id}` |
+| App shortcuts | `{relinkAppShortcut, shortcut.id}` |
+| File Shelf | `{relinkShelfItem, record id}` |
+
+Record ids match in any letter case. An Archive attachment is named by its
+Mac locator (bookmark and last known path), which stays valid when earlier
+attachments are removed; `index` (the import position) is the fallback, and
+a key with neither names every row of the record. Two attachments of one
+entry made from the same Mac file share one locator and resolve together.
+
+Every call reads the ledger afresh and writes it at most once, atomically.
+Without a ledger (no Mac import), or without a matching unresolved row,
+nothing is created or written, so owners call unconditionally. Calls are
+serialized within the process (the App shortcuts worker, the shelf and the
+UI thread share one file); a ledger replaced by another writer between the
+read and the write is read again and the change re-applied, up to four
+times, after which `changedOnDisk` surfaces. Resolved and dismissed rows are
+never changed again. Invalid stores, record ids and targets are refused
+before anything is read; unreadable or newer ledgers throw and are kept byte
+for byte.
+
+`macRelinkMediaCheck(row, media)` is the shared lookup rule for media rows
+of a record that still exists (the owner answers `missing` for a deleted
+record): an object with the row's Mac locator keeps it listed; a note whose
+one payload is a Windows reference resolves with its `windowsPath`; a note
+without media is dismissed; an attachment whose Mac locator is gone was
+relinked or removed while the ledger write was lost and is dismissed. A
+Windows attachment is never attributed to a row by position, because
+positions shift when attachments are removed.
+
+**Status (after checkpoint 127).** The ledger, the owner API and the transforms
+are tested (`mac_import_relink_contracts`, `mac_import_contracts`,
+`mac_import_native_contracts`), including concurrent writers in one process
+and another writer replacing the file mid-call. The File Shelf lists
+unresolved `fileShelf.item` entries as unavailable cards; a relink keeps the
+imported identifier and date through `ShelfRelinkSlot` and calls
+`markResolved`, Remove and Clear call `dismiss`, and loading calls
+`reconcile` (`shelf_services_contracts`). App shortcuts follow the
+committed `shortcuts.json` on their worker (`syncShortcutRelinks`); a
+shortcut relinked to a packaged application now resolves its row with its
+AppsFolder target. Notes (footer action) and Archive (the attachment's error
+text) relink their own records through their own pickers but do not yet
+call the owner API, so the import card's relink list still shows those
+items until the host wires `resolveMacRelink`, `dismissMacRelink` and
+`reconcileMacRelinks` into them. Reader books have no relink action yet.
 
 ## 3a. Calendar reminders
 
@@ -302,7 +361,16 @@ live folder is never swept, even in-process), classification of 13 planted
 folders, a bounded sweep of a deep tree, links that are never followed, the
 pre-open recovery, and the session's journal between the two renames.
 `mac_import_automation_contracts` (Windows) covers the card's UIA tree over
-synthetic nodes.
+synthetic nodes, including the focus events (the appearing card, moves,
+disabled buttons, a re-shown card) and SetFocus routing.
+`mac_import_relink_contracts` covers the relink ledger's owner API:
+explicit targets per store (file paths, AppsFolder targets for App
+shortcuts only), resolve/dismiss/reconcile by store and record id, the
+media lookup rule (a re-encoded Mac object keeps its row; no Windows
+attachment is attributed by position), refusals before any write,
+unreadable and newer ledgers kept byte for byte, a ledger replaced
+mid-call (re-read and re-applied, bounded) and concurrent owners on two
+threads.
 
 ## 4a. Verification status (checkpoint 124)
 
@@ -325,12 +393,32 @@ Verified on the laptop by hidden tests only:
   the next run's sweep of planted folders and its report, and the pre-open
   recovery on a second synthetic root.
 
+After checkpoint 127 (relink owner API and focus events), on the laptop:
+
+- `mac_import_relink_contracts`: 95 checks (also passes on the Mac under
+  clang).
+- `mac_import_automation_contracts`: 82 checks.
+- `app_shortcut_relink_contracts` (17) and `shelf_services_contracts` still
+  pass against the ledger's new target rule; the App shortcuts sync now
+  resolves a row relinked to a packaged application.
+- The `macImport` area in `application_owner_coverage`: 1,608 checks. Cycle
+  0 adds the card's focus events (appearing, Tab, SetFocus on each button,
+  the dialog and a text part, a disabled button refusing it during staging,
+  a reopened card listed and announced on its first frame) and the owner API
+  over the imported root's ledger (a Notes resolve by note id, an Archive
+  resolve by the attachment's Mac object, a packaged App shortcut target, a
+  Shelf dismissal, a no-op and a resolving Reader reconcile, a root without
+  an import left untouched).
+
 Not verified yet:
 
 - the host's real `DataRootRestart` and the `main.cpp` restart loop end to
   end (accepted quit, commit, fresh run);
-- `recoverMacImportWork` as called by `main.cpp` before each run opens the
-  root. The function itself is tested; the production call has not run;
+- `recoverMacImportWork` as `main.cpp` now calls it before each run opens
+  the root. The function itself is tested; the production call has not met
+  an interrupted activation;
+- the owner API called by Notes, Archive and Reader (host wiring pending);
+- focus events and SetFocus with a listening client (Narrator, Inspect);
 - a sweep after a real process kill on the real root;
 - the real shared folder dialog;
 - an export of real user data, larger than the golden fixture;
@@ -343,9 +431,6 @@ Known limits:
 
 - Folders made before checkpoint 124 (`e38d18d`) carry no marker. They are
   never swept and must be removed by hand.
-- The HUD root's `GetFocus` returns no element. The card exposes its focused
-  button only through HasKeyboardFocus, without AutomationFocusChanged, so
-  Narrator may not announce the dialog or its focus moves by itself.
 - The importer never deletes backups.
 - The commit runs between two runs, so it shows no progress while it works.
   Staging progress and the final report are shown.

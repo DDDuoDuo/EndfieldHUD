@@ -101,6 +101,12 @@ void MacImportCardState::resetFocus(double now) {
     focused_ = next; pressed_.reset();
     updateButtons(now, false); changed();
 }
+bool MacImportCardState::focus(int button, double now) {
+    finite(now); need(button == 0 || button == 1, "Invalid import card focus");
+    if (!shown_ || dismissing_ || !enabled_[static_cast<std::size_t>(button)]) return false;
+    if (focused_ != button) { focused_ = button; updateButtons(now, true); changed(); }
+    return true;
+}
 void MacImportCardState::updateButtons(double now, bool animated) {
     animated = animated && !reduced_ && shown_ && buttonsReady_;
     for (unsigned n = 0; n < 2; ++n) {

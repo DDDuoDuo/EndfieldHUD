@@ -44,6 +44,10 @@ public:
     // A new flow step: keyboard focus returns to the left (cancel) button so a
     // held Return never confirms the next step by accident.
     void resetFocus(double now);
+    // An explicit focus move to `button` (UI Automation SetFocus), animated
+    // like Tab/Left/Right; false while hidden or closing, or when the button
+    // is disabled.
+    bool focus(int button, double now);
     void show(double now);                  // reveal; Cancel (or the only enabled button) focused
     void dismiss(bool animated, double now);// input stays consumed until the .14 fade completes
     void hideImmediately(double now);

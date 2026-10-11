@@ -97,7 +97,7 @@ struct Card {
     std::size_t rows{14}, first{};
     bool shown{true}, confirm{true}, offscreen{};
     int focused{};
-    std::vector<std::string> invoked;
+    std::vector<std::string> invoked, focusRequests;
     std::vector<Node> nodes() const {
         std::vector<Node> out;
         if (!shown) return out;
@@ -130,6 +130,14 @@ struct Card {
         // Client points at 1.5x, offset like a window at (100, 50).
         h.toScreen = [this](c::Rect r) -> std::optional<c::Rect> { if (offscreen) return std::nullopt; return c::Rect{100 + r.x * 1.5, 50 + r.y * 1.5, r.width * 1.5, r.height * 1.5}; };
         h.invoke = [this](std::string_view id) { invoked.emplace_back(id); return true; };
+        // The area moves the card's focus like Tab (a disabled button refuses).
+        h.focus = [this](std::string_view id) {
+            focusRequests.emplace_back(id);
+            const int button = id == "confirm" ? 1 : 0;
+            if (button == 1 && !confirm) return false;
+            focused = button;
+            return true;
+        };
         return h;
     }
 };
@@ -174,8 +182,23 @@ void run() {
         const auto cancel = go(confirm.Get(), NavigateDirection_PreviousSibling);
         check(value(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 1 && value(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 0 &&
               value(cancel.Get(), UIA_IsKeyboardFocusablePropertyId) == 1 && value(title.Get(), UIA_IsKeyboardFocusablePropertyId) == 0, "Buttons carry the card's focus");
+        // AutomationFocusChanged: the first listing focused Cancel once.
+        ComPtr<IRawElementProviderFragment> focus;
+        check(tree.stats().focusMoves == 1 && SUCCEEDED(tree.focused(&focus)) && same(focus.Get(), cancel.Get()), "The appearing card announces Cancel once");
+        check(!tree.refresh() && tree.stats().focusMoves == 1, "An unchanged refresh announces nothing");
         card.focused = 1;
         check(!tree.refresh() && value(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 1, "Focus moves without restructuring");
+        check(tree.stats().focusMoves == 2 && SUCCEEDED(tree.focused(focus.ReleaseAndGetAddressOf())) && same(focus.Get(), confirm.Get()),
+              "A focus move announces the newly focused button");
+        // SetFocus routes to the host; the next refresh announces the move.
+        check(SUCCEEDED(cancel->SetFocus()) && card.focusRequests == std::vector<std::string>{"cancel"} && card.focused == 0 && tree.stats().focusRequests == 1,
+              "SetFocus on a button asks the host to move the card's focus");
+        check(!tree.refresh() && tree.stats().focusMoves == 3 && value(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 1, "The moved focus is announced");
+        check(dialog->SetFocus() == S_OK && title->SetFocus() == UIA_E_INVALIDOPERATION && first->SetFocus() == UIA_E_INVALIDOPERATION &&
+              card.focusRequests.size() == 1, "The dialog holds its button's focus; text and rows are not focusable");
+        check(value(list.Get(), UIA_IsKeyboardFocusablePropertyId) == 0 && value(first.Get(), UIA_HasKeyboardFocusPropertyId) == 0, "Lists and rows never report focus");
+        card.focused = 1;
+        check(!tree.refresh() && tree.stats().focusMoves == 4, "Back on confirm");
         ComPtr<IInvokeProvider> press;
         ComPtr<IRawElementProviderSimple> simple;
         ComPtr<IUnknown> unknown;
@@ -184,6 +207,13 @@ void run() {
         card.confirm = false;
         check(!tree.refresh() && press->Invoke() == UIA_E_ELEMENTNOTENABLED && card.invoked.size() == 1 && value(confirm.Get(), UIA_IsEnabledPropertyId) == 0,
               "A disabled button refuses Invoke");
+        // A disabled focused button reports no keyboard focus (nothing to
+        // announce) and refuses SetFocus; the area moves the focus to Cancel.
+        check(value(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 0 && value(confirm.Get(), UIA_IsKeyboardFocusablePropertyId) == 0 &&
+              SUCCEEDED(tree.focused(focus.ReleaseAndGetAddressOf())) && !focus && tree.stats().focusMoves == 4, "A disabled button holds no focus");
+        check(confirm->SetFocus() == UIA_E_ELEMENTNOTENABLED && card.focusRequests.size() == 1, "A disabled button refuses SetFocus");
+        card.focused = 0;
+        check(!tree.refresh() && tree.stats().focusMoves == 5, "Focus returning to an enabled button is announced");
         ComPtr<IRawElementProviderSimple> titleSimple;
         title.As(&titleSimple);
         check(SUCCEEDED(titleSimple->GetPatternProvider(UIA_InvokePatternId, unknown.ReleaseAndGetAddressOf())) && !unknown, "Text parts expose no Invoke");
@@ -232,10 +262,14 @@ void run() {
         card.shown = false;
         check(tree.refresh() && tree.size() == 0 && tree.parts() == 0 && confirm->get_BoundingRectangle(&r) == UIA_E_ELEMENTNOTAVAILABLE &&
               press->Invoke() == UIA_E_ELEMENTNOTAVAILABLE, "A hidden card lists nothing; old parts answer ElementNotAvailable");
+        const auto moves = tree.stats().focusMoves;
         card.shown = true;
         check(tree.refresh() && tree.size() == 1, "Showing the card again connects fresh parts");
+        check(tree.stats().focusMoves == moves + 1, "The shown card announces its focused button again");
         tree.disconnect();
         check(tree.size() == 0 && tree.parts() == 0, "Disconnect drops every part");
+        check(tree.refresh() && tree.stats().focusMoves == moves + 2, "After a disconnect the next listing announces its focus again");
+        tree.disconnect();
         group->tree = nullptr;
     }
     check(group->count() == 1, "The tree releases the owner's group");

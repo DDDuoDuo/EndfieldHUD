@@ -453,11 +453,21 @@ public:
         if (!card_) {
             g::LayerRasterOptions options; options.pixelsPerPoint = 2; options.paddingPoints = 1;
             card_ = std::make_unique<NativeImportCard>(state_, raster_, options);
+            automationPose_ = AutomationPose::unposed;
         }
         const Rect viewport{0, 0, metrics_.width, metrics_.height};
         card_->sync(flow_->content(), flow_->revision(), viewport, time_);
         const auto layout = core::source::DesktopChromeLayout::make(f.chrome, f.center, {});
         card_->updatePose(viewport, m::SettingsSafety::centeredSourceTransform(f.center, layout.designScale), time_, f.opacity);
+        // The card's UIA parts need its pose: the dialog (and its focused
+        // button's focus event) appears on the card's first frame, and its
+        // bounds are re-read once the reveal settles. Two content events per
+        // presentation; warm frames do nothing here.
+        if (automationPose_ != AutomationPose::settled) {
+            const bool settled = !state_.pose(time_).animated;
+            if (automationPose_ == AutomationPose::unposed || settled) automationActed();
+            automationPose_ = settled ? AutomationPose::settled : AutomationPose::revealing;
+        }
     }
     bool requiresFrames(double time) const override { return state_.requiresFrames(std::max(time, time_)); }
     void upload(g::Renderer& r) override { if (card_ && state_.presented()) card_->upload(r); }
@@ -727,6 +737,17 @@ private:
             host_.requestFrame();
             return true;
         };
+        h.focus = [this](std::string_view id) {
+            const int button = id == "cancel" ? 0 : id == "confirm" ? 1 : -1;
+            if (button < 0 || !flow_ || !flow_->presented()) return false;
+            time_ = std::max(time_, now());
+            // The keyboard focus moves exactly as Tab/Left/Right move it; the
+            // parts follow at once (HasKeyboardFocus and the focus event).
+            if (!state_.focus(button, time_)) return false;
+            host_.requestFrame();
+            automationActed();
+            return true;
+        };
         return h;
     }
     // The presented card in pre-order (native/mac_import_automation.hpp).
@@ -795,6 +816,7 @@ private:
     }
 
     struct Driver;
+    void relinkOwnerCalls(app::ModuleCoverage&);
     app::ApplicationHost& host_;
     g::LayerRasterizer& raster_;
     app::UtilityExecutor& utility_;
@@ -817,6 +839,8 @@ private:
     std::optional<mig::MacImportWorkSweep::Stats> swept_; // the last finished sweep
     std::unique_ptr<g::NativeMacImportAutomation> automation_;
     IRawElementProviderFragmentRoot* automationRoot_{}; // held by automation_
+    enum class AutomationPose : std::uint8_t { unposed, revealing, settled };
+    AutomationPose automationPose_{AutomationPose::unposed};
     // Hidden coverage only.
     std::unique_ptr<CoverageRestart> coverageRestart_;
     Microsoft::WRL::ComPtr<CoverageGroup> coverageGroup_;
@@ -830,7 +854,9 @@ private:
 //   cycle 0  in-process import of the golden export: intro, Escape, folder,
 //            bounded staging with progress, per data set review, commit with
 //            progress, final report, relink list, Done; the card's UIA tree
-//            (dialog, parts, focus, offscreen rows, hit test, Invoke);
+//            (dialog, parts, focus and its focus events, SetFocus, offscreen
+//            rows, hit test, Invoke); the relink ledger's owner API over the
+//            imported root as the module owners call it;
 //   cycle 1  the same destination again through the production restart path
 //            against the stand-in host service: replace prompt, review, a
 //            refused second request, a failed save (declined), the accepted
@@ -914,6 +940,10 @@ struct MacImportArea::Driver {
                 lastPercent = percent;
                 sawProgress = true;
                 step.check(invoke(L"macImport.confirm") == UIA_E_ELEMENTNOTENABLED, "Disabled buttons refuse UIA Invoke");
+                const auto confirm = part(L"macImport.confirm");
+                step.check(confirm && confirm->SetFocus() == UIA_E_ELEMENTNOTENABLED && integer(confirm.Get(), UIA_IsKeyboardFocusablePropertyId) == 0 &&
+                           integer(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 0 && focusedParts() == std::vector<std::wstring>{L"macImport.cancel"},
+                           "A disabled button refuses SetFocus; Cancel keeps the keyboard focus");
             }
         }
         step.check(!automation || sawProgress, "Staging progress reached UIA");
@@ -1004,6 +1034,14 @@ struct MacImportArea::Driver {
         for (auto& f : parts()) if (text(f.Get(), UIA_AutomationIdPropertyId) == id) return f;
         return {};
     }
+    // The parts reporting UIA keyboard focus, found as the host's GetFocus
+    // finds them (HasKeyboardFocus over the owner's fragments).
+    std::vector<std::wstring> focusedParts() {
+        std::vector<std::wstring> out;
+        for (auto& f : parts()) if (integer(f.Get(), UIA_HasKeyboardFocusPropertyId) == 1) out.push_back(text(f.Get(), UIA_AutomationIdPropertyId));
+        return out;
+    }
+    std::uint64_t focusMoves() const { return a.automation_ ? a.automation_->stats().focusMoves : 0; }
     HRESULT invoke(std::wstring_view id) {
         Microsoft::WRL::ComPtr<IInvokeProvider> button;
         const auto f = part(id);
@@ -1044,10 +1082,28 @@ struct MacImportArea::Driver {
         const auto cancel = part(L"macImport.cancel");
         step.check(integer(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 1 && integer(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 0 &&
                    integer(confirm.Get(), UIA_IsEnabledPropertyId) == 1, "Cancel holds the card's keyboard focus first");
+        // Focus events (AutomationFocusChanged, raised for listening clients
+        // only; counted always): the card appearing focuses Cancel once.
+        Fragment focused;
+        step.check(focusMoves() == 1 && SUCCEEDED(a.automation_->focused(&focused)) && sameObject(focused.Get(), cancel.Get()) &&
+                   focusedParts() == std::vector<std::wstring>{L"macImport.cancel"}, "The card's appearance moves the UIA focus to Cancel once");
+        step.check(!a.automationRefresh(root) && focusMoves() == 1, "An unchanged refresh raises no focus event");
         key(VK_TAB);
         step.check(!a.automationRefresh(root) && integer(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 1 && integer(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 0,
                    "Tab moves the focus property without restructuring");
+        step.check(focusMoves() == 2 && focusedParts() == std::vector<std::wstring>{L"macImport.confirm"}, "Tab raises one focus event on the newly focused button");
+        // UIA SetFocus moves the card's own focus like Tab, with its event.
+        const auto requests = a.automation_->stats().focusRequests;
+        step.check(SUCCEEDED(cancel->SetFocus()) && a.state_.focused() == 0 && a.automation_->stats().focusRequests == requests + 1 && focusMoves() == 3 &&
+                   integer(cancel.Get(), UIA_HasKeyboardFocusPropertyId) == 1 && integer(confirm.Get(), UIA_HasKeyboardFocusPropertyId) == 0,
+                   "SetFocus on a button moves the card's keyboard focus and announces it");
+        step.check(SUCCEEDED(cancel->SetFocus()) && focusMoves() == 3, "SetFocus on the focused button announces nothing again");
+        step.check(navigate(cancel.Get(), NavigateDirection_Parent)->SetFocus() == S_OK && title->SetFocus() == UIA_E_INVALIDOPERATION &&
+                   integer(title.Get(), UIA_IsKeyboardFocusablePropertyId) == 0 && a.state_.focused() == 0 && focusMoves() == 3,
+                   "The dialog keeps its button's focus; text parts are not keyboard focusable");
+        step.check(SUCCEEDED(confirm->SetFocus()) && a.state_.focused() == 1 && focusMoves() == 4, "SetFocus reaches the confirm button");
         key(VK_TAB);
+        step.check(!a.automationRefresh(root) && a.state_.focused() == 0 && focusMoves() == 5, "Tab returns to Cancel with its focus event");
         // The hit test uses the projection pointer input uses.
         const auto p = a.card_->actionPoint(1);
         POINT origin{};
@@ -1061,6 +1117,72 @@ struct MacImportArea::Driver {
                    "Buttons have screen bounds");
     }
 };
+
+// The relink ledger's owner API (core/migration/mac_import_relink.hpp) as the
+// module owners call it after their own relinks, removals and loads - by
+// store and record id - over the imported synthetic root's ledger. The
+// targets are explicit synthetic Windows paths below the coverage root
+// (never opened) and one packaged application id.
+void MacImportArea::relinkOwnerCalls(app::ModuleCoverage& step) {
+    const auto ledgerPath = destination_ / "Migration" / "relink.json";
+    const auto bytes = [&] { return ehud::data::detail::readFile(ledgerPath, mig::MacRelinkLedger::maximumBytes); };
+    const auto rows = mig::MacRelinkLedger(destination_).unresolved();
+    const auto first = [&](std::string_view store) -> const mig::MacRelinkItem* {
+        for (const auto& row : rows) if (row.store == store) return &row;
+        return nullptr;
+    };
+    const auto target = [&](std::string_view name) { return utf8(coverageRoot_ / "Relinked" / utf8Path(name)); };
+    std::size_t changed{};
+    // Without a ledger (a root that never imported) nothing is written.
+    const auto fresh = coverageRoot_ / "NoImport";
+    fs::create_directories(fresh);
+    step.check(mig::resolveMacRelink(fresh, {mig::relinkNotesMedia, ehud::data::makeUUID()}, target("a.png")) == mig::MacRelinkChange{} &&
+               !fs::exists(fresh / "Migration"), "Owner calls without an import write nothing");
+    fs::remove_all(fresh);
+    if (const auto* note = first(mig::relinkNotesMedia)) {
+        // Notes: the footer relink saved the note; its id names the row.
+        const auto c = mig::resolveMacRelink(destination_, {mig::relinkNotesMedia, note->recordID}, target("Note picture.png"));
+        step.check(c.resolved >= 1, "A Notes relink resolves the note's row");
+        changed += c.resolved;
+        const auto settled = bytes();
+        step.check(mig::resolveMacRelink(destination_, {mig::relinkNotesMedia, note->recordID}, target("Other.png")).resolved == 0 && bytes() == settled,
+                   "Repeating the call writes nothing");
+    }
+    if (const auto* attachment = first(mig::relinkArchiveMedia)) {
+        // Archive: the attachment is named by its Mac object, not its position.
+        const auto c = mig::resolveMacRelink(destination_, {mig::relinkArchiveMedia, attachment->recordID, &attachment->macReference}, target("Attachment.png"));
+        step.check(c.resolved >= 1, "An Archive relink resolves the attachment's row");
+        changed += c.resolved;
+    }
+    if (const auto* shortcut = first(mig::relinkAppShortcut)) {
+        const auto c = mig::resolveMacRelink(destination_, {mig::relinkAppShortcut, shortcut->recordID}, "shell:AppsFolder\\Synthetic.Coverage_8wekyb3d8bbwe!App");
+        step.check(c.resolved == 1, "A shortcut relinked to a packaged application resolves its row");
+        changed += c.resolved;
+    }
+    if (const auto* item = first(mig::relinkShelfItem)) {
+        const auto c = mig::dismissMacRelink(destination_, {mig::relinkShelfItem, item->recordID});
+        step.check(c.dismissed == 1, "A removed shelf item dismisses its row");
+        changed += c.dismissed;
+    }
+    if (first(mig::relinkReaderBook)) {
+        // Reader on load: books still holding their Mac locator stay listed
+        // (nothing written); a book the owner now names by a Windows file
+        // resolves with it.
+        const auto settled = bytes();
+        std::size_t asked{};
+        const auto unchanged = mig::reconcileMacRelinks(destination_, mig::relinkReaderBook, [&](const mig::MacRelinkItem&) { ++asked; return mig::RelinkRecordCheck{}; });
+        step.check(asked >= 1 && unchanged.resolved == 0 && unchanged.dismissed == 0 && unchanged.open == asked && bytes() == settled,
+                   "A reconcile that finds every record unchanged writes nothing");
+        const auto c = mig::reconcileMacRelinks(destination_, mig::relinkReaderBook, [&](const mig::MacRelinkItem&) {
+            return mig::RelinkRecordCheck{mig::RelinkRecordState::relinked, target("Book.epub")};
+        });
+        step.check(c.resolved == asked && c.open == 0, "A reconcile resolves books the Reader already relinked");
+        changed += c.resolved;
+    }
+    const mig::MacRelinkLedger after(destination_);
+    step.check(changed >= 1 && after.unresolved().size() == rows.size() - changed && after.items().size() >= rows.size(),
+               "The owner calls changed exactly their rows; the card's relink list shrinks with them");
+}
 
 void MacImportArea::coverage(app::ModuleCoverage& step) {
     if (step.module) return; // presents no HUD module
@@ -1119,7 +1241,12 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         d.hidden("Escape closes the intro and releases the card");
         (void)automationRefresh(d.group());
         step.check(automationCount() == 0, "A hidden card lists no UIA parts");
+        const auto moves = d.focusMoves();
         d.open();
+        // With a client connected, the card's first frame lists the dialog
+        // and announces its focused button without another content event.
+        step.check(automationCount() == 1 && d.focusMoves() == moves + 1 && d.focusedParts() == std::vector<std::wstring>{L"macImport.cancel"},
+                   "A reopened card appears in UIA on its first frame with Cancel focused");
         (void)automationRefresh(d.group());
         const auto dialog = d.part(L"macImport.dialog");
         d.stage(exportRoot, true);
@@ -1172,6 +1299,7 @@ void MacImportArea::coverage(app::ModuleCoverage& step) {
         UiaRect gone{};
         step.check(automationCount() == 0 && done->get_BoundingRectangle(&gone) == UIA_E_ELEMENTNOTAVAILABLE,
                    "A closed card disconnects its UIA parts");
+        relinkOwnerCalls(step);
     } else if (step.cycle == 1) {
         coverageInProcess_ = false; // the production restart path
         step.check(fs::exists(destination_ / "Migration" / "import.json"), "Cycle 1 starts from the earlier import");

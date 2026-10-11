@@ -48,6 +48,7 @@ struct NativeMacImportAutomation::State {
     MacImportAutomationHost host;
     std::vector<ComPtr<MacImportAutomationElement>> order;
     MacImportAutomationStats statistics;
+    int focusedRuntime{}; // the part that last received the focus event (0: none)
     std::optional<core::Rect> screen(const std::optional<core::Rect>& r) const {
         if (!r || !host.toScreen) return std::nullopt;
         const auto out = host.toScreen(*r);
@@ -68,6 +69,8 @@ public:
     bool connected{true};
     bool button() const noexcept { return data.role == Role::button; }
     bool progress() const noexcept { return data.role == Role::progress; }
+    bool focusable() const noexcept { return button() && data.enabled; }
+    bool hasFocus() const noexcept { return focusable() && data.focused; }
     // IUnknown
     IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override {
         if (!out) return E_POINTER;
@@ -111,8 +114,8 @@ public:
         case UIA_AutomationIdPropertyId: out = text("macImport." + data.id); break;
         case UIA_ControlTypePropertyId: out.vt = VT_I4; out.lVal = controlType(data.role); break;
         case UIA_IsEnabledPropertyId: out = flag(data.enabled); break;
-        case UIA_IsKeyboardFocusablePropertyId: out = flag(button() && data.enabled); break;
-        case UIA_HasKeyboardFocusPropertyId: out = flag(button() && data.focused); break;
+        case UIA_IsKeyboardFocusablePropertyId: out = flag(focusable()); break;
+        case UIA_HasKeyboardFocusPropertyId: out = flag(hasFocus()); break;
         case UIA_IsOffscreenPropertyId: { const auto s = state.lock(); out = flag(!s || !s->screen(data.rect)); break; }
         case UIA_FrameworkIdPropertyId: out = text("EndfieldHUD"); break;
         case isDialogProperty: if (data.role == Role::dialog) out = flag(true); break;
@@ -166,7 +169,22 @@ public:
         return guarded([&] { if (const auto r = s->screen(data.rect)) *out = {r->x, r->y, r->width, r->height}; return S_OK; });
     }
     IFACEMETHODIMP GetEmbeddedFragmentRoots(SAFEARRAY** out) override { if (!out) return E_POINTER; *out = nullptr; return S_OK; }
-    IFACEMETHODIMP SetFocus() override { return connected ? S_OK : UIA_E_ELEMENTNOTAVAILABLE; }
+    // A client moves the keyboard focus (Mac accessibility focus): the card's
+    // own focus follows through the host, exactly like Tab or the arrows.
+    // The dialog holds the focus of its button; text, list, rows and the
+    // progress bar are not keyboard focusable.
+    IFACEMETHODIMP SetFocus() override {
+        if (!connected) return UIA_E_ELEMENTNOTAVAILABLE;
+        if (data.role == Role::dialog) return S_OK;
+        if (!button()) return UIA_E_INVALIDOPERATION;
+        if (!data.enabled) return UIA_E_ELEMENTNOTENABLED;
+        const auto s = state.lock();
+        if (!s || !s->host.focus) return UIA_E_ELEMENTNOTAVAILABLE;
+        // The move may refresh the tree; keep this element and its id alive.
+        const ComPtr<MacImportAutomationElement> self(this);
+        ++s->statistics.focusRequests;
+        return guarded([&] { const std::string id = data.id; return s->host.focus(id) ? S_OK : UIA_E_INVALIDOPERATION; });
+    }
     IFACEMETHODIMP get_FragmentRoot(IRawElementProviderFragmentRoot** out) override {
         if (!out) return E_POINTER;
         *out = nullptr;
@@ -244,7 +262,11 @@ bool NativeMacImportAutomation::refresh() {
                 if (e->data.name != n.name) raise(UIA_NamePropertyId, text(e->data.name), text(n.name));
                 if (e->data.help != n.help) raise(UIA_HelpTextPropertyId, text(e->data.help), text(n.help));
                 if (e->data.enabled != n.enabled) raise(UIA_IsEnabledPropertyId, flag(e->data.enabled), flag(n.enabled));
-                if (e->data.role == Role::button && e->data.focused != n.focused) raise(UIA_HasKeyboardFocusPropertyId, flag(e->data.focused), flag(n.focused));
+                if (e->data.role == Role::button) {
+                    const bool before = e->data.enabled && e->data.focused, after = n.enabled && n.focused;
+                    if (before != after) raise(UIA_HasKeyboardFocusPropertyId, flag(before), flag(after));
+                    if (e->data.enabled != n.enabled) raise(UIA_IsKeyboardFocusablePropertyId, flag(e->data.enabled), flag(n.enabled));
+                }
                 if (e->data.role == Role::progress && e->data.value != n.value) raise(UIA_RangeValueValuePropertyId, number(e->data.value), number(n.value));
                 if (e->data.rect.has_value() != n.rect.has_value()) raise(UIA_IsOffscreenPropertyId, flag(!e->data.rect), flag(!n.rect));
             }
@@ -261,7 +283,25 @@ bool NativeMacImportAutomation::refresh() {
     }
     s.order = std::move(next);
     if (changed) ++s.statistics.structureChanges;
+    // Keyboard focus moved (the card appeared, Tab, an arrow, a press,
+    // SetFocus): announce the newly focused part once it is in the tree.
+    MacImportAutomationElement* focus{};
+    for (const auto& e : s.order) if (e->hasFocus()) { focus = e.Get(); break; }
+    const int runtime = focus ? focus->runtime : 0;
+    if (runtime != s.focusedRuntime) {
+        s.focusedRuntime = runtime;
+        if (focus) {
+            ++s.statistics.focusMoves;
+            if (listening) UiaRaiseAutomationEvent(static_cast<IRawElementProviderSimple*>(focus), UIA_AutomationFocusChangedEventId);
+        }
+    }
     return changed;
+}
+HRESULT NativeMacImportAutomation::focused(IRawElementProviderFragment** out) const {
+    if (!out) return E_POINTER;
+    *out = nullptr;
+    for (const auto& e : state_->order) if (e->hasFocus()) return e->QueryInterface(IID_PPV_ARGS(out));
+    return S_OK;
 }
 HRESULT NativeMacImportAutomation::child(std::size_t index, IRawElementProviderFragment** out) const {
     if (!out) return E_POINTER;
@@ -289,6 +329,7 @@ void NativeMacImportAutomation::disconnect() noexcept {
     for (auto& e : s.order) { e->disconnect(); ++s.statistics.disconnected; }
     if (!s.order.empty()) ++s.statistics.structureChanges;
     s.order.clear();
+    s.focusedRuntime = 0; // the next connected card announces its focus again
 }
 }
 #endif
