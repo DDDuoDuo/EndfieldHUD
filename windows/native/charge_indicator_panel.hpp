@@ -8,6 +8,7 @@
 #include <span>
 #include <string>
 #include <vector>
+struct IRawElementProviderFragmentRoot;
 
 // The floating desktop charge alert (OverlayController's shared panel in its
 // charging role): a separate top-most, no-activate, click-through tool window
@@ -17,6 +18,15 @@
 // window is shown only while the alert is visible and renders only while it
 // animates; position editing makes it input-capable (drag, cancel/confirm
 // buttons, Escape/Return) until the edit finishes.
+//
+// Accessibility (Mac: ChargeIndicatorView is a static text with its label;
+// the PositionActionButtons carry labels and tool tips): the window answers
+// WM_GETOBJECT with its own UI Automation root (native/charge_alert_
+// automation.hpp) listing the indicator text and, while editing, the Discard
+// and Confirm buttons (Invoke runs the same discard/confirm as a click, posted
+// to this window), and the editor's buttons show the system tool tips
+// "Discard (Esc)" / "Confirm (Return)" (comctl32 tooltip control, created on
+// the first edit and active only while editing).
 //
 // Platform note: a top-most window cannot cover an exclusive-fullscreen
 // Direct3D swap chain (borderless fullscreen is covered), and the renderer
@@ -78,6 +88,19 @@ public:
     bool windowVisible() const noexcept;      // ShowWindow state (false in hidden tests)
     core::Rect windowRect() const noexcept;   // last positioned rectangle, pixels
     std::string accessibilityLabel() const;
+    // The window's UI Automation root exactly as WM_GETOBJECT returns it
+    // (AddRef'd; created on the first request). No window: E_FAIL.
+    long automationRoot(IRawElementProviderFragmentRoot** out);
+    std::size_t automationChildren() const noexcept; // 0 before any request
+    // The private message a UI Automation press posts to window() (wParam:
+    // 0 discard, 1 confirm; lParam: the edit's generation).
+    static unsigned automationInvokeMessage() noexcept;
+    // The editor buttons' system tool tips as the tooltip control holds them
+    // (TTM_ENUMTOOLS: client rectangle in pixels and text); empty before the
+    // first edit or when the control could not be created.
+    struct ToolTip { core::Rect client; std::string text; };
+    std::vector<ToolTip> toolTips() const;
+    bool toolTipsActive() const noexcept;
     // Why the last presentation could not create its window/device (empty
     // when it could); retried on the next presentation, never per frame.
     std::string lastFailure() const;

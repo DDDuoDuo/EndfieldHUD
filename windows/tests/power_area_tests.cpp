@@ -156,6 +156,7 @@ void run(const fs::path& shader) {
         auto owner = p::powerModule(context);
         auto* service = host.find<p::PowerAreaService>(p::PowerAreaService::key);
         check(owner && service && owner->name() == "powerCharge" && !owner->presents(c::Module::power), "The factory registers its owner and service");
+        check(owner->automationModule() == c::Module::power, "The UI Automation group holding the Power entry carries the Power caption");
         const auto routing = owner->routing();
         check(routing.pointer == 1 && routing.message == 20 && routing.pointerCapture == a::ModuleRouting::noRoute && !routing.pointerPolicy.alwaysUpdateEnvironment,
               "Badge input routes after Notes and before the center modules; notices route through the message chain");
@@ -411,9 +412,29 @@ void run(const fs::path& shader) {
                   invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE), "The concealed HUD withdraws the entry");
             VariantClear(&gone);
             host.visible = true;
+            host.phase = c::SystemOverlayPhase::opening;
             owner->setOverlayVisible(true, h);
             settle(.1);
             check(owner->automationRefresh(nullptr) && owner->automationCount() == 1, "Reopening lists a new entry");
+            // allowsModuleInput is false until finishSystemOpening; the host's
+            // refresh after didOpen keeps the entry and it reads enabled.
+            ComPtr<IRawElementProviderFragment> reopened;
+            ComPtr<IRawElementProviderSimple> reopenedSimple;
+            ComPtr<IInvokeProvider> reopenedInvoke;
+            const auto enabled = [&] {
+                VARIANT v;
+                VariantInit(&v);
+                long out = -1;
+                if (reopenedSimple && SUCCEEDED(reopenedSimple->GetPropertyValue(UIA_IsEnabledPropertyId, &v)) && v.vt == VT_BOOL) out = v.boolVal == VARIANT_TRUE ? 1 : 0;
+                VariantClear(&v);
+                return out;
+            };
+            check(owner->automationChild(0, &reopened) == S_OK && SUCCEEDED(reopened.As(&reopenedSimple)) && SUCCEEDED(reopened.As(&reopenedInvoke)) &&
+                  enabled() == 0 && reopenedInvoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTENABLED),
+                  "An opening HUD lists the entry disabled and refuses presses");
+            host.phase.reset();
+            check(!owner->automationRefresh(nullptr) && owner->automationCount() == 1 && enabled() == 1,
+                  "The refresh after opening completes keeps the entry and enables it");
             owner->automationDisconnect();
             check(owner->automationCount() == 0 && owner->automationRefresh(nullptr) && owner->automationCount() == 1, "Disconnect, then a refresh relists");
             owner->automationDisconnect();

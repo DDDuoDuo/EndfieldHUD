@@ -1,5 +1,6 @@
 #include "native/charge_indicator_panel.hpp"
 #ifdef _WIN32
+#include "native/charge_alert_automation.hpp"
 #include "native/layer_scene.hpp"
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -7,10 +8,14 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <shellscalingapi.h>
+#include <commctrl.h>
+#include <uiautomation.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace endfield::native {
@@ -19,6 +24,8 @@ namespace m = modules;
 using Json = ehud::data::Json;
 using Matrix = core::Matrix4;
 constexpr wchar_t windowClassName[] = L"EndfieldHUDChargeAlertPanel";
+// A UI Automation press, posted to this panel's own window (never the HUD's).
+constexpr UINT invokeMessage = WM_APP + 0x0C41;
 
 std::wstring wide(const std::string& text) {
     if (text.empty()) return {};
@@ -36,6 +43,13 @@ std::array<float, 4> tint(const m::ChargeColor& c) {
             static_cast<float>(std::clamp(c[3], 0.0, 1.0))};
 }
 bool inside(const core::Rect& r, core::Point p) { return p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height; }
+std::string narrow(const wchar_t* text) {
+    if (!text || !*text) return {};
+    const int count = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(std::max(count, 1) - 1), '\0');
+    if (count > 1) WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), count, nullptr, nullptr);
+    return out;
+}
 
 } // namespace
 
@@ -130,6 +144,14 @@ struct ChargeIndicatorPanel::Impl {
     double time{};
     std::string label, titled, failure;
     std::optional<std::uint64_t> failedGeneration;
+    // Created on the first WM_GETOBJECT for the window's UIA root.
+    std::unique_ptr<ChargeAlertAutomation> automation;
+    // The editor buttons' tool tips (NSButton.toolTip): one tooltip control
+    // with a subclassed tool per button, created on the first edit.
+    HWND tooltip{};
+    bool tooltipActive{}, tooltipAttempted{};
+    std::array<std::wstring, 2> tipText;
+    std::array<RECT, 2> tipRects{};
 
     Impl(LayerRasterizer& r, ChargePanelOptions o, PositionFinished f)
         : raster(&r), options(std::move(o)), finished(std::move(f)), scene(r, "charge.alert"), anchor(r), buttonAnchor(r) {
@@ -178,6 +200,13 @@ struct ChargeIndicatorPanel::Impl {
             case WM_DISPLAYCHANGE: case WM_DPICHANGED:
                 self->screensChanged();
                 return 0;
+            case WM_GETOBJECT:
+                // Only the panel's current window (not one being created or closed).
+                if (hwnd == self->window && ChargeAlertAutomation::rootRequest(lparam)) return self->automationFor(hwnd).answer(wparam, lparam);
+                break;
+            case invokeMessage:
+                self->automationInvoke(static_cast<std::size_t>(wparam), static_cast<std::uint64_t>(lparam));
+                return 0;
             case WM_SETTINGCHANGE:
                 if (wparam == SPI_SETWORKAREA) self->screensChanged();
                 break;
@@ -224,8 +253,7 @@ struct ChargeIndicatorPanel::Impl {
                 initialized = true;
                 break;
             } catch (...) {
-                DestroyWindow(window);
-                window = nullptr;
+                closeWindow();
                 if (!clickThrough) throw;
             }
         }
@@ -234,7 +262,20 @@ struct ChargeIndicatorPanel::Impl {
         published = false;
         dirty = true;
     }
+    // UIA clients and the tool tips go with the window; messages arriving
+    // while it is destroyed no longer reach this panel.
+    void closeWindow() noexcept {
+        if (automation) { automation->disconnect(); automation.reset(); }
+        if (tooltip) { DestroyWindow(tooltip); tooltip = nullptr; }
+        tooltipActive = tooltipAttempted = false;
+        editingStyle = false; // a new window starts click-through
+        if (!window) return;
+        const HWND closing = std::exchange(window, nullptr);
+        SetWindowLongPtrW(closing, GWLP_USERDATA, 0);
+        DestroyWindow(closing);
+    }
     void destroy() noexcept {
+        if (automation) { automation->disconnect(); automation.reset(); }
         try {
             if (initialized) {
                 composition.detach(renderer);
@@ -248,7 +289,7 @@ struct ChargeIndicatorPanel::Impl {
         renderer.reset();
         initialized = false;
         published = false;
-        if (window) { DestroyWindow(window); window = nullptr; }
+        closeWindow();
         shown = false;
     }
 
@@ -268,20 +309,23 @@ struct ChargeIndicatorPanel::Impl {
         if (scene.setContent(key)) dirty = true;
         const auto& accessibility = scene.content().accessibility;
         if (accessibility != label) label = accessibility;
+        // Content events only: the label, the language of the button texts.
+        syncToolTips();
+        if (automation) automation->changed();
         // Edit controls: 28-point buttons at the monitor density.
-        const double buttonDensity = std::clamp(std::ceil(unit() * 4) / 4, 1.0, 4.0);
-        if (buttonDensity != this->buttonDensity) {
-            LayerRasterOptions raster;
-            raster.pixelsPerPoint = buttonDensity;
-            raster.paddingPoints = 1;
+        const double controlDensity = std::clamp(std::ceil(unit() * 4) / 4, 1.0, 4.0);
+        if (controlDensity != buttonDensity) {
+            LayerRasterOptions rasterOptions;
+            rasterOptions.pixelsPerPoint = controlDensity;
+            rasterOptions.paddingPoints = 1;
             ++buttonRevision;
             const std::array<Json, 3> layers{m::chargePositionButtonCircleLayer(), m::chargePositionButtonSymbolLayer(false),
                                              m::chargePositionButtonSymbolLayer(true)};
             for (std::size_t n = 0; n < 3; ++n) {
-                buttonImages[n] = this->raster->rasterize(buttonTextures[n], buttonRevision, layers[n], raster);
+                buttonImages[n] = raster->rasterize(buttonTextures[n], buttonRevision, layers[n], rasterOptions);
                 if (!buttonImages[n] || !buttonImages[n]->complete()) throw std::runtime_error("Unsupported position button artwork");
             }
-            this->buttonDensity = buttonDensity;
+            buttonDensity = controlDensity;
             dirty = true;
         }
     }
@@ -296,7 +340,7 @@ struct ChargeIndicatorPanel::Impl {
         const int w = std::max(1, static_cast<int>(std::lround(r.width))), h = std::max(1, static_cast<int>(std::lround(r.height)));
         SetWindowPos(window, HWND_TOPMOST, static_cast<int>(std::lround(r.x)), static_cast<int>(std::lround(r.y)), w, h,
                      SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-        if (sizeChanged) renderer.resize(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
+        if (sizeChanged) { renderer.resize(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h)); syncToolTips(); }
         dirty = true;
     }
     void setEditingStyle(bool editing) {
@@ -308,6 +352,107 @@ struct ChargeIndicatorPanel::Impl {
         SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         editingStyle = editing;
         if (editing && !options.hiddenForTests) { SetForegroundWindow(window); SetFocus(window); }
+        // The buttons appear or hide (PositionActionButton.isHidden).
+        if (editing) ensureToolTips();
+        syncToolTips();
+        if (automation) automation->changed();
+    }
+    // --- Tool tips ---------------------------------------------------------------
+    void ensureToolTips() {
+        if (tooltip || tooltipAttempted || !window) return;
+        tooltipAttempted = true; // one attempt per window: tool tips are optional
+        INITCOMMONCONTROLSEX controls{sizeof controls, ICC_TAB_CLASSES | ICC_BAR_CLASSES};
+        (void)InitCommonControlsEx(&controls);
+        tooltip = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr, WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, window, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!tooltip) return;
+        for (std::size_t b = 0; b < 2; ++b) {
+            tipText[b] = wide(m::chargePositionButtonTooltip(b == 1, appearance.language));
+            tipRects[b] = toolRect(b);
+            TTTOOLINFOW tool{};
+            tool.cbSize = static_cast<UINT>(TTTOOLINFOW_V2_SIZE); // also accepted by comctl32 5.x
+            tool.uFlags = TTF_SUBCLASS;
+            tool.hwnd = window;
+            tool.uId = b + 1;
+            tool.rect = tipRects[b];
+            tool.lpszText = tipText[b].data();
+            if (!SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool))) { DestroyWindow(tooltip); tooltip = nullptr; return; }
+        }
+        SendMessageW(tooltip, TTM_ACTIVATE, FALSE, 0);
+        tooltipActive = false;
+    }
+    // The 28-point button frames in window client pixels.
+    RECT toolRect(std::size_t b) const {
+        if (!layout) return {};
+        const auto& r = b == 0 ? layout->cancel : layout->confirm;
+        const auto& w = layout->window;
+        return {static_cast<LONG>(std::lround(r.x - w.x)), static_cast<LONG>(std::lround(r.y - w.y)),
+                static_cast<LONG>(std::lround(r.x - w.x + r.width)), static_cast<LONG>(std::lround(r.y - w.y + r.height))};
+    }
+    void syncToolTips() {
+        if (!tooltip) return;
+        for (std::size_t b = 0; b < 2; ++b) {
+            TTTOOLINFOW tool{};
+            tool.cbSize = static_cast<UINT>(TTTOOLINFOW_V2_SIZE);
+            tool.hwnd = window;
+            tool.uId = b + 1;
+            auto next = wide(m::chargePositionButtonTooltip(b == 1, appearance.language));
+            if (next != tipText[b]) {
+                tipText[b] = std::move(next);
+                tool.lpszText = tipText[b].data();
+                SendMessageW(tooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+            }
+            const auto rect = toolRect(b);
+            if (!EqualRect(&rect, &tipRects[b])) {
+                tipRects[b] = rect;
+                tool.rect = rect;
+                SendMessageW(tooltip, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&tool));
+            }
+        }
+        const bool active = editingStyle && state.editingPosition();
+        if (active != tooltipActive) {
+            if (!active) SendMessageW(tooltip, TTM_POP, 0, 0);
+            SendMessageW(tooltip, TTM_ACTIVATE, active ? TRUE : FALSE, 0);
+            tooltipActive = active;
+        }
+    }
+    // --- UI Automation ----------------------------------------------------------
+    ChargeAlertAutomation& automationFor(HWND hwnd) {
+        if (!automation) {
+            ChargeAlertAutomationHost host;
+            host.window = hwnd;
+            host.view = [this] { return automationView(); };
+            host.invoke = [this](std::size_t button) { return postInvoke(button); };
+            automation = std::make_unique<ChargeAlertAutomation>(std::move(host));
+        }
+        return *automation;
+    }
+    ChargeAlertAutomationView automationView() const {
+        ChargeAlertAutomationView v;
+        v.label = label;
+        if (layout) {
+            v.indicator = layout->indicator;
+            v.buttons = {layout->cancel, layout->confirm};
+        }
+        v.editing = state.editingPosition();
+        for (std::size_t b = 0; b < 2; ++b) {
+            v.names[b] = m::chargePositionButtonLabel(b == 1, appearance.language);
+            v.help[b] = m::chargePositionButtonTooltip(b == 1, appearance.language);
+        }
+        v.shown = shown && window && IsWindowVisible(window);
+        return v;
+    }
+    // NSButton.performClick from an accessibility client: the press runs from
+    // this window's procedure, after the provider call returned.
+    bool postInvoke(std::size_t button) {
+        if (!window || button > 1 || !state.editingPosition()) return false;
+        return PostMessageW(window, invokeMessage, button, static_cast<LPARAM>(state.generation())) != FALSE;
+    }
+    void automationInvoke(std::size_t button, std::uint64_t generation) {
+        // A press queued for an edit that already finished is dropped.
+        if (button > 1 || !state.editingPosition() || state.generation() != generation) return;
+        if (button == 0) discard();
+        else confirm();
     }
     void render() {
         if (!window || !layout) return;
@@ -519,6 +664,32 @@ void* ChargeIndicatorPanel::window() const noexcept { return impl_->window; }
 bool ChargeIndicatorPanel::windowVisible() const noexcept { return impl_->window && IsWindowVisible(impl_->window); }
 core::Rect ChargeIndicatorPanel::windowRect() const noexcept { return impl_->layout ? impl_->layout->window : core::Rect{}; }
 std::string ChargeIndicatorPanel::accessibilityLabel() const { return impl_->label; }
+long ChargeIndicatorPanel::automationRoot(IRawElementProviderFragmentRoot** out) {
+    if (!out) return E_POINTER;
+    *out = nullptr;
+    if (!impl_->window) return E_FAIL;
+    return impl_->automationFor(impl_->window).root(out);
+}
+std::size_t ChargeIndicatorPanel::automationChildren() const noexcept { return impl_->automation ? impl_->automation->size() : 0; }
+unsigned ChargeIndicatorPanel::automationInvokeMessage() noexcept { return invokeMessage; }
+std::vector<ChargeIndicatorPanel::ToolTip> ChargeIndicatorPanel::toolTips() const {
+    std::vector<ToolTip> out;
+    const auto tooltip = impl_->tooltip;
+    if (!tooltip) return out;
+    const auto count = static_cast<UINT>(SendMessageW(tooltip, TTM_GETTOOLCOUNT, 0, 0));
+    for (UINT n = 0; n < count && n < 8; ++n) {
+        std::array<wchar_t, 128> buffer{}; // TTM_ENUMTOOLS copies up to 80 characters
+        TTTOOLINFOW tool{};
+        tool.cbSize = static_cast<UINT>(TTTOOLINFOW_V2_SIZE);
+        tool.lpszText = buffer.data();
+        if (!SendMessageW(tooltip, TTM_ENUMTOOLSW, n, reinterpret_cast<LPARAM>(&tool))) continue;
+        out.push_back({core::Rect{static_cast<double>(tool.rect.left), static_cast<double>(tool.rect.top),
+                                  static_cast<double>(tool.rect.right - tool.rect.left), static_cast<double>(tool.rect.bottom - tool.rect.top)},
+                       narrow(buffer.data())});
+    }
+    return out;
+}
+bool ChargeIndicatorPanel::toolTipsActive() const noexcept { return impl_->tooltip && impl_->tooltipActive; }
 std::string ChargeIndicatorPanel::lastFailure() const { return impl_->failure; }
 Readback ChargeIndicatorPanel::readbackForTests() {
     if (!impl_->options.hiddenForTests || !impl_->initialized) throw std::logic_error("Readback is a hidden-test facility");

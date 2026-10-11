@@ -316,6 +316,9 @@ public:
         return automation_->fromPoint(x, y, out);
     }
     void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
+    // The group holding the Power navigation entry carries the Power caption
+    // (this owner presents no HUD module itself).
+    std::optional<core::Module> automationModule() const noexcept override { return core::Module::power; }
 
     // --- PowerAreaService -------------------------------------------------------
     void preview(double time) override {
@@ -548,6 +551,7 @@ private:
         reschedule();
         return true;
     }
+    void alertAutomation(app::ModuleCoverage&, bool inspect);
     std::optional<core::Point> badgeClientPoint(core::Point design) const {
         if (!lastCenter_ || !validMetrics(metrics_)) return std::nullopt;
         const auto camera = gpu::layerViewportProjection(metrics_.pixelWidth, metrics_.pixelHeight) * core::Matrix4::scale(metrics_.scale, metrics_.scale);
@@ -760,6 +764,7 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     check(editPosition(t) && pendingEdit_ && !editingPosition(), "Power area: an edit request waits for the HUD to close");
     (void)hostEvent({Kind::overlayConcealed, 0}, t);
     check(editingPosition() && editing_ && alert.windowVisible() && rendered(), "Power area: concealment begins the queued position edit");
+    if (shaderAvailable_) alertAutomation(step, true);
     const auto from = power_->panel().windowRect();
     const core::Point grab{from.x + from.width / 2, from.y + from.height * .3};
     check(power_->panel().pointer(gpu::ChargeIndicatorPanel::PointerKind::down, grab, t) &&
@@ -781,6 +786,18 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     // The private notice runs the deferred reopen (the coverage HUD is open).
     check(step.message(noticeMessage_, 0, 0) && !openDisplayPending_, "Power area: the private notice runs the deferred Display reopen");
     if (settingsOwner) restore();
+    // A UI Automation press on Discard (NSButton.performClick from a client):
+    // posted to the alert window and run by its procedure, never saved.
+    check(editPosition(t) && !editingPosition(), "Power area: a second edit request waits for the HUD to close");
+    (void)hostEvent({Kind::overlayConcealed, 0}, t);
+    check(editingPosition() && editing_, "Power area: concealment begins the second edit");
+    const auto saved = host_.settings();
+    if (shaderAvailable_) alertAutomation(step, false);
+    else check(power_->panel().key(VK_ESCAPE, t), "Power area: Escape discards the edit without the alert window");
+    alertChanged();
+    check(!editingPosition() && !editing_ && openDisplayPending_ && !alert.windowVisible() && host_.settings() == saved,
+          "Power area: discarding keeps the saved position and queues the Display reopen");
+    check(step.message(noticeMessage_, 0, 0) && !openDisplayPending_, "Power area: the private notice runs the deferred reopen after a discard");
 
     // --- Sleep with a plug change: shown exactly once on wake --------------------
     (void)hostEvent({Kind::suspended, app::HostEvent::suspendSystem}, t);
@@ -803,6 +820,69 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
           recordedEvents_ == events + 8 && !alert.windowVisible(), "Power area: the baseline reading returns silently under the HUD");
     hudFrames(.8, 8);
     check(!badge_->entries().empty() && badge_->state().phase() != m::ChargeBadgeState::Phase::hidden, "Power area: the badge redeploys with the HUD");
+}
+
+// The alert window's own UI Automation root while the position editor is
+// open (Mac: the indicator's static text, then the Discard and Confirm
+// buttons with their labels and tool tips). `inspect` false: a client
+// presses Discard, which the alert window's procedure runs from its posted
+// message (dispatched here for that window and message only; the panel keeps
+// its own coverage clock).
+void PowerArea::alertAutomation(app::ModuleCoverage& step, bool inspect) {
+    using Microsoft::WRL::ComPtr;
+    const auto& check = step.check;
+    auto& panel = power_->panel();
+    const auto language = applied_ ? applied_->language : core::Language::english;
+    const auto property = [](IUnknown* element, PROPERTYID id) {
+        ComPtr<IRawElementProviderSimple> simple;
+        std::string value;
+        if (!element || FAILED(element->QueryInterface(IID_PPV_ARGS(&simple)))) return value;
+        VARIANT v;
+        VariantInit(&v);
+        if (SUCCEEDED(simple->GetPropertyValue(id, &v)) && v.vt == VT_BSTR && v.bstrVal) {
+            const int n = WideCharToMultiByte(CP_UTF8, 0, v.bstrVal, -1, nullptr, 0, nullptr, nullptr);
+            if (n > 1) { value.resize(static_cast<std::size_t>(n - 1)); WideCharToMultiByte(CP_UTF8, 0, v.bstrVal, -1, value.data(), n, nullptr, nullptr); }
+        }
+        VariantClear(&v);
+        return value;
+    };
+    ComPtr<IRawElementProviderFragmentRoot> root;
+    ComPtr<IRawElementProviderFragment> fragment, indicator, discard, confirm;
+    check(panel.automationRoot(&root) == S_OK && root && SUCCEEDED(root.As(&fragment)) && panel.automationChildren() == 3 &&
+          SUCCEEDED(fragment->Navigate(NavigateDirection_FirstChild, &indicator)) && indicator &&
+          SUCCEEDED(indicator->Navigate(NavigateDirection_NextSibling, &discard)) && discard &&
+          SUCCEEDED(discard->Navigate(NavigateDirection_NextSibling, &confirm)) && confirm,
+          "Power area: the alert window's UI Automation root lists the indicator, Discard and Confirm while editing");
+    if (inspect) {
+        check(property(indicator.Get(), UIA_NamePropertyId) == panel.accessibilityLabel() &&
+              property(discard.Get(), UIA_NamePropertyId) == m::chargePositionButtonLabel(false, language) &&
+              property(discard.Get(), UIA_HelpTextPropertyId) == m::chargePositionButtonTooltip(false, language) &&
+              property(confirm.Get(), UIA_NamePropertyId) == m::chargePositionButtonLabel(true, language) &&
+              property(confirm.Get(), UIA_HelpTextPropertyId) == m::chargePositionButtonTooltip(true, language),
+              "Power area: the editor's indicator label, button labels and tool-tip help follow the Mac texts");
+        UiaRect bounds{};
+        const auto r = panel.windowRect();
+        ComPtr<IRawElementProviderFragment> hit;
+        check(SUCCEEDED(confirm->get_BoundingRectangle(&bounds)) && bounds.width > 0 && bounds.left > r.x && bounds.top > r.y &&
+              SUCCEEDED(root->ElementProviderFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, &hit)) && hit,
+              "Power area: the Confirm button is framed inside the editor and hit-tested by the root");
+        const auto tips = panel.toolTips();
+        check(panel.toolTipsActive() && tips.size() == 2 && tips[0].text == m::chargePositionButtonTooltip(false, language) &&
+              tips[1].text == m::chargePositionButtonTooltip(true, language) && tips[1].client.width > 0,
+              "Power area: the editor buttons carry their system tool tips");
+        return;
+    }
+    ComPtr<IInvokeProvider> invoke;
+    check(SUCCEEDED(discard.As(&invoke)) && invoke->Invoke() == S_OK && panel.state().editingPosition(),
+          "Power area: a UI Automation press on Discard is queued outside the provider call");
+    MSG msg;
+    unsigned dispatched{};
+    const auto window = static_cast<HWND>(panel.window());
+    const auto id = gpu::ChargeIndicatorPanel::automationInvokeMessage();
+    while (window && PeekMessageW(&msg, window, id, id, PM_REMOVE)) { DispatchMessageW(&msg); ++dispatched; }
+    check(dispatched == 1 && !panel.state().editingPosition() && panel.automationChildren() == 1 && !panel.toolTipsActive() &&
+          invoke->Invoke() == static_cast<HRESULT>(UIA_E_ELEMENTNOTAVAILABLE),
+          "Power area: the alert window runs the press, withdraws the buttons and deactivates their tool tips");
 }
 
 std::unique_ptr<app::ModuleOwner> powerModule(const app::ApplicationModuleContext& context) {
