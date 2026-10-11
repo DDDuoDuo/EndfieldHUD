@@ -150,7 +150,9 @@ Microsoft::WRL::ComPtr<IDataObject> makeNotesClipboardData(const NotesClipboardT
     const auto platform=notesClipboardPlatformText(value.text);std::vector<ClipboardData::Format> formats;
     formats.push_back({CF_UNICODETEXT,std::string(reinterpret_cast<const char*>(platform.c_str()),(platform.size()+1)*sizeof(char16_t))});
     // NUL-terminated: GlobalSize may report more than the payload's bytes.
-    if(value.rich){const auto format=richFormat();if(format)formats.push_back({format,encodeNotesClipboardRich(value)+'\0'});}
+    if(value.rich){const auto format=richFormat();if(format)formats.push_back({format,encodeNotesClipboardRich(value)+'\0'});
+        // Other applications read the selection's formatting as RTF, as from the source text view's copy.
+        static const auto rtf=static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"Rich Text Format"));if(rtf)formats.push_back({rtf,core::notes::exportNotesRTF(value.text,*value.rich)+'\0'});}
     ComPtr<IDataObject> object;object.Attach(new ClipboardData(std::move(formats)));return object;
 }
 namespace {

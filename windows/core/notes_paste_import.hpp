@@ -50,4 +50,13 @@ std::optional<ImportedRichText> importNotesRTF(std::string_view rtf,const PasteI
 // fragment between StartFragment/EndFragment (offsets or comment markers) is
 // pasted; its ancestors in the context still style it.
 std::optional<ImportedRichText> importNotesHTML(std::string_view html,const PasteImportOptions& = {});
+
+// The source text view's copy also offers other applications RTF. A Notes
+// selection (text and its sparse runs) as RTF for Word, WordPad or Outlook:
+// font families (Mac names as their Windows counterparts, no name: the
+// default family), point sizes, bold, italic, underline, strikethrough and
+// sRGB colors; theme ink stays the reader's automatic color rather than a
+// fixed white or black. Line breaks: "\n" is \par, U+2028 \line.
+struct NotesRTFExportOptions {std::string defaultFamily{"Segoe UI"};};
+std::string exportNotesRTF(std::u16string_view text,const RichText&,const NotesRTFExportOptions& = {});
 }

@@ -12,6 +12,7 @@ namespace endfield::native {
 LayerRasterOptions notesRasterOptions(LayerRasterOptions,double width,double height)noexcept;
 struct NativeNotesSceneStats {
     std::uint64_t contentUpdates{},placementUpdates{},feedbackChanges{};
+    std::uint64_t frameLoads{}; // large-card plate/header scene loads
 };
 struct NativeNotesExternalEditorAppearance {
     modules::NotesColor background,border;
@@ -57,6 +58,23 @@ public:
     bool requiresFrames(double time)const;
     LayerScene& scene()noexcept;
     const LayerScene& scene()const noexcept;
+    // A card beyond LayerScene's local group area (1024x1024 points) keeps its
+    // plate and header in this separate scene, composed immediately BEFORE
+    // scene(); null for ordinary cards. It reloads only when its own artwork
+    // changes (size, palette, selection, pin state, title, typography), never
+    // for editing entry/exit, scrolling or text edits.
+    LayerScene* frameScene()noexcept;
+    const LayerScene* frameScene()const noexcept;
+    // Its LayerCompositionEntry.after: while a large card's field is open,
+    // the opaque field backing as one tinted quad on the indicator's unit
+    // mesh (empty until uploadEditorIndicator made it resident).
+    std::span<const DrawObject> frameAfterDraws()const noexcept;
+    NativeNotesSceneStats stats()const noexcept;
+    // Releases both scenes' resources once unpublished (false: still referenced).
+    bool releaseResources(Renderer&);
+    // After publication: a frame scene left behind by a shrunken card releases
+    // its resident surfaces (false while they are still published).
+    bool collectRetired(Renderer&);
     // Explicit external-editor mode only. Compose this stable card scene, then
     // the caller's editor scene with this span in LayerCompositionEntry.after.
     // The final border borrows this card scene's already resident resources;
@@ -84,7 +102,6 @@ public:
     std::span<const DrawObject> mediaDraws()const noexcept;
     const std::optional<NativeNotesMediaSlot>& mediaSlot()const noexcept;
     bool releaseMedia(Renderer&); // after removal from shared composition
-    NativeNotesSceneStats stats()const noexcept;
 private:
     struct Impl;std::unique_ptr<Impl> impl_;
 };

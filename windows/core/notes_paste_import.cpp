@@ -463,6 +463,39 @@ std::optional<long long> headerOffset(std::string_view data,std::string_view key
 }
 }
 
+std::string exportNotesRTF(std::u16string_view text,const RichText& rich,const NotesRTFExportOptions& options){
+    // Dense segments: sparse source runs leave gaps in the default style.
+    struct Segment {std::uint32_t begin{},end{};const TextStyle* style{};};
+    static const TextStyle plain{};std::vector<Segment> segments;std::uint32_t at{};
+    for(const auto&run:rich.runs){if(run.location>at)segments.push_back({at,run.location,&plain});segments.push_back({run.location,run.location+run.length,&run.style});at=run.location+run.length;}
+    if(at<text.size())segments.push_back({at,static_cast<std::uint32_t>(text.size()),&plain});
+    std::vector<std::string> fonts{options.defaultFamily.empty()?std::string("Segoe UI"):options.defaultFamily};std::vector<std::array<int,3>> colors;
+    const auto fontIndex=[&](const TextStyle& s){const auto name=s.fontName?windowsFamily(*s.fontName):fonts.front();for(std::size_t n=0;n<fonts.size();++n)if(fonts[n]==name)return n;fonts.push_back(name);return fonts.size()-1;};
+    const auto byte=[](double v){return static_cast<int>(std::lround(std::clamp(v,0.,1.)*255));};
+    const auto colorIndex=[&](const TextStyle& s)->std::size_t{if(!s.color)return 0;const std::array<int,3> c{byte(s.color->red),byte(s.color->green),byte(s.color->blue)};
+        for(std::size_t n=0;n<colors.size();++n)if(colors[n]==c)return n+1;colors.push_back(c);return colors.size();};
+    std::string body;body.reserve(text.size()+segments.size()*32);
+    for(const auto&segment:segments){
+        const auto&s=*segment.style;
+        body+="\\f"+std::to_string(fontIndex(s))+"\\fs"+std::to_string(static_cast<int>(std::lround(std::clamp(s.fontSize,1.,1638.)*2)));
+        body+=s.bold?"\\b":"\\b0";body+=s.italic?"\\i":"\\i0";body+=s.underline?"\\ul":"\\ulnone";body+=s.strikethrough?"\\strike":"\\strike0";
+        body+="\\cf"+std::to_string(colorIndex(s))+" ";
+        for(auto n=segment.begin;n<segment.end&&n<text.size();++n){const auto c=text[n];
+            if(c=='\\'||c=='{'||c=='}'){body+='\\';body+=static_cast<char>(c);}
+            else if(c=='\n')body+="\\par\r\n";else if(c==0x2028)body+="\\line ";else if(c=='\t')body+="\\tab ";
+            else if(c>=0x20&&c<0x7F)body+=static_cast<char>(c);
+            else if(c<0x20)continue; // other controls are not RTF text
+            else body+="\\u"+std::to_string(static_cast<int>(static_cast<std::int16_t>(c)))+"?";
+        }
+    }
+    std::string out="{\\rtf1\\ansi\\ansicpg1252\\uc1\\deff0{\\fonttbl";
+    const auto escapeName=[](const std::string& name){std::string value;const auto units=[&]{std::u16string u;for(std::size_t n=0;n<name.size();){char32_t c;const auto b=static_cast<unsigned char>(name[n]);std::size_t length=b<0x80?1:(b>>5)==6?2:(b>>4)==14?3:4;c=length==1?b:length==2?b&0x1F:length==3?b&0x0F:b&0x07;for(std::size_t k=1;k<length&&n+k<name.size();++k)c=(c<<6)|(static_cast<unsigned char>(name[n+k])&0x3F);n+=length;appendScalar(u,c);}return u;}();
+        for(const auto c:units){if(c=='\\'||c=='{'||c=='}'||c==';')continue;if(c>=0x20&&c<0x7F)value+=static_cast<char>(c);else if(c>=0x80)value+="\\u"+std::to_string(static_cast<int>(static_cast<std::int16_t>(c)))+"?";}return value;};
+    for(std::size_t n=0;n<fonts.size();++n)out+="{\\f"+std::to_string(n)+"\\fnil\\fcharset0 "+escapeName(fonts[n])+";}";
+    out+="}{\\colortbl;";for(const auto&c:colors)out+="\\red"+std::to_string(c[0])+"\\green"+std::to_string(c[1])+"\\blue"+std::to_string(c[2])+";";
+    out+="}\r\n"+body+"}";
+    return out;
+}
 std::optional<ImportedRichText> importNotesRTF(std::string_view rtf,const PasteImportOptions& options){
     std::size_t start=0;while(start<rtf.size()&&std::isspace(static_cast<unsigned char>(rtf[start])))++start;
     if(rtf.substr(start,5)!="{\\rtf")return std::nullopt;

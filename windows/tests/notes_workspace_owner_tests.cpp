@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <iostream>
 #include <limits>
 #include <new>
@@ -146,6 +147,27 @@ void largeCards(HWND hwnd,gpu::Renderer&renderer){
     check(workspace.beginEditing(one)&&workspace.editor(),"A large card opens its editor");workspace.updatePose(p);publish();
     check(workspace.editor()->character(u'!',false).changed&&(workspace.syncEditor(),workspace.finishEditing().saved)&&state.note(one)->text=="Large note\nsecond line!","Editing the large card saves");publish();
     composition.detach(renderer);check(workspace.releaseResources(renderer),"The large card releases its resources");
+}
+// Editing entry and exit on a large card at the production 2 px/pt density:
+// CPU raster and upload time and the surfaces each transition re-rasters.
+void editingCost(HWND hwnd,gpu::Renderer&renderer){
+    std::string text;for(unsigned n=0;n<40;++n)text+="Line "+std::to_string(n)+" of a large card 终末地 Endfield\n";
+    for(const auto size:{std::pair{210.,140.},std::pair{1600.,1000.}}){
+        auto record=note(one,text);record.width=size.first;record.height=size.second;
+        mod::NotesState state({record},{[](const data::Note&){},[](std::string_view){}});state.setWorkspaceBounds({0,0,2400,1600});gpu::LayerRasterizer raster;
+        auto o=options();o.raster.pixelsPerPoint=2;gpu::NativeNotesWorkspace workspace(hwnd,state,raster,style(),o);gpu::LayerComposition composition;
+        auto p=pose();p.pixelWidth=2400;p.pixelHeight=1600;p.screenToClip=gpu::layerViewportProjection(2400,1600);
+        const auto step=[&](auto&&f){const auto rasters=raster.stats().rasterizations;const auto a=std::chrono::steady_clock::now();f();workspace.updatePose(p);composition.setEntries(renderer,workspace.entries());composition.present(renderer);check(workspace.collectRetired(renderer),"Editing transitions retire after publication");
+            return std::pair{std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-a).count(),raster.stats().rasterizations-rasters};};
+        const auto first=step([]{});
+        const auto enter=step([&]{check(workspace.beginEditing(one),"The card opens its field");});
+        const auto leave=step([&]{check(workspace.finishEditing().finished,"The unchanged field closes");});
+        const auto again=step([&]{check(workspace.beginEditing(one),"The card reopens its field");});
+        const auto edited=step([&]{check(workspace.editor()->character(u'!',false).changed,"One edit");workspace.syncEditor();check(workspace.finishEditing().saved,"The edited field saves");});
+        std::cout<<"Notes "<<size.first<<"x"<<size.second<<" pt card at 2 px/pt: first "<<first.first<<" ms ("<<first.second<<" rasters), enter "<<enter.first<<" ms ("<<enter.second<<"), unchanged exit "<<leave.first<<" ms ("<<leave.second
+            <<"), re-enter "<<again.first<<" ms ("<<again.second<<"), edited exit "<<edited.first<<" ms ("<<edited.second<<")\n";
+        composition.detach(renderer);check(workspace.releaseResources(renderer),"The measured card releases its resources");
+    }
 }
 void boundaries(HWND hwnd){
     auto longNote=note(one,std::string(65537,'a'));mod::NotesState longState({longNote},{[](const auto&){},[](auto){}});longState.setWorkspaceBounds({0,0,640,360});gpu::LayerRasterizer raster;
@@ -291,7 +313,7 @@ void motionLifecycle(HWND hwnd,gpu::Renderer&renderer){
 }
 }
 int wmain(int argc,wchar_t**argv){try{check(argc==2,"Pass native hud.hlsl path");check(SUCCEEDED(CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED)),"Owned COM test apartment");
-    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);culling(window.hwnd,renderer);largeCards(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
+    {Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,640,360,{gpu::Driver::warpForTests,argv[1],gpu::RenderTarget::offscreenForTests});run(window.hwnd,renderer);culling(window.hwnd,renderer);largeCards(window.hwnd,renderer);editingCost(window.hwnd,renderer);boundaries(window.hwnd);scrolling(window.hwnd,renderer);motionLifecycle(window.hwnd,renderer);check(!IsWindowVisible(window.hwnd),"Coordinator tests never show or activate a window");renderer.reset();}
     CoUninitialize();std::cout<<"Native Notes workspace owner contracts: "<<checks<<" checks passed\n";return 0;
 }catch(const std::exception&e){counting=false;std::cerr<<"Native Notes workspace owner failed after "<<checks<<" checks: "<<e.what()<<'\n';return 1;}}
 #endif

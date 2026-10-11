@@ -4,10 +4,12 @@
 #include "native/notes_image_decoder.hpp"
 #include <wincodec.h>
 #include <shlwapi.h>
+#include <richedit.h>
 #include <filesystem>
 #include <fstream>
 #ifdef _WIN32
 #include <objbase.h>
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -60,7 +62,7 @@ CLIPFORMAT richFormat(){return static_cast<CLIPFORMAT>(RegisterClipboardFormatW(
 
 void codecs(){
     check(gpu::notesClipboardPlatformText(u"a\nb\r\nc\rd")==u"a\r\nb\r\nc\r\nd","Document breaks become CRLF for other applications");
-    check(gpu::notesClipboardDocumentText(u"a\r\nb\rc\nd e")==u"a\nb\nc\nd e","Pasted CRLF and CR become LF as typed Return does; U+2029 stays");
+    check(gpu::notesClipboardDocumentText(u"a\r\nb\rc\nd\u2029e")==u"a\nb\nc\nd\u2029e","Pasted CRLF and CR become LF as typed Return does; U+2029 stays");
     const std::u16string value=u"Bold 终末地 😀\r\nnext";notes::RichText rich;rich.runs.push_back({0,4,bold(),{}});rich.runs.push_back({13,4,red(),{}});
     const gpu::NotesClipboardText payload{value,rich};const auto encoded=gpu::encodeNotesClipboardRich(payload);
     check(gpu::decodeNotesClipboardRich(encoded)==payload,"The private payload round-trips exact text (CRLF kept) and runs");
@@ -136,6 +138,28 @@ void foreignFormats(){
     const auto ours=gpu::readNotesClipboardData(own,100);check(ours&&ours->rich&&!ours->foreign,"EndfieldHUD's own runs win over foreign formats");
     Foreign large;large.text(u"big");large.formats.push_back({registered(L"Rich Text Format"),"{\\rtf1 "+std::string(200,'x')+"}"+std::string(1,'\0')});
     const auto bounded=gpu::readNotesClipboardData(large,100);check(bounded&&bounded->text==u"big"&&!bounded->foreign,"Foreign content beyond the field's limit pastes as plain text");
+}
+// Other applications: Windows' own RichEdit control (hidden, never the
+// clipboard) reads the RTF a rich copy offers.
+void richEditReadsCopy(){
+    check(LoadLibraryW(L"Msftedit.dll")!=nullptr,"Load the system RichEdit");
+    const std::u16string text=u"Plain bold red";notes::RichText rich;notes::TextStyle b;b.bold=true;b.fontName="Georgia";b.fontSize=18;rich.runs.push_back({6,4,b,{}});
+    notes::TextStyle r;r.color=notes::RGBA{1,0,0,1};rich.runs.push_back({11,3,r,{}});
+    auto object=gpu::makeNotesClipboardData({text,rich,std::nullopt});FORMATETC rtfFormat{registered(L"Rich Text Format"),nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
+    check(object->QueryGetData(&rtfFormat)==S_OK,"A rich copy offers RTF to other applications");
+    STGMEDIUM medium{};check(SUCCEEDED(object->GetData(&rtfFormat,&medium)),"The RTF renders");const std::string rtf(static_cast<const char*>(GlobalLock(medium.hGlobal)));GlobalUnlock(medium.hGlobal);ReleaseStgMedium(&medium);
+    auto plain=gpu::makeNotesClipboardData({u"plain",std::nullopt,std::nullopt});check(plain->QueryGetData(&rtfFormat)!=S_OK,"A plain copy offers no RTF");
+    HWND edit=CreateWindowExW(0,MSFTEDIT_CLASS,L"",ES_MULTILINE|WS_POPUP,0,0,400,200,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);check(edit&&!IsWindowVisible(edit),"A hidden RichEdit control");
+    struct Source{const std::string* data;std::size_t at{};};Source source{&rtf};
+    EDITSTREAM stream{reinterpret_cast<DWORD_PTR>(&source),0,[](DWORD_PTR cookie,LPBYTE buffer,LONG size,LONG* read)->DWORD{auto&v=*reinterpret_cast<Source*>(cookie);
+        const auto n=std::min<std::size_t>(static_cast<std::size_t>(size),v.data->size()-v.at);std::memcpy(buffer,v.data->data()+v.at,n);v.at+=n;*read=static_cast<LONG>(n);return 0;}};
+    SendMessageW(edit,EM_STREAMIN,SF_RTF,reinterpret_cast<LPARAM>(&stream));check(stream.dwError==0,"RichEdit reads the RTF");
+    wchar_t buffer[64]{};GetWindowTextW(edit,buffer,64);check(std::wstring_view(buffer)==L"Plain bold red","RichEdit shows the copied text");
+    const auto format=[&](int from){CHARFORMAT2W cf{};cf.cbSize=sizeof(cf);SendMessageW(edit,EM_SETSEL,from,from+1);SendMessageW(edit,EM_GETCHARFORMAT,SCF_SELECTION,reinterpret_cast<LPARAM>(&cf));return cf;};
+    const auto boldFormat=format(7);check((boldFormat.dwEffects&CFE_BOLD)&&std::wstring_view(boldFormat.szFaceName)==L"Georgia"&&boldFormat.yHeight==360,"Bold Georgia 18 pt arrives");
+    const auto redFormat=format(12);check(!(redFormat.dwEffects&CFE_AUTOCOLOR)&&redFormat.crTextColor==RGB(255,0,0)&&!(redFormat.dwEffects&CFE_BOLD),"The red run arrives in sRGB");
+    const auto inkFormat=format(1);check((inkFormat.dwEffects&CFE_AUTOCOLOR)&&inkFormat.yHeight==240,"Theme ink stays the reader's automatic color");
+    DestroyWindow(edit);
 }
 void foreignPaste(HWND hwnd){
     gpu::LayerRasterizer raster;const std::string textID="0000000D-0000-4000-8000-000000000011",todoID="0000000D-0000-4000-8000-000000000012";
@@ -279,7 +303,7 @@ void workspace(HWND hwnd){
 }
 } // namespace
 int main(){
-    try{Apartment apartment;Window window;codecs();richPaste();dataObjects();foreignFormats();images();workspace(window.value);foreignPaste(window.value);
+    try{Apartment apartment;Window window;codecs();richPaste();dataObjects();foreignFormats();richEditReadsCopy();images();workspace(window.value);foreignPaste(window.value);
         std::cout<<"PASS "<<checks<<" Notes clipboard contracts\n";return 0;
     }catch(const std::exception& e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

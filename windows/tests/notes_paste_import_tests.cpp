@@ -5,6 +5,7 @@
 #include "core/notes_paste_import.hpp"
 #include "core/notes_font_names.hpp"
 #include "core/data/json.hpp"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -81,6 +82,21 @@ void robustness(){
     }
     check(imported>500,"Most malformed documents still import their text");
 }
+// A Notes selection exported as RTF reads back through the same reader.
+void exportRoundTrip(){
+    const std::u16string text=u"Plain {bold} \\ red\tCJK 中文 😀\nnext\u2028line";
+    notes::RichText rich;notes::TextStyle bold;bold.bold=true;bold.fontName="Georgia";bold.fontSize=18;
+    notes::TextStyle red;red.color=notes::RGBA{1,0,0,1};red.italic=true;red.underline=true;red.strikethrough=true;red.fontName="HelveticaNeue-Bold";
+    rich.runs.push_back({6,6,bold,{}});rich.runs.push_back({15,3,red,{}});
+    const auto rtf=notes::exportNotesRTF(text,rich);
+    check(rtf.starts_with("{\\rtf1\\ansi")&&rtf.find("Georgia;")!=std::string::npos&&rtf.find("Arial;")!=std::string::npos&&rtf.find("Segoe UI;")!=std::string::npos,"Fonts are Windows families; Mac names map and unnamed runs use the default");
+    check(std::all_of(rtf.begin(),rtf.end(),[](char c){return static_cast<unsigned char>(c)<0x80;}),"The RTF is 7-bit: Unicode is escaped");
+    const auto back=notes::importNotesRTF(rtf);check(back&&back->text==text,"The exported text reads back exactly");
+    const auto at=[&](std::uint32_t unit)->const notes::TextStyle&{for(const auto&r:back->rich.runs)if(unit>=r.location&&unit<r.location+r.length)return r.style;throw std::runtime_error("unstyled unit");};
+    check(at(7).bold&&at(7).fontSize==18&&at(7).fontName==std::optional<std::string>("Georgia")&&!at(7).italic,"The bold Georgia run reads back");
+    check(at(16).italic&&at(16).underline&&at(16).strikethrough&&at(16).fontName==std::optional<std::string>("Arial")&&at(16).color&&at(16).color->red>.99,"The red run's traits read back (its color through the reader's Generic RGB table)");
+    check(!at(0).bold&&!at(0).color&&at(0).fontName==std::optional<std::string>("Segoe UI")&&at(0).fontSize==12,"Unstyled text keeps theme ink and the default family");
+}
 void windowsClipboard(){
     // CF_HTML: offsets into the whole data; the fragment's ancestors style it.
     const std::string body="<html><body><p style=\"color: rgb(255, 0, 0)\"><b>context</b> <!--StartFragment--><b>frag</b> tail<!--EndFragment--> after</p></body></html>";
@@ -103,7 +119,7 @@ void windowsClipboard(){
     notes::PasteImportOptions fonts;fonts.fontAvailable=[](std::string_view f){return f!="Not Installed";};
     const auto fallback=notes::importNotesHTML("<span style=\"font-family: 'Not Installed', Georgia\">g</span>",fonts);check(fallback&&fallback->rich.runs[0].style.fontName==std::optional<std::string>("Georgia"),"An uninstalled family falls through to the next");
     // Bounds and refusals.
-    notes::PasteImportOptions small;small.maximumUnits=4;check(!notes::importNotesRTF("{\\rtf1 too long\\par}",small),"Content past the bound pastes as plain text");
+    notes::PasteImportOptions bounded;bounded.maximumUnits=4;check(!notes::importNotesRTF("{\\rtf1 too long\\par}",bounded),"Content past the bound pastes as plain text");
     check(!notes::importNotesRTF("plain text")&&!notes::importNotesHTML("")&&!notes::importNotesHTML("<!-- only a comment --><span> </span>"),"Non-RTF and empty documents decline");
     // Pasted into the Notes model: one undo group with the imported runs.
     const auto red=notes::importNotesRTF("{\\rtf1\\ansi{\\fonttbl{\\f0 Arial;}}{\\colortbl;\\red255\\green0\\blue0;}\\f0\\fs28\\b big\\cf1  red\\par}");check(red&&red->text==u"big red\n","An RTF paste imports");
@@ -114,7 +130,7 @@ void windowsClipboard(){
 }
 }
 int main(int argc,char** argv){
-    try{check(argc==2,"Pass the paste oracle fixture");compareOracle(argv[1]);robustness();windowsClipboard();
+    try{check(argc==2,"Pass the paste oracle fixture");compareOracle(argv[1]);robustness();exportRoundTrip();windowsClipboard();
         std::cout<<"PASS "<<checks<<" Notes paste import contracts\n";return 0;}
     catch(const std::exception& e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

@@ -77,6 +77,8 @@ public:
 };
 // Data-object codec shared by the system clipboard and synthetic tests. The
 // returned object owns copies of its formats and never touches the clipboard.
+// CF_UNICODETEXT always; with runs also the private payload and RTF for
+// other applications (core::notes::exportNotesRTF).
 Microsoft::WRL::ComPtr<IDataObject> makeNotesClipboardData(const NotesClipboardText&);
 // Plain text (unpaired surrogates become U+FFFD), with the private runs only
 // when their text is exactly the CF_UNICODETEXT text; without them, foreign
