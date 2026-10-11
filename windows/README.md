@@ -1693,8 +1693,8 @@ synthetic data in temporary folders and private registry subtrees.
 | Mac, clang | The portable no-ICU configure generates. The `settings`, `settings_presentation`, `media_request_catalog`, `shelf_file_picker` and `display_center_logo` contracts pass there. `clipboard_url_contracts` passes against ICU 78 under AddressSanitizer. `packaging_update_check_contracts` passes under ASan/UBSan, and `mac_import_work_contracts` and the portable part of `file_shelf_files_contracts` (52 checks) pass too. |
 
 Not run in this batch: `windows.yml` on GitHub (so the `windows-2025` pin and
-its OS ICU check are untested there), the section 9 gate against
-`EndfieldHUD.exe`, and any visible run.
+its OS ICU check are untested there), the section 9 gate on the laptop
+desktop (`package_perf_gate --desktop`), and any visible run.
 
 ### What `EndfieldHUD.exe` contains
 
@@ -1749,7 +1749,7 @@ runs.
 | Personal Profile | `profile_automation`, `work_mode_automation`, `work_mode_preview`, `profile_pickers`, `source_scene` and `id_card_presenter` contracts | 148 coverage checks. Registered runtime textures (CPU side). Lifetime counted once, with nonzero stopwatch time in cycle 0. |
 | App shortcuts | `app_shortcut_automation_contracts`, `app_shortcut_preview_contracts`, `watch_appearance_contracts` | Original navigation icons, with no allocations on unchanged frames. Drop, paste and hover. Fresh session on each opening. |
 | Mac import | `mac_import_work_contracts` (846), `mac_import_automation_contracts` (69), `mac_import_flow_contracts` (295), `mac_import_contracts` (753), `mac_import_native_contracts` (251), `mac_import_reconcile_contracts` (11), `mac_import_tool_contracts` | Sweep classification, bounded sweep, pre-open recovery, activation journal. 1,021 macImport coverage checks, including the production restart path against a stand-in host service. |
-| System providers | `clipboard_url_contracts` (1,001; 246 Mac oracle strings), `system_services_contracts`, `clipboard_provider_contracts` | Link parsing parity. Capture statuses. Suspension catch-up. A 10,000-message power storm posts one notice. Host-wired Event Log records checked through `eventLog.owner`. |
+| System providers | `clipboard_url_contracts` (1,001; 246 Mac oracle strings), `clipboard_matches_contracts` (23,510; batch 5), `system_services_contracts`, `clipboard_provider_contracts` | Link parsing parity. Capture statuses. Suspension catch-up. A 10,000-message power storm posts one notice. Host-wired Event Log records checked through `eventLog.owner`. |
 | Reader, Map, Calendar, Minigame | `screen_reader_peers_contracts`, `reader_preview_contracts` (6,184), `map_preview_contracts` (74), `calendar_preview_contracts` (142), `orbipom_preview_contracts`, `calendar_reminder_area_contracts` (100) | Peers and presses, the Map's 12 Hz accessibility cadence, Calendar editor Value and focus, the reminder-click refresh sink. |
 | Notes, Archive, Projection | `notes_automation_contracts`, `notes_paste_import_contracts` (45 Mac oracle cases), `notes_clipboard_contracts`, `notes_format_host_contracts`, `notes_scene_contracts`, `notes_workspace_owner_contracts`, `archive_preview_contracts`, `projection_preview_contracts` | RTF/CF_HTML import and RTF export. Undo across promotion. The `queuedRowClick` reproduction fails without the fix. Large-card timings on WARP. |
 | File Shelf | `shelf_preview_thread_contracts` (98), `shelf_file_preview_contracts` (591), `file_shelf_files_contracts` (383), `shelf_services_contracts` (365) | A hung out-of-process COM server is cancelled and its thread ends. Cloud placeholder classes. UIA peers. Relink ledger. |
@@ -1818,8 +1818,9 @@ where an account, the network or real data is involved.
   builds and job objects that forbid breakaway are untested.
 - **Shell:** a GPU adapter switch; the clock's hover plate and swipe on a
   touchpad.
-- **Performance:** the section 9 gate with `--data-root`, the large-card
-  timings on a real GPU, and Reader, Map and minigame measurements.
+- **Performance:** the section 9 gate on the laptop desktop
+  (`package_perf_gate --desktop`), the large-card timings on a real GPU, and
+  Reader, Map and minigame measurements.
 
 ### Still open in code
 
@@ -1829,7 +1830,6 @@ where an account, the network or real data is involved.
   - the Power group's name;
   - a text pattern for the projected fields (Value only today);
   - names for the alert's position-editor buttons.
-- **Cursor:** no I-beam over open projected editors.
 - **Reader:**
   - render PDFs on an owned device (exit fault `0x87A` after a late PDF
     render);
@@ -1848,17 +1848,14 @@ where an account, the network or real data is involved.
   - pasted images are not transcoded on the shared media worker (needs a
     broker hook);
   - Office HTML class style sheets are not applied.
-- **Media Assembly:** stills with transparency export only on the CPU
-  (optional GPU path).
 - **Input:** precise touchpad scroll and pinch (a WM_POINTER or
   DirectManipulation path).
 - **Mac import:**
   - private folders made before `e38d18d` are unmarked and never swept;
   - no progress is visible during the post-shutdown commit.
-- **Shelf:** previews are refused while two retired preview threads stay
-  blocked outside COM. A separate preview host process would isolate them.
-- **Clipboard:** file items are compared by exact path. The Mac compares
-  standardized file URLs, with `..` resolved.
+- **Shelf:** an in-process property handler that hangs holds the utility
+  worker (the HUD thread never waits; cloud and remote items use cached
+  properties only).
 - **Packaging:**
   - QuickJS-NG's `LICENSE` is not staged;
   - builds are unsigned;
@@ -1871,11 +1868,447 @@ where an account, the network or real data is involved.
   Georgia cannot be told apart from an explicit choice, so these libraries
   show Georgia instead of the Noto Sans SC/KR default.
 - Approve an interaction for relinking imported books inside the Reader.
-- The Highlights/Shadows mapping was read from the installed CoreImage
-  framework, then verified black-box. Is a purely black-box derivation
-  wanted?
 - Once a certificate exists, may signed builds install updates automatically
   (Mac-style 30 s idle gate)?
 
 Contributor note: the Windows SDK's `rpcndr.h` defines `small` as a macro, so
 code must not use it as an identifier.
+
+## Batch 5 (2026-10-11): area and host entries
+
+The stage that owns each change recorded these entries; the host's second
+integration pass applied the host-side requests and wrote them down here.
+The consolidated batch 5 checkpoint follows from the docs stage. As before,
+every run was hidden on the laptop (WARP, hidden windows, synthetic data in
+temporary folders and private registry subtrees). No interactive desktop,
+real account, real audio, real dialog or UI Automation client was involved.
+
+### Host: the user-reported fixes (`0fcabbc`)
+
+- **One host time.** The Application hands every owner, deadline, utility
+  completion, message, pointer and key event and coverage step
+  `ModuleRegistry::hostTime`: the sample clamped to the latest time any owner
+  was handed, taken again at each hand-off. A nested `WM_CAPTURECHANGED` or an
+  owner's clock read inside a callback is never followed by the host's
+  earlier sample, which ended the live RCs with "Projection controls require a
+  finite monotonic owner clock" and "Event persistence requires finite
+  monotonic owner time". Hidden coverage reproduces the live order with two
+  probe owners (a later event nested in a deadline, a deadline nested in a
+  message). Projection, Notes, Archive, Profile and Work Mode also take an
+  earlier time as the latest one seen instead of failing (`dab027e`,
+  `3b059ec`).
+- **Isolation.** Projection workspace calls run under registry isolation (a
+  failure closes Projection and the HUD keeps running), as do area services,
+  built-in owner calls outside the routing chains and utility completions,
+  which are attributed to the owner that submitted them.
+- **Closing on an outside press.** A left press that no source control or
+  owner takes closes the HUD with the normal closing animation when it falls
+  outside the displayed circle (radius 310 around the design centre, through
+  the live projection; `SystemHUDView.mouseDown`). Inside the circle the press
+  keeps the HUD open, modal cards and menus unwind first, and a press during
+  the entrance closes the HUD once the opening completed. Hidden coverage
+  drives this through the real pointer route.
+- **Cold start.** `hud.hlsl` is compiled at build time (fxc) and embedded. A
+  launch prewarm, posted once the preference record applied, poses the first
+  opening offscreen while the HUD is closed (captions, chrome, bound
+  appearance and compiled materials rasterized and uploaded, one draw that is
+  never presented), applies the ID card, queues Map's geography decode and
+  lets owners do their first-update work (`ModuleOwner::prewarm`, used by
+  Archive). Opt-in numeric trace: `ENDFIELDHUD_STARTUP_TRACE=1` and
+  `watch_session_preview --startup-trace`. Hidden trace on the laptop (WARP):
+  renderer stage 312.8 ms → about 130 ms; the first opening's first frame
+  68.6 → 29.0 ms and its second frame 17.1 → 5.1 ms. Most of the remaining
+  29 ms is Map's first update and upload (about 4.4 + 12.0 ms), Account's
+  first upload (about 2.5 ms) and Power's (about 1.2 ms); those owners have no
+  prewarm entry point yet.
+- Slot: 365 of 368 suites.
+
+### Host integration pass 2
+
+Applied area requests:
+
+- **Map geography** (Reader/Map area): the host worker calls
+  `loadMapGeography`. A missing, differing or undecodable dataset is flagged
+  instead of thrown inside the Map's isolation, so `EndfieldHUD.exe` keeps the
+  Map with its pins and the Mac message.
+- **Shelf:** the Shelf receives the shared utility executor right after it
+  is created (properties reads and import-ledger writes), so its private
+  fallback worker is not used in `EndfieldHUD.exe`. The properties card's
+  *Open* waits for the close like *Reveal* (`openShelfReference` revalidates
+  the identity; a failure shows the localized message; a quit or forced close
+  drops it). The unused Shell preview handler sources
+  (`native/shelf_file_preview.*` and `shelf_file_preview_contracts`), the
+  process-wide `DisableProcessWindowsGhosting()` call and the startup read of
+  the unused Core Animation reveal samples are removed (the packaged
+  `reveal-mask.bin` stays for `subsection_mask_contracts`).
+- **Work Mode:** the open custom duration field is listed as the focused Edit
+  peer with Value; SetValue replaces the draft and keeps the field open.
+  Hidden coverage checks the role, keyboard focus, value and SetValue under
+  the real root.
+- **ID card:** a feed change while the HUD is concealed is applied as its own
+  content event (a private notice; the presenter's callback still only
+  schedules work), so a profile published after launch does not land in the
+  first opening's first frame. The launch prewarm already applies the card
+  once at launch.
+- **Volume:** the hidden fixture lists five synthetic adjustable apps with
+  per-app writers. Coverage checks the three-row (95-point) list, a wheel
+  detent of 36 points and that scrolling lays out at most the row entering the
+  window.
+- **Now Playing:** the shared audio worker publishes
+  `AudioApplicationRoute::rendering` (any of the process's sessions is
+  active), so a play or pause republishes the applications through
+  `audioChanged(audioApplications)` (`audio_session_worker_contracts`).
+- **Reader:** a left release or capture loss routed to an inactive Reader no
+  longer re-syncs its canvas. Before, a release anywhere over the HUD after a
+  settings change, with the Reader hidden, made the next publish throw "Place
+  Reader before upload": fatal in hidden coverage, and in production the
+  Reader owner was switched off. Hidden coverage now releases its press inside
+  the circle after an appearance change and checks that the Reader stays
+  enabled. The Library's *Relink…* titles the shared picker "Relink…".
+- **Packaging:** both notification identity suites use the long form of
+  `%TEMP%` (the CI runner's 8.3 `%TEMP%` made them fail);
+  `tests/system_overlay_state_tests.cpp` includes `<cmath>` for GCC; and
+  `native/app_notification_identity.cpp` compares the shortcut's target and
+  working folder with the identity after expanding both with
+  `GetLongPathNameW`, ordinally without case, so an `EndfieldHUD.exe` started
+  through an 8.3 path still finds its notification identity.
+
+Found while integrating:
+
+- **Shared raster cache bound.** With the five fixture apps, hidden coverage
+  of all owners and areas reached 1,022 retained raster entries, and the next
+  *+ Add App* raster failed with "Retained layer cache is full". The count
+  bound (`LayerRasterizer::maximumEntries`) is metadata only, and a user's own
+  Shelf, Notes and audio apps could reach it in production, where the failing
+  owner would be switched off. It is now 4,096 entries; the 256 MB pixel
+  budget and the text budgets are unchanged and remain the memory limits.
+- **Cold start, measured.** Hidden startup trace (WARP, `watch_session_preview
+  --startup-trace`, four runs): the first opening's first frame takes
+  27.4–30.6 ms of CPU and the warm opening's 3.2–5.2 ms; the launch prewarm
+  takes about 50 ms while the HUD is closed. In the cold frame, Map's first
+  update and upload take about 5.6–6.7 + 10 ms, Account's upload about 2 ms
+  and Power's 1–1.7 ms; the source shell's own stages differ from the warm
+  opening by about 2.5 ms. A host-side Map prewarm through
+  `MapPreview::update` with the overlay hidden changed nothing (the module
+  presentation at prewarm does not show Map, and activation redoes the work),
+  so it was not kept: Map, Account and Power need their own prewarm entry
+  points (area work).
+- **Video colour in Notes, Archive and Projection** (investigation, no code
+  change). On the Mac, a Notes video poster (`NotesMediaFactory.videoPoster`:
+  `AVAssetImageGenerator`, preferred transform, 1600 px box) is a
+  `kCGColorSpaceCoreMedia709` image. Drawn into an sRGB context it equals
+  Media Assembly's preview reading (Core Image, CoreMedia 709) within 1 level
+  on all 256 codes of the grey chart, tagged or untagged (128 → 139, 64 → 73,
+  16 → 14). Archive thumbnails use the same generator. `AVPlayerLayer`
+  playback was not measured. Windows shows the decoded values, so Notes and
+  Archive posters, and probably played frames, are up to 11 levels darker.
+  Reusing `mediaAssemblyVideoColour` needs a broker design for posters
+  (`setVideoPoster`) and played frames (a frame filter per BT.709 movie);
+  left to the media and notes areas.
+
+Not applied, with the reason:
+
+- Per-area startup marks: already recorded (`area:<name>` after each area's
+  construction).
+- Projection host times and the area clock: already in `0fcabbc`; every
+  hand-off, the area clock and Projection's key, cancelInteraction and
+  dismissal calls take the clamped host time.
+- Notes, Archive, Reader, App shortcuts and Shelf ledger calls: done by their
+  owners (`c6ee3a1`, `9126a23`, `b75b1c2`, `d61626e`). Notes reconciles at
+  construction, which reads one small file that is absent without an import.
+- The shared projected editor's rich single-line inset (Archive title and
+  date): not a host file; recorded as an area follow-up.
+
+Laptop slot `host` (MSVC x64 Release, full build, all 369 suites): 366 pass.
+The three failures are the environmental ones of checkpoint 124
+(`projection_composition_contracts` and `projection_workspace_contracts`: no
+composition swap chain over SSH; `packet_export_contracts`: no Mac `Sources/`
+in the slot). After the last host change, the 28 `application_*`, `map_*`,
+`watch_preview` and `endfieldhud_*` suites passed again, including both owner
+coverage runs; their host-check minimums are now 117 and 113 (6 new checks
+each). `media_assembly_codec_contracts` failed once in an earlier full run of
+this pass ("A moved original that is gone asks to be chosen again") and then
+passed in the next full run and three times alone; it is reported to the
+Media Assembly owner as possibly order- or timing-dependent.
+
+### Media Assembly
+
+1. The framework-derived Highlights/Shadows port was withdrawn (`4b2766e`).
+   The black-box fit (121 amount nodes × 17³ lattice, a grey ramp, 240
+   held-out pairs, 33³ and 65³ lattices at 4 nodes, structure probes) misses
+   the parity bound by 5 levels at best, so the slider applies no change (a
+   documented gap). The fixture regenerates byte for byte.
+2. Played-frame colour edits are verified through the shared broker (route 1,
+   frames edited in playback).
+3. Stills of any alpha export on the GPU in float bands with a CPU sticker
+   step: a 12 MP heavy edit takes 0.41 s, against 0.80 s on the CPU.
+   Translucent and extended-range edges are exact.
+4. Embedded ICC profiles (matrix/TRC, including v4 `para`, and grey) and PNG
+   gAMA/cHRM chunks are read like Core Image and ImageIO, derived black-box:
+   20 profiles and 14 PNG chunk probes are within 1 level on the CPU, GPU and
+   preview paths. The WIC transform used before missed by up to 24 levels in
+   gamut and by 121 after a LUT.
+5. Movie frames are read as CoreMedia 709 (gamma 1.961, v/16 toe) in
+   previews, exports and played frames; Windows showed them up to 11 levels
+   darker (`c2adc67`).
+6. Video exports were upside down (RGB32 input without a default stride).
+   Fixed.
+
+Laptop slot: 19 of 19.
+
+### Now Playing: window-title players
+
+- NetEase Cloud Music's Win32 client publishes no SMTC session (GSMTC listed
+  0 sessions while it played on the test laptop), so Now Playing composes
+  GSMTC with a window-title fallback (`native/now_playing_players.*`,
+  `modules/now_playing_players.*`; the Mac `NowPlayingAccessibility`
+  counterpart) for NetEase Cloud Music (`cloudmusic.exe`, class
+  `OrpheusBrowserHost`), QQ Music and Kugou.
+- While Now Playing is presented, WinEvent hooks on the UI thread (title
+  change, show, hide, destroy; no timer or polling) trigger a read.
+  EnumWindows with a bounded per-activation process cache and
+  `GetWindowTextW` (no message to the player) give one session per player
+  process (identity: image path; Event Log source by file name).
+- Title and artist are split like the source heading (oracle:
+  `tools/now_playing_players_reference.py` →
+  `tests/fixtures/now-playing-players-source.json`). Playing or paused is
+  inferred from title changes, HUD toggles and, when the audio worker
+  publishes it, the process's audio activity (`AudioApplicationRoute::
+  rendering`, added by the host pass). Play/pause, previous and next are
+  posted as `WM_APPCOMMAND`; NetEase covers and lyrics come from the public
+  catalog. A playing media session keeps precedence, and a player GSMTC lists
+  is not listed twice.
+- Hidden coverage drives the path through a synthetic desktop (Now Playing
+  area: 140 checks). `now_playing_probe` pumps messages, records window-title
+  players with their gaps (timeline, progress, seek; skips verified by a
+  following title change) and prints raw player windows with
+  `--live --windows`. `now_playing_players_contracts` (157 checks),
+  `now_playing_acceptance_contracts` (323) and `now_playing_probe_matrix` use
+  synthetic windows only.
+- Slot `nowplaying`: 28 of 28 (all `now_playing_*` suites through
+  `now_playing_all`, `application_owner_coverage`,
+  `application_session_end_coverage`, `application_registry_contracts`,
+  `application_executable_contracts`, `endfieldhud_package_contracts`).
+
+### Account Linking
+
+`b0fc68d` gives the login windows the Mac panel geometry. The consent and
+missing-runtime page has 860 × 650-point content, a minimum outer size of
+680 × 540, close and maximize but no minimize, and is centred on the HUD
+monitor's work area. Sign-in popups have 820 × 640 content, a minimum of
+680 × 440, and are centred on the login window; the minimum follows the
+per-monitor DPI. File drags over the Account page are refused, as on the Mac.
+`d6bafad` makes `hypergryph_account_owner_contracts` print its startup times
+(laptop: about 5–6.5 ms warm construction, 0.01 ms to open, about 10 ms for
+the first raster of the Account page when it is selected). Suites: webview
+489 checks, area 77, owner 71. Slot: 17 of 17, including
+`application_owner_coverage`.
+
+### Power
+
+1. The floating charge alert has its own UI Automation root
+   (`native/charge_alert_automation.*`): the indicator as static text with
+   its label, plus the Discard and Confirm buttons with the Mac labels and
+   tooltip help while editing. Invoke runs from the alert window, and the
+   editor buttons show the system tooltips.
+2. The HUD charge badge is rasterized once for the core plane's resting
+   position (design scale × HUD scale × 0.82 × DPI scale) and drawn again only
+   on size, DPI or HUD scale changes, never by opening or closing frames.
+   Each removed re-draw cost 4 to 13 ms of UI-thread time on the test laptop;
+   the startup raster takes about 25 ms (`charge_alert_probe
+   --raster-timing`). The Power area applies the badge content once at
+   startup.
+3. The `powerCharge` UIA group carries the Power caption.
+
+Commits `454440a` and `3d74603`. Final slot: 18 of 18.
+
+### Personal Profile
+
+- Profile area coverage: 6 steps, 158 checks. The raster is stable in cycles
+  1 and 2 (770 entries, 98,327,224 bytes), and lifetime is checked with
+  nonzero stopwatch time.
+- The Profile and Work Mode scenes take an earlier owner time as the latest
+  time seen (regressions in the `profile_scene`, `work_mode_scene`,
+  `work_mode_preview` and `profile_owner` contracts).
+- A large avatar's working copy is made on the worker, and portrait crops use
+  an exact premultiplied-linear table. A 4000 × 3000 photo now costs 17 ms of
+  UI-thread time instead of about 460 ms; a page crop takes 14 ms instead of
+  90 ms.
+- New opt-in diagnostic: `profile_cold_start_probe <hud.hlsl>
+  <resources/profile> <id_card-native-captions.json>` (prints timings only).
+- Every owner with projected editors now answers `ModuleOwner::cursorAt`
+  (Notes, Archive, Calendar, Work Mode, Personal Profile, App shortcuts), so
+  the I-beam shows over open fields.
+
+### App shortcuts
+
+1. *+ Add App* keeps its saved cards in six retained slots. A wheel step only
+   moves them: 1.7 ms per small step and 2.1 ms per 36-point notch, down from
+   about 25 ms of full-canvas rebuild per step. Only a card entering the
+   window draws its own name, original name and icon again (`72e59e9`).
+2. Relinks of imported Mac shortcuts update `Migration/relink.json` through
+   `reconcileMacRelinks`. A packaged-app relink resolves with its
+   `shell:AppsFolder` target (`b75b1c2`).
+3. Synthetic key input in tests and coverage states its modifiers and never
+   reads the keyboard state (`c57089d`).
+4. The *+ Add App* canvas owner costs 0.04 ms to construct; its first frame
+   takes about 36–40 ms of CPU (the canvas raster, done lazily on first view
+   as on the Mac).
+
+### Mac import: relink-ledger owner API and import card focus events (`74cc045`)
+
+- `resolveMacRelink`, `dismissMacRelink`, `reconcileMacRelinks` and
+  `macRelinkMediaCheck` work by store and record id. Nothing is written
+  without an import or a matching row; writers are serialized in-process, a
+  concurrent replacement is re-applied a bounded number of times, decisions
+  are final, and Archive attachments are named by their Mac locator, never
+  by position.
+- Packaged `shell:AppsFolder` targets are accepted for `appShortcuts.app`
+  rows.
+- The import card raises AutomationFocusChanged on its focus moves
+  (appearing, Tab, Left/Right, press, SetFocus). SetFocus routes to the
+  card's focus, and the dialog is listed on the card's first frame.
+- Laptop: `mac_import_relink_contracts` 95, `mac_import_automation_contracts`
+  82, `app_shortcut_relink_contracts` 17 (packaged branch); the
+  `shelf_services`, `mac_import`, flow, work, native, reconcile, plist,
+  settings and tool suites pass; `application_owner_coverage` passes with
+  1,608 macImport checks.
+- The owners now use it: App shortcuts and the Shelf (`b75b1c2`, `d61626e`),
+  Notes media and Archive attachments after their record writes and on load
+  (`c6ee3a1`, `modules/notes_relink_ledger`), and Reader books (`9126a23`).
+
+### System providers (`918502b`)
+
+Clipboard history identity matches `ClipboardPayload.matches`. Files compare
+by `standardizedFileURL`, done lexically: separators, `.`, `..` and the
+directory hint; Foundation keeps `/./` for a root followed only by dots;
+drive letters are folded; verbatim and device paths stay literal. Text and
+link originals compare by canonical equivalence through ICU NFC. Mac oracle
+`tools/clipboard_matches_reference.sh`: 87 paths, 9 lists, 43 string pairs.
+`clipboard_matches_contracts` runs 23,510 checks; `system_services_contracts`
+and the `systemProviders` coverage capture a respelled `CF_HDROP` selection
+and an NFD string through the real service. `event_log_owner_contracts` now
+expects the clamped owner clock of `dadf151`.
+
+### Reader and Map (`9126a23`)
+
+- Reader PDF pages render through `IPdfRendererNative` on a Direct3D device
+  the document owns and releases with it. `reader_pdf_exit_contracts`
+  reproduced the `0x87A`/2170 exit fault with the old `RenderToStreamAsync`
+  path; its hidden children now exit 0.
+- Map: `loadMapGeography` loads `Terrain.bin` and `Countries.bin`
+  separately. A failed dataset keeps the Map with its pins and shows the Mac
+  message; `EndfieldHUD.exe` uses it since the host pass. Tests:
+  `map_geography_load_contracts` and `map_preview_contracts`.
+- Reader Library *Relink…* for imported Mac books and unavailable Windows
+  books, over the Open picker route. It keeps the id, title, progress and
+  bookmarks, and resolves, dismisses and reconciles `Migration/relink.json`
+  rows through the import ledger API. Imported libraries keep their stored
+  `fontName` (Georgia). Tests: `reader_localization`, `reader_preview`,
+  `reader_owner` and `reader_native` contracts.
+- Final slot: 46 of 46 local suites plus `application_owner_coverage`.
+
+### Notes, Projection and Archive
+
+1. Owner times in Projection, Notes and Archive: an earlier time is taken as
+   the latest time seen, never fatal. Six paths handed raw times: the
+   workspace demand passed the raw time to the preview's frame demand; the
+   host called the media binding and the import receivers directly; key and
+   cancelInteraction took raw `now()`; the UIA clock; the binding passed the
+   raw time on; the preview passed the raw time to its scenes. Regressions in
+   the live order are in the projection preview, binding and scene suites and
+   in hidden coverage (an earlier-clock UIA invoke on Projection, `0deb3df`).
+2. Home/End move along the caret's visual line and Ctrl+Home/Ctrl+End to the
+   document, the Windows equivalent of Cmd+Left/Right and Cmd+Up/Down
+   (`0aa6019`).
+3. The Mac import relink ledger is kept up to date after Notes and Archive
+   relinks, deletions and loads (`modules/notes_relink_ledger`, `c6ee3a1`).
+4. Large Notes cards draw their border and field border as GPU ring meshes,
+   and a selection keeps the frame. On WARP at 1600 × 1000 points and 2 px
+   per point, editing entry went from 242 to 76 ms and re-entry from 145 to
+   71 ms (`e441cb2`).
+5. Slot `notes`: full build, 65 of 65 owned suites including
+   `application_owner_coverage`.
+
+### Temporary File Shelf (user reports, stage 5)
+
+- **Removal glitch.** The collection reveal (removal, Clear, additions) drew
+  the measured Core Animation path of `HUDSubsectionTransition.reveal`.
+  Between the collapsed first and the full last keyframe, Core Animation
+  drops zero-length segments; from phase .68 its path is a mismatched
+  five-subpath shape, and curved wedges covered cards that were already
+  revealed. The Shelf now draws the authored shutter keyframes
+  (`shelfRevealShutter`) at the Core Animation key times with per-segment
+  ease-out, which matches Core Animation between the well-formed keyframes
+  (`9b91c0a`). `shelf_removal_frames_contracts` renders an × removal frame by
+  frame through the production owner, published like `publishNative`: no
+  region is covered again and the frame is exactly settled at .26 s. The
+  Clipboard reveal and the Activity sort mask use samples with the same
+  topology.
+- **Properties card** (`d61626e`, `200e513`). The eye button, double-click
+  and Space open a `NotesRetainedMenu`-style card on the Shelf plane (it
+  follows the tilt; .16 s fade; modal for pointer, keys and UIA; follows the
+  selection). Rows: Name, Type, Size or Contains (direct children up to
+  10,000; never cloud or remote folders), Location (middle-shortened by
+  measured width, keeping whole trailing folders), Created and Modified (the
+  short date when the long one does not fit), and Dimensions and Duration
+  through `IPropertyStore` (cached properties only for cloud placeholders and
+  remote volumes). Open (after the HUD closes, `openShelfReference`) and
+  Reveal, in five languages. Properties are read on the utility executor. The
+  preview thread and its containment were removed.
+- **Import ledger.** Shelf relink, remove and clear call `resolveMacRelink`,
+  `dismissMacRelink` and `reconcileMacRelinks` on the utility worker after
+  the Shelf record write; nothing reads the ledger on the HUD thread.
+- Verified on the laptop: `shelf_removal_frames`, `shelf_properties` 28,
+  `shelf_services` 568, `shelf_scene` 115,987, `shelf_presentation` 1,754,
+  `shelf_file_picker` 130, all other Shelf suites,
+  `application_owner_coverage` and `application_session_end_coverage`. Not
+  verified: a real GPU and desktop, real media property handlers, OneDrive
+  placeholders, and Open in `EndfieldHUD.exe` (wired by the host pass).
+
+### Volume
+
+The app list now shows at most three rows. This is an explicit user change:
+the source shows two rows in a 64-point viewport, and three rows give 95
+points by the same rows × 31 + 2 rule. A longer list scrolls by wheel, by
+dragging the rows outside their sliders, or by dragging the scrollbar thumb
+or track, all within the source clamp. While a per-app status message is
+shown (`perAppStatus` or routing stopped), the list keeps the source two-row
+viewport so the status line at y = 300 stays clear. App rows are now retained
+LayerScenes keyed by process identity: the visible rows plus one on each
+side, at most 7. A scroll or drag only moves them, with no module reload and
+no caption layout; only a row crossing the viewport edge repaints its clipped
+highlight. Settled frames allocate, rasterize and upload nothing, and icon
+requests follow the same row window. The Mac oracle comparison
+(`volume_reference_tests`) uses `VolumeLayout::source()`. Suites:
+`volume_scene_contracts` (list layout, native scrolling) and
+`volume_preview_contracts` (owner scrolling); the host pass adds the list to
+`EndfieldHUD.exe` coverage (`edbe0b7`).
+
+### Packaging: section 9 gate and first release notes (`2d2f1e2`)
+
+- `package_perf_gate --desktop`, run from a terminal on the laptop's desktop
+  next to `EndfieldHUD.exe`, measures that build against a temporary
+  `--data-root`: closed idle, open idle with ambient on and off, 100
+  open/close cycles, and the cold and warm openings from the app's own
+  `ENDFIELDHUD_STARTUP_TRACE=1` trace (first frame, p50/p95 interval, late
+  frames, frame CPU, slowest startup stages and owners). It writes
+  `Release\performance-reports\<time>\performance-gate.json` and a readable
+  `performance-gate.md`. It asks before showing the HUD, refuses without a
+  visible desktop, stops on Ctrl+C with a partial report, keeps the app in a
+  kill-on-close job, and stops on the app's fatal record. Over SSH the slot's
+  `EndfieldHUD.exe` stops with "Cannot locate the current display", so no
+  Windows numbers exist yet.
+- `windows/packaging/release-notes-template.md` is now the first Windows
+  release (v1.2.0 build 18 baseline), including moving from a Mac and the
+  differences from macOS.
+- CI run 38116894941 (`e17f3af`, windows-2025: ICU 72.1, Unicode 15.1,
+  tzdata 2022g): 343 of 348 Windows suites passed. The installer, release and
+  both notification identity suites failed on the runner's 8.3 `%TEMP%`
+  (reproduced on the laptop; packaging fixed in `2d2f1e2`, the identity
+  suites by the host pass). `packaging_watch_runtime_staged` failed on cp1252
+  (fixed with `-X utf8`). The portable job stopped at a missing `<cmath>` in
+  `tests/system_overlay_state_tests.cpp` (fixed by the host pass).
+- Suites: `packaging_perf_gate_contracts` (56 checks),
+  `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`,
+  `packaging_perf_gate_render`, `endfieldhud_release_contracts`.
