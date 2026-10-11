@@ -50,7 +50,15 @@ public:
     bool wheel(const app::WheelEvent&,double time);
     bool scroll(core::Point logicalClientPoint,double delta,bool precise,bool ended,double time);
     bool magnify(core::Point logicalClientPoint,double amount,bool ended,double time);
+    // Source HUDWorldMapInteraction.keyDown takes unmodified keys only
+    // (command/control/option/shift). The first form is for the HUD window's
+    // key dispatch: it reads GetKeyState, which Win32 synchronizes with the
+    // key message being dispatched. Any other caller (tests, synthetic input)
+    // passes the modifier state explicitly, as ReaderPreview::key does: off
+    // that dispatch a thread's GetKeyState follows the live keyboard of the
+    // interactive session.
     bool key(const app::KeyEvent&,double time);
+    bool key(const app::KeyEvent&,bool modified,double time);
     bool perform(modules::MapAction,std::string_view pinID,double time);
     // HUDWorldMapInteraction.activateAction: a listed, enabled accessible
     // action id (map:zoomIn, map:zoomOut, map:reset, map:addPin,
