@@ -3,7 +3,9 @@
 // production EndfieldHUD.exe never contains this harness. Every input is an
 // explicit synthetic fixture in a new temporary data root; nothing is shown.
 #include "app/application_impl.hpp"
+#include "app/areas/calendar_reminder_module.hpp"
 #include "modules/archive_presentation.hpp"
+#include "native/display_center_logo.hpp"
 #include <algorithm>
 #include <iostream>
 #include <map>
@@ -109,6 +111,28 @@ int Application::Impl::runHiddenVerification(){
         };
         if(args.moduleCoverage){
             double time=at(100);open(time);present(time+1,true);time+=2;
+            // Host integration checks (counted in hostIntegrationChecks) and the
+            // UI Automation helpers they share.
+            const auto hostCheck=[&](bool value,const std::string&why){need(value,why.c_str());++hostChecks;};
+            using Microsoft::WRL::ComPtr;
+            const auto textProperty=[&](IUnknown*element,PROPERTYID id)->std::string{
+                ComPtr<IRawElementProviderSimple>simple;std::string out;if(!element||FAILED(element->QueryInterface(IID_PPV_ARGS(&simple))))return out;
+                VARIANT v;VariantInit(&v);if(SUCCEEDED(simple->GetPropertyValue(id,&v))&&v.vt==VT_BSTR&&v.bstrVal)out=narrow(v.bstrVal);VariantClear(&v);return out;};
+            // Reader, Map, Calendar and the minigame: their peers press like a click.
+            const auto peerProbe=[&](core::Module module,ModuleOwner*owner,std::initializer_list<std::pair<std::string_view,std::function<bool()>>>presses){
+                if(!owner||!registry.enabled(*owner))return;
+                selectModule(module,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                hostCheck(owner->automationCount()>0,"A local module lists its projected UI Automation peers under the HUD root");
+                for(const auto&[id,after]:presses){
+                    ComPtr<IRawElementProviderFragment>peer;
+                    for(std::size_t n=0;n<owner->automationCount()&&!peer;++n){
+                        ComPtr<IRawElementProviderFragment>f;
+                        if(SUCCEEDED(owner->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)==id)peer=f;}
+                    ComPtr<IInvokeProvider>invoke;
+                    hostCheck(peer&&SUCCEEDED(peer.As(&invoke))&&invoke->Invoke()==S_OK&&after(),"A local module's peer "+std::string(id)+" presses like its click");
+                    present(time,true);time+=.5;(void)probe.refresh();}
+                probe.disconnectOwners();hostCheck(owner->automationCount()==0,"Concealing disconnects the local module's peers");probe.shutdown();};
             std::vector modules{core::Module::notes,core::Module::fileShelf,core::Module::clipboard,core::Module::volume,core::Module::eventLog,core::Module::workMode,core::Module::power};if(archive)modules.push_back(core::Module::archive);if(storage)modules.push_back(core::Module::storage);if(activity)modules.push_back(core::Module::activityMonitor);if(reader)modules.push_back(core::Module::reader);if(calendar)modules.push_back(core::Module::calendar);if(map)modules.push_back(core::Module::map);if(!args.orbipomAssets.empty())modules.push_back(core::Module::minigame);if(settingsUI)modules.insert(modules.end(),{core::Module::system,core::Module::display,core::Module::hotkeys,core::Module::about});
             // Every HUD module an area presents joins the same combined cycles.
             std::vector<core::Module> areaModules;
@@ -257,6 +281,23 @@ int Application::Impl::runHiddenVerification(){
                         for(unsigned step=0;step<24;++step){const double atTime=time+.7+double(step)*.04;const auto previous=clipboard->state().scrollOffset();need(clipboard->wheel({target->x/metrics.scale,target->y/metrics.scale,step<12?-1.:1.,false,0,3},atTime),"Clipboard consumes the projected wheel input");present(atTime,true);scrollChanges+=clipboard->state().scrollOffset()!=previous;const auto usage=rasterizer.stats();peakEntries=std::max(peakEntries,usage.entries);peakBytes=std::max(peakBytes,usage.resourceBytes);}
                         need(scrollChanges>=12&&clipboard->state().scrollOffset()==0,"Clipboard moves through rows and returns to the top");
                     }
+                    // Reader peers in the first cycle, with the plain-text book: a
+                    // PDF page rendered late in the run leaves Windows.Data.Pdf's
+                    // own D3D device to an idle timer, which still runs at process
+                    // exit (README checkpoint 124, "Found while integrating").
+                    if(module==core::Module::reader&&reader&&cycle==0)
+                        peerProbe(core::Module::reader,readerModuleOwner.get(),{{"settings",[&]{return reader->capturesPointer();}},{"menu:close",[&]{return !reader->capturesPointer();}}});
+                    if(module==core::Module::workMode&&workMode&&cycle==0){
+                        // Drive the host's one Work Mode controller through its accessible
+                        // controls so areas observing it (Personal Profile lifetime hours)
+                        // receive real checkpoints in hidden coverage.
+                        const double start=time+.66;present(start,true);
+                        need(workMode->perform("work:stopwatch",start)&&workMode->perform("work:start",start+.01),"Work Mode starts a stopwatch through its accessible controls");
+                        for(unsigned n=1;n<=30;++n)present(start+.01+double(n)/60,true);
+                        const double stop=start+.6;
+                        need(workMode->perform("work:pause",stop)&&workMode->controller().snapshot(stop).phase==endfield::modules::WorkModePhase::paused&&workMode->controller().trackedWorkSeconds(stop)>0,"The stopwatch pauses with tracked time");
+                        present(stop+.01,true);
+                    }
                     if(auto*area=areaFor(registry.presenter(module)))runArea(*area,module,cycle,time+.7);
                 }
                 catch(const std::exception&e){const auto usage=rasterizer.stats();const auto&shown=notes->modulePresentation();
@@ -280,7 +321,6 @@ int Application::Impl::runHiddenVerification(){
             // Automation root over the Volume fragments and the OLE drop
             // route's Shelf navigation hit test.
             {
-                const auto hostCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
                 hostCheck(!restart.restartWith([]{},[]{})&&!restartPending,"A data-root restart cannot be requested outside production");
                 if(settingsUI&&areaHost&&areaHost->find<MacImportEntry>(macImportEntryService)){
                     settingsUI->refreshViews(time);
@@ -308,6 +348,133 @@ int Application::Impl::runHiddenVerification(){
                     hostCheck(rect.width>0&&rect.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(rect.left+rect.width/2,rect.top+rect.height/2,&hit))&&hit,"The root's hit test reaches a projected Volume control");
                     probe.disconnectOwners();hostCheck(volumeModuleOwner->automationCount()==0&&probe.groups()==0,"Concealing disconnects every fragment");
                     probe.shutdown();
+                }
+                // Every module's UI Automation group under the real HUD root:
+                // named after its module, children navigate back to it, and the
+                // root's hit test finds a projected control (built-in owners and
+                // the module areas through the ModuleOwner hooks).
+                const auto same=[](IUnknown*a,IUnknown*b){ComPtr<IUnknown>x,y;if(!a||!b||FAILED(a->QueryInterface(IID_PPV_ARGS(&x)))||FAILED(b->QueryInterface(IID_PPV_ARGS(&y))))return false;return x.Get()==y.Get();};
+                const auto findGroup=[&](HudAutomation&probe,std::string_view caption)->ComPtr<IRawElementProviderFragment>{
+                    ComPtr<IRawElementProviderFragment>root,group;if(FAILED(probe.root()->QueryInterface(IID_PPV_ARGS(&root))))return nullptr;
+                    for(HRESULT hr=root->Navigate(NavigateDirection_FirstChild,&group);SUCCEEDED(hr)&&group;){
+                        if(textProperty(group.Get(),UIA_NamePropertyId)==caption)return group;
+                        ComPtr<IRawElementProviderFragment>next;hr=group->Navigate(NavigateDirection_NextSibling,&next);group=next;}
+                    return nullptr;};
+                const auto groupProbe=[&](core::Module module,ModuleOwner*owner,std::optional<std::size_t>children){
+                    if(!owner||!registry.enabled(*owner))return;
+                    const std::string id(core::moduleIdentifier(module));
+                    selectModule(module,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    const auto group=findGroup(probe,moduleCaption(id,watchAppearance.language,id));
+                    hostCheck(group&&owner->automationCount()>0,"The "+id+" controls are listed in a UI Automation group named after the module");
+                    if(children)hostCheck(owner->automationCount()==*children,"The "+id+" group lists "+std::to_string(*children)+" controls ("+std::to_string(owner->automationCount())+")");
+                    ComPtr<IRawElementProviderFragment>first,parent;
+                    hostCheck(group&&SUCCEEDED(group->Navigate(NavigateDirection_FirstChild,&first))&&first&&SUCCEEDED(first->Navigate(NavigateDirection_Parent,&parent))&&same(parent.Get(),group.Get()),
+                        "The "+id+" controls navigate back to their group");
+                    bool hit=false;
+                    for(std::size_t n=0;n<owner->automationCount()&&!hit;++n){
+                        ComPtr<IRawElementProviderFragment>child,found;UiaRect r{};
+                        if(owner->automationChild(n,&child)<0||!child||FAILED(child->get_BoundingRectangle(&r))||!(r.width>0&&r.height>0))continue;
+                        hit=SUCCEEDED(probe.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&found;}
+                    hostCheck(hit,"The root's hit test reaches a projected "+id+" control");
+                    probe.disconnectOwners();hostCheck(owner->automationCount()==0,"Concealing disconnects the "+id+" controls");
+                    probe.shutdown();};
+                const auto areaOwner=[&](std::string_view name)->ModuleOwner*{for(auto&a:externalModules)if(a.name==name)return a.owner.get();return nullptr;};
+                groupProbe(core::Module::workMode,workModeModuleOwner.get(),std::nullopt);
+                groupProbe(core::Module::fileShelf,shelfModuleOwner.get(),std::nullopt);
+                groupProbe(core::Module::archive,archiveModuleOwner.get(),std::nullopt);
+                groupProbe(core::Module::mediaAssembly,areaOwner("mediaAssembly"),std::nullopt);
+                groupProbe(core::Module::nowPlaying,areaOwner("nowPlaying"),std::size_t{6});
+                groupProbe(core::Module::account,areaOwner("account"),std::nullopt);
+                groupProbe(core::Module::profile,areaOwner("profile"),std::nullopt);
+                // Map, Calendar and the minigame (the Reader's ran in cycle 0).
+                const auto month=calendar?calendar->view().month():endfield::modules::CalendarDay{};
+                peerProbe(core::Module::map,mapModuleOwner.get(),{{"map:reset",[&]{return map->state().viewport().zoom==endfield::modules::MapViewport::defaultZoom;}}});
+                peerProbe(core::Module::calendar,calendarModuleOwner.get(),{{"nextMonth",[&]{return calendar->view().month()!=month;}},{"previousMonth",[&]{return calendar->view().month()==month;}}});
+                peerProbe(core::Module::minigame,gameModuleOwner.get(),{{"rules",[&]{return game->state().rulesPresented();}},{"rules:close",[&]{return !game->state().rulesPresented();}}});
+                // The Power navigation entry (powerCharge presents no module):
+                // its group is named Power and its help is the live reading.
+                if(auto*power=areaOwner("powerCharge");power&&registry.enabled(*power)&&powerArea()){
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    HudAutomation probe(host.hwnd(),automationSource());(void)probe.refresh();
+                    ComPtr<IRawElementProviderFragment>entry;
+                    for(std::size_t n=0;n<power->automationCount()&&!entry;++n){ComPtr<IRawElementProviderFragment>f;if(SUCCEEDED(power->automationChild(n,&f))&&f&&textProperty(f.Get(),UIA_AutomationIdPropertyId)=="power")entry=f;}
+                    hostCheck(entry&&textProperty(entry.Get(),UIA_HelpTextPropertyId)==powerArea()->powerAccessibilityLabel(),"The Power navigation entry's help is the live charge reading");
+                    UiaRect r{};ComPtr<IRawElementProviderFragment>found;if(entry)(void)entry->get_BoundingRectangle(&r);
+                    hostCheck(r.width>0&&r.height>0&&SUCCEEDED(probe.root()->ElementProviderFromPoint(r.left+r.width/2,r.top+r.height/2,&found))&&same(found.Get(),entry.Get()),"The root's hit test finds the Power navigation entry");
+                    probe.disconnectOwners();probe.shutdown();
+                }
+                // Services the host publishes for the areas.
+                if(areaHost&&eventOwner)hostCheck(areaHost->find<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey)==eventOwner.get(),"The Event Log owner is published read-only for the areas");
+                if(areaHost&&calendar)hostCheck(areaHost->find<endfield::areas::CalendarReminderActivationSink>(endfield::areas::calendarReminderActivationKey)!=nullptr,"Calendar publishes its reminder-click refresh");
+                if(settingsUI&&updates())hostCheck(!settingsUI->controller().updateStatus().automaticTitle.empty()&&settingsUI->controller().updateStatus().automaticTitle==updates()->automaticTitle(settingsLanguage(configuration)),
+                    "About's update rows come from the windowsUpdates area");
+                // Settings > Display: the colour and logo dialogs are requested, never opened here.
+                if(settingsUI){const auto colors=colorRequests,logos=logoRequests;requestThemeColor();chooseCenterLogo();
+                    hostCheck(colorRequests==colors+1&&logoRequests==logos+1&&!themeColorQueued&&pickerOwner==PickerOwner::none,"Theme color and center logo dialogs are requested without opening in hidden coverage");}
+                // The center logo (setDesktopCenterLogo): a preset and an imported
+                // custom wordmark bind "desktop.center-logo" to EndfieldText and
+                // hide its glow; the packet logo returns and the pixels retire.
+                if(settingsUI&&materials&&!centerLogoMainID.empty()&&args.resources&&!args.resources("common.centerLogos").empty()){
+                    const auto choose=[&](std::string_view choice,std::optional<std::string>revision){
+                        auto next=settingsUI->controller().committed();next.set("centerLogo",std::string(choice));if(revision)next.set("centerLogoRevision",*revision);
+                        settingsUI->controller().update(std::move(next),time);present(time,true);drainUtility(time);
+                        for(unsigned frame=1;frame<=3;++frame)present(time+double(frame)/60,true);time+=.1;};
+                    const auto bound=[&](unsigned width,unsigned height){
+                        const auto&base=idCard?idCard->baseline():*desktopBaseline;const auto image=base.images.find(centerLogoMainID);const auto info=materials->textureInfo("desktop.center-logo");
+                        return image!=base.images.end()&&image->second.texture=="desktop.center-logo"&&image->second.size==std::array<float,2>{float(width),float(height)}&&image->second.displaySize&&
+                            std::abs((*image->second.displaySize)[1]-65)<1e-9&&base.normalMaterialNodes.contains(centerLogoMainID)&&(centerLogoGlowID.empty()||base.hiddenNodes.contains(centerLogoGlowID))&&info.has_value();};
+                    choose("rhineLab",std::nullopt);
+                    hostCheck(bound(692,97),"The Rhine Lab preset binds its 692 x 97 wordmark to EndfieldText and hides the glow");
+                    const auto revision=gpu::importCenterLogo(args.resources("common.centerLogos")/"babel.png",args.dataRoot/"CenterLogo");
+                    settingsUI->setCustomLogo(revision,time);present(time,true);drainUtility(time);for(unsigned frame=1;frame<=3;++frame)present(time+double(frame)/60,true);time+=.1;
+                    hostCheck(configuration.string("centerLogo")=="custom"&&bound(648,176),"An imported custom logo is stored as CenterLogo/<revision>.png and bound");
+                    choose("endfield",std::nullopt);
+                    const auto&base=idCard?idCard->baseline():*desktopBaseline;
+                    hostCheck(!base.images.contains(centerLogoMainID)&&!base.normalMaterialNodes.contains(centerLogoMainID)&&(centerLogoGlowID.empty()||!base.hiddenNodes.contains(centerLogoGlowID))&&!materials->textureInfo("desktop.center-logo"),
+                        "The Endfield logo restores the packet artwork and retires the registered pixels");
+                }
+                // The desktop clock (SystemHUDView.clockPoint): hover, a style
+                // indicator, a horizontal swipe and the Work Mode click.
+                if(chrome&&settingsUI){
+                    selectModule(core::Module::notes,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    const auto world=chrome->statusWorld();
+                    const auto camera=gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale);
+                    const auto client=[&](core::Point local)->std::optional<core::Point>{if(!world)return std::nullopt;const auto p=core::Projection::viewport(camera**world,metrics.pixelWidth,metrics.pixelHeight).project(local);
+                        if(!p)return std::nullopt;return core::Point{p->x/metrics.scale,p->y/metrics.scale};};
+                    const auto original=configuration.string("clockStyle");
+                    const auto indicator=source::DesktopClockArtworkPlan::indicatorRect(3);
+                    const auto rail=client({indicator.x+indicator.width/2,indicator.y+indicator.height/2});const auto body=client({170,50});
+                    hostCheck(rail&&body&&clockPoint(*rail)&&source::DesktopClockArtworkPlan::indicatorAt(*clockPoint(*rail))==3u&&clockPoint(*body)&&!source::DesktopClockArtworkPlan::indicatorAt(*clockPoint(*body)),
+                        "The status panel's projected hit test finds the clock and its style indicators");
+                    if(rail&&body){
+                        clockHover({PointerKind::move,PointerButton::none,body->x,body->y});const bool hovered=chromeContent.clockHovered;
+                        clockHover({PointerKind::leave,PointerButton::none,body->x,body->y});
+                        hostCheck(hovered&&!chromeContent.clockHovered,"Hovering the clock raises its plate; leaving restores it");
+                        hostCheck(clockPress({PointerKind::down,PointerButton::left,rail->x,rail->y},time)&&settingsUI->controller().committed().string("clockStyle")=="rail","A style indicator selects that clock style");
+                        present(time+.05,true);time+=.1;
+                        (void)clockWheel({body->x,body->y,1,true,0,3},time);(void)clockWheel({body->x,body->y,1,true,0,3},time+.05);(void)clockWheel({body->x,body->y,1,true,0,3},time+.1);
+                        hostCheck(settingsUI->controller().committed().string("clockStyle")=="stacked","A horizontal swipe over the clock advances its style once (28 points)");
+                        (void)clockWheel({body->x,body->y,3,true,0,3},time+.15);
+                        hostCheck(settingsUI->controller().committed().string("clockStyle")=="stacked","One swipe changes the style at most once");
+                        present(time+.2,true);time+=.5;
+                        hostCheck(clockPress({PointerKind::down,PointerButton::left,body->x,body->y},time)&&notes->selected()==core::Module::workMode,"Clicking the clock opens Work Mode");
+                        for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                        auto restore=settingsUI->controller().committed();restore.set("clockStyle",original);settingsUI->controller().update(std::move(restore),time);present(time,true);time+=.1;
+                    }
+                }
+                // Drag feedback over an area (ModuleOwner::dropHover): the HUD's
+                // drop route reaches the owner presenting the selected module,
+                // which refuses a document; a leave ends its highlight.
+                if(auto*apps=areaOwner("appShortcuts");apps&&registry.enabled(*apps)&&apps->presents(core::Module::addApp)&&chromePlan&&chromePlan->projection().center){
+                    selectModule(core::Module::addApp,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
+                    gpu::LayerScene probeGeometry(rasterizer);probeGeometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},{});gpu::NativeModuleSurface probePlane(probeGeometry,core::Module::addApp);
+                    const source::DesktopChromeSettings ps{{0,0,metrics.width,metrics.height},settings.hudScale,settings.hudOffset,core::Module::addApp,true};probePlane.update(*chromePlan->projection().center,ps,notes->modulePresentation().current,1);
+                    const auto plane=core::Projection::viewport(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale)*probePlane.pose().contentWorld,metrics.pixelWidth,metrics.pixelHeight);
+                    if(const auto center=plane.project({200,167})){const core::Point p{center->x/metrics.scale,center->y/metrics.scale};
+                        const std::vector<std::string>document{"C:\\Synthetic\\Notes.txt"};
+                        hostCheck(dropTarget(p)==std::optional<std::string>("area")&&!dropHover(document,p)&&dropHoverOwner==apps,"A file drag over Add App reaches the area, which refuses a document before the drop");
+                        hostCheck(dropHover({},std::nullopt)&&!dropHoverOwner,"Leaving the HUD ends the area's drag feedback");}
                 }
                 // The Shelf navigation entry takes an OLE file drop from any other module.
                 selectModule(core::Module::notes,time);session->setScrollPosition(1,time);for(unsigned frame=0;frame<40;++frame)present(time+double(frame)/60,true);time+=1;
@@ -354,6 +521,19 @@ int Application::Impl::runHiddenVerification(){
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Summons during closing never reopen");
                 t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::closed&&lifecycle.lastModule()==core::Module::notes,"Close retains the last module");
                 perform(lifecycle.reopen(),t);t=run(t,1.2);lifecycleCheck(lifecycle.phase()==core::SystemOverlayPhase::open&&notes->selected()==core::Module::notes,"Relaunch reopens on the last module");
+                // DataRootRestart through the host's own members (a gate opened
+                // for hidden coverage only): a failed save declines it.
+                const auto restartCheck=[&](bool value,const char*why){need(value,why);++hostChecks;};
+                restartVerification=true;
+                {auto ran=std::make_shared<unsigned>(0),declined=std::make_shared<unsigned>(0);auto token=std::make_shared<int>(0);const std::weak_ptr<int>alive=token;
+                 restartCheck(restart.restartWith([ran,token]{++*ran;},[declined]{++*declined;})&&restartPending,"A data-root restart is requested through the host");
+                 token.reset();reopenAfterSaveFailure(core::Module::notes,t);
+                 restartCheck(!restartPending&&alive.expired()&&*ran==0&&restartDeclinePosted&&*declined==0,"A failed save destroys the pending restart work unrun and posts its decline");
+                 (void)onAppMessage(NativeMessage{host.hwnd(),restartDeclinedMessage,serviceGeneration,0});
+                 restartCheck(*declined==1&&!restartDeclinePosted,"The decline runs once from its notice");
+                 (void)onAppMessage(NativeMessage{host.hwnd(),restartDeclinedMessage,serviceGeneration,0});
+                 restartCheck(*declined==1,"A repeated notice runs no second decline");
+                 t=run(t,.3);}
                 // Repeated summon cycles retain no extra raster resources,
                 // handles or threads once the first cycles have warmed caches.
                 const auto handles=[]{DWORD count{};need(GetProcessHandleCount(GetCurrentProcess(),&count)!=FALSE,"Read own handle count");return count;};
@@ -386,10 +566,16 @@ int Application::Impl::runHiddenVerification(){
                 const auto click=[&](core::Point p){need(onPointer({PointerKind::down,PointerButton::left,p.x,p.y}),"The card consumes the press");need(onPointer({PointerKind::up,PointerButton::left,p.x,p.y}),"The card consumes the release");};
                 click({cancel->x,cancel->y});t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&!quitRequested,"Projected Cancel dismisses the card");
                 press(t+1.1);t=run(t+1.1,.4);key(VK_RETURN);t=run(t,.4);lifecycleCheck(!quitConfirmation->presented()&&!quitRequested,"Return activates the initially focused Cancel");
-                press(t+1.1);t=run(t+1.1,.4);key(VK_TAB);lifecycleCheck(quitConfirmation->state().focused()==1,"Tab focuses Quit");key(VK_RETURN);
+                press(t+1.1);t=run(t+1.1,.4);key(VK_TAB);lifecycleCheck(quitConfirmation->state().focused()==1,"Tab focuses Quit");
+                // A restart pending at the confirmed quit is accepted: its work is handed out once.
+                auto restartRuns=std::make_shared<unsigned>(0);
+                restartCheck(restart.restartWith([restartRuns]{++*restartRuns;},[]{})&&restartPending,"A data-root restart can be requested while the card is up");
+                key(VK_RETURN);
                 lifecycleCheck(quitRequested&&lifecycle.terminating()&&lifecycle.phase()==core::SystemOverlayPhase::closing&&closing,"Confirmed quit plays the closing animation");
                 lifecycleCheck(lifecycle.toggle().empty()&&lifecycle.reopen().empty(),"Quitting ignores summons");
                 t=run(t,1.5);lifecycleCheck(stopping&&lifecycle.phase()==core::SystemOverlayPhase::closed&&!quitConfirmation->presented(),"The ordered drain runs after concealment, then the owner stops");
+                {auto work=takeRestartWork();restartCheck(restartAccepted==false&&work&&!takeRestartWork(),"The accepted restart's work is handed out exactly once");
+                 work();restartCheck(*restartRuns==1,"The handed-out work is the requested one");}
                 }
             }
         }

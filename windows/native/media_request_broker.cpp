@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <set>
@@ -13,10 +14,10 @@ using Channel=core::MediaRequestChannel;using Client=core::MediaClient;using Req
 void need(bool ok,const char*why){if(!ok)throw std::invalid_argument(why);}
 unsigned index(Channel c){return static_cast<unsigned>(c);}
 Request imageRequest(const NotesImagePlaybackRequest&r){return {r.image.key,r.image.path,r.image.revision,r.image.maximumDimension,r.kind,r.image.firstFrameOnly,r.image.videoPoster,r.image.allowVideoInspection,false,{},r.image.accessLease};}
-Request videoRequest(const NotesVideoRequest&r){return {r.key,r.path,r.revision,r.maximumDimension,modules::NotesMediaKind::video,false,false,false,r.workerPoster,r.duration,r.accessLease};}
+Request videoRequest(const NotesVideoRequest&r){Request q{r.key,r.path,r.revision,r.maximumDimension,modules::NotesMediaKind::video,false,false,false,r.workerPoster,r.duration,r.accessLease};q.frameFilter=r.frameFilter;return q;}
 Request inspectionRequest(const NotesImageRequest&r){return {r.key,r.path,r.revision,64,modules::NotesMediaKind::image,false,r.videoPoster,r.allowVideoInspection,false,{},r.accessLease};}
 NotesImageRequest decodeRequest(const Binding&r){const auto&v=r.request;return {r.globalKey,v.path,v.revision,v.maximumDimension,v.firstFrameOnly,v.accessLease,v.allowVideoInspection,v.videoPoster};}
-NotesVideoRequest movieRequest(const Binding&r){const auto&v=r.request;return {r.globalKey,v.path,v.revision,v.maximumDimension,v.duration,v.accessLease,v.workerPoster};}
+NotesVideoRequest movieRequest(const Binding&r){const auto&v=r.request;NotesVideoRequest q{r.globalKey,v.path,v.revision,v.maximumDimension,v.duration,v.accessLease,v.workerPoster};q.frameFilter=std::static_pointer_cast<const std::function<void(void*)>>(v.frameFilter);return q;}
 struct ProviderOwners {std::mutex mutex;std::set<const NativeNotesImageDecoder*>decoders;};
 ProviderOwners&providerOwners(){static ProviderOwners value;return value;}
 }

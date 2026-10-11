@@ -1,7 +1,11 @@
 #pragma once
 #include "core/data/file_shelf_store.hpp"
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
+#include <vector>
+#include <functional>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -110,6 +114,15 @@ public:
         // or exception reports NONE. Duplicate-only successful import is true.
         // Must own store dependencies and obey its non-reentry/lifetime rules.
         std::function<bool(std::span<const std::string>)> commit;
+        // Optional drag feedback (Mac draggingUpdated): the drag's paths,
+        // decoded once at DragEnter (empty when the source offers none or
+        // they cannot be read), with the physical screen point on enter/over
+        // and nullopt on leave or drop. Its result is ANDed into the offered
+        // effect. Same read-only rules as acceptsPoint.
+        std::function<bool(std::span<const std::string> paths,std::optional<POINTL> point)> hover;
+        // Optional gate asked once at DragEnter: false skips the path read and
+        // the hover callback for that drag (a forwarding owner without a route).
+        std::function<bool()> hoverWanted;
     };
     ShelfDropTarget(ShelfTransferRoute,Callbacks);
     ~ShelfDropTarget(); // owner thread; revoke before destroying borrowed HWND

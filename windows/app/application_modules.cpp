@@ -28,6 +28,12 @@
 #include "tools/work_mode_preview.hpp"
 #include "native/volume_accessibility.hpp"
 #include "native/volume_automation.hpp"
+#include "native/work_mode_automation.hpp"
+#include "app/areas/notes_automation_binding.hpp"
+#include "tools/reader_automation.hpp"
+#include "tools/map_automation.hpp"
+#include "tools/calendar_automation.hpp"
+#include "tools/orbipom_automation.hpp"
 
 namespace endfield::app {
 namespace source = core::source;
@@ -89,10 +95,23 @@ bool hasPixels(const ClientMetrics& m) { return m.pixelWidth && m.pixelHeight; }
 
 class NotesModule final : public ModuleOwner {
     tools::NotesPreview& n_;
+    std::function<double()> clock_;
+    std::function<void()> changed_;
+    // HUDNotesInteraction accessibility views (native/notes_automation.hpp),
+    // created on the first refresh for this owner's group.
+    endfield::notes::NotesAutomationBinding automation_{[this](IRawElementProviderFragmentRoot* root) { return n_.automation(root, clock_, changed_); }};
 public:
-    explicit NotesModule(tools::NotesPreview& n) : n_(n) {}
+    NotesModule(tools::NotesPreview& n, std::function<double()> clock, std::function<void()> changed) : n_(n), clock_(std::move(clock)), changed_(std::move(changed)) {}
+    ~NotesModule() override { automation_.disconnect(); }
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return clock_ && automation_.refresh(root); }
+    std::size_t automationCount() const override { return automation_.count(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return automation_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return automation_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { automation_.disconnect(); }
     std::string_view name() const noexcept override { return "notes"; }
     bool essential() const noexcept override { return true; } // owns module selection and the shared TSF manager
+    // Pinned cards show over every module; the group is still named Notes.
+    std::optional<core::Module> automationModule() const noexcept override { return core::Module::notes; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointer = 1; r.wheel = 1; r.key = 1; r.filterKey = 5; r.filterRequiresOwnerTarget = true;
         r.message = 4; r.messageRetriesPendingClose = true; r.finishEditing = 3; return r;
@@ -144,6 +163,12 @@ public:
     bool filterKey(const NativeMessage& m) override { return s_.filterKey(m); }
     bool message(const NativeMessage& m, double t) override { return s_.message(m, t); }
     void focus(bool v, double) override { if (!v) s_.cancelInteraction(); }
+    // HUDShelfActionButton peers (native/shelf_automation.hpp) owned by the Shelf.
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return s_.automationRefresh(root); }
+    std::size_t automationCount() const override { return s_.automationCount(); }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override { return s_.automationChild(index, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return s_.automationFromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { s_.automationDisconnect(); }
 };
 
 class ClipboardModule final : public ModuleOwner {
@@ -179,23 +204,29 @@ class VolumeModule final : public ModuleOwner {
     VolumeModuleHooks hooks_;
     // Created on the first UI Automation refresh (a client asked the HUD).
     std::unique_ptr<gpu::NativeVolumeAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{};
     core::Language automationLanguage_{core::Language::english};
+    // A UIA press changes the page outside the host's input routes.
+    bool accepted(bool value) { if (value && hooks_.changed) hooks_.changed(); return value; }
 public:
     VolumeModule(tools::VolumePreview& v, VolumeModuleHooks hooks) : v_(v), hooks_(std::move(hooks)) {}
     ~VolumeModule() override { automation_.reset(); }
     // HUDVolumeInteraction.layoutAccessibility: projected buttons and sliders.
+    // A new group (another root) re-creates the fragments under it.
     bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
         if (!hooks_.toScreen || !hooks_.clock) return false;
+        bool rebuilt = false;
+        if (automation_ && automationRoot_ != root) { rebuilt = automation_->size() > 0; automation_->disconnect(); automation_.reset(); }
         if (!automation_) {
             gpu::VolumeAutomationHost h;
             h.root = root;
             h.elements = [this] { return v_.acceptsInput() ? gpu::volumeAccessibility(v_.state(), gpu::volumeAccessibilityStrings(automationLanguage_)) : gpu::VolumeAccessibility{}; };
             h.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> { const auto client = v_.clientRect(canvas); return client ? hooks_.toScreen(*client) : std::nullopt; };
-            h.invoke = [this](std::string_view id) { return v_.perform(id, hooks_.clock()); };
-            h.setValue = [this](std::string_view id, double value) { return v_.setAccessibleValue(id, value, hooks_.clock()); };
-            automation_ = std::make_unique<gpu::NativeVolumeAutomation>(std::move(h));
+            h.invoke = [this](std::string_view id) { return accepted(v_.perform(id, hooks_.clock())); };
+            h.setValue = [this](std::string_view id, double value) { return accepted(v_.setAccessibleValue(id, value, hooks_.clock())); };
+            automation_ = std::make_unique<gpu::NativeVolumeAutomation>(std::move(h)); automationRoot_ = root;
         }
-        return automation_->refresh();
+        return automation_->refresh() || rebuilt;
     }
     std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
     long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
@@ -258,15 +289,47 @@ public:
 
 class WorkModeModule final : public ModuleOwner {
     tools::WorkModePreview& w_;
+    VolumeModuleHooks hooks_;
+    // HUDWorkModeInteraction.layoutAccessibility (native/work_mode_automation.hpp).
+    std::unique_ptr<gpu::NativeProfileAutomation> automation_;
+    IRawElementProviderFragmentRoot* automationRoot_{};
+    core::Language automationLanguage_{core::Language::english};
 public:
-    explicit WorkModeModule(tools::WorkModePreview& w) : w_(w) {}
+    WorkModeModule(tools::WorkModePreview& w, VolumeModuleHooks hooks) : w_(w), hooks_(std::move(hooks)) {}
+    ~WorkModeModule() override { automation_.reset(); }
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override {
+        if (!hooks_.toScreen || !hooks_.clock) return false;
+        bool rebuilt = false;
+        if (!automation_ || automationRoot_ != root) {
+            if (automation_) { rebuilt = automation_->size() > 0; automation_->disconnect(); }
+            gpu::ProfileAutomationHost h; h.root = root;
+            h.controls = [this] { return w_.clientRect(modules::WorkModePresentation::bounds()) ? gpu::workModeAutomationControls(w_.state(), automationLanguage_) : std::vector<gpu::ProfileAutomationControl>{}; };
+            h.toScreen = [this](core::Rect canvas) -> std::optional<core::Rect> { const auto client = w_.clientRect(canvas); return client ? hooks_.toScreen(*client) : std::nullopt; };
+            h.invoke = [this](std::string_view id) { const bool done = w_.perform(id, hooks_.clock()); if (done && hooks_.changed) hooks_.changed(); return done; };
+            automation_ = std::make_unique<gpu::NativeProfileAutomation>(std::move(h)); automationRoot_ = root;
+        }
+        return automation_->refresh() || rebuilt;
+    }
+    std::size_t automationCount() const override { return automation_ ? automation_->size() : 0; }
+    long automationChild(std::size_t index, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return E_INVALIDARG; }
+        return automation_->child(index, out);
+    }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override {
+        if (!automation_) { if (out) *out = nullptr; return S_OK; }
+        return automation_->fromPoint(x, y, out);
+    }
+    void automationDisconnect() noexcept override { if (automation_) automation_->disconnect(); }
     std::string_view name() const noexcept override { return "workMode"; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointer = 15; r.key = 8; r.filterKey = 2; r.message = 3; r.messageRetriesPendingClose = true; r.finishEditing = 4; return r;
     }
     bool presents(core::Module m) const noexcept override { return m == core::Module::workMode; }
     void resize(const ClientMetrics& m) override { w_.resize(m); }
-    void setAppearance(const ModuleAppearance& a, double t) override { w_.setLanguage(a.language); w_.setAppearance({a.dark, 2, a.accent}); w_.setReduceMotion(a.reduceMotion, t); }
+    void setAppearance(const ModuleAppearance& a, double t) override {
+        w_.setLanguage(a.language); w_.setAppearance({a.dark, 2, a.accent}); w_.setReduceMotion(a.reduceMotion, t);
+        automationLanguage_ = a.language == core::Language::system ? core::Language::english : a.language;
+    }
     void setOverlayVisible(bool v, double t) override { w_.setOverlayVisible(v, t); }
     void overlayClosing(double t) override { w_.cancelInteraction(t); w_.setOverlayVisible(false, t); }
     void update(const ModuleFrame& f) override { w_.update(f.center, f.chrome, f.presentation, f.opacity, f.time); }
@@ -412,9 +475,15 @@ class ReaderModule final : public ModuleOwner {
     gpu::ReaderOwner& owner_;
     gpu::LayerRasterizer& raster_;
     std::function<void(const WheelEvent&, double)> wheelObserved_;
+    gpu::NativeScreenReaderPeers peers_; // ReaderAXButton peers (last: disconnects first)
 public:
-    ReaderModule(tools::ReaderPreview& r, gpu::ReaderOwner& o, gpu::LayerRasterizer& raster, std::function<void(const WheelEvent&, double)> observed)
-        : r_(r), owner_(o), raster_(raster), wheelObserved_(std::move(observed)) {}
+    ReaderModule(tools::ReaderPreview& r, gpu::ReaderOwner& o, gpu::LayerRasterizer& raster, std::function<void(const WheelEvent&, double)> observed, gpu::ScreenReaderPeerHooks peerHooks)
+        : r_(r), owner_(o), raster_(raster), wheelObserved_(std::move(observed)), peers_(tools::readerAutomation(r, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "reader"; }
     ModuleRouting routing() const noexcept override { ModuleRouting r; r.pointerCapture = 4; r.pointer = 5; r.wheel = 10; r.key = 11; r.flush = 3; return r; }
     bool presents(core::Module m) const noexcept override { return m == core::Module::reader; }
@@ -448,8 +517,15 @@ public:
 class CalendarModule final : public ModuleOwner {
     tools::CalendarPreview& c_;
     CalendarModuleHooks hooks_;
+    gpu::NativeScreenReaderPeers peers_; // CalendarAXButton and editor peers (last: disconnects first)
 public:
-    CalendarModule(tools::CalendarPreview& c, CalendarModuleHooks hooks) : c_(c), hooks_(std::move(hooks)) {}
+    CalendarModule(tools::CalendarPreview& c, CalendarModuleHooks hooks, gpu::ScreenReaderPeerHooks peerHooks)
+        : c_(c), hooks_(std::move(hooks)), peers_(tools::calendarAutomation(c, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "calendar"; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointerCapture = 3; r.pointer = 4; r.wheelCapture = 3; r.wheel = 9; r.keyCapture = 2; r.key = 10;
@@ -487,8 +563,14 @@ public:
 
 class MapModule final : public ModuleOwner {
     tools::MapPreview& m_;
+    gpu::NativeScreenReaderPeers peers_; // HUDWorldMapInteraction status and buttons (last: disconnects first)
 public:
-    explicit MapModule(tools::MapPreview& m) : m_(m) {}
+    MapModule(tools::MapPreview& m, gpu::ScreenReaderPeerHooks peerHooks) : m_(m), peers_(tools::mapAutomation(m, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "map"; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointerCapture = 5; r.pointer = 6; r.wheel = 11; r.key = 12;
@@ -521,8 +603,14 @@ public:
 
 class MinigameModule final : public ModuleOwner {
     tools::OrbiPomPreview& g_;
+    gpu::NativeScreenReaderPeers peers_; // OrbiPomAXButton peers and the rules group (last: disconnects first)
 public:
-    explicit MinigameModule(tools::OrbiPomPreview& g) : g_(g) {}
+    MinigameModule(tools::OrbiPomPreview& g, gpu::ScreenReaderPeerHooks peerHooks) : g_(g), peers_(tools::orbiPomAutomation(g, std::move(peerHooks))) {}
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return peers_.refresh(root); }
+    std::size_t automationCount() const override { return peers_.size(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return peers_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return peers_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { peers_.disconnect(); }
     std::string_view name() const noexcept override { return "minigame"; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointerCapture = 2; r.pointer = 7; r.wheelCapture = 2; r.wheel = 12; r.key = 13;
@@ -563,8 +651,19 @@ class ArchiveModule final : public ModuleOwner {
     tools::ArchivePreview& a_;
     ArchiveService* service_;
     tools::ArchiveMediaBinding* media_;
+    std::function<double()> clock_;
+    std::function<void()> changed_;
+    // HUDArchiveInteraction.layoutAccessibility (native/notes_automation.hpp).
+    endfield::notes::NotesAutomationBinding automation_{[this](IRawElementProviderFragmentRoot* root) { return a_.automation(root, clock_, changed_); }};
 public:
-    ArchiveModule(tools::ArchivePreview& a, ArchiveService* s, tools::ArchiveMediaBinding* m) : a_(a), service_(s), media_(m) {}
+    ArchiveModule(tools::ArchivePreview& a, ArchiveService* s, tools::ArchiveMediaBinding* m, std::function<double()> clock, std::function<void()> changed)
+        : a_(a), service_(s), media_(m), clock_(std::move(clock)), changed_(std::move(changed)) {}
+    ~ArchiveModule() override { automation_.disconnect(); }
+    bool automationRefresh(IRawElementProviderFragmentRoot* root) override { return clock_ && automation_.refresh(root); }
+    std::size_t automationCount() const override { return automation_.count(); }
+    long automationChild(std::size_t i, IRawElementProviderFragment** out) const override { return automation_.child(i, out); }
+    long automationFromPoint(double x, double y, IRawElementProviderFragment** out) const override { return automation_.fromPoint(x, y, out); }
+    void automationDisconnect() noexcept override { automation_.disconnect(); }
     std::string_view name() const noexcept override { return "archive"; }
     ModuleRouting routing() const noexcept override {
         ModuleRouting r; r.pointerCapture = 6; r.pointer = 3; r.wheel = 3; r.key = 3; r.filterKey = 3; r.message = 2;
@@ -605,21 +704,23 @@ public:
 };
 } // namespace
 
-std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview& o) { return std::make_unique<NotesModule>(o); }
+std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview& o, std::function<double()> clock, std::function<void()> changed) { return std::make_unique<NotesModule>(o, std::move(clock), std::move(changed)); }
 std::unique_ptr<ModuleOwner> shelfModule(tools::ShelfPreview& o) { return std::make_unique<ShelfModule>(o); }
 std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview& o, const gpu::NativeClipboardAssets& a) { return std::make_unique<ClipboardModule>(o, a); }
 std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview& o, VolumeModuleHooks hooks) { return std::make_unique<VolumeModule>(o, std::move(hooks)); }
 std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview& o) { return std::make_unique<EventLogModule>(o); }
-std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview& o) { return std::make_unique<WorkModeModule>(o); }
+std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview& o, VolumeModuleHooks hooks) { return std::make_unique<WorkModeModule>(o, std::move(hooks)); }
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview& o) { return std::make_unique<BatteryModule>(o); }
 std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview& o) { return std::make_unique<SettingsModule>(o); }
 std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview& o, StorageModuleHooks h) { return std::make_unique<StorageModule>(o, std::move(h)); }
 std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview& o) { return std::make_unique<ActivityModule>(o); }
-std::unique_ptr<ModuleOwner> readerModule(tools::ReaderPreview& o, gpu::ReaderOwner& r, gpu::LayerRasterizer& raster, std::function<void(const WheelEvent&, double)> observed) {
-    return std::make_unique<ReaderModule>(o, r, raster, std::move(observed));
+std::unique_ptr<ModuleOwner> readerModule(tools::ReaderPreview& o, gpu::ReaderOwner& r, gpu::LayerRasterizer& raster, std::function<void(const WheelEvent&, double)> observed, gpu::ScreenReaderPeerHooks peers) {
+    return std::make_unique<ReaderModule>(o, r, raster, std::move(observed), std::move(peers));
 }
-std::unique_ptr<ModuleOwner> calendarModule(tools::CalendarPreview& o, CalendarModuleHooks h) { return std::make_unique<CalendarModule>(o, std::move(h)); }
-std::unique_ptr<ModuleOwner> mapModule(tools::MapPreview& o) { return std::make_unique<MapModule>(o); }
-std::unique_ptr<ModuleOwner> minigameModule(tools::OrbiPomPreview& o) { return std::make_unique<MinigameModule>(o); }
-std::unique_ptr<ModuleOwner> archiveModule(tools::ArchivePreview& o, ArchiveService* s, tools::ArchiveMediaBinding* m) { return std::make_unique<ArchiveModule>(o, s, m); }
+std::unique_ptr<ModuleOwner> calendarModule(tools::CalendarPreview& o, CalendarModuleHooks h, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<CalendarModule>(o, std::move(h), std::move(peers)); }
+std::unique_ptr<ModuleOwner> mapModule(tools::MapPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<MapModule>(o, std::move(peers)); }
+std::unique_ptr<ModuleOwner> minigameModule(tools::OrbiPomPreview& o, gpu::ScreenReaderPeerHooks peers) { return std::make_unique<MinigameModule>(o, std::move(peers)); }
+std::unique_ptr<ModuleOwner> archiveModule(tools::ArchivePreview& o, ArchiveService* s, tools::ArchiveMediaBinding* m, std::function<double()> clock, std::function<void()> changed) {
+    return std::make_unique<ArchiveModule>(o, s, m, std::move(clock), std::move(changed));
+}
 } // namespace endfield::app

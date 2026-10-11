@@ -36,10 +36,14 @@ enum class ApplicationAreaMode {
 // singleFile asks for exactly one existing file (Mac NSOpenPanel without
 // multiple selection), listed through the filter "filterName (filterSpec)",
 // e.g. "Images" / "*.png;*.jpg" (empty spec: every file).
+// applications asks for one application (Mac: any installed .app): an
+// existing .exe/.lnk through the filter, or a packaged application from
+// AppsFolder returned as "shell:AppsFolder\\<AppUserModelID>".
 struct ApplicationFileRequest {
     std::string title, acceptLabel, selectionLabel;
     bool singleFile{};
     std::string filterName, filterSpec;
+    bool applications{}; // one application: an existing .exe/.lnk through the filter, or a packaged application from AppsFolder
 };
 struct ApplicationFileResult {
     bool cancelled{};               // the user, a module switch or the HUD closing cancelled it

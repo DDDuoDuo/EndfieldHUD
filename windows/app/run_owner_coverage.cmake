@@ -42,10 +42,15 @@ string(JSON lifecycle GET "${report}" productionLifecycleChecks)
 if(NOT modules EQUAL 54 OR NOT lifecycle EQUAL CHECKS)
   message(FATAL_ERROR "Owner coverage incomplete: ${modules} module results, ${lifecycle} lifecycle checks")
 endif()
-# Host integration (UI Automation root over Volume, restart service, drop route).
+# Host integration: the UI Automation root over every module group and the
+# local peers, the Power entry, area services, the center logo, the clock,
+# the restart handoff and the drop route (HOST_CHECKS: the expected minimum).
 string(JSON host_checks GET "${report}" hostIntegrationChecks)
-if(host_checks LESS 7)
-  message(FATAL_ERROR "Host integration coverage incomplete: ${host_checks} checks")
+if(NOT HOST_CHECKS)
+  set(HOST_CHECKS 7)
+endif()
+if(host_checks LESS HOST_CHECKS)
+  message(FATAL_ERROR "Host integration coverage incomplete: ${host_checks} of at least ${HOST_CHECKS} checks")
 endif()
 # Module areas: the modules they present ran the same three combined cycles,
 # and every registered area is reported (constructed and covered when the

@@ -15,6 +15,8 @@ struct ScopedMediaRequest {
     modules::NotesMediaKind kind{modules::NotesMediaKind::image};
     bool firstFrameOnly{},videoPoster{},allowVideoInspection{},workerPoster{};
     std::optional<double>duration;std::shared_ptr<void>accessLease;
+    // Opaque played-frame filter (native NotesVideoRequest::frameFilter): carried to the frame server, never called here; compared by pointer.
+    std::shared_ptr<const void>frameFilter;
     bool operator==(const ScopedMediaRequest&)const=default;
 };
 struct ScopedMediaBinding {

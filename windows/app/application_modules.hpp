@@ -9,6 +9,7 @@
 #include "native/volume_scene.hpp"
 #include "modules/reader_presentation.hpp"
 #include "modules/storage_presentation.hpp"
+#include "native/screen_reader_peers.hpp"
 #include <functional>
 #include <memory>
 #include <optional>
@@ -40,26 +41,34 @@ struct CalendarModuleHooks {
 struct VolumeModuleHooks {
     std::function<double()> clock;                                           // shared clock for Invoke/RangeValue
     std::function<std::optional<core::Rect>(core::Rect client)> toScreen;    // logical client rect -> screen pixels
+    std::function<void()> changed;                                           // after an accepted press/value: present and re-list
 };
 struct StorageModuleHooks {
     std::function<double()> clock;    // injected synthetic clock in hidden coverage
     std::function<bool()> presented;  // HUD not closing and not concealed
 };
 
-std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview&);
+// Notes and Archive list their projected controls under the HUD UIA root
+// (app/areas/notes_automation_binding.hpp): `clock` is the press time,
+// `changed` presents and refreshes after an accepted peer action.
+std::unique_ptr<ModuleOwner> notesModule(tools::NotesPreview&, std::function<double()> clock = {}, std::function<void()> changed = {});
 std::unique_ptr<ModuleOwner> shelfModule(tools::ShelfPreview&);
 std::unique_ptr<ModuleOwner> clipboardModule(tools::ClipboardPreview&, const native::NativeClipboardAssets&);
 std::unique_ptr<ModuleOwner> volumeModule(tools::VolumePreview&, VolumeModuleHooks = {});
 std::unique_ptr<ModuleOwner> eventLogModule(tools::EventLogPreview&);
-std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview&);
+// Work Mode reuses the Volume hooks (press clock and client -> screen).
+std::unique_ptr<ModuleOwner> workModeModule(tools::WorkModePreview&, VolumeModuleHooks = {});
 std::unique_ptr<ModuleOwner> batteryModule(tools::BatteryPreview&);
 std::unique_ptr<ModuleOwner> settingsModule(tools::SettingsPreview&);
 std::unique_ptr<ModuleOwner> storageModule(tools::StoragePreview&, StorageModuleHooks);
 std::unique_ptr<ModuleOwner> activityModule(tools::ActivityPreview&);
+// Reader, Calendar, Map and the minigame list their projected peers
+// (native/screen_reader_peers.hpp, tools/*_automation.hpp) under the HUD root.
 std::unique_ptr<ModuleOwner> readerModule(tools::ReaderPreview&, native::ReaderOwner&, native::LayerRasterizer&,
-    std::function<void(const WheelEvent&, double)> wheelObserved = {});
-std::unique_ptr<ModuleOwner> calendarModule(tools::CalendarPreview&, CalendarModuleHooks);
-std::unique_ptr<ModuleOwner> mapModule(tools::MapPreview&);
-std::unique_ptr<ModuleOwner> minigameModule(tools::OrbiPomPreview&);
-std::unique_ptr<ModuleOwner> archiveModule(tools::ArchivePreview&, ArchiveService*, tools::ArchiveMediaBinding*);
+    std::function<void(const WheelEvent&, double)> wheelObserved, native::ScreenReaderPeerHooks);
+std::unique_ptr<ModuleOwner> calendarModule(tools::CalendarPreview&, CalendarModuleHooks, native::ScreenReaderPeerHooks);
+std::unique_ptr<ModuleOwner> mapModule(tools::MapPreview&, native::ScreenReaderPeerHooks);
+std::unique_ptr<ModuleOwner> minigameModule(tools::OrbiPomPreview&, native::ScreenReaderPeerHooks);
+std::unique_ptr<ModuleOwner> archiveModule(tools::ArchivePreview&, ArchiveService*, tools::ArchiveMediaBinding*,
+    std::function<double()> clock = {}, std::function<void()> changed = {});
 } // namespace endfield::app

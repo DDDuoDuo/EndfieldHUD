@@ -11,9 +11,9 @@ void Application::Impl::cleanup(){if(cleaned)return;cleaned=true;ready=false;sto
     if(mediaPicker)mediaPicker->cancel();mediaPicker.reset();
     // The HUD drop route and the UI Automation tree stop before any owner
     // goes: clients holding fragments get UIA_E_ELEMENTNOTAVAILABLE.
-    hudDrop->owner=nullptr;hudDrop->paths.clear();hudDropActive=false;
+    hudDrop->owner=nullptr;hudDrop->paths.clear();hudDropActive=false;dropHoverOwner=nullptr;
     if(automation){automation->shutdown();automation.reset();UiaDisconnectAllProviders();}
-    projectionHandoff.cancel();projectionDrop->enabled=false;if(shelf)shelf->setExternalDropCallbacks({},now());projection.reset();
+    projectionHandoff.cancel();projectionDrop->enabled=false;if(shelf)shelf->setExternalDropCallbacks({},now());releaseProjection();
     try{composition.detach(renderer);}catch(...){renderer.reset();}
     // GPU release in reverse registration order: Archive/Calendar/Work Mode
     // fields borrow Notes' activated TSF manager, so Notes releases last.
@@ -87,7 +87,7 @@ void Application::Impl::shutdownVisible(){
         if(readerOwner)need(readerOwner->flush(),"Reader changes could not be saved");
         if(settingsSaves)need(settingsSaves->flush(),"Settings changes could not be saved");if(eventSaves)eventSaves->flush(now());
     }
-    projectionHandoff.cancel();projectionDropRoute(false,now());projection.reset();backdrop.reset();
+    projectionHandoff.cancel();projectionDropRoute(false,now());releaseProjection();backdrop.reset();
     if(visibleMode())need(backdrop.stats().hostAttributeRestored,"Source preview could not restore its original host-backdrop flag");
     if(readerTrace)readerTrace->save(args.dataRoot/"reader-scroll-trace.json");cleanup();if(backdropQueue)backdropQueue->finish();pendingShelfReveal.reset(); // A reveal still pending at quit is dropped (OverlayController).
 }
@@ -99,10 +99,11 @@ int Application::run(){
     return impl_->runVisible();
 }
 void Application::activate(std::span<const std::string>arguments){impl_->forwardedActivation(arguments);}
-std::function<void()> Application::takeRestartWork(){
-    if(!impl_->restartAccepted)return {};
-    impl_->restartAccepted=false;return std::exchange(impl_->restartWork,{});
+std::function<void()> Application::Impl::takeRestartWork(){
+    if(!restartAccepted)return {};
+    restartAccepted=false;return std::exchange(restartWork,{});
 }
+std::function<void()> Application::takeRestartWork(){return impl_->takeRestartWork();}
 std::optional<std::optional<core::Module>> Application::takeDeviceRecovery(){
     if(!impl_->deviceLost)return std::nullopt;
     impl_->deviceLost=false;return std::optional<std::optional<core::Module>>(std::in_place,std::exchange(impl_->deviceLostModule,std::nullopt));

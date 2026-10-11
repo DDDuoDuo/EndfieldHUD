@@ -7,6 +7,9 @@
 // durability and per-module failure isolation.
 #include "app/application_impl.hpp"
 #include "app/application_persistence.hpp"
+#include "app/areas/projection_automation.hpp"
+#include "app/areas/calendar_reminder_module.hpp"
+#include "app/areas/update_service.hpp"
 #include <cctype>
 #include "core/application_arguments.hpp"
 #include <algorithm>
@@ -75,8 +78,8 @@ std::string text5(core::Language l,std::string_view en,std::string_view hans,std
     switch(l){case core::Language::simplifiedChinese:return std::string(hans);case core::Language::traditionalChinese:return std::string(hant);
     case core::Language::japanese:return std::string(ja);case core::Language::korean:return std::string(ko);default:return std::string(en);}
 }
-// No Windows updater exists yet (packaging is unsigned and has no update
-// channel): the About page's update row opens the GitHub releases page, and
+// Fallback without the windowsUpdates area (development previews, a disabled
+// area): the About page's update row opens the GitHub releases page, and
 // automatic installation is reported unavailable (canSetAutomatic=false).
 modules::SettingsUpdateStatus updateStatus(core::Language l){
     modules::SettingsUpdateStatus u;
@@ -197,6 +200,17 @@ Application::Impl::~Impl(){try{cleanup();}catch(...){}}
 
 void Application::Impl::registerModule(std::unique_ptr<ModuleOwner>&owner){registry.add(*owner);}
 void Application::Impl::unregisterModule(std::unique_ptr<ModuleOwner>&owner)noexcept{if(owner){registry.remove(*owner);owner.reset();}}
+// Projected UI Automation of the built-in owners: a press uses the shared
+// clock like a click; the content event presents and runs the host refresh
+// (which also takes actions a press queued, e.g. the Reader's file chooser).
+native::ScreenReaderPeerHooks Application::Impl::peerHooks(){return {host.hwnd(),[this]{return areaClock();},[this]{automationChanged();refresh(now());}};}
+VolumeModuleHooks Application::Impl::screenHooks(){
+    VolumeModuleHooks hooks;hooks.clock=[this]{return areaClock();};hooks.changed=[this]{automationChanged();refresh(now());};
+    hooks.toScreen=[this](core::Rect r)->std::optional<core::Rect>{
+        POINT origin{};if(!ClientToScreen(static_cast<HWND>(host.hwnd()),&origin))return std::nullopt;
+        const double scale=metrics.scale;return core::Rect{origin.x+r.x*scale,origin.y+r.y*scale,r.width*scale,r.height*scale};};
+    return hooks;
+}
 
 void Application::Impl::construct(){
     if(!args.watchBlur.empty())backdropAnimation=loadWatchBlur(args.watchBlur);startup.mark("original-backdrop-animation");
@@ -221,6 +235,7 @@ void Application::Impl::construct(){
     animation=std::make_unique<source::WatchAnimation>(*scene,*library);
     session=std::make_unique<SourceWatchSession>(*scene,*document,*library,*camera,resources,animators,transitions,profile,desktop);startup.mark("session-construction");
     idCardBaseline=desktop; // the bottom-left ID card's packet baseline (IdCardPresenter)
+    desktopBaseline=desktop;findCenterLogoNodes(); // center logo overrides without the presenter
     const auto sourceManifestSHA256=runtime?runtime->sourceManifestSHA256():package->manifestSHA256();
     materials=std::make_unique<gpu::SourceScene>(gpu::CompiledSourceScene{args.cache,args.cachePin});
     need(materials->provenance().packetSHA256==sourceManifestSHA256,"Compiled material cache source manifest SHA-256 differs from the input package");
@@ -369,9 +384,17 @@ void Application::Impl::constructAreas(){
     }
     // The Power page shows the area's merged reading (with the mWh pair).
     if(battery)areaHost->publish<power::PowerPageSink>(power::powerPageSinkKey,batteryPageSink);
+    // HUDCalendarController didBecomeActive -> refreshForSystemChange: a
+    // consumed Calendar reminder click refreshes Calendar once.
+    if(calendar){
+        calendarReminderRefresh=[this](double time){if(calendar)isolate(calendarModuleOwner,"system change",[&]{calendar->systemChanged(time);updateCalendarWake();});};
+        areaHost->publish<endfield::areas::CalendarReminderActivationSink>(endfield::areas::calendarReminderActivationKey,calendarReminderRefresh);
+    }
     // Committing a Mac import needs every store closed: the accepted-quit
     // teardown, then a fresh run (main.cpp). Production only.
     if(production())areaHost->publish<DataRootRestart>(dataRootRestartService,restart);
+    // Read-only Event Log for areas: systemProviders hidden coverage checks every host action hook's recorded vocabulary.
+    if(eventOwner)areaHost->publish<gpu::EventLogOwner>(gpu::eventLogOwnerServiceKey,*eventOwner);
     for(auto&[name,factory]:args.modules){
         if(!factory)continue;
         // A gate run over an isolated root never touches the shared toast
@@ -433,6 +456,15 @@ void Application::Impl::connectAreas(){
     // Areas are constructed after Settings: the System page's area rows
     // ("Import macOS data…") appear now.
     if(settingsUI)settingsUI->refreshViews(areaClock());
+    // The windowsUpdates area owns About's update rows and the tray item
+    // (AppDelegate.configureUpdater); its observer runs after any change.
+    if(auto*u=updates()){u->setObserver([this]{refreshUpdateStatus();if(production())updateTrayMenu();});refreshUpdateStatus();}
+}
+UpdateService* Application::Impl::updates()const noexcept{return areaHost?areaHost->find<UpdateService>(UpdateService::key):nullptr;}
+void Application::Impl::refreshUpdateStatus(){
+    if(!settingsUI)return;const auto l=settingsLanguage(configuration);
+    if(auto*u=updates()){auto status=u->settingsStatus(l);status.automaticTitle=u->automaticTitle(l);settingsUI->controller().setUpdateStatus(std::move(status));}
+    else settingsUI->controller().setUpdateStatus(updateStatus(l));
 }
 power::PowerAreaService* Application::Impl::powerArea()const noexcept{return areaHost?areaHost->find<power::PowerAreaService>(power::PowerAreaService::key):nullptr;}
 AppShortcutNavigation* Application::Impl::appNavigation()const noexcept{return areaHost?areaHost->find<AppShortcutNavigation>(appShortcutNavigationService):nullptr;}
@@ -463,6 +495,7 @@ void Application::Impl::drainUtility(double time){
     if(!utility)return;
     // The long-job executor (area exports) settles with the shared one.
     utility->waitIdle();if(longWork)longWork->waitIdle();utility->drain();if(longWork)longWork->drain();
+    if(centerLogoRetry)updateCenterLogo();
     broadcast(HostEvent::Kind::utilityCompleted,time);
 }
 void Application::Impl::finishAreaPicker(ApplicationFileResult result){
@@ -528,7 +561,8 @@ bool Application::Impl::AreaHost::chooseFiles(const ApplicationFileRequest&reque
     if(!completion||!impl_.mediaPicker||impl_.pickerOwner!=PickerOwner::none||impl_.stopping||!impl_.ready)return false;
     // singleFile: one existing file through the caller's filter (Mac
     // NSOpenPanel with content types and no multiple selection).
-    if(request.singleFile)impl_.mediaPicker->setLabels({request.title,request.acceptLabel,request.selectionLabel,gpu::ShelfPickerMode::singleFile,request.filterName,request.filterSpec});
+    if(request.applications)impl_.mediaPicker->setLabels({request.title,request.acceptLabel,request.selectionLabel,gpu::ShelfPickerMode::applications,request.filterName,request.filterSpec});
+    else if(request.singleFile)impl_.mediaPicker->setLabels({request.title,request.acceptLabel,request.selectionLabel,gpu::ShelfPickerMode::singleFile,request.filterName,request.filterSpec});
     else impl_.mediaPicker->setLabels({request.title,request.acceptLabel,request.selectionLabel,gpu::ShelfPickerMode::mixedReferences});
     if(!impl_.mediaPicker->request())return false;
     impl_.pickerOwner=PickerOwner::area;impl_.areaPicker=std::move(completion);impl_.host.capturePointer(false);return true;
@@ -584,7 +618,7 @@ void Application::Impl::constructNotes(){
     if(production())notes->select(core::Module::map,now()-1);
     mediaPicker=std::make_unique<gpu::NativeShelfFilePicker>(gpu::ShelfPickerRoute{static_cast<HWND>(host.hwnd()),mediaPickerMessage,serviceGeneration},gpu::ShelfPickerLabels{"添加图片/视频","添加","添加所选文件"});
     session->setHitFilter([this](std::string_view,core::Point p){return !registry.covers(p);},0);
-    notesModuleOwner=notesModule(*notes);registerModule(notesModuleOwner);
+    notesModuleOwner=notesModule(*notes,[this]{return areaClock();},[this]{automationChanged();refresh(now());});registerModule(notesModuleOwner);
     startup.mark("isolated-notes-owner");
 }
 void Application::Impl::constructShelf(){
@@ -620,7 +654,7 @@ void Application::Impl::constructMap(){
     options.raster.pixelsPerPoint=2;options.raster.paddingPoints=1;
     options.player=gpu::loadMapPlayerImages(args.mapPlayerAssets,{"3903dcef9be0a32e24b7d6e5ff06235f107df7ae56b2c0d29351b1f20facc83a","ca04f142185c7de40acd8523bdb563195d90a1d1"});
     map=std::make_unique<tools::MapPreview>(rasterizer,*utility,std::move(options));map->resize(metrics);
-    mapModuleOwner=mapModule(*map);registerModule(mapModuleOwner);
+    mapModuleOwner=mapModule(*map,peerHooks());registerModule(mapModuleOwner);
     startup.mark("lazy-map-owner");
 }
 // Decode the immutable bundled geography once on first selection. A full
@@ -659,7 +693,7 @@ void Application::Impl::constructReader(){
     // SystemHUDView ReaderCanvas.onEvent: readerAction imported/deleted/bookmarked/settings/progress.
     readerOwner->state().setEventObserver([this](std::string_view action){if(eventOwner&&!stopping)eventOwner->record({ehud::data::makeUUID(),modules::EventKind::readerAction,ehud::data::foundationNow(),{{"action",std::string(action)}}});});
     reader=std::make_unique<tools::ReaderPreview>(readerOwner->state(),rasterizer,std::move(options));reader->resize(metrics);
-    readerModuleOwner=readerModule(*reader,*readerOwner,rasterizer,[this](const WheelEvent&e,double time){if(readerTrace)readerTrace->record(true,time,reader->scrollSnapshot(),e.steps,e.linesPerStep);});
+    readerModuleOwner=readerModule(*reader,*readerOwner,rasterizer,[this](const WheelEvent&e,double time){if(readerTrace)readerTrace->record(true,time,reader->scrollSnapshot(),e.steps,e.linesPerStep);},peerHooks());
     registerModule(readerModuleOwner);
     startup.mark("lazy-reader-owner");
 }
@@ -692,7 +726,7 @@ void Application::Impl::constructCalendar(){
     hooks.afterUpdate=[this]{if(calendarWakeActive!=calendarState->active())updateCalendarWake();};
     hooks.afterClosing=[this]{updateCalendarWake();};
     hooks.flush=[this]{return flushCalendar();};
-    calendarModuleOwner=calendarModule(*calendar,std::move(hooks));registerModule(calendarModuleOwner);
+    calendarModuleOwner=calendarModule(*calendar,std::move(hooks),peerHooks());registerModule(calendarModuleOwner);
     startup.mark("isolated-calendar-owner");
 }
 void Application::Impl::constructServices(){
@@ -755,7 +789,7 @@ void Application::Impl::constructArchive(){
     media.errorText=[this](HRESULT hr){return tools::notesMediaErrorDescription(hr,watchAppearance.language);};
     media.loadThumbnail=[this](std::string id,auto completion){archiveService->state().loadThumbnail(std::move(id),std::move(completion));};media.changed=changed;
     archiveMedia=std::make_unique<tools::ArchiveMediaBinding>(*archive,*mediaBroker,archiveMediaClient,renderer,archiveImages,std::move(media));
-    archiveModuleOwner=archiveModule(*archive,archiveService.get(),archiveMedia.get());registerModule(archiveModuleOwner);
+    archiveModuleOwner=archiveModule(*archive,archiveService.get(),archiveMedia.get(),[this]{return areaClock();},[this]{automationChanged();refresh(now());});registerModule(archiveModuleOwner);
     startup.mark("shared-media-archive-owner");
 }
 void Application::Impl::constructStorage(){
@@ -860,8 +894,10 @@ void Application::Impl::constructWorkMode(){
     // profile.json writer.
     options.saveWorkSeconds=[](double){};
     workMode=std::make_unique<tools::WorkModePreview>(static_cast<HWND>(host.hwnd()),rasterizer,notes->activatedTextManager(),notes->textClient(),std::move(options));
-    workMode->resize(metrics);workMode->focus(focused,now());
-    workModeModuleOwner=workModeModule(*workMode);registerModule(workModeModuleOwner);
+    // The area clock: hidden coverage never moves the owner's time to the wall clock.
+    workMode->resize(metrics);workMode->focus(focused,areaClock());
+    // HUDWorkModeInteraction accessibility buttons under the HUD root.
+    workModeModuleOwner=workModeModule(*workMode,screenHooks());registerModule(workModeModuleOwner);
 }
 void Application::Impl::constructVolume(){
     tools::VolumePreviewOptions options;
@@ -891,11 +927,7 @@ void Application::Impl::constructVolume(){
         volume=std::make_unique<tools::VolumePreview>(rasterizer,std::move(options));
     }
     volume->resize(metrics);
-    VolumeModuleHooks volumeHooks;volumeHooks.clock=[this]{return areaClock();};
-    volumeHooks.toScreen=[this](core::Rect r)->std::optional<core::Rect>{
-        POINT origin{};if(!ClientToScreen(static_cast<HWND>(host.hwnd()),&origin))return std::nullopt;
-        const double scale=metrics.scale;return core::Rect{origin.x+r.x*scale,origin.y+r.y*scale,r.width*scale,r.height*scale};};
-    volumeModuleOwner=volumeModule(*volume,std::move(volumeHooks));registerModule(volumeModuleOwner);
+    volumeModuleOwner=volumeModule(*volume,screenHooks());registerModule(volumeModuleOwner);
 }
 void Application::Impl::constructSettings(){
     if(args.moduleCoverage&&!args.orbipomAssets.empty()){
@@ -940,8 +972,11 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.callbacks.editBatteryPosition=[this]{if(auto*p=powerArea())(void)p->editPosition(now());};
     // overlay.afterSystemClose + closeSystemOverlay: links open once the HUD closed.
     options.callbacks.openLink=[this](std::string_view url){openAfterClose(std::string(url),now());};
-    // No Windows updater yet: "Check for updates" opens the GitHub releases page.
-    options.callbacks.checkUpdates=[this]{openAfterClose(std::string(releasesURL),now());};
+    // AppDelegate.checkForAppUpdates through the windowsUpdates area (consented
+    // download and Setup hand-off); its returned page opens after the HUD
+    // closed. Without the area the row opens the GitHub releases page.
+    options.callbacks.checkUpdates=[this]{const auto time=now();if(auto*u=updates()){if(auto url=u->activate(time))openAfterClose(*url,time);}else openAfterClose(std::string(releasesURL),time);};
+    options.callbacks.automaticUpdates=[this](bool enabled){if(auto*u=updates())u->setAutomaticChecks(enabled,now());};
     options.about.repository=std::string(repositoryURL);
 #if defined(EHUD_APP_VERSION_NAME)&&defined(EHUD_APP_BUILD_NUMBER)
     options.about.version=std::string(EHUD_APP_VERSION_NAME)+" ("+EHUD_APP_BUILD_NUMBER+")"; // HUDAboutInformation: "<version> (<build>)"
@@ -950,8 +985,13 @@ void Application::Impl::createSettings(const ehud::data::Settings&loaded){
     options.viewHooks.macImportTitle=[this](core::Language l)->std::optional<std::string>{
         auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr;if(!e)return std::nullopt;return e->title(l);};
     options.viewHooks.macImport=[this]{if(auto*e=areaHost?areaHost->find<MacImportEntry>(macImportEntryService):nullptr)(void)e->present(areaClock());};
+    // Display > Theme color / Center logo (HUDSettingsInteraction.chooseColor,
+    // chooseLogo; a logo selection invalidates a pending import).
+    options.viewHooks.chooseColor=[this]{requestThemeColor();};
+    options.viewHooks.chooseLogo=[this]{chooseCenterLogo();};
+    options.viewHooks.logoSelection=[this]{++logoImportGeneration;};
     settingsUI=std::make_unique<tools::SettingsPreview>(rasterizer,std::move(options));settingsUI->resize(metrics);settingsUI->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,visibleMode()?now():args.benchmarkEpoch);
-    settingsUI->controller().setUpdateStatus(updateStatus(settingsLanguage(configuration)));
+    refreshUpdateStatus();
     settingsModuleOwner=settingsModule(*settingsUI);registerModule(settingsModuleOwner);
     if(loginItem){
         // LoginItemManager.start(ensureEnabled:): only the saved preference
@@ -983,7 +1023,7 @@ void Application::Impl::ensureGame(double time){
     gameSession=std::make_unique<modules::OrbiPomSession>(gameBest,std::move(callbacks));
     tools::OrbiPomPreviewOptions gameOptions;gameOptions.raster.assetRoot=args.orbipomAssets;gameOptions.raster.pixelsPerPoint=2;gameOptions.raster.paddingPoints=1;
     game=std::make_unique<tools::OrbiPomPreview>(*gameSession,rasterizer,std::move(gameOptions));game->resize(metrics);game->setForeground(focused,time);game->setOverlayVisible(session->phase()!=core::VisibilityPhase::concealed,time);configurationPending=true;
-    gameModuleOwner=minigameModule(*game);registerModule(gameModuleOwner);
+    gameModuleOwner=minigameModule(*game,peerHooks());registerModule(gameModuleOwner);
 }
 void Application::Impl::constructTray(){
     const auto bytes=ehud::data::detail::readFile(args.residentIcons/"manifest.json",512*1024);need(bytes.has_value(),"Missing original icon roster");
@@ -1088,8 +1128,9 @@ void Application::Impl::updateTrayMenu(){
     if(auto*power=powerArea())menu.push_back({gpu::TrayAction::previewCharging,wide(power->previewMenuTitle(language)),true});
     menu.push_back({gpu::TrayAction::none,{},false,false,true});
     menu.push_back({gpu::TrayAction::about,t("About EndfieldHUD","关于 EndfieldHUD"),bool(settingsUI)});
-    // checkForAppUpdates without installation support opens About.
-    menu.push_back({gpu::TrayAction::checkUpdates,t("Check for Updates…","检查更新…"),bool(settingsUI)});
+    // AppDelegate.checkForAppUpdates: the windowsUpdates area's state title
+    // ("Update available · …", "Checking for updates…") or the plain item.
+    menu.push_back({gpu::TrayAction::checkUpdates,updates()?wide(updates()->trayTitle(language)):t("Check for Updates…","检查更新…"),bool(settingsUI)});
     menu.push_back({gpu::TrayAction::quit,t("Quit EndfieldHUD","退出 EndfieldHUD")});
     tray->setMenu(std::move(menu));
 }
@@ -1163,6 +1204,7 @@ void Application::Impl::selectModule(core::Module module,double time){
     if(notes){const auto current=notes->selected();
         if(module!=current)if(auto*owner=registry.presenter(current);owner&&!owner->releasesSelection(time)){pendingModule=module;return;}}
     pendingModule.reset();if(mediaPicker){mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();finishAreaPicker({true,false,{}});}
+    if(module!=core::Module::display)deactivateDisplayPanels(); // the Display page's colour panel and logo import
     if(readerOwner&&module!=core::Module::reader)readerOwner->cancelImport();
     pendingReaderPicker.reset();pendingReaderAction.reset();
     if(notes)notes->select(module,time);
@@ -1181,7 +1223,7 @@ void Application::Impl::close(double time){
     if(!production())std::cout<<"Preview close requested at "<<time<<std::endl;
     if(registry.first(ModuleRegistry::Chain::finishEditing,[&](ModuleOwner&o,const ModuleRouting&){return !o.finishEditing(time);},"close")){pendingClose=true;return;}
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)archiveMedia->cancelImport();if(readerOwner)readerOwner->cancelImport();pendingReaderPicker.reset();pendingReaderAction.reset();
-    finishAreaPicker({true,false,{}});
+    finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     registry.forEach([&](ModuleOwner&o){o.overlayClosing(time);},"close");if(audio)audio->volume().setVisible(false);automationChanged();
     host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);canvasCapturedOpacity=canvasOpacity(time);canvasClosedAt=time;closing=true;session->close(time);refresh(time);
 }
@@ -1190,7 +1232,7 @@ void Application::Impl::forceConceal(double time){
     // termination cannot wait for visible animations or editor retries.
     pendingClose=false;pendingModule.reset();headerClock.setActive(false,time);pendingShelfReveal.reset();pendingLink.reset();
     if(mediaPicker)mediaPicker->cancel();pickerOwner=PickerOwner::none;pendingArchivePicker.reset();if(archiveMedia)archiveMedia->cancelImport();if(readerOwner)readerOwner->cancelImport();pendingReaderPicker.reset();pendingReaderAction.reset();
-    finishAreaPicker({true,false,{}});
+    finishAreaPicker({true,false,{}});deactivateDisplayPanels();setClockHovered(false);
     if(session->phase()!=core::VisibilityPhase::concealed||closing){
         registry.forEach([&](ModuleOwner&o){o.overlayClosing(time);},"force close");if(audio)audio->volume().setVisible(false);
         host.capturePointer(false);environment.pointerLocked=false;session->setEnvironment(environment,time);
@@ -1242,7 +1284,7 @@ void Application::Impl::trayAction(gpu::TrayAction action,bool hotkey,double tim
     case gpu::TrayAction::openOverlay:perform(hotkey?lifecycle.toggle():lifecycle.openOverlay(),time);break;
     case gpu::TrayAction::settings:perform(lifecycle.openSettingsModule(core::Module::system),time);break;
     case gpu::TrayAction::about:perform(lifecycle.openSettingsModule(core::Module::about),time);break;
-    case gpu::TrayAction::checkUpdates:perform(lifecycle.openSettingsModule(core::Module::about),time);break;
+    case gpu::TrayAction::checkUpdates:perform(lifecycle.openSettingsModule(core::Module::about),time);if(auto*u=updates())(void)u->check(time);break;
     case gpu::TrayAction::previewCharging:if(auto*p=powerArea())p->preview(time);break;
     case gpu::TrayAction::workMode:perform(lifecycle.openWorkMode(time),time);break;
     default:break;
@@ -1345,13 +1387,14 @@ void Application::Impl::applyConfiguration(double time){
     const auto clock=configuration.string("clockStyle");chromeContent.style=clock=="split"?source::DesktopClockStyle::split:clock=="dial"?source::DesktopClockStyle::dial:clock=="rail"?source::DesktopClockStyle::rail:clock=="stacked"?source::DesktopClockStyle::stacked:source::DesktopClockStyle::digital;
     chromeContent.localizedClose=core::localized("Click outside to close","点击外侧关闭",watchAppearance.language);chromeContent.uppercaseShortcut=modules::settingsShortcutTitle(modules::settingsShortcut(configuration));
     if(chrome){chrome->setAppearance({watchAppearance.dark,watchAppearance.dark?a:source::sourceBlackBlend(a,.35)});updateClock();}
+    updateCenterLogo(); // setDesktopCenterLogo(configuration.centerLogo, revision)
     if(tray&&settingsUI&&!settingsUI->controller().capturingShortcut()&&!quitRequested){const auto key=modules::settingsShortcut(configuration);const gpu::TrayHotkey desired{key.modifiers,key.key};
         if(tray->hotkey()!=desired){shortcutStatus=tray->setHotkey(desired)?std::string{}:core::localized("Shortcut unavailable","快捷键不可用",watchAppearance.language);settingsUI->controller().setExternalStatus(loginStatus,shortcutStatus);}}
     moduleAppearance={watchAppearance.language,watchAppearance.dark,accent,{a[0],a[1],a[2]},settings.reduceMotion,settings.ambientEnabled,settings.lowPower};
     registry.forEach([&](ModuleOwner&o){o.setAppearance(moduleAppearance,time);},"appearance");
     // Applied inside the frame being prepared (or before the first one): no extra refresh.
     (void)registry.broadcast({HostEvent::Kind::settingsChanged,0},time);
-    if(settingsUI)settingsUI->controller().setUpdateStatus(updateStatus(watchAppearance.language));
+    refreshUpdateStatus();
     applyTrayIcon();
     if(production())updateTrayMenu();
     // Baseline is the loaded record (AppDelegate.applicationDidFinishLaunching).
@@ -1371,7 +1414,7 @@ void Application::Impl::scheduleDeadline(){if(!visibleMode()||!ready||stopping)r
 void Application::Impl::refresh(double time){if(visibleMode()&&ready&&!stopping){
     syncActivityTelemetry(time);
     hudDropRoute(time);
-    if(automation&&automationDirty){automationDirty=false;automation->refresh();}
+    refreshAutomation();
     projectionDrop->enabled=projection&&projection->presented()&&projectionHandoff.acceptsInput()&&!projection->preview()->importBusy()&&pickerOwner==PickerOwner::none;
     projectionDrop->scale=metrics.scale;
     if(projection&&projection->presented())while(auto action=projection->preview()->takeAction())projectionActions.push_back(std::move(*action));
@@ -1461,6 +1504,7 @@ bool Application::Impl::present(double time,bool submit){
     if(mediaBroker){mediaBroker->sample(time);if(notes)notes->refreshSharedMedia(time);if(archiveMedia&&archiveMedia->refresh(time)&&archive&&notes&&chromePlan&&chromePlan->projection().center&&archiveModuleOwner)registry.guard(*archiveModuleOwner,[&]{archive->update(*chromePlan->projection().center,noteChromeSettings,notes->modulePresentation(),static_cast<float>(canvasOpacity(time)),time);},"frame");}
     {auto stage=probe.measure(LiveProbe::publication);publishNative();composition.present(renderer);renderer.setCamera(gpu::layerViewportProjection(metrics.pixelWidth,metrics.pixelHeight)*core::Matrix4::scale(metrics.scale,metrics.scale,1));}
     if(submit){auto stage=probe.measure(LiveProbe::draw);renderer.draw(visibleMode());}
+    if(centerLogoRetire)retireCenterLogo();
     if(readerTrace&&reader&&notes&&notes->selected()==core::Module::reader)readerTrace->record(false,time,reader->scrollSnapshot(),0,0,std::chrono::duration<double,std::milli>(Clock::now()-traceFrameStart).count());return true;
 }
 bool Application::Impl::requestMediaPicker(){
@@ -1560,7 +1604,7 @@ void Application::Impl::hudDropRoute(double time){
         notes->selected()!=core::Module::fileShelf&&pickerOwner==PickerOwner::none;
     if(wanted==hudDropActive)return;
     hudDropActive=wanted;hudDrop->paths.clear();hudDrop->posted=false;
-    if(!wanted){isolate(shelfModuleOwner,"drop route",[&]{shelf->setExternalDropCallbacks({},time);});return;}
+    if(!wanted){if(dropHoverOwner)(void)dropHover({},std::nullopt);isolate(shelfModuleOwner,"drop route",[&]{shelf->setExternalDropCallbacks({},time);});return;}
     hudDrop->hwnd=static_cast<HWND>(host.hwnd());hudDrop->scale=metrics.scale;hudDrop->owner=this;
     const std::weak_ptr<HudDropInbox>weak=hudDrop;
     const auto clientPoint=[](const HudDropInbox&state,POINT screen)->std::optional<core::Point>{
@@ -1580,7 +1624,27 @@ void Application::Impl::hudDropRoute(double time){
             if(accepted.empty())return false;
             state->target=std::move(*target);state->point=*point;state->paths=std::move(accepted);
             if(!PostMessageW(state->hwnd,hudDropMessage,serviceGeneration,0)){state->paths.clear();return false;}
-            state->posted=true;return true;}},time);});
+            state->posted=true;return true;},
+        // Drag feedback (draggingUpdated): area owners show their drop target
+        // and refuse what they would not take before the drop.
+        [weak,clientPoint](std::span<const std::string>paths,std::optional<POINTL>p){auto state=weak.lock();if(!state||!state->owner)return false;
+            std::optional<core::Point>point;if(p)point=clientPoint(*state,POINT{p->x,p->y});return state->owner->dropHover(paths,point);}},time);});
+}
+// Drag feedback over the HUD (UI thread, inside the COM callback): the area
+// owner presenting the selected module flips its own drop-target state; a
+// move off it, a leave or the drop ends that owner's highlight.
+bool Application::Impl::dropHover(std::span<const std::string>paths,std::optional<core::Point>point){
+    if(!notes||stopping)return false;
+    const auto time=areaClock();
+    ModuleOwner*owner=nullptr;
+    if(point&&dropTarget(*point)==std::optional<std::string>("area"))owner=registry.presenter(notes->selected());
+    if(dropHoverOwner&&dropHoverOwner!=owner){auto*previous=std::exchange(dropHoverOwner,nullptr);
+        if(registry.contains(*previous))(void)registry.guard(*previous,[&]{(void)previous->dropHover(paths,std::nullopt,time);},"drop hover");host.invalidate();}
+    if(!owner)return true;
+    bool accepted{};
+    if(registry.guard(*owner,[&]{accepted=owner->dropHover(paths,point,time);},"drop hover"))dropHoverOwner=owner;
+    host.invalidate();
+    return accepted;
 }
 // Read-only hit test of the drop route (UI thread, inside the COM callback).
 std::optional<std::string> Application::Impl::dropTarget(core::Point point)const{
@@ -1630,12 +1694,16 @@ void Application::Impl::receiveDrop(double time){
 // ---------------------------------------------------------------------------
 // UI Automation root (app/hud_automation.hpp)
 void Application::Impl::automationChanged(){automationDirty=true;}
+// Content event: re-list the owners' fragments (only once a UIA client asked).
+void Application::Impl::refreshAutomation(){if(automation&&automationDirty){automationDirty=false;automation->refresh();}}
 HudAutomationSource Application::Impl::automationSource(){
     HudAutomationSource source;
     source.owners=[this](std::vector<ModuleOwner*>&out){registry.forEach([&](ModuleOwner&o){out.push_back(&o);},"automation");};
     source.refresh=[this](ModuleOwner&o,IRawElementProviderFragmentRoot*root){bool changed{};(void)registry.guard(o,[&]{changed=o.automationRefresh(root);},"automation");return changed;};
     // Groups are named after the module the owner presents (localized caption).
     source.name=[this](const ModuleOwner&o){
+        // An owner that presents no module may name its group (powerCharge: Power).
+        if(const auto m=o.automationModule()){const auto id=core::moduleIdentifier(*m);return moduleCaption(id,watchAppearance.language,id);}
         for(unsigned n=0;n<=static_cast<unsigned>(core::Module::profile);++n){const auto module=static_cast<core::Module>(n);
             if(o.presents(module)){const auto id=core::moduleIdentifier(module);return moduleCaption(id,watchAppearance.language,id);}}
         return std::string("EndfieldHUD");};
@@ -1644,14 +1712,15 @@ HudAutomationSource Application::Impl::automationSource(){
 std::optional<std::intptr_t> Application::Impl::automationObject(const NativeMessage&m){
     if(!HudAutomation::rootRequest(m.lParam)||!ready||stopping||!visibleMode())return std::nullopt;
     if(!automation){automation=std::make_unique<HudAutomation>(host.hwnd(),automationSource());automationDirty=true;}
-    if(automationDirty){automationDirty=false;automation->refresh();}
+    refreshAutomation();
     return automation->answer(m.wParam,m.lParam);
 }
 
 // ---------------------------------------------------------------------------
 // DataRootRestart (app/areas/mac_import_handoff.hpp) and GPU device loss
 bool Application::Impl::requestRestart(std::function<void()> work,std::function<void()> declined){
-    if(!production()||!ready||stopping||quitRequested||sessionEnded||restartPending||restartAccepted||deviceLost||!work)return false;
+    // Production only; hidden coverage opens it for its own restart checks.
+    if(!(production()||restartVerification)||!ready||stopping||quitRequested||sessionEnded||restartPending||restartAccepted||deviceLost||!work)return false;
     restartWork=std::move(work);restartDeclined=std::move(declined);restartPending=true;
     // The red power button's confirmed quit, outside the area's own call.
     if(!PostMessageW(static_cast<HWND>(host.hwnd()),restartMessage,serviceGeneration,0)){restartPending=false;restartWork={};restartDeclined={};return false;}
@@ -1675,11 +1744,21 @@ bool Application::Impl::recoverDevice(const std::exception&e,double time){
     if(!error||!production())return false;
     const auto code=static_cast<HRESULT>(error->code());
     if(code!=DXGI_ERROR_DEVICE_REMOVED&&code!=DXGI_ERROR_DEVICE_RESET&&code!=DXGI_ERROR_DEVICE_HUNG&&code!=DXGI_ERROR_DRIVER_INTERNAL_ERROR)return false;
+    return restartDisplay("graphics device lost (HRESULT "+std::to_string(error->code())+")",time);
+}
+// A display change that moved the system's default adapter away from the
+// device (IDXGIFactory1::IsCurrent, e.g. a monitor attached to another GPU):
+// the same fresh run as a device loss, before the old device is removed.
+void Application::Impl::checkAdapter(double time){
+    if(!production()||!ready||stopping||deviceLost||renderer.adapterCurrent())return;
+    (void)restartDisplay("graphics adapter changed",time);
+}
+bool Application::Impl::restartDisplay(const std::string&reason,double time){
     if(deviceLost||stopping)return true;
     deviceLost=true;
     if(notes&&session->phase()!=core::VisibilityPhase::concealed&&!closing)deviceLostModule=notes->selected();
     declineRestart();runRestartDeclined();
-    const auto line=std::string("EndfieldHUD graphics device lost (HRESULT ")+std::to_string(error->code())+"); restarting the display\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
+    const auto line="EndfieldHUD "+reason+"; restarting the display\n";std::fputs(line.c_str(),stderr);OutputDebugStringA(line.c_str());
     // The session-end drain: no animation, editors committed, every save queue flushed.
     (void)lifecycle.forceClose();forceConceal(time);broadcast(HostEvent::Kind::quitting,time);
     if(archive)(void)archive->finishEditing(time);
@@ -1727,6 +1806,8 @@ void Application::Impl::projectionDropRoute(bool enabled,double time){
         [weak](std::span<const std::string>paths){auto state=weak.lock();if(!state||!state->enabled||!state->paths.empty()||paths.empty()||paths.size()>modules::ProjectionModel::maximumMedia)return false;POINT point{};if(!GetCursorPos(&point)||!ScreenToClient(state->hwnd,&point))return false;state->point={point.x/state->scale,point.y/state->scale};state->paths.assign(paths.begin(),paths.end());if(!PostMessageW(state->hwnd,projectionDropMessage,serviceGeneration,0)){state->paths.clear();return false;}return true;}
     },time);
 }
+// The projection area looks the workspace up by service: withdraw it first.
+void Application::Impl::releaseProjection()noexcept{if(areaHost)areaHost->withdraw(endfield::notes::projectionWorkspaceService);projection.reset();}
 void Application::Impl::cancelProjectionPicker(){if(pickerOwner==PickerOwner::projection){mediaPicker->cancel();pickerOwner=PickerOwner::none;}pendingProjectionPicker.reset();}
 tools::ProjectionPreviewOptions Application::Impl::projectionOptions(){
     tools::ProjectionPreviewOptions value;value.language=watchAppearance.language;value.reduceMotion=settings.reduceMotion;
@@ -1746,22 +1827,24 @@ void Application::Impl::projectionCommand(const ProjectionHandoff::Command&comma
     case A::closeHUD:perform(lifecycle.close(true),time);if(!closing){projectionHandoff.cancel();setProjectionActive(false,time);}break;
     case A::showProjection:{
         host.hide();composition.detach(renderer);published.clear();publishedNotesRevision=0;
-        if(!projection){const auto a=watchAppearance.accentSRGB;projection=std::make_unique<tools::ProjectionWorkspace>(host,renderer,rasterizer,backdrop,*mediaBroker,modules::NotesColor{a[0],a[1],a[2],1},configuration.number("backgroundDarkness"),configuration.number("blurAmount"));}
+        if(!projection){const auto a=watchAppearance.accentSRGB;projection=std::make_unique<tools::ProjectionWorkspace>(host,renderer,rasterizer,backdrop,*mediaBroker,modules::NotesColor{a[0],a[1],a[2],1},configuration.number("backgroundDarkness"),configuration.number("blurAmount"));
+            // The projection area lists the workspace's controls under the UIA root (app/areas/projection_automation.hpp).
+            if(areaHost)areaHost->publish(endfield::notes::projectionWorkspaceService,*projection);}
         tools::ProjectionMediaBindingOptions binding;
         binding.resolve=[](const modules::ProjectionMediaReference&ref){return gpu::NotesImageAccess{utf8Path(ref.path()),ref.accessLease()};};
         binding.errorText=[this](HRESULT hr){return tools::notesMediaErrorDescription(hr,watchAppearance.language);};
         projectionPainting=true;try{projection->resize(metrics,projectionWorkTopPixels/metrics.scale);projection->show(projectionOptions(),std::move(binding),time);projectionDropRoute(true,time);projectionPainting=false;}catch(...){projectionPainting=false;projectionHandoff.cancel();throw;}
-        refresh(now());break;
+        automationChanged();refresh(now());break;
     }
-    case A::closeProjection:projectionDropRoute(false,time);cancelProjectionPicker();if(projection)projection->dismiss(time,settings.reduceMotion);refresh(time);break;
-    case A::showHUD:projectionDropRoute(false,time);if(projection)projection->close(time);published.clear();publishedNotesRevision=0;setProjectionActive(false,time);perform(lifecycle.openOverlay(),time);break;
-    case A::external:{projectionDropRoute(false,time);if(projection)projection->close(time);published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
+    case A::closeProjection:projectionDropRoute(false,time);cancelProjectionPicker();if(projection)projection->dismiss(time,settings.reduceMotion);automationChanged();refresh(time);break;
+    case A::showHUD:projectionDropRoute(false,time);if(projection)projection->close(time);automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);perform(lifecycle.openOverlay(),time);break;
+    case A::external:{projectionDropRoute(false,time);if(projection)projection->close(time);automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);
         const auto action=command.externalID?static_cast<gpu::TrayAction>(*command.externalID):gpu::TrayAction::openOverlay;
         if(action==gpu::TrayAction::quit){perform(lifecycle.requestTermination(),time);break;}
         trayAction(action==gpu::TrayAction::none?gpu::TrayAction::openOverlay:action,false,time);
         break;
     }
-    case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();if(projection)projection->close(time);published.clear();publishedNotesRevision=0;setProjectionActive(false,time);break;
+    case A::closeImmediately:projectionDropRoute(false,time);cancelProjectionPicker();if(projection)projection->close(time);automationChanged();published.clear();publishedNotesRevision=0;setProjectionActive(false,time);break;
     }
 }
 } // namespace endfield::app

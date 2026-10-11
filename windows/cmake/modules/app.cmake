@@ -13,6 +13,30 @@ if(WIN32)
   target_compile_definitions(hud_application_core PRIVATE UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_application_core PRIVATE advapi32 shell32 ole32)
 endif()
+# Settings > Display > Center logo (Mac HUDCenterLogo/HUDCenterLogoStore/
+# HUDCenterLogoPresentation): portable artwork, Windows WIC decode/import.
+add_library(hud_display_center_logo modules/display_center_logo.cpp)
+target_include_directories(hud_display_center_logo PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_display_center_logo PUBLIC hud_localization)
+if(WIN32)
+  target_sources(hud_display_center_logo PRIVATE native/display_center_logo.cpp)
+  target_compile_definitions(hud_display_center_logo PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_display_center_logo PUBLIC hud_data hud_packet PRIVATE windowscodecs ole32)
+endif()
+if(BUILD_TESTING)
+  # Oracle: tools/display_center_logo_reference.sh (unchanged Mac sources).
+  add_executable(display_center_logo_tests tests/display_center_logo_tests.cpp)
+  target_link_libraries(display_center_logo_tests PRIVATE hud_display_center_logo hud_data)
+  if(WIN32)
+    target_compile_definitions(display_center_logo_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+    add_test(NAME display_center_logo_contracts COMMAND display_center_logo_tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/display-center-logo-source.json" "${CMAKE_CURRENT_SOURCE_DIR}/resources/center-logos")
+  else()
+    add_test(NAME display_center_logo_contracts COMMAND display_center_logo_tests
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/display-center-logo-source.json")
+  endif()
+endif()
+
 add_library(hud_quit_confirmation_state app/quit_confirmation_state.cpp)
 target_include_directories(hud_quit_confirmation_state PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(hud_quit_confirmation_state PUBLIC hud_settings hud_localization)
@@ -67,7 +91,7 @@ if(WIN32)
   # The single application owner. The six module owners that CMakeLists.txt
   # compiles directly into watch_session_preview are provided to the
   # production executable by hud_application_module_sources below.
-  add_library(hud_application app/application.cpp app/application_events.cpp app/application_lifetime.cpp app/application_modules.cpp app/hud_automation.cpp)
+  add_library(hud_application app/application.cpp app/application_events.cpp app/application_lifetime.cpp app/application_modules.cpp app/application_display.cpp app/hud_automation.cpp)
   target_include_directories(hud_application PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_application PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application PUBLIC hud_module_registry hud_system_overlay hud_application_core hud_single_instance
@@ -76,7 +100,7 @@ if(WIN32)
     hud_map_preview hud_map_store hud_map_assets hud_orbipom_presentation hud_orbipom_runtime
     hud_calendar_preview hud_calendar_notifications
     hud_clock hud_watch_session hud_watch_content hud_watch_runtime hud_overlay_host hud_services hud_backdrop
-    hud_shelf_icons hud_shelf_transfer hud_localization windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32)
+    hud_shelf_icons hud_shelf_transfer hud_localization hud_display_center_logo windowsapp CoreMessaging dwmapi psapi advapi32 wtsapi32 uiautomationcore oleaut32)
   add_library(hud_application_verification app/application_verification.cpp)
   target_compile_definitions(hud_application_verification PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(hud_application_verification PUBLIC hud_application)
@@ -180,6 +204,9 @@ if(WIN32)
   add_executable(EndfieldHUD WIN32 app/main.cpp "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.rc" "${CMAKE_CURRENT_BINARY_DIR}/EndfieldHUD.manifest")
   target_compile_definitions(EndfieldHUD PRIVATE ${EHUD_APP_DEFINITIONS})
   target_link_libraries(EndfieldHUD PRIVATE hud_application hud_application_module_sources hud_single_instance hud_application_package shell32)
+  # main.cpp rolls an interrupted Mac import activation back before the root
+  # opens (core/migration/mac_import_work.hpp; target from cmake/modules/import.cmake).
+  target_link_libraries(EndfieldHUD PRIVATE hud_mac_import)
   if(MSVC)
     target_compile_options(EndfieldHUD PRIVATE /W4 /permissive- /EHsc)
     target_compile_options(hud_single_instance PRIVATE /W4 /permissive- /EHsc)
@@ -228,7 +255,7 @@ if(WIN32)
   ehud_app_resource(shell.shader file "${CMAKE_CURRENT_SOURCE_DIR}/native/hud.hlsl" "shell/hud.hlsl")
   ehud_app_resource(shell.watchBlur file "${ehud_watch_blur}" "shell/watch-blur.json")
   foreach(ehud_common IN ITEMS notesFormat:notes-format shelf:shelf clipboard:clipboard applicationIcons:application-icons
-          watchAppearance:watch-appearance archive:archive storage:storage activity:activity mapPlayer:map-player)
+          watchAppearance:watch-appearance archive:archive storage:storage activity:activity mapPlayer:map-player centerLogos:center-logos)
     string(REPLACE ":" ";" ehud_common "${ehud_common}")
     list(GET ehud_common 0 ehud_common_id)
     list(GET ehud_common 1 ehud_common_folder)
@@ -294,13 +321,13 @@ if(WIN32)
       # Hidden module coverage plus the production lifecycle/quit flow.
       add_test(NAME application_owner_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/owner-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=19 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=19 -DHOST_CHECKS=78 "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_owner_coverage PROPERTIES TIMEOUT 600)
       # Same owner ending through WM_QUERYENDSESSION/WM_ENDSESSION instead of Quit.
       add_test(NAME application_session_end_coverage COMMAND "${CMAKE_COMMAND}" "-DPREVIEW=$<TARGET_FILE:watch_session_preview>"
         "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/session-end-coverage-work" "-DINPUTS=${ehud_app_inputs}" "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}"
-        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DEXTRA=--session-end-coverage
+        "-DMAP=${EHUD_MAP_RESOURCE_DIR}" "-DORBIPOM=${EHUD_ORBIPOM_RESOURCE_DIR}" -DCHECKS=15 -DHOST_CHECKS=75 -DEXTRA=--session-end-coverage
         "-DPACKAGE=$<TARGET_FILE_DIR:EndfieldHUD>/resources" -P "${CMAKE_CURRENT_SOURCE_DIR}/app/run_owner_coverage.cmake")
       set_tests_properties(application_session_end_coverage PROPERTIES TIMEOUT 600)
       add_test(NAME endfieldhud_install_contracts COMMAND "${CMAKE_COMMAND}" "-DBUILD=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"

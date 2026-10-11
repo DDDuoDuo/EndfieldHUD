@@ -22,6 +22,7 @@
 #include "app/single_instance.hpp"
 #include "core/application_arguments.hpp"
 #include "core/data/application_root.hpp"
+#include "core/migration/mac_import_work.hpp"
 #include "core/localization.hpp"
 #include "core/resource_locator.hpp"
 #include <array>
@@ -195,7 +196,14 @@ int run(const std::vector<std::string>& values) {
     // usual error instead of restarting forever.
     std::vector<std::chrono::steady_clock::time_point> recoveries;
     for (;;) {
-        const auto root = openRoot(isolated.empty() ? ehud::data::localApplicationDataBase() : isolated);
+        const auto base = isolated.empty() ? ehud::data::localApplicationDataBase() : isolated;
+        // A Mac import activation interrupted between its two renames (the
+        // previous root moved to its backup, the staged root not yet in place)
+        // is rolled back before any owner opens the root. Never replaces an
+        // existing root and never deletes anything (core/migration/README.md).
+        (void)ehud::migration::recoverMacImportWork((base / std::string(ehud::data::applicationRootDataDirectory)).lexically_normal(),
+            std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count());
+        const auto root = openRoot(base);
         if (!root) return 1;
         core::ApplicationArguments runArguments = arguments;
         runArguments.startup = startup;
@@ -245,6 +253,10 @@ int run(const std::vector<std::string>& values) {
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    // The Shelf's preview popup lives on its own watched thread; a hung
+    // third-party handler there must not turn into a ghost window offering to
+    // end the whole process (the HUD thread never waits on that thread).
+    DisableProcessWindowsGhosting();
     int count{};
     auto** argv = CommandLineToArgvW(GetCommandLineW(), &count);
     std::vector<std::string> values;

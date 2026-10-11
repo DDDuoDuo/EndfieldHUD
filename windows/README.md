@@ -901,9 +901,8 @@ unchanged HEAD fails them the same way:
   - The root exists only once a UIA client has asked for it.
 
   The built-in Volume owner implements the hooks with
-  `NativeVolumeAutomation`. Now Playing, Media Assembly and Account Linking have
-  their fragments ready, but each area still has to implement these hooks
-  (area files). The hidden coverage walks the root over Volume:
+  `NativeVolumeAutomation`. (Checkpoint 124: every other module now
+  implements them too; see that entry.) The hidden coverage walks the root over Volume:
   groups, parent and child navigation, the hit test and the disconnect.
 - **HUD file drops** (`SystemHUDView.performDragOperation`). The window keeps
   its one OLE target, owned by File Shelf. While another module is selected,
@@ -1165,13 +1164,12 @@ the README is the host's verification log.
 
 ### Still open after this checkpoint
 
-- The Now Playing, Media Assembly and Account areas still have to implement
-  the UIA hooks. Reader, Map, Calendar and Minigame descriptors are not yet
-  listed under the root.
-- Display settings: the custom accent colour picker and center-logo import.
-  The ChooseColorW picker in `native/profile_pickers` needs a title
-  parameter. The chrome clock's style indicators are not clickable, and the
-  cursor does not yet switch to an I-beam over editors or to resize cursors.
+- (Done in checkpoint 124: every area and built-in module lists its UIA
+  controls under the root.)
+- Display settings (done in checkpoint 124, except the cursor):
+  `chooseProfileColor(HWND, initial, title, ...)` exists and Settings uses it;
+  the center logo renders and imports; the clock's style indicators are
+  clickable. The cursor does not yet switch to an I-beam over editors.
 - Live acceptance:
   - recording behaviour;
   - GPU driver reset (Win+Ctrl+Shift+B) and mixed-DPI hot-plug;
@@ -1299,15 +1297,10 @@ need the desktop.
 
 ### Still open in code
 
-- UIA: Now Playing, Media Assembly and Account still have to implement the
-  `ModuleOwner` automation hooks. Reader, Map, Calendar and minigame
-  descriptors need projection and invoke APIs. The Power position editor and
-  the navigation entries have no provider.
-- The Power badge is still returned from `floatingEntries()`, so it composes
-  above pinned Notes. The source places it below the Notes workspace through
-  `planeEntries()`.
-- The profile area does not yet request the single-file image filter. It
-  takes the first regular file chosen.
+- UIA (checkpoint 124: resolved for every module): the Power position editor
+  and the navigation entries other than Power have no provider.
+- (Checkpoint 124: the Power badge composes through `planeEntries()`, below
+  pinned Notes.)
 - No module updates `Migration/relink.json`. Notes, Archive and App shortcuts
   relink their own records, but none calls `MacRelinkLedger::markResolved` or
   `reconcile`, so the import card's relink list does not reflect those
@@ -1317,14 +1310,361 @@ need the desktop.
 - Settings Display still lacks the custom accent colour picker, the
   center-logo import and rendering, and clickable clock style indicators.
   The cursor does not change shape over editors or grips.
-- Packaging: no updater, unsigned builds, the Evergreen WebView2 runtime is a
+- Packaging: unsigned builds, the Evergreen WebView2 runtime is a
   prerequisite, and only the x64 loader is vendored. The staged package
-  ships the font licences and the OrbiPom folder (with Matter's licence). It
-  does not ship QuickJS-NG's `LICENSE` or the WebView2 SDK's `LICENSE.txt`
-  and `NOTICE.txt`, although both are compiled into `EndfieldHUD.exe`.
-- A post-shutdown import commit that is killed leaves a `<root>.import-*`
-  folder, which is not swept at startup.
-- The portable no-ICU configure still fails at the Now Playing targets.
+  ships the font licences, the OrbiPom folder (with Matter's licence) and
+  (checkpoint 124) the WebView2 SDK's `LICENSE.txt` and `NOTICE.txt`. It
+  does not ship QuickJS-NG's `LICENSE`, although it is compiled into
+  `EndfieldHUD.exe`.
+- (Checkpoint 124: marked stale `<root>.import-*` folders are swept at
+  startup, and an interrupted activation is rolled back before the root opens.)
 
 Recorded platform gaps (capability, reason, fallback) are collected in
 `WINDOWS-MIGRATION.md`, section 6, "Windows platform gaps".
+
+## Checkpoint 124 (2026-10-10): batch 4 host integration
+
+The host stage applied the batch 4 area requests and its own follow-ups. A
+full MSVC x64 Release build in the private host slot passes 356 of 359
+registered suites. The three failures are the environmental ones recorded at
+checkpoint 123 (`projection_composition_contracts` and
+`projection_workspace_contracts` need a desktop session for a composition
+swap chain; `packet_export_contracts` needs the Mac `Sources/` tree).
+
+| Run | Result |
+| --- | --- |
+| `application_owner_coverage` | 54 module results, 19 production lifecycle checks, 78 host integration checks (at least 78 now required), 14 registered areas (15 area module results), ID card connected |
+| `application_session_end_coverage` | 15 lifecycle checks, 75 host integration checks (at least 75 required) |
+| `display_center_logo_contracts` (new) | The center logo against the Mac oracle: also passes on the Mac under clang with the portable no-ICU configure |
+| Portable no-ICU configure | `cmake -S windows -B <dir> -DCMAKE_DISABLE_FIND_PACKAGE_ICU=TRUE -DBUILD_TESTING=ON` configures and generates; `settings_*`, `media_request_catalog`, `shelf_file_picker` and `display_center_logo` contracts pass there |
+
+### Host routes
+
+- **UI Automation for every module.** The built-in owners now implement the
+  `ModuleOwner` hooks: Notes and Archive (`notes::NotesAutomationBinding`,
+  with the app clock and a content event after an accepted peer action),
+  File Shelf (its `ShelfPreview` peers), Work Mode (`NativeProfileAutomation`
+  over `workModeAutomationControls`) and Reader, Map, Calendar and the
+  minigame (`NativeScreenReaderPeers` over `tools::*Automation`). Volume
+  re-creates its fragments when it is given another group. `ModuleOwner::
+  automationModule()` names the group of an owner that presents no module
+  (Notes; the Power area still has to return Power). An accepted UIA press or
+  value write presents and re-lists the tree (Volume, Work Mode, the local
+  peers, Notes, Archive). The tree is re-listed when an opening completes
+  (the Power entry's IsEnabled). While a modal owner that lists controls
+  captures the pointer (the import card, an open menu), the root's hit test
+  reaches only its controls. The Projection workspace is published as
+  `projection.workspace` for the projection area, withdrawn before it is
+  destroyed, and the tree is marked changed on its show, close and input.
+- **Drag feedback over the HUD** (`ModuleOwner::dropHover`, Mac
+  draggingUpdated). `ShelfDropTarget::Callbacks` gained an optional `hover`
+  and `hoverWanted`: when a route wants feedback, `DragEnter` decodes the
+  paths once per drag; `DragEnter`/`DragOver` AND the owner's answer into the
+  offered effect; leave and drop end it. The Shelf forwards only to its
+  external route, so its own drops still read no payload while hovering. The
+  host routes the drag to the area owner presenting the selected module; a
+  move off it, a leave, the drop or the route closing ends the highlight.
+- **Shared dialog applications mode** (`ApplicationFileRequest::
+  applications`, `ShelfPickerMode::applications`): one application, an
+  existing `.exe`/`.lnk` through the caller's filter or a packaged app chosen
+  in AppsFolder (the default folder) returned as
+  `shell:AppsFolder\<AppUserModelID>`; non-storage items, links not
+  dereferenced, nothing added to Recent.
+- **Media broker:** `core::ScopedMediaRequest::frameFilter` carries
+  `NotesVideoRequest::frameFilter` to the frame server, so frames played
+  through the broker get Media Assembly's colour edits
+  (`media_assembly_preview_contracts` now asserts it).
+- **Mac import:** `main.cpp` calls `recoverMacImportWork` before each run
+  opens the root (`EndfieldHUD` links `hud_mac_import`). `wWinMain` calls
+  `DisableProcessWindowsGhosting()` for the Shelf's watched preview thread.
+- **Area services:** the Event Log owner (`eventLog.owner`, read-only) and
+  Calendar's reminder-click refresh (`calendar.reminderActivation`). About's
+  update row, its toggle ("Check for updates daily",
+  `SettingsUpdateStatus::automaticTitle`) and the tray's *Check for Updates…*
+  route to the windowsUpdates area (`app::UpdateService`); the fallback
+  without it still opens the GitHub releases page.
+- **Settings > Display.** *Theme color* posts a private notice; the modal
+  `ChooseColorW` (`chooseProfileColor` with the "Theme color" title) streams
+  live changes, OK keeps the colour, Cancel restores the starting one and a
+  module switch or close dismisses it keeping the last live colour (source
+  orderOut). *Center logo* follows `HUDSourceWatchView.setDesktopCenterLogo`:
+  the three bundled wordmarks (`resources/center-logos`, pinned) or the
+  managed `CenterLogo/<revision>.png` are decoded on the shared executor,
+  cropped at alpha above 8, drawn with the white 0.7 shadow and bound as
+  `desktop.center-logo` to EndfieldText (glow hidden), through the ID card
+  presenter's baseline; the packet logo returns for Endfield and the pixels
+  retire after the next frame. *Custom* imports one image through the shared
+  dialog (WIC, EXIF orientation, at most 768 px, 32 MB / 64 MP / 16,384 px
+  bounds, the five-language errors) and applies it only while the same
+  selection and revision are shown. Core Graphics' shadow blur is matched by
+  a Gaussian of variance (b/2)^2 + 1/2: at most 3 premultiplied levels from
+  the Mac oracle on the generated logo and 8 on the presets
+  (`tools/display_center_logo_reference.sh`).
+- **Desktop clock** (`SystemHUDView.clockPoint`):
+  `NativeChromePresentation::statusPoint` hit-tests the projected status
+  panel (340 x 145). Hovering it raises the hover plate when no menu
+  captures the pointer and no Notes card covers it; a style indicator
+  selects that style, a horizontal swipe of 28 points changes it once per
+  gesture, and the rest of the clock opens Work Mode.
+- **GPU adapter change:** on a display change the production owner asks
+  `Renderer::adapterCurrent()` (`IDXGIFactory1::IsCurrent`, then the default
+  adapter's LUID) and takes the device-loss fresh run when the default
+  adapter moved away from the device.
+- **CMake:** the Now Playing base targets are guarded by `hud_archive` /
+  `hud_now_playing`, so a portable configure without ICU generates.
+
+Hidden coverage now runs 78 host checks (75 in the session-end run, which
+ends without the quit card), most of them over the real HUD root: the groups of
+Work Mode, File Shelf, Archive, Media Assembly, Now Playing (6 controls),
+Account and Profile (named after the module, children navigate back, the
+root's hit test finds a control, concealing disconnects); the Reader peers
+(in cycle 0), Map, Calendar and minigame peers pressed through UIA Invoke;
+the Power entry's help and hit test; the published services and the update
+rows; the colour and logo dialogs requested without opening; the center
+logo (a preset, an imported custom logo, Endfield again with the pixels
+retired); the clock (hit test, hover, indicator, swipe, Work Mode); drag
+feedback reaching App shortcuts and ending on leave; and the restart members
+(a failed save destroys the pending work unrun and its decline runs once
+from the notice; a restart pending at the confirmed quit is handed out
+exactly once). In cycle 0 the host's Work Mode controller runs a stopwatch
+through its accessible controls, so the profile area sees real lifetime
+checkpoints.
+
+### Found while integrating
+
+- **Work Mode read the wall clock in hidden coverage.** `constructWorkMode`
+  passed `now()` to the owner, which moved its continuous time to the
+  machine's uptime, so stopwatch presses at synthetic times tracked 0 s. It
+  now passes the area clock (the same value in visible runs).
+- **A quit within seconds of rendering a PDF faults at exit.**
+  `Windows.Data.Pdf` keeps its own Direct3D device until an internal idle
+  timer releases it. Re-entering the Reader with a PDF late in the run made
+  the process end first: `dxgi.dll` raised exception `0x87A` during
+  `Windows.Data.Pdf`'s static destruction (exit code 2170). Waiting 30 s
+  before or after the teardown avoids it; the unchanged parent passes only
+  because its last PDF render happens long enough before exit. The data is
+  saved before this point. The Reader peer probe therefore runs in cycle 0
+  (plain text), and the fix is requested from the Reader: render through
+  `IPdfRendererNative` with an owned device that the owner releases. Recorded
+  in `WINDOWS-MIGRATION.md`, section 6.
+
+### Module areas (batch 4 results, recorded by the host)
+
+- **Media Assembly.** UI Automation hooks implemented (fragments under the
+  owner's group; a UIA Invoke/SetValue refreshes them and raises
+  StructureChanged on the group); hidden coverage drives the hooks through a
+  stand-in group. Moved originals are followed by file ID
+  (`mediaAssemblyLocate`: `OpenFileById` on the stored path's volume,
+  verified volume serial, `GetFinalPathNameByHandleW`) for previews, exports
+  (`MediaAssemblyExportPlan::source`, re-checked at commit) and new players;
+  *Overwrite original* still targets the document's own path (Mac
+  `sourceURL`). Played frames get a GPU colour filter in linear working space,
+  within 1 level of the CPU reference on a frame-server surface, now carried by
+  the broker. Opaque stills of at least 1 MP export on the job's GPU device in
+  row bands with the sticker step on the CPU (laptop: 12 MP heavy edit 359 ms
+  vs 1563 ms CPU; WARP within 1 level of the CPU export); stills with
+  transparency stay on the exact CPU processor. Laptop: 19/19 (14
+  `media_assembly` suites, both owner coverage runs, package, install and
+  executable contracts).
+- **Now Playing UI Automation.** The nowPlaying area implements the
+  `ModuleOwner` automation hooks (`app/areas/now_playing_module.cpp`) over
+  `native::NativeNowPlayingAutomation`. The fragments are created on the
+  host's first refresh and re-created when the host hands over a new group.
+  They are re-listed immediately after a UIA Invoke or SetValue (opening or
+  closing the volume menu adds or removes *Playing app volume*;
+  StructureChanged is raised on the group while clients listen) and
+  disconnected on conceal. The fragment COM boundary returns `E_FAIL` or
+  `E_OUTOFMEMORY` instead of letting owner exceptions unwind
+  (`now_playing_automation_contracts` adds throwing-callback cases). Hidden
+  coverage drives the hooks through a stand-in group: navigation, parent and
+  fragment root, group hit test, Invoke Next, seek identity, RangeValue seek,
+  volume menu by UIA with a route write and its confirmed value, Escape
+  removing the slider, disconnect and reconnect, re-rooting, nothing listed
+  while unpresented. It now runs 6 steps / 115 checks, with raster usage
+  identical in cycles 1-2. The Now Playing fragment skips itself in a
+  portable configure without ICU. Slot nowplaying: 25/25.
+- **Account Linking.** The area implements the `ModuleOwner` UI Automation
+  hooks (peers under the area's group of the HUD root; a UIA press posts the
+  area's registered message so the host refreshes). Without the WebView2
+  Runtime, Connect shows a localized explanation page linking to
+  `https://developer.microsoft.com/microsoft-edge/webview2/#download-section`;
+  *Check Again* continues without restart; the face names the missing
+  runtime; no bootstrapper is bundled. The WebView2 SDK `LICENSE.txt` and
+  `NOTICE.txt` now ship at `resources/licenses/webview2`. After the Mac import
+  restart the fresh owner reads the imported cache and restricts it to the
+  current user in place. Suites: `hypergryph_account_{api,login,sanity_gauge,
+  canvas,controller,profile_relay,native,platform,webview,owner,area}_contracts`
+  (webview 375 checks, area 49, platform 88, controller 1745, login 1111);
+  account hidden coverage 6 steps, 245 checks. Commits `5dd147e`, `16a186d`.
+- **Power.** The badge composes in the `planeEntries()` slot, below pinned
+  Notes. The Power navigation entry is a UIA Button provided by the
+  powerCharge area (`power_automation_contracts`). Hovering the Power entry
+  follows the Mac `refreshChargeHover` rule: it keeps an existing hover but
+  never acquires one. The supercharge banner has an exact 14-point capsule
+  set (ChargeIndicatorScene drawCount 85). Final slot result: 18 of 18.
+  Commits `c2a500d` and `bb4ef09`.
+- **Personal Profile (batch 4).** Profile area: 6 steps, 148 checks; raster
+  stable across cycles 1 and 2 (786 entries). New suites:
+  `profile_automation_contracts`, `work_mode_automation_contracts`. Extended:
+  `source_scene_contracts` (registered runtime desktop textures),
+  `id_card_presenter_contracts` (`setBaseline`), `profile_pickers_contracts`
+  (titled picker), `work_mode_preview_contracts` (`perform`/`clientRect`).
+  The profile area implements the UIA hooks (buttons, sliders, the editing
+  field's Edit peer) and requests the single-file image filter.
+- **App shortcuts.** Saved apps with the App icon preset show their original
+  application icon in the right-side navigation; `WatchAppearanceEntry`
+  shares the area's `LayerImageSource`; a released snapshot paints the source
+  grid; at most 20 retained icons. *+ Add App* takes one dropped `.exe`/`.lnk`
+  (`ModuleOwner::drop`) and Ctrl+V of a single application file; the name
+  field supports Edit-menu Cut/Copy/Paste. UI Automation peers: buttons with
+  Invoke and the name-field edit with Value. The chooser asks for one file
+  through the "Applications" (`*.exe;*.lnk`) filter and, with this
+  checkpoint, the dialog's applications mode (AppsFolder). A navigation
+  launch error selects *+ Add App*; every opening starts a fresh *+ Add App*
+  session that keeps only the last failed launch error. New suite
+  `app_shortcut_automation_contracts`. Gaps: no packaged-app logos; a 20-icon
+  bound.
+- **Mac import** (commit `e38d18d`): private-folder sweep, recovery, card UI
+  Automation and the restart path in coverage. `MacImportSession` marks and
+  locks `<root>.import-<uuid>` (`import-work.json`) and journals the backup in
+  `activation.json` before the first rename. The macImport area sweeps only
+  marked, abandoned folders at startup in bounded steps on the
+  UtilityExecutor; it never touches backups, the outcome note, unmarked or
+  live folders, or interrupted activations. `recoverMacImportWork` rolls an
+  interrupted activation back before the root opens (`main.cpp`, this
+  checkpoint). The outcome note is written right after activation. The
+  import card is a UIA dialog (title, message, ProgressBar, List/ListItems,
+  Invoke buttons). Hidden coverage drives the area's production
+  `DataRootRestart` path against a stand-in host service: refused second
+  request, declined save, accepted quit with teardown before the work,
+  session end never running the work, the next run's sweep and report,
+  recovery on a second synthetic root. Laptop: `mac_import_work_contracts`
+  846, `mac_import_automation_contracts` 69, `mac_import_flow_contracts` 295,
+  `mac_import_contracts` 753, `mac_import_native_contracts` 251,
+  `mac_import_reconcile_contracts` 11; the plist, settings and tool contracts
+  pass; `application_owner_coverage` passes with 1021 macImport checks. New
+  tool option: `mac_import_tool --work DEST` (read-only listing).
+- **System providers.** Clipboard links match ClipboardStore.
+  `UniformResourceLocatorW` (ANSI fallback) is read before `CF_UNICODETEXT`
+  as the link, with the string as its original text. Copy-back writes the URL
+  type plus the original string. Plain strings are links up to 2048 UTF-8
+  bytes. `ClipboardHistory::parsed_url` ports macOS 14+ `URL(string:)` with
+  ICU UTS #46 hosts: 246 Mac oracle strings, `tools/clipboard_url_reference.sh`,
+  `clipboard_url_contracts`. Over-limit headers report
+  `imageDimensionsTooLarge`. Capture suspended on sleep or lock catches up the
+  latest change once and re-reads an interrupted image. A `WM_POWERBROADCAST`
+  storm posts one notice (`system_services_contracts` over a synthetic
+  clipboard and a message-only window). systemProviders coverage runs
+  SystemServices over a synthetic clipboard, and with this checkpoint checks
+  the host-wired Event Log records through `eventLog.owner`.
+- **Local modules.** UI Automation peers for Reader, Map, Calendar and
+  Minigame: `native/screen_reader_peers` with Button/Edit/Text/Group, and
+  `tools/{reader,map,calendar,orbipom}_automation`; preview projection and
+  press APIs, plus Calendar editor Value and focus; the Map's 12 Hz gesture
+  cadence through the shared deadline; the Calendar refresh after a reminder
+  click (area sink, now published by the host); the Reader default kept as
+  the automatic Noto Sans SC/KR sentinel by the user's decision. Tests: new
+  `screen_reader_peers_contracts`, which includes the unchanged HUD root;
+  extended reader/map/calendar/orbipom preview contracts and
+  `calendar_reminder_area_contracts`. Full slot: 44/44 local tests plus
+  `application_owner_coverage`. Commits `2d8aa16`, `1d6c219`, `5bc5d14`.
+- **Notes, Archive, Projection.** UIA peers for Notes, Archive and Projection
+  (Invoke, RangeValue, Value, focus). Font-menu dismissal root cause: a menu
+  opened between frames was hit-tested before being positioned; the
+  `poseMenus` fix, with the `queuedRowClick` reproduction. Undo is kept across
+  promotion to the chunked editor. RTF and CF_HTML paste import is checked
+  against a 45-case Mac oracle (`windows/tools/notes_paste_reference.sh`), plus
+  RTF export on copy. Large-card plate and backing split (enter 305 -> 222 ms,
+  exit 157 -> 60 ms, re-enter 300 -> 128 ms, exit after edit 184 -> 87 ms on
+  WARP at 1600x1000 and 2 pixels per point). Slot notes: 64 of 64 owned suites
+  plus `application_owner_coverage`.
+- **Windows updater** (2026-10-10): the windowsUpdates area checks GitHub for
+  `windows-v*` releases only (never the Mac feed or Mac assets; the unchanged
+  Mac parser rejects `windows-v` tags). It checks on *Check for Updates*, or at
+  most once a day when the HUD opens with "Check for updates daily" on. On
+  two explicit About clicks it downloads and verifies the setup (HTTPS,
+  GitHub-only redirects, published size, SHA256SUMS line, the setup's own
+  payload and version), then closes the HUD and hands off to a quiet
+  in-place Setup upgrade; the outcome is reported on the next run or at Setup
+  exit. Only the registered installed copy updates; isolated data roots never
+  check on their own. Suites: `packaging_update_check_contracts` (Mac
+  HUDGitHubRelease oracle plus controller, portable),
+  `packaging_update_platform_contracts` (WinHTTP against a loopback server,
+  installed-copy check, verification, launcher, end to end),
+  `packaging_os_text_data_contracts`, and windowsUpdates hidden coverage in
+  `application_owner_coverage`. CI now runs on `windows-2025` and checks the
+  OS ICU (laptop: build 26200, ICU 72.1, Unicode 15.1, tzdata 2022g) before its
+  suites; `windows-2022` lacked Unicode 15.1 and the Samoa rules.
+  `stage_release` writes a `windows-v` release-notes draft. Builds remain
+  unsigned, so every update needs explicit consent; see
+  `windows/packaging/README.md`.
+
+### Temporary File Shelf (stage 3)
+
+Preview containment: Shell preview handlers and Quick Look's generic preview
+run on a dedicated STA preview thread with its own message pump
+(`native/shelf_preview_thread.hpp`). The HUD thread only queues requests and
+drains the controller's events through the Shelf's private notice. The popup
+is an unowned tool window of the preview thread, centred on the HUD; an owner
+window on the HUD thread would attach the two threads' input queues. Each
+blocking preview operation (resolution, activation, every `IPreviewHandler`,
+`IInitializeWithStream` and `IObjectWithSite` call, proxy releases, teardown)
+arms a one-shot thread-pool watchdog of 10 s, and each stream read restarts
+it. On expiry the call is cancelled (`CoEnableCallCancellation`,
+`CoCancelCall`) and the thread is retired. The handler is abandoned: it is
+never called again, its proxies are leaked, the leases and the stream's file
+handle close, and a popup holding a foreign child window is detached. The
+thread's apartment teardown cancels its own calls to the hung server, so the
+thread ends. The Shelf then shows "The preview stopped responding and was
+closed." in five languages, and the next preview starts a fresh thread.
+Closing or replacing a preview cancels a running call at once. A hang outside
+COM keeps its retired thread; while two remain, previews are refused with the
+same message. Cloud placeholders (`IO_REPARSE_TAG_CLOUD..CLOUD_F`, or recall
+attributes when the filter disguises them) are references resolved,
+relocated, iconified and revealed from no-recall metadata only. Only the
+explicit preview stream reopens the same identity with recall, and the
+destination of a drag reads the path itself; other reparse types and
+HSM-offline objects stay refused. UI Automation: one Button per Mac
+HUDShelfActionButton (toolbar, card plates with a read-only Selected value,
+preview/reveal/remove) plus Relink on imported cards, with the Windows
+keyboard help; Invoke runs `ShelfPreview::perform`. With this checkpoint the
+built-in adapter forwards the hooks. Mac import relink: unresolved
+`fileShelf.item` entries of `Migration/relink.json` are listed after the
+Windows references as unavailable cards. Double-click, Space or Relink opens
+the picker for that item; the chosen file or folder keeps the imported
+identifier and date (`ShelfRelinkSlot`) and the entry is resolved. Remove
+and Clear dismiss entries, an interrupted relink is reconciled on load, and
+nothing is matched by path or name. Verified on the laptop:
+`shelf_preview_thread` 98 checks (including a hung out-of-process COM server
+that is a hidden child of the test), `shelf_file_preview` 591,
+`file_shelf_files` 383, `shelf_services` 365, all other Shelf suites, and
+`application_owner_coverage` and `application_session_end_coverage` with the
+extended fileShelfCoverage area. Not verified: real handlers and real hangs
+on a desktop, a real OneDrive placeholder, Narrator/Inspect, and the relink
+dialog itself.
+
+### Not verified yet (added in batch 4)
+
+- The real dialogs: *Theme color* (`ChooseColorW`), the center-logo image
+  chooser, and the applications mode in AppsFolder with a packaged app.
+- Drag feedback with Explorer drags over *+ Add App* (only the routing ran).
+- Narrator and Inspect over every group; the Notes editor peer's focus in
+  the real tree.
+- An adapter switch with real GPUs; the updater against a real `windows-v`
+  release; the clock hover plate and swipe with a real touchpad.
+
+### Still open in code
+
+- The cursor does not change to an I-beam over open projected editors (the
+  only non-source cursor the Mac shows); each editor owner must expose its
+  open field's client area to a host cursor hit test.
+- UI Automation: the desktop clock's style buttons (Mac HUDClockActionButton)
+  and the navigation entries other than Power have no provider. The Power
+  area must return `core::Module::power` from `automationModule()` so its
+  group is named Power.
+- Reader: render PDFs on an owned device so a quit right after reading
+  cannot fault at exit (above). Reader books have no relink action.
+- Notes, Archive and App shortcuts do not update `Migration/relink.json`
+  after their own relinks.
+- App shortcuts: no packaged-app logos. Settings: the app-icon choice.
+- Packaging: QuickJS-NG's `LICENSE` is not shipped; builds are unsigned.

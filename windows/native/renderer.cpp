@@ -340,7 +340,7 @@ struct Renderer::Impl {
     };
     DWORD ownerThread{GetCurrentThreadId()};
     HWND window{};
-    bool offscreen{},mediaVideo{};
+    bool offscreen{},mediaVideo{},hardware{};
     std::uint32_t width{}, height{};
     RendererStats counters;
     bool cameraDirty{true}, readbackReady{};
@@ -487,6 +487,7 @@ struct Renderer::Impl {
         require(options.driver == Driver::hardware || options.driver == Driver::warpForTests, "Unknown graphics driver selection");
         require(options.target == RenderTarget::composition || options.target == RenderTarget::offscreenForTests, "Unknown render target selection");
         offscreen = options.target == RenderTarget::offscreenForTests;
+        hardware = options.driver == Driver::hardware;
         DWORD process{};
         GetWindowThreadProcessId(window, &process);
         require(process == GetCurrentProcessId(), "Renderer target must belong to this application");
@@ -1079,6 +1080,22 @@ RendererDeviceInfo Renderer::deviceInfo() const {
         "Cannot encode selected renderer adapter name");
     return {std::move(name), description.VendorId, description.DeviceId,
         static_cast<std::uint64_t>(description.DedicatedVideoMemory), static_cast<std::uint64_t>(description.SharedSystemMemory)};
+}
+bool Renderer::adapterCurrent() const noexcept {
+    // Explicit display-change query, never per frame. WARP and an
+    // uninitialized renderer have no hardware adapter to follow.
+    if (!impl_ || !impl_->device || !impl_->hardware) return true;
+    ComPtr<IDXGIDevice> device; if (FAILED(impl_->device.As(&device))) return true;
+    ComPtr<IDXGIAdapter> adapter; if (FAILED(device->GetAdapter(&adapter))) return true;
+    ComPtr<IDXGIFactory1> factory; if (FAILED(adapter->GetParent(IID_PPV_ARGS(&factory)))) return true;
+    // The adapter set did not change since the device was created.
+    if (factory->IsCurrent()) return true;
+    DXGI_ADAPTER_DESC current{}; if (FAILED(adapter->GetDesc(&current))) return true;
+    ComPtr<IDXGIFactory1> fresh; if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&fresh)))) return true;
+    ComPtr<IDXGIAdapter1> preferred; if (FAILED(fresh->EnumAdapters1(0, &preferred))) return true;
+    DXGI_ADAPTER_DESC1 next{}; if (FAILED(preferred->GetDesc1(&next))) return true;
+    // A new default adapter (D3D11CreateDevice(nullptr) would now choose it).
+    return next.AdapterLuid.LowPart == current.AdapterLuid.LowPart && next.AdapterLuid.HighPart == current.AdapterLuid.HighPart;
 }
 SourceGraphics& Renderer::sourceGraphics() {
     require(impl_ != nullptr, "Renderer is not initialized"); impl_->thread();

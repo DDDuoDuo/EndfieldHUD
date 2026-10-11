@@ -303,6 +303,11 @@ public:
     // Explicit diagnostic query only; never called by the frame loop. The
     // selected adapter may differ from another GPU installed in the laptop.
     RendererDeviceInfo deviceInfo() const;
+    // Display/adapter change (WM_DISPLAYCHANGE): false when the adapter set
+    // changed (IDXGIFactory1::IsCurrent) and the system's default adapter is
+    // no longer the one this hardware device runs on. The owner then recreates
+    // its renderer (the device-loss path). Always true for WARP.
+    bool adapterCurrent() const noexcept;
     // Original material path shares this exact device and presentation target.
     // No new window, renderer timer or duplicate GPU device is created.
     SourceGraphics& sourceGraphics();

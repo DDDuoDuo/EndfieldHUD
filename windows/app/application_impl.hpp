@@ -21,7 +21,10 @@
 #include "app/areas/app_shortcut_navigation.hpp"
 #include "app/areas/mac_import_handoff.hpp"
 #include "app/areas/power_module.hpp"
+#include "app/areas/update_service.hpp"
 #include "native/id_card_presenter.hpp"
+#include "native/profile_pickers.hpp"
+#include "modules/display_center_logo.hpp"
 #include "native/event_log_time.hpp"
 #include "modules/reader_localization.hpp"
 #include "core/system_overlay_state.hpp"
@@ -278,6 +281,8 @@ struct Application::Impl {
     void importReaderReference(std::uint64_t generation, std::string path, std::shared_ptr<void> lease, double time);
     void activate(const WatchActivation&);
     void registerModule(std::unique_ptr<ModuleOwner>&);
+    native::ScreenReaderPeerHooks peerHooks();
+    VolumeModuleHooks screenHooks();
     void unregisterModule(std::unique_ptr<ModuleOwner>&) noexcept;
     // --- module areas and host broadcasts ---------------------------------------
     void constructAreas();
@@ -293,6 +298,8 @@ struct Application::Impl {
     bool routePointer(ModuleOwner&, const PointerPolicy&, const PointerEvent&, double time, core::Point);
     // Host routes into module areas (app/areas/*.hpp contracts).
     power::PowerAreaService* powerArea() const noexcept;
+    UpdateService* updates() const noexcept;   // windowsUpdates area (app/areas/update_service.hpp)
+    void refreshUpdateStatus();
     AppShortcutNavigation* appNavigation() const noexcept;
     void bindNavigation(double time);
     void syncActivityTelemetry(double time);
@@ -301,8 +308,10 @@ struct Application::Impl {
     void hudDropRoute(double time);
     std::optional<std::string> dropTarget(core::Point client) const;
     void receiveDrop(double time);
+    bool dropHover(std::span<const std::string> paths, std::optional<core::Point> point);
     // UI Automation root (app/hud_automation.hpp).
     void automationChanged();
+    void refreshAutomation();
     HudAutomationSource automationSource();
     std::optional<std::intptr_t> automationObject(const NativeMessage&);
     // DataRootRestart (app/areas/mac_import_handoff.hpp) and GPU device loss.
@@ -310,15 +319,37 @@ struct Application::Impl {
     void declineRestart();
     void runRestartDeclined();
     bool recoverDevice(const std::exception&, double time);
+    bool restartDisplay(const std::string& reason, double time);
+    void checkAdapter(double time);
     // Settings links and update checks close the HUD first (overlay.afterSystemClose).
     void openAfterClose(std::string url, double time);
     void openPendingLink();
+
+    // --- Settings > Display and the desktop clock (app/application_display.cpp) ----
+    struct LogoImport { std::uint64_t generation{}; std::string selection, previous; };
+    void findCenterLogoNodes();
+    void updateCenterLogo();
+    void applyCenterLogo(const modules::CenterLogoArtwork*);
+    void retireCenterLogo();
+    void chooseCenterLogo();
+    void importCenterLogoFile(std::string path, LogoImport);
+    void requestThemeColor();
+    void chooseThemeColor();
+    void deactivateDisplayPanels();
+    std::optional<core::Point> clockPoint(core::Point client) const;
+    bool clockAcceptsInput() const;
+    void setClockHovered(bool);
+    void clockHover(const PointerEvent&);
+    bool clockPress(const PointerEvent&, double time);
+    bool clockWheel(const WheelEvent&, double time);
+    void selectClockStyle(unsigned index, double time);
 
     // --- projection --------------------------------------------------------------
     std::optional<gpu::DisplayDescriptor> projectionDisplay(std::uintptr_t preferred);
     void moveProjection(const gpu::DisplayDescriptor&);
     void projectionDropRoute(bool enabled, double time);
     void cancelProjectionPicker();
+    void releaseProjection()noexcept;
     tools::ProjectionPreviewOptions projectionOptions();
     void projectionCommand(const ProjectionHandoff::Command&, double time);
 
@@ -500,7 +531,7 @@ struct Application::Impl {
     bool quitRequested{};
     core::Point mediaInsertionPoint;
     bool eventRefreshQueued{}, archiveRefreshQueued{}, stopping{}, cleaned{};
-    enum class PickerOwner {none,notes,archive,reader,projection,area};
+    enum class PickerOwner {none,notes,archive,reader,projection,area,logo};
     PickerOwner pickerOwner{PickerOwner::none};
     std::function<void(ApplicationFileResult)> areaPicker; // pending area dialog completion
     std::optional<tools::ArchiveMediaAction> pendingArchivePicker;
@@ -521,6 +552,8 @@ struct Application::Impl {
     std::function<std::optional<std::pair<std::string,std::shared_ptr<void>>>(std::string_view)> areaShelfOpen;
     // Power page sink ("power.batteryPage"): the area's merged reading.
     power::PowerPageSink batteryPageSink;
+    // Calendar reminder click -> Calendar refresh ("calendar.reminderActivation").
+    std::function<void(double)> calendarReminderRefresh;
     // Source navigation with saved app shortcuts (app_shortcut_navigation.hpp).
     WatchSessionNavigation baseNavigation;
     bool navigationDirty{};
@@ -540,6 +573,8 @@ struct Application::Impl {
     Restart restart{*this};
     std::function<void()> restartWork, restartDeclined;
     bool restartPending{}, restartAccepted{}, restartDeclinePosted{};
+    bool restartVerification{}; // hidden coverage only: the restart checks may request it
+    std::function<void()> takeRestartWork();
     // GPU device loss ends this run like an accepted restart (main.cpp builds
     // a fresh owner with a new device); the HUD reopens on its last module.
     bool deviceLost{};
@@ -550,6 +585,7 @@ struct Application::Impl {
     struct HudDropInbox {HWND hwnd{};double scale{1};Impl* owner{};core::Point point;std::vector<std::string>paths;std::string target;bool posted{};};
     std::shared_ptr<HudDropInbox> hudDrop{std::make_shared<HudDropInbox>()};
     bool hudDropActive{};
+    ModuleOwner* dropHoverOwner{}; // area owner showing drag feedback (dropHover)
     // UI Automation root provider (lazily created on WM_GETOBJECT).
     std::unique_ptr<HudAutomation> automation;
     bool automationDirty{};
@@ -562,6 +598,21 @@ struct Application::Impl {
     // the effective reduce-motion value without changing the saved preference.
     bool systemAnimationsOff{};
     unsigned hostChecks{}; // hidden coverage: host integration checks
+    // Center logo (HUDSourceWatchView.setDesktopCenterLogo): the applied
+    // choice:revision key, the EndfieldText/EndfieldTextGlow nodes, the
+    // registered "desktop.center-logo" revision and, without the ID card
+    // presenter, the desktop baseline the logo overrides.
+    std::string centerLogoKey, centerLogoMainID, centerLogoGlowID;
+    std::uint64_t centerLogoGeneration{}, centerLogoTextureRevision{}, logoImportGeneration{};
+    bool centerLogoBound{}, centerLogoRetire{}, centerLogoRetry{};
+    UtilityExecutor::Route centerLogoRoute{}, logoImportRoute{};
+    std::optional<source::SourceDesktopFrameSettings> desktopBaseline;
+    std::optional<LogoImport> pendingLogoImport;
+    // Theme color (ChooseColorW from a private notice) and the clock gesture.
+    gpu::ProfilePickerSession themeColorSession;
+    bool themeColorQueued{}, themeColorDismissed{}, clockSwipeConsumed{};
+    double clockSwipe{}, clockSwipeTime{-1};
+    std::uint64_t colorRequests{}, logoRequests{}; // hidden coverage: dialogs requested (never opened)
     std::string hudDisplayID; // persistent ID of the display the HUD covers
     // Publication.
     struct PublishedEntry{gpu::LayerScene*scene;std::uint64_t content,resources;const gpu::DrawObject*after;std::size_t count;};
@@ -617,7 +668,7 @@ struct Application::Impl {
     double diagnosticStart{};
     bool diagnosticEditing{}, diagnosticFinished{};
     // Fixed WM_APP routes (unchanged from the preview) and the service generation.
-    static constexpr UINT hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
+    static constexpr UINT themeColorMessage=WM_APP+239,hudDropMessage=WM_APP+236,restartDeclinedMessage=WM_APP+237,restartMessage=WM_APP+238,eventChangedMessage=WM_APP+194,utilityMessage=WM_APP+195,mediaPickerMessage=WM_APP+196,
         sharedMediaMessage=WM_APP+223,archiveChangedMessage=WM_APP+224,systemServiceMessage=WM_APP+225,clipboardChangedMessage=WM_APP+226,
         readerChangedMessage=WM_APP+227,readerActionMessage=WM_APP+228,projectionActionMessage=WM_APP+229,projectionDropMessage=WM_APP+230,
         mapChangedMessage=WM_APP+231,calendarChangedMessage=WM_APP+232,audioMessage=WM_APP+233,trayMessage=WM_APP+210;

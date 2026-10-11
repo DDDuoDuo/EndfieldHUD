@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -16,7 +17,11 @@
 namespace endfield::native {
 // singleFile: exactly one existing file through the caller's filter (Mac
 // NSOpenPanel with allowedContentTypes and no multiple selection).
-enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile};
+// applications: one application (Mac: any installed .app) - an existing
+// .exe/.lnk through the caller's filter, or a packaged application chosen
+// in AppsFolder (where the dialog starts), returned as
+// "shell:AppsFolder\<AppUserModelID>"; links are not dereferenced.
+enum class ShelfPickerMode {mixedReferences,singleReaderFile,singleFile,applications};
 struct ShelfPickerLabels {
     std::string title{"Add to Temporary File Shelf"};
     std::string addReferences{"Add references"};
@@ -24,8 +29,8 @@ struct ShelfPickerLabels {
     // accepts its current mixed file/folder selection without following links.
     std::string addSelection{"Add selected references"};
     ShelfPickerMode mode{ShelfPickerMode::mixedReferences};
-    // singleFile only: the listed filter ("Images", "*.png;*.jpg"); an empty
-    // spec lists every file.
+    // singleFile/applications only: the listed filter ("Images",
+    // "*.png;*.jpg"); an empty spec lists every file.
     std::string filterName,filterSpec;
 };
 // Pure validation: all selections are bounded ordinary absolute Windows paths.
@@ -34,6 +39,12 @@ inline constexpr std::size_t shelfPickerMaximumItems=10000,
     shelfPickerMaximumSelectionBytes=ehud::data::FileShelfStore::maximumArchiveBytes;
 bool validShelfPickerSelection(std::span<const std::string>)noexcept;
 bool validReaderPickerSelection(std::span<const std::string>)noexcept;
+// "shell:AppsFolder\<AUMID>": a packaged application's model id (one '!',
+// no path separators or ':'), at most 512 bytes of UTF-8.
+inline constexpr std::string_view shelfPickerAppsFolderPrefix="shell:AppsFolder\\";
+bool validAppsFolderSelection(std::string_view)noexcept;
+// Exactly one entry: an ordinary absolute Windows path or an AppsFolder id.
+bool validApplicationPickerSelection(std::span<const std::string>)noexcept;
 
 #ifdef _WIN32
 struct ShelfPickerRoute {HWND owner{};UINT message{};UINT_PTR generation{};};

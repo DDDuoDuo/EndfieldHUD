@@ -17,6 +17,9 @@ SettingsShortcut settingsShortcut(const ehud::data::Settings&);
 struct SettingsUpdateStatus {
     std::string title,detail,latestVersion,releaseURL;
     bool automaticallyInstalls{},canCheck{},canSetAutomatic{};
+    // The toggle's label (Windows: "Check for updates daily", supplied by the
+    // windowsUpdates area); empty keeps the Mac "Install updates automatically".
+    std::string automaticTitle;
     bool operator==(const SettingsUpdateStatus&)const=default;
 };
 struct SettingsCallbacks {

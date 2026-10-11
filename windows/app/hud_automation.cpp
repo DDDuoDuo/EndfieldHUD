@@ -189,6 +189,18 @@ HRESULT HudAutomation::State::sibling(const HudAutomationGroup*g,bool next,IRawE
 HRESULT HudAutomation::State::hitTest(double x,double y,const ModuleOwner*only,IRawElementProviderFragment**out){
     ++statistics.hitTests;if(!std::isfinite(x)||!std::isfinite(y))return E_INVALIDARG;
     return guarded([&]{
+        // Modal owners (the import card, the red power button card, an open
+        // menu that captures the pointer) answer first; while one is up, the
+        // controls beneath it are not reachable by point, as for the pointer.
+        bool modal=false;
+        for(auto it=entries.rbegin();it!=entries.rend();++it){
+            if(only&&it->owner!=only)continue;if(!listed(*it))continue;
+            if(!it->owner->capturesPointer())continue;modal=true;
+            IRawElementProviderFragment*found{};const long hr=it->owner->automationFromPoint(x,y,&found);
+            if(hr<0){if(found)found->Release();continue;}
+            if(found){*out=found;return S_OK;}
+        }
+        if(modal)return S_OK;
         for(auto it=entries.rbegin();it!=entries.rend();++it){
             if(only&&it->owner!=only)continue;if(!listed(*it))continue;
             IRawElementProviderFragment*found{};const long hr=it->owner->automationFromPoint(x,y,&found);

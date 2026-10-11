@@ -190,11 +190,13 @@ public:
     bool hostEvent(const app::HostEvent&e,double t)override{++audit_->events[static_cast<std::size_t>(e.kind)];return inner_->hostEvent(e,t);}
     void coverage(app::ModuleCoverage&c)override{++audit_->coverage;inner_->coverage(c);}
     bool drop(std::span<const std::string>paths,core::Point p,double t)override{return inner_->drop(paths,p,t);}
+    bool dropHover(std::span<const std::string>paths,std::optional<core::Point>p,double t)override{return inner_->dropHover(paths,p,t);}
     bool automationRefresh(IRawElementProviderFragmentRoot*root)override{return inner_->automationRefresh(root);}
     std::size_t automationCount()const override{return inner_->automationCount();}
     long automationChild(std::size_t i,IRawElementProviderFragment**out)const override{return inner_->automationChild(i,out);}
     long automationFromPoint(double x,double y,IRawElementProviderFragment**out)const override{return inner_->automationFromPoint(x,y,out);}
     void automationDisconnect()noexcept override{inner_->automationDisconnect();}
+    std::optional<core::Module>automationModule()const noexcept override{return inner_->automationModule();}
 };
 void requireAudit(const AreaAudit&a,bool packaged){
     if(!a.constructed){if(packaged)throw std::runtime_error("Module area "+a.name+" returned no owner although the staged package was available");return;}

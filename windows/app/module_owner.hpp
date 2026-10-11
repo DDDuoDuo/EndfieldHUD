@@ -36,8 +36,10 @@
 //   drop(paths, point, time)            a file drop on the HUD while this owner
 //                                       presents the selected module (the host's
 //                                       one OLE drop target; copy effect only)
+//   dropHover(paths, point, time)       drag feedback over that module while a
+//                                       file drag is in progress (nullopt ends it)
 //   automationRefresh / automationCount / automationChild /
-//   automationFromPoint / automationDisconnect
+//   automationFromPoint / automationDisconnect / automationModule
 //                                       UI Automation fragments under the HUD
 //                                       window's root provider (below)
 //
@@ -298,6 +300,15 @@ public:
     // area is offered here after the COM callback returned (UTF-8 absolute
     // paths, logical client point). True when the owner took the drop.
     virtual bool drop(std::span<const std::string>, core::Point, double) { return false; }
+    // Drag feedback while a file drag is over the HUD and this owner presents
+    // the selected module (Mac draggingUpdated -> acceptsAppShortcutDrop ->
+    // beginExternalDrag/endExternalDrag): the dragged UTF-8 paths (decoded
+    // once per drag from CF_HDROP) and the logical client point; nullopt on
+    // leave, cancel or after the drop. True when a drop there would be taken
+    // (the host then offers DROPEFFECT_COPY, else NONE). Owners only flip
+    // their own drop-target state and request a frame (no file reads, focus
+    // or navigation).
+    virtual bool dropHover(std::span<const std::string>, std::optional<core::Point>, double) { return true; }
 
     // UI Automation (UIA). The HUD window answers WM_GETOBJECT with one root
     // provider (IRawElementProviderFragmentRoot, hosted by the HWND). Every
@@ -316,6 +327,9 @@ public:
     virtual long automationChild(std::size_t, IRawElementProviderFragment** out) const { if (out) *out = nullptr; return 0x80070057L; } // E_INVALIDARG
     virtual long automationFromPoint(double, double, IRawElementProviderFragment** out) const { if (out) *out = nullptr; return 0; }
     virtual void automationDisconnect() noexcept {}
+    // UI Automation group caption for an owner that presents no HUD module
+    // (none: "EndfieldHUD"), e.g. the Power navigation entry of powerCharge.
+    virtual std::optional<core::Module> automationModule() const noexcept { return std::nullopt; }
 };
 
 // Failure report delivered once per disabled owner. `what` is the exception's

@@ -116,4 +116,11 @@ bool NativeChromePresentation::update(const SourceWatchFrame&frame,const CameraF
     if(previousWorlds_==worlds&&previousOpacity_==opacity)return false;
     for(unsigned i=0;i<3;++i){placements_[i].world=worlds[i];placements_[i].opacity=opacity;}layers_->setPlacements(placements_);previousWorlds_=worlds;previousOpacity_=opacity;++stats_.placementUpdates;return true;
 }
+std::optional<Point> NativeChromePresentation::statusPoint(Point client,const Matrix4& camera,std::uint32_t pixelWidth,std::uint32_t pixelHeight,double scale)const{
+    if(!previousWorlds_||!(previousOpacity_>0)||!pixelWidth||!pixelHeight||!(scale>0)||!std::isfinite(client.x)||!std::isfinite(client.y))return std::nullopt;
+    const auto plane=Projection::viewport(camera*placements_[2].world,pixelWidth,pixelHeight);
+    const auto local=plane.unproject({client.x*scale,client.y*scale});
+    if(!local||!artwork_.artwork().hitBounds.contains(*local))return std::nullopt;
+    return local;
+}
 } // namespace endfield::native

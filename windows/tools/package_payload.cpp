@@ -205,7 +205,7 @@ int report(const Options& o) {
     root["excluded"] = Json::Array{Json("docs/ and docs/media recordings"), Json("debug symbols (*.pdb; separate symbols archive)"),
                                    Json("tests, test fixtures and development tools"), Json("build caches and intermediate shaders"), Json("user data")};
     root["runtimeDependencies"] = Json::Array{Json("Windows 10 or 11, x64"), Json("Visual C++ runtime: statically linked (/MT); no redistributable"),
-                                              Json("Microsoft Edge WebView2 Runtime: system component used only by account sign-in; not bundled"),
+                                              Json("Microsoft Edge WebView2 Runtime: system component used only by account sign-in; not bundled (Connect explains it and links to Microsoft's download page); SDK loader licence and notices in resources/licenses/webview2"),
                                               Json("Bundled fonts (fonts/) with their OFL licence texts")};
     const auto json = Json(std::move(root)).encode() + "\n";
     std::string markdown = "# EndfieldHUD " + v.display() + " Windows x64 package size\n\n";

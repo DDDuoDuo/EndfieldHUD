@@ -247,7 +247,10 @@ struct ShelfPreview::Impl {
                     if(route){const bool committed=route->commit(paths);if(committed)shared->committedExternal=true;return committed;}
                     std::set<std::string,std::less<>>before;for(const auto&item:retainedStore->items())before.insert(item.id);
                     retainedStore->add(paths);shared->committedExternal=false;
-                    for(const auto&item:retainedStore->items())if(!before.contains(item.id))shared->addedNames.push_back(item.name);return true;}});
+                    for(const auto&item:retainedStore->items())if(!before.contains(item.id))shared->addedNames.push_back(item.name);return true;},
+                // Drag feedback belongs to an external route (the HUD's area owners); the Shelf's own drops read no payload while hovering.
+                [shared](std::span<const std::string> paths,std::optional<POINTL> p){const auto route=shared->external;return !route||!route->hover||route->hover(paths,p);},
+                [shared]{const auto route=shared->external;return route&&route->hover;}});
             need(SUCCEEDED(drop->registerTarget()),"Register Windows Shelf file drop target");drop->setEnabled(false);
             // Incoming drags keep their Shell drag image across the HUD.
             drop->setDragImages(options.nativeIcons);

@@ -25,6 +25,13 @@ void selections(){
     for(const auto*file:{"C:\\owned\\book.PDF","C:\\owned\\book.EpUb","C:\\owned\\book.txt"}){const std::vector<std::string>paths{file};check(n::validReaderPickerSelection(paths),"Reader accepts one original supported extension, case-insensitively");}
     check(!n::validReaderPickerSelection(mixed)&&!n::validReaderPickerSelection({}),"Reader never silently chooses one book from multiple paths");
     const std::vector<std::string>unsupported{"C:\\owned\\book.pdf.exe"};check(!n::validReaderPickerSelection(unsupported),"Unsupported double extension cannot pass the Reader filter");
+    // Applications mode: one file-system application or one AppsFolder model id.
+    const std::vector<std::string>exe{"C:\\Synthetic\\Alpha.exe"},packaged{"shell:AppsFolder\\Synthetic.Packaged_8wekyb3d8bbwe!App"};
+    check(n::validApplicationPickerSelection(exe)&&n::validApplicationPickerSelection(packaged),"An application file or a packaged application id is one application");
+    const std::vector<std::string>two{"C:\\Synthetic\\Alpha.exe","C:\\Synthetic\\Beta.exe"};check(!n::validApplicationPickerSelection(two)&&!n::validApplicationPickerSelection({}),"Applications mode returns exactly one entry");
+    for(const auto*bad:{"shell:AppsFolder\\NoBang","shell:AppsFolder\\!App","shell:AppsFolder\\Family!","shell:AppsFolder\\A!B!C","shell:AppsFolder\\Fam\\ily!App","shell:AppsFolder\\C:Fam!App","shell:AppsFolder\\Fam/ily!App","shell:Other\\Family!App"}){
+        const std::vector<std::string>value{bad};check(!n::validApplicationPickerSelection(value),"Malformed AppsFolder ids reject");}
+    const std::vector<std::string>longID{"shell:AppsFolder\\"+std::string(510,'a')+"!Ap"};check(!n::validApplicationPickerSelection(longID),"The AppsFolder id bound is explicit");
 }
 }
 #ifdef _WIN32

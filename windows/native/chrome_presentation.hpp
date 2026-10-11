@@ -44,6 +44,15 @@ public:
     bool update(const core::source::SourceWatchFrame&,const core::source::CameraFrame&,
         const core::source::DesktopChromeSettings&,float canvasOpacity=1);
     DesktopChromePresentationStats stats()const noexcept{return stats_;}
+    // SystemHUDView.clockPoint: a logical client point -> the status panel's
+    // local point (HUDClockStyleArtwork.hitBounds, 340 x 145) while the panel
+    // is placed and visible. `camera` is the renderer's layer camera (pixel
+    // viewport x client scale), as used to draw the placement. Read only; no
+    // allocation. DesktopClockArtworkPlan::indicatorAt then names a style.
+    std::optional<core::Point> statusPoint(core::Point client,const core::Matrix4& camera,
+        std::uint32_t pixelWidth,std::uint32_t pixelHeight,double scale)const;
+    // The placed status panel's world (status local -> logical client), if any.
+    std::optional<core::Matrix4> statusWorld()const{return previousWorlds_?std::optional<core::Matrix4>(placements_[2].world):std::nullopt;}
 private:
     core::source::DesktopChromeProjectionPlan* projection_;
     LayerScene* layers_;

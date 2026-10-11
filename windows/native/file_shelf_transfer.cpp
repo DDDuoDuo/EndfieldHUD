@@ -277,6 +277,8 @@ struct ShelfDropTarget::Object final:IDropTarget {
     bool virtualOffered{},virtualNoticed{};std::array<CLIPFORMAT,2> descriptors{};
     // Optional Shell drag image over the HUD; entered once per drag session.
     bool images{},imageEntered{};Microsoft::WRL::ComPtr<IDropTargetHelper> helper;
+    // The current drag's paths for the optional hover callback (read once).
+    std::vector<std::string> dragPaths;bool hoverActive{},hovered{};
     Object(ShelfTransferRoute route,Callbacks value):notice(route,true),callbacks(std::make_shared<const Callbacks>(std::move(value))){
         require(bool(callbacks->acceptsPoint)&&bool(callbacks->commit),"Incomplete shelf drop callbacks");
         descriptors={static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW")),static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor"))};
@@ -287,6 +289,13 @@ struct ShelfDropTarget::Object final:IDropTarget {
     void error(const char* text,std::optional<StoreErrorCode> code={})noexcept{try{changes.error=text;changes.errorCode=code;notice.signal();}catch(...){}}
     void virtualNotice()noexcept{if(virtualNoticed)return;virtualNoticed=true;changes.virtualFiles=true;notice.signal();}
     bool accepts(POINTL point){const auto snapshot=callbacks;const auto version=revision;return alive&&enabled&&snapshot&&snapshot->acceptsPoint(point)&&alive&&enabled&&version==revision;}
+    // Drag feedback: true without a hover callback (unchanged behaviour).
+    bool hoverAccepts(std::optional<POINTL> point){
+        const auto snapshot=callbacks;if(!hoverActive||!snapshot||!snapshot->hover)return true;
+        if(!point&&!hovered)return true;hovered=point.has_value();
+        try{return snapshot->hover(dragPaths,point)||!point;}catch(...){return false;}
+    }
+    void endHover()noexcept{try{(void)hoverAccepts(std::nullopt);}catch(...){}hovered=hoverActive=false;dragPaths.clear();}
     // Virtual files only: some descriptor format without any CF_HDROP offer.
     bool virtualOnly(IDataObject& source,std::uint64_t version){
         for(const auto descriptor:descriptors){if(!descriptor)continue;FORMATETC format{descriptor,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
@@ -309,18 +318,25 @@ struct ShelfDropTarget::Object final:IDropTarget {
         FORMATETC format{CF_HDROP,nullptr,DVASPECT_CONTENT,-1,TYMED_HGLOBAL};
         const auto hr=source->QueryGetData(&format);if(!alive||version!=revision)return S_OK;offered=SUCCEEDED(hr);
         if(!offered)virtualOffered=virtualOnly(*source,version);
-        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;
+        // Decode the offered paths once per drag for the hover callback.
+        dragPaths.clear();hovered=false;
+        try{hoverActive=offered&&callbacks&&callbacks->hover&&(!callbacks->hoverWanted||callbacks->hoverWanted());}catch(...){hoverActive=false;}
+        if(hoverActive){try{dragPaths=incoming(*source);}catch(...){dragPaths.clear();}if(!alive||version!=revision)return S_OK;}
+        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point)&&hoverAccepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;
             else if(virtualOffered&&(allowed&DROPEFFECT_COPY)&&accepts(point))virtualNotice();return S_OK;}catch(...){hover(false);return failure();}
     }
     HRESULT STDMETHODCALLTYPE DragOver(DWORD,POINTL point,DWORD* effect)override{if(!effect)return E_POINTER;const auto allowed=*effect;*effect=DROPEFFECT_NONE;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;if(busy)return RPC_E_CALL_REJECTED;Call call(this,notice);
         ImageScope image{*this,nullptr,point,effect,ImageScope::over};busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};
-        try{const bool accepted=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;
+        try{const bool inside=offered&&(allowed&DROPEFFECT_COPY)&&accepts(point);bool accepted=false;
+            // Outside the accepting area the owner's highlight ends; the paths stay for a re-entry.
+            if(inside)accepted=hoverAccepts(point);else if(hovered)(void)hoverAccepts(std::nullopt);
+            hover(accepted);if(accepted)*effect=DROPEFFECT_COPY;
             else if(virtualOffered&&!virtualNoticed&&(allowed&DROPEFFECT_COPY)&&accepts(point))virtualNotice();return S_OK;}catch(...){hover(false);return failure();}}
-    HRESULT STDMETHODCALLTYPE DragLeave()override{if(!notice.ownerThread())return RPC_E_WRONG_THREAD;Call call(this,notice);++revision;offered=virtualOffered=false;hover(false);imageLeave();return S_OK;}
+    HRESULT STDMETHODCALLTYPE DragLeave()override{if(!notice.ownerThread())return RPC_E_WRONG_THREAD;Call call(this,notice);++revision;offered=virtualOffered=false;endHover();hover(false);imageLeave();return S_OK;}
     HRESULT STDMETHODCALLTYPE Drop(IDataObject* source,DWORD,POINTL point,DWORD* effect)override{
         if(!effect)return E_POINTER;const auto allowed=*effect;*effect=DROPEFFECT_NONE;if(!notice.ownerThread())return RPC_E_WRONG_THREAD;if(busy)return RPC_E_CALL_REJECTED;Call call(this,notice);
         ImageScope image{*this,source,point,effect,ImageScope::drop};
-        offered=virtualOffered=false;hover(false);if(!source||!(allowed&DROPEFFECT_COPY)||changes.committed)return S_OK;
+        offered=virtualOffered=false;hover(false);endHover();if(!source||!(allowed&DROPEFFECT_COPY)||changes.committed)return S_OK;
         busy=true;struct Reset{bool& b;~Reset(){b=false;}}reset{busy};
         try{if(!accepts(point))return S_OK;const auto version=revision;
             auto paths=incoming(*source); // external COM + medium release finish here

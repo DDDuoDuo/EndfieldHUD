@@ -52,14 +52,20 @@ bool Application::Impl::routePointer(ModuleOwner&owner,const PointerPolicy&polic
 bool Application::Impl::onPointer(const PointerEvent&e){
     auto stage=probe.measure(LiveProbe::pointer);if(!ready)return false;const auto time=now();const core::Point p{e.x,e.y};
     if(projection&&projection->presented()){
-        if(projectionHandoff.acceptsInput()){projection->pointer(e,time);host.capturePointer(projection->preview()->pointerLocked());refresh(time);}return true;
+        // A consumed press, release or drag can change the toolbar, menu or media state its UIA group lists.
+        if(projectionHandoff.acceptsInput()){if(projection->pointer(e,time)&&e.kind!=PointerKind::move)automationChanged();host.capturePointer(projection->preview()->pointerLocked());refresh(time);}return true;
     }
     using C=ModuleRegistry::Chain;
+    // SystemHUDView.updateControlHighlights: the desktop clock's hover plate.
+    if(e.kind==PointerKind::move||e.kind==PointerKind::leave)clockHover(e);
     // Exclusive captures (modal Settings/quit card, Minigame rules, Calendar
     // and Reader menus, Map drag, Archive selection) run before floating Notes.
     // A guarded failure inside routePointer leaves the chain to continue.
     if(registry.first(C::pointerCapture,[&](ModuleOwner&o,const ModuleRouting&r){return o.capturesPointer()&&routePointer(o,r.pointerPolicy,e,time,p);},"pointer"))return true;
     if(registry.first(C::pointer,[&](ModuleOwner&o,const ModuleRouting&r){return routePointer(o,r.pointerPolicy,e,time,p);},"pointer"))return true;
+    // The clock sits below popovers and workspace notes, beside navigation:
+    // a style indicator selects that style, the rest opens Work Mode.
+    if(clockPress(e,time))return true;
     if(e.kind==PointerKind::move){environment.pointer=p;session->pointerMove(p,time);}
     else if((e.kind==PointerKind::down||e.kind==PointerKind::doubleClick)&&e.button==PointerButton::left){environment.pointer=p;session->pointerDown(p,time);if(session->navigationPointerActive())host.capturePointer(true);}
     else if(e.kind==PointerKind::up&&e.button==PointerButton::left){environment.pointer=p;if(const auto action=session->pointerUp(p,time))activate(*action);host.capturePointer(false);}
@@ -77,7 +83,7 @@ bool Application::Impl::onPointer(const PointerEvent&e){
 
 bool Application::Impl::onWheel(const WheelEvent&e){
     if(!ready)return false;const auto time=now();
-    if(projection&&projection->presented()){if(projectionHandoff.acceptsInput()){projection->wheel(e,time);refresh(time);}return true;}
+    if(projection&&projection->presented()){if(projectionHandoff.acceptsInput()){if(projection->wheel(e,time))automationChanged();refresh(time);}return true;}
     using C=ModuleRegistry::Chain;
     if(registry.first(C::wheelCapture,[&](ModuleOwner&o,const ModuleRouting&){return o.capturesWheel()&&session->inputEnabled()&&o.wheel(e,time);},"wheel")){automationChanged();refresh(time);return true;}
     if(auto*owner=registry.first(C::wheel,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.wheel(e,time);},"wheel")){
@@ -85,6 +91,8 @@ bool Application::Impl::onWheel(const WheelEvent&e){
         if(owner->routing().wheelRefreshesPointerLock){environment.pointerLocked=pointerLocked();session->setEnvironment(environment,time);}
         refresh(time);return true;
     }
+    // Wheel input over the clock changes its style (horizontal) and never scrolls navigation.
+    if(clockWheel(e,time))return true;
     if(e.horizontal)return false;const bool handled=session->wheel({e.x,e.y},e.steps,e.linesPerStep,time);if(handled)refresh(time);return handled;
 }
 
@@ -99,7 +107,7 @@ bool Application::Impl::onBeforeKeyTranslation(const NativeMessage&m){
 
 bool Application::Impl::onKey(const KeyEvent&e){
     auto stage=probe.measure(LiveProbe::key);
-    if(ready&&projection&&projection->presented()){if(projectionHandoff.acceptsInput()){projection->key(e,now());refresh(now());}return true;}
+    if(ready&&projection&&projection->presented()){if(projectionHandoff.acceptsInput()){if(projection->key(e,now()))automationChanged();refresh(now());}return true;}
     if(ready){
         using C=ModuleRegistry::Chain;
         if(registry.first(C::keyCapture,[&](ModuleOwner&o,const ModuleRouting&){return session->inputEnabled()&&o.capturesKeys()&&o.key(e,now());},"key")){automationChanged();refresh(now());return true;}
@@ -130,6 +138,8 @@ void Application::Impl::onApplicationActive(bool active){
 
 void Application::Impl::onDisplayChanged(){
     if(ready&&production())recordDisplays(); // AppDelegate: screen parameter change refreshes displays
+    // A display change can move the default adapter: recreate the renderer on it.
+    if(ready&&production()){checkAdapter(now());if(stopping)return;}
     if(ready)broadcast(HostEvent::Kind::displaysChanged,now());
     // OverlayController.reposition while the HUD is presented (hot-plug,
     // resolution or arrangement): keep or move the covered display, or close.
@@ -182,7 +192,9 @@ void Application::Impl::onFrame(double time){
     host.setFrameDemand(demand(time));scheduleDeadline();
     // OverlayController.finishSystemOpening: the source entrance is complete
     // once the session is visible; a focus loss queued during opening closes now.
-    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),time);if(stopping)return;}
+    if(lifecycleOpening&&!closing&&session->phase()==core::VisibilityPhase::visible){const auto token=*lifecycleOpening;lifecycleOpening.reset();perform(lifecycle.didOpen(token),time);
+        // Entries enabled only once opening completes (the Power navigation entry) re-read their state.
+        automationChanged();refreshAutomation();if(stopping)return;}
     if(!active&&session->phase()==core::VisibilityPhase::concealed){
         if(notes)notes->setMediaActive(false,time);host.hide();if(quitConfirmation)quitConfirmation->hide(time);concealed(time);
         core::SystemOverlayEffects closed;
@@ -213,7 +225,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
         return 0;
     }
     if(ready&&m.wParam==serviceGeneration){
-        if(m.message==utilityMessage){if(utility)utility->drain();if(longWork)longWork->drain();if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
+        if(m.message==utilityMessage){if(utility)utility->drain();if(centerLogoRetry)updateCenterLogo();if(longWork)longWork->drain();if(activityProbe)activityProbe->submitPending();syncActivityTelemetry(now());if(systemServices)systemServices->clipboard_queue_capacity_available();if(storage)isolate(storageModuleOwner,"utility completion",[&]{storage->utilityCompleted(storageFixture?storageFixture->time.load(std::memory_order_relaxed):now());});if(archiveService)archiveService->queueCapacityAvailable();if(readerOwner)readerOwner->queueCapacityAvailable();if(calendarState){calendarState->queueCapacityAvailable();calendarNotifications->queueCapacityAvailable();}if(map)isolate(mapModuleOwner,"utility completion",[&]{if(notes&&notes->selected()==core::Module::map)requestMapGeography();map->utilityCompleted(visibleMode()?now():mapTime);});if(settingsSaves){settingsSaves->queueCapacityAvailable();if(settingsSaves->status().error&&settingsUI)settingsUI->controller().setStatus(*settingsSaves->status().error);}if(eventSaves)eventSaves->retry();broadcast(HostEvent::Kind::utilityCompleted,now());refresh(now());return 0;}
         if(m.message==audioMessage&&audio){
             // The shared AudioRuntime posted one coalesced notice: adopt the
             // publication, feed the Event Log device list and the areas.
@@ -226,6 +238,7 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             if(changes.volume)refresh(time);return 0;
         }
         if(m.message==hudDropMessage){receiveDrop(now());return 0;}
+        if(m.message==themeColorMessage){chooseThemeColor();return 0;}
         if(m.message==restartMessage){
             // DataRootRestart: the red power button's confirmed quit (close, the
             // flush chain, every save queue), then a fresh run (main.cpp).
@@ -299,7 +312,12 @@ std::optional<std::intptr_t> Application::Impl::onAppMessage(const NativeMessage
             host.suspendCursor(true);mediaPicker->handleMessage(m.wParam,m.lParam);host.suspendCursor(false);
             if(auto result=mediaPicker->drain(m.wParam)){
                 const auto owner=std::exchange(pickerOwner,PickerOwner::none);auto action=std::move(pendingArchivePicker);pendingArchivePicker.reset();auto readerAction=std::move(pendingReaderPicker);pendingReaderPicker.reset();auto projectionAction=std::exchange(pendingProjectionPicker,{});const auto time=now();
-                if(owner==PickerOwner::area){
+                if(owner==PickerOwner::logo){
+                    // HUDSettingsInteraction.chooseLogo: one image, imported on the shared executor.
+                    auto request=std::exchange(pendingLogoImport,std::nullopt);
+                    if(request&&request->generation==logoImportGeneration&&!result->canceled()&&SUCCEEDED(result->result)&&result->paths.size()==1)importCenterLogoFile(result->paths.front(),std::move(*request));
+                    else if(request&&!result->canceled()&&FAILED(result->result)&&settingsUI)settingsUI->showImportError(modules::centerLogoErrorText(modules::CenterLogoError::invalidImage,settingsLanguage(configuration)),time);
+                }else if(owner==PickerOwner::area){
                     ApplicationFileResult area;area.cancelled=result->canceled();area.failed=!area.cancelled&&FAILED(result->result);
                     if(!area.cancelled&&!area.failed)area.paths=result->paths;
                     finishAreaPicker(std::move(area));
