@@ -10,7 +10,16 @@
 namespace endfield::tools {
 namespace {namespace gpu=native;namespace mod=modules;using M=core::Matrix4;using P=core::Point;using R=core::Rect;using J=mod::ReaderJson;
 void need(bool b,const char*m){if(!b)throw std::invalid_argument(m);}bool inside(R r,P p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
-J empty(){return J::Object{{"bounds",J::Array{0,0,400,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}}
+J empty(){return J::Object{{"bounds",J::Array{0,0,400,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<R>projected(const core::Projection&projection,double scale,R r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const P c:{P{r.x,r.y},P{r.x+r.width,r.y},P{r.x,r.y+r.height},P{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return R{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}}
 struct ReaderPreview::Impl {
     mod::ReaderState*state;gpu::LayerRasterizer*raster;ReaderPreviewOptions options;mod::ReaderViewport viewport;gpu::NativeReaderScene canvas;gpu::LayerScene geometry;
     std::unique_ptr<gpu::NativeModuleSurface>surface;gpu::NativeModuleRegistration registration{"reader.registration"};
@@ -89,6 +98,19 @@ bool ReaderPreview::beginImport(std::uint64_t g,double t){auto&i=*impl_;const Im
 bool ReaderPreview::receiveImportError(std::uint64_t g,std::optional<std::string>error,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!importRequestCurrent(g))return false;if(error)need(error->size()<=4096&&J::validUtf8(*error)&&error->find('\0')==std::string::npos,"Invalid Reader import error");i.importPending=false;i.importApplying=false;i.importTarget.reset();i.importError=std::move(error);i.importVisual=bool(i.importError);i.dirty=true;return true;}
 bool ReaderPreview::receiveImport(std::uint64_t g,mod::ReaderBook b,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!importRequestCurrent(g))return false;i.importPending=false;i.importError.reset();i.importVisual=true;i.importApplying=true;i.dirty=true;const auto*old=i.state->book();i.importTarget=Impl::ImportTarget{b.platform,std::string(mod::readerReferencePath(b)),b.title,old&&old->platform==b.platform&&mod::readerReferencePath(*old)==mod::readerReferencePath(b)&&old->title==b.title};const bool changed=i.state->addValidated(std::move(b));if(!changed){i.importApplying=false;i.importVisual=false;i.importTarget.reset();}return changed;}
 void ReaderPreview::queueCapacityAvailable(){impl_->state->queueCapacityAvailable();}
+ReaderPreview::Accessibility ReaderPreview::accessibility(){auto&i=*impl_;Accessibility out;if(!i.input||!i.pose)return out;i.content();const auto language=i.options.strings.language;
+    out.canvas=mod::readerCanvasAccessibility(i.canvas.actions(),language);
+    if(i.menu){out.menu=mod::readerMenuAccessibility(i.menu->artwork.actions,language);for(auto&e:out.menu){e.rect.x+=i.menu->origin.x;e.rect.y+=i.menu->origin.y;}}
+    std::optional<std::string>summary;if(!i.importVisual)if(const auto*p=i.state->current())summary=p->summary;
+    out.help=mod::readerAccessibilityText(i.importError?i.importError:i.stateError(),summary,i.options.strings);return out;}
+bool ReaderPreview::perform(std::string_view id,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!i.input||!i.pose)return false;i.content();
+    const auto actions=i.canvas.actions();const auto found=std::find_if(actions.begin(),actions.end(),[&](const auto&a){return a.id==id;});if(found==actions.end()||!found->enabled)return false;
+    const std::string action(id);i.perform(action);return true;}
+bool ReaderPreview::performMenu(std::string_view id,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!i.input||!i.pose||!i.menu)return false;
+    const auto&items=i.menu->artwork.actions;const auto found=std::find_if(items.begin(),items.end(),[&](const auto&a){return a.id==id;});if(found==items.end()||!found->enabled)return false;
+    const std::string item(id);i.menuAction(item);return true;}
+std::optional<R>ReaderPreview::clientRect(R r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&ReaderPreview::clientMetrics()const noexcept{return impl_->metrics;}
 void ReaderPreview::upload(gpu::Renderer&r){auto&i=*impl_;need(!i.renderer||i.renderer==&r,"Reader resources belong to another renderer");i.renderer=&r;if(i.seen)i.canvas.upload(r);if(!i.pose)return;if(i.closing)i.closing->scene->upload(r);if(i.menu)i.menu->scene->upload(r);const auto revision=i.registration.stats().geometryRevision;if(i.registrationUploadedRevision!=revision){i.registration.uploadGeometry(r);i.registrationUploadedRevision=revision;}}
 std::span<const gpu::LayerCompositionEntry>ReaderPreview::entries(){auto&i=*impl_;i.count=0;if(!i.pose)return {};i.composed[i.count++]=i.canvas.entry();if(i.closing)i.composed[i.count++]=i.closing->scene->entry();if(i.menu)i.composed[i.count++]=i.menu->scene->entry();i.composed[i.count++]={&i.geometry,i.registration.draws()};return {i.composed.data(),i.count};}
 void ReaderPreview::collected(gpu::Renderer&r){auto&i=*impl_;for(auto it=i.retired.begin();it!=i.retired.end();)if((*it)->scene->release(r))it=i.retired.erase(it);else ++it;}

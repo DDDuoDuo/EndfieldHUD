@@ -16,6 +16,25 @@ Json blank(){return Json::Object{{"bounds",Json::Array{0,0,440,440}},{"position"
 native::MapAppearance appearanceFor(native::MapAppearance a,bool terrain){a.terrainReady=terrain;if(!a.strings.heading.starts_with("//"))a.strings.heading="// "+a.strings.heading;return a;}
 std::optional<double>earlier(std::optional<double>a,std::optional<double>b){return a&&b?std::min(*a,*b):a?a:b;}
 bool hasTerrain(const std::shared_ptr<const modules::MapGeography>&g){return g&&g->terrain.has_value();}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const Point c:{Point{r.x,r.y},Point{r.x+r.width,r.y},Point{r.x,r.y+r.height},Point{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}
+// Source action ids (WorldMapCanvas.accessibleActions) without allocating.
+bool accessibleID(const modules::MapActionHit&hit,std::string_view id){
+    using A=modules::MapAction;
+    switch(hit.action){
+    case A::zoomIn:return id=="map:zoomIn";case A::zoomOut:return id=="map:zoomOut";case A::reset:return id=="map:reset";
+    case A::addPin:return id=="map:addPin";case A::deletePin:return id=="map:deletePin";
+    case A::pin:{constexpr std::string_view prefix="map:pin:";return id.size()>prefix.size()&&id.starts_with(prefix)&&id.substr(prefix.size())==hit.pinID;}
+    }
+    return false;
+}
 }
 struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     modules::MapState state;gpu::LayerRasterizer&paint;app::UtilityExecutor&utility;
@@ -27,6 +46,11 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
     app::ClientMetrics metrics;core::Projection projection;std::optional<gpu::ModuleSurfacePose>pose;std::optional<Point>pointerPoint;
     bool alive{true},ready{},overlayVisible{true},prepared{},input{},pressed{};double time{};unsigned eventDepth{};
     std::uint64_t cameraRevision{},gestureRevision{},eventRevision{};
+    // Accessibility snapshot (requestAccessibilityLayout): what it was built
+    // from, the 12 Hz gesture cadence and a due publication forced by deadline().
+    struct AccessibilityKey {std::uint64_t revision{},camera{};core::Language language{};bool operator==(const AccessibilityKey&)const=default;};
+    core::Language language{core::Language::english};modules::MapAccessibility published;std::optional<AccessibilityKey>publishedKey;
+    modules::MapAccessibilityCadence cadence;bool accessibilityForced{};
     struct Event {Impl&i;std::uint64_t revision;Event(Impl&v,double t):i(v),revision(0){need(std::isfinite(t),"Map owner needs finite time");need(i.eventRevision!=UINT64_MAX,"Map owner event revision exhausted");revision=++i.eventRevision;if(!i.eventDepth)i.time=std::max(i.time,t);++i.eventDepth;}~Event(){--i.eventDepth;}bool current()const{return i.alive&&i.eventRevision==revision;}};
     bool current(std::uint64_t revision)const{return alive&&eventRevision==revision;}
     Impl(gpu::LayerRasterizer&r,app::UtilityExecutor&e,MapPreviewOptions&o):state(std::move(o.initial),std::move(o.persistence)),paint(r),utility(e),geography(std::move(o.geography)),appearance(appearanceFor(o.appearance,hasTerrain(geography))),options(o.raster),changed(std::move(o.changed)),recentered(std::move(o.recentered)),pinStyleChanged(std::move(o.pinStyleChanged)),geometry(r),surface(prepare(),core::Module::map){state.setReducedMotion(appearance.reducedMotion);composed.reserve(2);}
@@ -48,7 +72,7 @@ struct MapPreview::Impl : std::enable_shared_from_this<Impl> {
         if(change.handled||change.changed)notify();
     }
     void activate(bool nextPrepared,bool nextInput){const auto revision=eventRevision;
-        if(input!=nextInput){input=nextInput;pressed=false;if(!input){pointerPoint.reset();scene->settle();}synchronize(state.setActive(input),revision);if(!current(revision))return;}
+        if(input!=nextInput){input=nextInput;pressed=false;if(!input){pointerPoint.reset();scene->settle();cadence.cancel();accessibilityForced=false;}synchronize(state.setActive(input),revision);if(!current(revision))return;}
         if(prepared!=nextPrepared){prepared=nextPrepared;raster->setActive(prepared,time);if(!current(revision))return;}
         feedback();
     }
@@ -58,7 +82,7 @@ MapPreview::~MapPreview(){if(impl_){impl_->alive=false;impl_->ready=false;impl_-
 void MapPreview::resize(const app::ClientMetrics&m){need(m.pixelWidth&&m.pixelHeight&&std::isfinite(m.scale)&&m.scale>0,"Invalid Map viewport");impl_->metrics=m;}
 void MapPreview::setGeography(std::shared_ptr<const modules::MapGeography>g,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->geography==g)return;i->geography=std::move(g);i->appearance.terrainReady=hasTerrain(i->geography);i->scene->setAppearance(i->appearance);i->raster->setGeography(i->geography,i->time);}
 bool MapPreview::setAppearance(gpu::MapAppearance a,double t){auto i=impl_;const Impl::Event event(*i,t);a=appearanceFor(std::move(a),hasTerrain(i->geography));if(!i->scene->setAppearance(a))return false;i->appearance=std::move(a);i->state.setReducedMotion(i->appearance.reducedMotion);if(i->appearance.reducedMotion)i->scene->settle();i->raster->configure(i->appearance.dark,i->appearance.accent,i->options.pixelsPerPoint,i->time);if(event.current()){i->feedback();i->notify();}return true;}
-void MapPreview::setLanguage(core::Language language,double t){auto a=impl_->appearance;a.strings={core::localized("MAP","地图",language),core::localized("LOADING TERRAIN","载入地形",language),core::localized("PINS","标记",language)};setAppearance(std::move(a),t);}
+void MapPreview::setLanguage(core::Language language,double t){impl_->language=language;auto a=impl_->appearance;a.strings={core::localized("MAP","地图",language),core::localized("LOADING TERRAIN","载入地形",language),core::localized("PINS","标记",language)};setAppearance(std::move(a),t);}
 void MapPreview::setOverlayVisible(bool value,double t){auto i=impl_;const Impl::Event event(*i,t);if(i->overlayVisible==value)return;i->overlayVisible=value;if(!value)i->activate(false,false);if(event.current())i->notify();}
 void MapPreview::update(const Matrix&center,const core::source::DesktopChromeSettings&settings,const core::ModulePresentationSample&sample,float opacity,double t){auto i=impl_;const Impl::Event event(*i,t);need(i->metrics.pixelWidth&&i->metrics.pixelHeight,"Resize Map owner before presentation");
     const auto*shown=sample.current.module==core::Module::map?&sample.current:sample.incoming&&sample.incoming->module==core::Module::map?&*sample.incoming:nullptr;
@@ -69,8 +93,12 @@ void MapPreview::update(const Matrix&center,const core::source::DesktopChromeSet
     i->feedback();i->scene->updatePose({p.contentWorld,p.opacity,i->time,std::span(&p.hostClip,1),p.shutter?&*p.shutter:nullptr});i->registration.update(p.registration);
 }
 bool MapPreview::utilityCompleted(double t){auto i=impl_;const Impl::Event event(*i,t);return i->raster->submitPending(i->time);}
-bool MapPreview::deadline(double t){auto i=impl_;const Impl::Event event(*i,t);const auto before=i->state.gestureRevision();i->synchronize(i->state.advance(i->time),event.revision);if(!event.current())return true;const bool submitted=i->raster->advance(i->time);return submitted||before!=i->state.gestureRevision();}
-std::optional<double>MapPreview::nextWakeTime()const noexcept{return earlier(impl_->state.nextWakeTime(),impl_->raster->nextWakeTime());}
+bool MapPreview::deadline(double t){auto i=impl_;const Impl::Event event(*i,t);const auto before=i->state.gestureRevision();i->synchronize(i->state.advance(i->time),event.revision);if(!event.current())return true;const bool submitted=i->raster->advance(i->time);
+    // A deferred accessibility publication is due (or its gesture ended): the
+    // host's refresh after this changed artwork publishes it.
+    bool accessibility{};if(i->cadence.due(i->time,i->state.pointerLocked())){i->cadence.cancel();i->accessibilityForced=true;accessibility=true;}
+    return submitted||before!=i->state.gestureRevision()||accessibility;}
+std::optional<double>MapPreview::nextWakeTime()const noexcept{return earlier(earlier(impl_->state.nextWakeTime(),impl_->raster->nextWakeTime()),impl_->cadence.deadline());}
 bool MapPreview::requiresFrames(double t)const{return impl_->pose&&impl_->overlayVisible&&impl_->scene->requiresFrames(std::max(t,impl_->time));}
 bool MapPreview::covers(Point p)const{const auto q=impl_->local(p);return q&&modules::mapContains(*q);}
 bool MapPreview::pointer(const app::PointerEvent&e,double t){auto i=impl_;const Impl::Event event(*i,t);i->pointerPoint=Point{e.x,e.y};const auto q=i->local(*i->pointerPoint);
@@ -92,6 +120,19 @@ bool MapPreview::key(const app::KeyEvent&e,double t){auto i=impl_;const Impl::Ev
     const auto result=i->state.key(*key);i->synchronize(result,event.revision);return result.handled;
 }
 bool MapPreview::perform(modules::MapAction action,std::string_view pinID,double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->input)return false;const auto result=i->state.perform(action,pinID);i->synchronize(result,event.revision);return result.handled;}
+bool MapPreview::perform(std::string_view id,double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->input||!i->pose)return false;
+    const auto actions=i->state.actions();for(std::size_t n=0;n<actions.count;++n){const auto&hit=actions.items[n];if(!accessibleID(hit,id))continue;if(!hit.enabled)return false;
+        // MapState::perform finishes a wheel gesture first (activateAction's endGesture).
+        const std::string pin(hit.pinID);const auto result=i->state.perform(hit.action,pin);i->synchronize(result,event.revision);return result.handled;}
+    return false;}
+const modules::MapAccessibility&MapPreview::accessibility(){auto&i=*impl_;
+    if(!i.input||!i.pose){if(i.publishedKey){i.published=modules::MapAccessibility{};i.publishedKey.reset();}i.cadence.cancel();i.accessibilityForced=false;return i.published;}
+    const Impl::AccessibilityKey key{i.state.revision(),i.state.cameraRevision(),i.language};
+    if(i.publishedKey==key){i.cadence.cancel();i.accessibilityForced=false;return i.published;}
+    if(i.publishedKey&&!i.accessibilityForced&&!i.cadence.request(i.time,i.state.pointerLocked()))return i.published;
+    i.published=modules::mapAccessibility(i.state,i.language,i.state.error());i.publishedKey=key;i.cadence.published(i.time);i.accessibilityForced=false;return i.published;}
+std::optional<core::Rect>MapPreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&MapPreview::clientMetrics()const noexcept{return impl_->metrics;}
 void MapPreview::cancelInteraction(double t){auto i=impl_;const Impl::Event event(*i,t);i->pressed=false;i->pointerPoint.reset();i->synchronize(i->state.up(true),event.revision);if(!event.current())return;const auto outsidePoint=Point{-1e6,-1e6};i->synchronize(i->state.wheel(outsidePoint,0,false,true,i->time),event.revision);if(event.current())i->feedback();}
 bool MapPreview::pointerLocked()const noexcept{return impl_->state.pointerLocked();}
 const modules::MapState&MapPreview::state()const noexcept{return impl_->state;}

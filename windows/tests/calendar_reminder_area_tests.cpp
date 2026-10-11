@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <iostream>
 #include <map>
+#include <vector>
 #include <typeinfo>
 
 namespace {
@@ -147,6 +148,11 @@ void productionRoute() {
           routing.flush == a::ModuleRouting::noRoute, "Only the message chain reaches the area");
     for (unsigned n = 0; n <= static_cast<unsigned>(c::Module::profile); ++n) check(!owner->presents(static_cast<c::Module>(n)), "The area presents no HUD module");
     check(!gpu::processAppUserModelID(), "The test process identity is never established");
+    // The built-in Calendar owner's refresh (the host publishes it): the Mac
+    // Calendar refreshes when a reminder click activates the app.
+    std::vector<double> refreshed;
+    areas::CalendarReminderActivationSink refresh = [&](double time) { refreshed.push_back(time); };
+    f.host.publish<areas::CalendarReminderActivationSink>(areas::calendarReminderActivationKey, refresh);
 
     ComPtr<INotificationActivationCallback> callback;
     check(SUCCEEDED(service->createActivationCallback(&callback)) && callback, "The actual callback is available without COM registration");
@@ -162,10 +168,24 @@ void productionRoute() {
     while (PeekMessageW(&msg, f.window.h, WM_APP, 0xBFFF, PM_REMOVE)) { ++posted; notice = msg.message; check(msg.wParam == 1, "The notice carries the route generation"); }
     check(posted == 1 && notice == WM_APP + 0x1000 && service->calendarActivations() == 0, "Clicks coalesce into one private notice on the HUD window");
     check(!owner->message({f.window.h, WM_APP + 0x0FFF, 1, 0}, 1), "Other messages pass through");
-    check(owner->message({f.window.h, notice, 1, 0}, 1), "The private notice is consumed");
+    check(refreshed.empty(), "Nothing refreshes before the owner's notice");
+    check(owner->message({f.window.h, notice, 1, 0}, 1.5), "The private notice is consumed");
     check(service->calendarActivations() == 2 && service->ignoredActivations() == 1 && service->lastEvent() == std::optional<std::string>(eventID),
           "Calendar clicks name their event; malformed launches are ignored");
-    check(owner->message({f.window.h, notice, 2, 0}, 1) && service->calendarActivations() == 2, "A stale route generation consumes nothing");
+    check(refreshed == std::vector<double>{1.5} && service->calendarRefreshes() == 1, "One notice with reminder clicks refreshes Calendar once, at the notice time");
+    check(owner->message({f.window.h, notice, 2, 0}, 1.6) && service->calendarActivations() == 2 && refreshed.size() == 1, "A stale route generation consumes and refreshes nothing");
+    const auto deliver = [&](const wchar_t* arguments, double time) {
+        check(SUCCEEDED(callback->Activate(id.c_str(), arguments, nullptr, 0)), "A further click is accepted");
+        MSG next{};
+        check(PeekMessageW(&next, f.window.h, WM_APP, 0xBFFF, PM_REMOVE) && next.message == notice, "A further click posts one notice");
+        check(owner->message({f.window.h, notice, 1, 0}, time), "The further notice is consumed");
+    };
+    deliver(L"{\"type\":\"update\"}", 1.7);
+    check(service->ignoredActivations() == 2 && refreshed.size() == 1, "A notice with only foreign launches refreshes nothing");
+    f.host.withdraw(areas::calendarReminderActivationKey);
+    deliver(reminder.c_str(), 1.8);
+    check(service->calendarActivations() == 3 && refreshed.size() == 1 && service->calendarRefreshes() == 1,
+          "Without the Calendar owner's refresh a click is still consumed and refreshes nothing");
     check(!f.host.hostActions() && !f.host.frames, "A reminder click opens, selects, closes and records nothing (Mac activation only)");
     // The source never routes a click that arrives after the area is gone.
     owner.reset();
@@ -180,7 +200,9 @@ void hiddenCoverage() {
     auto* service = f.host.find<areas::CalendarRemindersService>(areas::CalendarRemindersService::key);
     check(owner && service && service->appUserModelID() == gpu::calendarNotificationAppUserModelID && !service->activatorRegistered(),
           "Hidden coverage constructs the synthetic identity without COM registration");
-    unsigned assertions{}, routed{};
+    unsigned assertions{}, routed{}, refreshes{};
+    areas::CalendarReminderActivationSink refresh = [&](double) { ++refreshes; };
+    f.host.publish<areas::CalendarReminderActivationSink>(areas::calendarReminderActivationKey, refresh);
     a::ModuleCoverage step;
     step.check = [&](bool value, std::string_view why) { ++assertions; check(value, std::string(why)); };
     step.present = [](double) {};
@@ -193,6 +215,7 @@ void hiddenCoverage() {
     for (unsigned cycle = 0; cycle < 3; ++cycle) { step.cycle = cycle; owner->coverage(step); }
     check(assertions >= 30 && routed == 6 && service->calendarActivations() == 3 && service->ignoredActivations() == 3,
           "Each cycle routes one reminder click and one foreign launch through the message chain");
+    check(refreshes == 3 && service->calendarRefreshes() == 3, "Each cycle's reminder notice refreshes the Calendar owner once");
     MSG msg{};
     check(!PeekMessageW(&msg, f.window.h, WM_APP, 0xBFFF, PM_REMOVE), "Coverage never posts to the HUD window");
     check(!f.host.hostActions(), "Coverage clicks take no host action");

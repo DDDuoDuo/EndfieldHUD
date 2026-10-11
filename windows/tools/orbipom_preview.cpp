@@ -6,11 +6,20 @@
 #include <algorithm>
 #include <cmath>
 namespace endfield::tools {
-namespace {namespace n=native;namespace m=modules;using M=core::Matrix4;using P=core::Point;using J=ehud::data::Json;void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}J blank(){return J::Object{{"bounds",J::Array{0,0,440,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}}
+namespace {namespace n=native;namespace m=modules;using M=core::Matrix4;using P=core::Point;using J=ehud::data::Json;void need(bool b,const char*s){if(!b)throw std::invalid_argument(s);}J blank(){return J::Object{{"bounds",J::Array{0,0,440,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<core::Rect>projected(const core::Projection&projection,double scale,core::Rect r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const P c:{P{r.x,r.y},P{r.x+r.width,r.y},P{r.x,r.y+r.height},P{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return core::Rect{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}}
 struct OrbiPomPreview::Impl {
-    m::OrbiPomState state;n::NativeOrbiPomScene scene;n::LayerScene geometry;n::NativeModuleSurface surface;n::NativeModuleRegistration registration{"orbipom.registration"};m::OrbiPomAppearance appearance;
+    m::OrbiPomSession&session;m::OrbiPomState state;n::NativeOrbiPomScene scene;n::LayerScene geometry;n::NativeModuleSurface surface;n::NativeModuleRegistration registration{"orbipom.registration"};m::OrbiPomAppearance appearance;
     app::ClientMetrics metrics;core::Projection projection;std::optional<n::ModuleSurfacePose>pose;std::optional<P>pointer;std::optional<double>baseline;std::array<n::LayerCompositionEntry,5>composed{};bool overlayVisible{true},foreground{true},suspended{},lowPower{},active{},input{},pressed{},alive{true};double time{};std::uint64_t revision{};
-    Impl(m::OrbiPomSession&s,n::LayerRasterizer&r,OrbiPomPreviewOptions o):state(s),scene(s,state,r,o.raster,o.appearance),geometry(r),surface(prepare(o.raster),core::Module::minigame),appearance(o.appearance){}
+    Impl(m::OrbiPomSession&s,n::LayerRasterizer&r,OrbiPomPreviewOptions o):session(s),state(s),scene(s,state,r,o.raster,o.appearance),geometry(r),surface(prepare(o.raster),core::Module::minigame),appearance(o.appearance){}
     n::LayerScene&prepare(const n::LayerRasterOptions&o){geometry.load(blank(),o);return geometry;}
     std::uint64_t clock(double t){need(std::isfinite(t),"OrbiPom owner needs finite time");need(revision!=UINT64_MAX,"OrbiPom event revision exhausted");time=std::max(time,t);return ++revision;}bool current(std::uint64_t r)const{return alive&&revision==r;}
     std::optional<P>local(P p)const{return input?projection.unproject({p.x*metrics.scale,p.y*metrics.scale}):std::nullopt;}
@@ -52,6 +61,12 @@ bool OrbiPomPreview::key(const app::KeyEvent&e,double t){auto i=impl_;const auto
 }
 void OrbiPomPreview::cancelInteraction(double t){auto i=impl_;const auto generation=i->clock(t);i->pressed=false;i->pointer.reset();i->state.up({});if(i->current(generation))i->synchronize();}
 const m::OrbiPomState&OrbiPomPreview::state()const noexcept{return impl_->state;}
+const m::OrbiPomSession&OrbiPomPreview::session()const noexcept{return impl_->session;}
+core::Language OrbiPomPreview::language()const noexcept{return impl_->appearance.language;}
+core::Rect OrbiPomPreview::rulesBounds()const noexcept{return impl_->scene.rulesBounds();}
+bool OrbiPomPreview::closeRules(double t){auto i=impl_;const auto generation=i->clock(t);if(!i->input||!i->state.rulesPresented())return false;i->state.setRulesPresented(false);if(i->current(generation))i->synchronize();return true;}
+std::optional<core::Rect>OrbiPomPreview::clientRect(core::Rect r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&OrbiPomPreview::clientMetrics()const noexcept{return impl_->metrics;}
 void OrbiPomPreview::upload(n::Renderer&r){auto&i=*impl_;if(!i.pose)return;i.scene.uploadResources(r);i.registration.uploadGeometry(r);}
 std::span<const n::LayerCompositionEntry>OrbiPomPreview::entries(){auto&i=*impl_;if(!i.pose)return {};const auto e=i.scene.entries();need(e.size()<i.composed.size(),"OrbiPom composition capacity");std::copy(e.begin(),e.end(),i.composed.begin());i.composed[e.size()]={&i.geometry,i.registration.draws()};return {i.composed.data(),e.size()+1};}
 void OrbiPomPreview::collected(n::Renderer&r){need(impl_->scene.collectRetired(r),"OrbiPom retired pixels still published");}

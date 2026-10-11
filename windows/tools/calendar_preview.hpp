@@ -65,6 +65,23 @@ public:
     // fields. Rects are canvas points; project them like pointer hit tests.
     // Content-event query (after input, state or language change), not per frame.
     std::vector<modules::CalendarAccessible>accessibility()const;
+    // Accessible presses: CalendarAXButton.onPress -> canvas.perform(id) for
+    // a canvas action, NotesRetainedMenu.accessibilityActivate for an item of
+    // the open event menu (close/save/delete/cancelDelete/confirmDelete). A
+    // listed, enabled id runs exactly as its click; false otherwise, while
+    // input is not accepted or while a closing menu still owns its fields.
+    bool perform(std::string_view actionID,double time);
+    // The open menu's CalendarFieldTextView editors: their text; an AX value
+    // write replaces it through the field's TSF document like typing
+    // (declined during IME composition or a store lock, nothing changes);
+    // focusField is makeFirstResponder (the HUD's text focus moves there).
+    std::optional<std::string>fieldText(modules::CalendarEditorField)const;
+    bool setFieldText(modules::CalendarEditorField,std::string_view utf8,double time);
+    bool focusField(modules::CalendarEditorField,double time);
+    // Source accessibility projection: a 400 x 440 canvas rect -> the logical
+    // client bounding rect of its projected corners while input is accepted.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
     void upload(native::Renderer&);
     std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);

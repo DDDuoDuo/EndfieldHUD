@@ -85,15 +85,20 @@ public:
         r.message = 40;
         return r;
     }
-    bool message(const app::NativeMessage& m, double) override {
+    bool message(const app::NativeMessage& m, double time) override {
         if (m.message != message_) return false;
         if (m.wParam != routeGeneration) return true;
+        bool reminder{};
         for (auto& activation : activation_->take()) {
             // Only an official Calendar launch string counts; the Mac app does
             // nothing visible for a reminder click, and neither does the HUD.
-            if (auto event = native::calendarNotificationEvent(activation.arguments)) { ++calendar_; last_ = std::move(*event); }
+            if (auto event = native::calendarNotificationEvent(activation.arguments)) { ++calendar_; last_ = std::move(*event); reminder = true; }
             else ++ignored_;
         }
+        // The click activates the Mac app, whose Calendar then refreshes
+        // (didBecomeActive -> refreshForSystemChange): once per notice.
+        if (reminder)
+            if (const auto* sink = host_.find<CalendarReminderActivationSink>(calendarReminderActivationKey); sink && *sink) { ++refreshes_; (*sink)(time); }
         return true;
     }
     void coverage(app::ModuleCoverage& step) override;
@@ -103,6 +108,7 @@ public:
     bool activatorRegistered() const noexcept override { return activation_ && activation_->registered(); }
     std::uint64_t calendarActivations() const noexcept override { return calendar_; }
     std::uint64_t ignoredActivations() const noexcept override { return ignored_; }
+    std::uint64_t calendarRefreshes() const noexcept override { return refreshes_; }
     const std::optional<std::string>& lastEvent() const noexcept override { return last_; }
     HRESULT createActivationCallback(INotificationActivationCallback** out) noexcept override {
         return activation_ ? activation_->createCallback(out) : E_UNEXPECTED;
@@ -116,7 +122,7 @@ private:
     HWND privateWindow_{};
     bool established_{};
     std::unique_ptr<native::NativeAppNotificationActivation> activation_;
-    std::uint64_t calendar_{}, ignored_{};
+    std::uint64_t calendar_{}, ignored_{}, refreshes_{};
     std::optional<std::string> last_;
 };
 
@@ -135,7 +141,10 @@ void CalendarRemindersArea::coverage(app::ModuleCoverage& step) {
     check(SUCCEEDED(createActivationCallback(&callback)) && callback, "Calendar reminders: the activation callback is available");
     const auto id = wide(identity_.appUserModelID);
     const auto reminder = wide(native::calendarNotificationArguments(coverageEvent, coverageSignature));
-    const auto calendar = calendar_, ignored = ignored_;
+    const auto calendar = calendar_, ignored = ignored_, refreshes = refreshes_;
+    // The Calendar owner's refresh (published by the host for the built-in
+    // Calendar); each reminder notice reaches it once.
+    const bool sink = host_.find<CalendarReminderActivationSink>(calendarReminderActivationKey) != nullptr;
     const auto selected = host_.selectedModule();
     const auto phase = host_.overlayPhase();
     check(SUCCEEDED(callback->Activate(id.c_str(), reminder.c_str(), nullptr, 0)), "Calendar reminders: a reminder click is accepted");
@@ -148,9 +157,10 @@ void CalendarRemindersArea::coverage(app::ModuleCoverage& step) {
     check(step.message(message_, routeGeneration, 0), "Calendar reminders: the private notice routes through the message chain");
     check(calendar_ == calendar + 1 && ignored_ == ignored + 1 && last_ == coverageEvent,
           "Calendar reminders: the click names its event; the foreign launch is ignored");
+    check(refreshes_ == refreshes + (sink ? 1u : 0u), "Calendar reminders: a reminder notice refreshes Calendar once, as the Mac activation does");
     check(host_.selectedModule() == selected && host_.overlayPhase() == phase, "Calendar reminders: a click opens no module, as on the Mac");
-    check(step.message(message_, routeGeneration, 0) && calendar_ == calendar + 1 && ignored_ == ignored + 1,
-          "Calendar reminders: a repeated notice consumes nothing twice");
+    check(step.message(message_, routeGeneration, 0) && calendar_ == calendar + 1 && ignored_ == ignored + 1 && refreshes_ == refreshes + (sink ? 1u : 0u),
+          "Calendar reminders: a repeated notice consumes and refreshes nothing twice");
 }
 } // namespace
 

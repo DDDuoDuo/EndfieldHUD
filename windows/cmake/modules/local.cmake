@@ -41,6 +41,45 @@ if(BUILD_TESTING)
   list(APPEND EHUD_LOCAL_TARGETS reader_accessibility_tests map_accessibility_tests)
 endif()
 
+# --- UI Automation peers of the local modules ----------------------------------
+# One projected-peer provider (native/screen_reader_peers: Button/Edit/Text/
+# Group fragments under an owner's group of the HUD window's UIA root) and the
+# Reader, Map, Calendar and minigame sources over their previews (canvas ->
+# logical client projection, accessible presses, Calendar editor values and
+# focus, the Map's 12 Hz gesture cadence). The built-in owners of
+# app/application_modules.cpp forward their ModuleOwner automation hooks to it.
+if(TARGET hud_reader_preview)
+  target_link_libraries(hud_reader_preview PUBLIC hud_local_accessibility)
+endif()
+if(TARGET hud_map_preview)
+  target_link_libraries(hud_map_preview PUBLIC hud_local_accessibility)
+endif()
+if(WIN32)
+  add_library(hud_local_automation STATIC native/screen_reader_peers.cpp
+    tools/reader_automation.cpp tools/map_automation.cpp tools/calendar_automation.cpp tools/orbipom_automation.cpp)
+  target_include_directories(hud_local_automation PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(hud_local_automation PRIVATE _WIN32_WINNT=0x0A00 UNICODE _UNICODE NOMINMAX)
+  target_link_libraries(hud_local_automation PUBLIC hud_reader_preview hud_map_preview hud_calendar_preview hud_native hud_orbipom_accessibility
+    PRIVATE uiautomationcore oleaut32 ole32 user32)
+  list(APPEND EHUD_LOCAL_TARGETS hud_local_automation)
+  if(TARGET hud_application)
+    target_link_libraries(hud_application PUBLIC hud_local_automation)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(screen_reader_peers_tests tests/screen_reader_peers_tests.cpp)
+    target_compile_definitions(screen_reader_peers_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_link_libraries(screen_reader_peers_tests PRIVATE hud_local_automation uiautomationcore oleaut32 ole32 user32)
+    add_test(NAME screen_reader_peers_contracts COMMAND screen_reader_peers_tests)
+    list(APPEND EHUD_LOCAL_TARGETS screen_reader_peers_tests)
+    # The preview suites drive the same peers over the real owners.
+    foreach(test reader_preview_tests map_preview_tests calendar_preview_tests orbipom_preview_tests)
+      if(TARGET ${test})
+        target_link_libraries(${test} PRIVATE hud_local_automation uiautomationcore oleaut32)
+      endif()
+    endforeach()
+  endif()
+endif()
+
 # --- Reader display-time localization -----------------------------------------
 # Mac Reader captions/ReaderError pairs through the shared five-language
 # catalog plus the Windows-only chooser/picker/import rows. Portable; the

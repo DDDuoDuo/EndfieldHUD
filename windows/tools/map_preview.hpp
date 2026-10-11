@@ -3,6 +3,7 @@
 #include "app/overlay_host.hpp"
 #include "native/map_scene.hpp"
 #include "native/layer_scene.hpp"
+#include "modules/map_accessibility.hpp"
 #include "core/localization.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
@@ -51,6 +52,26 @@ public:
     bool magnify(core::Point logicalClientPoint,double amount,bool ended,double time);
     bool key(const app::KeyEvent&,double time);
     bool perform(modules::MapAction,std::string_view pinID,double time);
+    // HUDWorldMapInteraction.activateAction: a listed, enabled accessible
+    // action id (map:zoomIn, map:zoomOut, map:reset, map:addPin,
+    // map:deletePin, map:pin:<UUID>) ends a wheel gesture, then performs
+    // exactly as its click. False otherwise or while input is not accepted.
+    bool perform(std::string_view accessibleID,double time);
+    // Source HUDWorldMapInteraction.layoutAccessibility (modules::
+    // mapAccessibility: the status over the 440 x 440 canvas, then one button
+    // per accessible action) under requestAccessibilityLayout's cadence:
+    // while a gesture locks input a change is published at most 12 times per
+    // second (the pending publication joins nextWakeTime, and deadline()
+    // then reports changed artwork so the host refreshes its peers); a change
+    // outside a gesture, and the end of a gesture, publish at once. Empty
+    // (no status) unless the canvas accepts input. Content-event query: an
+    // unchanged map returns the published snapshot without allocating, and
+    // nothing is scheduled until an automation client first asks.
+    const modules::MapAccessibility&accessibility();
+    // Source accessibility projection: a canvas rect -> the logical client
+    // bounding rect of its projected corners while input is accepted.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
     void cancelInteraction(double time);bool pointerLocked()const noexcept;
     const modules::MapState&state()const noexcept;
     native::NativeMapRaster::Stats rasterStats()const noexcept;

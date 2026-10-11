@@ -15,8 +15,11 @@
 //     that would forward and exit while COM waits for a server;
 //   - consumes each click without opening the HUD: the Mac LSUIElement app
 //     only becomes active and shows no window (HUDUpdateController handles
-//     update notifications only). Untrusted or foreign launch arguments are
-//     ignored.
+//     update notifications only). Becoming active makes the Mac Calendar
+//     refresh (HUDCalendarController observes didBecomeActive ->
+//     refreshForSystemChange); here a consumed Calendar click calls the
+//     Calendar owner's published refresh sink once per notice. Untrusted or
+//     foreign launch arguments are ignored and refresh nothing.
 // Absent (null factory) in development previews and when this executable is
 // not the installed one. Hidden coverage uses the synthetic identity on a
 // private message-only route: no registry, Start menu, COM class registration,
@@ -32,6 +35,15 @@
 #include <string_view>
 
 namespace endfield::areas {
+// Published by the host for the built-in Calendar owner under this key: the
+// refresh the Mac runs when the app becomes active (CalendarPreview::
+// systemChanged, then the Calendar wake is rescheduled), called with the
+// notice's time after a Calendar reminder click was consumed. The area looks
+// it up when used; without it a click refreshes nothing until the next HUD
+// activation.
+inline constexpr std::string_view calendarReminderActivationKey = "calendar.reminderActivation";
+using CalendarReminderActivationSink = std::function<void(double time)>;
+
 // Diagnostics of the area, published under `key` (UI thread; valid while the
 // area is registered).
 class CalendarRemindersService {
@@ -41,6 +53,7 @@ public:
     virtual bool activatorRegistered() const noexcept = 0;   // COM class object live (production)
     virtual std::uint64_t calendarActivations() const noexcept = 0; // clicks on Calendar reminders
     virtual std::uint64_t ignoredActivations() const noexcept = 0;  // foreign or malformed launch arguments
+    virtual std::uint64_t calendarRefreshes() const noexcept = 0;   // notices delivered to the Calendar refresh sink
     virtual const std::optional<std::string>& lastEvent() const noexcept = 0; // event UUID of the last Calendar click
     // The area's actual activation callback without any class registration
     // (synthetic fixtures; NativeAppNotificationActivation::createCallback).

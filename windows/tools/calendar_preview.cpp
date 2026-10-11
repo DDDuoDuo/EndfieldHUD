@@ -15,6 +15,21 @@ constexpr std::array<R,3>fieldRects{{{14,49,312,30},{14,99,312,28},{14,149,312,8
 std::string locale(core::Language l){switch(l){case core::Language::english:return "en_US";case core::Language::simplifiedChinese:return "zh_CN";case core::Language::traditionalChinese:return "zh_TW";case core::Language::japanese:return "ja_JP";case core::Language::korean:return "ko_KR";default:throw std::invalid_argument("Resolve Calendar language at the app preference boundary");}}
 mod::CalendarStrings strings(core::Language l){return mod::calendarStrings(l);}
 J empty(){return J::Object{{"bounds",J::Array{0,0,400,440}},{"position",J::Array{0,0}},{"anchorPoint",J::Array{0,0}},{"children",J::Array{}}};}
+// Bounding rect of a canvas rect's projected corners, in logical client points.
+std::optional<R>projected(const core::Projection&projection,double scale,R r){
+    if(!std::isfinite(r.x)||!std::isfinite(r.y)||!std::isfinite(r.width)||!std::isfinite(r.height)||r.width<0||r.height<0||!(scale>0))return std::nullopt;
+    double x0=INFINITY,y0=INFINITY,x1=-INFINITY,y1=-INFINITY;
+    for(const P c:{P{r.x,r.y},P{r.x+r.width,r.y},P{r.x,r.y+r.height},P{r.x+r.width,r.y+r.height}}){
+        const auto q=projection.project(c);if(!q||!std::isfinite(q->x)||!std::isfinite(q->y))return std::nullopt;
+        x0=std::min(x0,q->x);y0=std::min(y0,q->y);x1=std::max(x1,q->x);y1=std::max(y1,q->y);}
+    return R{x0/scale,y0/scale,(x1-x0)/scale,(y1-y0)/scale};
+}
+// Strict UTF-8 -> UTF-16 (an AX value write never alters invalid input).
+std::optional<std::u16string>utf16(std::string_view text){
+    std::u16string out;if(text.empty())return out;if(text.size()>4*65536)return std::nullopt;
+    const int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),nullptr,0);if(n<=0)return std::nullopt;
+    out.resize(static_cast<std::size_t>(n));MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,text.data(),static_cast<int>(text.size()),reinterpret_cast<wchar_t*>(out.data()),n);return out;
+}
 }
 struct CalendarPreview::Impl:std::enable_shared_from_this<Impl> {
     HWND hwnd;mod::CalendarState&state;gpu::CalendarCivilContext&civil;gpu::LayerRasterizer&raster;CalendarPreviewOptions options;ITfThreadMgr*manager;TfClientId client;
@@ -118,6 +133,21 @@ void CalendarPreview::focus(bool focused,double t){auto i=impl_;const Impl::Even
 bool CalendarPreview::dismissMenu(bool animated,double t){auto i=impl_;const Impl::Event event(*i,t);return i->close(animated);}
 std::vector<mod::CalendarAccessible>CalendarPreview::accessibility()const{const auto&i=*impl_;std::vector<mod::CalendarAccessible>out;if(!i.input||!i.pose||!i.canvas.stats().assets)return out;out=mod::calendarCanvasAccessibility(i.canvas.artwork().actions,i.options.strings);
     if(i.menu&&!i.menu->pendingDismiss&&!i.menu->captured)for(auto&e:mod::calendarMenuAccessibility(i.menu->scene.artwork().actions,i.options.strings,i.language)){e.rect.x+=30;e.rect.y+=77;out.push_back(std::move(e));}return out;}
+bool CalendarPreview::perform(std::string_view id,double t){auto i=impl_;const Impl::Event event(*i,t);if(!i->input||!i->pose)return false;if(i->menu&&(i->menu->pendingDismiss||i->menu->captured))return false;i->content();
+    const auto listed=[&](std::span<const mod::CalendarAction>actions)->std::optional<bool>{for(const auto&a:actions)if(a.id==id)return a.enabled;return std::nullopt;};
+    const std::string action(id);
+    if(i->menu)if(const auto enabled=listed(i->menu->scene.artwork().actions)){if(!*enabled)return false;i->menuAction(action);return true;}
+    const auto enabled=listed(i->canvas.artwork().actions);if(!enabled||!*enabled)return false;
+    i->perform(action);if(i->alive&&i->menu&&i->pose)i->poseMenu(*i->menu);return true;}
+std::optional<std::string>CalendarPreview::fieldText(mod::CalendarEditorField field)const{const auto&i=*impl_;const auto n=static_cast<unsigned>(field);if(n>=3||!i.menu||i.menu->captured)return std::nullopt;return mod::calendarEditorUTF8(i.menu->fields[n]->document().text());}
+bool CalendarPreview::setFieldText(mod::CalendarEditorField field,std::string_view text,double t){auto i=impl_;const Impl::Event event(*i,t);const auto n=static_cast<unsigned>(field);
+    if(n>=3||!i->input||!i->menu||i->menu->pendingDismiss||i->menu->captured||i->menu->stopped[n])return false;const auto value=utf16(text);if(!value)return false;
+    auto&f=*i->menu->fields[n];if(f.document().composition())return false;const auto length=static_cast<std::uint32_t>(f.document().text().size());
+    if(!f.editor().replaceTextFromHost({0,length},*value).handled)return false;if(!i->alive||!i->menu||i->menu->fields[n].get()!=&f)return true;f.normalize(i->options.text);f.syncContent();return true;}
+bool CalendarPreview::focusField(mod::CalendarEditorField field,double t){auto i=impl_;const Impl::Event event(*i,t);const auto n=static_cast<unsigned>(field);if(n>=3||!i->input||!i->menu)return false;
+    if(!i->focusField(n,false))return false;if(i->alive&&i->menu&&i->pose)i->poseMenu(*i->menu);return true;}
+std::optional<R>CalendarPreview::clientRect(R r)const{const auto&i=*impl_;if(!i.input||!i.pose)return std::nullopt;return projected(i.projection,i.metrics.scale,r);}
+const app::ClientMetrics&CalendarPreview::clientMetrics()const noexcept{return impl_->metrics;}
 bool CalendarPreview::editing()const noexcept{return bool(impl_->menu);}std::optional<mod::CalendarEditorField>CalendarPreview::focusedField()const noexcept{return impl_->menu?std::optional(static_cast<mod::CalendarEditorField>(impl_->menu->focused)):std::nullopt;}const mod::CalendarView&CalendarPreview::view()const noexcept{return impl_->view;}
 void CalendarPreview::upload(gpu::Renderer&r){auto i=impl_;need(!i->renderer||i->renderer==&r,"Calendar resources belong to another renderer");i->renderer=&r;if(i->seen){i->canvas.uploadResources(r);i->canvas.uploadAnimations(r);}if(i->closing){i->closing->scene.uploadResources(r);i->closing->scene.uploadAnimations(r);}if(i->menu){i->menu->scene.uploadResources(r);i->menu->scene.uploadAnimations(r);if(!i->menu->captured)for(auto&f:i->menu->fields)f->upload(r);}if(i->registrationRevision!=i->registration.stats().geometryRevision){i->registration.uploadGeometry(r);i->registrationRevision=i->registration.stats().geometryRevision;}}
 std::span<const gpu::LayerCompositionEntry>CalendarPreview::entries(){auto i=impl_;i->count=0;if(!i->pose)return {};const auto append=[&](std::span<const gpu::LayerCompositionEntry>v){for(const auto&e:v){need(i->count<i->composed.size(),"Calendar retained draw list exceeded its source budget");i->composed[i->count++]=e;}};append(i->canvas.entries());if(i->closing)append(i->closing->scene.entries());if(i->menu){append(i->menu->scene.entries());if(!i->menu->captured)for(auto&f:i->menu->fields)i->composed[i->count++]=f->entry();}i->composed[i->count++]={&i->geometry,i->registration.draws()};return{i->composed.data(),i->count};}

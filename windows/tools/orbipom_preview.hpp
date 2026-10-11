@@ -31,6 +31,20 @@ public:
     bool perform(modules::OrbiPomAction,double time);void cancelInteraction(double time);
     bool pointerLocked()const noexcept{return false;} // Aiming/buttons never freeze the source HUD gyro.
     const modules::OrbiPomState&state()const noexcept;
+    // Source accessibility inputs for the HUD's UI Automation peers
+    // (tools/orbipom_automation.hpp over modules::orbiPomAccessibility): the
+    // borrowed session, the caption language and the rules menu's canvas
+    // bounds (its Close item is menu-local {291,8,23,23}).
+    const modules::OrbiPomSession&session()const noexcept;
+    core::Language language()const noexcept;
+    core::Rect rulesBounds()const noexcept;
+    // OrbiPomRulesMenu Close (NotesRetainedMenu.perform("close") ->
+    // closeMenu): false unless the rules are open and input is accepted.
+    bool closeRules(double time);
+    // Source accessibility projection: a 440 x 440 canvas rect -> the logical
+    // client bounding rect of its projected corners while input is accepted.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();void collected(native::Renderer&);void release(native::Renderer&);
     native::OrbiPomSceneStats stats()const noexcept;
 private:struct Impl;std::shared_ptr<Impl>impl_;

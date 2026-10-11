@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include "app/overlay_host.hpp"
 #include "native/reader_scene.hpp"
+#include "modules/reader_accessibility.hpp"
 #include "core/module_presentation.hpp"
 #include "core/source_desktop_chrome.hpp"
 namespace endfield::tools {
@@ -56,6 +57,26 @@ public:
     bool acceptsDrop(core::Point client)const;
     std::optional<std::uint64_t>beginDrop(double);
     void queueCapacityAvailable();
+    // Source accessibility (ReaderInteraction.layoutAccessibility over
+    // ReaderCanvas.accessibleActions, and the open NotesRetainedMenu's items)
+    // for the HUD's UI Automation peers (tools/reader_automation.hpp): empty
+    // unless the canvas accepts input. Menu rects are offset into the 400 x
+    // 440 canvas; help is ReaderCanvas.accessibilityText (the visible error,
+    // else the page summary, else the empty caption) in the caption language.
+    // Content-event query: it brings the canvas content up to date first,
+    // as a pointer event does; never per frame.
+    struct Accessibility {std::vector<modules::ReaderAccessible>canvas,menu;std::string help;};
+    Accessibility accessibility();
+    // Accessible presses: ReaderAXButton.onPress -> ReaderCanvas.perform(id)
+    // for a canvas action, NotesRetainedMenu.accessibilityActivate for an item
+    // of the open menu. A listed, enabled id runs exactly as its click; false
+    // otherwise or while input is not accepted.
+    bool perform(std::string_view canvasActionID,double time);
+    bool performMenu(std::string_view menuItemID,double time);
+    // Source accessibility projection: a canvas rect -> the logical client
+    // bounding rect of its projected corners while input is accepted.
+    std::optional<core::Rect>clientRect(core::Rect canvas)const;
+    const app::ClientMetrics&clientMetrics()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
 private:struct Impl;std::unique_ptr<Impl>impl_;
