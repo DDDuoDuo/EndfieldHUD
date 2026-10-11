@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -130,6 +131,14 @@ struct MediaAssemblyProfile {
 //  unsupported: anything else (lookup-table, CMYK or Lab profiles, malformed
 //    data); the caller keeps the platform colour management for those.
 MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexcept;
+// A PNG without an embedded profile, as ImageIO reads its colour chunks
+// (measured black-box, tests/fixtures/media-assembly-icc-source.json): an
+// sRGB chunk, no gAMA, or gAMA 45450...45460 (the PNG sRGB fallback) with
+// sRGB or no cHRM is sRGB; cHRM alone is ignored. Otherwise gamma 100000/gAMA
+// with the cHRM primaries and white point (sRGB/D65 without cHRM), through
+// the same tone-curve rules as an embedded profile (gAMA 1/1.8 and 1/2.2
+// snap, the v/16 toe). gAMA and cHRM values are the chunk's 1e-5 units.
+MediaAssemblyProfile mediaAssemblyPNGColour(bool srgbChunk,std::optional<std::uint32_t>gamma,std::optional<std::array<std::uint32_t,8>>chromaticities)noexcept;
 
 // Borrowed RGBA8 bitmap rows (top-left origin, encoded sRGB). colour (a
 // straight source only) converts the original encoded values per pixel.

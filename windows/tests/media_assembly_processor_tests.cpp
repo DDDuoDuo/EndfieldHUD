@@ -334,7 +334,14 @@ void colourProfiles(const J&icc,Cubes&cubes){
     const std::map<std::string,T,std::less<>>expectedCurve{{"p3-gamma22",T::gamma22},{"p3-gamma18",T::gamma18},{"bt2020-gamma26",T::measured},{"p3-table22",T::gamma22},
         {"adobe-table",T::sRGB},{"display-p3-para",T::sRGB},{"grey-gamma22",T::gamma22},{"gamma-307",T::measured},{"gamma-435",T::measured},{"gamma-564",T::gamma22},
         {"gamma-589",T::measured},{"gamma-561",T::gamma22},{"gamma-566",T::measured},{"gamma-567",T::measured},{"gamma-570",T::measured},{"gamma-458",T::measured},
-        {"gamma-463",T::measured},{"gamma-464",T::measured},{"para-srgb-threshold",T::sRGB},{"para-exponent-2.42",T::measured}};
+        {"gamma-463",T::measured},{"gamma-464",T::measured},{"para-srgb-threshold",T::sRGB},{"para-exponent-2.42",T::measured},
+        {"png-gama18",T::gamma18},{"png-gama20",T::measured},{"png-gama1",T::measured},{"png-gama45000",T::measured},{"png-gama45440",T::gamma22},
+        {"png-gama45470",T::gamma22},{"png-gama45455-chrm-p3",T::gamma22},{"png-gama18-chrm-d50",T::gamma18}};
+    // PNG colour chunks as recorded with the probe (1e-5 units).
+    const auto pngColour=[](const J&c){std::optional<std::uint32_t>gamma;std::optional<std::array<std::uint32_t,8>>chromaticities;
+        if(!c["gAMA"].isNull())gamma=std::uint32_t(c["gAMA"].integer());
+        if(!c["cHRM"].isNull()){std::array<std::uint32_t,8>v{};for(std::size_t n=0;n<8;++n)v[n]=std::uint32_t(c["cHRM"].array()[n].integer());chromaticities=v;}
+        return m::mediaAssemblyPNGColour(c["sRGB"].boolean(),gamma,chromaticities);};
     std::size_t converted{},matched{},untagged{},probes{},alternatives{};
     for(const auto&image:icc["images"].array()){
         const auto name=image["name"].string(),kind=image["kind"].string();const bool grey=kind=="grey",probe=image["probe"].boolean();const unsigned h=unsigned(image["height"].integer());
@@ -345,8 +352,9 @@ void colourProfiles(const J&icc,Cubes&cubes){
         std::shared_ptr<const m::MediaAssemblySourceColour>colour;
         if(kind=="none")++untagged;
         else{
-            const auto read=m::mediaAssemblyProfile(base64(image["profile"].string()));
-            if(name=="srgb-matrix"){check(read.kind==m::MediaAssemblyProfileKind::sRGB&&!read.colour,"A profile describing sRGB is matched to sRGB");++matched;}
+            const auto read=kind=="png"?pngColour(image["chunks"]):m::mediaAssemblyProfile(base64(image["profile"].string()));
+            // ImageIO names the colour space sRGB exactly when Core Image leaves the codes unchanged.
+            if(image["decodedColorSpace"].string()=="kCGColorSpaceSRGB"){check(read.kind==m::MediaAssemblyProfileKind::sRGB&&!read.colour,"Colour ImageIO reads as sRGB is matched to sRGB: "+name);++matched;}
             else{check(read.kind==m::MediaAssemblyProfileKind::converted&&read.colour,"Matrix/TRC and grey profiles are converted: "+name);colour=read.colour;++converted;
                 const auto want=expectedCurve.find(name);check(want!=expectedCurve.end()&&colour->curves==std::array{want->second,want->second,want->second},"Tone curve class follows the measured rules: "+name);}
         }
@@ -389,7 +397,10 @@ void colourProfiles(const J&icc,Cubes&cubes){
             std::cout<<'\n';
         }
     }
-    check(converted==20&&matched==1&&untagged==1&&probes==13&&alternatives==9,"Every fixture profile was measured");
+    check(converted==28&&matched==7&&untagged==1&&probes==27&&alternatives==9,"Every fixture profile and PNG colour probe was measured");
+    // Out-of-range PNG chunks are ignored like a missing chunk.
+    check(m::mediaAssemblyPNGColour(false,0u,std::nullopt).kind==m::MediaAssemblyProfileKind::sRGB,"gAMA 0 is ignored");
+    check(m::mediaAssemblyPNGColour(false,55556u,std::array<std::uint32_t,8>{31270,0,64000,33000,30000,60000,15000,6000}).kind==m::MediaAssemblyProfileKind::unsupported,"A cHRM with a zero y is rejected");
     // Malformed or unsupported profiles fall back (never throw, never read
     // outside the bytes).
     const auto profile=[&](std::string_view name){for(const auto&image:icc["images"].array())if(image["name"].string()==name)return base64(image["profile"].string());throw std::runtime_error("missing profile");};

@@ -40,6 +40,10 @@ Probes (identity only, one 256x1 row with every code per channel, P3
 primaries) separate the curve handling: u8Fixed8 gammas next to 1.2, 1.7,
 2.3 and around 1.8 and 2.2 (up to 7/256 off), and 'para' curves just off
 the sRGB transfer (threshold 0.04 instead of 0.04045; exponent 2.42).
+PNG chunk probes (identity only, 256x1, no iCCP) record how ImageIO reads
+gAMA, cHRM and sRGB chunks: gAMA alone at 1/1.8, 1/2.0, 1.0, 1/2.222 and
+around 45455 (the PNG sRGB fallback), gAMA 45455 with P3 or sRGB cHRM, cHRM
+alone, an sRGB chunk next to conflicting gAMA/cHRM, and a D50 white point.
 """
 from pathlib import Path
 import base64, importlib.util, json, struct, subprocess, sys, tempfile, zlib
@@ -82,6 +86,26 @@ PROBES = [
     ('gamma-464', 'rgb', P3, ('gamma', 464)),
     ('para-srgb-threshold', 'rgb4', P3, ('para', (2.4, 1 / 1.055, 0.055 / 1.055, 1 / 12.92, 0.04))),
     ('para-exponent-2.42', 'rgb4', P3, ('para', (2.42, 1 / 1.055, 0.055 / 1.055, 1 / 12.92, 0.04045))),
+]
+def chrm(white, primaries):
+    return [int(round(v * 100000)) for v in (white[0], white[1]) + tuple(c for p in primaries for c in p)]
+
+
+PNG_PROBES = [
+    ('png-gama18', {'gAMA': 55556}),
+    ('png-gama20', {'gAMA': 50000}),
+    ('png-gama1', {'gAMA': 100000}),
+    ('png-gama45000', {'gAMA': 45000}),
+    ('png-gama45440', {'gAMA': 45440}),
+    ('png-gama45450', {'gAMA': 45450}),
+    ('png-gama45455', {'gAMA': 45455}),
+    ('png-gama45460', {'gAMA': 45460}),
+    ('png-gama45470', {'gAMA': 45470}),
+    ('png-gama45455-chrm-p3', {'gAMA': 45455, 'cHRM': chrm(D65, P3)}),
+    ('png-gama45455-chrm-srgb', {'gAMA': 45455, 'cHRM': chrm(D65, SRGB)}),
+    ('png-chrm-p3', {'cHRM': chrm(D65, P3)}),
+    ('png-srgb-gama18-chrm-p3', {'sRGB': True, 'gAMA': 55556, 'cHRM': chrm(D65, P3)}),
+    ('png-gama18-chrm-d50', {'gAMA': 55556, 'cHRM': chrm((0.3457, 0.3585), SRGB)}),
 ]
 # Edits that move colours: identity, two that bring wide-gamut values back
 # towards the sRGB cube, and one with a LUT (clamped lookup input).
@@ -207,12 +231,19 @@ def chunk(kind, payload):
     return struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', zlib.crc32(kind + payload) & 0xffffffff)
 
 
-def png(width, height, samples, channels, icc=None, name=b'synthetic'):
+def png(width, height, samples, channels, icc=None, name=b'synthetic', chunks=None):
     row = width * channels
     raw = b''.join(b'\0' + bytes(samples[y * row:(y + 1) * row]) for y in range(height))
     out = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2 if channels == 3 else 0, 0, 0, 0))
     if icc is not None:
         out += chunk(b'iCCP', name + b'\0\0' + zlib.compress(icc, 9))
+    chunks = chunks or {}
+    if chunks.get('sRGB'):
+        out += chunk(b'sRGB', b'\0')
+    if 'gAMA' in chunks:
+        out += chunk(b'gAMA', struct.pack('>I', chunks['gAMA']))
+    if 'cHRM' in chunks:
+        out += chunk(b'cHRM', struct.pack('>8I', *chunks['cHRM']))
     return out + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b'')
 
 
@@ -294,6 +325,13 @@ def main():
             files.append(str(path))
             record['png'] = base64.b64encode(data).decode()
             images.append(record)
+        for name, chunks in PNG_PROBES:
+            data = png(WIDTH, 1, synthetic_rgb(1), 3, chunks=chunks)
+            path = directory / (name + '.png')
+            path.write_bytes(data)
+            files.append(str(path))
+            images.append({'name': name, 'kind': 'png', 'height': 1, 'probe': True, 'png': base64.b64encode(data).decode(),
+                           'chunks': {'sRGB': bool(chunks.get('sRGB')), 'gAMA': chunks.get('gAMA'), 'cHRM': chunks.get('cHRM')}})
         edits = []
         for name, values in EDITS:
             adjustments = {'crop': {'x': 0, 'y': 0, 'width': 1, 'height': 1}, 'rotationQuarterTurns': 0, 'mirrored': False,
@@ -302,7 +340,7 @@ def main():
                            'levelsBlack': 0.0, 'levelsWhite': 1.0, 'levelsGamma': 1.0, 'trimStart': 0.0, 'filter': 'none', 'stickers': []}
             adjustments.update(values)
             edits.append({'name': name, 'adjustments': adjustments})
-        (directory / 'request.json').write_text(json.dumps({'files': files, 'probes': len(PROBES), 'edits': edits}))
+        (directory / 'request.json').write_text(json.dumps({'files': files, 'probes': len(PROBES) + len(PNG_PROBES), 'edits': edits}))
         sources = reference.pinned_sources()
         oracle = reference.build_oracle(sources, DRIVER, directory)
         result = json.loads(subprocess.check_output([str(oracle), str(reference.assets), str(directory / 'request.json')]))

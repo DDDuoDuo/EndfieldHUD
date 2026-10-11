@@ -2,7 +2,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <fstream>
 #include <stdexcept>
+#include <string_view>
 
 namespace endfield::native {
 std::filesystem::path mediaAssemblyPath(std::string_view s){return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(s.data()),s.size()));}
@@ -67,15 +70,41 @@ Still openStill(const std::filesystem::path&path){
     need(s.width&&s.height&&std::uint64_t(s.width)*s.height<=NativeMediaAssemblyEngine::maximumPixels,m::MediaAssemblyError::unsupported);
     return s;
 }
+// The colour chunks of a PNG file before its image data (iCCP, sRGB, gAMA,
+// cHRM), read from the file itself: WIC's PNG decoder reports colour
+// contexts and gAMA metadata of its own for chunks the file does not have.
+struct PngColour {bool png{},iccp{},srgb{};std::optional<std::uint32_t>gamma;std::optional<std::array<std::uint32_t,8>>chromaticities;};
+PngColour pngColour(const std::filesystem::path&path){
+    PngColour out;std::ifstream in(path,std::ios::binary);std::array<char,8>signature{};
+    if(!in||!in.read(signature.data(),8)||std::memcmp(signature.data(),"\x89PNG\r\n\x1a\n",8)!=0)return out;out.png=true;
+    const auto u32=[](const unsigned char*b){return (std::uint32_t(b[0])<<24)|(std::uint32_t(b[1])<<16)|(std::uint32_t(b[2])<<8)|std::uint32_t(b[3]);};
+    for(int n=0;n<256;++n){
+        std::array<unsigned char,8>head{};if(!in.read(reinterpret_cast<char*>(head.data()),8))break;
+        const auto length=u32(head.data());const std::string_view type(reinterpret_cast<const char*>(head.data()+4),4);
+        if(type=="IDAT"||type=="IEND"||length>(1u<<24))break;
+        out.iccp=out.iccp||type=="iCCP";out.srgb=out.srgb||type=="sRGB";
+        if((type=="gAMA"&&length==4)||(type=="cHRM"&&length==32)){
+            std::array<unsigned char,32>data{};if(!in.read(reinterpret_cast<char*>(data.data()),std::streamsize(length)))break;
+            if(type=="gAMA")out.gamma=u32(data.data());else{std::array<std::uint32_t,8>v{};for(std::size_t k=0;k<8;++k)v[k]=u32(data.data()+k*4);out.chromaticities=v;}
+            in.seekg(4,std::ios::cur);
+        }else in.seekg(std::streamoff(length)+4,std::ios::cur);
+    }
+    return out;
+}
 // The frame's colour, as Core Image takes a tagged CGImage into its sRGB
 // working space. An embedded ICC profile Media Assembly reads itself
-// (MediaAssemblyProfileKind::converted) is returned in colour and the bytes
+// (MediaAssemblyProfileKind::converted), or the gAMA/cHRM chunks of a PNG
+// without one as ImageIO reads them, are returned in colour and the bytes
 // keep their encoding; a profile matched to sRGB, an EXIF sRGB or
 // uncalibrated tag, or no tag leaves the pixels as they are. Only another
 // profile (lookup-table, CMYK, Lab) or an EXIF Adobe RGB tag goes through the
 // platform colour management (WIC/WCS) to sRGB, whose own rendering intent
 // and precision differ from the Mac (documented gap).
-ComPtr<IWICColorContext>platformColour(IWICImagingFactory*wic,IWICBitmapFrameDecode*frame,std::shared_ptr<const m::MediaAssemblySourceColour>*colour){
+ComPtr<IWICColorContext>platformColour(IWICImagingFactory*wic,IWICBitmapFrameDecode*frame,std::shared_ptr<const m::MediaAssemblySourceColour>*colour,const PngColour*png){
+    if(png&&png->png&&!png->iccp){
+        if(colour){const auto read=m::mediaAssemblyPNGColour(png->srgb,png->gamma,png->chromaticities);if(read.kind==m::MediaAssemblyProfileKind::converted)*colour=read.colour;}
+        return {};
+    }
     UINT count{};if(FAILED(frame->GetColorContexts(0,nullptr,&count))||!count||count>16)return {};
     std::array<ComPtr<IWICColorContext>,16>contexts;std::array<IWICColorContext*,16>raw{};
     for(UINT n=0;n<count;++n){if(FAILED(wic->CreateColorContext(&contexts[n])))return {};raw[n]=contexts[n].Get();}
@@ -94,8 +123,8 @@ ComPtr<IWICColorContext>platformColour(IWICImagingFactory*wic,IWICBitmapFrameDec
 }
 // One WIC source as straight RGBA8 at width x height (Fant): sRGB, or the
 // original encoding of a profile returned in colour (see platformColour).
-std::vector<std::uint8_t>pixels(IWICImagingFactory*wic,ComPtr<IWICBitmapSource>source,IWICBitmapFrameDecode*frame,unsigned w,unsigned h,std::shared_ptr<const m::MediaAssemblySourceColour>*colour=nullptr){
-    if(frame)if(const auto input=platformColour(wic,frame,colour)){
+std::vector<std::uint8_t>pixels(IWICImagingFactory*wic,ComPtr<IWICBitmapSource>source,IWICBitmapFrameDecode*frame,unsigned w,unsigned h,std::shared_ptr<const m::MediaAssemblySourceColour>*colour=nullptr,const PngColour*png=nullptr){
+    if(frame)if(const auto input=platformColour(wic,frame,colour,png)){
         ComPtr<IWICColorContext>output;ComPtr<IWICColorTransform>t;
         if(SUCCEEDED(wic->CreateColorContext(&output))&&SUCCEEDED(output->InitializeFromExifColorSpace(1))&&SUCCEEDED(wic->CreateColorTransformer(&t))&&SUCCEEDED(t->Initialize(source.Get(),input.Get(),output.Get(),GUID_WICPixelFormat32bppRGBA)))source=t;}
     UINT sw{},sh{};check(source->GetSize(&sw,&sh),m::MediaAssemblyError::unsupported);
@@ -296,12 +325,13 @@ modules::MediaAssemblyDocumentInfo NativeMediaAssemblyEngine::open(const std::st
     const bool swap=v.rotation==90||v.rotation==270;d.pixels={double(swap?v.height:v.width),double(swap?v.width:v.height)};return d;
 }
 MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeStill(const m::MediaAssemblyDocumentInfo&d,std::optional<unsigned>maximum){
-    const auto s=openStill(mediaAssemblyPath(d.path));MediaAssemblyBitmap out;
+    const auto path=mediaAssemblyPath(d.path);const auto s=openStill(path);MediaAssemblyBitmap out;
+    const auto png=IsEqualGUID(s.container,GUID_ContainerFormatPng)?pngColour(path):PngColour{};
     ComPtr<IWICBitmapFrameDecode>frame;check(s.decoder->GetFrame(0,&frame),m::MediaAssemblyError::unsupported);
     if(!s.gif){
         // Scale before orienting; the bound applies to the longest side.
         const auto[w,h]=bounded(s.width,s.height,maximum);ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);
-        out.width=w;out.height=h;out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h,&out.colour);orient(out,s.orientation);return out;
+        out.width=w;out.height=h;out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h,&out.colour,&png);orient(out,s.orientation);return out;
     }
     // GIF first frame on its logical screen (transparent outside the frame).
     UINT fw{},fh{};check(frame->GetSize(&fw,&fh),m::MediaAssemblyError::unsupported);ComPtr<IWICMetadataQueryReader>meta;frame->GetMetadataQueryReader(&meta);

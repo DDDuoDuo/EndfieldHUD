@@ -286,6 +286,16 @@ struct Tag {std::size_t at{},size{};};
 // exact gamma; any other curve is evaluated as written. Gamma and measured
 // curves are raised to at least v/16 (the linear toe).
 constexpr double toneMatch=.0016;
+bool classifyCurve(const std::array<double,256>&y,std::array<float,256>&out,MediaAssemblyToneCurve&kind){
+    for(const double v:y)if(!std::isfinite(v))return false;
+    const auto within=[&](auto&&reference){for(unsigned k=0;k<256;++k)if(std::abs(y[k]-reference(k/255.))>toneMatch)return false;return true;};
+    if(within([](double x){return MediaAssemblyColorPipeline::srgbDecode(x);})){
+        kind=MediaAssemblyToneCurve::sRGB;for(unsigned k=0;k<256;++k)out[k]=float(std::round(MediaAssemblyColorPipeline::srgbDecode(k/255.)*4095.)/4095.);return true;}
+    for(const auto&known:{std::pair{1.8,MediaAssemblyToneCurve::gamma18},std::pair{2.2,MediaAssemblyToneCurve::gamma22}}){const double gamma=known.first;
+        if(within([gamma](double x){return std::pow(x,gamma);})){kind=known.second;for(unsigned k=0;k<256;++k)out[k]=float(std::max(std::pow(k/255.,gamma),k/255./16.));return true;}}
+    kind=MediaAssemblyToneCurve::measured;for(unsigned k=0;k<256;++k)out[k]=float(std::max(y[k],k/255./16.));
+    return true;
+}
 bool toneCurve(const ProfileBytes&p,Tag t,std::array<float,256>&out,MediaAssemblyToneCurve&kind){
     if(t.size<12||!p.has(t.at,t.size))return false;const auto type=p.u32(t.at);
     std::array<double,256>y{};
@@ -305,25 +315,20 @@ bool toneCurve(const ProfileBytes&p,Tag t,std::array<float,256>&out,MediaAssembl
             switch(function){case 0:y[k]=std::pow(x,g);break;case 1:y[k]=a!=0&&x>=-b/a?power(x):0;break;case 2:y[k]=(a!=0&&x>=-b/a?power(x):0)+c;break;
             case 3:y[k]=x>=d?power(x):c*x;break;default:y[k]=x>=d?power(x)+e:c*x+f;break;}}
     }else return false;
-    for(const double v:y)if(!std::isfinite(v))return false;
-    const auto within=[&](auto&&reference){for(unsigned k=0;k<256;++k)if(std::abs(y[k]-reference(k/255.))>toneMatch)return false;return true;};
-    if(within([](double x){return MediaAssemblyColorPipeline::srgbDecode(x);})){
-        kind=MediaAssemblyToneCurve::sRGB;for(unsigned k=0;k<256;++k)out[k]=float(std::round(MediaAssemblyColorPipeline::srgbDecode(k/255.)*4095.)/4095.);return true;}
-    for(const auto&known:{std::pair{1.8,MediaAssemblyToneCurve::gamma18},std::pair{2.2,MediaAssemblyToneCurve::gamma22}}){const double gamma=known.first;
-        if(within([gamma](double x){return std::pow(x,gamma);})){kind=known.second;for(unsigned k=0;k<256;++k)out[k]=float(std::max(std::pow(k/255.,gamma),k/255./16.));return true;}}
-    kind=MediaAssemblyToneCurve::measured;for(unsigned k=0;k<256;++k)out[k]=float(std::max(y[k],k/255./16.));
-    return true;
+    return classifyCurve(y,out,kind);
 }
-// sRGB colorants (IEC 61966-2-1 primaries, D65, Bradford-adapted to the D50
-// PCS, s15Fixed16 as an sRGB profile carries them); columns are R, G, B.
-M3 srgbColorants(){
-    const std::array<std::array<double,2>,3>primaries{{{.64,.33},{.30,.60},{.15,.06}}};
-    M3 p{};for(int c=0;c<3;++c){const auto v=xyz(primaries[c]);for(int r=0;r<3;++r)p[r*3+c]=v[r];}
-    const auto s=transform3(inverse(p),xyz({.3127,.3290}));for(int r=0;r<3;++r)for(int c=0;c<3;++c)p[r*3+c]*=s[c];
-    const auto source=transform3(bradford,xyz({.3127,.3290})),target=transform3(bradford,{.9642,1.,.8249});
+// RGB colorants from chromaticities and a white point, Bradford-adapted to
+// the D50 PCS and stored as s15Fixed16 (as a profile carries them); columns
+// are R, G, B.
+M3 pcsColorants(const std::array<std::array<double,2>,3>&primaries,std::array<double,2>white){
+    M3 p{};for(int c=0;c<3;++c){const auto v=xyz(primaries[std::size_t(c)]);for(int r=0;r<3;++r)p[std::size_t(r*3+c)]=v[std::size_t(r)];}
+    const auto s=transform3(inverse(p),xyz(white));for(int r=0;r<3;++r)for(int c=0;c<3;++c)p[std::size_t(r*3+c)]*=s[std::size_t(c)];
+    const auto source=transform3(bradford,xyz(white)),target=transform3(bradford,{.9642,1.,.8249});
     const M3 scale{target[0]/source[0],0,0,0,target[1]/source[1],0,0,0,target[2]/source[2]};
     auto m=multiply(inverse(bradford),multiply(scale,multiply(bradford,p)));for(auto&v:m)v=std::round(v*65536.)/65536.;return m;
 }
+// sRGB colorants (IEC 61966-2-1 primaries, D65).
+M3 srgbColorants(){return pcsColorants({{{.64,.33},{.30,.60},{.15,.06}}},{.3127,.3290});}
 }
 MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexcept{
     try{
@@ -352,6 +357,27 @@ MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexc
         bool srgb=!grey&&std::all_of(colour->curves.begin(),colour->curves.end(),[](MediaAssemblyToneCurve c){return c==MediaAssemblyToneCurve::sRGB;});
         for(std::size_t n=0;n<9&&srgb;++n)srgb=std::abs(colorants[n]-srgbPCS[n])<=1e-3;
         if(srgb)return {MediaAssemblyProfileKind::sRGB,nullptr};
+        return {MediaAssemblyProfileKind::converted,std::move(colour)};
+    }catch(...){return {};}
+}
+MediaAssemblyProfile mediaAssemblyPNGColour(bool srgb,std::optional<std::uint32_t>gamma,std::optional<std::array<std::uint32_t,8>>chromaticities)noexcept{
+    try{
+        // sRGB chunk, no (or an invalid) gAMA: sRGB. cHRM alone is ignored.
+        if(srgb||!gamma||*gamma==0)return {MediaAssemblyProfileKind::sRGB,nullptr};
+        constexpr std::array<std::uint32_t,8>srgbChromaticities{31270,32900,64000,33000,30000,60000,15000,6000};
+        bool srgbPrimaries=!chromaticities;
+        if(chromaticities){srgbPrimaries=true;for(std::size_t n=0;n<8;++n)srgbPrimaries=srgbPrimaries&&std::abs(double((*chromaticities)[n])-double(srgbChromaticities[n]))<=100;}
+        // The PNG sRGB fallback encoding (gAMA 45455) with sRGB or no cHRM.
+        if(*gamma>=45450&&*gamma<=45460&&srgbPrimaries)return {MediaAssemblyProfileKind::sRGB,nullptr};
+        const auto&c=chromaticities?*chromaticities:srgbChromaticities;const auto at=[&](std::size_t n){return double(c[n])/100000.;};
+        for(std::size_t n=1;n<8;n+=2)if(c[n]==0)return {};
+        auto colour=std::make_shared<MediaAssemblySourceColour>();
+        static const M3 fromXYZ=inverse(srgbColorants());
+        const auto m=multiply(fromXYZ,pcsColorants({{{at(2),at(3)},{at(4),at(5)},{at(6),at(7)}}},{at(0),at(1)}));
+        for(std::size_t n=0;n<9;++n){if(!std::isfinite(m[n]))return {};colour->toLinearSRGB[n]=float(m[n]);}
+        const double exponent=100000./double(*gamma);std::array<double,256>y{};for(unsigned k=0;k<256;++k)y[k]=std::pow(k/255.,exponent);
+        if(!classifyCurve(y,colour->linear[0],colour->curves[0]))return {};
+        colour->linear[1]=colour->linear[2]=colour->linear[0];colour->curves[1]=colour->curves[2]=colour->curves[0];
         return {MediaAssemblyProfileKind::converted,std::move(colour)};
     }catch(...){return {};}
 }

@@ -295,7 +295,8 @@ void colourManaged(const fs::path&root,const fs::path&assets,const fs::path&fixt
         auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(file)));doc->id="icc-"+name;
         check(doc->pixels==endfield::core::Point{double(W),double(H)},"ICC still opens at its size: "+name);
         // The profile reaches the decoded source: converted unless it is sRGB.
-        const bool convert=kind!="none"&&name!="srgb-matrix";converted+=convert;
+        // ImageIO names the colour space sRGB exactly when Core Image leaves the codes unchanged.
+        const bool convert=kind!="none"&&image["decodedColorSpace"].string()!="kCGColorSpaceSRGB";converted+=convert;
         const auto decoded=n::NativeMediaAssemblyEngine::decodeStill(*doc,1024);check(bool(decoded.colour)==convert,"The decoded still carries its embedded profile: "+name);
         {const auto deferred=engine.previewSource(*doc,{},0);check(deferred.source&&bool(deferred.source->colour)==convert,"Deferred previews carry the embedded profile to the GPU: "+name);}
         // Pixels a wide-gamut profile places outside sRGB.
@@ -324,7 +325,7 @@ void colourManaged(const fs::path&root,const fs::path&assets,const fs::path&fixt
         }
         fs::remove(file);
     }
-    check(converted==20&&exports==2*(9*4+13),"Every ICC fixture still was exported on both paths");
+    check(converted==28&&exports==2*(9*4+27),"Every ICC and PNG colour fixture still was exported on both paths");
 }
 
 int wmain(int argc,wchar_t**argv){
