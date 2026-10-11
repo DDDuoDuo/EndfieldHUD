@@ -263,8 +263,12 @@ applications dialog, `shell:AppsFolder\<PackageFamilyName>!<ApplicationId>`
 ### Owner API (by store and record id)
 
 Owners never need a ledger id. After their own record write committed
-(record first, ledger second) they call, on the shared UtilityExecutor or
-their own worker:
+(record first, ledger second) they call the API below. The Shelf calls it on
+the shared UtilityExecutor, App shortcuts on their worker, Archive on its
+FIFO file queue behind the entry save, and Reader in the library's worker
+job. Notes calls it on the UI thread right after its synchronous store
+write, which happens only on an explicit relink or deletion and once when the
+owner is constructed.
 
 | Call | When | Rows it changes |
 |---|---|---|
@@ -308,21 +312,36 @@ relinked or removed while the ledger write was lost and is dismissed. A
 Windows attachment is never attributed to a row by position, because
 positions shift when attachments are removed.
 
-**Status (after checkpoint 127).** The ledger, the owner API and the transforms
+**Status (checkpoint 128).** The ledger, the owner API and the transforms
 are tested (`mac_import_relink_contracts`, `mac_import_contracts`,
 `mac_import_native_contracts`), including concurrent writers in one process
-and another writer replacing the file mid-call. The File Shelf lists
-unresolved `fileShelf.item` entries as unavailable cards; a relink keeps the
-imported identifier and date through `ShelfRelinkSlot` and calls
-`markResolved`, Remove and Clear call `dismiss`, and loading calls
-`reconcile` (`shelf_services_contracts`). App shortcuts follow the
-committed `shortcuts.json` on their worker (`syncShortcutRelinks`); a
-shortcut relinked to a packaged application now resolves its row with its
-AppsFolder target. Notes (footer action) and Archive (the attachment's error
-text) relink their own records through their own pickers but do not yet
-call the owner API, so the import card's relink list still shows those
-items until the host wires `resolveMacRelink`, `dismissMacRelink` and
-`reconcileMacRelinks` into them. Reader books have no relink action yet.
+and another writer replacing the file mid-call. Every owner of imported
+records now calls the owner API:
+
+- The File Shelf lists unresolved `fileShelf.item` entries as unavailable
+  cards (double-click, Space or *Relink* opens the picker). A relink keeps
+  the imported identifier and date through `ShelfRelinkSlot` and resolves
+  the row; Remove and Clear dismiss; refresh reconciles. All ledger work runs
+  on the utility worker (`shelf_services_contracts`).
+- App shortcuts follow the committed `shortcuts.json` on their worker
+  (`syncShortcutRelinks` through `reconcileMacRelinks`); a shortcut relinked
+  to a packaged application resolves its row with its AppsFolder target
+  (`app_shortcut_relink_contracts`).
+- Notes (footer action) resolves a media note's row after a relink,
+  dismisses a deleted note's row and reconciles when the persistent root
+  loads (`modules/notes_relink_ledger`, `notes_relink_ledger_contracts`).
+- Archive (the attachment's error text) saves the entry first, then resolves
+  or dismisses on the same file queue only when the stored entry shows the
+  change; deleting an entry dismisses all its rows, and the first load
+  reconciles once (`archive_state_contracts`, `archive_preview_contracts`).
+- Reader books are relinked from the Library (*Relink…*, for imported Mac
+  books and unavailable Windows books). The library is saved first, then the
+  book's row is resolved; removing an imported book dismisses its row, and
+  loading reconciles. A ledger failure never fails the library
+  (`reader_owner_contracts`, `reader_localization_contracts`).
+
+All of this ran over synthetic ledgers in temporary folders; no real Mac
+export has reached these owners.
 
 ## 3a. Calendar reminders
 
@@ -417,7 +436,8 @@ Not verified yet:
 - `recoverMacImportWork` as `main.cpp` now calls it before each run opens
   the root. The function itself is tested; the production call has not met
   an interrupted activation;
-- the owner API called by Notes, Archive and Reader (host wiring pending);
+- the owner API as Notes, Archive and Reader call it on a real Mac
+  export's ledger (their suites use synthetic ledgers only);
 - focus events and SetFocus with a listening client (Narrator, Inspect);
 - a sweep after a real process kill on the real root;
 - the real shared folder dialog;

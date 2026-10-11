@@ -2312,3 +2312,252 @@ requests follow the same row window. The Mac oracle comparison
 - Suites: `packaging_perf_gate_contracts` (56 checks),
   `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`,
   `packaging_perf_gate_render`, `endfieldhud_release_contracts`.
+
+## Checkpoint 128 (batch 5): consolidated status
+
+This entry sums up batch 5: every commit after checkpoint 124's record
+(`1062ffd`), including the area and host entries above and the commits those
+entries leave out. Code is at `58962f4`; `28b3e40` and this entry change
+documentation only. Nothing from batch 5 is pushed.
+
+Batch 5 started from problems the user reported after running an
+`EndfieldHUD.exe` build on the laptop desktop. No fix has been confirmed on
+the desktop yet. All evidence below comes from hidden runs on the laptop
+(hidden windows, WARP or the hardware GPU offscreen, synthetic data,
+temporary folders, private registry subtrees) and from local clang builds on
+the Mac. No UI Automation client, network service, real account, real dialog
+or real audio session was involved.
+
+### The user's reports
+
+| Report | Change | Hidden evidence | Still to confirm on the desktop |
+| --- | --- | --- | --- |
+| Projection crashed on opening (Media Assembly no longer did) | Owner times arrived out of order: an event nested in a host callback (the `WM_CAPTURECHANGED` after a Projection release, an owner reading the clock inside a callback) gave Projection a later time, then the host's earlier sample failed a strict check ("Projection controls require a finite monotonic owner clock"). The host now hands every owner one non-decreasing time (`ModuleRegistry::hostTime`, `0fcabbc`). Projection, Notes, Archive, Profile and Work Mode take an earlier time as the latest seen (`dab027e`, `3b059ec`), and Projection calls run isolated. The earlier Media Assembly crash was the same class in the Event Log store (`dadf151`). | `application_registry_contracts` replays both live orders; the Projection preview, media binding, controls scene and media scene suites; hidden coverage audits every area for an earlier time (none in a whole run) and invokes Projection through UIA with an earlier clock. | Open and use Projection (keys, UIA, media, dismissal). `projection_workspace_contracts`, which holds the same regression, needs a desktop session. |
+| The HUD did not close on presses at the sides | `SystemHUDView.mouseDown` ported: a left press that no source control or owner takes closes the HUD with the normal animation when it falls outside the circle of radius 310 around the design centre, through the live projection (`0fcabbc`). Inside the circle nothing happens; during the entrance the close waits for the opening. | 9 host checks in both coverage runs (sides, corners, the closing animation, the queued close, reopening, an inside press, the quit card keeping the press). | Sides, corners, the taskbar area, another monitor (closed through *Close when focus lost*). |
+| A glitch when removing Shelf items | The reveal drew Core Animation's measured path, which sweeps wedges over cards between its degenerate keyframes. Removal, Clear and additions now draw the authored shutter keyframes at Core Animation's key times (`9b91c0a`). | `shelf_removal_frames_contracts` renders an × removal frame by frame through the production owner: no region is covered again, and the frame settles exactly at .26 s. | The real GPU. Clipboard's reveal and Activity's sort transition use samples of the same topology and are unchanged. |
+| Now Playing did not recognize the song | NetEase Cloud Music's Win32 client publishes no media session (GSMTC listed none while it played on the laptop). Now Playing also reads the main window titles of NetEase Cloud Music, QQ Music and Kugou, like the Mac's accessibility fallback (`597df08`, `70ebabb`, `e8f4b1f`; process audio activity from host pass 2). | `now_playing_players_contracts` (157), `now_playing_acceptance_contracts` (323), `now_playing_probe_matrix`, 140 Now Playing coverage checks over a synthetic desktop. | Recognition, cover, lyrics and `WM_APPCOMMAND` transport in the user's player; `now_playing_probe --live --windows` for QQ Music and Kugou. Another player that publishes no session is still not found. |
+| Show a Shelf item's properties instead of a preview | A HUD secondary-menu card (name, type, size or item count, location, dates, dimensions, duration; Open and Reveal) read on the utility executor (`d61626e`, `200e513`; the shared executor and Open after the HUD closes from host pass 2). The Shell preview popup, its thread and its handler code were removed. | `shelf_properties_contracts`, `shelf_presentation_contracts` (1,754), `shelf_services_contracts` (568), `shelf_file_picker_contracts` (130), the `fileShelfCoverage` area. | Open in `EndfieldHUD.exe` (a production-only path), real media types, OneDrive placeholders, SMB shares. |
+| Volume scrolling stutters with more than two apps; show three | App rows are retained scenes that a scroll only moves; at most three rows (95 points), scrolled by wheel, row drag or scrollbar drag (`edbe0b7`). This deliberately differs from the Mac's two rows. | `volume_scene_contracts`, `volume_preview_contracts`; coverage with five synthetic apps (95-point list, 36-point detent, at most 3 text layouts while scrolling). | Wheel, touchpad and drag with real audio sessions. |
+| The cold start is laggy | `hud.hlsl` compiled at build time and embedded; a launch prewarm poses and draws the first opening offscreen while the HUD is closed (`0fcabbc`); the charge badge rasterizes once for its resting size (`3d74603`); a large avatar's crop working copy is made on the worker (`f72c590`); an ID card change while closed is applied before the next opening (host pass 2). | Hidden traces: renderer start-up 312.8 → about 130 ms; launch to first frame 1,076 → about 920 ms; the first opening's first frame 68.6 → 29.0 ms of CPU (27–31 ms in four later WARP runs) and its second 17.1 → 5.1 ms; a warm opening's first frame 3–5 ms. | A production trace (`ENDFIELDHUD_STARTUP_TRACE=1`) or `package_perf_gate --desktop`. Unchanged: about 160–190 ms before the first startup stage, about 150 ms of area construction, and Map (about 16 ms), Account (about 2 ms) and Power (1–1.7 ms) work in the cold first frame. |
+
+### Test runs
+
+| Run | Result |
+| --- | --- |
+| Host pass 2, full MSVC x64 Release build | 366 of 369 suites. The three failures are the environmental ones of checkpoints 123 and 124: `projection_composition_contracts` and `projection_workspace_contracts` (no composition swap chain over SSH) and `packet_export_contracts` (no Mac `Sources/` in the slot). After the last code change (`58962f4`), 28 suites passed again: the `application_*`, `map_*` and `endfieldhud_*` suites and `watch_preview_argument_contracts`. |
+| `application_owner_coverage` | 54 module results and 19 lifecycle checks (both exact), at least 117 host checks (enforced minimum; 81 at checkpoint 124), 14 areas constructed. |
+| `application_session_end_coverage` | 15 lifecycle checks, at least 113 host checks (78 at checkpoint 124). |
+| Earlier host slots | Host pass 1 (`fff7dea`): 356 of 359. The user-reported host fixes (`0fcabbc`): 365 of 368. The same three environmental failures. |
+| Area slots (committed tree plus the area's files) | Media Assembly 19/19, Now Playing 28/28, Account 17/17, Power 18/18, Personal Profile 23/23, App shortcuts 19/19, Mac import 13/13, System providers 29/29, Reader/Map/Calendar/Minigame 46/46, Notes/Archive/Projection 65/65, Shelf 17/17, Volume 17/17, packaging 14/14. |
+| Mac, clang | The portable `now_playing_*` suites (ICU from Homebrew), `clipboard_matches_contracts` against ICU 78 under ASan/UBSan, `mac_import_relink_contracts`, `packaging_perf_gate_contracts` (56, ASan/UBSan), the portable Volume suite (142 checks), `shelf_scene_contracts`, `shelf_presentation_contracts`, `reader_localization_contracts` and `source_watch_session_contracts`; the no-ICU portable configure generates. |
+| GitHub Actions | One run, on `e17f3af` before batch 5's fixes (run 38116894941, `windows-2025`: ICU 72.1, Unicode 15.1, tzdata 2022g): 343 of 348 Windows suites. Its failures (the runner's 8.3 `%TEMP%`, a cp1252 read, a missing `<cmath>`) are fixed in local commits that no run has confirmed. |
+| Intermittent | `media_assembly_codec_contracts` failed once in a full host pass 2 run ("A moved original that is gone asks to be chosen again"), then passed in the next full run and three times alone. Unexplained. |
+
+### What `EndfieldHUD.exe` contains now
+
+Changes since checkpoint 124:
+
+- **Same owners and areas:** 15 built-in owners, the quit card, the desktop
+  clock's automation owner, 10 production module areas and 4 coverage-only
+  areas.
+- **Time and failures:**
+  - one non-decreasing host time at every owner hand-off;
+  - isolation for Projection workspace calls, area services, built-in calls
+    outside the routing chains and utility completions (run under the owner
+    that submitted them);
+  - the Event Log store clamps out-of-order owner times, and a failed save
+    shows its status and retries at the next wake (`dadf151`, `d8bf2c9`);
+  - a fatal failure writes the exception type, a bounded path-redacted
+    message, the HRESULT and the active host stage to
+    `Diagnostics/last-fatal.txt` in the data root (`d8bf2c9`); the section 9
+    gate reads it.
+- **Pointer:** the outside-press close; `ModuleOwner::cursorAt` with one
+  `WM_SETCURSOR` path (`fff7dea`). The I-beam shows over the open Work Mode
+  duration field, the open profile field and the open *+ Add App* name field.
+  Notes, Archive and Calendar fields keep the source cursor (see the
+  corrections below).
+- **UI Automation:**
+  - the root's and groups' `GetFocus` return the fragment that has keyboard
+    focus;
+  - `HudButtonAutomation` lists the source navigation (bound entries valued
+    Selected or Not selected, the red power button, the profile card, Scroll
+    modules up and down) and the clock's buttons (the selected style's Value
+    is "Selected");
+  - the Power group is captioned Power;
+  - Work Mode's open duration field is a focused Edit peer with SetValue;
+  - the import card raises AutomationFocusChanged and accepts SetFocus;
+  - the charge alert window has its own UIA root.
+- **Startup:** embedded `hud.hlsl` bytecode (fxc at build time; without fxc,
+  or when the shipped `hud.hlsl` differs, the shader compiles at run time);
+  the launch prewarm and `ModuleOwner::prewarm`, which only Archive
+  implements; the opt-in startup trace with per-area construction stages.
+- **Area work wired by the host:**
+  - Map geography through `loadMapGeography`;
+  - the Shelf on the shared UtilityExecutor, and the properties card's Open
+    after the HUD closes;
+  - an ID card change while concealed applied as its own content event;
+  - `AudioApplicationRoute::rendering` from the audio worker;
+  - a release reaching the inactive Reader is ignored (it used to switch the
+    Reader off with "Place Reader before upload");
+  - the Library's *Relink…* titles the picker.
+- **Bounds:** `LayerRasterizer::maximumEntries` went from 1,024 to 4,096
+  entries. The 256 MB pixel budget is unchanged.
+- **Removed:** `DisableProcessWindowsGhosting`, the Shell preview handler code
+  and its suite (`native/shelf_file_preview.*`), the Shelf preview thread and
+  the startup read of the unused reveal samples.
+- **Package:** no new resources, vendored code or fonts. QuickJS-NG's
+  `LICENSE` is still not staged (`CREDITS.md`).
+
+### Verified, by suite
+
+| Area | Suites | Main evidence |
+| --- | --- | --- |
+| Host | `application_registry_contracts`, both coverage runs, `overlay_host_contracts`, `source_watch_session_contracts`, `audio_session_worker_contracts`, `layer_raster_contracts`, the two notification identity suites | Both live crash orders. No earlier time handed to any area in a whole coverage run. Outside-press close. The cursor route and the hidden-window cursor contract. `GetFocus` on an open Notes editor. Navigation buttons, hit test and a UIA scroll press. Work Mode's Edit peer and SetValue. The Volume list. The Reader stays enabled after a release. Embedded shaders reported by the renderer. |
+| Projection, Notes, Archive | Projection preview, media binding, controls scene and media scene suites; `notes_scene_contracts`, `notes_workspace_owner_contracts`, `notes_text_navigation_contracts`, `notes_relink_ledger_contracts`, `archive_state_contracts`, `archive_preview_contracts` | Earlier owner times taken as the latest. Visual-line Home/End in both editor kinds. Ledger resolve, dismiss and reconcile. Large-card GPU rings: editing entry 242 → 76 ms on WARP. |
+| Media Assembly | the 14 `media_assembly_*` suites | 20 ICC profiles and 14 PNG chunk probes within 1 level of Core Image on the CPU, GPU and preview paths. Movie frames within 2 levels of the Mac preview (11 before). Exported video row order. GPU stills exact against the CPU (12 MP: 0.41 s against 0.80 s). The Highlights/Shadows fit reproduces its fixture byte for byte. |
+| Now Playing | `now_playing_players_contracts` (157), `now_playing_acceptance_contracts` (323), `now_playing_probe_matrix`, all `now_playing_*` through `now_playing_all` | The Mac-oracle title split on 35 headings. Composite precedence. The synthetic desktop in coverage (140 checks). |
+| Account | `hypergryph_account_webview_contracts` (489), `hypergryph_account_owner_contracts` | Mac panel geometry and per-monitor DPI. Drags refused. Startup costs printed, not asserted. |
+| Power | `charge_indicator_panel_contracts`, `charge_badge_preview_contracts`, `power_area_contracts` | The alert's UIA root and tooltips. No re-raster while opening or closing at 2× (counters). The Power caption. |
+| Personal Profile, Work Mode | `profile_image_contracts`, `id_card_artwork_contracts` (Mac oracle, unchanged), `profile_scene_contracts`, `work_mode_scene_contracts`, `work_mode_preview_contracts`, `profile_owner_contracts`, `work_mode_automation_contracts` | The working copy made on the worker (a 4000 × 3000 avatar: about 460 → 17 ms of UI-thread time on WARP). Out-of-order times. The I-beam rect. 158 profile coverage checks. |
+| App shortcuts | `app_shortcut_preview_contracts`, `app_shortcut_scene_contracts`, `app_shortcut_presentation_contracts`, `app_shortcut_relink_contracts` (17) | A wheel step 1.7–2.5 ms, small steps with no raster (about 25 ms before). The handoff mask in the host's frame order. A packaged relink resolves. |
+| Mac import | `mac_import_relink_contracts` (95), `mac_import_automation_contracts` (82), the other `mac_import_*` suites | The owner API under concurrency, a mid-call replacement and refusals. Focus events. 1,608 macImport coverage checks. |
+| System providers | `clipboard_matches_contracts` (23,510), `system_services_contracts` (11,375), `event_log_owner_contracts` (46) | 87 Mac-oracle paths, 9 lists, 43 string pairs. The clamped Event Log owner clock. |
+| Reader, Map | `reader_pdf_exit_contracts` (19), `map_geography_load_contracts`, `map_preview_contracts` (82), `reader_preview_contracts` (6,223), `reader_owner_contracts` (57), `reader_localization_contracts`, `reader_native_contracts` | Exit fault `0x87A` reproduced with the old renderer, exit 0 on the owned device. Each geography dataset fails alone. A relink keeps the book's id, title and bookmarks and updates the ledger. |
+| File Shelf | `shelf_removal_frames_contracts`, `shelf_scene_contracts` (115,987), `shelf_presentation_contracts` (1,754), `shelf_properties_contracts`, `shelf_services_contracts` (568), `shelf_file_picker_contracts` (130) | Removal frames. Properties of synthetic files (PNG dimensions, WAV duration). The modal card. The ledger on the worker. |
+| Volume | `volume_scene_contracts`, `volume_preview_contracts`, `volume_preview_icon_contracts` | No module reload or caption layout on scroll. Settled frames allocate, rasterize and upload nothing. |
+| Packaging | `packaging_perf_gate_contracts` (56), `packaging_perf_probe_contracts`, `packaging_perf_gate_tool`, `packaging_perf_gate_render`, `endfieldhud_release_contracts`, `packaging_installer_contracts` (385 with an 8.3 `%TEMP%`) | Opening analysis and the refusal over SSH. The first-release notes rendered. |
+
+### Corrections to the entries above
+
+- The batch 5 "Personal Profile" entry says every owner with projected
+  editors answers `ModuleOwner::cursorAt`, naming Notes, Archive and Calendar.
+  Only Work Mode, Personal Profile and App shortcuts do. The host adapters for
+  Notes, Archive and Calendar (`app/application_modules.cpp`) forward a
+  preview's `textCursorAt` only once the preview declares it, and none of the
+  three does yet, so their fields show the source cursor. WINDOWS-MIGRATION.md
+  is corrected too.
+- The batch 5 entries leave out these commits:
+  - host pass 1 (`fff7dea`): the cursor route, `GetFocus`, the navigation and
+    clock buttons (the clock's selected style now carries the Mac Value
+    "Selected" instead of help text), and a bounded update toggle label;
+  - `dadf151`: the Event Log store clamps out-of-order owner times. Before,
+    a Media Assembly edit or a Work Mode transition ended the HUD;
+  - `d8bf2c9`: the fatal record and the Event Log save retry;
+  - `9d85cd6` and `666505a`: the profile field's I-beam, Work Mode's Edit
+    peer builder, and Ctrl+X/C/V in the profile and duration fields;
+  - `d29fd94`: App shortcut relink rows, packaged-app logos and the name
+    field's I-beam;
+  - `c5650db` and `b724f25`: the account menu's focus, toggle state and status
+    in UIA, keyboard navigation and DPI changes in the login window, the Mac
+    auth button art, the wallet's recovery countdowns as UIA value, and
+    accent-lit account controls;
+  - the validation fixes `a53cc5d`, `ef4c92b`, `40578fa`, `e07cb2a`,
+    `e17f3af` and `c57089d` (and Work Mode in `666505a`): synthetic keys in
+    the Map, Account, Profile, Work Mode, Activity, Clipboard, Event Log,
+    Shelf and *+ Add App* tests state their modifiers. Before, the tests read
+    the live keyboard, so a key held on the laptop made checks fail.
+- Checkpoint 124's "Still open in code" items now done: the root focus route
+  and focus events (import card), the navigation entries in UIA, the Power
+  group's name, names for the alert's editor buttons, Reader PDFs on an owned
+  device, a Reader relink action, keeping the Map when its geography fails,
+  the relink ledger in Notes, Archive and App shortcuts (and Reader),
+  packaged-app logos, the large Notes card's field border raster and its
+  frame reload on the first selection change. The
+  app-icon choice is now a recorded platform gap: it changes the tray icon,
+  and the executable's own icon cannot change at run time.
+- Checkpoint 124's decisions: Home/End (visual line), Georgia for imported
+  Reader libraries and relinking from the Library are settled; automatic
+  updates for signed builds are still open.
+- Checkpoint 124 said no visible run of `EndfieldHUD.exe` had been recorded.
+  The user has since run a build on the laptop desktop; this batch answers
+  that run's reports.
+
+### Live acceptance still needed
+
+Checkpoint 124's list still applies. Batch 5 adds:
+
+- **The reports above:**
+  - open and use Projection;
+  - presses at the sides, corners, taskbar and on another monitor;
+  - Shelf removal, Clear and additions on the real GPU;
+  - the properties card (Open, Reveal, Esc, real photos and videos, a
+    OneDrive placeholder, an SMB share);
+  - Now Playing with the user's player, and `now_playing_probe --live
+    --windows` for QQ Music and Kugou;
+  - Volume with four or more real audio apps (wheel, touchpad, drag);
+  - the cold start, through `ENDFIELDHUD_STARTUP_TRACE=1` or
+    `package_perf_gate --desktop`.
+- **Pointer and accessibility:**
+  - the visible I-beam over the three fields that answer it;
+  - Narrator or Inspect over the navigation group, `GetFocus`, the clock's
+    Value, the charge alert's root, Work Mode's duration Edit and the import
+    card's focus events.
+- **Media Assembly:** Display P3 photos, movie brightness (paused, playing,
+  exported), export orientation, PNG gamma, a large transparent export.
+- **Reader and Map:** quitting right after a PDF render; relinking with a
+  synthetic Mac export; damaged geography in a development package copy.
+- **Other areas:**
+  - Account: login window geometry on mixed-DPI monitors; the no-drop cursor
+    over the Account page;
+  - Power: the alert's UIA root, the editor tooltips, opening and closing
+    smoothness at several display and HUD scales;
+  - Profile: a large phone photo as the avatar, slider drags;
+  - *+ Add App*: scrolling a long list (coverage saves at most 3 apps);
+  - Clipboard: respelled selections from Explorer and VS Code, NFC and NFD
+    text;
+  - Notes: the GPU card border at strong tilt and real DPI; Home/End with an
+    IME.
+- **Packaging:** GitHub Actions after a push; the first `windows-v` release
+  and an in-place update.
+
+### Still open in code
+
+- **Cursor:** `textCursorAt` in the Notes, Archive and Calendar previews.
+- **UI Automation:**
+  - a text pattern for projected fields;
+  - a focus announcement when the Shelf properties card opens;
+  - no UIA event has been observed by a listening client.
+- **Cold start:**
+  - prewarm entry points for Map (about 16 ms), Account (about 2 ms) and
+    Power (1–1.7 ms) of the 27–31 ms cold first frame;
+  - Map verifies and expands its player images on the UI thread at launch
+    (not measured);
+  - about 160–190 ms before the first startup stage (COM and DLL loading)
+    and about 150 ms of area construction were measured, not changed.
+- **Video colour:** Notes and Archive posters (measured on the Mac: grey 128
+  shows as 139), and probably played frames in Notes, Archive and
+  Projection, need the CoreMedia 709 reading through the media broker.
+- **Reveal masks:** Clipboard's reveal and Activity's sort transition use
+  samples of the Shelf's old topology (a decision for the user, below).
+- **Notes:**
+  - leaving the editor on a card larger than 1024 × 1024 points re-rasters
+    about 46 text lines (59 ms on WARP);
+  - the relink ledger is written on the UI thread;
+  - the Archive single-line inset comes from the shared editor;
+  - pasted images are not transcoded on the shared media worker;
+  - Office HTML class style sheets are not applied.
+- **Personal Profile:** the page portrait crop runs on the UI thread (about
+  14 ms per change, slider drags included); decoded avatars up to 4096 px
+  stay in the two-entry cache.
+- **Source shell:** the ENDFIELD INDUSTRIES logo's click flicker and the
+  clickable scroll indicators are not ported; presses there are absorbed
+  without an action.
+- **Input:** precise touchpad scroll and pinch.
+- **Mac import:** unmarked private folders from before `e38d18d`; no progress
+  during the post-shutdown commit.
+- **Packaging:** QuickJS-NG's `LICENSE` is not staged; builds are unsigned;
+  no "update available" toast.
+
+### Decisions for the user
+
+- Clipboard's reveal and Activity's sort transition: draw the authored
+  keyframes there too, as the Shelf now does? The Mac shows Core Animation's
+  interpolation, which most likely has the same wedges.
+- Once a certificate exists, may signed builds install updates automatically
+  (Mac-style 30 s idle gate)?
+- If NetEase Cloud Music ignores `WM_APPCOMMAND` in the live run, a follow-up
+  chooses another delivery path from that evidence.
+- Settled in batch 5: Volume shows three app rows (the user's change); the
+  Shelf preview became the properties card; Home/End follow the visual line;
+  imported Reader libraries keep Georgia; books are relinked from the Library;
+  Highlights/Shadows is derived black-box only and stays a gap.

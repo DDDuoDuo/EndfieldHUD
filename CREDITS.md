@@ -42,7 +42,7 @@ Account integration references include [endfield-wallpaper](https://github.com/E
 
 ## Windows build
 
-The native Windows port in `windows/` adds the third-party components below. The vendored libraries and fonts are unmodified and kept with their licenses and a provenance file that pins the upstream source and SHA-256 hashes. Sparkle and MediaRemote Adapter are used only by the macOS app. The Windows build otherwise relies on components that ship with Windows, such as `winsqlite3`, `icu.dll`, Media Foundation and WIC, and on the separately installed Evergreen WebView2 Runtime. None of these is redistributed.
+The native Windows port in `windows/` adds the third-party components below. The vendored libraries and fonts are unmodified and kept with their licenses and a provenance file that pins the upstream source and SHA-256 hashes. Sparkle and MediaRemote Adapter are used only by the macOS app. The Windows build otherwise relies on components that ship with Windows, such as `winsqlite3`, `icu.dll`, Media Foundation, WIC and `Windows.Data.Pdf`, and on the separately installed Evergreen WebView2 Runtime. None of these is redistributed. The Windows SDK's `fxc.exe` compiles the HUD's own `hud.hlsl` at build time; only that shader's bytecode is embedded, and no SDK file ships.
 
 | Project | Use and license |
 | --- | --- |
@@ -58,7 +58,7 @@ The Windows package ships:
 - the OrbiPom resource folder, which contains Matter.js's license;
 - since checkpoint 124, the WebView2 SDK's `LICENSE.txt` and `NOTICE.txt` at `resources/licenses/webview2`.
 
-It does not yet include the QuickJS-NG license, although QuickJS-NG is compiled into `EndfieldHUD.exe`. This is an open packaging item.
+It does not yet include the QuickJS-NG license, although QuickJS-NG is compiled into `EndfieldHUD.exe`. This is an open packaging item. Batch 5 (checkpoint 128) added no vendored code, fonts or licence files.
 
 ## Map data
 
