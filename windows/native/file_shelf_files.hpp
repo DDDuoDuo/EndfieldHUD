@@ -1,5 +1,6 @@
 #pragma once
 #include "core/data/file_shelf_store.hpp"
+#include <cstdint>
 #include <memory>
 
 namespace endfield::native {
@@ -39,8 +40,11 @@ struct FileShelfFileOptions {
 // Paths must be ordinary absolute UTF-8 drive/UNC paths accepted by the native
 // store. Device namespaces, ADS, relative paths and dot components are rejected
 // before CreateFile. The final component is opened without following reparse
-// points: ordinary files/directories and selected symbolic links are supported;
-// junctions, cloud placeholders and other reparse types explicitly are not.
+// points: ordinary files/directories, selected symbolic links and cloud
+// placeholders (classifyShelfObject) are supported; junctions, offline
+// (HSM) objects and other reparse types explicitly are not. Every open uses
+// FILE_FLAG_OPEN_NO_RECALL: a cloud placeholder is referenced, iconified,
+// relocated and revealed from its metadata without hydrating it.
 // Link size is absent and target reachability/content access is NOT established.
 // No directory enumeration, rename search, bookmark migration or target copy
 // occurs. An ancestor may be a filesystem redirect; identity always comes from
@@ -64,6 +68,18 @@ public:
 private:
     std::shared_ptr<const Configuration> configuration_;
 };
+// The Mac Shelf references iCloud Drive items that are not downloaded. On
+// Windows the equivalent is a Cloud Files API placeholder (OneDrive Files
+// On-Demand and other sync providers): reparse tag IO_REPARSE_TAG_CLOUD...
+// IO_REPARSE_TAG_CLOUD_F, or, where the cloud filter disguises the reparse
+// point from this process, the recall attributes FILE_ATTRIBUTE_RECALL_ON_
+// DATA_ACCESS / FILE_ATTRIBUTE_RECALL_ON_OPEN. Such items are references like
+// any other; their contents are fetched only by an explicit preview (the
+// preview stream reopens the same identity with recall) or by the drop
+// target of an explicit drag (which reads the dragged path). Pure: attribute
+// and tag values of FILE_ATTRIBUTE_TAG_INFO.
+enum class ShelfObjectKind {ordinary,symbolicLink,cloudPlaceholder,unsupportedReparse,offline};
+ShelfObjectKind classifyShelfObject(std::uint32_t attributes,std::uint32_t reparseTag)noexcept;
 // Pure helpers, also exercised on other platforms. relocatedShelfPath converts
 // a GetFinalPathNameByHandleW DOS result ("\\?\C:\..." or "\\?\UNC\s\h\...")
 // to the ordinary path form the store accepts; empty when it is not one.

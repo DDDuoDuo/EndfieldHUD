@@ -72,11 +72,13 @@ std::string shellTypeName(const std::string& name){
 ShelfFileMetadata describe(HANDLE handle,std::string path,const Configuration& configuration){
     if(GetFileType(handle)!=FILE_TYPE_DISK)throw StoreError(StoreErrorCode::invalid,"Shelf reference is not a disk filesystem object");
     const auto attributes=info<FILE_ATTRIBUTE_TAG_INFO>(handle,FileAttributeTagInfo,"Cannot inspect shelf reparse metadata");
-    const bool link=(attributes.FileAttributes&FILE_ATTRIBUTE_REPARSE_POINT)!=0;
-    if(link&&attributes.ReparseTag!=IO_REPARSE_TAG_SYMLINK)
+    // Cloud placeholders are ordinary references (no-recall metadata only).
+    const auto kind=classifyShelfObject(attributes.FileAttributes,attributes.ReparseTag);
+    if(kind==ShelfObjectKind::unsupportedReparse)
         throw StoreError(StoreErrorCode::unavailable,"This shelf provider does not support this reparse-point type");
-    if((attributes.FileAttributes&FILE_ATTRIBUTE_OFFLINE)!=0)
+    if(kind==ShelfObjectKind::offline)
         throw StoreError(StoreErrorCode::unavailable,"Shelf reference is offline; no recall was requested");
+    const bool link=kind==ShelfObjectKind::symbolicLink;
     const auto standard=info<FILE_STANDARD_INFO>(handle,FileStandardInfo,"Cannot inspect shelf file metadata");
     if(standard.DeletePending)throw StoreError(StoreErrorCode::unavailable,"Shelf reference is pending deletion");
     if(standard.EndOfFile.QuadPart<0)throw StoreError(StoreErrorCode::invalid,"Shelf reference has an invalid byte count");
@@ -188,6 +190,19 @@ ShelfFileAccess resolvePath(const ShelfRecord& record,const Configuration& confi
 #endif
     throw *failure;
 }
+}
+ShelfObjectKind classifyShelfObject(std::uint32_t attributes,std::uint32_t tag)noexcept{
+    // winnt.h values, spelled out so the classification is portable.
+    constexpr std::uint32_t reparsePoint=0x400,offline=0x1000,recallOnOpen=0x40000,recallOnDataAccess=0x400000;
+    constexpr std::uint32_t symlinkTag=0xA000000Cu,cloudTag=0x9000001Au,cloudMask=0x0000F000u;
+    if(attributes&reparsePoint){
+        if(tag==symlinkTag)return ShelfObjectKind::symbolicLink;
+        if((tag&~cloudMask)==cloudTag)return ShelfObjectKind::cloudPlaceholder;
+        return ShelfObjectKind::unsupportedReparse;
+    }
+    if(attributes&(recallOnOpen|recallOnDataAccess))return ShelfObjectKind::cloudPlaceholder; // disguised placeholder
+    if(attributes&offline)return ShelfObjectKind::offline;
+    return ShelfObjectKind::ordinary;
 }
 std::string relocatedShelfPath(std::string_view value){
     std::string path;

@@ -226,7 +226,24 @@ void shellTypeNames(){
 }
 #endif
 }
-int main(){try{guards();pathHelpers();
+// Cloud Files placeholders are references (no-recall metadata); every other
+// reparse type and offline (HSM) objects stay refused. Values are winnt.h's.
+void objectKinds(){
+    constexpr std::uint32_t reparse=0x400,directory=0x10,offline=0x1000,recallOnOpen=0x40000,recallOnData=0x400000,pinned=0x80000,unpinned=0x100000,sparse=0x200;
+    check(classifyShelfObject(0x80,0)==ShelfObjectKind::ordinary&&classifyShelfObject(directory,0)==ShelfObjectKind::ordinary,"Ordinary files and folders");
+    check(classifyShelfObject(reparse,0xA000000Cu)==ShelfObjectKind::symbolicLink,"A selected symbolic link stays a link");
+    check(classifyShelfObject(reparse,0xA0000003u)==ShelfObjectKind::unsupportedReparse,"A junction (mount point) is refused");
+    check(classifyShelfObject(reparse,0x80000023u)==ShelfObjectKind::unsupportedReparse&&classifyShelfObject(reparse,0x8000001Bu)==ShelfObjectKind::unsupportedReparse,"Other reparse types (AppExecLink, ...) are refused");
+    for(std::uint32_t nibble=0;nibble<16;++nibble)check(classifyShelfObject(reparse|sparse|recallOnData|unpinned,0x9000001Au|(nibble<<12))==ShelfObjectKind::cloudPlaceholder,"IO_REPARSE_TAG_CLOUD..CLOUD_F placeholders are references");
+    check(classifyShelfObject(reparse|directory|recallOnOpen,0x9000301Au)==ShelfObjectKind::cloudPlaceholder,"A cloud folder placeholder is a reference");
+    check(classifyShelfObject(reparse|offline,0x9000001Au)==ShelfObjectKind::cloudPlaceholder,"An offline-marked cloud placeholder is still a placeholder");
+    check(classifyShelfObject(recallOnData|unpinned,0)==ShelfObjectKind::cloudPlaceholder&&classifyShelfObject(directory|recallOnOpen,0)==ShelfObjectKind::cloudPlaceholder,
+          "A placeholder disguised by the cloud filter is recognised by its recall attributes");
+    check(classifyShelfObject(0x80|pinned,0)==ShelfObjectKind::ordinary,"A hydrated, pinned cloud file is an ordinary file");
+    check(classifyShelfObject(offline,0)==ShelfObjectKind::offline,"HSM offline objects are refused (no recall is requested)");
+    check(classifyShelfObject(reparse,0x9000101Bu)==ShelfObjectKind::unsupportedReparse,"Only the cloud tag family matches, not neighbouring tags");
+}
+int main(){try{guards();pathHelpers();objectKinds();
 #ifdef _WIN32
     actualMetadataAndLifetime();replacementAndStoreBundle();links();unsupportedReparse();relocation();shellTypeNames();
 #else

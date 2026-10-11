@@ -40,6 +40,13 @@ struct ShelfPreviewOptions {
     // code), the name and ShelfPreviewServices::describe lines. Off: such items
     // report `failed` as before.
     bool fallback{};
+    // Contained hosting (shelf_preview_thread.hpp): the popup is an unowned
+    // top-level tool window of the preview thread, centred on this window of
+    // the HUD's thread, which gets the foreground back before a focused
+    // preview hides. Cross-thread owner/parent links would attach the two
+    // threads' input queues, so a hung handler could stall the HUD. Null: the
+    // popup is owned by route.owner on the same thread.
+    HWND anchor{};
 };
 enum class ShelfPreviewNotice:LPARAM {work=1,events=2};
 enum class ShelfPreviewEventKind {opened,closed,failed,revealRequested};
@@ -61,10 +68,25 @@ struct ShelfPreviewServices {
     // Generic preview text for the current metadata (owner language). Default:
     // name, the stored type description and the byte count.
     std::function<ShelfPreviewDescription(const ehud::data::ShelfFileMetadata&)>describe;
+    // Containment hooks (preview thread). watch(true)/watch(false) bracket every
+    // operation that can block in third-party code or on a slow filesystem:
+    // resolve, describe, handler activation, stream opening, every
+    // IPreviewHandler/IInitializeWithStream/IObjectWithSite call, proxy
+    // releases and the popup teardown. Brackets nest; a hook may close or
+    // abandon this controller from watch(false). activity() runs whenever the
+    // handler reads, seeks or clones the preview stream: it is making progress
+    // (for example while a cloud placeholder hydrates), not hung.
+    std::function<void(bool)>watch;
+    std::function<void()>activity;
 };
+// The default Shell activation (registered out-of-process stream preview
+// handler for the name's extension), for services that delegate to it.
+HRESULT createShelfPreviewHandler(const ehud::data::ShelfFileMetadata&,IPreviewHandler**)noexcept;
 // Read-only, seekable stream for an explicitly selected ordinary file. Opens a
 // no-recall/no-final-reparse handle, compares FILE_ID_INFO to the lease and
 // retains it until the last stream/clone releases. Does not load a whole file.
+// A cloud placeholder (classifyShelfObject) is the one exception: this explicit
+// preview reopens the same identity with recall, so reads hydrate it.
 // Individual Read requests are bounded to 16 MiB; oversized requests fail
 // explicitly rather than truncating. File contents may change while leased.
 HRESULT openShelfPreviewStream(const ehud::data::ShelfFileAccess&,IStream**)noexcept;
@@ -84,6 +106,12 @@ public:
     // Events are bounded/coalesced notices, never direct state/store callbacks.
     std::vector<ShelfPreviewEvent>drain(UINT_PTR routeGeneration);
     void close(bool restoreOwnerFocus=true);
+    // The handler stopped responding (containment watchdog): forget the
+    // current preview without calling into the handler again. Its leases and
+    // stream file handle close now, this side's COM objects are disconnected,
+    // the popup hides and the handler proxies are deliberately leaked (a
+    // release could block on the hung server). Nothing is reported.
+    void abandon()noexcept;
     void setRoute(ShelfPreviewRoute); // close/cancel before owner replacement
     // Call before TranslateMessage. Handles only this owned preview window or
     // its child windows: unmodified Escape/Space closes, Ctrl-R queues reveal.
@@ -98,8 +126,9 @@ private:
 // handlers, folders and links show the generic preview when
 // ShelfPreviewOptions::fallback is set, and otherwise report failure; no
 // unrelated app is launched either way.
-// Third-party handlers can block synchronous COM calls; no forced abort or
-// unbounded replacement service is created. Native visual/handler coverage
+// Third-party handlers can block synchronous COM calls: production hosts this
+// controller on a dedicated preview thread (ContainedShelfFilePreview) whose
+// watchdog cancels and abandons a hung handler. Native visual/handler coverage
 // requires actual Windows testing and is not inferred from injected fixtures.
 } // namespace endfield::native
 #endif

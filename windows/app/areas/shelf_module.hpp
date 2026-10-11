@@ -15,15 +15,28 @@
 //     their 128-bit file identity and their new paths are saved (the Mac
 //     bookmark renewal), a deleted one and one moved into "$Recycle.Bin" stay
 //     unavailable, and every untouched original survives remove and clear;
+//   - a Mac-imported Shelf item (an unresolved fileShelf.item entry of the
+//     import area's Migration/relink.json) listed as an unavailable card,
+//     relinked to a synthetic file that keeps the imported identifier, with
+//     the ledger entry resolved and shelfAdded recorded;
+//   - the UI Automation peers of the presented Shelf (one per accessible
+//     action plus the imported card's Relink peer), Invoke selecting a card
+//     and asking for the picker, and withdrawal when the Shelf is hidden;
 //   - Quick Look's generic preview for a folder and for a type with no
-//     registered stream preview handler, in a hidden popup (ESC/Space close);
+//     registered stream preview handler, in a hidden popup on the dedicated
+//     preview thread (never the HUD thread);
+//   - preview containment: a synthetic handler type that stalls is cancelled
+//     by the preview thread's watchdog (localized "not responding" text), the
+//     retired thread ends once released and the next preview runs on a fresh
+//     preview thread;
 //   - the localized text of those operations.
 // It owns a NEW data root inside its coverage root, a private never-shown
-// owner window (the HUD HWND keeps its own routes), a hidden preview popup, no
-// icon worker, no drop registration and no clipboard access. Event Log records
-// go to a counting sink: the real Event Log is drawn by the module cycles, whose
-// raster usage must repeat exactly. Outside hidden coverage the factory returns
-// null (the built-in owner is the production path).
+// owner window (the HUD HWND keeps its own routes), a private rasterizer for
+// its presentation (outside the module cycles' measured raster usage), a
+// hidden preview popup, no icon worker, no drop registration and no clipboard
+// access. Event Log records go to a counting sink: the real Event Log is drawn
+// by the module cycles, whose raster usage must repeat exactly. Outside hidden
+// coverage the factory returns null (the built-in owner is the production path).
 //
 // Recorded platform gap, direct tray-icon drop (Mac StatusItemFileDropView):
 // Shell_NotifyIconW offers no drop contract. Its callback carries only mouse,

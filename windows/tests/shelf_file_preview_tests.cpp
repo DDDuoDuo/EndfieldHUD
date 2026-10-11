@@ -31,6 +31,7 @@ void pure(){
 #ifdef _WIN32
 #include "native/file_shelf_files.hpp"
 #include <atomic>
+#include <thread>
 #include <objbase.h>
 #include <objidl.h>
 #include <ocidl.h>
@@ -75,6 +76,7 @@ public:
     HRESULT frameWindow(HWND*out){ComPtr<IOleWindow>window;const auto hr=site_.As(&window);return FAILED(hr)?hr:window->GetWindow(out);}
     HRESULT frameKey(MSG&message){ComPtr<IPreviewHandlerFrame>frame;const auto hr=site_.As(&frame);return FAILED(hr)?hr:frame->TranslateAccelerator(&message);}
     HRESULT frameContext(PREVIEWHANDLERFRAMEINFO*out){ComPtr<IPreviewHandlerFrame>frame;const auto hr=site_.As(&frame);return FAILED(hr)?hr:frame->GetWindowContext(out);}
+    HRESULT read(void*buffer,ULONG count,ULONG*read){return stream_?stream_->Read(buffer,count,read):E_FAIL;}
 };
 struct Fixture {
     Window owner;LeaseCounts leases;std::shared_ptr<HandlerLog>log=std::make_shared<HandlerLog>();ComPtr<Handler>handler;
@@ -178,6 +180,68 @@ void genericPreview(){
     rejects([&]{strict->request(firstID,d::ShelfFileAccess{folderMetadata(),[]{}});},"Without the generic preview a folder request still rejects");
     preview.reset();folders.reset();strict.reset();fixture.owner.discard();check(fixture.leases.acquired==fixture.leases.released,"Every generic preview lease balances");
 }
+// Containment watchdog contract: an abandoned (hung) handler is never called
+// again, its stream stops reading the original, its leases and popup end, and
+// the controller activates no further handler. Stream reads report progress.
+void abandonedHandler(){
+    Fixture fixture;unsigned activities{};auto services=fixture.services();services.activity=[&]{++activities;};
+    auto preview=std::make_unique<n::NativeShelfFilePreview>(fixture.owner.route(71),n::ShelfPreviewOptions{false,600,400},services);
+    check(preview->request(firstID,lease(fixture.leases)),"Request queues");fixture.dispatch(*preview);auto events=fixture.events(*preview,71);
+    check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::opened,"The handler opens");
+    char byte{};ULONG read{};check(SUCCEEDED(fixture.handler->read(&byte,1,&read))&&activities>=1,"Handler stream reads report progress");
+    const auto popup=preview->window();const unsigned unloads=fixture.log->unloads,sites=fixture.log->sites;
+    preview->abandon();
+    check(!preview->window()&&!IsWindow(popup)&&!preview->stats().active,"Abandoning retires the popup");
+    check(fixture.log->unloads==unloads&&fixture.log->sites==sites&&fixture.leases.acquired==fixture.leases.released,"An abandoned handler is never called again; both leases end");
+    check(fixture.handler->read(&byte,1,&read)==E_UNEXPECTED,"The abandoned handler's stream no longer reads the original");
+    HWND reported{};check(FAILED(fixture.handler->frameWindow(&reported))&&!reported,"The abandoned frame exposes no window");
+    MSG none{};check(!PeekMessageW(&none,fixture.owner.value,Window::notice,Window::notice,PM_NOREMOVE)&&preview->drain(71).empty(),"Abandoning reports nothing");
+    const auto factories=fixture.factories;check(preview->request(firstID,lease(fixture.leases)),"A later request still queues");fixture.dispatch(*preview);events=fixture.events(*preview,71);
+    check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::failed&&fixture.factories==factories&&!preview->window()&&fixture.leases.acquired==fixture.leases.released,
+        "An abandoned controller never activates another handler");
+    preview.reset();fixture.owner.discard();
+}
+// A handler host's child window inside the popup belongs to another thread
+// (process): with the handler abandoned, DestroyWindow on the popup could wait
+// on that hung thread, so the popup is hidden and detached instead and left to
+// its own thread's exit.
+void abandonedForeignChild(){
+    Fixture fixture;auto services=fixture.services();services.activity=[]{};
+    auto preview=std::make_unique<n::NativeShelfFilePreview>(fixture.owner.route(74),n::ShelfPreviewOptions{false,600,400},services);
+    check(preview->request(firstID,lease(fixture.leases)),"Request queues");fixture.dispatch(*preview);const auto events=fixture.events(*preview,74);
+    check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::opened,"The handler opens");
+    const auto popup=preview->window();HWND child{};
+    const HANDLE ready=CreateEventW(nullptr,TRUE,FALSE,nullptr),done=CreateEventW(nullptr,TRUE,FALSE,nullptr);check(ready&&done,"Owned events");
+    std::thread host([&]{
+        child=CreateWindowExW(WS_EX_NOPARENTNOTIFY,L"STATIC",L"",WS_CHILD,0,0,10,10,popup,nullptr,GetModuleHandleW(nullptr),nullptr);SetEvent(ready);
+        while(MsgWaitForMultipleObjects(1,&done,FALSE,INFINITE,QS_ALLINPUT)!=WAIT_OBJECT_0){MSG m{};while(PeekMessageW(&m,nullptr,0,0,PM_REMOVE))DispatchMessageW(&m);}
+        if(child)DestroyWindow(child);
+    });
+    while(MsgWaitForMultipleObjects(1,&ready,FALSE,5000,QS_SENDMESSAGE)==WAIT_OBJECT_0+1){MSG m{};PeekMessageW(&m,nullptr,0,0,PM_NOREMOVE);}
+    check(child&&GetParent(child)==popup&&GetWindowThreadProcessId(child,nullptr)!=GetCurrentThreadId(),"Another thread's window sits inside the popup");
+    preview->abandon();
+    check(IsWindow(popup)&&!IsWindowVisible(popup)&&GetWindowLongPtrW(popup,GWLP_USERDATA)==0&&!preview->window()&&fixture.leases.acquired==fixture.leases.released,
+          "With a foreign child the abandoned popup is hidden and detached, not destroyed; the leases end");
+    SendMessageW(popup,WM_SIZE,SIZE_RESTORED,MAKELPARAM(300,200));check(fixture.log->rects==0,"A detached popup no longer reaches the abandoned handler");
+    SetEvent(done);host.join();CloseHandle(ready);CloseHandle(done);check(DestroyWindow(popup)!=FALSE,"The popup's own thread destroys it later");
+    preview.reset();fixture.owner.discard();
+}
+// Contained hosting: an unowned popup centred on the anchor window (which, in
+// production, belongs to the HUD's thread).
+void anchoredPopup(){
+    Fixture fixture;Window anchor;check(SetWindowPos(anchor.value,nullptr,200,100,640,480,SWP_NOZORDER|SWP_NOACTIVATE)!=FALSE,"Anchor placed");
+    n::ShelfPreviewOptions options{false,600,400};options.anchor=anchor.value;
+    auto preview=std::make_unique<n::NativeShelfFilePreview>(fixture.owner.route(72),options,fixture.services());
+    check(preview->request(firstID,lease(fixture.leases)),"Anchored request queues");fixture.dispatch(*preview);const auto events=fixture.events(*preview,72);
+    check(events.size()==1&&events[0].kind==n::ShelfPreviewEventKind::opened,"Anchored preview opens");
+    const auto popup=preview->window();RECT frame{},area{};check(GetWindowRect(popup,&frame)&&GetWindowRect(anchor.value,&area),"Frames read");
+    check(GetWindow(popup,GW_OWNER)==nullptr&&GetParent(popup)==nullptr,"An anchored popup has no owner window");
+    const POINT centre{(frame.left+frame.right)/2,(frame.top+frame.bottom)/2};check(PtInRect(&area,centre)!=FALSE,"The popup is centred over its anchor");
+    preview->close(false);fixture.events(*preview,72);check(!IsWindow(popup)&&fixture.leases.acquired==fixture.leases.released,"The anchored popup closes and balances its leases");
+    preview.reset();fixture.owner.discard();
+    bool rejected{};try{options.anchor=reinterpret_cast<HWND>(static_cast<std::uintptr_t>(0x7ffffff0));n::NativeShelfFilePreview bad(fixture.owner.route(73),options,fixture.services());}catch(const std::exception&){rejected=true;}
+    check(rejected,"A dead anchor window is rejected");
+}
 std::string pathText(const std::filesystem::path&path){const auto text=path.u8string();return {reinterpret_cast<const char*>(text.data()),text.size()};}
 void actualOwnedReadOnlyStream(){
     const auto root=std::filesystem::temp_directory_path()/("endfield-preview-stream-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));check(std::filesystem::create_directory(root),"Own new temporary preview fixture directory");
@@ -195,7 +259,7 @@ void actualOwnedReadOnlyStream(){
     check(FAILED(n::openShelfPreviewStream({},&rejected))&&!rejected,"Closed reference never implicitly reads a user file");
 }
 }
-int main(){try{pure();COM com;queuedIdentityAndLifetime();toggleReplacementAndKeys();failedAndCanceled();teardownDuringExternalCalls();genericPreview();actualOwnedReadOnlyStream();std::cout<<"PASS "<<checks<<" Shelf native preview/lease checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
+int main(){try{pure();COM com;queuedIdentityAndLifetime();toggleReplacementAndKeys();failedAndCanceled();teardownDuringExternalCalls();genericPreview();abandonedHandler();abandonedForeignChild();anchoredPopup();actualOwnedReadOnlyStream();std::cout<<"PASS "<<checks<<" Shelf native preview/lease checks\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
 #else
 int main(){try{pure();std::cout<<"PASS "<<checks<<" portable Shelf preview checks; Windows handler/stream fixtures not executed\n";return 0;}catch(const std::exception&error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<'\n';return 1;}}
 #endif

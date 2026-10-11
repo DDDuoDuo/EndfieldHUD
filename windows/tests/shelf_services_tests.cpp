@@ -12,7 +12,9 @@
 #include "native/file_shelf_files.hpp"
 #include "native/module_scene.hpp"
 #include "core/data/file_io.hpp"
+#include "core/migration/mac_import_relink.hpp"
 #include <ole2.h>
+#include <uiautomation.h>
 #include <wrl/client.h>
 #include <algorithm>
 #include <atomic>
@@ -27,6 +29,7 @@ namespace app = endfield::app;
 namespace mod = endfield::modules;
 namespace data = ehud::data;
 namespace tools = endfield::tools;
+namespace mig = ehud::migration;
 using Microsoft::WRL::ComPtr;
 namespace {
 unsigned checks{};
@@ -174,11 +177,13 @@ void owner(HWND hwnd, const gpu::NativeShelfAssets& assets) {
         check(std::any_of(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.windowsPath == utf8(renamed); }), "The renewed path is saved");
     }
 
-    // Generic preview of a folder through the owner (hidden popup).
-    shelf->requestPreview(item("Folder")->id); pump();
+    // Generic preview of a folder through the owner (hidden popup), on the
+    // dedicated preview thread.
+    shelf->requestPreview(item("Folder")->id); check(shelf->settlePanels(10000), "The preview thread settles"); pump();
     auto panels = shelf->panels();
     check(panels.previewActive && panels.previewFallback && !panels.previewVisible && panels.previewFallbacks == 1, "A folder opens the generic preview");
-    shelf->requestPreview(item("Folder")->id); pump();
+    check(panels.previewThread != 0 && panels.previewThread != GetCurrentThreadId() && panels.previewThreads == 1 && panels.previewTimeouts == 0, "The preview runs on its own thread");
+    shelf->requestPreview(item("Folder")->id); check(shelf->settlePanels(10000), "The preview thread settles"); pump();
     check(!shelf->panels().previewActive, "Requesting the same item again toggles the preview closed (Space)");
 
     // Preview of a deleted original: a localized error, never an exception.
@@ -202,10 +207,176 @@ void owner(HWND hwnd, const gpu::NativeShelfAssets& assets) {
     check(shelf->importFiles(std::vector<std::string>{utf8(dropped)}, ++time) && later == 1 && events.size() == 2, "A replaced recorder receives later records only");
     shelf->setLanguage(core::Language::japanese);
     check(shelf->state().strings().revealPrefix == "エクスプローラーで表示：" && shelf->state().strings().previewPrefix == "プレビュー：", "Language changes rename the platform actions");
-    shelf->cancelPanels(); pump();
+    shelf->cancelPanels(); shelf->settlePanels(10000); pump();
     shelf.reset();
     { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) {} }
     check(RevokeDragDrop(hwnd) == DRAGDROP_E_NOTREGISTERED && !IsWindowVisible(hwnd), "Teardown revokes the drop target; nothing was shown");
+}
+// Presents the Shelf on the fixture window (the drop test's projection).
+struct Presented {
+    core::ModulePresentation modules{core::Module::fileShelf};
+    core::source::DesktopChromeSettings settings{{0, 0, 1280, 800}, 1, {}, core::Module::fileShelf, true};
+    core::Matrix4 center = core::source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
+    void show(tools::ShelfPreview& shelf, double& time) { const auto sample = modules.sample(++time).presentation; shelf.update(center, settings, sample, 1, time); }
+};
+std::wstring property(IRawElementProviderFragment* fragment, PROPERTYID id) {
+    ComPtr<IRawElementProviderSimple> simple; ok(fragment->QueryInterface(IID_PPV_ARGS(&simple)), "Peer is a simple provider");
+    VARIANT value; VariantInit(&value); ok(simple->GetPropertyValue(id, &value), "Peer property");
+    std::wstring out = value.vt == VT_BSTR && value.bstrVal ? std::wstring(value.bstrVal) : std::wstring{}; VariantClear(&value); return out;
+}
+std::wstring wide(std::string_view text) { const auto n = MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), nullptr, 0); std::wstring out(std::size_t(n), L'\0'); MultiByteToWideChar(CP_UTF8, 0, text.data(), int(text.size()), out.data(), n); return out; }
+ComPtr<IRawElementProviderFragment> peer(tools::ShelfPreview& shelf, std::wstring_view id) {
+    for (std::size_t n = 0; n < shelf.automationCount(); ++n) {
+        ComPtr<IRawElementProviderFragment> fragment; ok(shelf.automationChild(n, &fragment), "Peer child");
+        if (property(fragment.Get(), UIA_AutomationIdPropertyId) == id) return fragment;
+    }
+    return nullptr;
+}
+std::wstring value(IRawElementProviderFragment* fragment) {
+    ComPtr<IRawElementProviderSimple> simple; ok(fragment->QueryInterface(IID_PPV_ARGS(&simple)), "Peer is a simple provider");
+    ComPtr<IUnknown> pattern; ok(simple->GetPatternProvider(UIA_ValuePatternId, &pattern), "Value pattern query");
+    if (!pattern) return L"<none>"; ComPtr<IValueProvider> provider; ok(pattern.As(&provider), "Value provider");
+    BSTR text{}; ok(provider->get_Value(&text), "Value read"); std::wstring out(text ? text : L""); SysFreeString(text); return out;
+}
+HRESULT invoke(IRawElementProviderFragment* fragment) {
+    check(fragment != nullptr, "The peer exists");
+    ComPtr<IRawElementProviderSimple> simple; ok(fragment->QueryInterface(IID_PPV_ARGS(&simple)), "Peer is a simple provider");
+    ComPtr<IUnknown> pattern; if (const auto hr = simple->GetPatternProvider(UIA_InvokePatternId, &pattern); FAILED(hr)) return hr;
+    check(pattern != nullptr, "Every Shelf peer is invokable");
+    ComPtr<IInvokeProvider> provider; ok(pattern.As(&provider), "Invoke provider"); return provider->Invoke();
+}
+
+// UI Automation peers of the presented Shelf (HUDFileShelfInteraction.
+// layoutAccessibility): one Button per accessible action, help and values,
+// Invoke through ShelfPreview::perform, hit testing and disconnection.
+void automation(HWND hwnd, const gpu::NativeShelfAssets& assets) {
+    Temp temp; gpu::LayerRasterizer raster;
+    tools::ShelfPreviewOptions options{temp.root / "metadata", false, false, {}}; options.visiblePanels = false;
+    auto shelf = std::make_unique<tools::ShelfPreview>(hwnd, raster, assets, std::move(options));
+    shelf->resize({1280, 800, 96, 1, 1280, 800}); shelf->setLanguage(core::Language::english);
+    double time{};
+    const auto a = temp.root / "Alpha.txt", b = temp.root / "Beta.txt"; write(a, "alpha"); write(b, "beta");
+    check(shelf->importFiles(std::vector<std::string>{utf8(a), utf8(b)}, ++time), "Two references are added");
+    check(!shelf->automationRefresh(nullptr) && shelf->automationCount() == 0, "A Shelf that is not presented lists no peers");
+    Presented presented; presented.show(*shelf, time);
+    check(shelf->automationRefresh(nullptr), "Presenting the Shelf lists its peers");
+    const auto actions = shelf->state().accessibleActions();
+    check(shelf->automationCount() == actions.size() && actions.size() == 10, "One peer per accessible action: Add, Clear and four per card");
+    const auto idA = wide(shelf->state().items()[0].id), idB = wide(shelf->state().items()[1].id);
+    auto add = peer(*shelf, L"shelf:add"); check(add && property(add.Get(), UIA_NamePropertyId) == L"Add files", "The Add files button is named by its label");
+    check(property(add.Get(), UIA_HelpTextPropertyId) == wide(tools::shelfText(tools::ShelfText::accessibilityHelp, core::Language::english)), "Help is the Windows keyboard help");
+    auto plateA = peer(*shelf, L"shelf:" + idA + L":select"), plateB = peer(*shelf, L"shelf:" + idB + L":select");
+    check(plateA && plateB && property(plateA.Get(), UIA_NamePropertyId).starts_with(L"Alpha.txt, "), "A card plate is named by its details");
+    check(value(plateA.Get()) == L"Selected" && value(plateB.Get()) == L"Selected" && value(add.Get()) == L"<none>", "Selected plates carry the Selected value; buttons have none");
+    auto preview = peer(*shelf, L"shelf:" + idA + L":preview"); check(preview && property(preview.Get(), UIA_NamePropertyId) == L"Preview: Alpha.txt", "Card buttons use the Windows action names");
+    UiaRect bounds{}; ok(plateA->get_BoundingRectangle(&bounds), "Plate bounds"); check(bounds.width > 20 && bounds.height > 10 && bounds.left >= 0 && bounds.top >= 0, "Plates are projected to screen pixels");
+    // The hit test finds the plate at its centre (card buttons sit on top of it elsewhere).
+    ComPtr<IRawElementProviderFragment> hit; ok(shelf->automationFromPoint(bounds.left + bounds.width * .3, bounds.top + bounds.height * .3, &hit), "Hit test");
+    check(hit && property(hit.Get(), UIA_AutomationIdPropertyId) == L"shelf:" + idA + L":select", "The hit test returns the card under the point");
+    // Invoke selects exactly that card and asks the host to refresh.
+    check(invoke(plateA.Get()) == S_OK && shelf->state().selectedIDs().size() == 1 && shelf->state().selectedIDs().contains(shelf->state().items()[0].id), "Invoking a plate selects that card");
+    MSG notice{}; check(PeekMessageW(&notice, hwnd, WM_APP + 185, WM_APP + 185, PM_REMOVE) && notice.lParam == 1 && shelf->message({hwnd, notice.message, notice.wParam, notice.lParam}, ++time),
+                        "The invocation posts one content notice that the owner consumes");
+    check(!shelf->automationRefresh(nullptr) && value(plateA.Get()) == L"Selected" && value(plateB.Get()).empty(), "Refreshing keeps identities and updates the values");
+    // Clear asks for confirmation: the toolbar peers change.
+    check(invoke(peer(*shelf, L"shelf:clear").Get()) == S_OK && shelf->state().confirmingClear(), "Invoking Clear asks for confirmation");
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
+    check(shelf->automationRefresh(nullptr) && peer(*shelf, L"shelf:cancelClear") && peer(*shelf, L"shelf:confirmClear") && !peer(*shelf, L"shelf:add"), "The confirmation buttons replace the toolbar");
+    check(invoke(peer(*shelf, L"shelf:cancelClear").Get()) == S_OK && !shelf->state().confirmingClear(), "Cancel keeps every reference");
+    check(invoke(add.Get()) == UIA_E_ELEMENTNOTAVAILABLE, "A withdrawn peer is disconnected");
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
+    // Add files goes through the host's choose action, as a click does.
+    check(shelf->automationRefresh(nullptr), "The toolbar returns");
+    check(invoke(peer(*shelf, L"shelf:add").Get()) == S_OK && shelf->takeAction() && true, "Invoking Add files queues the host's choose action");
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
+    // Disconnection (HUD hidden) and an unpresented Shelf.
+    auto kept = peer(*shelf, L"shelf:" + idB + L":select");
+    shelf->automationDisconnect(); check(shelf->automationCount() == 0 && kept->get_BoundingRectangle(&bounds) == UIA_E_ELEMENTNOTAVAILABLE, "Disconnected peers answer ELEMENTNOTAVAILABLE");
+    core::ModulePresentation other(core::Module::clipboard); const auto hidden = other.sample(++time).presentation; shelf->update(presented.center, presented.settings, hidden, 1, time);
+    shelf->automationRefresh(nullptr); check(shelf->automationCount() == 0, "Another module lists no Shelf peers");
+    shelf.reset();
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) {} }
+}
+
+// Mac-imported Shelf items (Migration/relink.json written by the import area):
+// unavailable cards until the user picks the file on this PC.
+mig::MacRelinkItem imported(std::string record, std::string name, bool folder, double created) {
+    mig::MacRelinkItem item; item.id = data::makeUUID(); item.store = std::string(mig::relinkShelfItem); item.recordID = std::move(record);
+    item.displayName = name; item.lastKnownPath = "/Users/doctor/Desktop/" + name; item.kind = folder ? "folder" : "file";
+    item.macReference = data::Json::Object{{"id", item.recordID}, {"name", name}, {"typeDescription", folder ? "Folder" : "PDF document"}, {"lastKnownPath", item.lastKnownPath},
+                                           {"isDirectory", folder}, {"createdAt", created}, {"bookmark", "Ym9va21hcms="}, {"isSecurityScoped", true}};
+    if (!folder) item.macReference["byteCount"] = 1234;
+    return item;
+}
+void relink(HWND hwnd, const gpu::NativeShelfAssets& assets) {
+    Temp temp; gpu::LayerRasterizer raster; std::vector<Recorded> events;
+    const auto root = temp.root / "data";
+    tools::ShelfPreviewOptions options{root, false, false, {}}; options.visiblePanels = false;
+    options.recordEvent = [&](mod::EventKind kind, mod::EventMetadata metadata) { events.push_back({kind, std::move(metadata)}); };
+    auto shelf = std::make_unique<tools::ShelfPreview>(hwnd, raster, assets, std::move(options));
+    shelf->resize({1280, 800, 96, 1, 1280, 800}); shelf->setLanguage(core::Language::english);
+    double time{};
+    const auto kept = temp.root / "Kept.txt"; write(kept, "kept");
+    check(shelf->importFiles(std::vector<std::string>{utf8(kept)}, ++time) && shelf->pendingRelinks() == 0, "A Windows reference; nothing imported yet");
+    // The import area's ledger: two Shelf items and one Notes item.
+    const auto reportID = std::string("AAAAAAAA-0000-4000-8000-000000000001"), folderID = std::string("AAAAAAAA-0000-4000-8000-000000000002");
+    auto report = imported(reportID, "Report.pdf", false, 700000000.5), folder = imported(folderID, "Mac folder", true, 700000100.25);
+    mig::MacRelinkItem note; note.id = data::makeUUID(); note.store = std::string(mig::relinkNotesMedia); note.recordID = data::makeUUID(); note.displayName = "photo.png"; note.kind = "image";
+    std::filesystem::create_directories(root / "Migration"); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode({report, folder, note}));
+    shelf->refresh(++time);
+    const auto items = shelf->state().items();
+    check(shelf->pendingRelinks() == 2 && items.size() == 3 && items[0].name == "Kept.txt" && items[1].id == reportID && items[2].id == folderID, "Imported Shelf items follow the Windows references; other modules' entries are not listed");
+    check(items[1].name == "Report.pdf" && items[1].availabilityError && items[1].byteCount == 1234 && !items[1].isDirectory && items[2].isDirectory && items[2].availabilityError,
+          "An imported item is an unavailable card with its Mac metadata");
+    check(shelf->state().dragSelection(reportID).empty(), "An imported item is never dragged");
+    check(!shelf->perform("shelf:" + reportID + ":preview", ++time) || !shelf->takeAction(), "An imported item is never previewed or revealed");
+    // Its relink action (UI Automation peer next to the plate).
+    Presented presented; presented.show(*shelf, time); shelf->automationRefresh(nullptr);
+    auto action = peer(*shelf, wide("shelf:" + reportID + ":relink"));
+    check(action && property(action.Get(), UIA_NamePropertyId) == L"Relink: Report.pdf" && property(action.Get(), UIA_HelpTextPropertyId) == wide(tools::shelfText(tools::ShelfText::relinkHelp, core::Language::english)),
+          "An imported card has a Relink peer with its own help");
+    check(invoke(action.Get()) == S_OK, "Invoking Relink is accepted");
+    const auto request = shelf->takeAction(); check(request && request->kind == tools::ShelfPreviewAction::Kind::choose && shelf->state().selectedID() == std::optional<std::string>(reportID),
+          "Relink selects the card and asks the host for the picker (choose action)");
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) shelf->message({hwnd, m.message, m.wParam, m.lParam}, ++time); }
+    // The picker's completion: exactly one item.
+    const auto chosen = temp.root / "Report on this PC.pdf"; write(chosen, "pdf");
+    check(!shelf->relink(reportID, std::vector<std::string>{utf8(chosen), utf8(kept)}, ++time) && shelf->state().error() == std::optional<std::string>(tools::shelfText(tools::ShelfText::relinkChooseOne, core::Language::english)) &&
+          shelf->pendingRelinks() == 2, "Two chosen items relink nothing and explain why");
+    events.clear();
+    check(shelf->relink(reportID, std::vector<std::string>{utf8(chosen)}, ++time) && shelf->pendingRelinks() == 1, "The chosen file relinks the imported item");
+    const auto* relinked = shelf->state().item(reportID);
+    check(relinked && !relinked->availabilityError && relinked->name == "Report on this PC.pdf" && relinked->lastKnownPath == utf8(chosen) && shelf->state().selectedID() == std::optional<std::string>(reportID),
+          "The reference keeps the imported identifier, is available and selected");
+    check(events.size() == 1 && event(events, 0, mod::EventKind::shelfAdded, "filename", "Report on this PC.pdf"), "Relinking records shelfAdded for the chosen file");
+    {
+        gpu::NativeFileShelfFiles files; data::FileShelfStore saved(root, files.platform());
+        const auto row = std::find_if(saved.items().begin(), saved.items().end(), [&](const auto& r) { return r.id == reportID; });
+        check(row != saved.items().end() && row->createdAt == 700000000.5 && row->windowsPath == utf8(chosen), "The saved reference keeps the Mac identifier and date");
+        mig::MacRelinkLedger ledger(root); const auto* entry = ledger.find(report.id);
+        check(entry && entry->state == mig::RelinkState::resolved && entry->windowsPath == utf8(chosen) && ledger.find(note.id)->state == mig::RelinkState::unresolved, "The ledger entry is resolved with the chosen path; others are untouched");
+    }
+    // Removing an imported card dismisses its entry (references only).
+    events.clear();
+    check(shelf->perform("shelf:" + folderID + ":remove", ++time) && shelf->pendingRelinks() == 0 && !shelf->state().item(folderID), "Removing an imported card dismisses it");
+    check(events.size() == 1 && event(events, 0, mod::EventKind::shelfRemoved, "filename", "Mac folder"), "Removal records shelfRemoved");
+    { mig::MacRelinkLedger ledger(root); check(ledger.find(folder.id)->state == mig::RelinkState::dismissed, "The folder entry is dismissed in the ledger"); }
+    // A record written before its ledger entry (an interrupted relink) is
+    // resolved on the next load, never shown twice.
+    auto interrupted = imported(reportID, "Report.pdf", false, 700000000.5);
+    { mig::MacRelinkLedger ledger(root); auto rows = ledger.items(); rows.push_back(interrupted); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode(rows)); }
+    shelf->refresh(++time);
+    { mig::MacRelinkLedger ledger(root); check(shelf->pendingRelinks() == 0 && ledger.find(interrupted.id)->state == mig::RelinkState::resolved && ledger.find(interrupted.id)->windowsPath == utf8(chosen),
+          "An entry whose record exists is reconciled to that record's path"); }
+    // Clearing the Shelf dismisses imported items that are still pending.
+    auto later = imported("AAAAAAAA-0000-4000-8000-000000000003", "Later.key", false, 700000200.0);
+    { mig::MacRelinkLedger ledger(root); auto rows = ledger.items(); rows.push_back(later); write(root / "Migration" / "relink.json", mig::MacRelinkLedger::encode(rows)); }
+    shelf->refresh(++time); check(shelf->pendingRelinks() == 1, "A later imported item is listed");
+    check(shelf->perform("shelf:clear", ++time) && shelf->perform("shelf:confirmClear", ++time) && shelf->state().items().empty() && shelf->pendingRelinks() == 0, "Clear removes references and imported items");
+    { mig::MacRelinkLedger ledger(root); check(ledger.find(later.id)->state == mig::RelinkState::dismissed && ledger.find(note.id)->state == mig::RelinkState::unresolved, "Clear dismisses only Shelf entries"); }
+    check(std::filesystem::exists(chosen) && std::filesystem::exists(kept), "Relinking and clearing never touch the files");
+    shelf.reset();
+    { MSG m{}; while (PeekMessageW(&m, hwnd, WM_APP + 185, WM_APP + 189, PM_REMOVE)) {} }
 }
 } // namespace
 
@@ -215,6 +386,8 @@ int wmain(int argc, wchar_t** argv) {
         Ole ole; text();
         Window window; gpu::NativeShelfAssets assets(std::filesystem::absolute(argv[1]));
         owner(window.hwnd, assets);
+        automation(window.hwnd, assets);
+        relink(window.hwnd, assets);
         std::cout << "Shelf services: " << checks << " checks passed\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << "Shelf services failed after " << checks << " checks: " << e.what() << '\n'; return 1; }
