@@ -28,6 +28,21 @@ struct ArchiveExecutor {
     std::function<bool(std::function<void()>,std::function<void(std::exception_ptr)>)>submit;
 };
 struct ArchiveStateEvent {std::string name,id;};
+// Mac import relink ledger upkeep (modules/notes_relink_ledger.hpp), set by
+// the repository's owner. Each function runs on the FIFO file executor right
+// after the record write it follows (record first, ledger second) and must
+// not throw; an unset function is skipped.
+//   relinked   the entry's attachment that held the Mac media object now
+//              holds the Windows reference at the path (the stored entry
+//              was checked to hold it);
+//   removed    the attachment that held the Mac media object was removed
+//              (stored entry checked), or, with null, the entry was deleted;
+//   reconcile  once after the first load, against the repository.
+struct ArchiveRelinkLedger {
+    std::function<void(std::string_view entryID,const ArchiveJson& macMedia,std::string_view windowsPath)>relinked;
+    std::function<void(std::string_view entryID,const ArchiveJson* macMedia)>removed;
+    std::function<void(ArchiveRepository&)>reconcile;
+};
 struct ArchiveGalleryRow {std::string_view id;core::Rect local,hit;std::size_t index{};};
 struct ArchiveCategoryRow {std::string_view id;core::Rect local,hit;std::size_t index{};bool selected{};};
 // Source ArchiveController + ArchiveCanvas collection semantics. Content stays
@@ -54,6 +69,15 @@ public:
     // the Event Log with the action name only, never document text.
     std::vector<ArchiveStateEvent>takeEvents();
     void recordAction(std::string name,std::string id);
+    void setRelinkLedger(ArchiveRelinkLedger);
+    // After update() replaced the selected entry's attachment that held the
+    // Mac media object `macMedia` with the Windows reference at `windowsPath`
+    // (mediaRelinked), or removed it (mediaRemoved): saves now, then updates
+    // the ledger behind that write once the stored entry shows the change. A
+    // failed or rejected save leaves the row to the next load's reconcile.
+    // False: no ledger, or nothing could be queued.
+    bool mediaRelinked(std::string entryID,ArchiveJson macMedia,std::string windowsPath);
+    bool mediaRemoved(std::string entryID,ArchiveJson macMedia);
     void select(std::optional<std::string>);
     bool create(std::string id,double foundationDate,std::optional<std::string>categoryID={});
     std::optional<std::string>createCategory(std::string id,std::string name,double foundationDate);

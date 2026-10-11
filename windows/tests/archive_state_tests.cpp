@@ -82,4 +82,30 @@ void textReference(const std::filesystem::path&root){const auto rules=endfield::
     for(const auto&row:oracle["pairs"].array())check((rules.categoryNameKey(row["left"].string())==rules.categoryNameKey(row["right"].string()))==row["equal"].boolean(),"Installed native category equality matches unchanged ArchiveCategory.nameKey");
 }
 }
-int main(int argc,char**argv){try{check(argc>=1&&argc<=3,"Optional arguments are actual-source Archive canvas and text reference roots");model();state();races();if(argc>=2)reference(argv[1]);if(argc==3)textReference(argv[2]);std::cout<<"PASS "<<checks<<" Archive state/model contracts\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+// Mac import relink ledger upkeep: behind the record write on the FIFO queue,
+// only when the stored entry shows the change; reconcile once behind the first load.
+void relinkLedger(){const auto rules=endfield::native::nativeArchiveTextRules();auto repo=fixture();
+    const J mac=J::Object{{"version",1},{"kind","image"},{"bookmark","Ym9va21hcms="},{"isSecurityScoped",true},{"lastKnownPath","/Users/doctor/a.png"},{"displayName","a.png"},{"pixelWidth",4},{"pixelHeight",3},{"frameCount",1}};
+    auto macB=mac;macB["lastKnownPath"]="/Users/doctor/b.png";macB["displayName"]="b.png";
+    const auto first=repo->order[0],second=repo->order[1];repo->documents.at(first).media={mac,macB};repo->documents.at(second).media={mac};
+    Queue queue;mod::ArchiveState state(repo,queue.executor(),rules);
+    check(!state.mediaRelinked(first,mac,"C:\\Synthetic\\a.png")&&queue.jobs.empty(),"Without a ledger nothing is queued");
+    // `stored`: what the repository held when the ledger ran (record first, ledger second).
+    struct Call{std::string kind,id;std::optional<J>mac;std::string path;bool stored{};};std::vector<Call>calls;unsigned reconciles{};
+    const auto holds=[&](const std::string&id,const J&m){const auto it=repo->documents.find(id);return it!=repo->documents.end()&&std::find(it->second.media.begin(),it->second.media.end(),m)!=it->second.media.end();};
+    mod::ArchiveRelinkLedger ledger;ledger.relinked=[&](std::string_view id,const J&m,std::string_view p){const std::string key(id);calls.push_back({"relinked",key,m,std::string(p),!holds(key,m)&&holds(key,J::parse(ehud::data::makeWindowsMediaReference(std::string(p),p=="C:\\Synthetic\\a.png"?"a.png":"b.png",4,3)))});};
+    ledger.removed=[&](std::string_view id,const J*m){const std::string key(id);calls.push_back({"removed",key,m?std::optional<J>(*m):std::nullopt,{},m?!holds(key,*m):!repo->documents.contains(key)});};
+    ledger.reconcile=[&](mod::ArchiveRepository&r){++reconciles;check(r.entry(first).has_value(),"Reconcile reads the repository on the file queue");};
+    state.setRelinkLedger(std::move(ledger));
+    state.activate();queue.drain();check(reconciles==1,"The ledger reconciles once behind the first load");state.deactivate();queue.drain();state.activate();queue.drain();check(reconciles==1,"Later activations do not reconcile again");
+    state.select(first);queue.drain();check(state.selected()&&state.selected()->id==first&&state.selected()->media.size()==2,"The imported entry with two Mac attachments is selected");
+    auto entry=*state.selected();entry.media[0]=J::parse(ehud::data::makeWindowsMediaReference("C:\\Synthetic\\a.png","a.png",4,3));check(state.update(entry,200,10),"The relinked attachment updates the entry");
+    const auto saves=repo->saves;check(state.mediaRelinked(first,mac,"C:\\Synthetic\\a.png")&&calls.empty()&&!state.saveDeadline(),"A relink saves at once and queues its ledger update without running it");
+    queue.drain();check(repo->saves==saves+1&&calls.size()==1&&calls[0].kind=="relinked"&&calls[0].id==first&&calls[0].mac==mac&&calls[0].path=="C:\\Synthetic\\a.png"&&calls[0].stored,"The ledger follows the record write with the replaced Mac locator and the chosen path");
+    repo->failSave=true;entry=*state.selected();entry.media[1]=J::parse(ehud::data::makeWindowsMediaReference("C:\\Synthetic\\b.png","b.png",4,3));state.update(entry,201,11);check(state.mediaRelinked(first,macB,"C:\\Synthetic\\b.png"),"A second relink queues");queue.drain();
+    check(calls.size()==1&&state.hasUnsavedChanges(),"A failed record write leaves the ledger row to the next load's reconcile");repo->failSave=false;state.retryPendingSaves();queue.drain();check(!state.hasUnsavedChanges(),"The retried record saves");
+    state.select(second);queue.drain();entry=*state.selected();entry.media.clear();check(state.update(entry,202,12)&&state.mediaRemoved(second,mac),"A removed Mac attachment queues its ledger update");queue.drain();
+    check(calls.size()==2&&calls[1].kind=="removed"&&calls[1].id==second&&calls[1].mac==mac&&calls[1].stored,"The removed attachment's row follows the record write");
+    check(state.deleteSelected(),"The entry is deleted");queue.drain();check(calls.size()==3&&calls[2].kind=="removed"&&calls[2].id==second&&!calls[2].mac&&calls[2].stored,"A deleted entry's rows follow the record removal");
+}
+int main(int argc,char**argv){try{check(argc>=1&&argc<=3,"Optional arguments are actual-source Archive canvas and text reference roots");model();state();races();relinkLedger();if(argc>=2)reference(argv[1]);if(argc==3)textReference(argv[2]);std::cout<<"PASS "<<checks<<" Archive state/model contracts\n";return 0;}catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}

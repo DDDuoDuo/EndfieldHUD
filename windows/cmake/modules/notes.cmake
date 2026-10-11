@@ -31,6 +31,32 @@ if(BUILD_TESTING)
   add_test(NAME notes_paste_import_contracts COMMAND notes_paste_import_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/notes-paste-reference.json")
   list(APPEND EHUD_NOTES_TARGETS notes_paste_import_tests)
 endif()
+# Mac import relink ledger upkeep for Notes media and Archive attachments
+# (modules/notes_relink_ledger.hpp) over the import ledger's owner API
+# (core/migration/mac_import_relink.hpp, import.cmake): Notes calls it after
+# its own record writes, Archive behind them on its FIFO file queue.
+add_library(hud_notes_relink modules/notes_relink_ledger.cpp)
+target_include_directories(hud_notes_relink PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(hud_notes_relink PUBLIC hud_data PRIVATE hud_mac_import)
+list(APPEND EHUD_NOTES_TARGETS hud_notes_relink)
+foreach(owner hud_archive_service hud_notes_preview)
+  if(TARGET ${owner})
+    target_link_libraries(${owner} PRIVATE hud_notes_relink)
+  endif()
+endforeach()
+if(BUILD_TESTING)
+  add_executable(notes_relink_ledger_tests tests/notes_relink_ledger_tests.cpp)
+  target_link_libraries(notes_relink_ledger_tests PRIVATE hud_notes_relink hud_mac_import)
+  if(WIN32)
+    target_compile_definitions(notes_relink_ledger_tests PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+  endif()
+  add_test(NAME notes_relink_ledger_contracts COMMAND notes_relink_ledger_tests)
+  list(APPEND EHUD_NOTES_TARGETS notes_relink_ledger_tests)
+  # The Notes owner suite reconciles a synthetic ledger through its load.
+  if(TARGET notes_preview_tests)
+    target_link_libraries(notes_preview_tests PRIVATE hud_mac_import)
+  endif()
+endif()
 if(WIN32)
   # Paragraph-chunked long-document editor for Notes text fields: typing cost
   # follows the edited chunk, not the document length (native/notes_long_editor).

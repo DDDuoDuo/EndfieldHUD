@@ -12,6 +12,10 @@ namespace {
 void need(bool v,const char*m){if(!v)throw std::invalid_argument(m);}
 bool contains(core::Rect r,core::Point p){return p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height;}
 std::optional<core::Rect>intersect(core::Rect a,core::Rect b){const auto x=std::max(a.x,b.x),y=std::max(a.y,b.y),right=std::min(a.x+a.width,b.x+b.width),bottom=std::min(a.y+a.height,b.y+b.height);if(right<=x||bottom<=y)return {};return core::Rect{x,y,right-x,bottom-y};}
+// The stored attachment list still holds the Mac media object `mac`: the
+// same bookmark and last known path (other metadata may be re-encoded).
+bool holdsMacMedia(const ArchiveEntry&e,const ArchiveJson&mac){for(const auto&m:e.media){if(!m.isObject()||m.contains("referencePlatform"))continue;if(mac["bookmark"].isString()?m["bookmark"]==mac["bookmark"]&&m["lastKnownPath"]==mac["lastKnownPath"]:m==mac)return true;}return false;}
+bool holdsWindowsPath(const ArchiveEntry&e,std::string_view path){for(const auto&m:e.media)if(m.isObject()&&m["referencePlatform"]==ArchiveJson("windows")&&m["windowsPath"].isString()&&m["windowsPath"].string()==path)return true;return false;}
 std::string message(std::exception_ptr e){try{if(e)std::rethrow_exception(e);}catch(const std::exception&v){return v.what();}catch(...){return "The archive could not be saved.";}return {};}
 }
 struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
@@ -23,6 +27,7 @@ struct ArchiveState::Impl:std::enable_shared_from_this<Impl> {
     std::vector<ArchiveCategory>categories;std::vector<ArchiveSummary>entries;std::optional<ArchiveEntry>selected;
     std::map<std::string,Pending,std::less<>>dirty;std::map<std::string,std::uint64_t,std::less<>>saving;
     std::map<std::string,ArchiveCategory,std::less<>>dirtyCategories;
+    std::shared_ptr<const ArchiveRelinkLedger>ledger;bool reconciled{};
     std::set<std::string,std::less<>>savingCategories,deleting,unannounced,removingCategories;
     std::map<std::string,std::set<std::string,std::less<>>,std::less<>>categoryRemovals;
     std::map<std::string,std::uint64_t,std::less<>>categoryChanges;
@@ -113,6 +118,9 @@ ArchiveState::ArchiveState(std::shared_ptr<ArchiveRepository>repository,ArchiveE
 ArchiveState::~ArchiveState(){auto&i=*impl_;if(std::this_thread::get_id()!=i.thread)std::terminate();i.alive=false;i.active=false;i.thumbnailRequests.clear();}
 void ArchiveState::activate(){auto&i=*impl_;i.onThread();i.active=true;i.invalidate();const auto token=i.generation;
     const bool accepted=i.perform<ArchiveSnapshot>([store=i.store]{ArchiveSnapshot value;value.entries=store->summaries();const auto id=store->selection();value.selected=id?store->entry(*id):std::nullopt;value.categories=store->categories();return value;},[self=impl_,token](auto failure,auto result){if(self->generation!=token)return;if(failure)self->readError=message(failure);else if(result){try{self->snapshot(std::move(*result));return;}catch(...){self->readError=message(std::current_exception());}}self->changed();});if(!accepted){i.readError="Archive file queue is busy. Retry after pending work completes.";i.changed();}
+    // Once per state, behind the first load: the Mac import relink ledger
+    // against the stored entries (a relink whose ledger write was lost).
+    else if(i.ledger&&i.ledger->reconcile&&!i.reconciled)i.reconciled=i.perform<int>([store=i.store,ledger=i.ledger]{ledger->reconcile(*store);return 0;},[](auto,auto){});
 }
 void ArchiveState::deactivate(){auto&i=*impl_;i.onThread();i.active=false;i.flush();i.invalidate();i.selected.reset();i.changed();}
 bool ArchiveState::active()const noexcept{return impl_->active;}bool ArchiveState::busy()const noexcept{return impl_->operations>0;}
@@ -122,6 +130,12 @@ const std::optional<ArchiveEntry>&ArchiveState::selected()const noexcept{return 
 std::uint64_t ArchiveState::revision()const noexcept{return impl_->revision;}std::uint64_t ArchiveState::collectionRevision()const noexcept{return impl_->collectionRevision;}
 std::vector<ArchiveStateEvent>ArchiveState::takeEvents(){impl_->onThread();return std::exchange(impl_->events,{});}
 void ArchiveState::recordAction(std::string name,std::string id){auto&i=*impl_;i.onThread();need(name=="edited"||name=="mediaAdded"||name=="mediaRemoved","Unknown Archive interaction action");i.events.push_back({std::move(name),std::move(id)});}
+void ArchiveState::setRelinkLedger(ArchiveRelinkLedger ledger){auto&i=*impl_;i.onThread();i.ledger=std::make_shared<const ArchiveRelinkLedger>(std::move(ledger));}
+// The entry's save is queued first (FIFO), so the ledger job reads what it wrote.
+bool ArchiveState::mediaRelinked(std::string id,ArchiveJson mac,std::string path){auto&i=*impl_;i.onThread();if(!i.ledger||!i.ledger->relinked)return false;i.flush();
+    return i.perform<int>([store=i.store,ledger=i.ledger,id=std::move(id),mac=std::move(mac),path=std::move(path)]{const auto entry=store->entry(id);if(entry&&holdsWindowsPath(*entry,path)&&!holdsMacMedia(*entry,mac))ledger->relinked(id,mac,path);return 0;},[](auto,auto){});}
+bool ArchiveState::mediaRemoved(std::string id,ArchiveJson mac){auto&i=*impl_;i.onThread();if(!i.ledger||!i.ledger->removed)return false;i.flush();
+    return i.perform<int>([store=i.store,ledger=i.ledger,id=std::move(id),mac=std::move(mac)]{const auto entry=store->entry(id);if(!entry||!holdsMacMedia(*entry,mac))ledger->removed(id,&mac);return 0;},[](auto,auto){});}
 void ArchiveState::select(std::optional<std::string>id){auto&i=*impl_;i.onThread();need(!id||ehud::data::validUUID(*id),"Invalid Archive selection");if(id&&i.deleting.contains(*id))return;i.flush();i.pendingCreatedSelection.reset();++i.selectionRevision;i.selectionFailed=false;i.invalidate();const auto token=i.generation;auto outgoing=i.selected;if(!id)i.selected.reset();i.changed();
     const bool accepted=i.perform<std::optional<ArchiveEntry>>([store=i.store,id]{auto entry=id?store->entry(*id):std::nullopt;store->select(id);return entry;},[self=impl_,id,token,outgoing=std::move(outgoing)](auto failure,auto result){if(self->generation!=token)return;
         if(!failure&&result){if(*result){validateArchiveEntry(**result,self->rules);need(id&&(**result).id==*id&&self->categoryExists((**result).categoryID),"Mismatched Archive selection payload");}self->selected=id?(self->dirty.contains(*id)?std::optional(self->dirty.at(*id).entry):(*result?std::optional(self->applyingRemovals(std::move(**result))):std::nullopt)):std::nullopt;self->readError.reset();}
@@ -138,7 +152,7 @@ void ArchiveState::queueCapacityAvailable(){auto&i=*impl_;i.onThread();if(i.back
 std::optional<double>ArchiveState::saveDeadline()const noexcept{return impl_->deadline;}
 bool ArchiveState::flushIfDue(double t){auto&i=*impl_;i.onThread();t=i.at(t);if(!i.deadline||t<*i.deadline)return false;i.flush();return true;}
 bool ArchiveState::deleteSelected(){auto&i=*impl_;i.onThread();if(!i.selected||i.deleting.contains(i.selected->id))return false;const auto entry=*i.selected;const auto id=entry.id;std::optional<Impl::Pending>pending;if(i.dirty.contains(id)){pending=i.dirty.at(id);i.dirty.erase(id);}i.deadline.reset();i.deleting.insert(id);i.invalidate();i.selected.reset();const auto found=std::find_if(i.entries.begin(),i.entries.end(),[&](const auto&s){return s.id==id;});if(found!=i.entries.end()){i.thumbnailBytes-=archiveThumbnailCost(found->thumbnail);i.entries.erase(found);}i.changed();
-    const bool accepted=i.perform<int>([store=i.store,id]{store->remove(id);return 0;},[self=impl_,entry,pending](auto failure,auto){self->deleting.erase(entry.id);if(!failure){self->writeErrors.erase(entry.id);self->unannounced.erase(entry.id);self->categoryChanges.erase(entry.id);self->events.push_back({"deleted",entry.id});}else {if(pending)self->dirty[entry.id]=*pending;self->upsertSummary(entry);self->writeErrors[entry.id]=message(failure);}self->changed();});if(!accepted){i.deleting.erase(id);if(pending)i.dirty[id]=*pending;i.upsertSummary(entry);i.writeErrors[id]="Archive file queue is busy. Retry deletion when capacity is available.";i.changed();return false;}return true;
+    const bool accepted=i.perform<int>([store=i.store,id,ledger=i.ledger]{store->remove(id);if(ledger&&ledger->removed)ledger->removed(id,nullptr);return 0;},[self=impl_,entry,pending](auto failure,auto){self->deleting.erase(entry.id);if(!failure){self->writeErrors.erase(entry.id);self->unannounced.erase(entry.id);self->categoryChanges.erase(entry.id);self->events.push_back({"deleted",entry.id});}else {if(pending)self->dirty[entry.id]=*pending;self->upsertSummary(entry);self->writeErrors[entry.id]=message(failure);}self->changed();});if(!accepted){i.deleting.erase(id);if(pending)i.dirty[id]=*pending;i.upsertSummary(entry);i.writeErrors[id]="Archive file queue is busy. Retry deletion when capacity is available.";i.changed();return false;}return true;
 }
 bool ArchiveState::deleteCategory(std::string_view value){auto&i=*impl_;i.onThread();const std::string id(value);if(i.categoryRemovals.contains(id)||!i.categoryExists(std::optional(id)))return false;std::set<std::string,std::less<>>affected;for(const auto&s:i.entries)if(s.categoryID==id)affected.insert(s.id);for(const auto&[document,p]:i.dirty)if(p.entry.categoryID==id)affected.insert(document);if(i.selected&&i.selected->categoryID==id)affected.insert(i.selected->id);i.categoryRemovals[id]=affected;i.categories.erase(std::remove_if(i.categories.begin(),i.categories.end(),[&](const auto&c){return c.id==id;}),i.categories.end());i.dirtyCategories.erase(id);i.categoryErrors.erase(id);
     for(const auto&document:affected){std::optional<ArchiveEntry>entry=i.dirty.contains(document)?std::optional(i.dirty.at(document).entry):(i.selected&&i.selected->id==document?i.selected:std::nullopt);if(entry){entry->categoryID.reset();i.dirty[document]={*entry,++i.dirtyRevision};if(i.selected&&i.selected->id==document)i.selected=*entry;}}

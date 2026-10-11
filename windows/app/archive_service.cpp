@@ -1,5 +1,6 @@
 #include "app/archive_service.hpp"
 #include "modules/archive_repository.hpp"
+#include "modules/notes_relink_ledger.hpp"
 #include <thread>
 
 namespace endfield::app {
@@ -8,9 +9,10 @@ struct ArchiveService::Impl:std::enable_shared_from_this<Impl> {
     std::shared_ptr<modules::ArchiveSQLiteRepository>repository;
     std::unique_ptr<modules::ArchiveState>state;
     UtilityExecutor::Route route;bool alive{true};
+    std::filesystem::path appRoot; // the data root above Archive/: Migration/relink.json
     const std::thread::id owner=std::this_thread::get_id();
     Impl(std::filesystem::path directory,UtilityExecutor&e,modules::ArchiveTextRules rules,std::function<void()>notify)
-      :executor(e),changed(std::move(notify)),repository(std::make_shared<modules::ArchiveSQLiteRepository>(std::move(directory),std::move(rules))),route(e.makeRoute()){}
+      :executor(e),changed(std::move(notify)),repository(std::make_shared<modules::ArchiveSQLiteRepository>(directory,std::move(rules))),route(e.makeRoute()),appRoot(directory.parent_path()){}
     void onOwner()const{if(std::this_thread::get_id()!=owner)throw std::logic_error("Archive service belongs to its owner thread");}
     void initialize(modules::ArchiveTextRules rules){
         const std::weak_ptr<Impl>weak=shared_from_this();
@@ -22,6 +24,13 @@ struct ArchiveService::Impl:std::enable_shared_from_this<Impl> {
             });
         }};
         state=std::make_unique<modules::ArchiveState>(repository,std::move(bridge),std::move(rules));
+        // Mac import relink rows of Archive attachments follow the entry writes
+        // on the same FIFO queue (modules/notes_relink_ledger.hpp).
+        modules::ArchiveRelinkLedger ledger;const auto root=appRoot;
+        ledger.relinked=[root](std::string_view id,const modules::ArchiveJson&mac,std::string_view path){(void)modules::archiveMediaRelinked(root,id,mac,path);};
+        ledger.removed=[root](std::string_view id,const modules::ArchiveJson*mac){(void)modules::archiveMediaRemoved(root,id,mac);};
+        ledger.reconcile=[root](modules::ArchiveRepository&store){(void)modules::archiveMediaReconcile(root,[&store](std::string_view id)->std::optional<std::vector<modules::ArchiveJson>>{auto entry=store.entry(id);if(!entry)return std::nullopt;return std::move(entry->media);});};
+        state->setRelinkLedger(std::move(ledger));
     }
 };
 ArchiveService::ArchiveService(std::filesystem::path directory,UtilityExecutor&executor,modules::ArchiveTextRules rules,std::function<void()>changed){

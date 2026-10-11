@@ -4,6 +4,8 @@
 #endif
 #include "tools/notes_preview.hpp"
 #include "core/data/data_store.hpp"
+#include "core/data/file_io.hpp"
+#include "core/migration/mac_import_relink.hpp"
 #include "core/module_presentation.hpp"
 #include <objbase.h>
 #include <dwrite.h>
@@ -948,6 +950,24 @@ void formattingPreview(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesCo
 }
 } // namespace
 
+// The Mac import relink ledger beside an existing data root (production
+// persistent mode): loading the owner reconciles it with the stored notes.
+void relinkLedger(HWND hwnd,gpu::Renderer&renderer,const gpu::NativeNotesControlsAssets&assets){
+    namespace mig=ehud::migration;TempRoot root;std::filesystem::create_directories(root.path/"Migration");
+    data::Note relinked;relinked.id="0000000C-0000-4000-8000-000000000001";relinked.kind=data::NoteKind::image;relinked.x=180;relinked.y=245;relinked.width=240;relinked.height=145;
+    relinked.media=data::makeWindowsMediaReference("C:\\Synthetic\\photo.png","photo.png",4,3); // relinked; the ledger write was lost
+    data::Note text;text.id="0000000C-0000-4000-8000-000000000003";text.text="Text";text.x=500;text.y=245;text.width=200;text.height=120;
+    const data::Json mac=data::Json::Object{{"version",1},{"kind","image"},{"bookmark","Ym9va21hcms="},{"isSecurityScoped",true},{"lastKnownPath","/Users/someone/photo.heic"},{"displayName","photo.heic"},{"pixelWidth",4},{"pixelHeight",3},{"frameCount",1}};
+    const auto item=[&](std::string record){mig::MacRelinkItem i;i.id=data::makeUUID();i.store=std::string(mig::relinkNotesMedia);i.recordID=std::move(record);i.displayName="photo.heic";i.lastKnownPath="/Users/someone/photo.heic";i.kind="image";i.macReference=mac;return i;};
+    data::detail::replaceFile(root.path/"Migration"/"relink.json",std::nullopt,mig::MacRelinkLedger::encode({item(relinked.id),item("0000000C-0000-4000-8000-000000000002"),item(text.id)}),mig::MacRelinkLedger::maximumBytes);
+    gpu::LayerRasterizer raster;const std::array initial{relinked,text};
+    {tools::NotesPreview preview(hwnd,raster,root.path,assets,false,{},initial,{},true);
+     const auto rows=mig::MacRelinkLedger(root.path).items();
+     check(rows.size()==3&&rows[0].state==mig::RelinkState::resolved&&rows[0].windowsPath==std::optional<std::string>("C:\\Synthetic\\photo.png"),"Loading the owner resolves a relinked note whose ledger write was lost");
+     check(rows[1].state==mig::RelinkState::dismissed&&rows[2].state==mig::RelinkState::dismissed,"A deleted note's row and a note without media are dismissed");
+     if(renderer.stats().initialized)preview.release(renderer);}
+    check(savedNotes(root.path).size()==2,"Reconciling the ledger never changes the stored notes");
+}
 int wmain(int argc, wchar_t** argv) {
     try {
         check(argc == 5 || argc == 6, "Pass HUD shader, prepared Notes bundle root, pinned manifest SHA and pinned source commit");
@@ -975,6 +995,7 @@ int wmain(int argc, wchar_t** argv) {
         clipboardKeys(window.hwnd,renderer,assets);
         wordSelection(window.hwnd,renderer,assets);
         imagePaste(window.hwnd,renderer,assets);
+        relinkLedger(window.hwnd,renderer,assets);
         if(argc==6)formattingPreview(window.hwnd,renderer,assets,std::filesystem::absolute(argv[5]));
         renderer.reset();
         std::cout << "Native Notes preview integration: " << checks << " checks passed\n";

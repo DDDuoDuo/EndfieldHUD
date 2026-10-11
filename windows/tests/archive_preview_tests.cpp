@@ -110,6 +110,8 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   check(preview.finishEditing(time),"Automation editing finishes");paint();}
  // An imported Mac attachment cannot open on Windows: its error text chooses the file again.
  {auto entry=*state.selected();entry.media={J::parse(R"({"version":1,"kind":"image","bookmark":"Ym9va21hcms=","isSecurityScoped":true,"lastKnownPath":"/Users/someone/Pictures/photo.heic","displayName":"photo.heic","pixelWidth":400,"pixelHeight":300,"frameCount":1})")};
+  // The relink's Mac import ledger row follows the entry write (ArchiveRelinkLedger).
+  std::vector<std::pair<std::string,std::string>>ledgerRows;mod::ArchiveRelinkLedger ledger;ledger.relinked=[&](std::string_view id,const J&mac,std::string_view path){ledgerRows.emplace_back(std::string(id)+"|"+mac["lastKnownPath"].string(),std::string(path));};state.setRelinkLedger(std::move(ledger));
   check(state.update(entry,811692802.,time),"An imported Mac attachment");paint();preview.setMediaPlayback(0,false,0,std::string("The original media file is unavailable. Choose it again to restore access."),time);paint();
   click(100,354);auto relink=preview.takeMediaAction();check(relink&&relink->kind==tools::ArchiveMediaAction::Kind::chooseLocal&&relink->remaining==1&&relink->documentID==documentID,"Its error text queues one local file choice");
   const auto movie=J::parse(data::makeWindowsMediaReference("C:\\Synthetic\\clip.mp4","clip.mp4",640,360,"video",4.,1));
@@ -118,6 +120,7 @@ void run(const wchar_t*shader,const std::filesystem::path&fixturePath,const std:
   click(100,354);relink=preview.takeMediaAction();check(relink.has_value(),"Choose the file again");
   const auto replacement=J::parse(data::makeWindowsMediaReference("C:\\Synthetic\\photo.png","photo.png",400,300,"image",{},1));
   check(preview.receiveMedia(documentID,relink->generation,{replacement},{},time)&&state.selected()->media.size()==1&&state.selected()->media[0]==replacement,"The chosen file replaces exactly that attachment, in its place");paint();
+  check(ledgerRows.size()==1&&ledgerRows[0].first==std::string(documentID)+"|/Users/someone/Pictures/photo.heic"&&ledgerRows[0].second=="C:\\Synthetic\\photo.png"&&!state.hasUnsavedChanges(),"The relink saves at once and its Mac import ledger row follows (the refused movie left none)");state.setRelinkLedger({});
   click(100,354);check(!preview.takeMediaAction(),"A Windows attachment offers no relink");
   entry=*state.selected();entry.media.clear();check(state.update(entry,811692803.,time),"Remove the relinked fixture attachment");paint();
   // Source documentDropURLs(.archive): dropped files attach like chosen ones.
