@@ -4,6 +4,7 @@
 #include "core/source_camera.hpp"
 #include "core/motion.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 namespace endfield::native {namespace {
@@ -24,19 +25,58 @@ J maskContent(const core::SubsectionCurvePath&p){J::Array commands;std::size_t a
 struct NativeAppShortcutScene::Impl {
  struct Track {double from{},target{},start{},duration{};};
  static double value(const Track&t,double time){return t.duration>0?t.from+(t.target-t.from)*core::CubicTiming{0,0,.58,1}.value((time-t.start)/t.duration):t.target;}
+ // The leaves of one Part in draw order. On the list screen the saved
+ // cards come first as retained slots (cardSlots), then the chrome; a
+ // hidden card is a slot's neighbour outside the list viewport.
+ struct Layout {std::vector<m::ShortcutSurface>surfaces;std::vector<std::uint8_t>hidden;};
  struct Part {
-  std::vector<m::ShortcutSurface>plan;LayerScene scene;std::vector<LayerPlacement>placements;std::vector<std::array<PlaneMask,8>>masks;std::vector<Track>feedback;std::vector<R>feedbackBounds;bool uploaded{};std::uint64_t uploadedResourceRevision{};
+  std::vector<m::ShortcutSurface>plan;std::vector<std::uint8_t>hidden;std::uint64_t contentRevision{};LayerScene scene;std::vector<LayerPlacement>placements;std::vector<std::array<PlaneMask,8>>masks;std::vector<Track>feedback;std::vector<R>feedbackBounds;bool uploaded{};std::uint64_t uploadedResourceRevision{};
   std::optional<std::size_t>traceIndex;std::optional<m::ShortcutPresetTransition>trace;m::ShortcutColor traceAccent{};double traceProgress{},paintedTraceProgress{};std::uint64_t traceRevision{1};
   std::string maskID;std::optional<core::SubsectionCurvePath>maskPath;std::optional<PlaneAlphaMask>alpha;std::shared_ptr<const LayerRasterImage>maskImage;std::uint64_t maskRevision{},uploadedMask{};bool maskDirty{};
-  Part(LayerRasterizer&r,std::vector<m::ShortcutSurface>p,const LayerRasterOptions&o):plan(std::move(p)),scene(r),placements(plan.size()),masks(plan.size()),feedback(plan.size()),feedbackBounds(plan.size()){
-   static std::atomic<std::uint64_t>id{};maskID="apps.mask."+std::to_string(++id);scene.load(root(plan),o);need(scene.report().unsupported.empty(),"Unsupported source Shortcut artwork");
-   for(std::size_t n=0;n<plan.size();++n){const auto&s=plan[n];if(s.role==m::ShortcutSurfaceRole::presetTrace)traceIndex=n;const auto&box=s.content["bounds"].array();feedbackBounds[n]={s.local.values[12],s.local.values[13],box[2].number(),box[3].number()};const auto index=scene.surfaceIndex(s.id);need(index&&*index==n,"Shortcut source leaves must remain independent");placements[n]={n,s.local,(s.role==m::ShortcutSurfaceRole::tint||s.role==m::ShortcutSurfaceRole::rim||s.role==m::ShortcutSurfaceRole::presetTrace)?0.f:1.f,{}};}scene.setPlacements(placements);scene.prepareDraws();
+  Part(LayerRasterizer&r,Layout l,const LayerRasterOptions&o):plan(std::move(l.surfaces)),hidden(std::move(l.hidden)),scene(r),placements(plan.size()),masks(plan.size()),feedback(plan.size()),feedbackBounds(plan.size()){
+   need(hidden.size()==plan.size(),"Every Shortcut leaf states its visibility");static std::atomic<std::uint64_t>id{};maskID="apps.mask."+std::to_string(++id);scene.load(root(plan),o);need(scene.report().unsupported.empty(),"Unsupported source Shortcut artwork");
+   for(std::size_t n=0;n<plan.size();++n){const auto&s=plan[n];if(s.role==m::ShortcutSurfaceRole::presetTrace)traceIndex=n;bounds(n);const auto index=scene.surfaceIndex(s.id);need(index&&*index==n,"Shortcut source leaves must remain independent");placements[n]={n,s.local,(hidden[n]||s.role==m::ShortcutSurfaceRole::tint||s.role==m::ShortcutSurfaceRole::rim||s.role==m::ShortcutSurfaceRole::presetTrace)?0.f:1.f,{}};}scene.setPlacements(placements);scene.prepareDraws();
   }
+  void bounds(std::size_t n){const auto&s=plan[n];const auto&box=s.content["bounds"].array();feedbackBounds[n]={s.local.values[12],s.local.values[13],box[2].number(),box[3].number()};}
  };
  m::AppShortcutState&state;const NativeAppShortcutAssets&assets;LayerRasterizer&raster;LayerRasterOptions options;m::ShortcutAppearance appearance;m::ShortcutOriginalImages images;
  std::unique_ptr<Part>current,outgoing;std::vector<std::unique_ptr<Part>>retired;std::array<LayerCompositionEntry,2>entries{};std::size_t entryCount{};std::uint64_t revision{},screenGeneration{},presetGeneration{};double presetStart{};std::string presetIcon;bool dirty{true},posed{},pressed{},reduced{};std::optional<core::Point>pointer;double time{};AppShortcutSceneStats stats;Renderer*owner{};DrawObject validator;
  Impl(m::AppShortcutState&s,const NativeAppShortcutAssets&a,LayerRasterizer&r,LayerRasterOptions o,m::ShortcutAppearance v):state(s),assets(a),raster(r),options(std::move(o)),appearance(v){retired.reserve(4);validator.sourceID="apps.pose";validator.masks.reserve(8);}
  void clock(double t)const{need(std::isfinite(t)&&t>=time,"Shortcut scene needs monotonic time");}
+ // AppShortcutCanvas.repaint rebuilds every card on each scroll step; here
+ // the cards that can meet the 252-point list viewport at once (at most six
+ // of the 52-point rows) keep slot index % 6, filled with the visible cards
+ // and their nearest neighbours in the saved order. Cards never overlap, so
+ // their order between slots draws the same pixels.
+ static constexpr std::size_t cardSlots=6;
+ Layout layout(std::vector<m::ShortcutSurface>plan)const{
+  Layout out;const auto&items=state.file().items;
+  if(state.editing()||items.empty()){out.hidden.assign(plan.size(),0);out.surfaces=std::move(plan);return out;}
+  std::optional<std::size_t>shown;for(const auto&s:plan)if(s.row)shown=shown?std::min(*shown,*s.row):*s.row;
+  const auto count=items.size(),slots=std::min(count,cardSlots),start=std::min(shown.value_or(static_cast<std::size_t>(state.scrollOffset()/52)),count-slots);
+  std::array<std::vector<m::ShortcutSurface>,cardSlots>cards;std::vector<m::ShortcutSurface>chrome;
+  for(auto&s:plan){if(!s.row){chrome.push_back(std::move(s));continue;}need(*s.row>=start&&*s.row<start+slots,"Visible Shortcut card outside its retained window");cards[*s.row%cardSlots].push_back(std::move(s));}
+  for(std::size_t k=0;k<slots;++k){
+   const auto index=start+(k+cardSlots-start%cardSlots)%cardSlots;const bool visible=!cards[k].empty();
+   auto card=visible?std::move(cards[k]):m::prepareAppShortcutRow(state,index,assets.artwork(),appearance,images);
+   const auto prefix="apps:"+items[index].id,slot="apps.card."+std::to_string(k);
+   for(auto&s:card){need(s.row==index&&s.id.starts_with(prefix),"Shortcut card leaf outside its row");s.id=slot+s.id.substr(prefix.size());s.content["id"]=s.id;out.surfaces.push_back(std::move(s));out.hidden.push_back(!visible);}
+  }
+  for(auto&s:chrome){out.surfaces.push_back(std::move(s));out.hidden.push_back(0);}
+  return out;
+ }
+ // The same leaves (identity, role, clip and chrome action) as the retained
+ // Part: repaint only the leaves whose content changed and re-place the
+ // rest; feedback restarts as on a rebuilt canvas. False leaves it as is.
+ bool replace(Part&part,Layout&next){
+  auto&leaves=next.surfaces;if(part.plan.size()!=leaves.size()||part.scene.fontRevision()!=raster.fontRevision())return false;
+  for(std::size_t n=0;n<leaves.size();++n){const auto&a=part.plan[n];const auto&b=leaves[n];if(a.id!=b.id||a.role!=b.role||a.clip!=b.clip||a.row.has_value()!=b.row.has_value()||(!a.row&&a.action!=b.action))return false;}
+  for(std::size_t n=0;n<leaves.size();++n){auto&a=part.plan[n];auto&b=leaves[n];
+   if(a.content!=b.content){need(part.contentRevision!=UINT64_MAX,"Shortcut leaf revision exhausted");need(part.scene.updateLocalContent(b.id,++part.contentRevision,b.content,options),"Shortcut leaf repaint was refused");++stats.leafRepaints;}
+   a=std::move(b);part.hidden[n]=next.hidden[n];part.bounds(n);part.feedback[n]={};
+  }
+  return true;
+ }
  void refresh(){entryCount=0;if(outgoing)entries[entryCount++]={&outgoing->scene,{}};if(current)entries[entryCount++]={&current->scene,{}};}
  void retire(std::unique_ptr<Part>p){if(!p)return;if(p->uploaded||p->uploadedMask)retired.push_back(std::move(p));else raster.remove(p->maskID);}
  template<class F>void each(F&&f){if(outgoing)f(*outgoing,true);if(current)f(*current,false);}
@@ -48,15 +88,24 @@ bool NativeAppShortcutScene::setAppearance(m::ShortcutAppearance a){auto&i=*impl
 bool NativeAppShortcutScene::setOriginalImages(m::ShortcutOriginalImages v){auto&i=*impl_;if(v==i.images)return false;i.images=std::move(v);i.dirty=true;return true;}
 bool NativeAppShortcutScene::syncContent(double t){auto&i=*impl_;i.clock(t);const auto&preset=i.state.presetTransition();if(!preset.generation)i.presetGeneration=0;if(!i.dirty&&i.revision==i.state.revision())return false;auto plan=m::prepareAppShortcutArtwork(i.state,i.assets.artwork(),i.appearance,i.images);
  const bool newTrace=i.state.editing()&&preset.generation&&(preset.generation!=i.presetGeneration||preset.start!=i.presetStart||preset.icon!=i.presetIcon);if(newTrace)appendTrace(plan,preset,i.appearance.accent);
- need(plan.size()<=LayerRasterizer::maximumEntries-i.raster.stats().entries,"Shortcut replacement exceeds shared raster budget");auto next=std::make_unique<Impl::Part>(i.raster,std::move(plan),i.options);if(newTrace){next->trace=preset;next->traceAccent=i.appearance.accent;}
+ auto layout=i.layout(std::move(plan));const auto transition=i.state.transition();
+ // A finished handoff still names its mask in the published draws until
+ // the next present, while the owner collects before it: that canvas is
+ // replaced, so the published list drops the mask with it.
+ const bool handoffEnded=i.current&&!transition.active&&(i.current->maskPath||i.current->uploadedMask);
+ if(!newTrace&&i.current&&!handoffEnded&&transition.generation==i.screenGeneration&&i.replace(*i.current,layout)){
+  i.presetIcon=preset.icon;i.presetGeneration=preset.generation;i.presetStart=preset.start;if(!transition.active)i.retire(std::move(i.outgoing));
+  i.revision=i.state.revision();i.dirty=false;i.time=t;++i.stats.replacements;i.refresh();const auto point=i.pointer;const auto pressed=i.pressed;i.pointer.reset();i.pressed=!pressed;setFeedback(point,pressed,i.reduced,t);return true;
+ }
+ need(layout.surfaces.size()<=LayerRasterizer::maximumEntries-i.raster.stats().entries,"Shortcut replacement exceeds shared raster budget");auto next=std::make_unique<Impl::Part>(i.raster,std::move(layout),i.options);if(newTrace){next->trace=preset;next->traceAccent=i.appearance.accent;}
  i.presetIcon=preset.icon;i.presetGeneration=preset.generation;i.presetStart=preset.start;
- const auto transition=i.state.transition();if(transition.active&&transition.generation!=i.screenGeneration){i.retire(std::move(i.outgoing));i.outgoing=std::move(i.current);}else i.retire(std::move(i.current));if(!transition.active)i.retire(std::move(i.outgoing));i.current=std::move(next);i.revision=i.state.revision();i.screenGeneration=transition.generation;i.dirty=false;i.time=t;++i.stats.builds;i.refresh();const auto point=i.pointer;const auto pressed=i.pressed;i.pointer.reset();i.pressed=!pressed;setFeedback(point,pressed,i.reduced,t);return true;}
-bool NativeAppShortcutScene::setFeedback(std::optional<core::Point>p,bool pressed,bool reduced,double t){auto&i=*impl_;i.clock(t);if(p)need(std::isfinite(p->x)&&std::isfinite(p->y),"Invalid shortcut pointer");if(i.pointer==p&&i.pressed==pressed&&i.reduced==reduced)return false;std::string_view action;double area=INFINITY;if(p&&i.current&&i.state.active()&&!i.state.transitioning())for(std::size_t n=0;n<i.current->plan.size();++n){const auto&s=i.current->plan[n];const auto&r=i.current->feedbackBounds[n];if(s.role==m::ShortcutSurfaceRole::tint&&(!s.clip||s.clip->contains(*p))&&roundedContains(r,*p)&&r.width*r.height<=area){action=s.action;area=r.width*r.height;}}
+ if(transition.active&&transition.generation!=i.screenGeneration){i.retire(std::move(i.outgoing));i.outgoing=std::move(i.current);}else i.retire(std::move(i.current));if(!transition.active)i.retire(std::move(i.outgoing));i.current=std::move(next);i.revision=i.state.revision();i.screenGeneration=transition.generation;i.dirty=false;i.time=t;++i.stats.builds;i.refresh();const auto point=i.pointer;const auto pressed=i.pressed;i.pointer.reset();i.pressed=!pressed;setFeedback(point,pressed,i.reduced,t);return true;}
+bool NativeAppShortcutScene::setFeedback(std::optional<core::Point>p,bool pressed,bool reduced,double t){auto&i=*impl_;i.clock(t);if(p)need(std::isfinite(p->x)&&std::isfinite(p->y),"Invalid shortcut pointer");if(i.pointer==p&&i.pressed==pressed&&i.reduced==reduced)return false;std::string_view action;double area=INFINITY;if(p&&i.current&&i.state.active()&&!i.state.transitioning())for(std::size_t n=0;n<i.current->plan.size();++n){const auto&s=i.current->plan[n];const auto&r=i.current->feedbackBounds[n];if(s.role==m::ShortcutSurfaceRole::tint&&!i.current->hidden[n]&&(!s.clip||s.clip->contains(*p))&&roundedContains(r,*p)&&r.width*r.height<=area){action=s.action;area=r.width*r.height;}}
  i.each([&](auto&part,bool old){for(std::size_t n=0;n<part.plan.size();++n){const auto&s=part.plan[n];if(s.role!=m::ShortcutSurfaceRole::tint&&s.role!=m::ShortcutSurfaceRole::rim)continue;const bool matches=!old&&s.action==action;const double target=matches?(s.role==m::ShortcutSurfaceRole::rim?1:pressed?1:.62):0;auto&track=part.feedback[n];if(track.target!=target||(reduced&&track.duration))track={Impl::value(track,t),target,t,reduced?0:pressed&&matches?.06:.14};}});i.pointer=p;i.pressed=pressed;i.reduced=reduced;i.time=t;return true;}
 void NativeAppShortcutScene::updatePose(const AppShortcutScenePose&p){auto&i=*impl_;i.clock(p.time);need(!i.dirty&&i.revision==i.state.revision()&&i.current,"Synchronize Shortcut content before pose");need(p.world.finite()&&std::isfinite(p.opacity)&&p.opacity>=0&&p.opacity<=1&&p.ownerMasks.size()<=7,"Invalid Shortcut pose");if(p.shutter)validatePlaneShutter(*p.shutter);const auto sample=m::shortcutScreenSample(i.state.transition(),p.time);const auto preset=m::shortcutPresetTransform(i.state.presetTransition(),p.time);
  i.each([&](auto&part,bool old){const auto screen=p.world*M::translation(200,167)*(old?sample.outgoing:sample.incoming)*M::translation(-200,-167),inverse=core::source::inverseSourceMatrix(screen);std::optional<core::SubsectionCurvePath>path;if(sample.active)path=(old?i.assets.departure():i.assets.arrival())->sample(i.state.transition().direction,sample.phase);if(path!=part.maskPath){part.maskPath=path;part.maskDirty=bool(path);}part.alpha=path?std::optional(PlaneAlphaMask{inverse,part.maskImage?part.maskImage->bounds:R{0,0,400,334},part.maskID}):std::nullopt;
   if(part.trace)part.traceProgress=i.state.presetTransition().generation?m::shortcutPresetProgress(*part.trace,p.time):1;
-  for(std::size_t n=0;n<part.plan.size();++n){const auto&s=part.plan[n];auto&v=part.placements[n];v.world=screen*((!old&&s.role==m::ShortcutSurfaceRole::preview)?preset:M{})*s.local;v.opacity=p.opacity*((s.role==m::ShortcutSurfaceRole::tint||s.role==m::ShortcutSurfaceRole::rim)?float(Impl::value(part.feedback[n],p.time)):s.role==m::ShortcutSurfaceRole::presetTrace&&part.traceProgress==0?0.f:1.f);std::copy(p.ownerMasks.begin(),p.ownerMasks.end(),part.masks[n].begin());auto count=p.ownerMasks.size();if(s.clip)part.masks[n][count++]={inverse,*s.clip};v.masks=std::span(part.masks[n]).first(count);i.validator.world=v.world;i.validator.opacity=v.opacity;i.validator.masks.assign(v.masks.begin(),v.masks.end());i.validator.shutter=p.shutter?std::optional(*p.shutter):std::nullopt;validateDrawObject(i.validator);}
+  for(std::size_t n=0;n<part.plan.size();++n){const auto&s=part.plan[n];auto&v=part.placements[n];v.world=screen*((!old&&s.role==m::ShortcutSurfaceRole::preview)?preset:M{})*s.local;v.opacity=part.hidden[n]?0.f:p.opacity*((s.role==m::ShortcutSurfaceRole::tint||s.role==m::ShortcutSurfaceRole::rim)?float(Impl::value(part.feedback[n],p.time)):s.role==m::ShortcutSurfaceRole::presetTrace&&part.traceProgress==0?0.f:1.f);std::copy(p.ownerMasks.begin(),p.ownerMasks.end(),part.masks[n].begin());auto count=p.ownerMasks.size();if(s.clip)part.masks[n][count++]={inverse,*s.clip};v.masks=std::span(part.masks[n]).first(count);i.validator.world=v.world;i.validator.opacity=v.opacity;i.validator.masks.assign(v.masks.begin(),v.masks.end());i.validator.shutter=p.shutter?std::optional(*p.shutter):std::nullopt;validateDrawObject(i.validator);}
  });i.each([&](auto&part,bool){part.scene.setPlacements(part.placements);part.scene.setGroupShutter(p.shutter?std::optional(*p.shutter):std::nullopt);part.scene.setGroupAlphaMask(part.alpha);});i.posed=true;i.time=p.time;++i.stats.poses;}
 bool NativeAppShortcutScene::uploadAnimations(Renderer&r){auto&i=*impl_;need(i.posed&&r.stats().initialized&&(!i.owner||i.owner==&r),"Invalid Shortcut resource owner");bool changed{};i.each([&](auto&part,bool){if(part.traceIndex&&part.traceProgress!=part.paintedTraceProgress){
   const auto&surface=part.plan[*part.traceIndex];const auto content=traceContent(surface.id,part.traceAccent,part.traceProgress);need(part.traceRevision!=UINT64_MAX,"Shortcut trace revision exhausted");

@@ -24,6 +24,10 @@ enum class ShortcutSurfaceRole {artwork,tint,rim,preview,presetTrace};
 struct ShortcutSurface {
     std::string id,action;ShortcutJson content;core::Matrix4 local;
     std::optional<core::Rect>clip;ShortcutSurfaceRole role{ShortcutSurfaceRole::artwork};
+    // The saved list index of a row card's leaf (none for the canvas chrome
+    // and the draft). A card's content never depends on the scroll: only
+    // its local placement does.
+    std::optional<std::size_t>row;
 };
 // One published original application image: an exact LayerImageSource
 // key/revision (contents {memoryImage,revision}). An empty key is absent.
@@ -40,6 +44,11 @@ struct ShortcutOriginalImages {
     bool operator==(const ShortcutOriginalImages&)const=default;
 };
 std::vector<ShortcutSurface>prepareAppShortcutArtwork(const AppShortcutState&,
+    const AppShortcutArtwork&,const ShortcutAppearance&,const ShortcutOriginalImages& images={});
+// The leaves of one saved row's card exactly as prepareAppShortcutArtwork
+// paints them at the current scroll, also while the card is outside the
+// list viewport (a retained neighbour of the visible cards). List screen only.
+std::vector<ShortcutSurface>prepareAppShortcutRow(const AppShortcutState&,std::size_t index,
     const AppShortcutArtwork&,const ShortcutAppearance&,const ShortcutOriginalImages& images={});
 std::string shortcutActionID(const ShortcutAction&);
 std::string shortcutActionLabel(const ShortcutAction&,const AppShortcutState&,core::Language);

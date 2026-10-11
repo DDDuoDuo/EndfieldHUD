@@ -5,8 +5,11 @@
 #include "native/layer_scene.hpp"
 namespace endfield::native {
 struct AppShortcutScenePose {core::Matrix4 world;float opacity{1};double time{};std::span<const PlaneMask>ownerMasks;const PlaneShutter*shutter{};};
-struct AppShortcutSceneStats {std::uint64_t builds{},poses{},maskRasters{},maskBytes{};std::size_t surfaces{},retired{};};
-// Source list/draft artwork, six-to-seven virtual rows, independent feedback,
+// builds: new canvases (a screen change, a preset trace or a changed leaf
+// set); replacements: content events that kept the canvas and repainted
+// leafRepaints changed leaves in place (a scroll step only re-places them).
+struct AppShortcutSceneStats {std::uint64_t builds{},poses{},maskRasters{},maskBytes{},replacements{},leafRepaints{};std::size_t surfaces{},retired{};};
+// Source list/draft artwork, six retained virtual row cards, independent feedback,
 // source .26s local two-screen transition. No provider, clock, HWND or publisher.
 // State/artwork/rasterizer must outlive the adapter. Current/outgoing content is
 // retired only after caller publishes entries() through its shared composition.
