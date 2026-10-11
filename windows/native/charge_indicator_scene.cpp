@@ -17,7 +17,11 @@ constexpr double pi = 3.14159265358979323846;
 // radius, a stretchable centre of 2/9 I, total 20/9 I, so the slice fraction
 // is exactly 0.45 and all nine-slices share the same nine UV meshes.
 struct SliceSpec { double margin, radius; };
-constexpr SliceSpec baseSpec{10, 19}, emblemLargeSpec{1, 11.5}, emblemSmallSpec{1, 3};
+// Capsule sets at the source's exact corner radii: 19 (circle and compact)
+// and 14 (the 240 x 48 supercharge banner). Core Animation keeps the shadow
+// radius and border widths while cornerRadius animates, so each settled stage
+// draws its own set unscaled.
+constexpr SliceSpec baseSpec{10, 19}, bannerSpec{10, 14}, emblemLargeSpec{1, 11.5}, emblemSmallSpec{1, 3};
 constexpr std::array<float, 4> sliceUV{0.f, 0.45f, 0.55f, 1.f};
 struct SliceLayout { unsigned inset{}, center{}, size{}; double density{}; };
 SliceLayout sliceLayout(const SliceSpec& spec, double density) {
@@ -38,10 +42,10 @@ std::uint8_t byte(double v) { return static_cast<std::uint8_t>(std::lround(std::
 // (0,1)) under two 0.99-alpha backgrounds, composited in encoded sRGB like
 // Core Animation. The centre slice samples the middle of a long straight edge
 // so stretching never carries corner falloff along an edge.
-Pixels baseTexture(bool dark, double requested) {
-    const auto l = sliceLayout(baseSpec, requested);
-    const double d = l.density, margin = baseSpec.margin, radius = baseSpec.radius;
-    const unsigned extension = 2 * static_cast<unsigned>(std::ceil(10 * d));
+Pixels baseTexture(const SliceSpec& spec, bool dark, double requested) {
+    const auto l = sliceLayout(spec, requested);
+    const double d = l.density, margin = spec.margin, radius = spec.radius;
+    const unsigned extension = 2 * static_cast<unsigned>(std::ceil(margin * d));
     const unsigned n = l.size + extension;
     const double body = n / d - 2 * margin;
     // Core Animation's shadow blur measured from the unchanged renderer: a
@@ -87,9 +91,9 @@ Pixels baseTexture(bool dark, double requested) {
     return result;
 }
 // White Core Animation border: inside the bounds, following the corner.
-Pixels borderTexture(double width, double requested) {
-    const auto l = sliceLayout(baseSpec, requested);
-    const double d = l.density, margin = baseSpec.margin, radius = baseSpec.radius, body = l.size / d - 2 * margin;
+Pixels borderTexture(const SliceSpec& spec, double width, double requested) {
+    const auto l = sliceLayout(spec, requested);
+    const double d = l.density, margin = spec.margin, radius = spec.radius, body = l.size / d - 2 * margin;
     Pixels result{l.size, l.size, std::vector<std::uint8_t>(static_cast<std::size_t>(l.size) * l.size * 4, 255)};
     for (unsigned y = 0; y < l.size; ++y)
         for (unsigned x = 0; x < l.size; ++x) {
@@ -160,12 +164,15 @@ std::string sliceUtf16(const std::string& text, std::size_t start, std::size_t l
     return out;
 }
 
-enum Texture : std::size_t { base, border05, border15, emblemLarge, emblemSmall, ripple, bolt, ring, cap, laptop, text0, text1, text2, text3, textureCount };
-constexpr std::array<const char*, textureCount> textureNames{"base", "border05", "border15", "emblemL", "emblemS", "ripple", "bolt", "ring",
-                                                              "cap", "laptop", "text0", "text1", "text2", "text3"};
-// Draw slots (paint order of the source canvas).
-constexpr std::size_t drawBase = 0, drawRipple = 9, drawBorder05 = 12, drawBorder15 = 21, drawEmblemLarge = 30, drawEmblemSmall = 39,
-                      drawBolt = 48, drawText = 49, drawTrack = 53, drawProgress = 54, drawCap = 55, drawLaptop = 57;
+enum Texture : std::size_t { base, base14, border05, border15, border05r14, border15r14, emblemLarge, emblemSmall, ripple, bolt, ring, cap, laptop,
+                             text0, text1, text2, text3, textureCount };
+constexpr std::array<const char*, textureCount> textureNames{"base", "base14", "border05", "border15", "border05r14", "border15r14", "emblemL", "emblemS",
+                                                              "ripple", "bolt", "ring", "cap", "laptop", "text0", "text1", "text2", "text3"};
+// Draw slots (paint order of the source canvas). Each capsule layer has a
+// radius-19 and a radius-14 nine-slice; only the nearer one is opaque.
+constexpr std::size_t drawBase = 0, drawBase14 = 9, drawRipple = 18, drawBorder05 = 21, drawBorder15 = 30, drawBorder05r14 = 39,
+                      drawBorder15r14 = 48, drawEmblemLarge = 57, drawEmblemSmall = 66, drawBolt = 75, drawText = 76, drawTrack = 80,
+                      drawProgress = 81, drawCap = 82, drawLaptop = 84;
 static_assert(drawLaptop + 1 == ChargeIndicatorScene::drawCount);
 } // namespace
 
@@ -198,10 +205,13 @@ struct ChargeIndicatorScene::Impl {
         quadMesh = prefix + "/quad";
         for (std::size_t i = 0; i < 9; ++i) sliceMeshes[i] = prefix + "/slice" + std::to_string(i);
         auto texture = [&](std::size_t slot) -> const std::string& {
-            if (slot < drawRipple) return textures[base].id;
+            if (slot < drawBase14) return textures[base].id;
+            if (slot < drawRipple) return textures[base14].id;
             if (slot < drawBorder05) return textures[ripple].id;
             if (slot < drawBorder15) return textures[border05].id;
-            if (slot < drawEmblemLarge) return textures[border15].id;
+            if (slot < drawBorder05r14) return textures[border15].id;
+            if (slot < drawBorder15r14) return textures[border05r14].id;
+            if (slot < drawEmblemLarge) return textures[border15r14].id;
             if (slot < drawEmblemSmall) return textures[emblemLarge].id;
             if (slot < drawBolt) return textures[emblemSmall].id;
             if (slot == drawBolt) return textures[bolt].id;
@@ -215,7 +225,7 @@ struct ChargeIndicatorScene::Impl {
             d.sourceID = prefix + "/draw" + std::to_string(slot);
             d.textureID = texture(slot);
             const bool sliced = slot < drawRipple || (slot >= drawBorder05 && slot < drawBolt);
-            d.meshID = sliced ? sliceMeshes[(slot < drawRipple ? slot : (slot - drawBorder05) % 9)] : quadMesh;
+            d.meshID = sliced ? sliceMeshes[(slot < drawRipple ? slot : slot - drawBorder05) % 9] : quadMesh;
             d.opacity = 0;
             d.masks.reserve(8);
         }
@@ -272,8 +282,10 @@ bool ChargeIndicatorScene::setContent(const ChargeIndicatorSceneContent& request
     ++i.contentRevision;
     if (densityChanged) {
         ++i.densityRevision;
-        i.setPixels(border05, borderTexture(0.5, next.pixelsPerPoint));
-        i.setPixels(border15, borderTexture(1.5, next.pixelsPerPoint));
+        i.setPixels(border05, borderTexture(baseSpec, 0.5, next.pixelsPerPoint));
+        i.setPixels(border15, borderTexture(baseSpec, 1.5, next.pixelsPerPoint));
+        i.setPixels(border05r14, borderTexture(bannerSpec, 0.5, next.pixelsPerPoint));
+        i.setPixels(border15r14, borderTexture(bannerSpec, 1.5, next.pixelsPerPoint));
         i.setPixels(emblemLarge, fillTexture(emblemLargeSpec, next.pixelsPerPoint));
         i.setPixels(emblemSmall, fillTexture(emblemSmallSpec, next.pixelsPerPoint));
         auto rippleOptions = options;
@@ -284,7 +296,10 @@ bool ChargeIndicatorScene::setContent(const ChargeIndicatorSceneContent& request
         i.setImage(cap, m::chargeCapLayer(), i.densityRevision, options);
         i.setImage(laptop, m::chargeLaptopLayer(), i.densityRevision, options);
     }
-    if (densityChanged || darkChanged) i.setPixels(base, baseTexture(next.appearance.dark, next.pixelsPerPoint));
+    if (densityChanged || darkChanged) {
+        i.setPixels(base, baseTexture(baseSpec, next.appearance.dark, next.pixelsPerPoint));
+        i.setPixels(base14, baseTexture(bannerSpec, next.appearance.dark, next.pixelsPerPoint));
+    }
     for (std::size_t t = 0; t < 4; ++t)
         if (densityChanged || !i.hasContent || content.texts[t] != i.content.texts[t])
             i.setImage(static_cast<Texture>(text0 + t), content.texts[t], i.contentRevision, options);
@@ -329,7 +344,12 @@ void ChargeIndicatorScene::place(const ChargeIndicatorPlacement& p) {
                 setDraw(first + row * 3 + column, toWorld * rect(xs[column], ys[row], xs[column + 1] - xs[column], ys[row + 1] - ys[row]), alpha, tint);
     };
     const float bodyAlpha = unit(pose.bodyOpacity) * opacity;
-    slices(drawBase, bodyToWorld, bw, bh, br, baseSpec, bodyAlpha, white);
+    // The nearer exact-radius set: the banner's 14 points, else 19. While
+    // the radius morphs between them the chosen set scales by r / radius.
+    const bool banner = br < (baseSpec.radius + bannerSpec.radius) / 2;
+    const float base19Alpha = banner ? 0.f : bodyAlpha, base14Alpha = banner ? bodyAlpha : 0.f;
+    slices(drawBase, bodyToWorld, bw, bh, br, baseSpec, base19Alpha, white);
+    slices(drawBase14, bodyToWorld, bw, bh, br, bannerSpec, base14Alpha, white);
     // Ripples are body sublayers: inherit its opacity and clip to its corners.
     const auto bodyInverse = canvasInverse ? std::optional<Matrix>(inverseAffine(150, 42, pose.bodyScale, -bw / 2, -bh / 2) * *canvasInverse)
                                            : std::nullopt;
@@ -349,8 +369,10 @@ void ChargeIndicatorScene::place(const ChargeIndicatorPlacement& p) {
     const auto borderColor = p.embeddedBorder ? pose.borderColor : colors.border;
     const double blend = std::clamp(borderWidth - 0.5, 0.0, 1.0);
     const auto borderTint = linearTint(borderColor);
-    slices(drawBorder05, bodyToWorld, bw, bh, br, baseSpec, bodyAlpha * static_cast<float>(1 - blend), borderTint);
-    slices(drawBorder15, bodyToWorld, bw, bh, br, baseSpec, bodyAlpha * static_cast<float>(blend), borderTint);
+    slices(drawBorder05, bodyToWorld, bw, bh, br, baseSpec, base19Alpha * static_cast<float>(1 - blend), borderTint);
+    slices(drawBorder15, bodyToWorld, bw, bh, br, baseSpec, base19Alpha * static_cast<float>(blend), borderTint);
+    slices(drawBorder05r14, bodyToWorld, bw, bh, br, bannerSpec, base14Alpha * static_cast<float>(1 - blend), borderTint);
+    slices(drawBorder15r14, bodyToWorld, bw, bh, br, bannerSpec, base14Alpha * static_cast<float>(blend), borderTint);
     // Emblem rounded rectangle (path interpolated as width/height/radius).
     const double ew = pose.emblemWidth, eh = pose.emblemHeight, er = std::clamp(pose.emblemRadius, 0.0, std::min(ew, eh) / 2);
     const Matrix emblemToWorld = p.canvasToWorld * Matrix::translation(pose.emblemCenter.x, pose.emblemCenter.y) *

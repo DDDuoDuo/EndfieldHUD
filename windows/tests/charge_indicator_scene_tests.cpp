@@ -104,6 +104,11 @@ void run(const std::filesystem::path& shader) {
     check(at(image, 5, 5).a == 0 && at(image, 150, 75).a == 0, "Outside the capsule and its shadow stays clear");
     const auto shadow = at(image, 150, 62.5);
     check(shadow.a > 2 && shadow.a < 90 && shadow.r <= 6, "Soft black shadow below the capsule");
+    // Shadow falloff off the straight edges (mid-width), in device rows
+    // aligned to each edge: below (offset +1 point) and above the capsule.
+    std::array<int, 6> compactShadow{};
+    for (std::size_t n = 0; n < 4; ++n) compactShadow[n] = at(image, 150, 61.5 + static_cast<double>(n)).a;
+    for (std::size_t n = 0; n < 2; ++n) compactShadow[4 + n] = at(image, 150, 22.5 - static_cast<double>(n)).a;
     const auto corner = at(image, 18.6, 23.6);
     check(corner.a < 40, "Rounded corner is not a square quad");
     // Ring: progress 75% clockwise from the top; the upper-left quarter is track only.
@@ -125,6 +130,20 @@ void run(const std::filesystem::path& shader) {
     for (double x = 125; x < 240; x += 0.5)
         for (double y = 37; y < 62; y += 0.5) if (at(image, x, y).r > 150) ++bright;
     check(bright > 80 && at(image, 33, 42).a > 200 && at(image, 15, 42).a == 0, "CHARGE MODE banner capsule");
+    // Core Animation keeps shadowRadius 4 / offset (0, 1) at the banner's
+    // 14-point corners: its straight-edge falloff equals the compact one.
+    bool sameShadow = compactShadow[0] > compactShadow[3] && compactShadow[3] > 0;
+    for (std::size_t n = 0; n < 4; ++n) sameShadow = sameShadow && std::abs(at(image, 150, 66.5 + static_cast<double>(n)).a - compactShadow[n]) <= 2;
+    for (std::size_t n = 0; n < 2; ++n) sameShadow = sameShadow && std::abs(at(image, 150, 17.5 - static_cast<double>(n)).a - compactShadow[4 + n]) <= 2;
+    if (!sameShadow) {
+        std::cerr << "compact shadow";
+        for (const auto v : compactShadow) std::cerr << ' ' << v;
+        std::cerr << " / banner";
+        for (std::size_t n = 0; n < 4; ++n) std::cerr << ' ' << int(at(image, 150, 66.5 + static_cast<double>(n)).a);
+        for (std::size_t n = 0; n < 2; ++n) std::cerr << ' ' << int(at(image, 150, 17.5 - static_cast<double>(n)).a);
+        std::cerr << '\n';
+    }
+    check(sameShadow, "The 14-point banner keeps the source's 4-point shadow (exact-radius set, not a scaled 19-point one)");
     // Morph and ripples: numeric only, no uploads or allocations of resources.
     const auto stats = renderer.stats();
     timeline.setStage(m::ChargeStage::hidden, false, 0);

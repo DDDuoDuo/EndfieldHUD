@@ -15,7 +15,9 @@
 // textures (plate + Core Animation shadow, 0.5/1.5-point borders, emblem).
 // Frames change only numeric data: the morphing capsule is a nine-slice whose
 // corners keep their source radius, so width/height/radius animate without
-// re-rasterizing, stretching text or allocating. The progress ring is the
+// re-rasterizing, stretching text or allocating. The capsule has one set per
+// source corner radius (19: circle/compact, 14: supercharge banner), so each
+// settled stage keeps the exact 4-point shadow and 0.5/1.5-point borders. The progress ring is the
 // stroked track with the renderer's angular clip plus two round caps.
 namespace endfield::native {
 struct ChargeIndicatorSceneContent {
@@ -42,7 +44,7 @@ struct ChargeIndicatorPlacement {
 #ifdef _WIN32
 class ChargeIndicatorScene final {
 public:
-    static constexpr std::size_t drawCount = 58;
+    static constexpr std::size_t drawCount = 85;
     // prefix makes every renderer/rasterizer ID unique per owner.
     ChargeIndicatorScene(LayerRasterizer&, std::string prefix);
     ~ChargeIndicatorScene();
