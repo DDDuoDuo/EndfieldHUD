@@ -174,6 +174,7 @@ bool NativeProfileAutomation::refresh(){
     auto list=s.host.controls?s.host.controls():std::vector<ProfileAutomationControl>{};
     const bool listening=UiaClientsAreListening()!=FALSE;
     std::vector<ComPtr<ProfileAutomationElement>>next;next.reserve(list.size());bool changed=list.size()!=s.order.size();
+    ComPtr<ProfileAutomationElement>opened; // a newly opened field takes the HUD's keyboard focus
     for(std::size_t i=0;i<list.size();++i){
         auto&c=list[i];ComPtr<ProfileAutomationElement>e;
         for(const auto&old:s.order)if(old->connected&&old->control.id==c.id&&old->control.role==c.role){
@@ -181,7 +182,7 @@ bool NativeProfileAutomation::refresh(){
             bool taken=false;for(const auto&n:next)if(n.Get()==old.Get()){taken=true;break;}
             if(!taken){e=old;break;}
         }
-        if(!e){e.Attach(new ProfileAutomationElement(state_,std::move(c)));++s.statistics.created;changed=true;}
+        if(!e){e.Attach(new ProfileAutomationElement(state_,std::move(c)));++s.statistics.created;changed=true;if(e->control.role==Role::edit)opened=e;}
         else{
             if(listening){
                 auto*simple=static_cast<IRawElementProviderSimple*>(e.Get());
@@ -197,7 +198,10 @@ bool NativeProfileAutomation::refresh(){
         next.push_back(std::move(e));
     }
     for(auto&old:s.order){bool kept=false;for(const auto&n:next)if(n.Get()==old.Get()){kept=true;break;}if(!kept){old->disconnect();++s.statistics.disconnected;}}
-    s.order=std::move(next);if(changed)++s.statistics.structureChanges;return changed;
+    s.order=std::move(next);if(changed)++s.statistics.structureChanges;
+    // The source NSTextView becomes first responder: announce the new field.
+    if(opened&&listening)UiaRaiseAutomationEvent(static_cast<IRawElementProviderSimple*>(opened.Get()),UIA_AutomationFocusChangedEventId);
+    return changed;
 }
 HRESULT NativeProfileAutomation::child(std::size_t index,IRawElementProviderFragment**out)const{
     if(!out)return E_POINTER;*out=nullptr;if(index>=state_->order.size())return E_INVALIDARG;

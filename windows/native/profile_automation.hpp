@@ -61,7 +61,8 @@ struct ProfileAutomationStats {std::uint64_t refreshes{},structureChanges{},crea
 // action is a Button with Invoke, each slider a Slider with RangeValue over
 // the source range (SmallChange/LargeChange = the source step) and the open
 // field an Edit with a writable Value holding its draft (it has the HUD's
-// keyboard focus). A RangeValue write is clamped into the range like the
+// keyboard focus; a newly listed field raises AutomationFocusChanged, as the
+// source NSTextView becomes first responder). A RangeValue write is clamped into the range like the
 // source setAccessibilityValue; non-finite values are refused. Buttons and
 // sliders are not tab stops: the HUD routes its own keys (Escape, arrows) as
 // on the Mac.
