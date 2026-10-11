@@ -4,6 +4,7 @@
 #include "core/motion.hpp"
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -16,6 +17,34 @@ void need(bool ok,const char*why){if(!ok)throw std::invalid_argument(why);}
 Json rect(core::Rect r){return Json::Array{r.x,r.y,r.width,r.height};}
 Json point(core::Point p){return Json::Array{p.x,p.y};}
 Json color(const std::optional<modules::NotesColor>&c){if(!c)return {};return Json::Object{{"sRGB",Json::Array{(*c)[0],(*c)[1],(*c)[2],(*c)[3]}}};}
+// A CALayer border (inside a width x height rect: outer corner radius
+// `radius`, inner radius radius-stroke) as one GPU mesh in rect-local points,
+// for a large card whose border would otherwise be a card-sized bitmap. Each
+// edge ramps alpha across one raster pixel (1/pixelsPerPoint) centred on the
+// geometric edge: the box-filter coverage the raster gives the same stroke. A
+// stroke thinner than a pixel is one ridge of its coverage. Vertex alpha only;
+// the draw's linearTint carries the colour. Arcs: eight segments a corner.
+void borderRing(double width,double height,double radius,double stroke,double pixelsPerPoint,std::vector<Vertex>&vertices,std::vector<std::uint32_t>&indices){
+    vertices.clear();indices.clear();
+    const double extent=std::min(width,height)*.5,r=std::clamp(radius,0.,extent),w=std::clamp(stroke,0.,extent),h=.5/pixelsPerPoint;
+    const bool ridge=w*pixelsPerPoint<1;const unsigned rows=ridge?3:4;constexpr unsigned segments=8;constexpr double pi=std::numbers::pi;
+    // Corner centre, start angle and the inward direction (an inner corner
+    // sharper than the outer one moves its centre inward).
+    const std::array<std::array<double,5>,4> corners{{{r,r,pi,1,1},{width-r,r,1.5*pi,-1,1},{width-r,height-r,0,-1,-1},{r,height-r,.5*pi,1,-1}}};
+    const double innerRadius=std::max(0.,r-w),shift=std::max(0.,w-r);
+    for(const auto&c:corners)for(unsigned k=0;k<=segments;++k){
+        const double a=c[2]+.5*pi*k/segments,nx=std::cos(a),ny=std::sin(a);
+        const double ox=c[0]+nx*r,oy=c[1]+ny*r,ix=c[0]+c[3]*shift+nx*innerRadius,iy=c[1]+c[4]*shift+ny*innerRadius;
+        const auto vertex=[&](double x,double y,double alpha){vertices.push_back({{static_cast<float>(x),static_cast<float>(y),0},{0,0},{1,1,1,static_cast<float>(alpha)}});};
+        vertex(ox+nx*h,oy+ny*h,0);
+        if(ridge)vertex((ox+ix)*.5,(oy+iy)*.5,w*pixelsPerPoint);else{vertex(ox-nx*h,oy-ny*h,1);vertex(ix+nx*h,iy+ny*h,1);}
+        vertex(ix-nx*h,iy-ny*h,0);
+    }
+    const auto samples=static_cast<std::uint32_t>(vertices.size()/rows);
+    for(std::uint32_t s=0;s<samples;++s){const auto a=s*rows,b=((s+1)%samples)*rows;
+        for(std::uint32_t j=0;j+1<rows;++j)for(const auto v:{a+j,b+j,b+j+1,a+j,b+j+1,a+j+1})indices.push_back(v);}
+}
+std::array<float,4> linearColor(const modules::NotesColor&c){std::array<float,4>out{};for(unsigned n=0;n<3;++n){const auto v=c[n];out[n]=static_cast<float>(v<=.04045?v/12.92:std::pow((v+.055)/1.055,2.4));}out[3]=static_cast<float>(c[3]);return out;}
 Json command(const char*op,std::initializer_list<core::Point> points){Json::Array p;for(auto value:points)p.push_back(point(value));return Json::Object{{"op",op},{"points",std::move(p)}};}
 Json roundedPath(core::Rect b,double radius){
     // CGPath's four circular-corner cubic segments, also used by the original
@@ -107,7 +136,21 @@ struct NativeNotesCardScene::Impl {
     std::array<DrawObject,2>afterDraws;std::size_t afterCount{};std::vector<std::size_t>borderSurfaces;
     // A large card's opaque field backing: one tinted quad (the indicator's
     // unit mesh) drawn after its frame scene, not a slot-sized bitmap.
-    DrawObject backingDraw;bool splitEditor{};
+    // [border ring, field backing]: a large card's CALayer border as one GPU
+    // ring mesh (so the frame never reloads for a selection's border) and its
+    // open field's opaque backing. The field border is a ring too (afterDraws[1]).
+    struct Ring {std::string mesh;std::vector<Vertex>vertices;std::vector<std::uint32_t>indices;std::array<double,5>key{};std::uint64_t revision{},uploaded{};bool active{},resident{};Renderer*owner{};};
+    std::array<DrawObject,2>frameAfter;Ring cardRing,fieldRing;bool splitEditor{};
+    // Rebuilds a ring's mesh only when its geometry changed (a content event).
+    static void shape(Ring&ring,double width,double height,double radius,double stroke,double ppp){
+        const std::array<double,5>key{width,height,radius,stroke,ppp};if(ring.revision&&ring.key==key)return;
+        borderRing(width,height,radius,stroke,ppp,ring.vertices,ring.indices);ring.key=key;++ring.revision;}
+    static bool upload(Ring&ring,Renderer&r){
+        if(!ring.active||ring.uploaded==ring.revision)return false;need(!ring.owner||ring.owner==&r,"A Notes border ring belongs to a different renderer");
+        r.setMesh(ring.mesh,ring.revision,{ring.vertices,ring.indices});const bool grew=!ring.resident;ring.resident=true;ring.uploaded=ring.revision;ring.owner=&r;return grew;}
+    static bool release(Ring&ring,Renderer&r){
+        if(!ring.resident)return true;need(ring.owner==&r,"Cannot retire another renderer's Notes border ring");if(!r.removeMesh(ring.mesh))return false;
+        ring.resident=false;ring.uploaded=0;ring.owner=nullptr;return true;}
     std::optional<core::Rect>indicator;std::string indicatorMesh;Renderer*indicatorOwner{};bool indicatorUploaded{};
     std::optional<NativeNotesMediaSlot>mediaSlot;
     std::optional<modules::NotesMediaLayout>mediaLayout;
@@ -176,6 +219,9 @@ struct NativeNotesCardScene::Impl {
             std::vector<char> header(layers.size(),0);for(std::size_t i=1;i<layers.size();++i)header[i]=(layers[i].parent==0&&layers[i].id.ends_with("/header"))||(layers[i].parent!=Layer::noParent&&header[layers[i].parent]);
             std::unique_ptr<bool[]> plate(new bool[layers.size()]{});for(std::size_t i=1;i<layers.size();++i)plate[i]=excluded[i]||!header[i];
             auto frameCard=tree(layers,{plate.get(),layers.size()},0);frameCard["opacity"]=1;frameCard["hidden"]=false;
+            // The plate's CALayer border is the GPU ring after the frame scene:
+            // a selection's border never reloads (re-rasters) the plate.
+            frameCard["borderWidth"]=0;frameCard["borderColor"]=Json{};
             nextFrame=Json::Object{{"bounds",rect(layers[0].bounds)},{"masksToBounds",true},{"children",Json::Array{std::move(frameCard)}}};
             for(std::size_t i=1;i<layers.size();++i)if(header[i])excluded[i]=true;
         }
@@ -205,7 +251,8 @@ struct NativeNotesCardScene::Impl {
         if(nextSlot){const auto r=nextSlot->localRect;need(!(r.x<gripInk.x+gripInk.width&&r.x+r.width>gripInk.x&&r.y<gripInk.y+gripInk.height&&r.y+r.height>gripInk.y),"External Notes editor overlaps final source resize grip");}
         decorations.push_back(clipped(*grip,local(layers,gripIndex),layers[0],gripInk));
         std::vector<std::string> borderIDs;
-        if(nextSlot){
+        // A large card's field border is a GPU ring (below), not a slot-sized bitmap.
+        if(nextSlot&&!split){
             const auto r=nextSlot->localRect;Layer border;border.id=layers[0].id+"/external-editor-border";border.name="notes.external.editor.border";
             border.kind=modules::NotesLayerKind::shape;border.bounds={.5,.5,r.width-1,r.height-1};
             border.shape.kind=modules::NotesPathKind::roundedRect;border.shape.radius=nextSlot->cornerRadius-.5;
@@ -253,8 +300,19 @@ struct NativeNotesCardScene::Impl {
             const double gray=.5;const auto linear=static_cast<float>(std::pow((gray+.055)/1.055,2.4));thumb.linearTint={linear,linear,linear,.65f};}
         else indicator.reset();
         splitEditor=split&&nextSlot.has_value();
+        auto&backingDraw=frameAfter[1];
         if(splitEditor){backingDraw.sourceID=indicatorMesh+"/backing";backingDraw.meshID=indicatorMesh;backingDraw.textureID.clear();backingDraw.masks.resize(1);backingDraw.opacity=0;
-            const auto&c=editorAppearance->background;for(unsigned n=0;n<3;++n){const auto v=c[n];backingDraw.linearTint[n]=static_cast<float>(v<=.04045?v/12.92:std::pow((v+.055)/1.055,2.4));}backingDraw.linearTint[3]=1;}
+            const auto&c=editorAppearance->background;for(unsigned n=0;n<3;++n){const auto v=c[n];backingDraw.linearTint[n]=static_cast<float>(v<=.04045?v/12.92:std::pow((v+.055)/1.055,2.4));}backingDraw.linearTint[3]=1;
+            // Source editor border (CALayer: inside the viewport, its radius, one point).
+            const auto&slot=*nextSlot;if(fieldRing.mesh.empty())fieldRing.mesh=layers[0].id+"/external-editor-border-ring";
+            shape(fieldRing,slot.localRect.width,slot.localRect.height,slot.cornerRadius,1,rasterOptions.pixelsPerPoint);fieldRing.active=true;
+            auto&border=afterDraws[1];border.sourceID=fieldRing.mesh+"/draw";border.meshID=fieldRing.mesh;border.textureID.clear();border.masks.clear();border.opacity=0;border.linearTint=linearColor(editorAppearance->border);afterCount=2;
+        }else fieldRing.active=false;
+        // The large card's own border (selection: accent, 1.1 points).
+        cardRing.active=split&&layers[0].border&&(*layers[0].border)[3]>0&&layers[0].borderWidth>0;
+        if(cardRing.active){if(cardRing.mesh.empty())cardRing.mesh=layers[0].id+"/card-border-ring";
+            shape(cardRing,bounds.width,bounds.height,layers[0].cornerRadius,layers[0].borderWidth,rasterOptions.pixelsPerPoint);
+            auto&ring=frameAfter[0];ring.sourceID=cardRing.mesh+"/draw";ring.meshID=cardRing.mesh;ring.textureID.clear();ring.masks.clear();ring.opacity=0;ring.linearTint=linearColor(*layers[0].border);}
         gripSurface=*nextGrip;mediaLayout=std::move(nextMedia);mediaSlot.reset();
         if(mediaLayout){mediaSlot=NativeNotesMediaSlot{mediaLayout->geometry().content,mediaLayout->geometry().hasSeek};
             if(mediaMesh.empty())mediaMesh=localDraws.front().sourceID+"/media-quad";
@@ -298,6 +356,7 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
         auto&m=masks[index];m.clear();for(const auto&mask:original.masks){auto placed=mask;placed.worldToLocal=mask.worldToLocal*inverse;m.push_back(placed);}p.masks=m;
     }};
     pose(i.localDraws,i.placements,i.masks);
+    if(i.cardRing.active){auto&ring=i.frameAfter[0];ring.world=world;ring.opacity=opacityValue;}
     if(i.frameActive){pose(i.frameDraws,i.framePlacements,i.frameMasks);i.frame.setPlacements(i.framePlacements);}
     for(const auto&f:i.feedback)i.placements[f.surface].opacity=static_cast<float>(Impl::value(f,time))*opacityValue;
     if(i.editorSlot){for(std::size_t n=0;n<i.borderSurfaces.size();++n){const auto&frame=i.placements[i.borderSurfaces[n]];auto&after=i.afterDraws[n+1];after.world=frame.world;after.opacity=frame.opacity;after.masks.assign(frame.masks.begin(),frame.masks.end());}
@@ -310,7 +369,8 @@ bool NativeNotesCardScene::updatePose(const Matrix&workspace,float canvas,double
         // One resident resource, published once as the caller's after-editor
         // draw. Do not paint this border below glyph/selection as well.
         for(const auto index:i.borderSurfaces)i.placements[index].opacity=0;
-        if(i.splitEditor){const auto&field=slot.localRect;i.backingDraw.world=world*Matrix::translation(field.x,field.y)*Matrix::scale(field.width,field.height,1);i.backingDraw.opacity=opacityValue;i.backingDraw.masks[0]={inverse,field,slot.cornerRadius};}
+        if(i.splitEditor){const auto&field=slot.localRect;auto&backing=i.frameAfter[1];backing.world=world*Matrix::translation(field.x,field.y)*Matrix::scale(field.width,field.height,1);backing.opacity=opacityValue;backing.masks[0]={inverse,field,slot.cornerRadius};
+            auto&border=i.afterDraws[1];border.world=world*Matrix::translation(field.x,field.y);border.opacity=opacityValue;}
     }
     if(i.mediaSlot){
         const auto fitted=i.mediaWidth&&i.mediaHeight?i.mediaLayout->fittedImage(i.mediaWidth,i.mediaHeight):core::Rect{};
@@ -333,17 +393,25 @@ bool NativeNotesCardScene::requiresFrames(double time)const {need(std::isfinite(
 LayerScene&NativeNotesCardScene::scene()noexcept{return impl_->scene;}
 LayerScene*NativeNotesCardScene::frameScene()noexcept{return impl_->frameActive?&impl_->frame:nullptr;}
 const LayerScene*NativeNotesCardScene::frameScene()const noexcept{return impl_->frameActive?&impl_->frame:nullptr;}
-bool NativeNotesCardScene::releaseResources(Renderer&r){auto&i=*impl_;const bool frame=i.frame.releaseResources(r);return i.scene.releaseResources(r)&&frame;}
-bool NativeNotesCardScene::collectRetired(Renderer&r){auto&i=*impl_;return i.frameActive||i.frame.releaseResources(r);}
+bool NativeNotesCardScene::releaseResources(Renderer&r){auto&i=*impl_;const bool frame=i.frame.releaseResources(r);const bool ring=Impl::release(i.cardRing,r);return i.scene.releaseResources(r)&&frame&&ring;}
+bool NativeNotesCardScene::collectRetired(Renderer&r){auto&i=*impl_;const bool ring=i.cardRing.active||Impl::release(i.cardRing,r);return (i.frameActive||i.frame.releaseResources(r))&&ring;}
 const LayerScene&NativeNotesCardScene::scene()const noexcept{return impl_->scene;}
-std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{const auto&i=*impl_;if(!i.editorSlot||i.afterCount<2)return {};return i.indicatorUploaded?std::span<const DrawObject>{i.afterDraws.data(),i.afterCount}:std::span<const DrawObject>{i.afterDraws.data()+1,i.afterCount-1};}
-std::span<const DrawObject>NativeNotesCardScene::frameAfterDraws()const noexcept{const auto&i=*impl_;if(!i.frameActive||!i.splitEditor||!i.editorSlot||!i.indicatorUploaded)return {};return {&i.backingDraw,1};}
+std::span<const DrawObject>NativeNotesCardScene::externalEditorAfterDraws()const noexcept{const auto&i=*impl_;if(!i.editorSlot||i.afterCount<2)return {};
+    // A large card's field border is its ring: published once both meshes are resident.
+    if(i.splitEditor)return i.indicatorUploaded&&i.fieldRing.resident?std::span<const DrawObject>{i.afterDraws.data(),2}:std::span<const DrawObject>{};
+    return i.indicatorUploaded?std::span<const DrawObject>{i.afterDraws.data(),i.afterCount}:std::span<const DrawObject>{i.afterDraws.data()+1,i.afterCount-1};}
+std::span<const DrawObject>NativeNotesCardScene::frameAfterDraws()const noexcept{const auto&i=*impl_;if(!i.frameActive)return {};
+    const bool ring=i.cardRing.active&&i.cardRing.resident,backing=i.splitEditor&&i.editorSlot&&i.indicatorUploaded;
+    if(ring)return {i.frameAfter.data(),backing?2u:1u};if(backing)return {i.frameAfter.data()+1,1};return {};}
+bool NativeNotesCardScene::uploadFrameBorder(Renderer&r){auto&i=*impl_;return i.frameActive&&Impl::upload(i.cardRing,r);}
 bool NativeNotesCardScene::setEditorScrollIndicator(std::optional<core::Rect>thumb){auto&i=*impl_;if(thumb&&(!i.editorSlot||!std::isfinite(thumb->x)||!std::isfinite(thumb->y)||!std::isfinite(thumb->width)||!std::isfinite(thumb->height)||thumb->width<=0||thumb->height<=0))throw std::invalid_argument("Invalid Notes editor scroll indicator");
     if(i.indicator==thumb)return false;i.indicator=thumb;i.posed=false;return true;}
-bool NativeNotesCardScene::uploadEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.editorSlot||i.indicatorUploaded)return false;need(!i.indicatorOwner||i.indicatorOwner==&r,"Editor indicator quad belongs to a different renderer");
+bool NativeNotesCardScene::uploadEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.editorSlot)return false;need(!i.indicatorOwner||i.indicatorOwner==&r,"Editor indicator quad belongs to a different renderer");
+    // A large card's field border ring (re)uploads with it; a resized field replaces it.
+    const bool ring=i.splitEditor&&Impl::upload(i.fieldRing,r);if(i.indicatorUploaded)return ring;
     const std::array<Vertex,4>vertices{{{{0,0,0},{0,0}},{{1,0,0},{1,0}},{{1,1,0},{1,1}},{{0,1,0},{0,1}}}};constexpr std::array<std::uint32_t,6>indices{0,1,2,0,2,3};
     r.setMesh(i.indicatorMesh,1,{vertices,indices});i.indicatorOwner=&r;i.indicatorUploaded=true;return true;}
-bool NativeNotesCardScene::releaseEditorIndicator(Renderer&r){auto&i=*impl_;if(!i.indicatorUploaded)return true;need(i.indicatorOwner==&r,"Cannot retire another renderer's editor indicator quad");if(!r.removeMesh(i.indicatorMesh))return false;i.indicatorUploaded=false;i.indicatorOwner=nullptr;return true;}
+bool NativeNotesCardScene::releaseEditorIndicator(Renderer&r){auto&i=*impl_;if(!Impl::release(i.fieldRing,r))return false;if(!i.indicatorUploaded)return true;need(i.indicatorOwner==&r,"Cannot retire another renderer's editor indicator quad");if(!r.removeMesh(i.indicatorMesh))return false;i.indicatorUploaded=false;i.indicatorOwner=nullptr;return true;}
 const std::optional<NativeNotesExternalEditorSlot>&NativeNotesCardScene::externalEditorSlot()const noexcept{return impl_->editorSlot;}
 void NativeNotesCardScene::setMediaTexture(std::string texture,unsigned width,unsigned height){
     auto&i=*impl_;need(i.mediaSlot.has_value(),"Initialize media card before binding pixels");

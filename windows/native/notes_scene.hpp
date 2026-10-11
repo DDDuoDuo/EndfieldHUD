@@ -61,14 +61,22 @@ public:
     // A card beyond LayerScene's local group area (1024x1024 points) keeps its
     // plate and header in this separate scene, composed immediately BEFORE
     // scene(); null for ordinary cards. It reloads only when its own artwork
-    // changes (size, palette, selection, pin state, title, typography), never
-    // for editing entry/exit, scrolling or text edits.
+    // changes (size, palette, pin state, title, typography), never for
+    // selection, editing entry/exit, scrolling or text edits: the plate's
+    // CALayer border is a GPU ring mesh among frameAfterDraws().
     LayerScene* frameScene()noexcept;
     const LayerScene* frameScene()const noexcept;
-    // Its LayerCompositionEntry.after: while a large card's field is open,
-    // the opaque field backing as one tinted quad on the indicator's unit
-    // mesh (empty until uploadEditorIndicator made it resident).
+    // Its LayerCompositionEntry.after: [the card's border ring (once
+    // uploadFrameBorder made it resident), while its field is open the opaque
+    // field backing as one tinted quad on the indicator's unit mesh (once
+    // uploadEditorIndicator made that resident)]. The ring is one antialiased
+    // mesh of the source border (accent and 1.1 points when selected): a
+    // selection retints and reshapes it, never rasters the plate.
     std::span<const DrawObject> frameAfterDraws()const noexcept;
+    // Uploads (or replaces, after a size or border change) the ring mesh;
+    // true when frameAfterDraws() grew. Released by releaseResources(), or by
+    // collectRetired() once the card no longer needs it.
+    bool uploadFrameBorder(Renderer&);
     NativeNotesSceneStats stats()const noexcept;
     // Releases both scenes' resources once unpublished (false: still referenced).
     bool releaseResources(Renderer&);
@@ -83,7 +91,9 @@ public:
     // All content uses ONE transactional LayerScene load, never two partial
     // scene replacements. Draw identity/count changes need setEntries().
     // With the editor indicator resident: [scroll indicator, border]; before
-    // uploadEditorIndicator, only the border.
+    // uploadEditorIndicator, only the border. A large card's field border is a
+    // GPU ring mesh instead of a slot-sized bitmap: it and the indicator are
+    // published together once uploadEditorIndicator made both resident.
     std::span<const DrawObject> externalEditorAfterDraws()const noexcept;
     // Source HUDProjectedTextEditor scrollIndicator: card-local thumb of the
     // open external editor, or nullopt without overflow. Numeric only (no

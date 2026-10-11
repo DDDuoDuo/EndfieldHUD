@@ -212,7 +212,7 @@ void largeCardContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     check(frame.pixels[at(50,200)+3]==255&&frame.pixels[at(50,200)]<80,"The large card paints its opaque body");check(frame.pixels[at(99,0)+3]<128,"Its rounded corner stays clipped");check(frame.pixels[at(150,100)+3]==0,"Nothing paints beyond it");
     // Editing entry and exit keep the frame: its plate is never rastered again.
     const auto beforeEntry=raster.stats().rasterizations;const auto plate=card.frameScene()->draws().front().textureID;
-    state.beginEditing(id1);presentation.updateContent(state,appearance);check(card.syncContent()&&card.externalEditorSlot().has_value()&&card.externalEditorAfterDraws().size()==1,"The large card enters editing with its source viewport and frame");
+    state.beginEditing(id1);presentation.updateContent(state,appearance);check(card.syncContent()&&card.externalEditorSlot().has_value()&&card.externalEditorAfterDraws().empty(),"The large card enters editing with its source viewport and frame; its field border ring waits to be resident");
     check(card.stats().frameLoads==1&&card.frameScene()->draws().front().textureID==plate,"Editing entry keeps the frame scene");
     const auto afterEntry=raster.stats().rasterizations;check(afterEntry-beforeEntry<=card.scene().draws().size(),"Entry rasters body surfaces only");
     check(card.frameAfterDraws().empty()&&card.uploadEditorIndicator(renderer)&&card.frameAfterDraws().size()==1&&card.frameAfterDraws().front().textureID.empty()&&card.externalEditorAfterDraws().size()==2,"The field backing is one tinted quad once its unit mesh is resident");
@@ -224,9 +224,20 @@ void largeCardContracts(gpu::Renderer&renderer,gpu::LayerRasterizer&raster){
     state.detachEditor();presentation.updateContent(state,appearance);check(card.syncContent()&&!card.externalEditorSlot()&&card.stats().frameLoads==1&&card.frameAfterDraws().empty(),"Editing exit keeps the frame scene and drops the backing quad");
     composition.setScenes(renderer,scenes);composition.present(renderer);check(card.releaseEditorIndicator(renderer),"The unpublished unit mesh retires after exit");
     check(raster.stats().rasterizations-afterEntry<=card.scene().draws().size(),"Exit rasters body surfaces only");
-    // A changed selection border reloads the frame once.
-    state.select(std::nullopt);presentation.updateContent(state,appearance);check(card.syncContent()&&card.stats().frameLoads==2,"A selection change reloads the frame");
-    card.updatePose(shifted,1,2);composition.setScenes(renderer,scenes);composition.present(renderer);
+    // The card's own border is one GPU ring after its frame scene: a selection
+    // retints and reshapes it and never reloads (re-rasters) the plate.
+    const auto meshes=renderer.stats().meshes;check(card.frameAfterDraws().empty()&&card.uploadFrameBorder(renderer)&&renderer.stats().meshes==meshes+1&&!card.uploadFrameBorder(renderer),"The border ring uploads once");
+    const auto ringEntries=[&]{return std::array{gpu::LayerCompositionEntry{card.frameScene(),card.frameAfterDraws()},gpu::LayerCompositionEntry{&card.scene(),{}}};};
+    check(card.frameAfterDraws().size()==1&&card.frameAfterDraws().front().textureID.empty()&&card.frameAfterDraws().front().meshID.ends_with("/card-border-ring"),"The ring follows the frame scene");
+    card.updatePose(shifted,1,2);auto withRing=ringEntries();composition.setEntries(renderer,withRing);composition.present(renderer);renderer.draw(false);const auto selected=renderer.readback();
+    check(selected.pixels[at(99,128)+2]>200&&selected.pixels[at(99,128)+1]>150&&selected.pixels[at(99,128)]<120&&selected.pixels[at(99,128)+3]==255,"The selected card's right edge is its accent border (BGRA readback)");
+    check(selected.pixels[at(150,128)+3]==0&&selected.pixels[at(95,128)]<80,"The ring stays on the card's edge");
+    const auto beforeSelection=raster.stats().rasterizations;state.select(std::nullopt);presentation.updateContent(state,appearance);
+    check(card.syncContent()&&card.stats().frameLoads==1&&card.frameScene()->draws().front().textureID==plate,"A selection change keeps the frame scene");
+    check(raster.stats().rasterizations-beforeSelection<=card.scene().draws().size()&&!card.uploadFrameBorder(renderer)&&renderer.stats().meshes==meshes+1,"A selection rasters no plate and replaces the ring in place");
+    card.updatePose(shifted,1,3);withRing=ringEntries();composition.setEntries(renderer,withRing);composition.present(renderer);renderer.draw(false);const auto deselected=renderer.readback();
+    check(deselected.pixels[at(99,128)+2]<120&&deselected.pixels[at(99,128)+3]==255&&std::abs(int(deselected.pixels[at(50,128)])-int(selected.pixels[at(50,128)]))<=1,"The deselected border is the plain one over the same plate");
+    composition.setScenes(renderer,scenes);composition.present(renderer);
     // Shrinking back within the group area returns the plate to the card surface.
     state.beginGesture(id1,{1400,900},mod::NotesState::Gesture::resize);state.dragTo({300,200});state.endGesture();const auto compact=input("Large\nNote",state.card(id1)->rect.width-18);presentation.updateContent(state,compact);
     check(card.syncContent()&&!card.frameScene()&&std::any_of(card.scene().draws().begin(),card.scene().draws().end(),[](const auto&d){return d.sourceID.ends_with("/card");}),"A card back within the group area has no frame scene");

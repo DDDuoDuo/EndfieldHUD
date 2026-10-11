@@ -450,6 +450,9 @@ bool NativeNotesWorkspace::mediaSeeking()const noexcept{return impl_->mediaSeek.
 void NativeNotesWorkspace::uploadMedia(Renderer&r){auto&i=*impl_;i.check();
     // The open field's scroll-indicator quad joins its after-editor draws once.
     if(i.field)if(auto*s=i.find(i.field->id);s&&s->native->uploadEditorIndicator(r)){i.rebuildEntries();if(i.pose)i.applyPose(*i.pose);}
+    // Large cards' border rings join their frame entries once resident, and
+    // are replaced after a resize or a selection's border (no plate raster).
+    {bool grew{};for(auto*s:i.active)grew=s->native->uploadFrameBorder(r)||grew;if(grew){i.rebuildEntries();if(i.pose)i.applyPose(*i.pose);}}
     if(!i.mediaUploadPending)return;need(!i.mediaRenderer||i.mediaRenderer==&r,"Notes media textures belong to another renderer");i.mediaRenderer=&r;bool entryShapeChanged{},bindingChanged{};
     for(auto*s:i.mediaSlots){auto&a=*s->media;const auto beforeDraws=s->native->mediaDraws();const std::string_view prior=beforeDraws.empty()?std::string_view{}:beforeDraws[0].textureID;const auto next=a.videoRequest?std::string_view(a.videoTexture):(a.frame?std::string_view(a.key):std::string_view{});bindingChanged=bindingChanged||prior!=next;
         if(a.videoRequest){if(prior!=next||a.uploadedFrame!=a.observedContent)s->native->setMediaTexture(a.videoTexture,a.videoTexture.empty()?0:a.videoWidth,a.videoTexture.empty()?0:a.videoHeight);a.uploadedFrame=a.observedContent;}
