@@ -63,6 +63,9 @@ struct AudioServiceOptions {
 };
 struct AudioServiceStats {
     std::uint64_t wakes{},topologyReads{},volumeReads{},sessionReads{},published{},journalWrites{};
+    // Times the idle session manager and its session objects were released
+    // (no per-app vote, no owned route).
+    std::uint64_t sessionReleases{};
     bool workerStarted{};
 };
 // ONE sleeping worker for all Windows audio (endpoints, per-app sessions and

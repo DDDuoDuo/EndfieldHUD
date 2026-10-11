@@ -130,7 +130,7 @@ public:
     // Owner-only.
     AudioEndpointSnapshot current;std::uint64_t currentRevision{};unsigned votes{};
     // Statistics (any thread).
-    std::atomic<std::uint64_t>wakes{},topologyReads{},volumeReads{},sessionReads{},publications{},journalWrites{};
+    std::atomic<std::uint64_t>wakes{},topologyReads{},volumeReads{},sessionReads{},publications{},journalWrites{},sessionReleases{};
 
     Impl(AudioServiceOptions o,Notice n):options(std::move(o)),notice(std::move(n)){
         if(!options.endpoints||!options.sessions)throw std::invalid_argument("Audio service requires injected endpoint and session backends");
@@ -407,6 +407,13 @@ public:
                 }
             }
             if(sessionsRead&&resumed)readSessions();
+            // Nobody shows per-app audio and no route is owned: release the
+            // session manager and every session object (an exited app's
+            // included) until the next vote opens them afresh. Owned routes
+            // keep their paused sessions so they can still be restored.
+            if(sessions&&!resumed&&!(demand&tierApplications)&&!owned()&&!sessions->endpoint().empty()){
+                sessions->close();routes=AudioSessionRoutes();records.clear();++impl.sessionReleases;
+            }
             // The listener kept only for owned routes ends with the last route.
             if(!demand&&endpointsOpen&&!owned())closeEndpoints();
             state.applications=routes.applications();sortAudioApplications(state.applications,impl.options.order);
@@ -481,7 +488,7 @@ bool AudioService::drain(){
 const AudioEndpointSnapshot&AudioService::snapshot()const noexcept{return impl_->current;}
 std::uint64_t AudioService::revision()const noexcept{return impl_->currentRevision;}
 AudioServiceStats AudioService::stats()const{
-    const auto&i=*impl_;AudioServiceStats s{i.wakes.load(),i.topologyReads.load(),i.volumeReads.load(),i.sessionReads.load(),i.publications.load(),i.journalWrites.load(),false};
+    const auto&i=*impl_;AudioServiceStats s{i.wakes.load(),i.topologyReads.load(),i.volumeReads.load(),i.sessionReads.load(),i.publications.load(),i.journalWrites.load(),i.sessionReleases.load(),false};
     {std::lock_guard lock(i.signal->mutex);s.workerStarted=i.started;}return s;
 }
 void AudioService::stop()noexcept{

@@ -4,6 +4,8 @@
 #include "core/module_presentation.hpp"
 #include <objbase.h>
 #include <atomic>
+#include <chrono>
+#include "core/source_camera.hpp"
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -49,7 +51,7 @@ void scrolling(const std::filesystem::path&shader){Window window;gpu::Renderer r
     tools::VolumePreview preview(raster,std::move(options));preview.resize({1280,800,96,1,1280,800});core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::volume;core::ModulePresentation modules(core::Module::volume);double time{};
     gpu::LayerComposition composition;const auto frame=[&](double t){preview.update({},settings,modules.sample(t).presentation,1,t);preview.upload(renderer);composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.present(renderer);};
     frame(time);check(preview.state().applicationViewport().height==95&&preview.state().maximumApplicationScroll()==6*31-95.,"The owner's app list shows three rows of six");
-    check(preview.entries().size()==6&&!preview.entries().back().after.empty(),"The module scene and its retained rows compose with the registration strokes last");
+    check(preview.entries().size()==7&&!preview.entries().back().after.empty(),"The module's header and detail scenes and its retained rows compose with the registration strokes last");
     gpu::LayerScene geometry(raster);gpu::LayerRasterOptions fixtureOptions;geometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},fixtureOptions);gpu::NativeModuleSurface surface(geometry,core::Module::volume);surface.update({},settings,modules.sample(time).presentation.current,1);core::Projection plane=core::Projection::viewport(gpu::layerViewportProjection(1280,800)*surface.pose().contentWorld,1280,800);
     const auto point=[&](double x,double y){const auto p=plane.project({x,y});check(p.has_value(),"Source plane projects fixture point");return *p;};
     auto p=point(60,280);const auto raster0=raster.stats();
@@ -66,6 +68,78 @@ void scrolling(const std::filesystem::path&shader){Window window;gpu::Renderer r
     p=point(60,280);preview.wheel({p.x,p.y,10,false,0,3},time+=1./60);check(preview.state().applicationScroll()==0,"Wheel up clamps at the top of the list");frame(time);
     composition.setEntries(renderer,{});preview.collected(renderer);preview.release(renderer);composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"The owner retires the module scene and every retained row");renderer.reset();
 }
+// User-reported: switching between Headphones / Bluetooth and App volume
+// shook. Reproduced frame by frame through the owner on the real module
+// plane: the source motion (VolumeCanvas.animateAction) slides the content 11
+// points and back with a slight depth about the content's centre, starting
+// at the transaction commit. The port applied it about the canvas's top-left
+// corner (the page drifted ~2.4 points up and ~2.8 left and back, a diagonal
+// jolt) and started it at the press, so the first frame after the switch's
+// whole-module rebuild landed mid-motion.
+std::array<double,2>contentPoint(const core::Matrix4&inverseContent,const gpu::DrawObject&d,double x,double y){const auto m=inverseContent*d.world;const auto&v=m.values;const double w=v[3]*x+v[7]*y+v[15];return {(v[0]*x+v[4]*y+v[12])/w,(v[1]*x+v[5]*y+v[13])/w};}
+const gpu::DrawObject&draw(const gpu::LayerComposition&c,std::string_view suffix){for(const auto&d:c.draws())if(d.sourceID.ends_with(suffix))return d;throw std::runtime_error("Missing composed Volume surface");}
+void pageSwitch(const std::filesystem::path&shader){Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,1280,800,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(1280,800));gpu::LayerRasterizer raster;
+    gpu::VolumeSnapshot data;data.outputs={{"endpoint-1","Speakers"},{"endpoint-2","Headphones",true},{"endpoint-3","Buds",true,true}};data.outputID="endpoint-1";data.volume=.55;data.balance=0;data.muted=false;data.canSetVolume=data.canSetMute=data.canSetBalance=true;data.applicationActivitySupported=true;
+    for(unsigned n=0;n<6;++n)data.applications.push_back({std::to_string(300+n)+":1","Synthetic app "+std::to_string(n),300+n,true,gpu::VolumeAppState::direct,{},{},{},{}});
+    tools::VolumePreviewOptions options;options.initial=data;options.rasterDensity=2; // the production raster density
+    const auto building=std::chrono::steady_clock::now();
+    tools::VolumePreview preview(raster,std::move(options));preview.resize({1280,800,96,1,1280,800});core::source::DesktopChromeSettings settings;settings.viewport={0,0,1280,800};settings.module=core::Module::volume;core::ModulePresentation modules(core::Module::volume);double time{};
+    gpu::LayerComposition composition;const auto frame=[&](double t){preview.update({},settings,modules.sample(t).presentation,1,t);preview.upload(renderer);composition.setEntries(renderer,preview.entries());preview.collected(renderer);composition.present(renderer);};
+    frame(time);
+    std::cout<<"Volume full build and first upload: "<<raster.stats().rasterizations<<" rasterizations, "<<raster.stats().textLayoutsCreated<<" text layouts, "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-building).count()<<" ms (WARP fixture)\n";
+    frame(time+=.5);
+    gpu::LayerScene geometry(raster);gpu::LayerRasterOptions fixtureOptions;geometry.load(Json::Object{{"bounds",Json::Array{0,0,400,334}},{"children",Json::Array{}}},fixtureOptions);gpu::NativeModuleSurface surface(geometry,core::Module::volume);surface.update({},settings,modules.sample(time).presentation.current,1);
+    const auto contentWorld=surface.pose().contentWorld;const auto inverseContent=core::source::inverseSourceMatrix(contentWorld);core::Projection plane=core::Projection::viewport(gpu::layerViewportProjection(1280,800)*contentWorld,1280,800);
+    const auto point=[&](double x,double y){const auto p=plane.project({x,y});check(p.has_value(),"Source plane projects fixture point");return *p;};
+    const auto bytes=[&](const char*state){std::cout<<"Volume resident ("<<state<<"): raster cache "<<raster.stats().resourceBytes<<" B in "<<raster.stats().entries<<" entries, GPU "<<renderer.stats().resourceBytes<<" B in "<<renderer.stats().textures<<" textures\n";};
+    bytes("App volume, three rows");
+    // The title's local origin is canvas (12,0): canvas centre (200,167) is local (188,167).
+    const auto centre=[&]{return contentPoint(inverseContent,draw(composition,"volume/title"),188,167);};
+    const double w0=1+10./700;
+    const auto press=[&](double x,double y,std::string_view expected){const auto p=point(x,y);const auto raster0=raster.stats();const auto begin=std::chrono::steady_clock::now();
+        check(preview.pointer({app::PointerKind::down,app::PointerButton::left,p.x,p.y},time+=.5)&&preview.pointer({app::PointerKind::up,app::PointerButton::left,p.x,p.y},time),"A projected detail button takes the press");
+        const auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count();const auto rasters=raster.stats().rasterizations-raster0.rasterizations,layouts=raster.stats().textLayoutsCreated-raster0.textLayoutsCreated;
+        std::cout<<"Volume owner switch to "<<expected<<": "<<rasters<<" rasterizations, "<<layouts<<" text layouts, "<<ms<<" ms on the press (WARP fixture)\n";return std::pair{rasters,layouts};};
+    // Every frame: the page centre slides straight back to rest (no vertical
+    // motion, no reversal), and header, detail and rows move as one.
+    const auto motion=[&](const char*what,bool rows){
+        frame(time+=.05); // the first frame comes late after the switch
+        const auto first=preview.state().actionSample(time);check(first.active&&first.transform.values[12]==11&&first.transform.values[14]==-10,"The first frame after the switch shows the source start pose");
+        auto c=centre();check(std::abs(c[0]-(200+11/w0))<1e-6&&std::abs(c[1]-167)<1e-6,"The page centre starts 11 points to the side at the source depth, not lifted or pulled to a corner");
+        double previous=c[0];unsigned frames{};
+        do{frame(time+=1./60);++frames;c=centre();
+            check(std::abs(c[1]-167)<1e-6&&c[0]<=previous+1e-9&&c[0]>=200-1e-9,what);previous=c[0];
+            const auto title=inverseContent*draw(composition,"volume/title").world*core::Matrix4::translation(-12,0);
+            const auto detailButton=inverseContent*draw(composition,"volume/action/4/plate").world;
+            for(std::size_t n=0;n<16;++n)check(std::abs(title.values[n]-detailButton.values[n])<1e-9,"Header surfaces share one content motion");
+            if(rows){const auto row=inverseContent*draw(composition,"volume/app-row/name").world*core::Matrix4::translation(-18,-235);for(std::size_t n=0;n<16;++n)check(std::abs(title.values[n]-row.values[n])<1e-9,"App rows move rigidly with the page");}
+            check(frames<40,"The motion settles");}while(preview.requiresFrames(time));
+        std::cout<<what<<": "<<frames<<" frames after the first, rest offset "<<c[0]-200<<'\n';
+        check(std::abs(c[0]-200)<1e-9&&std::abs(c[1]-167)<1e-9,"The motion rests exactly in place");check(frames>=10&&frames<=12,"The motion lasts the source 0.18 s at 60 frames per second");
+    };
+    // App volume -> Headphones / Bluetooth (canvas 12..193 x 205..231).
+    const auto toHeadphones=press(100,218,"Headphones / Bluetooth");check(preview.state().headphones(),"Headphones page shown");
+    motion("Each frame moves the Headphones page straight back to rest",false);
+    check(toHeadphones.first<=13&&toHeadphones.second<=6,"Switching repaints only the two highlights, the device rows and the page controls");
+    bytes("Headphones, rows parked");
+    // Headphones / Bluetooth -> App volume (canvas 202..388 x 205..231).
+    const auto parkedStats=preview.sceneStats();check(parkedStats.rowParks==5&&parkedStats.detailBuilds>=2,"The owner's Headphones page parks its five retained rows");
+    const auto toApps=press(295,218,"App volume");check(!preview.state().headphones()&&preview.entries().size()==7,"App volume composes its parked rows again");
+    check(preview.sceneStats().rowRevivals==parkedStats.rowRevivals+5&&preview.sceneStats().rowBuilds==parkedStats.rowBuilds&&preview.sceneStats().structureUpdates==parkedStats.structureUpdates,"Returning revives the parked rows without building a row or the header again");
+    motion("Each frame moves the App volume page straight back to rest",true);
+    check(toApps.first<=5&&toApps.second<=1,"Returning repaints only the two highlights and the list's status line, track and thumb");
+    // Settled: no motion, no allocation, no raster, no upload.
+    const auto settledRaster=raster.stats();const auto settledGPU=renderer.stats();allocations=0;counting=true;
+    try{for(unsigned n=0;n<30;++n){preview.update({},settings,modules.sample(time+=1./60).presentation,1,time);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
+    check(allocations==0&&raster.stats().rasterizations==settledRaster.rasterizations&&renderer.stats().textureUploads==settledGPU.textureUploads&&!preview.requiresFrames(time),"Settled frames after a switch allocate, rasterize and upload nothing");
+    // Leave Volume from the Headphones page: once the departure is published
+    // its GPU textures go with the composition and its parked rows are released.
+    press(100,218,"Headphones / Bluetooth");frame(time+=.3);bytes("Headphones before leaving");
+    settings.module=core::Module::power;modules.select(core::Module::power,time+=.1);for(unsigned n=0;n<90;++n)frame(time+=1./60);
+    check(preview.entries().empty(),"A departed Volume composes nothing");bytes("Volume hidden");
+    check(renderer.stats().textures==0,"The composition releases the hidden Volume's textures");
+    composition.setEntries(renderer,{});preview.collected(renderer);preview.release(renderer);composition.detach(renderer);check(renderer.stats().textures==0&&renderer.stats().meshes==0,"Every Volume resource is retired");renderer.reset();
 }
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shader to isolated Volume integration fixture");run(argv[1]);scrolling(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass shader to isolated Volume integration fixture");run(argv[1]);scrolling(argv[1]);pageSwitch(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume preview checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

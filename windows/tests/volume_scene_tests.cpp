@@ -127,6 +127,35 @@ void listLayout(){
     check(leaf(plan,"volume/app-row/0/name")["position"]==Json::Array{18,235-15.}&&leaf(plan,"volume/app-row/3/name")["position"]==Json::Array{18,235+93-15.},"Row captions follow the offset exactly");
     rejects([&]{gpu::VolumeController bad(fixture(),{},{},gpu::VolumeLayout{4});},"The canvas fits at most three app rows");
 }
+// User-reported: switching between Headphones / Bluetooth and App volume
+// "shook". The source motion (VolumeCanvas.animateAction) is a 0.18 s
+// sublayerTransform from translate(11,0,-10)·m34(-1/700) to identity on the
+// content layer, which Core Animation renders about the layer's anchor (its
+// centre) and flattens into its plane, starting when the transaction commits.
+// Applied about the top-left corner it shrank the module towards the corner
+// and dragged the whole page up and left by ~2.4-2.8 points; started at the
+// press it lost its first frames to the page rebuild.
+std::array<double,3>apply(const core::Matrix4&m,double x,double y){const auto&v=m.values;return {v[0]*x+v[4]*y+v[12],v[1]*x+v[5]*y+v[13],v[3]*x+v[7]*y+v[15]};}
+void actionMotion(){
+    gpu::VolumeController c(fixture());c.setActive(true);
+    check(gpu::volumeContentTransform({})==core::Matrix4{},"A settled action leaves the content exactly in place");
+    check(c.perform("audio:headphones",1)&&c.headphones(),"The detail switch requests the source action");
+    // Pending until a frame presents it: the start pose, however late.
+    for(const double t:{1.,1.05,3.}){const auto s=c.actionSample(t);check(s.active&&s.transform.values[12]==11&&s.transform.values[14]==-10&&s.reveal==core::Rect{10,0,390,334},"A requested action holds the source start pose until a frame presents it (Core Animation begins at the commit, after the repaint)");}
+    check(c.presentAction(3)&&!c.presentAction(3.01),"The first presenting frame begins the motion once");
+    const auto start=c.actionSample(3);check(start.active&&start.transform.values[12]==11,"The first presented frame shows the start pose, not a motion already advanced by the rebuild");
+    const double w0=1+10./700;const auto rendered=gpu::volumeContentTransform(start.transform);
+    const auto anchor=apply(rendered,200,167),corner=apply(rendered,0,0),opposite=apply(rendered,400,334);
+    check(std::abs(anchor[0]/anchor[2]-(200+11/w0))<1e-9&&std::abs(anchor[1]/anchor[2]-167)<1e-9,"The content centre only slides sideways (11 points through the source depth)");
+    check(std::abs(corner[0]/corner[2]-(200-189/w0))<1e-9&&std::abs(corner[1]/corner[2]-(167-167/w0))<1e-9&&std::abs(opposite[1]/opposite[2]-(167+167/w0))<1e-9,"The source depth shrinks the page symmetrically about its centre, not towards its top-left corner");
+    check(rendered.values[2]==0&&rendered.values[6]==0&&rendered.values[14]==0,"The content plane is flattened: no depth leaves the plane");
+    // The anchor moves monotonically back to rest, never vertically.
+    double previous=anchor[0]/anchor[2];for(int n=1;n<=12;++n){const auto t=3+n/60.;const auto s=c.actionSample(t);const auto p=apply(gpu::volumeContentTransform(s.transform),200,167);const double x=p[0]/p[2];
+        check(std::abs(p[1]/p[2]-167)<1e-9&&x<=previous+1e-12&&x>=200-1e-12,"Each frame moves the page centre straight back towards rest, without vertical motion or overshoot");previous=x;}
+    check(!c.actionSample(3.18).active&&!c.presentAction(3.2),"The motion ends after the source 0.18 s");
+    check(c.perform("audio:applications",4)&&!c.headphones()&&c.actionSample(4).active,"Back to App volume requests the motion again");c.setActive(false);check(!c.actionSample(5).active&&!c.presentAction(5),"Leaving Volume drops a pending motion");
+    c.setActive(true);check(c.perform("audio:headphones",6,true)&&!c.actionSample(6).active&&!c.presentAction(6),"Reduced motion requests no action");
+}
 #ifdef _WIN32
 class Window{public:Window(){WNDCLASSW c{};c.lpfnWndProc=DefWindowProcW;c.hInstance=GetModuleHandleW(nullptr);c.lpszClassName=L"EndfieldVolumeOwnedFixture";atom=RegisterClassW(&c);check(atom!=0,"Register owned Volume fixture");hwnd=CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP|WS_EX_TOOLWINDOW,c.lpszClassName,L"Owned Volume fixture",WS_POPUP,0,0,400,334,nullptr,nullptr,c.hInstance,nullptr);check(hwnd!=nullptr,"Create hidden owned Volume fixture");}~Window(){if(hwnd)DestroyWindow(hwnd);if(atom)UnregisterClassW(reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(atom)),GetModuleHandleW(nullptr));}HWND hwnd{};ATOM atom{};};
 // Names of the composed app rows' caption draws, in paint order: y of each.
@@ -159,9 +188,37 @@ template<class Entries>void scrolling(gpu::Renderer&renderer,gpu::LayerRasterize
     c.scroll({20,300},-1000,time+=.01);publish();const auto dragged=scene.stats();check(c.applicationScroll()==0&&c.mouseDown({60,300},time+=.01)&&c.panning(),"List drag starts");for(unsigned n=1;n<=40;++n){c.mouseDragged({60,300-n*3.5});publish();}c.mouseUp();
     check(scene.stats().structureUpdates==dragged.structureUpdates&&scene.stats().localUpdates==dragged.localUpdates&&std::abs(c.applicationScroll()-140)<1e-9&&scene.rowCount()<=7,"Dragging through the list moves retained rows only and keeps the window bounded");
 }
+// User-reported shaking on the Headphones / App volume switch: the switch
+// used to reload the whole module (every caption, plate and slider) and to
+// destroy and rebuild every app row, so its first frame came late. Now the
+// header keeps its surfaces (two highlight leaves change), the detail page
+// alone reloads, and the Headphones page parks the rows instead.
+template<class Entries>void detailSwitch(gpu::Renderer&renderer,gpu::LayerRasterizer&raster,gpu::LayerComposition&composition,gpu::NativeVolumeScene&scene,gpu::VolumeController&c,Entries entries){
+    double time=40;auto publish=[&](double t){scene.syncContent();scene.updatePose({},1,t);composition.setEntries(renderer,entries());check(scene.collectRetired(renderer),"Retired rows release after publication");composition.present(renderer);};
+    c.scroll({20,300},-1000,time);publish(time);const auto rows=scene.rowCount();check(rows>=4&&!c.headphones(),"App volume composes its retained rows");
+    auto before=scene.stats();auto raster0=raster.stats();
+    check(c.perform("audio:headphones",time+=.5)&&c.headphones(),"Switch to Headphones / Bluetooth");publish(time+=.02);
+    auto after=scene.stats();const auto toHeadphones=raster.stats().rasterizations-raster0.rasterizations,headphonesLayouts=raster.stats().textLayoutsCreated-raster0.textLayoutsCreated;
+    std::cout<<"Volume scene: App volume -> Headphones: "<<toHeadphones<<" rasterizations, "<<headphonesLayouts<<" text layouts (header "<<scene.scene().draws().size()<<" surfaces kept)\n";
+    check(after.structureUpdates==before.structureUpdates&&after.detailBuilds==before.detailBuilds+1&&after.localUpdates==before.localUpdates+2,"The switch keeps the header (two detail-button highlights change) and loads only the detail page");
+    check(scene.rowCount()==0&&scene.parkedRowCount()==rows&&after.rowParks==before.rowParks+rows&&after.rowRetirements==before.rowRetirements&&after.rowBuilds==before.rowBuilds,"The Headphones page parks the app rows instead of destroying them");
+    check(toHeadphones<=13&&headphonesLayouts<=6,"Two highlights plus the two device rows and the page controls are all the switch paints");
+    check(scene.entries().size()==2,"Parked rows are not composed");
+    before=scene.stats();raster0=raster.stats();
+    check(c.perform("audio:applications",time+=.5)&&!c.headphones(),"Back to App volume");publish(time+=.02);after=scene.stats();
+    const auto toApps=raster.stats().rasterizations-raster0.rasterizations,appsLayouts=raster.stats().textLayoutsCreated-raster0.textLayoutsCreated;
+    std::cout<<"Volume scene: Headphones -> App volume: "<<toApps<<" rasterizations, "<<appsLayouts<<" text layouts ("<<rows<<" rows revived)\n";
+    check(scene.rowCount()==rows&&scene.parkedRowCount()==0&&after.rowRevivals==before.rowRevivals+rows&&after.rowBuilds==before.rowBuilds&&after.rowUpdates==before.rowUpdates,"App volume composes the parked rows again without rebuilding or repainting them");
+    check(after.structureUpdates==before.structureUpdates&&toApps<=5&&appsLayouts<=1,"Returning repaints the two highlights and the list's status, track and thumb only");
+    // Leaving Volume from the Headphones page releases its parked rows once
+    // the departing artwork is published without them.
+    check(c.perform("audio:headphones",time+=.5),"Headphones again");publish(time+=.02);check(scene.parkedRowCount()==rows,"Rows parked");
+    c.setActive(false);scene.retainDepartingArtwork(true);composition.setEntries(renderer,entries());check(scene.collectRetired(renderer)&&scene.parkedRowCount()==0,"A departing Volume releases its parked rows after the next publication");
+    scene.retainDepartingArtwork(false);c.setActive(true);check(c.perform("audio:applications",time+=.5),"Reactivated on App volume");publish(time+=.02);check(scene.rowCount()==rows,"Rows are rebuilt after a departure released them");
+}
 void native(const std::filesystem::path&shader){Window window;gpu::Renderer renderer;renderer.initialize(window.hwnd,400,334,{gpu::Driver::warpForTests,shader,gpu::RenderTarget::offscreenForTests});renderer.setCamera(gpu::layerViewportProjection(400,334));gpu::LayerRasterizer raster;gpu::LayerRasterOptions options;options.pixelsPerPoint=1;gpu::LayerImageSource icons;options.memoryImages=&icons;
     auto state=fixture();gpu::VolumeController c(state);c.setActive(true);gpu::NativeVolumeScene scene(c,raster,options);check(scene.syncContent()&&!scene.syncContent(),"Retained Volume source content loads only on explicit events");check(scene.scene().report().unsupported.empty(),"Volume source shapes/text are supported by shared raster");
-    check(scene.rowCount()==5&&scene.entries().size()==6,"The visible app rows and one row below are retained scenes after the module scene");for(const auto&e:scene.entries())check(e.scene->report().unsupported.empty(),"Retained app rows are supported by the shared raster");
+    check(scene.rowCount()==5&&scene.entries().size()==7,"The visible app rows and one row below are retained scenes after the module's header and detail scenes");for(const auto&e:scene.entries())check(e.scene->report().unsupported.empty(),"Retained app rows are supported by the shared raster");
     scene.updatePose({},1,0);gpu::LayerComposition composition;const auto entries=[&]{return scene.entries();};composition.setEntries(renderer,entries());composition.present(renderer);renderer.draw(false);const auto first=renderer.readback();check(!first.pixels.empty(),"Hidden fixture paints real original-style Volume artwork");
     scene.setFeedback(core::Point{100,55},false,false,1);scene.updatePose({},1,1.14);composition.present(renderer);const auto steadyRaster=raster.stats();const auto steadyGPU=renderer.stats();allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){core::Matrix4 matrix;matrix.values[3]=n*.000001;scene.updatePose(matrix,.8f,2+n/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
     check(allocations==0,"120 Volume tilt frames allocate no CPU storage");check(raster.stats().rasterizations==steadyRaster.rasterizations&&raster.stats().textLayoutsCreated==steadyRaster.textLayoutsCreated&&renderer.stats().textureUploads==steadyGPU.textureUploads&&renderer.stats().meshUploads==steadyGPU.meshUploads,"Pointer feedback and tilt reuse artwork/text/GPU resources");
@@ -174,12 +231,13 @@ void native(const std::filesystem::path&shader){Window window;gpu::Renderer rend
     const auto warmedRaster=raster.stats();const auto warmedImages=icons.stats();const auto warmedGPU=renderer.stats();allocations=0;counting=true;try{for(unsigned n=0;n<120;++n){core::Matrix4 matrix;matrix.values[3]=n*.000001;scene.updatePose(matrix,.9f,10+n/60.);composition.present(renderer);}}catch(...){counting=false;throw;}counting=false;
     check(allocations==0&&raster.stats().rasterizations==warmedRaster.rasterizations&&icons.stats().cacheHits==warmedImages.cacheHits&&renderer.stats().textureUploads==warmedGPU.textureUploads,"120 icon-bearing tilt frames perform no allocations, rasterization, cache lookup or texture upload");
     scrolling(renderer,raster,composition,scene,c,entries);
+    detailSwitch(renderer,raster,composition,scene,c,entries);
     composition.detach(renderer);check(scene.releaseResources(renderer)&&renderer.stats().textures==0&&renderer.stats().meshes==0,"Owner detach retires every Volume resource (module scene and app rows) without another publisher");renderer.reset();
 }
 #endif
 }
 #ifdef _WIN32
-int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass HLSL to hidden Volume fixture");portable();listLayout();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int wmain(int argc,wchar_t**argv){const auto hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);try{check(SUCCEEDED(hr)&&argc==2,"Pass HLSL to hidden Volume fixture");portable();listLayout();actionMotion();native(argv[1]);CoUninitialize();std::cout<<"PASS "<<checks<<" Volume checks\n";return 0;}catch(const std::exception&e){counting=false;if(SUCCEEDED(hr))CoUninitialize();std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #else
-int main(){try{portable();listLayout();std::cout<<"PASS "<<checks<<" Volume portable checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
+int main(){try{portable();listLayout();actionMotion();std::cout<<"PASS "<<checks<<" Volume portable checks\n";return 0;}catch(const std::exception&e){counting=false;std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}}
 #endif

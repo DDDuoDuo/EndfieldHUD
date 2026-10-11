@@ -111,7 +111,14 @@ public:
     // Artwork other than the list offset: a scroll or list drag changes only
     // contentRevision, so retained rows move without being repainted.
     std::uint64_t artworkRevision()const noexcept;
+    // The source sublayerTransform/reveal values of the action motion. A
+    // requested motion holds its start pose until presentAction() begins it:
+    // Core Animation starts an implicitly timed animation when the transaction
+    // commits, after the repaint, so rebuilding a page never consumes it.
     VolumeActionSample actionSample(double time)const;
+    // The first frame that presents a requested motion begins it at `time`
+    // (the scene calls this from updatePose). False when nothing is pending.
+    bool presentAction(double time);
     static constexpr core::Rect bounds(){return {0,0,400,334};}
     const VolumeLayout&layout()const noexcept;
     core::Rect applicationViewport()const noexcept;double maximumApplicationScroll()const noexcept;
@@ -136,15 +143,28 @@ struct VolumeStyle {bool dark{true};VolumeColor accent{250./255,212./255,31./255
 struct VolumeSurface {std::string id;core::Matrix4 local;float opacity{1};std::optional<core::Rect>clip;std::string feedback;bool rim{};};
 struct VolumeScenePlan {ehud::data::Json layers;std::vector<VolumeSurface>surfaces;};
 VolumeScenePlan prepareVolumeScene(const VolumeController&,VolumeStyle={});
+// How Core Animation renders VolumeCanvas.content.sublayerTransform: about the
+// content layer's anchor point (the centre of its 400x334 bounds, 200,167) and
+// flattened into the content plane (a CALayer, unlike a CATransformLayer,
+// projects its sublayers onto its own plane before its own transform). The
+// content's z=0 points keep their projective x, y and w; the result stays
+// invertible for plane masks. Identity maps to identity exactly.
+core::Matrix4 volumeContentTransform(const core::Matrix4& sublayerTransform);
 
 #ifdef _WIN32
 class LayerRasterizer;class LayerScene;class Renderer;struct LayerRasterOptions;struct PlaneMask;struct PlaneShutter;struct LayerCompositionEntry;
 struct NativeVolumeSceneStats {
-    std::uint64_t structureUpdates{},localUpdates{},poseUpdates{},feedbackChanges{};
+    // structureUpdates: loads of the header part (title, controls, detail
+    // buttons); detailBuilds: loads of the detail part (Headphones rows or the
+    // app list's status, scrollbar and page controls). localUpdates counts
+    // changed leaves of both. A detail page switch reloads only the detail.
+    std::uint64_t structureUpdates{},localUpdates{},poseUpdates{},feedbackChanges{},detailBuilds{};
     // App rows are retained parts keyed by process identity; a list offset
     // change only moves them (scrollSyncs) and repaints nothing but the
     // clipped highlight of a row crossing the viewport edge (rowUpdates).
-    std::uint64_t rowBuilds{},rowUpdates{},rowRetirements{},scrollSyncs{};
+    // The Headphones page parks them (rowParks) and App volume composes them
+    // again unchanged (rowRevivals).
+    std::uint64_t rowBuilds{},rowUpdates{},rowRetirements{},scrollSyncs{},rowParks{},rowRevivals{};
 };
 class NativeVolumeScene final {
 public:
@@ -161,10 +181,13 @@ public:
     bool updatePose(const core::Matrix4& contentWorld,float opacity,double time,
         std::span<const PlaneMask> ownerMasks={},const PlaneShutter* ownerShutter=nullptr);
     bool requiresFrames(double time)const;
-    // The module artwork without its app rows; the rows are separate retained
-    // scenes. entries() lists all in paint order (rows after this scene).
+    // The header artwork (everything above and including the detail buttons).
+    // The detail page and each app row are separate retained scenes; entries()
+    // lists them in source paint order: header, detail, then the rows.
     LayerScene&scene()noexcept;const LayerScene&scene()const noexcept;
-    std::span<const LayerCompositionEntry>entries()noexcept;std::size_t rowCount()const noexcept;
+    std::span<const LayerCompositionEntry>entries()noexcept;
+    // Composed app rows, and rows parked while the Headphones page shows.
+    std::size_t rowCount()const noexcept;std::size_t parkedRowCount()const noexcept;
     // Resource-only paths for the caller's composition (see LayerScene).
     // collectRetired releases rows that left the window: call it after the
     // composition published entries() without them.

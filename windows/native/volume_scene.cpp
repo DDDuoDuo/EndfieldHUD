@@ -51,6 +51,9 @@ struct VolumeController::Impl {
     struct Pan {bool thumb{};double grab{},origin{};};std::optional<Pan>pan;
     std::vector<std::size_t>apps;std::vector<const VolumeDevice*>connected;std::vector<VolumeControl>actions;std::vector<VolumeSlider>sliders;
     std::uint64_t revision{},artwork{};std::optional<double>lastTime,actionStarted;double actionDirection{1};
+    // A requested action motion holds its start pose until the first frame
+    // that presents it begins it (Core Animation: the transaction commit).
+    bool actionPending{};
     std::size_t pages()const{const auto count=chooser?(*chooser?snapshot.inputs.size():snapshot.outputs.size()):headphones?connected.size():0;return std::max<std::size_t>(1,(count+(chooser?5:1))/(chooser?6:2));}
     bool listShown()const{return !chooser&&!headphones&&snapshot.applicationActivitySupported;}
     // The source per-app status line (perAppAudio.statusMessage at y=300).
@@ -65,7 +68,7 @@ struct VolumeController::Impl {
         if(first==apps.size())return {0,0};return {first?first-1:0,std::min(apps.size(),last+2)};
     }
     void time(double t){need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Volume requires a finite monotonic caller clock");lastTime=t;}
-    void animate(double direction,double t,bool reduced){if(active&&!reduced){actionDirection=direction;actionStarted=t;}else actionStarted.reset();}
+    void animate(double direction,double t,bool reduced){if(active&&!reduced){actionDirection=direction;actionStarted=t;actionPending=true;}else{actionStarted.reset();actionPending=false;}}
     const VolumeApplication*app(std::string_view id)const{const auto found=std::find_if(snapshot.applications.begin(),snapshot.applications.end(),[&](const auto&a){return a.id==id;});return found==snapshot.applications.end()?nullptr:&*found;}
     // Only rows meeting the viewport get a (clipped) slider, as in the source.
     void applicationSliders(){
@@ -106,7 +109,7 @@ void validateStrings(const VolumeStrings&s){
 }
 VolumeController::VolumeController(VolumeSnapshot s,VolumeCallbacks callbacks,VolumeStrings strings,VolumeLayout layout):impl_(std::make_unique<Impl>()){validate(s);validateStrings(strings);need(layout.applicationRows>=2&&layout.applicationRows<=3,"Volume shows two (source) or three app rows");impl_->snapshot=std::move(s);impl_->callbacks=std::move(callbacks);impl_->strings=std::move(strings);impl_->layout=layout;impl_->rebuild();}
 VolumeController::~VolumeController()=default;
-bool VolumeController::setActive(bool value){auto&i=*impl_;if(i.active==value)return false;Impl::Call call(i);i.active=value;if(!value){i.dragged.reset();i.pan.reset();i.chooser.reset();i.selected="volume";i.page=0;i.scroll=0;i.accumulation=0;i.actionStarted.reset();i.rebuild();}if(i.callbacks.setActive)i.callbacks.setActive(value);return true;}
+bool VolumeController::setActive(bool value){auto&i=*impl_;if(i.active==value)return false;Impl::Call call(i);i.active=value;if(!value){i.dragged.reset();i.pan.reset();i.chooser.reset();i.selected="volume";i.page=0;i.scroll=0;i.accumulation=0;i.actionStarted.reset();i.actionPending=false;i.rebuild();}if(i.callbacks.setActive)i.callbacks.setActive(value);return true;}
 bool VolumeController::receiveSnapshot(VolumeSnapshot snapshot){validate(snapshot);auto&i=*impl_;if(i.snapshot==snapshot)return false;if(i.dragged){const bool writable=i.dragged->starts_with("app:")?snapshot.applicationActivitySupported: *i.dragged=="volume"?snapshot.canSetVolume&&snapshot.volume.has_value():snapshot.canSetBalance&&snapshot.balance.has_value();if(snapshot.outputID!=i.snapshot.outputID||!writable)i.dragged.reset();}i.snapshot=std::move(snapshot);i.rebuild();if(i.dragged){const auto s=std::find_if(i.sliders.begin(),i.sliders.end(),[&](const auto&v){return v.id==*i.dragged;});if(s==i.sliders.end()||!s->enabled)i.dragged.reset();}return true;}
 bool VolumeController::setStrings(VolumeStrings s){
     validateStrings(s);if(impl_->strings==s)return false;
@@ -159,10 +162,18 @@ const std::string&VolumeController::selectedSlider()const noexcept{return impl_-
 std::span<const VolumeControl>VolumeController::actions()const noexcept{return impl_->actions;}std::span<const VolumeSlider>VolumeController::sliders()const noexcept{return impl_->sliders;}std::uint64_t VolumeController::contentRevision()const noexcept{return impl_->revision;}std::uint64_t VolumeController::artworkRevision()const noexcept{return impl_->artwork;}
 const VolumeLayout&VolumeController::layout()const noexcept{return impl_->layout;}core::Rect VolumeController::applicationViewport()const noexcept{return impl_->viewport();}double VolumeController::maximumApplicationScroll()const noexcept{return impl_->maximumScroll();}
 std::span<const std::size_t>VolumeController::applicationRows()const noexcept{return impl_->apps;}std::pair<std::size_t,std::size_t>VolumeController::applicationWindow()const noexcept{return impl_->window();}
-VolumeActionSample VolumeController::actionSample(double time)const{const auto&i=*impl_;need(std::isfinite(time)&&(!i.lastTime||time>=*i.lastTime),"Invalid Volume sample clock");VolumeActionSample sample;if(!i.active||!i.actionStarted||time>=*i.actionStarted+.18)return sample;
-    const auto remaining=1-core::CubicTiming{.15,.78,.3,1}.value(std::clamp((time-*i.actionStarted)/.18,0.,1.));const auto p=(-1./700)*remaining,z=-10*remaining;
+VolumeActionSample VolumeController::actionSample(double time)const{const auto&i=*impl_;need(std::isfinite(time)&&(!i.lastTime||time>=*i.lastTime),"Invalid Volume sample clock");VolumeActionSample sample;if(!i.active||!i.actionStarted||(!i.actionPending&&time>=*i.actionStarted+.18))return sample;
+    const auto remaining=i.actionPending?1.:1-core::CubicTiming{.15,.78,.3,1}.value(std::clamp((time-*i.actionStarted)/.18,0.,1.));const auto p=(-1./700)*remaining,z=-10*remaining;
     sample.transform.values[11]=p;sample.transform.values[12]=i.actionDirection*11*remaining;sample.transform.values[14]=z;sample.transform.values[15]=1+p*z;
     sample.reveal={i.actionDirection>0?10*remaining:0,0,400-10*remaining,334};sample.active=true;return sample;
+}
+bool VolumeController::presentAction(double time){auto&i=*impl_;if(!i.actionPending)return false;i.time(time);if(!i.active){i.actionPending=false;i.actionStarted.reset();return false;}i.actionPending=false;i.actionStarted=time;return true;}
+core::Matrix4 volumeContentTransform(const core::Matrix4&s){
+    need(s.finite(),"Invalid Volume content transform");if(s==core::Matrix4{})return s;
+    // Flatten: drop the z output (row 2) and the z input (column 2) of the
+    // content plane's z=0 points; keep x, y and the projective w.
+    auto flat=s;flat.values[2]=0;flat.values[6]=0;flat.values[14]=0;flat.values[8]=0;flat.values[9]=0;flat.values[10]=1;flat.values[11]=0;
+    return core::Matrix4::translation(200,167)*flat*core::Matrix4::translation(-200,-167);
 }
 VolumeSnapshot volumeSnapshotFromEndpoints(const AudioEndpointSnapshot&audio){VolumeSnapshot s;s.outputID=utf8(audio.defaultOutputID);s.inputID=utf8(audio.defaultInputID);
     for(const auto&d:audio.outputs)s.outputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});for(const auto&d:audio.inputs)s.inputs.push_back({utf8(d.id),utf8(d.name),d.headphones,d.bluetooth});
@@ -208,21 +219,28 @@ struct Artwork {
 bool rowsShown(const VolumeController&c){return !c.choosing()&&!c.headphones()&&c.snapshot().applicationActivitySupported&&!c.applicationRows().empty();}
 // Source thumb travel at the current offset (0 when the list fits).
 double thumbOffset(const VolumeController&c){const auto max=c.maximumApplicationScroll();if(max<=0)return 0;const auto height=c.applicationViewport().height;const auto size=std::max(12.,height*height/(max+height));return (height-size)*c.applicationScroll()/max;}
-// Everything but the app rows, in source paint order. `rows` receives the
-// surface index where the source paints its app rows (SIZE_MAX: none). The
-// scrollbar thumb sits `thumb` points below its top position.
-void mainArtwork(Artwork&a,const VolumeController&controller,std::size_t&rows,double thumb){
-    rows=SIZE_MAX;const auto&s=controller.snapshot();const auto&labels=controller.strings();const auto title=controller.choosing()?(controller.choosingInput()?labels.inputDevice:labels.outputDevice):labels.title;
+// The header in source paint order: title, subtitle and either the device
+// chooser rows or the main controls up to the Headphones / App volume buttons.
+void headArtwork(Artwork&a,const VolumeController&controller){
+    const auto&s=controller.snapshot();const auto&labels=controller.strings();const auto title=controller.choosing()?(controller.choosingInput()?labels.inputDevice:labels.outputDevice):labels.title;
     a.text("volume/title",title.starts_with("//")?title:"// "+title,{12,0,310,20},15,a.primary,"Semibold");a.text("volume/subtitle",s.status.value_or(controller.choosing()?labels.chooseConnected:labels.subtitle),{12,23,376,13},9.5,a.muted);
-    if(controller.choosing()){if(controller.actions().size()==1)a.text("volume/empty-devices",labels.noConnectedDevices,{20,148,360,35},13,a.muted,"Regular","center");for(std::size_t n=0;n<controller.actions().size();++n)if(controller.actions()[n].id!="audio:previous"&&controller.actions()[n].id!="audio:next")a.button(controller.actions()[n],n);}
-    else {
-        a.text("volume/output-label",labels.output,{12,47,67,17},11.5,a.primary);a.text("volume/input-label",labels.input,{12,82,67,17},11.5,a.primary);
-        for(std::size_t n=0;n<2;++n)a.button(controller.actions()[n],n);
-        a.text("volume/volume-label",labels.volume,{12,116,65,16},11.5,a.primary);a.text("volume/volume-value",s.volume?percent(*s.volume):labels.unavailable,{12,133,67,14},9.5,a.muted);a.button(controller.actions()[2],2);
-        a.text("volume/balance-label",labels.balance,{12,161,65,16},11.5,a.primary);a.text("volume/left","L",{83,163,15,15},10,a.muted,"Regular","center");a.text("volume/right","R",{351,163,16,15},10,a.muted,"Regular","center");
-        for(std::size_t n=0;n<controller.sliders().size();++n)if(!controller.sliders()[n].id.starts_with("app:"))a.slider(controller.sliders()[n],"volume/slider/"+std::to_string(n));
-        a.text("volume/balance-description",!s.canSetBalance?labels.unsupportedBalance:s.balance?(std::abs(*s.balance)<.01?labels.centered:std::string(*s.balance<0?"L ":"R ")+percent(std::abs(*s.balance))):labels.missingBalance,{82,185,306,12},9,a.muted,"Regular","center");if(!s.canSetVolume)a.text("volume/device-controls",labels.deviceControls,{82,144,306,12},8.5,a.muted);
-        a.button(controller.actions()[3],3);a.button(controller.actions()[4],4);
+    if(controller.choosing()){if(controller.actions().size()==1)a.text("volume/empty-devices",labels.noConnectedDevices,{20,148,360,35},13,a.muted,"Regular","center");for(std::size_t n=0;n<controller.actions().size();++n)if(controller.actions()[n].id!="audio:previous"&&controller.actions()[n].id!="audio:next")a.button(controller.actions()[n],n);return;}
+    a.text("volume/output-label",labels.output,{12,47,67,17},11.5,a.primary);a.text("volume/input-label",labels.input,{12,82,67,17},11.5,a.primary);
+    for(std::size_t n=0;n<2;++n)a.button(controller.actions()[n],n);
+    a.text("volume/volume-label",labels.volume,{12,116,65,16},11.5,a.primary);a.text("volume/volume-value",s.volume?percent(*s.volume):labels.unavailable,{12,133,67,14},9.5,a.muted);a.button(controller.actions()[2],2);
+    a.text("volume/balance-label",labels.balance,{12,161,65,16},11.5,a.primary);a.text("volume/left","L",{83,163,15,15},10,a.muted,"Regular","center");a.text("volume/right","R",{351,163,16,15},10,a.muted,"Regular","center");
+    for(std::size_t n=0;n<controller.sliders().size();++n)if(!controller.sliders()[n].id.starts_with("app:"))a.slider(controller.sliders()[n],"volume/slider/"+std::to_string(n));
+    a.text("volume/balance-description",!s.canSetBalance?labels.unsupportedBalance:s.balance?(std::abs(*s.balance)<.01?labels.centered:std::string(*s.balance<0?"L ":"R ")+percent(std::abs(*s.balance))):labels.missingBalance,{82,185,306,12},9,a.muted,"Regular","center");if(!s.canSetVolume)a.text("volume/device-controls",labels.deviceControls,{82,144,306,12},8.5,a.muted);
+    a.button(controller.actions()[3],3);a.button(controller.actions()[4],4);
+}
+// The detail page after the header in source paint order (the Headphones
+// device rows, or the app list's status, scrollbar and per-app status line),
+// then the page indicator and page buttons. `rows` receives the surface index
+// where the source paints its app rows (SIZE_MAX: none). The scrollbar thumb
+// sits `thumb` points below its top position.
+void detailArtwork(Artwork&a,const VolumeController&controller,std::size_t&rows,double thumb){
+    rows=SIZE_MAX;const auto&s=controller.snapshot();const auto&labels=controller.strings();
+    if(!controller.choosing()){
         if(controller.headphones()){
             std::vector<const VolumeDevice*>devices;std::set<std::string,std::less<>>seen;for(const auto*list:{&s.outputs,&s.inputs})for(const auto&d:*list)if((d.headphones||d.bluetooth)&&seen.insert(d.id).second)devices.push_back(&d);
             if(devices.empty())a.text("volume/no-headphones",labels.noHeadphones,{18,250,364,35},11,a.muted,"Regular","center",true);else{const auto start=std::min(devices.size(),controller.pageIndex()*2);for(std::size_t n=start;n<std::min(devices.size(),start+2);++n){const auto&d=*devices[n];const auto y=237+double(n-start)*30;const auto prefix="volume/device-detail/"+std::to_string(n-start);a.text(prefix+"/title",d.name,{18,y,243,17},11,a.primary,"Medium");a.text(prefix+"/detail",std::string(d.bluetooth?"Bluetooth":labels.headphones)+(d.id==s.outputID?labels.outputSuffix:""),{269,y+1,112,16},9,a.muted,"Regular","right");a.fillRect(prefix+"/line",{16,y+24,368,.5},alpha(a.muted,.25));}}
@@ -238,6 +256,8 @@ void mainArtwork(Artwork&a,const VolumeController&controller,std::size_t&rows,do
     }
     if(controller.pageCount()>1)a.text("volume/page",std::to_string(controller.pageIndex()+1)+" / "+std::to_string(controller.pageCount()),{299,307,54,15},10,a.muted,"Regular","center");for(std::size_t n=0;n<controller.actions().size();++n)if(controller.actions()[n].id=="audio:previous"||controller.actions()[n].id=="audio:next")a.button(controller.actions()[n],n);
 }
+// Everything but the app rows, in source paint order.
+void mainArtwork(Artwork&a,const VolumeController&controller,std::size_t&rows,double thumb){headArtwork(a,controller);detailArtwork(a,controller,rows,thumb);}
 // One retained app row in row-local coordinates (its slider row top at y=0).
 // `visible` is the slider's part inside the viewport, relative to that top
 // (the source highlight is drawn over the visible rectangle only).
@@ -273,8 +293,9 @@ Json payload(Json node){node["position"]=Json::Array{0,0};return node;}
 }
 struct NativeVolumeScene::Impl {
     struct Track {std::string id;double from{},target{},start{},duration{};bool active{};};
-    // One retained LayerScene: the module artwork, or one app row keyed by
-    // its process identity (row = list index, visible = clipped slider part).
+    // One retained LayerScene: the header, the detail page, or one app row
+    // keyed by its process identity (row = list index, visible = clipped
+    // slider part).
     struct Part {
         explicit Part(LayerRasterizer&r):scene(r){}
         LayerScene scene;VolumeScenePlan plan;std::vector<Json>payloads;std::vector<LayerPlacement>placements;std::vector<std::array<PlaneMask,8>>masks;
@@ -285,17 +306,19 @@ struct NativeVolumeScene::Impl {
         // released, so a stale value only skips redundant work).
         std::uint64_t uploaded{UINT64_MAX};
     };
-    VolumeController*controller;LayerRasterizer*raster;LayerRasterOptions options;VolumeStyle style;Part main;
-    std::vector<std::unique_ptr<Part>>rows,retired;std::vector<LayerCompositionEntry>entries;
+    VolumeController*controller;LayerRasterizer*raster;LayerRasterOptions options;VolumeStyle style;Part main,detail;
+    // rows: composed app rows; parked: rows kept while the Headphones page
+    // hides the list; retired: rows awaiting release after a publication.
+    std::vector<std::unique_ptr<Part>>rows,parked,retired;std::vector<LayerCompositionEntry>entries;
     std::uint64_t revision{},artwork{};bool styleDirty{},posed{},departing{};std::optional<double>lastTime;NativeVolumeSceneStats stats;
     // Placement state captured at the last content sync (a departing module
     // keeps it while the controller has already reset its offset).
     std::size_t thumb{SIZE_MAX};double placedScroll{},placedThumb{};Rect viewport{12,234,376,64};
-    Impl(VolumeController&c,LayerRasterizer&r,LayerRasterOptions o,VolumeStyle s):controller(&c),raster(&r),options(std::move(o)),style(s),main(r){entries.reserve(12);rows.reserve(8);retired.reserve(8);entries.push_back({&main.scene,{}});}
+    Impl(VolumeController&c,LayerRasterizer&r,LayerRasterOptions o,VolumeStyle s):controller(&c),raster(&r),options(std::move(o)),style(s),main(r),detail(r){entries.reserve(12);rows.reserve(8);parked.reserve(8);retired.reserve(16);entries.push_back({&main.scene,{}});entries.push_back({&detail.scene,{}});}
     void time(double t){need(std::isfinite(t)&&(!lastTime||t>=*lastTime),"Volume scene requires a finite monotonic owner clock");lastTime=t;}
     static double sample(const Track&track,double time){if(!track.active||track.duration<=0)return track.target;return track.from+(track.target-track.from)*core::CubicTiming{0,0,.58,1}.value(std::clamp((time-track.start)/track.duration,0.,1.));}
-    template<class F>void each(F&&f){f(main);for(auto&p:rows)f(*p);}
-    template<class F>void each(F&&f)const{f(main);for(const auto&p:rows)f(*p);}
+    template<class F>void each(F&&f){f(main);f(detail);for(auto&p:rows)f(*p);}
+    template<class F>void each(F&&f)const{f(main);f(detail);for(const auto&p:rows)f(*p);}
     // Equal surface lists update only changed leaves; otherwise the part is
     // reloaded and its feedback tracks carry over by control and rim.
     bool sync(Part&p,VolumeScenePlan next,bool force,std::uint64_t&leafUpdates){
@@ -314,25 +337,36 @@ struct NativeVolumeScene::Impl {
             // finite feedback never enter this path or reshape caption glyphs.
             for(std::size_t n=0;n<next.surfaces.size();++n)if(force||nextPayloads[n]!=p.payloads[n]){p.scene.updateLocalContent(next.surfaces[n].id,++p.localRevisions[n],next.layers["children"].array()[n],options);++leafUpdates;}
         }
-        p.plan=std::move(next);p.payloads=std::move(nextPayloads);p.loaded=true;return structure;
+        // The layer tree is never read again once loaded: keep only the
+        // surfaces (placement) and the leaf payloads (change detection).
+        p.plan=std::move(next);p.plan.layers=Json{};p.payloads=std::move(nextPayloads);p.loaded=true;return structure;
     }
+    // A part that leaves the composition: destroyed at once if it was never
+    // handed to one, otherwise released after the caller's next publication.
+    void retire(std::unique_ptr<Part>p){if(!p)return;if(p->exposed){retired.push_back(std::move(p));++stats.rowRetirements;}}
     // The retained row window: rows meeting the viewport plus one either
-    // side. Rows outside it retire; ones never handed to a composition are
-    // destroyed at once, published ones after the caller's next publication.
+    // side. Rows outside it retire. The Headphones page only hides the list
+    // (the source keeps its offset), so its rows are parked, not retired.
     void syncRows(){
-        const auto&c=*controller;const auto&apps=c.snapshot().applications;const auto listed=c.applicationRows();const auto[first,last]=c.applicationWindow();
-        viewport=c.applicationViewport();placedScroll=c.applicationScroll();std::vector<std::unique_ptr<Part>>next;next.reserve(last-first);
-        for(auto k=first;k<last;++k){const auto&app=apps[listed[k]];std::unique_ptr<Part>part;
-            if(const auto found=std::find_if(rows.begin(),rows.end(),[&](const auto&p){return p&&p->application==app.id;});found!=rows.end())part=std::move(*found);
-            else if(const auto old=std::find_if(retired.begin(),retired.end(),[&](const auto&p){return p->application==app.id;});old!=retired.end()){part=std::move(*old);retired.erase(old);}
-            if(!part){part=std::make_unique<Part>(*raster);part->application=app.id;}
-            const auto top=viewport.y+double(k)*31-placedScroll;Rect visible{151,0,185,28};if(const auto v=intersect({151,top,185,28},viewport))visible={v->x,v->y-top,v->width,v->height};
-            if(sync(*part,rowArtwork(c,app,visible,style),false,stats.rowUpdates))++stats.rowBuilds;part->row=k;part->visible=visible;next.push_back(std::move(part));
+        const auto&c=*controller;
+        if(c.headphones()&&!c.choosing()&&c.snapshot().applicationActivitySupported){
+            for(auto&p:rows)if(p){parked.push_back(std::move(p));++stats.rowParks;}rows.clear();
+        }else{
+            const auto&apps=c.snapshot().applications;const auto listed=c.applicationRows();const auto[first,last]=c.applicationWindow();
+            viewport=c.applicationViewport();placedScroll=c.applicationScroll();std::vector<std::unique_ptr<Part>>next;next.reserve(last-first);
+            const auto take=[&](std::vector<std::unique_ptr<Part>>&from,std::string_view id){std::unique_ptr<Part>part;if(const auto found=std::find_if(from.begin(),from.end(),[&](const auto&p){return p&&p->application==id;});found!=from.end()){part=std::move(*found);from.erase(found);}return part;};
+            for(auto k=first;k<last;++k){const auto&app=apps[listed[k]];auto part=take(rows,app.id);
+                if(!part){part=take(parked,app.id);if(part)++stats.rowRevivals;}
+                if(!part)part=take(retired,app.id);
+                if(!part){part=std::make_unique<Part>(*raster);part->application=app.id;}
+                const auto top=viewport.y+double(k)*31-placedScroll;Rect visible{151,0,185,28};if(const auto v=intersect({151,top,185,28},viewport))visible={v->x,v->y-top,v->width,v->height};
+                if(sync(*part,rowArtwork(c,app,visible,style),false,stats.rowUpdates))++stats.rowBuilds;part->row=k;part->visible=visible;next.push_back(std::move(part));
+            }
+            for(auto&p:rows)retire(std::move(p));for(auto&p:parked)retire(std::move(p));parked.clear();
+            rows=std::move(next);
         }
-        for(auto&p:rows)if(p&&p->exposed){retired.push_back(std::move(p));++stats.rowRetirements;}
-        rows=std::move(next);
         placedThumb=thumbOffset(c);
-        entries.clear();entries.push_back({&main.scene,{}});for(auto&p:rows)entries.push_back({&p->scene,{}});
+        entries.clear();entries.push_back({&main.scene,{}});entries.push_back({&detail.scene,{}});for(auto&p:rows)entries.push_back({&p->scene,{}});
     }
     bool updateTracks(Part&p,std::optional<std::string_view>hit,bool pressed,bool reduced,double time){bool changed{};
         for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto index=p.trackForSurface[n];if(index==SIZE_MAX)continue;auto&t=p.tracks[index];const auto&s=p.plan.surfaces[n];const bool selected=hit&&*hit==t.id;const double target=selected?(s.rim?1:pressed?1:.62):s.opacity;
@@ -345,12 +379,18 @@ NativeVolumeScene::~NativeVolumeScene()=default;
 bool NativeVolumeScene::syncContent(){auto&i=*impl_;const auto&c=*i.controller;if(i.revision==c.contentRevision()&&!i.styleDirty)return false;
     need(!i.departing,"Departing Volume artwork is retained until reactivation");
     if(i.styleDirty||!i.main.loaded||i.artwork!=c.artworkRevision()){
-        Artwork a(i.style);std::size_t rows{};mainArtwork(a,c,rows,0);if(i.sync(i.main,a.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.structureUpdates;
-        i.thumb=SIZE_MAX;for(std::size_t n=0;n<i.main.plan.surfaces.size();++n)if(i.main.plan.surfaces[n].id=="volume/app-thumb")i.thumb=n;
+        // Header and detail page are separate parts: a detail page switch or
+        // a page step reloads only the detail; the header updates the leaves
+        // that changed (the two detail buttons' highlight).
+        Artwork head(i.style);headArtwork(head,c);if(i.sync(i.main,head.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.structureUpdates;
+        Artwork page(i.style);std::size_t rows{};detailArtwork(page,c,rows,0);if(i.sync(i.detail,page.finish(VolumeController::bounds()),i.styleDirty,i.stats.localUpdates))++i.stats.detailBuilds;
+        i.thumb=SIZE_MAX;for(std::size_t n=0;n<i.detail.plan.surfaces.size();++n)if(i.detail.plan.surfaces[n].id=="volume/app-thumb")i.thumb=n;
     }else ++i.stats.scrollSyncs;
     i.syncRows();i.revision=c.contentRevision();i.artwork=c.artworkRevision();i.styleDirty=false;i.posed=false;return true;
 }
 bool NativeVolumeScene::setStyle(VolumeStyle style){for(double c:style.accent)need(std::isfinite(c)&&c>=0&&c<=1,"Invalid Volume accent");auto&i=*impl_;if(i.style==style)return false;i.style=style;i.styleDirty=true;return true;}
+// A departing module keeps only its composed artwork for the outgoing
+// transition; its parked rows are released by the next collectRetired.
 void NativeVolumeScene::retainDepartingArtwork(bool value)noexcept{auto&i=*impl_;i.departing=value;if(value)i.each([](Impl::Part&p){for(auto&t:p.tracks){t.from=t.target;t.active=false;}});}
 bool NativeVolumeScene::setFeedback(std::optional<Point>point,bool pressed,bool reduced,double time){auto&i=*impl_;i.time(time);need(i.revision==i.controller->contentRevision()&&!i.styleDirty,"Synchronize Volume artwork before feedback");std::optional<std::string_view>hit;double area=std::numeric_limits<double>::infinity();
     if(point&&std::isfinite(point->x)&&std::isfinite(point->y)&&contains(VolumeController::bounds(),*point)){
@@ -361,27 +401,35 @@ bool NativeVolumeScene::setFeedback(std::optional<Point>point,bool pressed,bool 
     if(changed){i.posed=false;++i.stats.feedbackChanges;}return changed;
 }
 bool NativeVolumeScene::updatePose(const Matrix&world,float opacity,double time,std::span<const PlaneMask>ownerMasks,const PlaneShutter*shutter){auto&i=*impl_;i.time(time);need(i.revision&&(i.departing||(i.revision==i.controller->contentRevision()&&!i.styleDirty)),"Synchronize Volume artwork before placement");need(world.finite()&&std::isfinite(opacity)&&opacity>=0&&opacity<=1&&ownerMasks.size()<=6,"Invalid Volume placement");
-    const auto action=i.departing?VolumeActionSample{}:i.controller->actionSample(time);const auto moved=world*action.transform;const auto inverseWorld=core::source::inverseSourceMatrix(world),inverseMoved=core::source::inverseSourceMatrix(moved);
-    const auto place=[&](Impl::Part&p,const Matrix&base,bool row,bool shown){
-        for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto&s=p.plan.surfaces[n];auto&placement=p.placements[n];placement.world=base*(!row&&n==i.thumb?Matrix::translation(0,i.placedThumb)*s.local:s.local);const auto track=p.trackForSurface[n];
+    // The first frame presenting a requested action begins its motion.
+    if(!i.departing)(void)i.controller->presentAction(time);
+    // Core Animation renders the content's sublayerTransform about the
+    // content anchor and flattened into its plane; the reveal mask is the
+    // content's own mask and does not move with its sublayers.
+    const auto action=i.departing?VolumeActionSample{}:i.controller->actionSample(time);const auto moved=world*volumeContentTransform(action.transform);const auto inverseWorld=core::source::inverseSourceMatrix(world),inverseMoved=core::source::inverseSourceMatrix(moved);
+    const auto place=[&](Impl::Part&p,const Matrix&base,bool row,bool shown,std::size_t thumb){
+        for(std::size_t n=0;n<p.plan.surfaces.size();++n){const auto&s=p.plan.surfaces[n];auto&placement=p.placements[n];placement.world=base*(n==thumb?Matrix::translation(0,i.placedThumb)*s.local:s.local);const auto track=p.trackForSurface[n];
             placement.opacity=shown?(track!=SIZE_MAX?static_cast<float>(Impl::sample(p.tracks[track],time)):s.opacity)*opacity:0.f;
             std::copy(ownerMasks.begin(),ownerMasks.end(),p.masks[n].begin());auto count=ownerMasks.size();p.masks[n][count++]={inverseWorld,action.reveal};
             if(row)p.masks[n][count++]={inverseMoved,i.viewport};else if(s.clip)p.masks[n][count++]={inverseMoved,*s.clip};placement.masks={p.masks[n].data(),count};}
         p.scene.setPlacements(p.placements);p.scene.setGroupShutter(shutter?std::optional<PlaneShutter>{*shutter}:std::nullopt);for(auto&t:p.tracks)if(time>=t.start+t.duration)t.active=false;
     };
-    place(i.main,moved,false,true);
+    place(i.main,moved,false,true,SIZE_MAX);place(i.detail,moved,false,true,i.thumb);
     // Rows move by the list offset alone: no artwork, text or mesh changes.
-    for(auto&p:i.rows){const auto top=i.viewport.y+double(p->row)*31-i.placedScroll;place(*p,moved*Matrix::translation(0,top),true,intersect({12,top,376,30},i.viewport).has_value());}
+    for(auto&p:i.rows){const auto top=i.viewport.y+double(p->row)*31-i.placedScroll;place(*p,moved*Matrix::translation(0,top),true,intersect({12,top,376,30},i.viewport).has_value(),SIZE_MAX);}
     i.posed=true;++i.stats.poseUpdates;return true;
 }
 bool NativeVolumeScene::requiresFrames(double time)const{const auto&i=*impl_;need(std::isfinite(time)&&(!i.lastTime||time>=*i.lastTime),"Invalid Volume frame clock");if(i.departing)return false;if(i.controller->actionSample(time).active)return true;bool value{};i.each([&](const Impl::Part&p){for(const auto&t:p.tracks)value=value||(t.active&&time<t.start+t.duration);});return value;}
 LayerScene&NativeVolumeScene::scene()noexcept{return impl_->main.scene;}const LayerScene&NativeVolumeScene::scene()const noexcept{return impl_->main.scene;}
 std::span<const LayerCompositionEntry>NativeVolumeScene::entries()noexcept{auto&i=*impl_;for(auto&p:i.rows)p->exposed=true;return i.entries;}
-std::size_t NativeVolumeScene::rowCount()const noexcept{return impl_->rows.size();}
+std::size_t NativeVolumeScene::rowCount()const noexcept{return impl_->rows.size();}std::size_t NativeVolumeScene::parkedRowCount()const noexcept{return impl_->parked.size();}
 void NativeVolumeScene::uploadResources(Renderer&r){auto&i=*impl_;i.each([&](Impl::Part&p){p.exposed=true;if(p.uploaded==p.scene.resourceRevision())return;p.scene.uploadResources(r);p.uploaded=p.scene.resourceRevision();});}
+// Called after a publication: retired rows and, once Volume departs, its
+// parked rows are no longer composed and release their resources.
 bool NativeVolumeScene::collectRetired(Renderer&r){auto&i=*impl_;i.each([&](Impl::Part&p){p.scene.collectRetiredResources(r);});
+    if(i.departing){for(auto&p:i.parked)i.retire(std::move(p));i.parked.clear();}
     while(!i.retired.empty()){if(!i.retired.back()->scene.releaseResources(r))return false;i.retired.pop_back();}return true;}
-bool NativeVolumeScene::releaseResources(Renderer&r){auto&i=*impl_;bool complete=collectRetired(r);i.each([&](Impl::Part&p){complete=p.scene.releaseResources(r)&&complete;p.uploaded=UINT64_MAX;});return complete;}
+bool NativeVolumeScene::releaseResources(Renderer&r){auto&i=*impl_;for(auto&p:i.parked)if(p)i.retired.push_back(std::move(p));i.parked.clear();bool complete=collectRetired(r);i.each([&](Impl::Part&p){complete=p.scene.releaseResources(r)&&complete;p.uploaded=UINT64_MAX;});return complete;}
 NativeVolumeSceneStats NativeVolumeScene::stats()const noexcept{return impl_->stats;}
 }
 #endif

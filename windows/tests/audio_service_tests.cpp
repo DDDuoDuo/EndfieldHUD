@@ -2,6 +2,11 @@
 #include "native/audio_route_journal.hpp"
 #include "native/volume_audio_access.hpp"
 #include "core/data/data_store.hpp"
+#include "native/volume_scene.hpp"
+#ifdef _WIN32
+#include <windows.h>
+#include <tlhelp32.h>
+#endif
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -316,6 +321,53 @@ void processExit(){
     h.until([](const auto&x){const auto*a=app(x,"4244:300");return a&&a->state==n::AudioApplicationRouteState::direct&&a->available;},"The restarted app is listed as direct");
     s.stop();
 }
+// Now Playing reads AudioApplicationRoute::rendering for window-title
+// players (NetEase keeps the song in its title while paused). A session
+// state event republishes it without repainting Volume; hiding per-app audio
+// with nothing owned releases the session manager and every session object.
+void renderingAndRelease(){
+    Harness h;auto&s=*h.service;const auto player=std::string("4242:100");
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown");
+    h.until([](const auto&x){return x.applicationsSupported&&!x.applicationsPaused&&x.applications.size()==2;},"Sessions listed");
+    check(app(s.snapshot(),player)->rendering&&app(s.snapshot(),"77:100")->rendering,"Active sessions publish their process as rendering");
+    const auto volumeBefore=n::volumeSnapshotFromEndpoints(s.snapshot());
+    {std::lock_guard l(h.world->m);h.world->sessions[speaker][0].active=false;}h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&!a->rendering&&a->available;},"A paused player's state event republishes its route as not rendering (still listed and adjustable)");
+    check(n::volumeSnapshotFromEndpoints(s.snapshot())==volumeBefore,"A play/pause changes nothing Volume draws, so Volume does not repaint");
+    {std::lock_guard l(h.world->m);h.world->sessions[speaker][0].active=true;}h.wake(&World::sessionWake);
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->rendering;},"Playing again republishes rendering");
+    unsigned opens{},closes{},pauses{};{std::lock_guard l(h.world->m);opens=h.world->sessionOpens;closes=h.world->sessionCloses;pauses=h.world->sessionPauses;}
+    check(s.vote(n::AudioVoter::volume,false)==0,"Volume hidden with no owned route");
+    h.until([](const auto&x){return x.applicationsPaused&&x.applications.empty();},"Hidden per-app audio publishes no stale routes");
+    {std::lock_guard l(h.world->m);check(h.world->sessionCloses==closes+1&&!h.world->sessionWake&&s.stats().sessionReleases==1,"With nothing owned, hiding releases the session manager and every session object");}
+    check(s.vote(n::AudioVoter::volume,true)==0,"Volume shown again");
+    h.until([](const auto&x){return !x.applicationsPaused&&x.applicationsSupported&&x.applications.size()==2;},"The sessions are listed again on the next showing");
+    {std::lock_guard l(h.world->m);check(h.world->sessionOpens==opens+1,"Showing per-app audio again opens the sessions afresh");}
+    check(s.setApplicationGain(player,.5f),"Owned route");
+    h.until([&](const auto&x){const auto*a=app(x,player);return a&&a->state==n::AudioApplicationRouteState::active;},"Route active");
+    check(s.vote(n::AudioVoter::volume,false)==0,"Volume hidden with an owned route");
+    h.until([](const auto&x){return x.applicationsPaused;},"Paused");
+    {std::lock_guard l(h.world->m);check(h.world->sessionCloses==closes+1&&h.world->sessionPauses>pauses,"An owned route keeps its paused sessions so it can still be restored");}
+    check(s.stopApplication(player),"Restore while hidden");
+    h.world_until([&](World&w){return w.sessionCloses==closes+2;},"Restoring the last owned route while hidden releases the sessions too");
+    check(std::abs(sessionVolume(*h.world,speaker,"{session-player}")-.8f)<1e-6f&&s.stats().sessionReleases==2,"The original level is restored before the release");
+    s.stop();
+}
+#ifdef _WIN32
+// This process's thread IDs (Toolhelp; read-only). Compared as sets, so a
+// loader or pool thread that exits meanwhile cannot disturb the count.
+std::set<DWORD>threads(){std::set<DWORD>ids;const auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);if(snapshot==INVALID_HANDLE_VALUE)return ids;THREADENTRY32 e{};e.dwSize=sizeof(e);const auto pid=GetCurrentProcessId();
+    if(Thread32First(snapshot,&e))do if(e.th32OwnerProcessID==pid)ids.insert(e.th32ThreadID);while(Thread32Next(snapshot,&e));CloseHandle(snapshot);return ids;}
+std::size_t added(const std::set<DWORD>&before){std::size_t n{};for(const auto id:threads())n+=!before.contains(id);return n;}
+void oneWorker(){
+    const auto before=threads();Harness h;auto&s=*h.service;check(added(before)==0,"Constructing the audio service starts no thread");
+    s.vote(n::AudioVoter::eventLog,true);s.vote(n::AudioVoter::volume,true);s.vote(n::AudioVoter::nowPlaying,true);
+    h.until([](const auto&x){return x.applicationsSupported&&x.available;},"Every tier active");
+    const auto running=added(before);std::cout<<"Audio service threads: "<<before.size()<<" before, +"<<running<<" with every tier active (injected backends)\n";
+    check(running==1,"Every audio tier (devices, endpoint control, per-app sessions) shares one worker thread");
+    s.stop();check(added(before)==0,"Stopping the service joins its one worker");
+}
+#endif
 void binding(){
     Harness h;auto&s=*h.service;
     n::VolumeProviderBinding volume(n::volumeProviderAccess(s));auto callbacks=volume.callbacks();n::VolumeController controller(volume.snapshot(),callbacks);
@@ -343,6 +395,10 @@ void binding(){
 }
 }
 int main(){
-    try{lifecycle();fixedOutput();journal();processExit();binding();std::cout<<"PASS "<<checks<<" injected audio service checks (one sleeping worker; no native audio accessed)\n";return 0;}
+    try{lifecycle();fixedOutput();journal();processExit();renderingAndRelease();
+#ifdef _WIN32
+        oneWorker();
+#endif
+        binding();std::cout<<"PASS "<<checks<<" injected audio service checks (one sleeping worker; no native audio accessed)\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

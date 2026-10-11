@@ -102,6 +102,7 @@ std::optional<core::Rect>VolumePreview::clientRect(core::Rect r)const{
 bool VolumePreview::perform(std::string_view action,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!acceptsInput())return false;const bool used=i.controller.perform(action,i.time,i.reduced);i.content();return used;}
 bool VolumePreview::setAccessibleValue(std::string_view slider,double value,double t){auto&i=*impl_;const Impl::Event event(i,t);if(!acceptsInput()||!std::isfinite(value))return false;const bool used=i.controller.setSlider(slider,value);i.content();return used;}
 const gpu::VolumeController&VolumePreview::state()const noexcept{return impl_->controller;}
+gpu::NativeVolumeSceneStats VolumePreview::sceneStats()const noexcept{return impl_->scene.stats();}
 void VolumePreview::upload(gpu::Renderer&r){auto&i=*impl_;if(i.pose){i.scene.uploadResources(r);i.registration.uploadGeometry(r);}}
 std::span<const gpu::LayerCompositionEntry>VolumePreview::entries(){auto&i=*impl_;if(!i.pose)return {};const auto parts=i.scene.entries();i.composed.clear();i.composed.insert(i.composed.end(),parts.begin(),parts.end());i.composed.back().after=i.registration.draws();return i.composed;}
 // After the caller published entries(): rows that left the retained window

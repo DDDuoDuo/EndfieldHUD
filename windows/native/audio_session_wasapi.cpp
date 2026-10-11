@@ -143,6 +143,17 @@ class NativeBackend final:public AudioSessionBackend {
     static void unwatch(Entry&e)noexcept{if(e.exitWait){UnregisterWaitEx(e.exitWait,INVALID_HANDLE_VALUE);e.exitWait=nullptr;}}
     // WAIT_FAILED (no SYNCHRONIZE access) is never treated as termination.
     static bool ended(const Entry&e)noexcept{return e.process&&e.process->value&&WaitForSingleObject(e.process->value,0)==WAIT_OBJECT_0;}
+    // Discovery results per exact process identity (PID + creation time),
+    // kept across close/open: the idle session manager is released while no
+    // one shows per-app audio, and reopening must not re-read executables.
+    // Bounded; the least recently used identity leaves first.
+    struct Metadata{std::wstring name;std::optional<AudioApplicationExecutable>executable;std::string appUserModelID;std::uint64_t used{};};
+    static constexpr std::size_t metadataCapacity=64;
+    std::map<std::string,Metadata,std::less<>>metadata;std::uint64_t metadataClock{};
+    void remember(const std::string&key,const AudioSessionRecord&record,const std::wstring&processName){
+        if(metadata.size()>=metadataCapacity&&!metadata.contains(key))metadata.erase(std::min_element(metadata.begin(),metadata.end(),[](const auto&a,const auto&b){return a.second.used<b.second.used;}));
+        metadata.insert_or_assign(key,Metadata{processName,record.executable,record.appUserModelID,++metadataClock});
+    }
     HRESULT comStatus;bool initialized{};DWORD thread=GetCurrentThreadId();std::wstring endpoint;
     ComPtr<IMMDeviceEnumerator>enumerator;ComPtr<IAudioSessionManager2>manager;ComPtr<NewSessions>notification;bool managerRegistered{};
     std::shared_ptr<EventRoute>route;
@@ -166,6 +177,7 @@ class NativeBackend final:public AudioSessionBackend {
                     // volume events, hover, drag or native callback threads.
                     const auto prior=std::find_if(entries.begin(),entries.end(),[&](const auto&entry){return entry.second.record.processKey==next.record.processKey;});
                     if(prior!=entries.end()){next.record.executable=prior->second.record.executable;next.record.name=prior->second.processName;next.record.appUserModelID=prior->second.record.appUserModelID;}
+                    else if(const auto known=metadata.find(next.record.processKey);known!=metadata.end()){next.record.executable=known->second.executable;next.record.name=known->second.name;next.record.appUserModelID=known->second.appUserModelID;known->second.used=++metadataClock;}
                     else{
                         std::array<wchar_t,32768>path{};DWORD length=static_cast<DWORD>(path.size());
                         if(QueryFullProcessImageNameW(next.process->value,0,path.data(),&length)&&length&&length<path.size()){
@@ -177,7 +189,7 @@ class NativeBackend final:public AudioSessionBackend {
                         next.record.appUserModelID=applicationIdentity(next.process->value);
                     }
                     if(next.record.name.empty()||next.record.name.size()>4096)next.record.name=L"PID "+std::to_wstring(pid);
-                    next.processName=next.record.name;
+                    next.processName=next.record.name;remember(next.record.processKey,next.record,next.processName);
                     TaskString label;if(SUCCEEDED(control->GetDisplayName(&label.value))&&label.value&&*label.value&&wcsnlen(label.value,4097)<=4096){const std::wstring_view display(label.value);
                         const auto resolved=display.front()==L'@'?indirect(display):std::wstring(display);
                         if(!resolved.empty()&&resolved.size()<=4096)next.record.name=resolved;}

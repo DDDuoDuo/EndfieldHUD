@@ -60,6 +60,9 @@ public:
     bool perform(std::string_view action,double time);
     bool setAccessibleValue(std::string_view slider,double value,double time);
     const native::VolumeController&state()const noexcept;
+    // Retained artwork counters (header and detail loads, row builds, parks
+    // and revivals) for hidden coverage; no work.
+    native::NativeVolumeSceneStats sceneStats()const noexcept;
     void upload(native::Renderer&);std::span<const native::LayerCompositionEntry>entries();
     void collected(native::Renderer&);void release(native::Renderer&);
 private:struct Impl;std::unique_ptr<Impl>impl_;
