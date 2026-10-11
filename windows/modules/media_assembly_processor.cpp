@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #if defined(__clang__)
 #pragma clang fp contract(off)
@@ -213,11 +214,12 @@ MediaAssemblyRGBA MediaAssemblyFrameProcessor::source(const MediaAssemblyPixels&
     const long long sx=origin_[0]+column_[0]*x+row_[0]*y,sy=origin_[1]+column_[1]*x+row_[1]*y;
     if(sx<0||sy<0||sx>=(long long)plan_.sourceWidth||sy>=(long long)plan_.sourceHeight)return {};
     const auto*p=s.bytes.data()+std::size_t(sy)*s.stride+std::size_t(sx)*4;const float a=p[3]/255.f;
+    if(s.colour){const auto c=s.colour->convert(p[0],p[1],p[2]);return {c[0]*a,c[1]*a,c[2]*a,a};}
     if(s.premultiplied)return {p[0]/255.f,p[1]/255.f,p[2]/255.f,a};
     return {p[0]/255.f*a,p[1]/255.f*a,p[2]/255.f*a,a};
 }
 void MediaAssemblyFrameProcessor::render(const MediaAssemblyPixels&s,unsigned first,unsigned count,std::span<std::uint8_t>target,std::size_t stride,MediaAssemblyOutputAlpha mode)const{
-    need(s.width==plan_.sourceWidth&&s.height==plan_.sourceHeight&&s.stride>=std::size_t(s.width)*4&&s.bytes.size()>=s.stride*(s.height-1)+std::size_t(s.width)*4,"Media Assembly source does not match its plan");
+    need(s.width==plan_.sourceWidth&&s.height==plan_.sourceHeight&&s.stride>=std::size_t(s.width)*4&&s.bytes.size()>=s.stride*(s.height-1)+std::size_t(s.width)*4&&!(s.colour&&s.premultiplied),"Media Assembly source does not match its plan");
     need(first<=plan_.outputHeight&&count<=plan_.outputHeight-first&&stride>=std::size_t(plan_.outputWidth)*4&&(count==0||target.size()>=stride*(count-1)+std::size_t(plan_.outputWidth)*4),"Invalid Media Assembly output rows");
     const double H=plan_.outputHeight;
     for(unsigned row=0;row<count;++row){
@@ -242,7 +244,7 @@ MediaAssemblyRGBA MediaAssemblyFrameProcessor::stickersOver(MediaAssemblyRGBA p,
     return p;
 }
 void MediaAssemblyFrameProcessor::renderColour(const MediaAssemblyPixels&s,unsigned first,unsigned count,std::span<float>target,std::size_t stride)const{
-    need(s.width==plan_.sourceWidth&&s.height==plan_.sourceHeight&&s.stride>=std::size_t(s.width)*4&&s.bytes.size()>=s.stride*(s.height-1)+std::size_t(s.width)*4,"Media Assembly source does not match its plan");
+    need(s.width==plan_.sourceWidth&&s.height==plan_.sourceHeight&&s.stride>=std::size_t(s.width)*4&&s.bytes.size()>=s.stride*(s.height-1)+std::size_t(s.width)*4&&!(s.colour&&s.premultiplied),"Media Assembly source does not match its plan");
     need(first<=plan_.outputHeight&&count<=plan_.outputHeight-first&&stride>=std::size_t(plan_.outputWidth)*4&&(count==0||target.size()>=stride*(count-1)+std::size_t(plan_.outputWidth)*4),"Invalid Media Assembly colour rows");
     for(unsigned row=0;row<count;++row){
         auto*out=target.data()+std::size_t(row)*stride;
@@ -260,6 +262,98 @@ void MediaAssemblyFrameProcessor::compositeStickers(unsigned first,unsigned coun
 }
 std::vector<std::uint8_t>MediaAssemblyFrameProcessor::render(const MediaAssemblyPixels&s,MediaAssemblyOutputAlpha mode)const{
     std::vector<std::uint8_t>out(std::size_t(width())*height()*4);render(s,0,height(),out,std::size_t(width())*4,mode);return out;
+}
+std::array<float,3>MediaAssemblySourceColour::convert(std::uint8_t r,std::uint8_t g,std::uint8_t b)const noexcept{
+    const float lr=linear[0][r],lg=linear[1][g],lb=linear[2][b];const auto&m=toLinearSRGB;
+    const auto encode=[](float v){return float(v<0?-MediaAssemblyColorPipeline::srgbEncode(-double(v)):MediaAssemblyColorPipeline::srgbEncode(double(v)));};
+    return {encode(m[0]*lr+m[1]*lg+m[2]*lb),encode(m[3]*lr+m[4]*lg+m[5]*lb),encode(m[6]*lr+m[7]*lg+m[8]*lb)};
+}
+namespace {
+// ICC.1 profile fields (big-endian), bounds-checked by the caller.
+struct ProfileBytes {
+    std::span<const std::uint8_t>d;
+    bool has(std::size_t at,std::size_t n)const noexcept{return at<=d.size()&&n<=d.size()-at;}
+    std::uint32_t u32(std::size_t at)const noexcept{return (std::uint32_t(d[at])<<24)|(std::uint32_t(d[at+1])<<16)|(std::uint32_t(d[at+2])<<8)|std::uint32_t(d[at+3]);}
+    std::uint16_t u16(std::size_t at)const noexcept{return std::uint16_t((unsigned(d[at])<<8)|unsigned(d[at+1]));}
+    double s15(std::size_t at)const noexcept{return double(static_cast<std::int32_t>(u32(at)))/65536.;}
+};
+constexpr std::uint32_t signature(const char(&s)[5])noexcept{return (std::uint32_t(std::uint8_t(s[0]))<<24)|(std::uint32_t(std::uint8_t(s[1]))<<16)|(std::uint32_t(std::uint8_t(s[2]))<<8)|std::uint32_t(std::uint8_t(s[3]));}
+struct Tag {std::size_t at{},size{};};
+// One tone curve ('curv' identity/gamma/table or 'para' types 0-4) at the
+// 256 RGB8 codes, as Core Image's outputs show it is applied: a curve
+// within toneMatch of the sRGB transfer becomes the exact sRGB transfer on
+// a 1/4095 grid; one within toneMatch of gamma 1.8 or 2.2 becomes that
+// exact gamma; any other curve is evaluated as written. Gamma and measured
+// curves are raised to at least v/16 (the linear toe).
+constexpr double toneMatch=.0016;
+bool toneCurve(const ProfileBytes&p,Tag t,std::array<float,256>&out,MediaAssemblyToneCurve&kind){
+    if(t.size<12||!p.has(t.at,t.size))return false;const auto type=p.u32(t.at);
+    std::array<double,256>y{};
+    if(type==signature("curv")){
+        const auto n=p.u32(t.at+8);if(n>65536||t.size<12+std::size_t(n)*2)return false;
+        for(unsigned k=0;k<256;++k){const double x=k/255.;
+            if(n==0)y[k]=x;
+            else if(n==1)y[k]=std::pow(x,p.u16(t.at+12)/256.);
+            else{const double at=x*(n-1);const auto i=std::min<std::size_t>(n-2,std::size_t(at));const double f=at-double(i);
+                y[k]=(p.u16(t.at+12+i*2)*(1-f)+p.u16(t.at+12+(i+1)*2)*f)/65535.;}}
+    }else if(type==signature("para")){
+        static constexpr std::array<unsigned,5>counts{1,3,4,5,7};const unsigned function=p.u16(t.at+8);if(function>4||t.size<12+std::size_t(counts[function])*4)return false;
+        std::array<double,7>q{1,1,0,0,0,0,0};for(unsigned n=0;n<counts[function];++n)q[n]=p.s15(t.at+12+n*4);
+        const double g=q[0],a=q[1],b=q[2],c=q[3],d=q[4],e=q[5],f=q[6];
+        const auto power=[&](double x){const double base=a*x+b;return base>0?std::pow(base,g):0.;};
+        for(unsigned k=0;k<256;++k){const double x=k/255.;
+            switch(function){case 0:y[k]=std::pow(x,g);break;case 1:y[k]=a!=0&&x>=-b/a?power(x):0;break;case 2:y[k]=(a!=0&&x>=-b/a?power(x):0)+c;break;
+            case 3:y[k]=x>=d?power(x):c*x;break;default:y[k]=x>=d?power(x)+e:c*x+f;break;}}
+    }else return false;
+    for(const double v:y)if(!std::isfinite(v))return false;
+    const auto within=[&](auto&&reference){for(unsigned k=0;k<256;++k)if(std::abs(y[k]-reference(k/255.))>toneMatch)return false;return true;};
+    if(within([](double x){return MediaAssemblyColorPipeline::srgbDecode(x);})){
+        kind=MediaAssemblyToneCurve::sRGB;for(unsigned k=0;k<256;++k)out[k]=float(std::round(MediaAssemblyColorPipeline::srgbDecode(k/255.)*4095.)/4095.);return true;}
+    for(const auto&known:{std::pair{1.8,MediaAssemblyToneCurve::gamma18},std::pair{2.2,MediaAssemblyToneCurve::gamma22}}){const double gamma=known.first;
+        if(within([gamma](double x){return std::pow(x,gamma);})){kind=known.second;for(unsigned k=0;k<256;++k)out[k]=float(std::max(std::pow(k/255.,gamma),k/255./16.));return true;}}
+    kind=MediaAssemblyToneCurve::measured;for(unsigned k=0;k<256;++k)out[k]=float(std::max(y[k],k/255./16.));
+    return true;
+}
+// sRGB colorants (IEC 61966-2-1 primaries, D65, Bradford-adapted to the D50
+// PCS, s15Fixed16 as an sRGB profile carries them); columns are R, G, B.
+M3 srgbColorants(){
+    const std::array<std::array<double,2>,3>primaries{{{.64,.33},{.30,.60},{.15,.06}}};
+    M3 p{};for(int c=0;c<3;++c){const auto v=xyz(primaries[c]);for(int r=0;r<3;++r)p[r*3+c]=v[r];}
+    const auto s=transform3(inverse(p),xyz({.3127,.3290}));for(int r=0;r<3;++r)for(int c=0;c<3;++c)p[r*3+c]*=s[c];
+    const auto source=transform3(bradford,xyz({.3127,.3290})),target=transform3(bradford,{.9642,1.,.8249});
+    const M3 scale{target[0]/source[0],0,0,0,target[1]/source[1],0,0,0,target[2]/source[2]};
+    auto m=multiply(inverse(bradford),multiply(scale,multiply(bradford,p)));for(auto&v:m)v=std::round(v*65536.)/65536.;return m;
+}
+}
+MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexcept{
+    try{
+        const ProfileBytes p{icc};if(!p.has(0,132))return {};
+        const std::size_t size=p.u32(0);if(size<132||size>icc.size()||p.u32(36)!=signature("acsp")||p.u32(20)!=signature("XYZ "))return {};
+        const ProfileBytes q{icc.first(size)};const auto space=q.u32(16);const bool grey=space==signature("GRAY");if(!grey&&space!=signature("RGB "))return {};
+        const std::size_t count=q.u32(128);if(count>256||!q.has(132,count*12))return {};
+        static const M3 srgbPCS=srgbColorants(),fromXYZ=inverse(srgbPCS);
+        const auto find=[&](std::uint32_t name)->std::optional<Tag>{for(std::size_t n=0;n<count;++n){const auto at=132+n*12;if(q.u32(at)!=name)continue;const Tag t{q.u32(at+4),q.u32(at+8)};if(!q.has(t.at,t.size))return std::nullopt;return t;}return std::nullopt;};
+        for(const auto lookup:{signature("A2B0"),signature("A2B1"),signature("A2B2"),signature("D2B0")})if(find(lookup))return {};
+        auto colour=std::make_shared<MediaAssemblySourceColour>();M3 colorants{};
+        if(grey){
+            const auto k=find(signature("kTRC"));if(!k||!toneCurve(q,*k,colour->linear[0],colour->curves[0]))return {};
+            colour->linear[1]=colour->linear[2]=colour->linear[0];colour->curves[1]=colour->curves[2]=colour->curves[0];colour->toLinearSRGB={1,0,0,0,1,0,0,0,1};
+        }else{
+            const std::array names{signature("rXYZ"),signature("gXYZ"),signature("bXYZ")};const std::array curves{signature("rTRC"),signature("gTRC"),signature("bTRC")};
+            for(int c=0;c<3;++c){
+                const auto x=find(names[std::size_t(c)]);if(!x||x->size<20||q.u32(x->at)!=signature("XYZ "))return {};
+                for(int r=0;r<3;++r)colorants[std::size_t(r*3+c)]=q.s15(x->at+8+std::size_t(r)*4);
+                const auto t=find(curves[std::size_t(c)]);if(!t||!toneCurve(q,*t,colour->linear[std::size_t(c)],colour->curves[std::size_t(c)]))return {};
+            }
+            const auto m=multiply(fromXYZ,colorants);for(std::size_t n=0;n<9;++n){if(!std::isfinite(m[n]))return {};colour->toLinearSRGB[n]=float(m[n]);}
+        }
+        // Matched to sRGB (Core Image then leaves the codes unchanged): three
+        // sRGB curves and the sRGB colorants within 0.001.
+        bool srgb=!grey&&std::all_of(colour->curves.begin(),colour->curves.end(),[](MediaAssemblyToneCurve c){return c==MediaAssemblyToneCurve::sRGB;});
+        for(std::size_t n=0;n<9&&srgb;++n)srgb=std::abs(colorants[n]-srgbPCS[n])<=1e-3;
+        if(srgb)return {MediaAssemblyProfileKind::sRGB,nullptr};
+        return {MediaAssemblyProfileKind::converted,std::move(colour)};
+    }catch(...){return {};}
 }
 void mediaAssemblyResample(const MediaAssemblyPixels&s,unsigned w,unsigned h,std::span<std::uint8_t>target,std::size_t stride){
     need(s.width&&s.height&&w&&h&&s.stride>=std::size_t(s.width)*4&&stride>=std::size_t(w)*4&&target.size()>=stride*(h-1)+std::size_t(w)*4,"Invalid Media Assembly resample");

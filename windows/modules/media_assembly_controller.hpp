@@ -8,8 +8,13 @@
 #include <span>
 
 namespace endfield::modules {
-// Decoded, orientation-applied straight RGBA8 pixels (top-left rows).
-struct MediaAssemblyBitmap {unsigned width{},height{};std::vector<std::uint8_t>straightRGBA;};
+struct MediaAssemblySourceColour; // modules/media_assembly_processor.hpp
+// Decoded, orientation-applied straight RGBA8 pixels (top-left rows). colour
+// is the still's embedded profile (MediaAssemblyProfileKind::converted): the
+// bytes keep their original encoding and every chain converts them into the
+// working space per pixel. Null: sRGB (untagged, matched to sRGB, a movie
+// frame, or already converted by the platform colour management).
+struct MediaAssemblyBitmap {unsigned width{},height{};std::vector<std::uint8_t>straightRGBA;std::shared_ptr<const MediaAssemblySourceColour>colour;};
 // Bounded preview pixels produced by the engine (straight encoded sRGB RGBA8,
 // at most 1024 on each side). Immutable once published.
 //

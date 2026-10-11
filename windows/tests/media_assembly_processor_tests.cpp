@@ -13,6 +13,7 @@
 #include <map>
 #include <new>
 #include <sstream>
+#include <tuple>
 
 namespace {std::atomic<bool>counting{};std::atomic<std::size_t>allocations{};}
 void*operator new(std::size_t n){if(counting)++allocations;if(auto*p=std::malloc(n?n:1))return p;throw std::bad_alloc();}
@@ -294,6 +295,125 @@ void downscale(){
     check(m::mediaAssemblyDownscaleLevels(.43527)==1&&m::mediaAssemblyDownscaleLevels(.21764)==1&&m::mediaAssemblyDownscaleLevels(.2176)==2,"Measured Core Image halving octaves");
     check(m::mediaAssemblyDownscaleLevels(.10882)==2&&m::mediaAssemblyDownscaleLevels(.10881)==3&&m::mediaAssemblyDownscaleLevels(0)==0,"Further octaves and degenerate scale");
 }
+// Embedded colour profiles (tests/fixtures/media-assembly-icc-source.json,
+// written by tools/media_assembly_icc_reference.py from Core Image's own
+// outputs on synthetic ICC.1 profiles embedded in owned PNGs). The
+// MediaAssemblySourceColour model was derived from those outputs only, by
+// recovering Core Image's per-channel linear values through the inverse
+// colorant matrix (every code appears once per channel and row):
+//  1. A profile describing sRGB itself renders every code unchanged (Core
+//     Image matches it to sRGB), so it needs no conversion.
+//  2. Curves within 0.0016 of the sRGB transfer (a 1024-entry table, 'para'
+//     type 3, 'para' with threshold 0.04) give exactly round(sRGB(v)*4095)/
+//     4095 at every code; an exponent of 2.42 (0.003 off) is used as written.
+//  3. Gammas within 0.0016 of 1.8 or 2.2 (563/256, 561/256, 564/256, 461/256,
+//     a 2.2 table) are applied as exactly 1.8 or 2.2; 566/256 and 463/256
+//     (0.0018 off) and gammas next to 1.2, 1.7, 2.3 and 2.6 are used as
+//     written. Every non-sRGB curve is raised to v/16 near black (slopes
+//     1/15.5 and 1/16.5 fit worse).
+//  4. The profile colorants to the D50 PCS, back through the s15Fixed16
+//     sRGB colorants and the extended sRGB encode then reproduce every
+//     identity float within 5e-4 and every RGBA8 byte within one level, and
+//     edits on the converted, unclamped values (colour controls, exposure, a
+//     LUT) land within one level of the Mac export, including the pixels
+//     outside sRGB that the edits bring back into range. Dropping any of
+//     rules 2 and 3 or the toe misses the floats by more than 1e-3.
+void colourProfiles(const J&icc,Cubes&cubes){
+    using T=m::MediaAssemblyToneCurve;
+    check(icc["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!icc["usesAppOrWindow"].boolean(),"ICC fixture uses the authoritative isolated oracle");
+    const unsigned w=unsigned(icc["width"].integer());check(w==256,"Every code value appears once per channel and row");
+    std::vector<std::pair<std::string,m::MediaAssemblyAdjustments>>edits;
+    for(const auto&e:icc["edits"].array()){m::MediaAssemblyAdjustments a;
+        for(const auto&[key,value]:e["adjustments"].object()){
+            if(key=="saturation")a.saturation=value.number();else if(key=="exposure")a.exposure=value.number();
+            else if(key=="filter"){const auto f=std::find(filterIDs.begin(),filterIDs.end(),value.string());check(f!=filterIDs.end(),"Known ICC fixture filter");a.filter=m::MediaAssemblyFilter(f-filterIDs.begin());}
+            else check(false,"Unknown ICC fixture adjustment "+key);}
+        edits.emplace_back(e["name"].string(),a);}
+    check(edits.size()==4&&edits[0].first=="identity","ICC fixture edits");
+    // The derivation's curve classes (rules 2 and 3 above).
+    const std::map<std::string,T,std::less<>>expectedCurve{{"p3-gamma22",T::gamma22},{"p3-gamma18",T::gamma18},{"bt2020-gamma26",T::measured},{"p3-table22",T::gamma22},
+        {"adobe-table",T::sRGB},{"display-p3-para",T::sRGB},{"grey-gamma22",T::gamma22},{"gamma-307",T::measured},{"gamma-435",T::measured},{"gamma-564",T::gamma22},
+        {"gamma-589",T::measured},{"gamma-561",T::gamma22},{"gamma-566",T::measured},{"gamma-567",T::measured},{"gamma-570",T::measured},{"gamma-458",T::measured},
+        {"gamma-463",T::measured},{"gamma-464",T::measured},{"para-srgb-threshold",T::sRGB},{"para-exponent-2.42",T::measured}};
+    std::size_t converted{},matched{},untagged{},probes{},alternatives{};
+    for(const auto&image:icc["images"].array()){
+        const auto name=image["name"].string(),kind=image["kind"].string();const bool grey=kind=="grey",probe=image["probe"].boolean();const unsigned h=unsigned(image["height"].integer());
+        check(h==(probe?1u:4u),"ICC image height: "+name);probes+=probe;
+        std::vector<std::uint8_t>source(std::size_t(w)*h*4,255);
+        for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x){auto*p=source.data()+(std::size_t(y)*w+x)*4;
+            if(grey)p[0]=p[1]=p[2]=std::uint8_t((x+64*y)%256);else{p[0]=std::uint8_t(x);p[1]=std::uint8_t((7*x+64*y+3)%256);p[2]=std::uint8_t((13*x+32*y+101)%256);}}
+        std::shared_ptr<const m::MediaAssemblySourceColour>colour;
+        if(kind=="none")++untagged;
+        else{
+            const auto read=m::mediaAssemblyProfile(base64(image["profile"].string()));
+            if(name=="srgb-matrix"){check(read.kind==m::MediaAssemblyProfileKind::sRGB&&!read.colour,"A profile describing sRGB is matched to sRGB");++matched;}
+            else{check(read.kind==m::MediaAssemblyProfileKind::converted&&read.colour,"Matrix/TRC and grey profiles are converted: "+name);colour=read.colour;++converted;
+                const auto want=expectedCurve.find(name);check(want!=expectedCurve.end()&&colour->curves==std::array{want->second,want->second,want->second},"Tone curve class follows the measured rules: "+name);}
+        }
+        const auto floats=base64(image["identityFloat"].string());check(floats.size()==std::size_t(w)*h*16,"Identity floats: "+name);
+        const auto expectedFloat=[&](std::size_t i){float v;std::memcpy(&v,floats.data()+i*4,4);return v;};
+        const auto byteOf=[](float v){return int(std::floor(std::clamp(v,0.f,1.f)*255.f+.5f));};
+        const auto measure=[&](const m::MediaAssemblySourceColour*c){double worstFloat{};int worstByte{};std::size_t outside{};
+            for(std::size_t p=0;p<std::size_t(w)*h;++p){const auto*px=source.data()+p*4;
+                const auto v=c?c->convert(px[0],px[1],px[2]):std::array<float,3>{px[0]/255.f,px[1]/255.f,px[2]/255.f};bool out{};
+                for(std::size_t ch=0;ch<3;++ch){const float e=expectedFloat(p*4+ch);out=out||e<-.5f/255||e>1+.5f/255;
+                    worstFloat=std::max(worstFloat,double(std::abs(v[ch]-e)));worstByte=std::max(worstByte,std::abs(byteOf(v[ch])-byteOf(e)));}
+                outside+=out;}
+            return std::tuple{worstFloat,worstByte,outside};};
+        const auto[worstFloat,worstByte,outside]=measure(colour.get());
+        std::cout<<"icc "<<name<<": conversion worst float "<<worstFloat<<", worst byte "<<worstByte<<", "<<outside<<" of "<<w*h<<" pixels outside sRGB\n";
+        check(worstFloat<=5e-4&&worstByte<=1,"The source conversion matches Core Image within one level: "+name);
+        if(!colour)check(worstFloat<=1e-6&&outside==0,"Core Image leaves sRGB and untagged codes unchanged: "+name);
+        // Each rule is needed: the alternative misses the floats by > 1e-3.
+        const auto alternative=[&](const char*rule,auto&&curve){auto other=*colour;for(auto&c:other.linear)for(unsigned k=0;k<256;++k)c[k]=float(curve(k/255.));
+            const auto[f,b,o]=measure(&other);(void)o;std::cout<<"icc "<<name<<": without "<<rule<<" worst float "<<f<<", worst byte "<<b<<'\n';
+            check(f>1e-3,std::string("The ")+rule+" is needed for "+name);++alternatives;};
+        if(name=="p3-gamma22"||name=="p3-gamma18"||name=="gamma-561"){
+            const double written=double(image["curve"].array()[1].integer())/256,snapped=name=="p3-gamma18"?1.8:2.2;
+            alternative("gamma snap",[&](double v){return std::max(std::pow(v,written),v/16);});
+            alternative("v/16 toe",[&](double v){return std::pow(v,snapped);});}
+        if(name=="bt2020-gamma26")alternative("v/16 toe",[](double v){return std::pow(v,666./256);});
+        if(name=="adobe-table"||name=="display-p3-para")alternative("1/4095 sRGB grid",[](double v){return m::MediaAssemblyColorPipeline::srgbDecode(v);});
+        const auto&cases=image["cases"].array();check(cases.size()==(probe?1:edits.size()),"Every ICC edit rendered: "+name);
+        const m::MediaAssemblyPixels pixels{w,h,std::size_t(w)*4,source,false,colour.get()};
+        for(std::size_t k=0;k<cases.size();++k){
+            const auto&[editName,a]=edits[k];const auto&c=cases[k];check(c["name"].string()==editName,"ICC case order");
+            const m::MediaAssemblyFrameProcessor processor(w,h,a,cubes.get(a.filter),true);
+            std::vector<std::uint8_t>out(std::size_t(w)*h*4);counting=true;allocations=0;processor.render(pixels,0,h,out,std::size_t(w)*4);counting=false;
+            check(allocations==0,"Converted rows allocate nothing");
+            const auto compare=[&](const std::string&field){const auto expected=base64(c[field].string());check(expected.size()==out.size(),"ICC case bytes");int worst{};
+                for(std::size_t i=0;i<out.size();++i)worst=std::max(worst,std::abs(int(out[i])-int(expected[i])));return worst;};
+            const int worst=compare("export");std::cout<<"icc "<<name<<' '<<editName<<": export worst "<<worst;
+            check(worst<=byteBound,"Edits on the converted source match the Mac export within one level: "+name+" "+editName);
+            if(c.contains("preview")){const int preview=compare("preview");std::cout<<", preview worst "<<preview;check(preview<=byteBound,"The converted source matches the Mac preview within one level: "+name);}
+            std::cout<<'\n';
+        }
+    }
+    check(converted==20&&matched==1&&untagged==1&&probes==13&&alternatives==9,"Every fixture profile was measured");
+    // Malformed or unsupported profiles fall back (never throw, never read
+    // outside the bytes).
+    const auto profile=[&](std::string_view name){for(const auto&image:icc["images"].array())if(image["name"].string()==name)return base64(image["profile"].string());throw std::runtime_error("missing profile");};
+    const auto base=profile("p3-gamma22");
+    const auto put=[](std::vector<std::uint8_t>&b,std::size_t at,std::uint32_t v){b[at]=std::uint8_t(v>>24);b[at+1]=std::uint8_t(v>>16);b[at+2]=std::uint8_t(v>>8);b[at+3]=std::uint8_t(v);};
+    const auto get=[](const std::vector<std::uint8_t>&b,std::size_t at){return (std::uint32_t(b[at])<<24)|(std::uint32_t(b[at+1])<<16)|(std::uint32_t(b[at+2])<<8)|std::uint32_t(b[at+3]);};
+    const auto tag=[&](const std::vector<std::uint8_t>&b,std::string_view s)->std::size_t{const std::uint32_t want=(std::uint32_t(std::uint8_t(s[0]))<<24)|(std::uint32_t(std::uint8_t(s[1]))<<16)|(std::uint32_t(std::uint8_t(s[2]))<<8)|std::uint32_t(std::uint8_t(s[3]));
+        for(std::size_t n=0;n<get(b,128);++n)if(get(b,132+n*12)==want)return 132+n*12;throw std::runtime_error("missing tag");};
+    const auto unsupported=[&](std::vector<std::uint8_t>b,const char*why){check(m::mediaAssemblyProfile(b).kind==m::MediaAssemblyProfileKind::unsupported,why);};
+    check(m::mediaAssemblyProfile(base).kind==m::MediaAssemblyProfileKind::converted,"The unmodified profile converts");
+    unsupported({},"An empty profile is unsupported");
+    unsupported({base.begin(),base.begin()+100},"A truncated header is unsupported");
+    unsupported({base.begin(),base.end()-8},"A profile shorter than its declared size is unsupported");
+    {auto b=base;b[36]='x';unsupported(b,"A profile without the acsp signature is unsupported");}
+    {auto b=base;put(b,16,0x434D594Bu);unsupported(b,"A CMYK profile is left to the platform colour management");}
+    {auto b=base;put(b,20,0x4C616220u);unsupported(b,"A Lab PCS is left to the platform colour management");}
+    {auto b=base;put(b,128,100000);unsupported(b,"An oversized tag table is unsupported");}
+    {auto b=base;put(b,tag(b,"rTRC")+4,std::uint32_t(b.size()));unsupported(b,"A tag outside the profile is unsupported");}
+    {auto b=base;put(b,tag(b,"cprt"),0x41324230u);unsupported(b,"A lookup-table (A2B0) profile is left to the platform colour management");}
+    {auto b=base;put(b,get(b,tag(b,"gXYZ")+4),0x6375727Au);unsupported(b,"A colorant of the wrong type is unsupported");}
+    {auto b=base;put(b,get(b,tag(b,"bTRC")+4)+8,70000);unsupported(b,"A tone curve longer than its tag is unsupported");}
+    {auto b=base;const auto at=tag(b,"rXYZ");for(int k=0;k<4;++k)b[at+std::size_t(k)]=0;unsupported(b,"A profile without its red colorant is unsupported");}
+}
+
 void streaming(){
     // Export streams bands; bands must equal one full render, and the
     // resample used by the video composition keeps associated alpha.
@@ -326,11 +446,12 @@ void performance(Cubes&cubes){
 }
 int main(int argc,char**argv){
     try{
-        if(argc!=4)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly> <highlight-shadow-fit.json>");
+        if(argc!=5)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly> <highlight-shadow-fit.json> <icc-source.json>");
         const auto fixture=J::parse(read(argv[1]),8*1024*1024);
         check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"Authoritative isolated oracle");
         Cubes cubes{argv[2],{}};
-        derivations();downscale();pixels(fixture,cubes);highlightShadowGap(J::parse(read(argv[3]),1024*1024));frames(fixture,cubes,argv[2]);extendedStickers();streaming();performance(cubes);
+        derivations();downscale();pixels(fixture,cubes);highlightShadowGap(J::parse(read(argv[3]),1024*1024));frames(fixture,cubes,argv[2]);extendedStickers();
+        colourProfiles(J::parse(read(argv[4]),2*1024*1024),cubes);streaming();performance(cubes);
         std::cout<<"media_assembly_processor_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception&e){std::cerr<<"media_assembly_processor_tests: "<<e.what()<<'\n';return 1;}
 }

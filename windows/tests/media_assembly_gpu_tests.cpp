@@ -6,7 +6,10 @@
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
+#include <array>
 #include <chrono>
+#include <cmath>
+#include <memory>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -147,6 +150,31 @@ void run(const fs::path&assets){
             check(compare(stored,cpu.render(source,m::MediaAssemblyOutputAlpha::straight),std::string("extended stickers")+(translucent?" translucent":"")).worst<=1,
                 "GPU rows plus the sticker step equal the CPU export over extended-range colour");
         }
+    }
+    // 1d. Embedded-profile stills: the GPU converts every straight source
+    // pixel exactly like MediaAssemblyPixels::colour on the CPU (here gamma
+    // 2.2 with the v/16 toe and a wide-gamut-to-sRGB matrix that puts many
+    // colours outside sRGB), before the edits, in previews and export rows.
+    {
+        auto colour=std::make_shared<m::MediaAssemblySourceColour>();
+        for(auto&c:colour->linear)for(unsigned k=0;k<256;++k)c[k]=float(std::max(std::pow(k/255.,2.2),k/255./16.));
+        colour->toLinearSRGB={1.2249f,-.2247f,0.f,-.0420f,1.0419f,0.f,-.0197f,-.0786f,1.0979f};
+        const auto uploads=gpu.stats().colourUploads;
+        for(const bool translucent:{false,true})for(const auto&c:cases()){
+            const auto&pixels=translucent?alpha:opaque;const std::string name=c.name+(translucent?" translucent":"");
+            gpu.setSource(w,h,pixels,std::size_t(w)*4,false,0,colour);const auto plan=gpu.configure(c.a,cube(c.a.filter),false);
+            const m::MediaAssemblyFrameProcessor cpu(w,h,c.a,cube(c.a.filter),false,{},false);const m::MediaAssemblyPixels source{w,h,std::size_t(w)*4,pixels,false,colour.get()};
+            const auto target=d.target(plan.outputWidth,plan.outputHeight);gpu.render(d.surface(target).Get());
+            check(compare(d.read(target),cpu.render(source,m::MediaAssemblyOutputAlpha::straight),"profile render "+name).worst<=1,"The GPU converts an embedded profile like the CPU: "+name);
+            const std::size_t row=std::size_t(plan.outputWidth)*4;std::vector<float>rows(row*plan.outputHeight),reference(rows.size());
+            gpu.renderRows(0,plan.outputHeight,rows,row);cpu.renderColour(source,0,plan.outputHeight,reference,row);double drift{};
+            for(std::size_t i=0;i<rows.size();++i)drift=std::max(drift,double(std::abs(rows[i]-reference[i]))/std::max(1.,double(std::abs(reference[i]))));
+            check(drift<1e-4,"GPU colour rows of a profiled source follow the CPU rows: "+name+" (relative drift "+std::to_string(drift)+")");
+        }
+        check(gpu.stats().colourUploads==uploads+1,"A source's profile curves upload once");
+        // A later source without a profile is not converted.
+        gpu.setSource(w,h,opaque,std::size_t(w)*4,false);const auto plan=gpu.configure({},{},false);const auto target=d.target(plan.outputWidth,plan.outputHeight);gpu.render(d.surface(target).Get());
+        check(compare(d.read(target),opaque,"unprofiled source after a profiled one").worst==0,"A source without a profile is left unconverted");
     }
     // 2. Export path: associated output, even-size bilinear resample, raw
     // rotation folded into the geometry (no CPU rotate copy).

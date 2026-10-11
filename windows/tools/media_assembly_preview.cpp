@@ -350,7 +350,7 @@ struct MediaAssemblyPreview::Impl:std::enable_shared_from_this<Impl> {
     // media texture; a new id only when the edited size changes.
     void renderPreview(gpu::Renderer&r){
         const auto&image=*shown;
-        if(image.source!=gpuSource){processor->setSource(image.source->width,image.source->height,image.source->straightRGBA,std::size_t(image.source->width)*4,false);gpuSource=image.source;}
+        if(image.source!=gpuSource){processor->setSource(image.source->width,image.source->height,image.source->straightRGBA,std::size_t(image.source->width)*4,false,0,image.source->colour);gpuSource=image.source;}
         const auto plan=processor->configure(*image.edits,image.lookup,false);
         if(!media||!media->valid()||media->width()!=plan.outputWidth||media->height()!=plan.outputHeight){
             retireTexture();texture="media.assembly.preview."+std::to_string(++textureSerial);media=r.createMediaTexture(texture,plan.outputWidth,plan.outputHeight);++statistics.gpuTargets;presentPreview();

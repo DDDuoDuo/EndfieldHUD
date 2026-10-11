@@ -11,7 +11,7 @@ if(BUILD_TESTING)
   target_link_libraries(media_assembly_processor_tests PRIVATE hud_media_assembly_processor hud_data hud_reader_zlib)
   add_test(NAME media_assembly_processor_contracts COMMAND media_assembly_processor_tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-processor-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-highlight-shadow-fit.json)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-highlight-shadow-fit.json ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-icc-source.json)
 endif()
 
 # Portable controller: export ticket/commit rules, secondary menus, keyboard,
@@ -50,8 +50,9 @@ if(WIN32)
   if(BUILD_TESTING)
     add_executable(media_assembly_codec_tests tests/media_assembly_codec_tests.cpp)
     target_compile_definitions(media_assembly_codec_tests PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(media_assembly_codec_tests PRIVATE hud_media_assembly_codec windowscodecs mfplat mfreadwrite mfuuid ole32 d3d11)
-    add_test(NAME media_assembly_codec_contracts COMMAND media_assembly_codec_tests ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly)
+    target_link_libraries(media_assembly_codec_tests PRIVATE hud_media_assembly_codec hud_data windowscodecs mfplat mfreadwrite mfuuid ole32 d3d11)
+    add_test(NAME media_assembly_codec_contracts COMMAND media_assembly_codec_tests ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-icc-source.json)
   endif()
 
   # UI Automation fragments for the projected controls (the host's HUD root

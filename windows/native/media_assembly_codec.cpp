@@ -1,5 +1,6 @@
 #include "native/media_assembly_codec.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -66,11 +67,37 @@ Still openStill(const std::filesystem::path&path){
     need(s.width&&s.height&&std::uint64_t(s.width)*s.height<=NativeMediaAssemblyEngine::maximumPixels,m::MediaAssemblyError::unsupported);
     return s;
 }
-// Converts one WIC source to sRGB straight RGBA8 at width x height (Fant).
-std::vector<std::uint8_t>pixels(IWICImagingFactory*wic,ComPtr<IWICBitmapSource>source,IWICBitmapFrameDecode*frame,unsigned w,unsigned h){
-    if(frame){UINT contexts{};if(SUCCEEDED(frame->GetColorContexts(0,nullptr,&contexts))&&contexts&&contexts<=16){
-        ComPtr<IWICColorContext>input,output;if(SUCCEEDED(wic->CreateColorContext(&input))&&SUCCEEDED(wic->CreateColorContext(&output))){IWICColorContext*raw=input.Get();UINT actual{};
-            if(SUCCEEDED(frame->GetColorContexts(1,&raw,&actual))&&actual&&SUCCEEDED(output->InitializeFromExifColorSpace(1))){ComPtr<IWICColorTransform>t;if(SUCCEEDED(wic->CreateColorTransformer(&t))&&SUCCEEDED(t->Initialize(source.Get(),input.Get(),output.Get(),GUID_WICPixelFormat32bppRGBA)))source=t;}}}}
+// The frame's colour, as Core Image takes a tagged CGImage into its sRGB
+// working space. An embedded ICC profile Media Assembly reads itself
+// (MediaAssemblyProfileKind::converted) is returned in colour and the bytes
+// keep their encoding; a profile matched to sRGB, an EXIF sRGB or
+// uncalibrated tag, or no tag leaves the pixels as they are. Only another
+// profile (lookup-table, CMYK, Lab) or an EXIF Adobe RGB tag goes through the
+// platform colour management (WIC/WCS) to sRGB, whose own rendering intent
+// and precision differ from the Mac (documented gap).
+ComPtr<IWICColorContext>platformColour(IWICImagingFactory*wic,IWICBitmapFrameDecode*frame,std::shared_ptr<const m::MediaAssemblySourceColour>*colour){
+    UINT count{};if(FAILED(frame->GetColorContexts(0,nullptr,&count))||!count||count>16)return {};
+    std::array<ComPtr<IWICColorContext>,16>contexts;std::array<IWICColorContext*,16>raw{};
+    for(UINT n=0;n<count;++n){if(FAILED(wic->CreateColorContext(&contexts[n])))return {};raw[n]=contexts[n].Get();}
+    UINT actual{};if(FAILED(frame->GetColorContexts(count,raw.data(),&actual))||!actual)return {};
+    ComPtr<IWICColorContext>profile,adobe;
+    for(UINT n=0;n<std::min(actual,count);++n){WICColorContextType type{};if(FAILED(raw[n]->GetType(&type)))continue;
+        if(type==WICColorContextProfile&&!profile)profile=raw[n];
+        else if(type==WICColorContextExifColorSpace){UINT space{};if(SUCCEEDED(raw[n]->GetExifColorSpace(&space))&&space==2&&!adobe)adobe=raw[n];}}
+    if(!profile)return adobe;
+    UINT size{};if(FAILED(profile->GetProfileBytes(0,nullptr,&size))||!size||size>(16u<<20))return profile;
+    std::vector<BYTE>bytes(size);if(FAILED(profile->GetProfileBytes(size,bytes.data(),&size)))return profile;
+    const auto read=m::mediaAssemblyProfile(std::span<const std::uint8_t>(bytes.data(),std::min<std::size_t>(size,bytes.size())));
+    if(read.kind==m::MediaAssemblyProfileKind::sRGB)return {};
+    if(read.kind==m::MediaAssemblyProfileKind::converted&&colour){*colour=read.colour;return {};}
+    return profile;
+}
+// One WIC source as straight RGBA8 at width x height (Fant): sRGB, or the
+// original encoding of a profile returned in colour (see platformColour).
+std::vector<std::uint8_t>pixels(IWICImagingFactory*wic,ComPtr<IWICBitmapSource>source,IWICBitmapFrameDecode*frame,unsigned w,unsigned h,std::shared_ptr<const m::MediaAssemblySourceColour>*colour=nullptr){
+    if(frame)if(const auto input=platformColour(wic,frame,colour)){
+        ComPtr<IWICColorContext>output;ComPtr<IWICColorTransform>t;
+        if(SUCCEEDED(wic->CreateColorContext(&output))&&SUCCEEDED(output->InitializeFromExifColorSpace(1))&&SUCCEEDED(wic->CreateColorTransformer(&t))&&SUCCEEDED(t->Initialize(source.Get(),input.Get(),output.Get(),GUID_WICPixelFormat32bppRGBA)))source=t;}
     UINT sw{},sh{};check(source->GetSize(&sw,&sh),m::MediaAssemblyError::unsupported);
     if(sw!=w||sh!=h){ComPtr<IWICBitmapScaler>scaler;check(wic->CreateBitmapScaler(&scaler),m::MediaAssemblyError::unsupported);check(scaler->Initialize(source.Get(),w,h,WICBitmapInterpolationModeFant),m::MediaAssemblyError::unsupported);source=scaler;}
     ComPtr<IWICFormatConverter>converted;check(wic->CreateFormatConverter(&converted),m::MediaAssemblyError::unsupported);
@@ -274,18 +301,18 @@ MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeStill(const m::MediaAssembl
     if(!s.gif){
         // Scale before orienting; the bound applies to the longest side.
         const auto[w,h]=bounded(s.width,s.height,maximum);ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);
-        out.width=w;out.height=h;out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h);orient(out,s.orientation);return out;
+        out.width=w;out.height=h;out.straightRGBA=pixels(s.wic.Get(),source,frame.Get(),w,h,&out.colour);orient(out,s.orientation);return out;
     }
     // GIF first frame on its logical screen (transparent outside the frame).
     UINT fw{},fh{};check(frame->GetSize(&fw,&fh),m::MediaAssemblyError::unsupported);ComPtr<IWICMetadataQueryReader>meta;frame->GetMetadataQueryReader(&meta);
     const unsigned left=metadata(meta.Get(),L"/imgdesc/Left").value_or(0),top=metadata(meta.Get(),L"/imgdesc/Top").value_or(0);
-    ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);const auto rgba=pixels(s.wic.Get(),source,frame.Get(),fw,fh);
+    ComPtr<IWICBitmapSource>source;check(frame.As(&source),m::MediaAssemblyError::unsupported);std::shared_ptr<const m::MediaAssemblySourceColour>colour;const auto rgba=pixels(s.wic.Get(),source,frame.Get(),fw,fh,&colour);
     std::vector<std::uint8_t>canvas(std::size_t(s.width)*s.height*4,0);
     for(unsigned y=0;y<fh&&top+y<s.height;++y)for(unsigned x=0;x<fw&&left+x<s.width;++x)std::copy_n(rgba.data()+(std::size_t(y)*fw+x)*4,4,canvas.data()+(std::size_t(top+y)*s.width+left+x)*4);
     const auto[w,h]=bounded(s.width,s.height,maximum);
-    if(w==s.width&&h==s.height){out={w,h,std::move(canvas)};return out;}
+    if(w==s.width&&h==s.height){out={w,h,std::move(canvas),std::move(colour)};return out;}
     ComPtr<IWICBitmap>bitmap;check(s.wic->CreateBitmapFromMemory(s.width,s.height,GUID_WICPixelFormat32bppRGBA,s.width*4,UINT(canvas.size()),canvas.data(),&bitmap),m::MediaAssemblyError::unsupported);
-    ComPtr<IWICBitmapSource>bs;check(bitmap.As(&bs),m::MediaAssemblyError::unsupported);out={w,h,pixels(s.wic.Get(),bs,nullptr,w,h)};return out;
+    ComPtr<IWICBitmapSource>bs;check(bitmap.As(&bs),m::MediaAssemblyError::unsupported);out={w,h,pixels(s.wic.Get(),bs,nullptr,w,h),std::move(colour)};return out;
 }
 MediaAssemblyBitmap NativeMediaAssemblyEngine::decodeVideoFrame(const m::MediaAssemblyDocumentInfo&d,double time,unsigned maximum){
     Platform mf;auto reader=videoReader(mediaAssemblyPath(d.path),false);const auto v=inspectVideo(reader.Get());
@@ -327,7 +354,7 @@ modules::MediaAssemblyPreviewImage NativeMediaAssemblyEngine::preview(const m::M
     const auto[image,cube]=previewInputs(d,a,time);
     const m::MediaAssemblyFrameProcessor processor(image->width,image->height,a,cube?cube->rgb8():std::span<const std::uint8_t>{},false);
     m::MediaAssemblyPreviewImage out{processor.width(),processor.height(),{}};
-    out.straightRGBA=processor.render({image->width,image->height,std::size_t(image->width)*4,image->straightRGBA,false},m::MediaAssemblyOutputAlpha::straight);
+    out.straightRGBA=processor.render({image->width,image->height,std::size_t(image->width)*4,image->straightRGBA,false,image->colour.get()},m::MediaAssemblyOutputAlpha::straight);
     return out;
 }
 modules::MediaAssemblyPreviewImage NativeMediaAssemblyEngine::previewSource(const m::MediaAssemblyDocumentInfo&d,const m::MediaAssemblyAdjustments&a,double time){
@@ -401,11 +428,11 @@ std::string NativeMediaAssemblyEngine::exportMedia(const m::MediaAssemblyExportR
         // and stores it, exactly as the CPU processor does (extended-range
         // colour under translucent sticker edges and translucent pixels keep
         // their precision). Any GPU failure finishes on the CPU.
-        const m::MediaAssemblyPixels pixels{source.width,source.height,std::size_t(source.width)*4,source.straightRGBA,false};
+        const m::MediaAssemblyPixels pixels{source.width,source.height,std::size_t(source.width)*4,source.straightRGBA,false,source.colour.get()};
         std::unique_ptr<NativeMediaAssemblyGpuProcessor>gpu;
         const bool large=std::uint64_t(processor.width())*processor.height()>=impl_->options.gpuStillPixels;
         if(large&&impl_->options.exportDevice&&std::max(source.width,source.height)<=16384)if(auto device=impl_->options.exportDevice())try{
-            gpu=std::make_unique<NativeMediaAssemblyGpuProcessor>(std::move(device));gpu->setSource(source.width,source.height,source.straightRGBA,std::size_t(source.width)*4,false);
+            gpu=std::make_unique<NativeMediaAssemblyGpuProcessor>(std::move(device));gpu->setSource(source.width,source.height,source.straightRGBA,std::size_t(source.width)*4,false,0,source.colour);
             const auto edited=gpu->configure(r.adjustments,lookup,false);if(edited.outputWidth!=processor.width()||edited.outputHeight!=processor.height())gpu.reset();
         }catch(const std::exception&){gpu.reset();}
         std::uint64_t gpuRows{},cpuRows{};

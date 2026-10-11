@@ -2,6 +2,7 @@
 #include "modules/media_assembly_geometry.hpp"
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -89,10 +90,52 @@ private:
 
 
 
-// Borrowed RGBA8 bitmap rows (top-left origin, encoded sRGB).
+// Embedded colour profile of a still source. Core Image colour-matches a
+// tagged CGImage into the working space (extended encoded sRGB) before any
+// edit; the Windows chains do the same per pixel from the original encoded
+// RGB8 values, so colour a wide-gamut profile places outside sRGB survives
+// the edits until the final RGBA8 store, as on the Mac. Derived black-box
+// from Core Image outputs on synthetic ICC.1 profiles (tests/fixtures/
+// media-assembly-icc-source.json, tools/media_assembly_icc_reference.py):
+// each channel is linearised with its tone curve as Core Image applies it
+// (MediaAssemblyToneCurve), taken through the profile colorants to the D50
+// PCS, back through the sRGB colorants (public sRGB primaries, Bradford-
+// adapted, s15Fixed16) and sRGB-encoded without clamping.
+enum class MediaAssemblyToneCurve {
+    sRGB,     // within 0.0016 of the sRGB transfer: exact sRGB on a 1/4095 grid
+    gamma18,  // within 0.0016 of gamma 1.8: exact 1.8, linear toe v/16
+    gamma22,  // within 0.0016 of gamma 2.2: exact 2.2, linear toe v/16
+    measured  // any other curve as written, linear toe v/16
+};
+struct MediaAssemblySourceColour {
+    std::array<std::array<float,256>,3>linear{};  // channel c at code k
+    std::array<float,9>toLinearSRGB{};            // row-major
+    std::array<MediaAssemblyToneCurve,3>curves{MediaAssemblyToneCurve::measured,MediaAssemblyToneCurve::measured,MediaAssemblyToneCurve::measured};
+    // Working-space (encoded, extended) straight colour of one source pixel.
+    std::array<float,3>convert(std::uint8_t r,std::uint8_t g,std::uint8_t b)const noexcept;
+    bool operator==(const MediaAssemblySourceColour&)const=default;
+};
+enum class MediaAssemblyProfileKind {sRGB,converted,unsupported};
+struct MediaAssemblyProfile {
+    MediaAssemblyProfileKind kind{MediaAssemblyProfileKind::unsupported};
+    std::shared_ptr<const MediaAssemblySourceColour>colour; // converted only
+};
+// Reads an embedded ICC profile (bounded; malformed input is unsupported).
+//  sRGB: three tone curves matched to the sRGB transfer and colorants
+//    within 0.001 of the sRGB colorants; Core Image matches such a profile
+//    to sRGB and leaves the pixels unchanged, so no conversion runs.
+//  converted: an RGB matrix/TRC profile ('rXYZ'/'gXYZ'/'bXYZ' with 'curv'
+//    or 'para' tone curves) or a grey profile ('kTRC'), XYZ PCS, without
+//    'A2B0'/'A2B1'/'A2B2'/'D2B0' lookup tags.
+//  unsupported: anything else (lookup-table, CMYK or Lab profiles, malformed
+//    data); the caller keeps the platform colour management for those.
+MediaAssemblyProfile mediaAssemblyProfile(std::span<const std::uint8_t>icc)noexcept;
+
+// Borrowed RGBA8 bitmap rows (top-left origin, encoded sRGB). colour (a
+// straight source only) converts the original encoded values per pixel.
 struct MediaAssemblyPixels {
     unsigned width{},height{};std::size_t stride{};std::span<const std::uint8_t>bytes;
-    bool premultiplied{};
+    bool premultiplied{};const MediaAssemblySourceColour*colour{};
 };
 // Original sticker artwork at its own canvas size, associated RGBA8.
 struct MediaAssemblyStickerArtwork {

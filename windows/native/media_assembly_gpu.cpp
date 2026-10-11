@@ -4,6 +4,7 @@
 #include <dxgi.h>
 #include <wrl/client.h>
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -24,6 +25,7 @@ void need(bool value,const char*what){if(!value)throw std::invalid_argument(std:
 constexpr char shaderSource[]=R"hlsl(
 Texture2D<float4> Source : register(t0);
 Texture3D<float4> Cube : register(t1);
+Texture2D<float4> SourceCurves : register(t2); // 256x1: linear r, g, b at each RGB8 code
 cbuffer Edit : register(b0) {
     int4 Map0;      // origin.xy, column.xy
     int4 Map1;      // row.xy, source size
@@ -32,11 +34,12 @@ cbuffer Edit : register(b0) {
     float4 Levels;  // gain, bias, gamma power
     float4 Matrix0; float4 Matrix1; float4 Matrix2;
     float4 Curve[4];// spline interval j: y, b, c, d
+    float4 Source0; float4 Source1; float4 Source2; // embedded profile -> linear sRGB rows
 };
 // Bit 8 (Highlights/Shadows) is never set: that step applies no change on
 // Windows (documented gap, modules/media_assembly_processor.hpp).
 static const uint StepExposure=1u, StepControls=2u, StepTemperature=4u, StepTone=16u, StepLevels=32u, StepGamma=64u, StepLookup=128u;
-static const uint FlagSourcePremultiplied=1u, FlagLinear=2u, FlagOutputPremultiplied=4u, FlagOutputUnclamped=8u;
+static const uint FlagSourcePremultiplied=1u, FlagLinear=2u, FlagOutputPremultiplied=4u, FlagOutputUnclamped=8u, FlagSourceColour=16u;
 
 float4 FullScreen(uint id : SV_VertexID) : SV_Position {
     float2 t = float2((id << 1) & 2, id & 2);
@@ -112,11 +115,24 @@ float4 Output(float4 straight) {
     if (Mode.y & FlagOutputPremultiplied) return float4(p, a);
     return a <= 0 ? float4(0, 0, 0, 0) : float4(p / a, a);
 }
+// MediaAssemblySourceColour::convert: a straight source pixel described by
+// an embedded profile into the working space (extended encoded sRGB).
+float4 SourceColour(float4 c) {
+    uint3 k = (uint3)round(saturate(c.rgb) * 255);
+    float3 l = float3(SourceCurves.Load(int3(k.r, 0, 0)).r, SourceCurves.Load(int3(k.g, 0, 0)).g, SourceCurves.Load(int3(k.b, 0, 0)).b);
+    float3 v = float3(Source0.x * l.r + Source0.y * l.g + Source0.z * l.b,
+                      Source1.x * l.r + Source1.y * l.g + Source1.z * l.b,
+                      Source2.x * l.r + Source2.y * l.g + Source2.z * l.b);
+    return float4(ToEncoded(v), c.a);
+}
 float4 Process(float4 position : SV_Position) : SV_Target {
     int2 o = int2(position.xy);
     int2 s = Map0.xy + o.x * Map0.zw + o.y * Map1.xy;
     float4 c = float4(0, 0, 0, 0);
-    if (s.x >= 0 && s.y >= 0 && s.x < Map1.z && s.y < Map1.w) c = Source.Load(int3(s, 0));
+    if (s.x >= 0 && s.y >= 0 && s.x < Map1.z && s.y < Map1.w) {
+        c = Source.Load(int3(s, 0));
+        if (Mode.y & FlagSourceColour) c = SourceColour(c);
+    }
     return Output(Edit(c));
 }
 // mediaAssemblyResample on associated pixels (no renormalisation at edges).
@@ -153,11 +169,12 @@ const Bytecode&bytecode(){
     std::call_once(once,[]{try{value.vertex=compile("FullScreen","vs_4_0");value.process=compile("Process","ps_4_0");value.resample=compile("Resample","ps_4_0");compiled=true;}catch(...){failure=std::current_exception();}});
     if(failure)std::rethrow_exception(failure);return value;
 }
-constexpr unsigned flagSourcePremultiplied=1,flagLinear=2,flagOutputPremultiplied=4,flagOutputUnclamped=8;
+constexpr unsigned flagSourcePremultiplied=1,flagLinear=2,flagOutputPremultiplied=4,flagOutputUnclamped=8,flagSourceColour=16;
 struct alignas(16) Constants {
     std::int32_t map0[4]{},map1[4]{};std::uint32_t mode[4]{};float controls[4]{},levels[4]{},matrix0[4]{},matrix1[4]{},matrix2[4]{},curve[16]{};
+    float source[3][4]{};
 };
-static_assert(sizeof(Constants)==12*16,"HLSL cbuffer layout");
+static_assert(sizeof(Constants)==15*16,"HLSL cbuffer layout");
 }
 
 struct NativeMediaAssemblyGpuProcessor::Impl {
@@ -165,6 +182,8 @@ struct NativeMediaAssemblyGpuProcessor::Impl {
     ComPtr<ID3D11VertexShader>vertex;ComPtr<ID3D11PixelShader>process,resample;ComPtr<ID3D11Buffer>constants;ComPtr<ID3D11RasterizerState>raster;
     ComPtr<ID3D11Texture2D>source;ComPtr<ID3D11ShaderResourceView>sourceView;unsigned sourceWidth{},sourceHeight{},rotation{};bool sourcePremultiplied{};
     ComPtr<ID3D11Texture3D>cube;ComPtr<ID3D11ShaderResourceView>cubeView;std::vector<std::uint8_t>cubeBytes;
+    // Embedded-profile conversion of the current still source (null: sRGB).
+    std::shared_ptr<const m::MediaAssemblySourceColour>colour;ComPtr<ID3D11Texture2D>curves;ComPtr<ID3D11ShaderResourceView>curvesView;
     Constants edit{};bool configured{};m::MediaAssemblyPixelPlan plan{};
     ComPtr<ID3D11Texture2D>scratch;ComPtr<ID3D11ShaderResourceView>scratchView;D3D11_TEXTURE2D_DESC scratchDesc{};
     IDXGISurface*surface{};ComPtr<ID3D11Texture2D>surfaceTexture;ComPtr<ID3D11RenderTargetView>surfaceTarget;unsigned surfaceWidth{},surfaceHeight{};
@@ -183,7 +202,7 @@ struct NativeMediaAssemblyGpuProcessor::Impl {
         context->ClearState();
         const D3D11_VIEWPORT viewport{0,0,float(w),float(h),0,1};context->RSSetViewports(1,&viewport);context->RSSetState(raster.Get());
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);context->VSSetShader(vertex.Get(),nullptr,0);context->PSSetShader(shader,nullptr,0);
-        ID3D11ShaderResourceView*views[2]{view,cubeView.Get()};context->PSSetShaderResources(0,2,views);ID3D11Buffer*buffers[1]{constants.Get()};context->PSSetConstantBuffers(0,1,buffers);
+        ID3D11ShaderResourceView*views[3]{view,cubeView.Get(),curvesView.Get()};context->PSSetShaderResources(0,3,views);ID3D11Buffer*buffers[1]{constants.Get()};context->PSSetConstantBuffers(0,1,buffers);
         context->OMSetRenderTargets(1,&target,nullptr);context->Draw(3,0);
         // Leave no bindings behind (the renderer re-establishes its own state per pass).
         context->ClearState();
@@ -196,6 +215,13 @@ struct NativeMediaAssemblyGpuProcessor::Impl {
         ComPtr<ID3D11Device>owner;t->GetDevice(&owner);need(owner.Get()==device.Get(),"target surface belongs to another device");
         ComPtr<ID3D11RenderTargetView>view;check(device->CreateRenderTargetView(t.Get(),nullptr,&view),"create target view");
         surface=s;surfaceTexture=std::move(t);surfaceTarget=std::move(view);surfaceWidth=d.Width;surfaceHeight=d.Height;
+    }
+    // The configured edit for a pass over the current source: its alpha mode
+    // and its embedded-profile conversion.
+    Constants sourced()const{
+        auto k=edit;k.mode[1]|=sourcePremultiplied?flagSourcePremultiplied:0;
+        if(colour){k.mode[1]|=flagSourceColour;for(int r=0;r<3;++r)for(int c=0;c<3;++c)k.source[r][c]=colour->toLinearSRGB[std::size_t(r*3+c)];}
+        return k;
     }
 };
 
@@ -214,8 +240,18 @@ bool NativeMediaAssemblyGpuProcessor::hasSource()const noexcept{return impl_->so
 MediaAssemblyGpuStats NativeMediaAssemblyGpuProcessor::stats()const noexcept{return impl_->statistics;}
 void NativeMediaAssemblyGpuProcessor::releaseTargets()noexcept{auto&i=*impl_;i.surface=nullptr;i.surfaceTarget.Reset();i.surfaceTexture.Reset();}
 
-void NativeMediaAssemblyGpuProcessor::setSource(unsigned w,unsigned h,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotation){
+void NativeMediaAssemblyGpuProcessor::setSource(unsigned w,unsigned h,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotation,std::shared_ptr<const m::MediaAssemblySourceColour>colour){
     auto&i=*impl_;need(w&&h&&w<=16384&&h<=16384,"source exceeds the D3D11 texture limit");need(rotation==0||rotation==90||rotation==180||rotation==270,"invalid source rotation");
+    need(!(colour&&premultiplied),"an embedded profile needs a straight source");
+    if(colour&&(!i.colour||!(*i.colour==*colour))){
+        // 256 x 1 float curves (r, g, b linear at each RGB8 code), immutable.
+        std::array<float,256*4>texels{};for(std::size_t k=0;k<256;++k)for(std::size_t c=0;c<3;++c)texels[k*4+c]=colour->linear[c][k];
+        D3D11_TEXTURE2D_DESC d{};d.Width=256;d.Height=1;d.MipLevels=1;d.ArraySize=1;d.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;d.SampleDesc.Count=1;d.Usage=D3D11_USAGE_IMMUTABLE;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        const D3D11_SUBRESOURCE_DATA init{texels.data(),UINT(sizeof texels),0};i.curvesView.Reset();i.curves.Reset();
+        check(i.device->CreateTexture2D(&d,&init,&i.curves),"create source curves");check(i.device->CreateShaderResourceView(i.curves.Get(),nullptr,&i.curvesView),"create source curves view");
+        ++i.statistics.colourUploads;
+    }
+    i.colour=std::move(colour);
     need(stride>=std::size_t(w)*4&&rgba.size()>=stride*(h-1)+std::size_t(w)*4,"source rows are too short");
     if(!i.source||i.sourceWidth!=w||i.sourceHeight!=h){
         i.sourceView.Reset();i.texture(i.source,w,h,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE);--i.statistics.targetAllocations;++i.statistics.sourceAllocations;
@@ -267,8 +303,7 @@ m::MediaAssemblyPixelPlan NativeMediaAssemblyGpuProcessor::configure(const m::Me
 void NativeMediaAssemblyGpuProcessor::render(IDXGISurface*target){
     auto&i=*impl_;need(i.configured&&i.source,"configure a source first");i.bindSurface(target);
     need(i.surfaceWidth==i.plan.outputWidth&&i.surfaceHeight==i.plan.outputHeight,"target size differs from the edit plan");
-    auto k=i.edit;k.mode[1]|=i.sourcePremultiplied?flagSourcePremultiplied:0;
-    i.pass(i.process.Get(),i.sourceView.Get(),i.surfaceTarget.Get(),i.plan.outputWidth,i.plan.outputHeight,k);++i.statistics.renders;
+    i.pass(i.process.Get(),i.sourceView.Get(),i.surfaceTarget.Get(),i.plan.outputWidth,i.plan.outputHeight,i.sourced());++i.statistics.renders;
 }
 
 void NativeMediaAssemblyGpuProcessor::processInPlace(IDXGISurface*s){
@@ -291,7 +326,7 @@ void NativeMediaAssemblyGpuProcessor::renderToMemory(unsigned w,unsigned h,std::
         i.outputTarget.Reset();i.texture(i.output,w,h,DXGI_FORMAT_B8G8R8A8_UNORM,D3D11_BIND_RENDER_TARGET);check(i.device->CreateRenderTargetView(i.output.Get(),nullptr,&i.outputTarget),"create export target");
         i.texture(i.staging,w,h,DXGI_FORMAT_B8G8R8A8_UNORM,0,D3D11_USAGE_STAGING,D3D11_CPU_ACCESS_READ);i.outputWidth=w;i.outputHeight=h;
     }
-    auto k=i.edit;k.mode[1]|=(i.sourcePremultiplied?flagSourcePremultiplied:0)|flagOutputPremultiplied;
+    auto k=i.sourced();k.mode[1]|=flagOutputPremultiplied;
     if(resample){
         if(!i.processed||i.processedWidth!=pw||i.processedHeight!=ph){
             i.processedTarget.Reset();i.processedView.Reset();i.texture(i.processed,pw,ph,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE);
@@ -318,7 +353,7 @@ void NativeMediaAssemblyGpuProcessor::renderRows(unsigned first,unsigned count,s
     }
     // The band's first output row is row `first` of the plan: shift the
     // pixel map's origin by `first` rows.
-    auto k=i.edit;k.mode[1]|=(i.sourcePremultiplied?flagSourcePremultiplied:0)|flagOutputUnclamped;
+    auto k=i.sourced();k.mode[1]|=flagOutputUnclamped;
     const long long ox=k.map0[0]+static_cast<long long>(first)*k.map1[0],oy=k.map0[1]+static_cast<long long>(first)*k.map1[1];
     need(ox>=-65536&&ox<=65536&&oy>=-65536&&oy<=65536,"geometry out of range");k.map0[0]=std::int32_t(ox);k.map0[1]=std::int32_t(oy);
     i.pass(i.process.Get(),i.sourceView.Get(),i.bandTarget.Get(),w,count,k);

@@ -1,4 +1,5 @@
 #include "native/media_assembly_codec.hpp"
+#include "core/data/json.hpp"
 #include <iostream>
 #ifdef _WIN32
 #include <windows.h>
@@ -11,11 +12,13 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <fstream>
+#include <iterator>
 #include <numbers>
 
 namespace {
-namespace n=endfield::native;namespace m=endfield::modules;namespace fs=std::filesystem;using Microsoft::WRL::ComPtr;
+namespace n=endfield::native;namespace m=endfield::modules;namespace fs=std::filesystem;using Microsoft::WRL::ComPtr;using J=ehud::data::Json;
 unsigned checks{};
 std::string current;
 void check(bool v,const std::string&why){++checks;current=why;if(!v)throw std::runtime_error(why);}
@@ -251,8 +254,81 @@ void movies(const fs::path&root,const fs::path&assets){
     }
 }
 }
+std::vector<std::uint8_t>base64(std::string_view text){
+    std::vector<std::uint8_t>out;unsigned buffer{},bits{};
+    for(char c:text){int v=c>='A'&&c<='Z'?c-'A':c>='a'&&c<='z'?c-'a'+26:c>='0'&&c<='9'?c-'0'+52:c=='+'?62:c=='/'?63:-1;if(v<0)continue;buffer=(buffer<<6)|unsigned(v);bits+=6;if(bits>=8){bits-=8;out.push_back(std::uint8_t(buffer>>bits));}}
+    return out;
+}
+// Colour-managed stills (tests/fixtures/media-assembly-icc-source.json,
+// tools/media_assembly_icc_reference.py): owned PNGs with synthetic ICC
+// profiles decoded by WIC and edited by the engine, compared with the pinned
+// still preview and export on the Mac. The embedded profile is read from the
+// PNG (IWICColorContext profile bytes) and converted per pixel like Core
+// Image (MediaAssemblySourceColour), on the CPU and on the export job's GPU,
+// so colour outside sRGB survives the edits as on the Mac. The former WIC
+// colour transform (Windows Color System, perceptual gamut mapping) missed
+// these stills by up to 24 levels on in-gamut pixels.
+void colourManaged(const fs::path&root,const fs::path&assets,const fs::path&fixturePath){
+    std::ifstream in(fixturePath,std::ios::binary);check(bool(in),"ICC fixture");const std::string text((std::istreambuf_iterator<char>(in)),std::istreambuf_iterator<char>());
+    const auto fixture=J::parse(text,2*1024*1024);
+    check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"ICC fixture uses the authoritative isolated oracle");
+    const unsigned W=unsigned(fixture["width"].integer());
+    std::vector<std::pair<std::string,m::MediaAssemblyAdjustments>>edits;
+    for(const auto&e:fixture["edits"].array()){
+        m::MediaAssemblyAdjustments a;
+        for(const auto&[key,value]:e["adjustments"].object()){
+            if(key=="saturation")a.saturation=value.number();else if(key=="exposure")a.exposure=value.number();
+            else if(key=="filter"){const auto f=m::mediaAssemblyFilters();const auto at=std::find_if(f.begin(),f.end(),[&](const auto&i){return i.id==value.string();});check(at!=f.end(),"Known ICC fixture filter");a.filter=m::MediaAssemblyFilter(at-f.begin());}
+            else check(false,"Unknown ICC fixture adjustment "+key);
+        }
+        edits.emplace_back(e["name"].string(),a);
+    }
+    const auto warp=[]()->std::shared_ptr<void>{Microsoft::WRL::ComPtr<ID3D11Device>device;const D3D_FEATURE_LEVEL level=D3D_FEATURE_LEVEL_10_0;
+        if(FAILED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,&level,1,D3D11_SDK_VERSION,&device,nullptr,nullptr)))return {};
+        return std::shared_ptr<void>(device.Detach(),[](void*p){static_cast<ID3D11Device*>(p)->Release();});};
+    // CPU engine (no export device) and a GPU engine that takes every still.
+    n::NativeMediaAssemblyEngine engine({assets,{},{},[]{return std::shared_ptr<void>{};},0}),onGpu({assets,{},{},warp,0});unsigned serial{};std::size_t converted{},exports{};
+    for(const auto&image:fixture["images"].array()){
+        const auto name=image["name"].string(),kind=image["kind"].string();const unsigned H=unsigned(image["height"].integer());
+        const auto file=root/(L"icc-"+std::wstring(name.begin(),name.end())+L".png");
+        {const auto bytes=base64(image["png"].string());std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));check(bool(out),"Owned ICC still written");}
+        auto doc=std::make_shared<m::MediaAssemblyDocumentInfo>(engine.open(utf8(file)));doc->id="icc-"+name;
+        check(doc->pixels==endfield::core::Point{double(W),double(H)},"ICC still opens at its size: "+name);
+        // The profile reaches the decoded source: converted unless it is sRGB.
+        const bool convert=kind!="none"&&name!="srgb-matrix";converted+=convert;
+        const auto decoded=n::NativeMediaAssemblyEngine::decodeStill(*doc,1024);check(bool(decoded.colour)==convert,"The decoded still carries its embedded profile: "+name);
+        {const auto deferred=engine.previewSource(*doc,{},0);check(deferred.source&&bool(deferred.source->colour)==convert,"Deferred previews carry the embedded profile to the GPU: "+name);}
+        // Pixels a wide-gamut profile places outside sRGB.
+        const auto raw=base64(image["identityFloat"].string());check(raw.size()==std::size_t(W)*H*16,"Identity floats: "+name);
+        std::vector<bool>outside(std::size_t(W)*H);std::size_t outsideCount{};
+        for(std::size_t p=0;p<outside.size();++p)for(int c=0;c<3;++c){float v;std::memcpy(&v,raw.data()+(p*4+c)*4,4);if(v<-.5f/255||v>1+.5f/255)outside[p]=true;}
+        for(const bool o:outside)outsideCount+=o;
+        const auto&cases=image["cases"].array();
+        for(std::size_t k=0;k<cases.size();++k){
+            const auto&c=cases[k];const auto&[editName,a]=edits[k];check(c["name"].string()==editName,"ICC case order");
+            const auto expectExport=base64(c["export"].string());check(expectExport.size()==std::size_t(W)*H*4,"ICC case bytes: "+name+" "+editName);
+            int worst[2][2]{};const auto measure=[&](const std::vector<std::uint8_t>&got,int path){check(got.size()==expectExport.size(),"ICC output size");
+                for(std::size_t p=0;p<outside.size();++p)for(int ch=0;ch<4;++ch){const std::size_t i=p*4+ch;worst[path][outside[p]]=std::max(worst[path][outside[p]],std::abs(int(got[i])-int(expectExport[i])));}};
+            for(int path=0;path<2;++path){auto&with=path?onGpu:engine;const auto gpuBefore=with.stats().gpuStillExports;
+                const auto out=root/(L"icc-out-"+std::to_wstring(++serial)+L".png");m::MediaAssemblyExportTicket t;
+                check(with.exportMedia({doc,a,utf8(out),false,"icc"+std::to_string(serial),false},t)==utf8(out),"ICC still exports: "+name+" "+editName);
+                check(with.stats().gpuStillExports==gpuBefore+(path?1u:0u),"The ICC still exports on the intended path");
+                unsigned w{},h{};measure(readImage(out,w,h),path);fs::remove(out);check(w==W&&h==H,"ICC export size");++exports;}
+            std::cout<<"icc "<<name<<' '<<editName<<": export worst in sRGB "<<worst[0][0]<<" outside "<<worst[0][1]<<"; GPU export worst in sRGB "<<worst[1][0]<<" outside "<<worst[1][1]<<" ("<<outsideCount<<" of "<<outside.size()<<" pixels outside sRGB)";
+            check(std::max({worst[0][0],worst[0][1],worst[1][0],worst[1][1]})<=1,"Edited ICC stills export within one level of the Mac: "+name+" "+editName);
+            if(c.contains("preview")){
+                const auto expectPreview=base64(c["preview"].string());const auto preview=engine.preview(*doc,a,0);check(preview.width==W&&preview.height==H&&preview.straightRGBA.size()==expectPreview.size(),"ICC preview size");
+                int previewWorst{};for(std::size_t i=0;i<expectPreview.size();++i)previewWorst=std::max(previewWorst,std::abs(int(preview.straightRGBA[i])-int(expectPreview[i])));
+                std::cout<<"; preview worst "<<previewWorst;check(previewWorst<=1,"ICC stills preview within one level of the Mac: "+name);}
+            std::cout<<'\n';
+        }
+        fs::remove(file);
+    }
+    check(converted==20&&exports==2*(9*4+13),"Every ICC fixture still was exported on both paths");
+}
+
 int wmain(int argc,wchar_t**argv){
-    COM com;try{check(SUCCEEDED(com.result)&&argc==2,"Pass windows/resources/media-assembly");Temp temp;stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
+    COM com;try{check(SUCCEEDED(com.result)&&argc==3,"Pass windows/resources/media-assembly and the ICC fixture");Temp temp;colourManaged(temp.path,fs::absolute(argv[1]),fs::absolute(argv[2]));stills(temp.path,fs::absolute(argv[1]));movies(temp.path,fs::absolute(argv[1]));
         std::cout<<"PASS "<<checks<<" native Media Assembly codec checks\n";return 0;}
     catch(const std::exception&e){std::cerr<<"FAIL after "<<checks<<": "<<e.what()<<'\n';return 1;}
 }

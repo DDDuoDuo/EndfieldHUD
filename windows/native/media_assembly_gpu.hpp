@@ -7,7 +7,7 @@
 struct ID3D11Device;struct IDXGISurface;
 namespace endfield::native {
 struct MediaAssemblyGpuStats {
-    std::uint64_t renders{},inPlace{},readbacks{},sourceUploads{},sourceAllocations{},lookupUploads{},targetAllocations{};
+    std::uint64_t renders{},inPlace{},readbacks{},sourceUploads{},sourceAllocations{},lookupUploads{},targetAllocations{},colourUploads{};
 };
 // GPU evaluation of the MediaAssemblyEngine.apply colour chain and geometry
 // (no stickers) on an existing D3D11 device. It runs exactly the portable
@@ -36,8 +36,12 @@ public:
     // RGBA8 rows (top-left origin, encoded sRGB). rotationDegrees is the Media
     // Foundation display rotation (0/90/180/270), folded into the geometry so
     // movie frames need no CPU rotation copy. Same-size uploads reuse the
-    // texture. The edit plan is computed on the oriented size.
-    void setSource(unsigned width,unsigned height,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotationDegrees=0);
+    // texture. The edit plan is computed on the oriented size. colour (a
+    // straight still with an embedded profile) converts each source pixel
+    // into the working space first, exactly like MediaAssemblyPixels::colour
+    // on the CPU; its 256-entry curves are uploaded once per profile.
+    void setSource(unsigned width,unsigned height,std::span<const std::uint8_t>rgba,std::size_t stride,bool premultiplied,unsigned rotationDegrees=0,
+        std::shared_ptr<const modules::MediaAssemblySourceColour>colour={});
     bool hasSource()const noexcept;
     // Edits for the following passes (stickers are ignored: they are retained
     // scene leaves in previews and composited by the CPU on image export).
