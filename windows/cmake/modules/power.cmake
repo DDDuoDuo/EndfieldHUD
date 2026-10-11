@@ -60,7 +60,7 @@ if(WIN32)
   target_include_directories(hud_power_area PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(hud_power_area PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00 UNICODE _UNICODE NOMINMAX)
   target_link_libraries(hud_power_area PUBLIC hud_module_registry hud_power_owner hud_charge_badge hud_power_automation hud_utility hud_data hud_services
-    PRIVATE user32 oleaut32)
+    PRIVATE hud_source_motion user32 oleaut32)
   list(APPEND EHUD_POWER_TARGETS hud_power_area)
   set_property(GLOBAL APPEND PROPERTY EHUD_APP_AREAS
     "powerCharge|hud_power_area|app/areas/power_module.hpp|endfield::power::powerModule")
@@ -125,7 +125,7 @@ if(BUILD_TESTING)
     # User-run alert diagnostics (screens, hidden layered composition target).
     add_executable(charge_alert_probe tools/charge_alert_probe.cpp)
     target_compile_definitions(charge_alert_probe PRIVATE UNICODE _UNICODE NOMINMAX)
-    target_link_libraries(charge_alert_probe PRIVATE hud_charge_panel)
+    target_link_libraries(charge_alert_probe PRIVATE hud_charge_panel ole32)
     add_test(NAME charge_alert_probe_inert COMMAND charge_alert_probe)
     set_tests_properties(charge_alert_probe_inert PROPERTIES PASS_REGULAR_EXPRESSION "inert")
     list(APPEND EHUD_POWER_TARGETS battery_capacity_probe charge_alert_probe)

@@ -218,6 +218,34 @@ void run(const fs::path& shader) {
         frames(7.2, 7.5);
         check(!owner->covers(edge), "Cancelled hover collapses the capsule");
         check(service->powerAccessibilityLabel() == "EndfieldHUD, Battery: 63%, On battery", "Power entry help");
+        // The badge artwork is rasterized for the core plane's rest pose:
+        // scaling the plane (the deployment lift, tilt, parallax) transforms
+        // it without a re-raster; the HUD scale preference re-rasterizes it.
+        {
+            const auto zoomed = [&](double s, double t) {
+                host.clock = std::max(host.clock, t);
+                const auto pose = center * c::Matrix4::translation(500, 484) * c::Matrix4::scale(s, s) * c::Matrix4::translation(-500, -484);
+                owner->update({pose, chrome, sample, 1.f, t, true});
+                owner->upload(renderer);
+            };
+            const auto rasterized = raster.stats().rasterizations;
+            for (unsigned n = 0; n <= 4; ++n) zoomed(1 + n * .4, 7.5 + n * .005);
+            frame(7.53);
+            check(raster.stats().rasterizations == rasterized && owner->covers(middle), "Scaling the core plane up to 2.6x re-rasterizes nothing");
+            // The Settings page commits the HUD scale (not this area: no save counted).
+            host.configuration.set("hudScale", Json(2.0));
+            host.settingsPending = true;
+            frame(7.54);
+            const auto scaled = raster.stats().rasterizations;
+            check(scaled > rasterized, "A 2x HUD scale re-rasterizes the badge for its new rest pose");
+            host.configuration.set("hudScale", Json(1.0));
+            host.settingsPending = true;
+            frame(7.55);
+            const auto restored = raster.stats().rasterizations;
+            check(restored > scaled, "Restoring the HUD scale re-rasterizes it once more");
+            frames(7.56, 7.58);
+            check(raster.stats().rasterizations == restored && host.settingsUpdates == 0, "Frames at rest re-rasterize nothing");
+        }
 
         // Settings > Edit position: the HUD closes first, then the editor.
         check(service->editPosition(7.6) && !service->editingPosition(), "The edit request is deferred");

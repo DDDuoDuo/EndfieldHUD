@@ -3,6 +3,7 @@
 #include "modules/charge_badge.hpp"
 #include "native/charge_indicator_scene.hpp"
 #include "native/layer_scene.hpp"
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -23,7 +24,19 @@ public:
     ~ChargeBadgePreview();
     ChargeBadgePreview(const ChargeBadgePreview&) = delete;
     ChargeBadgePreview& operator=(const ChargeBadgePreview&) = delete;
-    void resize(const app::ClientMetrics&);
+    // Client metrics and the HUD design scale at the core plane's rest pose
+    // (DesktopChromeLayout.designScale: min(width / 1100, height / 740, 1.15)
+    // x hudScale). Content event: the artwork is rasterized once for that
+    // rest pose (designScale x 0.82 x the client DPI scale, quarter steps
+    // within 1...4). The frames' deployment, tilt and parallax transforms
+    // then scale it the way Core Animation scales layer contents, so no
+    // opening, closing or hover frame re-rasterizes; only a size, DPI or HUD
+    // scale change does.
+    void resize(const app::ClientMetrics&, double designScale);
+    // Device pixels per canvas point of the rasterized artwork, and how many
+    // times a density change re-rasterized existing content.
+    double rasterDensity() const noexcept;
+    std::uint64_t densityChanges() const noexcept;
     // Content events (battery reading, resolved dark/accent/language, metric).
     void setContent(const modules::BatteryReading&, const modules::ChargeIndicatorAppearance&,
         modules::ChargeMetric = modules::ChargeMetric::battery, const std::optional<modules::ChargeTelemetry>& = std::nullopt);

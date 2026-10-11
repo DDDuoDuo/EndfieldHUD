@@ -2,6 +2,7 @@
 #include "app/application_host.hpp"
 #include "app/utility_executor.hpp"
 #include "core/data/data_store.hpp"
+#include "core/source_desktop_chrome.hpp"
 #include "modules/power_policy.hpp"
 #include "native/layer_scene.hpp"
 #include "native/power_automation.hpp"
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -95,7 +97,7 @@ public:
         // coverage keeps a deterministic sequence.
         seed_ = mode_ == Mode::hiddenCoverage ? 0x5eedc4a26eull : (std::uint64_t(std::random_device{}()) << 32) ^ std::random_device{}();
         badge_ = std::make_unique<tools::ChargeBadgePreview>(context.rasterizer, [this] { host_.selectModule(core::Module::power); });
-        if (validMetrics(metrics_)) badge_->resize(metrics_);
+        placeBadge(); // the first content rasterizes at the rest-pose density
         tools::PowerOwnerCallbacks callbacks;
         callbacks.recordEvent = [this](m::EventKind kind, const m::EventMetadata& metadata) { recordEvent(kind, metadata); };
         callbacks.readingChanged = [this](const m::BatteryReading& reading) { readingChanged(reading); };
@@ -115,6 +117,10 @@ public:
         // AppDelegate startup: the first reading is a baseline (always mode
         // presents persistently); the HUD is not open yet.
         (void)observe(now);
+        // The badge artwork is rasterized once here, while the HUD is still
+        // closed, with the settings and the startup reading both applied.
+        constructed_ = true;
+        badgeContent();
         host_.publish<PowerAreaService>(PowerAreaService::key, *this);
     }
     ~PowerArea() override {
@@ -143,7 +149,7 @@ public:
     }
     void resize(const app::ClientMetrics& metrics) override {
         metrics_ = metrics;
-        if (validMetrics(metrics)) badge_->resize(metrics);
+        placeBadge();
     }
     void setAppearance(const app::ModuleAppearance& a, double time) override {
         clock(time);
@@ -268,9 +274,12 @@ public:
             power_->panel().refreshScreens();
             changed = true;
             break;
-        case Kind::settingsChanged:
-            changed = applySettings(time_);
+        case Kind::settingsChanged: {
+            const double density = badge_->rasterDensity();
+            placeBadge(); // the HUD scale
+            changed = applySettings(time_) || badge_->rasterDensity() != density;
             break;
+        }
         case Kind::quitting:
             // AppDelegate.onQuitAccepted: terminating; no alert, edit or
             // reopen until the owner ends (or a failed save reopens the HUD).
@@ -401,6 +410,7 @@ private:
     bool hudVisible_{}, terminating_{}, suspended_{};
     bool pendingEdit_{}, closeRequested_{}, openDisplayPending_{}, noticePosted_{}, editing_{};
     bool alertAnimating_{}, alertCadence_{}, readingApplied_{}, pendingSelect_{};
+    bool constructed_{}; // badge content is applied once construction finished
     unsigned uploads_{}, recordedEvents_{};
 
     static bool validMetrics(const app::ClientMetrics& metrics) noexcept {
@@ -481,8 +491,18 @@ private:
         alertChanged();
         return true;
     }
+    // The badge's rest pose: the client metrics and the HUD design scale with
+    // the configured HUD scale (DesktopChromeLayout, SystemHUDView.designScale).
+    void placeBadge() {
+        if (!validMetrics(metrics_) || !std::isfinite(metrics_.width) || !std::isfinite(metrics_.height) || !(metrics_.width > 0) ||
+            !(metrics_.height > 0)) return;
+        const auto& hud = host_.settings().fields["hudScale"];
+        const double hudScale = hud.isNumber() && std::isfinite(hud.number()) && hud.number() > 0 ? hud.number() : 1;
+        const core::source::DesktopChromeSettings rest{{0, 0, metrics_.width, metrics_.height}, hudScale, {}, core::Module::power, true};
+        badge_->resize(metrics_, core::source::DesktopChromeLayout::make(rest, {}, {}).designScale);
+    }
     void badgeContent() {
-        if (!applied_) return;
+        if (!applied_ || !constructed_) return;
         const auto& s = applied_->settings;
         const bool dark = s.theme == m::ChargeTheme::dark || (s.theme == m::ChargeTheme::system && applied_->dark);
         badge_->setContent(power_->reading(), {dark, s.accent(), applied_->language}, s.metric, telemetry_);
@@ -616,6 +636,21 @@ void PowerArea::coverage(app::ModuleCoverage& step) {
     check(powerAccessibilityLabel().find("63%") != std::string::npos, "Power area: the Power entry help carries the live reading");
     const auto circle = badgeClientPoint(badgeDesignCenter);
     check(circle && covers(*circle), "Power area: the circle hit region projects through the core plane");
+    {
+        // The artwork was rasterized for the core plane's rest pose (the
+        // frames only transform it): that density matches the settled
+        // on-screen scale at the badge within one quarter step.
+        const auto right = badgeClientPoint({badgeDesignCenter.x + 1, badgeDesignCenter.y});
+        const auto below = badgeClientPoint({badgeDesignCenter.x, badgeDesignCenter.y + 1});
+        double measured{};
+        if (right && below) {
+            const double points = std::max(std::hypot(right->x - circle->x, right->y - circle->y), std::hypot(below->x - circle->x, below->y - circle->y));
+            measured = std::clamp(std::ceil(points * m::ChargeBadgeState::rendererScale * metrics_.scale * 4) / 4, 1.0, 4.0);
+        }
+        check(right && below && std::abs(measured - badge_->rasterDensity()) <= .25 + 1e-9,
+              "Power area: the badge's rest-pose raster density " + std::to_string(badge_->rasterDensity()) +
+                  " matches the settled core plane (" + std::to_string(measured) + ")");
+    }
     const auto previous = host_.selectedModule();
     check(pointer({app::PointerKind::move, app::PointerButton::none, circle->x, circle->y, 0}, t) && badge_->hovered(), "Power area: hover acquires the badge");
     hudFrames(.25, 8);

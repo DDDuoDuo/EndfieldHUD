@@ -12,12 +12,10 @@ namespace m = modules;
 using Matrix = core::Matrix4;
 using Json = ehud::data::Json;
 void need(bool value, const char* message) { if (!value) throw std::invalid_argument(message); }
-// Effective device pixels per canvas point of a design->world matrix.
-double density(const Matrix& center, double clientScale) {
-    const double sx = std::hypot(center.values[0], center.values[1]), sy = std::hypot(center.values[4], center.values[5]);
-    const double value = std::max(sx, sy) * m::ChargeBadgeState::rendererScale * clientScale;
-    // Quantize so ordinary tilt/parallax never re-rasterizes.
-    return std::clamp(std::ceil(value * 4) / 4, 1.0, 4.0);
+// Device pixels per canvas point of the badge at the core plane's rest pose
+// (design points -> logical points -> device pixels), in quarter steps.
+double restDensity(double designScale, double clientScale) {
+    return std::clamp(std::ceil(designScale * m::ChargeBadgeState::rendererScale * clientScale * 4) / 4, 1.0, 4.0);
 }
 } // namespace
 
@@ -28,6 +26,7 @@ struct ChargeBadgePreview::Impl {
     std::function<void()> selectPower;
     gpu::ChargeIndicatorSceneContent content;
     bool hasContent{}, visible{}, pressed{}, reduced{};
+    std::uint64_t densityChanges{};
     // Host navigation target (setNavigationHovered) and a move that left the
     // hovered badge before that target was known.
     bool navigationReported{}, navigationPower{}, hoverUnresolved{};
@@ -74,10 +73,20 @@ struct ChargeBadgePreview::Impl {
 ChargeBadgePreview::ChargeBadgePreview(gpu::LayerRasterizer& raster, std::function<void()> selectPower)
     : impl_(std::make_unique<Impl>(raster, std::move(selectPower))) {}
 ChargeBadgePreview::~ChargeBadgePreview() = default;
-void ChargeBadgePreview::resize(const app::ClientMetrics& m) {
+void ChargeBadgePreview::resize(const app::ClientMetrics& m, double designScale) {
     need(m.pixelWidth && m.pixelHeight && std::isfinite(m.scale) && m.scale > 0, "Invalid charge badge viewport");
-    impl_->metrics = m;
+    need(std::isfinite(designScale) && designScale > 0, "Invalid charge badge design scale");
+    auto& i = *impl_;
+    i.metrics = m;
+    const double density = restDensity(designScale, m.scale);
+    if (density == i.content.pixelsPerPoint) return;
+    i.content.pixelsPerPoint = density;
+    if (!i.hasContent) return; // the first content rasterizes at this density
+    i.scene.setContent(i.content);
+    ++i.densityChanges;
 }
+double ChargeBadgePreview::rasterDensity() const noexcept { return impl_->content.pixelsPerPoint; }
+std::uint64_t ChargeBadgePreview::densityChanges() const noexcept { return impl_->densityChanges; }
 void ChargeBadgePreview::setContent(const m::BatteryReading& reading, const m::ChargeIndicatorAppearance& appearance, m::ChargeMetric metric,
                                     const std::optional<m::ChargeTelemetry>& telemetry) {
     auto& i = *impl_;
@@ -136,9 +145,8 @@ m::ChargeBadgeState::Events ChargeBadgePreview::update(const Matrix& center, flo
     const auto phase = i.state.phase();
     i.visible = phase != m::ChargeBadgeState::Phase::hidden && phase != m::ChargeBadgeState::Phase::waiting && opacity > 0;
     if (!i.visible) { i.pressed = false; return events; }
-    // Raster density follows the effective on-screen size (content event).
-    const double d = density(center, i.metrics.scale);
-    if (d != i.content.pixelsPerPoint) { i.content.pixelsPerPoint = d; i.scene.setContent(i.content); }
+    // The artwork keeps its rest-pose density (resize): the center's
+    // deployment, tilt and parallax only transform it.
     const auto pose = i.state.sample(i.time);
     gpu::ChargeIndicatorPlacement placement;
     placement.canvasToWorld = Impl::canvasToWorld(center);

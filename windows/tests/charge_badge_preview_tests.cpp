@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
 
 namespace {
 namespace gpu = endfield::native;
@@ -50,14 +51,17 @@ void run(const std::filesystem::path& shader) {
         gpu::Renderer& r; gpu::LayerComposition& c; t::ChargeBadgePreview& b; bool& done;
         ~Cleanup() { if (done) return; try { c.detach(r); b.release(r); } catch (...) { r.reset(); } }
     } cleanup{renderer, composition, badge, done};
-    badge.resize({width, height, 96, 1, width, height});
+    c::source::DesktopChromeSettings settings{{0, 0, width, height}, 1, {}, c::Module::power, true};
+    const auto layout = c::source::DesktopChromeLayout::make(settings, {}, {});
+    const auto center = layout.designToScreen;
+    badge.resize({width, height, 96, 1, width, height}, layout.designScale);
     m::BatteryReading reading;
     reading.present = reading.pluggedIn = reading.charging = true;
     reading.percentage = 75;
     m::ChargeIndicatorAppearance appearance;
     badge.setContent(reading, appearance);
-    c::source::DesktopChromeSettings settings{{0, 0, width, height}, 1, {}, c::Module::power, true};
-    const auto center = c::source::DesktopChromeLayout::make(settings, {}, {}).designToScreen;
+    // 1.081 design scale x 0.82 x 1 rounds up to the 1x quarter step.
+    check(badge.rasterDensity() == 1 && badge.densityChanges() == 0, "The first content rasterizes once for the 1x rest pose");
     auto project = [&](double x, double y) {
         const auto q = c::Projection::viewport(camera * center, width, height).project({x, y});
         check(q.has_value(), "Design point projects");
@@ -152,6 +156,43 @@ void run(const std::filesystem::path& shader) {
     for (double time = now; time <= exitStart + 0.66; time += 1.0 / 60) frame(time);
     frame(exitStart + 0.7);
     check(badge.exitFinished() && badge.entries().empty() && !badge.requiresFrames(now), "Exit completes with the source 0.64 s");
+    // Rest-pose raster density, as Core Animation scales layer contents: a
+    // DPI change re-rasterizes the artwork once; the deployment transforms of
+    // an opening and a closing re-rasterize and re-upload nothing (a density
+    // measured per frame would re-rasterize at every quarter step between 1
+    // and 2 here, while opening and again while closing).
+    {
+        const auto rasterized = raster.stats().rasterizations;
+        badge.resize({2 * width, 2 * height, 192, 2, width, height}, layout.designScale);
+        check(badge.rasterDensity() == 2 && badge.densityChanges() == 1 && raster.stats().rasterizations > rasterized,
+              "A 2x DPI change re-rasterizes the artwork once for its new rest pose");
+        const auto redrawn = raster.stats().rasterizations;
+        const auto lifted = [&](double s) {
+            return center * c::Matrix4::translation(500, 484) * c::Matrix4::scale(s, s) * c::Matrix4::translation(-500, -484);
+        };
+        badge.animateEntrance(now, 11);
+        const double opened = now;
+        std::optional<std::uint64_t> revealUploads;
+        for (double time = opened; time <= opened + 2.2; time += 1.0 / 60) {
+            now = time;
+            (void)badge.update(lifted(std::min(1.0, 0.2 + (time - opened) * 0.8 / 0.9)), 1, now); // the core plane grows into place
+            badge.upload(renderer);
+            if (!revealUploads && !badge.entries().empty()) revealUploads = renderer.stats().textureUploads;
+        }
+        check(revealUploads && raster.stats().rasterizations == redrawn && badge.densityChanges() == 1 && badge.rasterDensity() == 2 &&
+              renderer.stats().textureUploads == *revealUploads, "The opening lift re-rasterizes and re-uploads nothing after the reveal");
+        badge.animateExit(now, 5);
+        const double closing = now;
+        for (double time = closing; time <= closing + 0.7; time += 1.0 / 60) {
+            now = time;
+            (void)badge.update(lifted(std::max(0.08, 1 - (time - closing) * 0.92 / 0.64)), 1, now); // retracts inward
+            badge.upload(renderer);
+        }
+        check(badge.exitFinished() && raster.stats().rasterizations == redrawn && renderer.stats().textureUploads == *revealUploads,
+              "The closing retraction re-rasterizes and re-uploads nothing");
+        badge.resize({width, height, 96, 1, width, height}, layout.designScale);
+        check(badge.rasterDensity() == 1 && badge.densityChanges() == 2, "Returning to 1x re-rasterizes once more");
+    }
     // Reduce Motion: compact immediately.
     badge.setReduceMotion(true, now);
     badge.animateEntrance(now, 9);
