@@ -31,10 +31,11 @@ cbuffer Edit : register(b0) {
     float4 Controls;// exposure gain, brightness, contrast, saturation
     float4 Levels;  // gain, bias, gamma power
     float4 Matrix0; float4 Matrix1; float4 Matrix2;
-    float4 Shadow;  // shadow, highlight, no-op mix, highlight gain
     float4 Curve[4];// spline interval j: y, b, c, d
 };
-static const uint StepExposure=1u, StepControls=2u, StepTemperature=4u, StepHighlightShadow=8u, StepTone=16u, StepLevels=32u, StepGamma=64u, StepLookup=128u;
+// Bit 8 (Highlights/Shadows) is never set: that step applies no change on
+// Windows (documented gap, modules/media_assembly_processor.hpp).
+static const uint StepExposure=1u, StepControls=2u, StepTemperature=4u, StepTone=16u, StepLevels=32u, StepGamma=64u, StepLookup=128u;
 static const uint FlagSourcePremultiplied=1u, FlagLinear=2u, FlagOutputPremultiplied=4u;
 
 float4 FullScreen(uint id : SV_VertexID) : SV_Position {
@@ -52,54 +53,6 @@ float Power(float x, float e) {
     if (e == 0) return 1;
     if (x <= 0) return 0;
     return exp2(e * log2(x));
-}
-float Smooth(float e0, float e1, float x) { float t = saturate((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); }
-float Blend(float a, float b, float t) { return a * (1 - t) + b * t; }
-float3 Blend3(float3 a, float3 b, float t) { return a * (1 - t) + b * t; }
-float Luma(float3 v) { return v.r * 0.299 + v.g * 0.587 + v.b * 0.114; }
-float MidWeight(float y) { return max(max(-2.6 * y * y - 2.6 * y + 0.98, -6.25 * y * y - 6.25 * y + 0.5965), 1); }
-float SignOf(float v) { return v > 0 ? 1 : (v < 0 ? -1 : 0); }
-
-// CIHighlightShadowAdjust at radius 0 (see MediaAssemblyHighlightShadowKernel).
-float3 HighlightShadow(float3 p) {
-    float s = Shadow.x, h = Shadow.y, z = Shadow.z, g = Shadow.w;
-    float peak = max(0, max(max(p.r, p.g), p.b));
-    float root = sqrt(peak);
-    float warmth = (max(p.r, 0) + 0.8 * max(p.g, 0) + 1.1 * max(p.b, 0)) / max(0.001, p.r + p.g + p.b);
-    float lift = s == 0 ? 0 : s * Power(min(warmth, 1), 1 - s);
-    float scale = 0.5 + 0.5 * Smooth(0.5, 1, s);
-    bool linearShadow = z == 1;
-    float3 e = float3(1, 1, 1);
-    float3 shade = float3(0, 0, 0);
-    [unroll] for (int c = 0; c < 3; ++c) {
-        float base = max(p[c], 0) * scale;
-        if (linearShadow) shade[c] = (1 + lift) * base * 2;
-        else { e[c] = Blend(exp2(-lift - p[c]), 1, z); shade[c] = (1 + lift) * Power(base, e[c]) * 2; }
-    }
-    float y = p.r * 0.299 + p.g * 0.587 + p.b * 0.114;
-    float i = p.r * 0.596 + p.g * -0.2755 + p.b * -0.321;
-    float q = p.r * 0.212 + p.g * -0.523 + p.b * 0.311;
-    float curved = SignOf(y) * (linearShadow ? abs(y) * scale : Power(abs(y) * scale, e.r)) * 2;
-    float3 lumaOnly = float3(curved * 1.00048 + i * 0.955558 + q * 0.619549,
-                             curved * 0.999864 + i * -0.271545 + q * -0.646786,
-                             curved * 0.999446 + i * -1.10803 + q * 1.70542);
-    float fade = Smooth(0, 0.1 + lift, sqrt(root));
-    shade = Blend3(shade, lumaOnly, 0.35);
-    shade = Blend3(p, shade, fade);
-    shade = Blend3(shade, p, root);
-    float3 high = float3(0, 0, 0);
-    [unroll] for (int k = 0; k < 3; ++k) high[k] = SignOf(p[k]) * Power(abs(p[k]) * g, 2 - h);
-    float pivotMix = 1 + (1 - min(1, h + 0.3)) * 0.4;
-    float boost = min(MidWeight(Luma(high)), 30 * peak) * (1 - h);
-    float highFade = root <= 0.2 ? 0 : (root >= 0.8 ? 1 : Smooth(0.2, 0.8, root));
-    high = Blend3(high, Blend3(float3(0.25, 0.25, 0.25), high, pivotMix), boost);
-    high = Blend3(p, high, highFade);
-    high = Blend3(p, high, peak);
-    float3 result = Blend3(shade, high, min(root, 1));
-    float restore = min(MidWeight(Luma(result)), 30 * peak);
-    float stretch = 1 + abs(lift) * 0.1 * (1 - z);
-    result = Blend3(result, Blend3(float3(0.5, 0.5, 0.5), result, stretch), restore);
-    return max(result, 0) + min(p, 0);
 }
 float Tone(float x) {
     float e = Encode(saturate(x));
@@ -140,7 +93,6 @@ float4 Edit(float4 c) {
     if (steps & StepTemperature) v = float3(Matrix0.x * v.r + Matrix0.y * v.g + Matrix0.z * v.b,
                                            Matrix1.x * v.r + Matrix1.y * v.g + Matrix1.z * v.b,
                                            Matrix2.x * v.r + Matrix2.y * v.g + Matrix2.z * v.b);
-    if (steps & StepHighlightShadow) v = HighlightShadow(v);
     if (steps & StepTone) v = float3(Tone(v.r), Tone(v.g), Tone(v.b));
     if (steps & StepLevels) v = saturate(v * Levels.x + Levels.y);
     if (steps & StepGamma) v = float3(Power(max(v.r, 0), Levels.z), Power(max(v.g, 0), Levels.z), Power(max(v.b, 0), Levels.z));
@@ -200,9 +152,9 @@ const Bytecode&bytecode(){
 }
 constexpr unsigned flagSourcePremultiplied=1,flagLinear=2,flagOutputPremultiplied=4;
 struct alignas(16) Constants {
-    std::int32_t map0[4]{},map1[4]{};std::uint32_t mode[4]{};float controls[4]{},levels[4]{},matrix0[4]{},matrix1[4]{},matrix2[4]{},shadow[4]{},curve[16]{};
+    std::int32_t map0[4]{},map1[4]{};std::uint32_t mode[4]{};float controls[4]{},levels[4]{},matrix0[4]{},matrix1[4]{},matrix2[4]{},curve[16]{};
 };
-static_assert(sizeof(Constants)==13*16,"HLSL cbuffer layout");
+static_assert(sizeof(Constants)==12*16,"HLSL cbuffer layout");
 }
 
 struct NativeMediaAssemblyGpuProcessor::Impl {
@@ -295,7 +247,6 @@ m::MediaAssemblyPixelPlan NativeMediaAssemblyGpuProcessor::configure(const m::Me
     k.controls[0]=c.exposure;k.controls[1]=c.brightness;k.controls[2]=c.contrast;k.controls[3]=c.saturation;
     k.levels[0]=c.levelGain;k.levels[1]=c.levelBias;k.levels[2]=c.gammaPower;
     for(int r=0;r<3;++r){float*row=r==0?k.matrix0:r==1?k.matrix1:k.matrix2;for(int col=0;col<3;++col)row[col]=c.temperature[std::size_t(r*3+col)];}
-    k.shadow[0]=c.highlightShadow.shadow;k.shadow[1]=c.highlightShadow.highlight;k.shadow[2]=c.highlightShadow.noOpMix;k.shadow[3]=c.highlightShadow.gain;
     for(std::size_t j=0;j<4;++j)for(std::size_t n=0;n<4;++n)k.curve[j*4+n]=float(c.curve[j][n]);
     if(c.steps&m::mediaAssemblyStepLookup){
         const auto bytes=c.lookup;need(bytes.size()==32*32*32*3,"lookup must be the original 32 cubed RGB8 cube");

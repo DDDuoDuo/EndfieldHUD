@@ -4,16 +4,20 @@
 Builds a detached oracle from the pinned macOS sources: Engine.apply, the asset
 catalog (original LUTs and sticker PNGs from windows/resources/media-assembly)
 and the same explicit sRGB-working CIContext as the original preview/export.
-No user media, decoder, window, app or account is used.
+No user media, decoder, window, app or account is used. Only rendered outputs
+of the public Core Image API are recorded; no framework internals are read.
 
 Sections written to the fixture:
   cases   one-pixel associated RGBAf inputs through every operator, including
-          dense temperature/tint, tone-curve and highlight/shadow grids (with
-          the highlight/shadow filter's identity window and its edges). These
-          are the evidence for the derived Windows formulas.
+          dense temperature/tint and tone-curve grids. These are the evidence
+          for the derived Windows formulas. Highlights/Shadows cases on a
+          uniform amount grid record what Core Image does for the documented
+          Windows gap (no model; see media_assembly_highlight_shadow_fit.py).
   frames  opaque synthetic RGBA8 images through crop/mirror/rotation, colour
           operators and sticker compositing, rendered as the original
           createCGImage(.RGBA8) bytes (associated alpha).
+
+build_oracle() is shared with media_assembly_highlight_shadow_fit.py.
 """
 from pathlib import Path
 import base64, hashlib, json, subprocess, sys, tempfile
@@ -21,10 +25,17 @@ import base64, hashlib, json, subprocess, sys, tempfile
 root = Path(__file__).resolve().parents[2]
 commit = 'ca04f142185c7de40acd8523bdb563195d90a1d1'
 names = ['MediaAssemblyEngine.swift', 'MediaAssemblyModel.swift', 'MediaAssemblyAssetCatalog.swift']
-sources = {n: subprocess.check_output(['git', 'show', commit + ':Sources/' + n], cwd=root).decode() for n in names}
-engine = sources[names[0]]
-start = engine.index('    static func apply(')
-end = engine.index('    func makePlaybackItem(', start)
+assets = root / 'windows/resources/media-assembly'
+
+
+def pinned_sources():
+    return {n: subprocess.check_output(['git', 'show', commit + ':Sources/' + n], cwd=root).decode() for n in names}
+
+
+def source_pins(sources):
+    return {n: hashlib.sha256(v.encode()).hexdigest() for n, v in sources.items()}
+
+
 glue = r'''
 enum L10n {static func text(_ en:String,_ cn:String)->String{en}}
 enum MediaAssemblyError:Error{case invalidAdjustment,unsupported,exportFailed,unavailable}
@@ -51,18 +62,16 @@ for f in MediaAssemblyFilter.allCases where f != .none{add(f.rawValue){$0.filter
 add("combined-lut"){$0.exposure = -0.43;$0.contrast=1.2;$0.saturation=0.7;$0.levelsGamma=1.7;$0.filter = .filter3}
 // Former evidence-only records, now characterised by the dense grids below.
 add("unproven-temperature"){$0.temperature=4700;$0.tint=37}
-add("unproven-highlight-shadow"){$0.highlights=0.4;$0.shadows=0.6}
 add("unproven-tonecurve"){$0.curve=[0,0.14,0.61,0.88,1]}
 // CITemperatureAndTint over the whole source slider domain, including the
 // Robertson isotherm row near 3077 K and both tint extremes.
 for t in [2000.0,2500,3000,3077,3100,3500,4700,5600,6500,8000,10000,12000]{for n in [-200.0,-37,0,1,37,200] where !(t==6500&&n==0){add("temperature\(Int(t))/\(Int(n))"){$0.temperature=t;$0.tint=n}}}
 for (i,c) in [[0,1,0,1,0],[0,0.9,0.1,0.9,1],[1,0.75,0.5,0.25,0],[0.2,0.5,0.5,0.6,0.9],[0.05,0.25,0.5,0.75,0.95],[0,0.3,0.3,0.31,1]].enumerated(){add("tonecurve\(i)"){$0.curve=c}}
-for h in [0.0,0.25,0.4,0.7,0.93,1]{for s in [0.0,0.07,0.3,0.6,1] where !(h==1&&s==0){add("highlight\(h)/shadow\(s)"){$0.highlights=h;$0.shadows=s}}}
-// The filter's own identity window (|shadows| < 0.05 and highlights > 0.95),
-// its edges, and off-grid amounts for the logistic highlight gain and the
-// (|shadows|/0.3)^1.6 no-op mix.
-for (h,s) in [(0.95,0.04),(0.951,0.0),(0.96,0.03),(0.97,0.049),(0.99,0.05),(1,0.05),(0.5,0.0),(0.12,0.0),(0.85,0.15),(0.33,0.95),(0.61,0.21),(0.05,0.45)]{add("highlight\(h)/shadow\(s)"){$0.highlights=h;$0.shadows=s}}
+// CIHighlightShadowAdjust has no Windows model (documented gap). A uniform
+// amount grid records Core Image's output for the gap measurement.
+for h in [0.0,0.25,0.5,0.75,1]{for s in [0.0,0.25,0.5,0.75,1] where !(h==1&&s==0){add("highlight\(h)/shadow\(s)"){$0.highlights=h;$0.shadows=s}}}
 add("everything"){$0.exposure=0.21;$0.brightness=0.04;$0.contrast=1.1;$0.saturation=1.2;$0.temperature=5600;$0.tint = -12;$0.highlights=0.8;$0.shadows=0.25;$0.curve=[0.02,0.27,0.52,0.76,0.97];$0.levelsBlack=0.03;$0.levelsWhite=0.96;$0.levelsGamma=1.15;$0.filter = .special2}
+add("everything-but-highlight-shadow"){$0.exposure=0.21;$0.brightness=0.04;$0.contrast=1.1;$0.saturation=1.2;$0.temperature=5600;$0.tint = -12;$0.curve=[0.02,0.27,0.52,0.76,0.97];$0.levelsBlack=0.03;$0.levelsWhite=0.96;$0.levelsGamma=1.15;$0.filter = .special2}
 var cases:[[String:Any]]=[]
 for (name,a) in operations {
  var outputs:[[Float]]=[];var rgba8:[[Int]]=[]
@@ -117,20 +126,39 @@ try addFrame("sticker-large-scale",160,120,stickers:true){$0.stickers=[MediaAsse
 try addFrame("stickers-excluded",96,64,stickers:false){$0.stickers=[s1,s2]}
 FileHandle.standardOutput.write(try JSONSerialization.data(withJSONObject:["inputs":inputs,"cases":cases,"frames":frames],options:[.sortedKeys]))
 '''
-model = sources[names[1]].split('struct MediaAssemblyDocument {')[0]
-with tempfile.TemporaryDirectory(prefix='endfield-media-pixels-') as tmp:
-    p = Path(tmp)
-    (p / 'main.swift').write_text(model + sources[names[2]] + glue + '\nenum Original {\n' + engine[start:end] + '\n}\n' + driver)
+
+
+def build_oracle(sources, swift_driver, directory):
+    """Compile the pinned model, asset catalog and unchanged Engine.apply (as
+    Original.apply) with swift_driver into directory/oracle. The first oracle
+    argument must be the media-assembly resources folder."""
+    engine = sources[names[0]]
+    start = engine.index('    static func apply(')
+    end = engine.index('    func makePlaybackItem(', start)
+    model = sources[names[1]].split('struct MediaAssemblyDocument {')[0]
+    directory = Path(directory)
+    (directory / 'main.swift').write_text(model + sources[names[2]] + glue + '\nenum Original {\n' + engine[start:end] + '\n}\n' + swift_driver)
     # The Swift module cache stays inside the temporary directory so the
     # generator never writes into shared build trees.
     subprocess.run(['/usr/bin/swiftc', '-O', '-sdk', '/Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk', '-module-cache-path',
-                    str(p / 'module-cache'), str(p / 'main.swift'), '-o', str(p / 'oracle')], check=True)
-    result = json.loads(subprocess.check_output([str(p / 'oracle'), str(root / 'windows/resources/media-assembly')]))
-result.update({'sourceCommit': commit, 'sourcePins': {n: hashlib.sha256(v.encode()).hexdigest() for n, v in sources.items()},
-               'usesAppOrWindow': False,
-               'synthetic': 'r=x*255/(w-1), g=y*255/(h-1), b=((7x+13y)*5)%256, a=255 (integer division), top-left rows',
-               'scope': 'Actual unchanged Engine.apply and AssetCatalog on synthetic associated RGBAf sRGB pixels and opaque synthetic RGBA8 frames; same explicit source preview context, original LUTs and sticker PNGs. No user data or decoder.'})
-output = Path(sys.argv[1])
-output.parent.mkdir(parents=True, exist_ok=True)
-output.write_text(json.dumps(result, separators=(',', ':')) + '\n')
-print(output, len(result['cases']), len(result['frames']), output.stat().st_size)
+                    str(directory / 'module-cache'), str(directory / 'main.swift'), '-o', str(directory / 'oracle')], check=True)
+    return directory / 'oracle'
+
+
+def main():
+    sources = pinned_sources()
+    with tempfile.TemporaryDirectory(prefix='endfield-media-pixels-') as tmp:
+        oracle = build_oracle(sources, driver, tmp)
+        result = json.loads(subprocess.check_output([str(oracle), str(assets)]))
+    result.update({'sourceCommit': commit, 'sourcePins': source_pins(sources),
+                   'usesAppOrWindow': False,
+                   'synthetic': 'r=x*255/(w-1), g=y*255/(h-1), b=((7x+13y)*5)%256, a=255 (integer division), top-left rows',
+                   'scope': 'Actual unchanged Engine.apply and AssetCatalog on synthetic associated RGBAf sRGB pixels and opaque synthetic RGBA8 frames; same explicit source preview context, original LUTs and sticker PNGs. No user data or decoder.'})
+    output = Path(sys.argv[1])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, separators=(',', ':')) + '\n')
+    print(output, len(result['cases']), len(result['frames']), output.stat().st_size)
+
+
+if __name__ == '__main__':
+    main()

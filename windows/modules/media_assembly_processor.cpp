@@ -100,9 +100,8 @@ MediaAssemblyColorPipeline::MediaAssemblyColorPipeline(const MediaAssemblyAdjust
     if(a.exposure!=0){steps_|=mediaAssemblyStepExposure;exposure_=float(std::exp2(a.exposure));}
     if(a.brightness!=0||a.contrast!=1||a.saturation!=1){steps_|=mediaAssemblyStepColorControls;brightness_=float(a.brightness);contrast_=float(a.contrast);saturation_=float(a.saturation);}
     if(a.temperature!=6500||a.tint!=0){steps_|=mediaAssemblyStepTemperatureTint;const auto m=temperatureMatrix(6500,0,a.temperature,a.tint);for(std::size_t i=0;i<9;++i)matrix_[i]=float(m[i]);}
-    // The source requests the filter whenever either amount moved; the filter
-    // itself may still resolve to its identity window.
-    if(a.highlights!=1||a.shadows!=0){highlightShadow_=MediaAssemblyHighlightShadowKernel::make(a.highlights,a.shadows,tables);if(!highlightShadow_.identity)steps_|=mediaAssemblyStepHighlightShadow;}
+    // a.highlights/a.shadows: the source's CIHighlightShadowAdjust step has no
+    // Windows model and applies no change (documented gap in the header).
     if(a.curve!=std::array<double,5>{0,.25,.5,.75,1}){steps_|=mediaAssemblyStepToneCurve;curveY_=a.curve;spline(curveY_,curveB_,curveC_,curveD_);
         if(tables){toneTable_.resize(toneSamples+1);for(unsigned i=0;i<=toneSamples;++i)toneTable_[i]=toneExact(float(double(i)/toneSamples));}}
     if(a.levelsBlack!=0||a.levelsWhite!=1){steps_|=mediaAssemblyStepLevels;const double gain=1/(a.levelsWhite-a.levelsBlack);levelGain_=float(gain);levelBias_=float(-a.levelsBlack*gain);}
@@ -112,7 +111,7 @@ MediaAssemblyColorPipeline::MediaAssemblyColorPipeline(const MediaAssemblyAdjust
 }
 MediaAssemblyColorPipeline::Constants MediaAssemblyColorPipeline::constants()const{
     Constants c;c.steps=steps_;c.linearWorkingSpace=linear_;c.exposure=exposure_;c.brightness=brightness_;c.contrast=contrast_;c.saturation=saturation_;
-    c.temperature=matrix_;c.highlightShadow=highlightShadow_;c.levelGain=levelGain_;c.levelBias=levelBias_;c.gammaPower=gammaPower_;c.lookup=lookup_;
+    c.temperature=matrix_;c.levelGain=levelGain_;c.levelBias=levelBias_;c.gammaPower=gammaPower_;c.lookup=lookup_;
     for(std::size_t j=0;j<4;++j)c.curve[j]={curveY_[j],curveB_[j],curveC_[j],curveD_[j]};
     return c;
 }
@@ -143,7 +142,6 @@ MediaAssemblyRGBA MediaAssemblyColorPipeline::apply(MediaAssemblyRGBA p)const no
         r+=brightness_;g+=brightness_;b+=brightness_;
     }
     if(steps_&mediaAssemblyStepTemperatureTint){const auto&m=matrix_;const float x=m[0]*r+m[1]*g+m[2]*b,y=m[3]*r+m[4]*g+m[5]*b,z=m[6]*r+m[7]*g+m[8]*b;r=x;g=y;b=z;}
-    if(steps_&mediaAssemblyStepHighlightShadow){const auto v=highlightShadow_.apply({r,g,b});r=v[0];g=v[1];b=v[2];}
     if(steps_&mediaAssemblyStepToneCurve){r=tone(r);g=tone(g);b=tone(b);}
     if(steps_&mediaAssemblyStepLevels){r=unit(r*levelGain_+levelBias_);g=unit(g*levelGain_+levelBias_);b=unit(b*levelGain_+levelBias_);}
     if(steps_&mediaAssemblyStepGamma){r=std::pow(std::max(r,0.f),gammaPower_);g=std::pow(std::max(g,0.f),gammaPower_);b=std::pow(std::max(b,0.f),gammaPower_);}
@@ -168,75 +166,6 @@ unsigned mediaAssemblyDownscaleLevels(double scale)noexcept{
     // 2^-1.2 = 0.4352752816 for every rotation and at each further octave).
     if(!(scale>0)||!std::isfinite(scale))return 0;unsigned levels=0;const double threshold=std::exp2(-1.2);
     while(scale<threshold&&levels<24){scale*=2;++levels;}return levels;
-}
-namespace {
-float smooth(float edge0,float edge1,float x)noexcept{const float t=std::clamp((x-edge0)/(edge1-edge0),0.f,1.f);return t*t*(3.f-2.f*t);}
-float blend(float from,float to,float amount)noexcept{return from*(1.f-amount)+to*amount;}
-float signOf(float v)noexcept{return v>0?1.f:v<0?-1.f:0.f;}
-float luma(const std::array<float,3>&v)noexcept{return v[0]*.299f+v[1]*.587f+v[2]*.114f;}
-// Mid-tone weight shared by both restore passes: two downward parabolas in
-// luma, floored at one (they only exceed it for negative luma).
-float midWeight(float y)noexcept{return std::max(std::max(-2.6f*y*y-2.6f*y+.98f,-6.25f*y*y-6.25f*y+.5965f),1.f);}
-// x^e for x >= 0 as exp2(e*log2 x) (the GPU's own power expansion).
-float power(float x,float e)noexcept{if(e==1)return x;if(e==0)return 1;if(x<=0)return 0;return std::exp2(e*std::log2(x));}
-}
-MediaAssemblyHighlightShadowKernel MediaAssemblyHighlightShadowKernel::make(double highlights,double shadows,bool table){
-    MediaAssemblyHighlightShadowKernel k;
-    const double s=std::clamp(shadows,-1.,1.),h=std::clamp(highlights,0.,1.);
-    if(std::abs(s)<.05&&h>.95)return k;
-    k.identity=false;k.shadow=float(s);k.highlight=float(h);
-    k.noOpMix=float(std::clamp(1-std::pow(std::abs(s/.3),1.6),0.,1.));
-    k.gain=float(1/std::max(1.997-1/(1+std::exp(-6*h)),1.));
-    if(table&&k.highlight!=1){
-        const double e=2-double(k.highlight);k.highlightCurve.resize(highlightSamples+1);
-        for(unsigned i=0;i<=highlightSamples;++i)k.highlightCurve[i]=float(std::pow(double(i)/highlightSamples,e));
-    }
-    return k;
-}
-float MediaAssemblyHighlightShadowKernel::highlightPower(float x)const noexcept{
-    if(highlight==1.f)return x;
-    if(highlightCurve.empty())return power(x,2.f-highlight);
-    if(!(x<=1.f))return power(x,2.f-highlight);
-    const float at=x*float(highlightSamples);const auto i=std::min<unsigned>(highlightSamples-1,unsigned(at));const float f=at-float(i);
-    return highlightCurve[i]+(highlightCurve[i+1]-highlightCurve[i])*f;
-}
-std::array<float,3>MediaAssemblyHighlightShadowKernel::apply(std::array<float,3>p)const noexcept{
-    if(identity)return p;
-    const float r=p[0],g=p[1],b=p[2];
-    // The filter's blur input is the pixel itself at radius 0.
-    const float peak=std::max(0.f,std::max(std::max(r,g),b)),root=std::sqrt(peak);
-    // Shadow lift, stronger for blue/red dominant pixels than for green.
-    const float warmth=(std::max(r,0.f)+.8f*std::max(g,0.f)+1.1f*std::max(b,0.f))/std::max(.001f,r+g+b);
-    const float lift=shadow==0?0.f:shadow*power(std::min(warmth,1.f),1.f-shadow);
-    const float scale=.5f+.5f*smooth(.5f,1.f,shadow);
-    // With the no-op mix at one every shadow exponent is exactly one.
-    const bool linearShadow=noOpMix==1.f;
-    std::array<float,3>exponent{1.f,1.f,1.f},shade{},high{},out{};
-    for(int c=0;c<3;++c){
-        const float base=std::max(p[c],0.f)*scale;
-        if(linearShadow)shade[c]=(1.f+lift)*base*2.f;
-        else{exponent[c]=blend(std::exp2(-lift-p[c]),1.f,noOpMix);shade[c]=(1.f+lift)*power(base,exponent[c])*2.f;}
-    }
-    // The same curve applied to luma only (YIQ), mixed in at 35 %.
-    const float y=r*.299f+g*.587f+b*.114f,i=r*.596f+g*-.2755f+b*-.321f,q=r*.212f+g*-.523f+b*.311f;
-    const float curved=signOf(y)*(linearShadow?std::abs(y)*scale:power(std::abs(y)*scale,exponent[0]))*2.f;
-    const std::array<float,3>lumaOnly{curved*1.00048f+i*.955558f+q*.619549f,curved*.999864f+i*-.271545f+q*-.646786f,curved*.999446f+i*-1.10803f+q*1.70542f};
-    const float shadowFade=smooth(0.f,.1f+lift,std::sqrt(root));
-    for(int c=0;c<3;++c){shade[c]=blend(shade[c],lumaOnly[c],.35f);shade[c]=blend(p[c],shade[c],shadowFade);shade[c]=blend(shade[c],p[c],root);}
-    // Highlight power curve around a quarter-grey pivot.
-    for(int c=0;c<3;++c)high[c]=signOf(p[c])*highlightPower(std::abs(p[c])*gain);
-    const float pivotMix=1.f+(1.f-std::min(1.f,highlight+.3f))*.4f;
-    const float boost=std::min(midWeight(luma(high)),30.f*peak)*(1.f-highlight);
-    const float highFade=root<=.2f?0.f:root>=.8f?1.f:smooth(.2f,.8f,root);
-    for(int c=0;c<3;++c){high[c]=blend(high[c],blend(.25f,high[c],pivotMix),boost);high[c]=blend(p[c],high[c],highFade);high[c]=blend(p[c],high[c],peak);}
-    for(int c=0;c<3;++c)out[c]=blend(shade[c],high[c],std::min(root,1.f));
-    // Mid-grey contrast restore proportional to the applied lift.
-    const float restore=std::min(midWeight(luma(out)),30.f*peak),stretch=1.f+std::abs(lift)*.1f*(1.f-noOpMix);
-    for(int c=0;c<3;++c){out[c]=blend(out[c],blend(.5f,out[c],stretch),restore);out[c]=std::max(out[c],0.f)+std::min(p[c],0.f);}
-    return out;
-}
-std::array<float,3>mediaAssemblyHighlightShadow(std::array<float,3>v,float highlights,float shadows)noexcept{
-    return MediaAssemblyHighlightShadowKernel::make(highlights,shadows).apply(v);
 }
 std::vector<std::uint8_t>mediaAssemblyPremultiply(std::span<const std::uint8_t>s){
     need(s.size()%4==0,"Invalid Media Assembly RGBA8 artwork");std::vector<std::uint8_t>out(s.size());

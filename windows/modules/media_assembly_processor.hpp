@@ -13,43 +13,27 @@ struct MediaAssemblyRGBA {
     float r{},g{},b{},a{};
     bool operator==(const MediaAssemblyRGBA&)const=default;
 };
-// CIHighlightShadowAdjust as the original engine uses it (only
-// inputHighlightAmount/inputShadowAmount set, so the default inputRadius 0
-// selects the filter's per-pixel variant; filter version 2 is the only and
-// default version). Characterised from the unchanged Core Image filter on the
-// pinned macOS build: the parameter mapping is the filter's own (amounts
-// clamped to highlights [0,1] / shadows [-1,1]; identity while
-// |shadows| < 0.05 and highlights > 0.95; a shadow no-op mix of
-// clamp(1 - (|shadows|/0.3)^1.6) and a highlight gain of
-// 1 / max(1, 1.997 - logistic(6 * highlights))), and the per-pixel operator
-// (a chroma-weighted exponential shadow lift blended 35 % with its YIQ-luma
-// version, a highlight power curve with a quarter-grey pivot, both faded by
-// the pixel's own peak channel, then a mid-grey contrast restore). It runs on
-// unpremultiplied working-space values; negative components pass through.
-// The processor oracle compares it against Core Image over a dense grid
-// (tests/fixtures/media-assembly-processor-source.json).
-struct MediaAssemblyHighlightShadowKernel {
-    bool identity{true};
-    float shadow{},highlight{1},noOpMix{1},gain{1};
-    // x^(2-highlight) sampled on [0,1] (the gained, clamped-gain domain of
-    // every non-extended value); linear interpolation error < 1e-6. Built
-    // once per kernel; values outside fall back to the exact power.
-    static constexpr unsigned highlightSamples=4096;std::vector<float>highlightCurve;
-    // table=false skips the CPU curve table (GPU constants only).
-    static MediaAssemblyHighlightShadowKernel make(double highlights,double shadows,bool table=true);
-    std::array<float,3>apply(std::array<float,3>straight)const noexcept;
-private:
-    float highlightPower(float magnitude)const noexcept;
-};
-inline constexpr bool mediaAssemblyHighlightShadowCharacterized=true;
-std::array<float,3>mediaAssemblyHighlightShadow(std::array<float,3>straight,float highlights,float shadows)noexcept;
+// CIHighlightShadowAdjust (the Highlights/Shadows sliders) is a documented
+// Windows gap: no change is applied. The operator was probed black-box only
+// (rendered Core Image outputs on synthetic pixels; tools/
+// media_assembly_highlight_shadow_fit.py) and no generic model fitted to
+// those outputs reaches the parity bound every characterised operator meets
+// (float 2e-5, one RGBA8 level): the best, a measured 17^3 RGB lattice per
+// 0.1 amount step, still differs by up to 8 levels on held-out pixels and 21
+// with extended-range inputs (tests/fixtures/
+// media-assembly-highlight-shadow-fit.json). The amounts are
+// kept in the document and shown on the sliders exactly like the Mac; the
+// colour chain skips the step in previews, played frames and exports.
+inline constexpr bool mediaAssemblyHighlightShadowCharacterized=false;
 enum MediaAssemblyColorStep : unsigned {
     mediaAssemblyStepExposure=1u<<0,mediaAssemblyStepColorControls=1u<<1,mediaAssemblyStepTemperatureTint=1u<<2,
-    mediaAssemblyStepHighlightShadow=1u<<3,mediaAssemblyStepToneCurve=1u<<4,mediaAssemblyStepLevels=1u<<5,
+    // 1u<<3 stays unused: Highlights/Shadows applies no change (gap above).
+    mediaAssemblyStepToneCurve=1u<<4,mediaAssemblyStepLevels=1u<<5,
     mediaAssemblyStepGamma=1u<<6,mediaAssemblyStepLookup=1u<<7};
 
 // MediaAssemblyEngine.apply colour chain, after geometry and before stickers.
-// Each source step is skipped at its default exactly like the original. The
+// Each source step is skipped at its default exactly like the original, and
+// Highlights/Shadows is always skipped (documented gap above). The
 // object is immutable and allocation free per pixel; build one per job/frame
 // parameter change (it precomputes the matrix and spline once).
 //
@@ -60,10 +44,8 @@ enum MediaAssemblyColorStep : unsigned {
 //    primaries applied as one linear matrix on working values.
 //  - CIToneCurve: natural cubic spline through the five points evaluated on
 //    sRGB-encoded clamped input, clamped and decoded again.
-//  - CIHighlightShadowAdjust: the radius-0 per-pixel operator with the
-//    filter's own parameter mapping (see MediaAssemblyHighlightShadowKernel).
-//  Everything, including the geometry and the sticker composite, is exact
-//  within the original RGBA8 rounding.
+//  Everything else, including the geometry and the sticker composite, is
+//  exact within the original RGBA8 rounding.
 class MediaAssemblyColorPipeline final {
 public:
     // lookup is the borrowed 32^3 RGB8 red-fastest cube of adjustments.filter
@@ -86,14 +68,14 @@ public:
     // natural-spline interval j coefficients {y, b, c, d} on encoded input.
     struct Constants {
         unsigned steps{};bool linearWorkingSpace{};float exposure{1},brightness{},contrast{1},saturation{1};
-        std::array<float,9>temperature{};MediaAssemblyHighlightShadowKernel highlightShadow;
+        std::array<float,9>temperature{};
         std::array<std::array<double,4>,4>curve{};float levelGain{1},levelBias{},gammaPower{1};
         std::span<const std::uint8_t>lookup;
     };
     Constants constants()const;
 private:
     unsigned steps_{};float exposure_{1};float brightness_{},contrast_{1},saturation_{1};
-    std::array<float,9>matrix_{};MediaAssemblyHighlightShadowKernel highlightShadow_{};
+    std::array<float,9>matrix_{};
     std::array<double,5>curveY_{},curveB_{},curveC_{},curveD_{};
     float levelGain_{1},levelBias_{},gammaPower_{1};
     std::span<const std::uint8_t>lookup_;bool linear_{};

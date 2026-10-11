@@ -237,6 +237,12 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
     // releases the player and the next one carries the colour filter, which
     // edits each played frame in place on the renderer's device.
     check(owner.stats().filteredPlayers==0&&!owner.playbackFrameFilter(),"Geometry-only edits need no played-frame filter");
+    {   // Highlights/Shadows applies no change on Windows (documented gap,
+        // media_assembly_processor.hpp), so it alone needs no filter either.
+        check(owner.perform("tools",now)&&owner.perform("adjust",now)&&owner.setAccessibleValue("shadows",.6,now),"Shadows while playing");
+        drain();for(int k=0;k<10;++k){frame();drain();}
+        check(probe->playing&&owner.stats().filteredPlayers==0&&!owner.playbackFrameFilter()&&session.adjustments().shadows==.6,"Highlights/Shadows alone attaches no played-frame filter (documented gap)");
+        check(owner.perform("toolBack",now)&&owner.perform("tools",now)&&!owner.presentation().drawer(),"Leaving the adjust tool and drawer");}
     {const auto starts=owner.stats().playbackStarts;
         check(owner.perform("tools",now)&&owner.perform("adjust",now)&&owner.setAccessibleValue("brightness",.25,now),"Brightness while playing");
         drain();for(int k=0;k<10;++k){frame();drain();}
@@ -259,10 +265,11 @@ void playback(n::Renderer&r,HWND hwnd,const fs::path&assets,const fs::path&fixtu
             check(close(edited)&&owner.stats().filteredFrames==frames+1,"The played-frame filter edits a frame in place like the CPU video compositor ("+std::to_string(edited[2])+","+std::to_string(edited[1])+","+std::to_string(edited[0])+" vs "+std::to_string(expected[0])+","+std::to_string(expected[1])+","+std::to_string(expected[2])+")");
             check(r.removeTexture("media.assembly.test.played"),"Test media target released");}
         std::cout<<"played-frame filter: hook "<<owner.stats().frameFilterHook<<", broker route "<<owner.stats().frameFilterRoute<<", frames edited in playback "<<owner.stats().filteredFrames-1<<'\n';
-        if(owner.stats().frameFilterRoute){
-            // End to end: frames played through the shared broker arrive edited.
-            check(owner.stats().filteredFrames>1&&probe->surface&&close(firstPixel(probe->surface.Get())),"Frames played through the shared broker carry the colour edits");
-        }
+        // The host carries the filter through the shared media broker
+        // (core::ScopedMediaRequest::frameFilter), so frames played through
+        // it arrive edited end to end.
+        check(owner.stats().frameFilterRoute,"The shared media broker carries the played-frame filter");
+        check(owner.stats().filteredFrames>1&&probe->surface&&close(firstPixel(probe->surface.Get())),"Frames played through the shared broker carry the colour edits");
         check(owner.perform("toolBack",now)&&owner.perform("tools",now)&&!owner.presentation().drawer(),"Leaving the adjust tool and drawer");}
     owner.perform("play",now);for(int k=0;k<4;++k)frame();check(!probe->playing&&!owner.stats().videoShown,"Pause releases the player");
     check(!owner.playbackFrameFilter(),"A released player keeps no filter");

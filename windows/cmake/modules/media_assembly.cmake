@@ -10,7 +10,8 @@ if(BUILD_TESTING)
   add_executable(media_assembly_processor_tests tests/media_assembly_processor_tests.cpp)
   target_link_libraries(media_assembly_processor_tests PRIVATE hud_media_assembly_processor hud_data hud_reader_zlib)
   add_test(NAME media_assembly_processor_contracts COMMAND media_assembly_processor_tests
-    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-processor-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-processor-source.json ${CMAKE_CURRENT_SOURCE_DIR}/resources/media-assembly
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/media-assembly-highlight-shadow-fit.json)
 endif()
 
 # Portable controller: export ticket/commit rules, secondary menus, keyboard,

@@ -664,7 +664,8 @@ private:
         // Shelf provider): a type drift would silently empty "Choose from Shelf".
         step.check(host_.find<app::UtilityExecutor>(longWorkKey) && host_.find<ShelfChoices>(shelfChoicesKey) && host_.find<ShelfOpen>(shelfOpenKey),
                    "The host publishes the long-work executor and the Shelf services with the exact types the area looks up");
-        step.check(owner.stats().frameFilterHook, "The shared frame server offers the played-frame filter hook");
+        step.check(owner.stats().frameFilterHook && owner.stats().frameFilterRoute,
+                   "The shared frame server offers the played-frame filter hook and the media broker carries the filter to it");
         {   // The host's refresh after the module step: the fragments follow the
             // owner (none while Media Assembly is not the accepting module).
             ComPtr<CoverageAutomationGroup> group; group.Attach(new CoverageAutomationGroup(*this));

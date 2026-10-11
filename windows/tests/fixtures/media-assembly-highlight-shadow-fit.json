@@ -1,0 +1,232 @@
+{
+ "best": "lattice17",
+ "decision": "gap",
+ "lattice33AtFineNodes": {
+  "samples": 4000,
+  "tableFloatsPerNode": 107811,
+  "worstByte": 6,
+  "worstFloat": 0.0241938
+ },
+ "locality": {
+  "amounts": [
+   0.35,
+   0.55
+  ],
+  "imageMaxDifference": 0.0,
+  "perPixel": true,
+  "permutedRowMaxDifference": 0.0,
+  "pixels": 4096,
+  "pixelsChanged": 4096
+ },
+ "macOS": "15.7.4",
+ "models": [
+  {
+   "atFineNodes": {
+    "meanByte": 33.35,
+    "over1Fraction": 0.7351,
+    "samples": 4000,
+    "worstByte": 132,
+    "worstFloat": 0.518726
+   },
+   "description": "No change (the Windows behaviour while the gap stands).",
+   "heldOutRandom": {
+    "meanByte": 19.6,
+    "over1Fraction": 0.7007,
+    "samples": 5760,
+    "worstByte": 130,
+    "worstFloat": 0.5076
+   },
+   "heldOutStandardInputs": {
+    "meanByte": 9.582,
+    "over1Fraction": 0.4231,
+    "samples": 4320,
+    "worstByte": 127,
+    "worstFloat": 0.52779
+   },
+   "name": "none",
+   "reachesBound": false,
+   "tableFloats": 0
+  },
+  {
+   "atFineNodes": {
+    "meanByte": 22.36,
+    "over1Fraction": 0.5007,
+    "samples": 4000,
+    "worstByte": 138,
+    "worstFloat": 0.541227
+   },
+   "description": "Per-channel curve measured on a 257-step grey ramp at each amount node.",
+   "heldOutRandom": {
+    "meanByte": 17.79,
+    "over1Fraction": 0.4923,
+    "samples": 5760,
+    "worstByte": 138,
+    "worstFloat": 0.539619
+   },
+   "heldOutStandardInputs": {
+    "meanByte": 6.705,
+    "over1Fraction": 0.2347,
+    "samples": 4320,
+    "worstByte": 117,
+    "worstFloat": 0.459833
+   },
+   "name": "greyCurve",
+   "reachesBound": false,
+   "tableFloats": 93291
+  },
+  {
+   "atFineNodes": {
+    "meanByte": 27.46,
+    "over1Fraction": 0.7269,
+    "samples": 4000,
+    "worstByte": 242,
+    "worstFloat": 2.17636
+   },
+   "description": "Grey-ramp gain at the Rec. 709 luma applied to all channels.",
+   "heldOutRandom": {
+    "meanByte": 20.24,
+    "over1Fraction": 0.6984,
+    "samples": 5760,
+    "worstByte": 227,
+    "worstFloat": 2.22011
+   },
+   "heldOutStandardInputs": {
+    "meanByte": 7.352,
+    "over1Fraction": 0.3571,
+    "samples": 4320,
+    "worstByte": 134,
+    "worstFloat": 3.12403
+   },
+   "name": "lumaGain",
+   "reachesBound": false,
+   "tableFloats": 93291
+  },
+  {
+   "atFineNodes": {
+    "meanByte": 5.387,
+    "over1Fraction": 0.6272,
+    "samples": 4000,
+    "worstByte": 46,
+    "worstFloat": 0.178586
+   },
+   "description": "Least-squares cubic RGB polynomial per channel at each amount node (fitted on 9^3 probe points).",
+   "heldOutRandom": {
+    "meanByte": 4.082,
+    "over1Fraction": 0.5675,
+    "samples": 5760,
+    "worstByte": 39,
+    "worstFloat": 0.152816
+   },
+   "heldOutStandardInputs": {
+    "meanByte": 5.703,
+    "over1Fraction": 0.4556,
+    "samples": 4320,
+    "worstByte": 52,
+    "worstFloat": 0.219271
+   },
+   "name": "poly3",
+   "reachesBound": false,
+   "tableFloats": 7260
+  },
+  {
+   "atFineNodes": {
+    "meanByte": 0.6652,
+    "over1Fraction": 0.1196,
+    "samples": 4000,
+    "worstByte": 14,
+    "worstFloat": 0.057394
+   },
+   "description": "Trilinear 9^3 RGB lattice of Core Image outputs at each amount node.",
+   "heldOutRandom": {
+    "meanByte": 0.5422,
+    "over1Fraction": 0.08659,
+    "samples": 5760,
+    "worstByte": 14,
+    "worstFloat": 0.0547213
+   },
+   "heldOutStandardInputs": {
+    "meanByte": 0.428,
+    "over1Fraction": 0.07587,
+    "samples": 4320,
+    "worstByte": 21,
+    "worstFloat": 0.126909
+   },
+   "name": "lattice9",
+   "reachesBound": false,
+   "tableFloats": 264627
+  },
+  {
+   "atFineNodes": {
+    "meanByte": 0.1841,
+    "over1Fraction": 0.02581,
+    "samples": 4000,
+    "worstByte": 10,
+    "worstFloat": 0.0388134
+   },
+   "description": "Trilinear 17^3 RGB lattice of Core Image outputs at each amount node.",
+   "heldOutRandom": {
+    "meanByte": 0.1881,
+    "over1Fraction": 0.02339,
+    "samples": 5760,
+    "worstByte": 8,
+    "worstFloat": 0.0298687
+   },
+   "heldOutStandardInputs": {
+    "meanByte": 0.2365,
+    "over1Fraction": 0.04722,
+    "samples": 4320,
+    "worstByte": 21,
+    "worstFloat": 0.126909
+   },
+   "name": "lattice17",
+   "reachesBound": false,
+   "tableFloats": 1783419
+  }
+ ],
+ "parityBound": {
+  "float": 2e-05,
+  "rgba8": 1
+ },
+ "probe": {
+  "amountNodes": 121,
+  "amountStep": 0.1,
+  "expectedBytes": "RGBA8 from the rendered floats with the test rounding (colour clamped to alpha, round to nearest)",
+  "fineLattice": 33,
+  "fineNodes": [
+   [
+    0.0,
+    0.0
+   ],
+   [
+    0.5,
+    0.5
+   ],
+   [
+    0.0,
+    1.0
+   ],
+   [
+    0.3,
+    0.7
+   ]
+  ],
+  "greyRamp": 257,
+  "heldOutAmounts": 240,
+  "heldOutRandomPixels": 24,
+  "heldOutStandardInputs": 18,
+  "jobs": 886,
+  "lattice": 17,
+  "nodePixels": 1000,
+  "renderedPixels": 795686,
+  "seed": 20261011
+ },
+ "provenance": "Black-box only: rendered Core Image outputs of the unchanged Engine.apply on synthetic pixels. No framework binary, kernel text, CI_PRINT_TREE output or private method was read; the models are generic approximations fitted to the probe.",
+ "reachesBound": false,
+ "sourceCommit": "ca04f142185c7de40acd8523bdb563195d90a1d1",
+ "sourcePins": {
+  "MediaAssemblyAssetCatalog.swift": "cb9c981d28f0a8a4101357ea7c4a80464d2d6db4572527477128c0f4ae239011",
+  "MediaAssemblyEngine.swift": "96af95531fcb34878f80328841964965bb7d9a359e5d7e46b9d99ba0c5258781",
+  "MediaAssemblyModel.swift": "a9cc18d721360d5d41243c4e5417fe1742f16a824fcd10d5a80e271e64dfebce"
+ },
+ "usesAppOrWindow": false
+}

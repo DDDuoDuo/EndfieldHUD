@@ -68,6 +68,8 @@ std::vector<Case>cases(){
     add("exposure",[](auto&a){a.exposure=.7;});
     add("controls",[](auto&a){a.brightness=.13;a.contrast=1.25;a.saturation=.35;});
     add("temperature",[](auto&a){a.temperature=3400;a.tint=-45;});
+    // Highlights/Shadows applies no change on either path (documented gap,
+    // modules/media_assembly_processor.hpp); these frames stay unedited.
     add("highlight-shadow",[](auto&a){a.highlights=.3;a.shadows=.7;});
     add("highlights-only",[](auto&a){a.highlights=.2;});
     add("tone",[](auto&a){a.curve={0,.14,.61,.88,1};});

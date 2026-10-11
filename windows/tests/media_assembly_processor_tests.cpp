@@ -82,67 +82,123 @@ void derivations(){
     a.filter=m::MediaAssemblyFilter::filter1;rejects([&]{m::MediaAssemblyColorPipeline p(a);},"Filter requires its cube");
     a=m::MediaAssemblyAdjustments{};std::vector<std::uint8_t>cube(32*32*32*3);rejects([&]{m::MediaAssemblyColorPipeline p(a,cube);},"Cube without filter is rejected");
     a.exposure=9;rejects([&]{m::MediaAssemblyColorPipeline p(a);},"Invalid adjustments are rejected");
-    // CIHighlightShadowAdjust parameter mapping (the filter's own): identity
-    // window, logistic highlight gain and the (|s|/0.3)^1.6 no-op mix.
-    using K=m::MediaAssemblyHighlightShadowKernel;
-    check(K::make(1,0).identity&&K::make(.96,.049).identity&&K::make(.951,0).identity,"Filter identity while |shadows|<0.05 and highlights>0.95");
-    check(!K::make(.95,.04).identity&&!K::make(1,.05).identity&&!K::make(.5,0).identity,"Filter edges outside its identity window");
-    check(std::abs(K::make(0,.5).gain-float(1/1.497))<1e-6&&std::abs(K::make(.4,.5).gain-.925778f)<1e-6&&std::abs(K::make(.5,.5).gain-.957464f)<1e-6,"Logistic highlight gain as printed by the filter");
-    check(K::make(.97,.5).gain==1.f&&K::make(.96,.5).gain<1.f,"Highlight gain saturates at one near 0.97");
-    check(K::make(.5,0).noOpMix==1.f&&K::make(.5,.3).noOpMix==0.f&&std::abs(K::make(.5,.07).noOpMix-float(1-std::pow(.07/.3,1.6)))<1e-6,"Shadow no-op mix");
-    check(K::make(2,-3).highlight==1.f&&K::make(2,-3).shadow==-1.f,"Amounts clamp like the filter");
-    a=m::MediaAssemblyAdjustments{};a.highlights=.97;a.shadows=.03;check(m::MediaAssemblyColorPipeline(a).identity(),"Identity window skips the pass");
-    const std::array<float,3>grey{.5f,.5f,.5f};check(m::mediaAssemblyHighlightShadow(grey,1,.04)==grey,"Free function honours the identity window");
+    // Highlights/Shadows: the documented gap (highlightShadowGap below). The
+    // step is never part of the chain, alone or combined with other edits.
+    a=m::MediaAssemblyAdjustments{};a.highlights=.3;a.shadows=.7;check(m::MediaAssemblyColorPipeline(a).identity(),"Highlights/Shadows alone applies no change (documented gap)");
+    {m::MediaAssemblyAdjustments b;b.exposure=a.exposure=.2;b.curve=a.curve={0,.2,.6,.8,1};const m::MediaAssemblyColorPipeline with(a),without(b);
+        check(with.steps()==without.steps(),"Highlights/Shadows adds no step to a combined edit");
+        for(unsigned i=0;i<512;++i){const m::MediaAssemblyRGBA p{float(i%8)/7.f*1.1f-.05f,float((i/8)%8)/7.f,float(i/64)/7.f,i%5?1.f:.5f};check(with.apply(p)==without.apply(p),"Highlights/Shadows leaves combined pixels unchanged");}}
     // Constants-only pipelines (GPU path) evaluate the same chain exactly;
     // the CPU tables stay within their documented interpolation bound.
-    a=m::MediaAssemblyAdjustments{};a.highlights=.35;a.shadows=.45;a.curve={0,.2,.6,.8,1};a.exposure=.2;
+    a=m::MediaAssemblyAdjustments{};a.curve={0,.2,.6,.8,1};a.exposure=.2;a.temperature=4800;
     const m::MediaAssemblyColorPipeline withTables(a),constantsOnly(a,{},false,false);double worst{};
-    check(withTables.steps()==constantsOnly.steps()&&constantsOnly.constants().highlightShadow.highlightCurve.empty(),"Constants-only pipelines build no tables");
+    check(withTables.steps()==constantsOnly.steps(),"Constants-only pipelines run the same steps");
     for(unsigned i=0;i<4096;++i){const float r=float(i%16)/15.f*1.1f-.05f,g=float((i/16)%16)/15.f,b=float(i/256)/15.f;const auto x=withTables.apply({r,g,b,1}),y=constantsOnly.apply({r,g,b,1});
         worst=std::max({worst,double(std::abs(x.r-y.r)),double(std::abs(x.g-y.g)),double(std::abs(x.b-y.b))});}
     check(worst<5e-6,"Tables match the exact chain within 5e-6");
 }
 
+// The parity bound every characterised operator meets against the oracle
+// (float relative error, RGBA8 levels); cube cases use the cube bound.
+constexpr double floatBound=2e-5,cubeFloatBound=.001;constexpr int byteBound=1;
+int level(float value)noexcept{return int(std::floor(std::clamp(value,0.f,1.f)*255.f+.5f));}
+std::array<int,4>rgba8(const m::MediaAssemblyRGBA&p)noexcept{const float a=std::clamp(p.a,0.f,1.f);return {level(std::min(p.r,a)),level(std::min(p.g,a)),level(std::min(p.b,a)),level(a)};}
+bool requestsHighlightShadow(const m::MediaAssemblyAdjustments&a){return a.highlights!=1||a.shadows!=0;}
+
 void pixels(const J&fixture,Cubes&cubes){
-    const auto&inputs=fixture["inputs"].array();double worstFloat{},worstHS{};int worstByte{},worstHSByte{};unsigned compared{},hsCompared{};
+    const auto&inputs=fixture["inputs"].array();double worstFloat{};int worstByte{},gapWorstByte{};std::size_t compared{},gated{},gapCases{},gapSamples{};double gapBytes{};
     for(const auto&c:fixture["cases"].array()){
         const auto a=adjustments(c["adjustments"]);const m::MediaAssemblyColorPipeline pipeline(a,cubes.get(a.filter));
-        const bool hs=(pipeline.steps()&m::mediaAssemblyStepHighlightShadow)!=0;
+        if(requestsHighlightShadow(a)){
+            // The source runs CIHighlightShadowAdjust here; Windows applies
+            // no change (documented gap): exactly the chain without the step.
+            // The distance to Core Image is measured, not gated.
+            auto without=a;without.highlights=1;without.shadows=0;const m::MediaAssemblyColorPipeline rest(without,cubes.get(a.filter));++gapCases;
+            for(std::size_t i=0;i<inputs.size();++i){
+                const auto&in=inputs[i].array();const m::MediaAssemblyRGBA p{float(in[0].number()),float(in[1].number()),float(in[2].number()),float(in[3].number())};
+                const auto out=pipeline.apply(p);check(out==rest.apply(p),"Highlights/Shadows applies no change: "+c["name"].string());
+                const auto bytes=rgba8(out);for(int k=0;k<4;++k){const int d=std::abs(bytes[k]-int(c["rgba8"].array()[i].array()[k].integer()));gapWorstByte=std::max(gapWorstByte,d);gapBytes+=d;++gapSamples;}
+            }
+            continue;
+        }
         // CIColorCubeWithColorSpace interpolates on the GPU's texture path;
         // the existing cube oracle bounds that at a quarter byte. Every other
         // derived operator is float32-exact.
-        const double tolerance=(pipeline.steps()&m::mediaAssemblyStepLookup)?.001:2e-5;
+        const double tolerance=(pipeline.steps()&m::mediaAssemblyStepLookup)?cubeFloatBound:floatBound;++gated;
         for(std::size_t i=0;i<inputs.size();++i){
             const auto&in=inputs[i].array();const m::MediaAssemblyRGBA p{float(in[0].number()),float(in[1].number()),float(in[2].number()),float(in[3].number())};
             const auto out=pipeline.apply(p);const std::array<float,4>v{out.r,out.g,out.b,out.a};
             // Reference RGBA8 from the original createCGImage: associated,
             // colour clamped to alpha, rounded to nearest.
+            const auto bytes=rgba8(out);
             for(int k=0;k<4;++k){
                 const double expected=c["float"].array()[i].array()[k].number();const int expectedByte=int(c["rgba8"].array()[i].array()[k].integer());
-                const float alpha=std::clamp(v[3],0.f,1.f);const float value=k==3?alpha:std::min(v[k],alpha);
-                const int byte=int(std::floor(std::clamp(value,0.f,1.f)*255.f+.5f));
+                const int byte=bytes[std::size_t(k)];
                 const double error=std::abs(double(v[k])-expected)/std::max(1.,std::abs(expected));
-                // Highlight/shadow cases are gated like every other operator
-                // (the combined "everything" case also carries a LUT, so it
-                // shares the cube bound); the pure grid is tracked separately.
-                if(hs&&!(pipeline.steps()&m::mediaAssemblyStepLookup))worstHS=std::max(worstHS,error);
-                if(hs)worstHSByte=std::max(worstHSByte,std::abs(byte-expectedByte));
                 worstFloat=std::max(worstFloat,error);worstByte=std::max(worstByte,std::abs(byte-expectedByte));
-                if(error>tolerance||std::abs(byte-expectedByte)>1){std::cerr<<c["name"].string()<<" input "<<i<<" channel "<<k<<" got "<<v[k]<<" expected "<<expected<<" bytes "<<byte<<'/'<<expectedByte<<'\n';}
+                if(error>tolerance||std::abs(byte-expectedByte)>byteBound){std::cerr<<c["name"].string()<<" input "<<i<<" channel "<<k<<" got "<<v[k]<<" expected "<<expected<<" bytes "<<byte<<'/'<<expectedByte<<'\n';}
                 check(error<=tolerance,"Derived operator float output matches the original Core Image chain: "+c["name"].string());
-                check(std::abs(byte-expectedByte)<=1,"Derived operator RGBA8 output matches the original Core Image chain: "+c["name"].string());
+                check(std::abs(byte-expectedByte)<=byteBound,"Derived operator RGBA8 output matches the original Core Image chain: "+c["name"].string());
                 ++compared;
             }
-            if(hs)++hsCompared;
         }
     }
-    std::cout<<"pixels compared="<<compared<<" worstFloat="<<worstFloat<<" worstByte="<<worstByte<<" highlightShadow samples="<<hsCompared<<" worstHSFloat="<<worstHS<<" worstHSByte="<<worstHSByte<<'\n';
-    check(compared>10000,"Every derived operator case was compared");
-    // CIHighlightShadowAdjust: every oracle sample of the dense grid (and of
-    // the combined cases) is gated at float32 and RGBA8 exactness.
-    check(hsCompared>=700,"Highlight/shadow oracle grid measured");
-    check(m::mediaAssemblyHighlightShadowCharacterized,"Highlight/shadow is characterised");
-    check(worstHSByte<=1&&worstHS<=2e-5,"Characterised highlight/shadow matches the original");
+    std::cout<<"pixels compared="<<compared<<" worstFloat="<<worstFloat<<" worstByte="<<worstByte<<'\n';
+    std::cout<<"highlight/shadow gap: cases="<<gapCases<<" worstByte="<<gapWorstByte<<" meanByte="<<gapBytes/double(std::max<std::size_t>(1,gapSamples))<<" (no change applied vs Core Image)\n";
+    // Every other oracle case (118: identity, exposure, controls, levels,
+    // gamma, all 14 LUTs, 72 temperature/tint and 7 tone-curve cases and the
+    // combined ones) is gated on every input and channel.
+    check(gated==118&&compared==gated*inputs.size()*4&&gated+gapCases==fixture["cases"].array().size(),"Every derived operator case was compared");
+    // The uniform 5x5 amount grid (minus the default) and the combined case.
+    check(gapCases==25,"Every Highlights/Shadows oracle case is measured as the gap");
+    check(gapWorstByte>byteBound,"Core Image visibly changes these pixels, so the gap is real and recorded");
+}
+
+// CIHighlightShadowAdjust derivation record (tests/fixtures/
+// media-assembly-highlight-shadow-fit.json, written by tools/
+// media_assembly_highlight_shadow_fit.py). The operator was observed only
+// from the outside: the unchanged Engine.apply rendered synthetic RGBAf
+// pixels through the public Core Image API in the preview/export working
+// space; no framework code, kernel text or debug tree output was read.
+//  1. Locality: a random row, a permutation of it and a 64x64 image of the
+//     same pixels give identical outputs per pixel, so a per-pixel model
+//     f(r,g,b; highlights, shadows) is sufficient in principle.
+//  2. Probe: 121 amount nodes (step 0.1), each with a 17^3 RGB lattice and a
+//     257-step grey ramp; a 33^3 lattice at four nodes.
+//  3. Models, all generic and interpolated bilinearly between amount nodes:
+//     per-channel grey curve, grey gain at Rec. 709 luma, least-squares cubic
+//     RGB polynomial, trilinear 9^3 and 17^3 lattices of measured outputs.
+//  4. Held out: 240 random amount pairs with random opaque pixels and the
+//     processor oracle's standard inputs (alpha, extended range).
+// Result: the best model (the 17^3 lattice, 7 MB of floats) still misses
+// the parity bound by several RGBA8 levels, and a 33^3 lattice at its own
+// node misses it too, so the source operator has features no table of this
+// size resolves. No model is shipped: Highlights/Shadows applies no change,
+// the documented gap. A future model is accepted only inside the bound, and
+// mediaAssemblyHighlightShadowCharacterized must then follow the record.
+void highlightShadowGap(const J&fit){
+    check(fit["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fit["usesAppOrWindow"].boolean(),"Fit uses the authoritative isolated oracle");
+    check(fit["provenance"].string().starts_with("Black-box only"),"Fit records its black-box provenance");
+    const auto&locality=fit["locality"];
+    check(locality["perPixel"].boolean()&&locality["permutedRowMaxDifference"].number()==0&&locality["imageMaxDifference"].number()==0&&locality["pixelsChanged"].integer()>0,"Probe shows a per-pixel operator that changes pixels");
+    check(fit["parityBound"]["float"].number()==floatBound&&fit["parityBound"]["rgba8"].integer()==byteBound,"Fit is judged by the processor parity bound");
+    const auto&probe=fit["probe"];check(probe["amountNodes"].integer()==121&&probe["lattice"].integer()==17&&probe["heldOutAmounts"].integer()>=200,"Fit probe covers the amount square densely");
+    bool anyInside{};std::vector<std::string>names;
+    for(const auto&model:fit["models"].array()){
+        const auto&random=model["heldOutRandom"];const auto&standard=model["heldOutStandardInputs"];
+        const bool inside=random["worstFloat"].number()<=floatBound&&random["worstByte"].integer()<=byteBound&&standard["worstFloat"].number()<=floatBound&&standard["worstByte"].integer()<=byteBound;
+        check(inside==model["reachesBound"].boolean(),"Fit verdict follows its own numbers: "+model["name"].string());
+        check(random["samples"].integer()>=5000&&standard["samples"].integer()>=4000,"Fit model judged on the held-out sets: "+model["name"].string());
+        std::cout<<"highlight/shadow model "<<model["name"].string()<<": held-out worst "<<random["worstByte"].integer()<<" levels (float "<<random["worstFloat"].number()<<"), mean "<<random["meanByte"].number()
+                 <<"; standard inputs worst "<<standard["worstByte"].integer()<<" levels; table floats "<<model["tableFloats"].integer()<<'\n';
+        if(model["name"].string()=="none")check(random["worstByte"].integer()>byteBound,"No change differs visibly from Core Image (the recorded gap)");
+        else anyInside=anyInside||inside;
+        names.push_back(model["name"].string());
+    }
+    check(names==std::vector<std::string>{"none","greyCurve","lumaGain","poly3","lattice9","lattice17"},"Every recorded black-box model was evaluated");
+    check(fit["lattice33AtFineNodes"]["worstByte"].integer()>byteBound,"A 33^3 lattice at its own node also misses the bound");
+    check(fit["reachesBound"].boolean()==anyInside&&fit["decision"].string()==(anyInside?"model":"gap"),"Fit decision follows the bound");
+    check(m::mediaAssemblyHighlightShadowCharacterized==anyInside,"Highlights/Shadows is applied only with a black-box model inside the parity bound");
 }
 
 void frames(const J&fixture,Cubes&cubes,const fs::path&root){
@@ -165,6 +221,13 @@ void frames(const J&fixture,Cubes&cubes,const fs::path&root){
         for(std::size_t i=0;i<out.size();++i){const int d=std::abs(int(out[i])-int(expected[i]));worst=std::max(worst,d);differing+=d>1;total+=d;}
         const double mean=total/double(out.size());
         std::cout<<"frame "<<f["name"].string()<<' '<<processor.width()<<'x'<<processor.height()<<" worst="<<worst<<" over1="<<differing<<" mean="<<mean<<'\n';
+        if(requestsHighlightShadow(a)){
+            // Documented gap: the frame renders exactly as without the step;
+            // the distance to the Core Image frame above is the recorded gap.
+            auto without=a;without.highlights=1;without.shadows=0;const m::MediaAssemblyFrameProcessor rest(w,h,without,cubes.get(a.filter),include,stickers);
+            check(rest.render(pixels)==out&&worst>byteBound,"Highlights/Shadows frame renders without the step (documented gap): "+f["name"].string());
+            continue;
+        }
         // Geometry, colour and sticker compositing (Core Image's 2^-1.2
         // halving prefilter + bilinear) are exact within RGBA8 rounding.
         check(worst<=1&&mean<.05,"Frame is pixel exact within rounding: "+f["name"].string());
@@ -219,11 +282,11 @@ void performance(Cubes&cubes){
 }
 int main(int argc,char**argv){
     try{
-        if(argc!=3)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly>");
+        if(argc!=4)throw std::runtime_error("usage: media_assembly_processor_tests <processor-source.json> <resources/media-assembly> <highlight-shadow-fit.json>");
         const auto fixture=J::parse(read(argv[1]),8*1024*1024);
         check(fixture["sourceCommit"].string()=="ca04f142185c7de40acd8523bdb563195d90a1d1"&&!fixture["usesAppOrWindow"].boolean(),"Authoritative isolated oracle");
         Cubes cubes{argv[2],{}};
-        derivations();downscale();pixels(fixture,cubes);frames(fixture,cubes,argv[2]);streaming();performance(cubes);
+        derivations();downscale();pixels(fixture,cubes);highlightShadowGap(J::parse(read(argv[3]),1024*1024));frames(fixture,cubes,argv[2]);streaming();performance(cubes);
         std::cout<<"media_assembly_processor_tests: "<<checks<<" checks passed\n";return 0;
     }catch(const std::exception&e){std::cerr<<"media_assembly_processor_tests: "<<e.what()<<'\n';return 1;}
 }

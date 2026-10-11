@@ -13,8 +13,9 @@ struct MediaAssemblyGpuStats {
 // (no stickers) on an existing D3D11 device. It runs exactly the portable
 // MediaAssemblyColorPipeline constants (modules/media_assembly_processor):
 // the integer crop/mirror/quarter-turn permutation, exposure, colour
-// controls, the temperature/tint matrix, CIHighlightShadowAdjust, the tone
-// spline, levels, gamma and the exact trilinear 32^3 lookup, in the encoded
+// controls, the temperature/tint matrix, the tone spline, levels, gamma and
+// the exact trilinear 32^3 lookup (Highlights/Shadows applies no change, the
+// documented gap in media_assembly_processor.hpp), in the encoded
 // (still/preview) or linear (video compositor) working space. Results match
 // the CPU reference within one RGBA8 level (WARP test).
 //
